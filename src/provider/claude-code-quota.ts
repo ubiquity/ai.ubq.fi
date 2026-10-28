@@ -1,8 +1,8 @@
 import type { Kv } from "#kv";
 /**
  * Upstream-observed Claude Code subscription windows. The provider's OAuth
- * usage endpoint and unified rate-limit headers are authoritative statements
- * of remaining subscription allowance; local token accounting is never treated
+ * unified response headers are authoritative statements of remaining
+ * subscription allowance; local token accounting is never treated
  * as the account's allowance. Durable exhaustion is only ever recorded from an
  * upstream rejection that carries a window and reset; anything weaker stays a
  * request-local cooldown so a transient 429 cannot invent a weekly block.
@@ -71,6 +71,7 @@ export type ClaudeCodeQuotaObservation = Readonly<{
   representative_claim: string | null;
   observed_at_ms: number;
 }>;
+export type ClaudeCodeHeaderObservation = Omit<ClaudeCodeQuotaObservation, "usage_snapshot"> & Readonly<{ source: "response_headers" }>;
 
 export type ClaudeCodeAcceptedObservation = ClaudeCodeAccountIdentity &
   Readonly<{
@@ -81,6 +82,7 @@ export type ClaudeCodeAcceptedObservation = ClaudeCodeAccountIdentity &
     response_status: number | null;
     state: "available" | "unavailable";
     observation: ClaudeCodeQuotaObservation;
+    source?: "response_headers";
   }>;
 type ObservationRecorder = (kv: Kv, event: ClaudeCodeAcceptedObservation) => Promise<void>;
 let observationRecorder: ObservationRecorder | null = null;
@@ -96,6 +98,7 @@ export const claudeCodeQuotaKey = (binding?: ClaudeCodeAccountBinding) =>
   binding ? (["uos_ai", "claude_code_quota", "v1", binding.account_id, binding.account_cohort_id] as const) : CLAUDE_CODE_QUOTA_KV_KEY;
 
 export type ClaudeCodeQuotaState = Readonly<{
+  response_headers?: ClaudeCodeHeaderObservation;
   usage_snapshot?: ClaudeCodeUsageSnapshot;
   pool_proofs?: Readonly<Record<string, ClaudeCodePoolProof>>;
   windows: Readonly<Partial<Record<ClaudeCodeWindowId, ClaudeCodeQuotaWindow>>>;
@@ -116,6 +119,7 @@ export type ClaudeCodeUsageState = Readonly<{
   message: string | null;
   attempted_at_ms: number;
   observed_at_ms: number | null;
+  retry_at_ms?: number;
 }>;
 export type ClaudeCodePoolProof = Readonly<{
   kind: "auth_invalid" | "quota_exhausted";
@@ -358,6 +362,7 @@ const parseClaudeCodeUsageState = (value: unknown): ClaudeCodeUsageState | null 
   if (!isRecord(value) || value.source !== "oauth_usage" || typeof value.state !== "string" || !CLAUDE_CODE_USAGE_STATES.has(value.state)) return null;
   const attemptedAtMs = positiveSafeInteger(value.attempted_at_ms);
   const observedAtMs = value.observed_at_ms === null ? null : positiveSafeInteger(value.observed_at_ms);
+  const retryAtMs = positiveSafeInteger(value.retry_at_ms);
   if (attemptedAtMs === null || (value.observed_at_ms !== null && observedAtMs === null)) return null;
   if (value.status !== null && (typeof value.status !== "number" || !Number.isInteger(value.status) || value.status < 100 || value.status > 599)) return null;
   if (value.message !== null && typeof value.message !== "string") return null;
@@ -368,17 +373,32 @@ const parseClaudeCodeUsageState = (value: unknown): ClaudeCodeUsageState | null 
     message: sanitizeClaudeCodeErrorMessage(value.message),
     attempted_at_ms: attemptedAtMs,
     observed_at_ms: observedAtMs,
+    ...(value.state === "rate_limited" && retryAtMs !== null && retryAtMs > attemptedAtMs ? { retry_at_ms: retryAtMs } : {}),
   };
 };
 
 const parseBlockWindow = (value: unknown): ClaudeCodeWindowId | null =>
   CLAUDE_CODE_WINDOWS.includes(value as ClaudeCodeWindowId) ? (value as ClaudeCodeWindowId) : null;
 
+const parseHeaderObservation = (value: unknown): ClaudeCodeHeaderObservation | null => {
+  if (!isRecord(value) || value.source !== "response_headers" || value.usage_snapshot !== undefined || !positiveSafeInteger(value.observed_at_ms)) return null;
+  return {
+    source: "response_headers",
+    windows: parseStoredWindows(value.windows),
+    standard: parseStoredStandardWindows(value.standard),
+    representative_claim: typeof value.representative_claim === "string" ? value.representative_claim : null,
+    observed_at_ms: Number(value.observed_at_ms),
+  };
+};
+
+const headerObservationField = (value: ClaudeCodeHeaderObservation | null | undefined) => (value ? { response_headers: value } : {});
+
 export const parseClaudeCodeQuotaState = (value: unknown): ClaudeCodeQuotaState | null => {
   if (!isRecord(value)) return null;
   const updatedAtMs = finiteNumber(value.updated_at_ms);
   if (updatedAtMs === null || updatedAtMs <= 0) return null;
   return {
+    ...headerObservationField(parseHeaderObservation(value.response_headers)),
     ...(value.pool_proofs === undefined ? {} : { pool_proofs: parsePoolProofs(value.pool_proofs) }),
     ...(readClaudeCodeUsageSnapshot(value.usage_snapshot) ? { usage_snapshot: readClaudeCodeUsageSnapshot(value.usage_snapshot) ?? undefined } : {}),
     windows: parseStoredWindows(value.windows),
@@ -442,6 +462,7 @@ export const mergeClaudeCodeQuotaState = (
   const usageSnapshot = observation.usage_snapshot ? newerWindow(previous?.usage_snapshot, observation.usage_snapshot) : previous?.usage_snapshot;
   return {
     ...(usageSnapshot ? { usage_snapshot: usageSnapshot } : {}),
+    ...headerObservationField(previous?.response_headers),
     windows,
     standard,
     usage: previous?.usage ?? null,
@@ -488,13 +509,41 @@ type QuotaOutcome = Readonly<{
   nowMs?: number;
   /** A direct OAuth usage read; metadata only and never part of routing guards. */
   usage?: ClaudeCodeUsageState;
+  /** Meter provenance is set only at the ordinary inference response-header seam. */
+  observation_source?: "response_headers";
   /** Internal CAS retry budget, never an upstream retry. */
   attempts?: number;
 }>;
 
+const withHeaderObservation = (state: ClaudeCodeQuotaState, input: QuotaOutcome): ClaudeCodeQuotaState => {
+  if (input.observation_source !== "response_headers" || !input.observation || observationIsEmpty(input.observation)) return state;
+  const previous = state.response_headers;
+  const observation = input.observation;
+  const windows = { ...previous?.windows };
+  const standard = { ...previous?.standard };
+  for (const window of CLAUDE_CODE_WINDOWS) {
+    const observed = observation.windows[window];
+    if (observed) windows[window] = newerWindow(windows[window], observed);
+  }
+  for (const family of CLAUDE_CODE_STANDARD_FAMILIES) {
+    const observed = observation.standard[family];
+    if (observed) standard[family] = newerWindow(standard[family], observed);
+  }
+  return {
+    ...state,
+    response_headers: {
+      source: "response_headers",
+      windows,
+      standard,
+      representative_claim: observation.representative_claim ?? previous?.representative_claim ?? null,
+      observed_at_ms: Math.max(previous?.observed_at_ms ?? 0, observation.observed_at_ms),
+    },
+  };
+};
+
 const quotaStateForOutcome = (previous: ClaudeCodeQuotaState | null, input: QuotaOutcome, nowMs: number): ClaudeCodeQuotaState => {
   const observation = input.observation ?? { windows: {}, standard: {}, representative_claim: null, observed_at_ms: nowMs };
-  const base = mergeClaudeCodeQuotaState(previous, observation, input.exhaustion ?? null, nowMs);
+  const base = withHeaderObservation(mergeClaudeCodeQuotaState(previous, observation, input.exhaustion ?? null, nowMs), input);
   let withCooldown: ClaudeCodeQuotaState = base;
   if (input.transient) {
     withCooldown = {
@@ -571,6 +620,7 @@ const publishAcceptedObservation = async (kv: Kv, input: QuotaOutcome, withCoold
       response_status: input.response_status ?? null,
       state: input.auth_invalid || claudeCodeQuotaBlocked(withCooldown, nowMs) || claudeCodeQuotaCoolingDown(withCooldown, nowMs) ? "unavailable" : "available",
       observation: input.observation,
+      ...(input.observation_source ? { source: input.observation_source } : {}),
     };
     try {
       await observationRecorder(kv, event);

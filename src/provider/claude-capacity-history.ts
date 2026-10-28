@@ -84,6 +84,7 @@ const validPointWindows = (value: Record<string, unknown>): boolean => {
 
 export const readClaudeCapacityHistoryPoint = (value: unknown): ClaudeCapacityHistoryPoint | null => {
   if (!isRecord(value) || value.v !== 1 || !validPointIdentity(value) || !validPointTimes(value) || !validPointWindows(value)) return null;
+  if (value.source !== undefined && value.source !== "response_headers") return null;
   if (value.usage_snapshot !== undefined) {
     const snapshot = readClaudeCodeUsageSnapshot(value.usage_snapshot);
     if (!snapshot || snapshot.observed_at_ms > Number(value.sampled_at_ms)) return null;
@@ -150,6 +151,7 @@ const pointForObservation = async (event: ClaudeCodeAcceptedObservation): Promis
         state: event.state,
         response_status: event.response_status,
         observation: event.observation,
+        ...(event.source ? { source: event.source } : {}),
       })
     ),
     bucket_start_at_ms: Math.floor((sourceTime ?? event.sampled_at_ms) / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) * PROVIDER_CAPACITY_HISTORY_BUCKET_MS,
@@ -161,6 +163,7 @@ const pointForObservation = async (event: ClaudeCodeAcceptedObservation): Promis
     workspace_id: event.workspace_id,
     state: event.state,
     response_status: event.response_status,
+    ...(event.source ? { source: event.source } : {}),
     windows: { five_hour: window("5h"), seven_day: window("7d") },
     ...(event.observation.usage_snapshot ? { usage_snapshot: event.observation.usage_snapshot } : {}),
     standard: Object.entries(event.observation.standard).map(([family, item]) => ({ family, ...item })),

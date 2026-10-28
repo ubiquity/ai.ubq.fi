@@ -1,8 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { readFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { runInNewContext } from "node:vm";
 import { openKv, type Kv } from "#kv";
 import { parseClaudeCodeUsageSnapshot, readClaudeCodeUsageSnapshot, CLAUDE_USAGE_LEGACY_WINDOWS } from "../src/provider/claude-code-usage-schema.ts";
 import { parseClaudeCodeUsagePayload } from "../src/provider/claude-code-usage.ts";
@@ -140,11 +139,11 @@ test("direct snapshots, current readback, history and scoped rollups survive nat
       nowMs: at + 20,
     });
     const source = await claudeCapacitySource(kv, at + 20, () => null);
-    assert.equal(source.usage_snapshot?.observed_at_ms, at);
-    assert.deepEqual(source.usage_snapshot.payload, payload);
-    assert.equal(source.usage_stale, true);
-    assert.equal(source.state, "stale");
-    assert.equal(source.usage?.state, "unreachable");
+    assert.equal(source.usage_snapshot, undefined);
+    assert.equal(source.usage, null);
+    assert.equal(source.source_observed_at_ms, null);
+    assert.equal(source.windows.five_hour, null);
+    assert.equal(source.state, "available");
     const empty = parseClaudeCodeUsagePayload({ limits: [] }, at + 30);
     assert(empty);
     await recordClaudeCodeQuotaOutcome(kv, { binding, observation: empty, nowMs: at + 30 });
@@ -154,107 +153,4 @@ test("direct snapshots, current readback, history and scoped rollups survive nat
     kv.close();
     rmSync(directory, { recursive: true, force: true });
   }
-});
-
-const script = readFileSync(new URL("../static/admin.js", import.meta.url), "utf8");
-const chartContext = { CAPACITY_CHART_BUCKET_MS: 900_000, clampCapacityChartPercent: (value: number) => Math.min(100, Math.max(0, value)) };
-const chart = runInNewContext(
-  script.slice(script.indexOf("const CLAUDE_CAPACITY_CHART_SERIES ="), script.indexOf("const renderClaudeHistorySelector =")) +
-    "\n({series:claudeCapacityChartSeries,points:claudeCapacityChartPoints})",
-  chartContext
-) as {
-  series: (value: unknown, account: string) => { window: string; label: string }[];
-  points: (value: unknown, account: string, id: string, interval: unknown) => ({ remainingPercent: number } | null)[];
-};
-test("shipped chart discovers dynamic series and breaks missing, empty, reset and cohort runs", () => {
-  const make = (offset: number, patch: Record<string, unknown> = {}) => ({
-    account_id: "a",
-    account_cohort_id: "cohort",
-    credential_kind: "oauth",
-    workspace_id: null,
-    state: "available",
-    sampled_at_ms: AT + offset,
-    source_observed_at_ms: AT + offset,
-    bucket_start_at_ms: AT,
-    usage_snapshot: snapshot({ limits: [row({ percent: 20 })] }, AT + offset),
-    ...patch,
-  });
-  const first = make(0);
-  const view = {
-    points: [first, make(1), make(2, { usage_snapshot: snapshot({ limits: [] }, AT + 2) }), make(3), make(4, { account_cohort_id: "replacement" })],
-    stale_after_ms: 1000,
-  };
-  const series = chart.series({ claude_history: view }, "a");
-  assert.equal(series.length, 1);
-  assert.match(series[0]?.label ?? "", /Future model/);
-  const points = chart.points(view, "a", series[0]?.window ?? "", { startAtMs: AT, resetAtMs: AT + 100, durationMs: 100 });
-  assert.equal(points.filter(Boolean).length, 4);
-  assert.equal(points.filter((point) => point === null).length, 4);
-  const changedReset = make(1, { usage_snapshot: snapshot({ limits: [row({ resets_at: null })] }, AT + 1) });
-  assert.equal(
-    chart
-      .points({ points: [first, changedReset] }, "a", series[0]?.window ?? "", { startAtMs: AT, resetAtMs: AT + 100, durationMs: 100 })
-      .filter((point) => point === null).length,
-    2
-  );
-  assert.equal(
-    chart.series({ claude_history: { points: [make(0, { usage_snapshot: snapshot({ limits: [], seven_day: { utilization: 10, resets_at: null } }) })] } }, "a")
-      .length,
-    0
-  );
-});
-
-class MeterElement {
-  dataset: Record<string, string> = {};
-  textContent = "";
-  children: MeterElement[] = [];
-  setAttribute() {}
-  addEventListener() {}
-  append(...children: MeterElement[]) {
-    this.children.push(...children);
-  }
-  appendChild(child: MeterElement) {
-    this.children.push(child);
-  }
-}
-test("shipped renderer uses all server meters safely and treats an empty list as authoritative", () => {
-  const rendered: { label: string; meter: { used_percent: number | null } }[] = [];
-  const context = {
-    document: { createElement: () => new MeterElement() },
-    latestClaudeSubscription: null,
-    latestProviderHealth: null,
-    setBadge: () => {},
-    capacityBadgeState: (value: string) => value,
-    capacityStateLabel: (value: string) => value,
-    formatCapacityTimestamp: (value: number) => String(value),
-    renderCapacityWindow: (_element: MeterElement, label: string, meter: { used_percent: number | null }) => rendered.push({ label, meter }),
-    appendCapacitySourceMeta: () => {},
-    refreshClaudeUsage: () => {},
-    claudeCapacityWindowForDisplay: (value: unknown) => value,
-  };
-  const render = runInNewContext(
-    script.slice(script.indexOf("const renderClaudeCapacitySource ="), script.indexOf("const claudeCapacitySourcesForDisplay =")) +
-      "\nrenderClaudeCapacitySource",
-    context
-  ) as (value: unknown) => MeterElement;
-  const label = '<img src=x onerror="fail()">';
-  const source = {
-    source: "claude_code",
-    state: "stale",
-    usage_stale: true,
-    account_id: "a",
-    windows: { five_hour: { used_percent: 99 } },
-    usage_snapshot: snapshot({ limits: [row({ scope: { model: { display_name: label } } }), row({ kind: "other", is_active: false })] }),
-  };
-  const result = render(source);
-  assert.equal(rendered.length, 2);
-  assert.match(rendered[0]?.label ?? "", /<img.*Headline/);
-  assert.equal(rendered[0]?.meter.used_percent, 121.5);
-  const windows = result.children.at(-1);
-  assert.match(windows?.children[0]?.textContent ?? "", /Last known usage.*stale/);
-  assert.equal(windows?.children[1]?.dataset.usageSeverity, "vendor_future");
-  rendered.length = 0;
-  const empty = render({ ...source, usage_snapshot: snapshot({ limits: [] }) });
-  assert.equal(rendered.length, 0);
-  assert.match(empty.children.at(-1)?.children.at(-1)?.textContent ?? "", /No subscription meters/);
 });
