@@ -2,7 +2,6 @@
 //! never request DATA, select the actual one-use operation/start permission.
 use super::super::{actor, receiver::NativeRenewalAuthority};
 use super::custody_session::ImportCustodyStartedRequest;
-use super::effects::NativeImportMode;
 use super::remote_state::ImportActionState;
 use super::{effects, publication, publication_current, remote_state, unavailable};
 use gateway_auth_native_contracts::native_import::{
@@ -20,6 +19,7 @@ use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeAut
 use gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH;
 use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
 use gateway_authority_native_records::import_action::ImportActionRow;
+use gateway_authority_native_records::import_effects::NativeImportMode;
 use gateway_authority_native_records::rows;
 use gateway_authority_native_records::rows::{GenerationEffect, Phase};
 use gateway_core::state::AuthorityStore;

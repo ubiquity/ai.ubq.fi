@@ -12,9 +12,9 @@ use gateway_auth_passkeys::passkeys;
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority::native_control::import::AuthenticatedNativeImport;
 use gateway_authority::native_control::import::effects::NativeImportClaim;
-use gateway_authority::native_control::import::effects::NativeImportMode;
 use gateway_authority::native_control::receiver::NativeRenewalAuthority;
 use gateway_authority::store::Authority;
+use gateway_authority_native_records::import_effects::NativeImportMode;
 use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_native_import_source::result::{NativeImportCompletion, NativeImportResult};
 use gateway_native_import_test_support::{

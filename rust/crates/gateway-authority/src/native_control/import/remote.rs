@@ -2,7 +2,7 @@
 //! mint body, claim, Started, currentness or terminal proofs through this type.
 use super::super::OWNER_RENEWAL_MAX_MS;
 use super::custody_session::{ImportCustodyStartedRequest, VerifiedCurrentImportStarted};
-use super::effects::{NativeImportBinding, NativeImportClaim, NativeImportMode, NativeImportStart};
+use super::effects::{NativeImportClaim, NativeImportStart};
 use super::remote_state::{ImportActionState, RemoteImportState};
 use super::remote_tls::{ImportAuthorityTls, Roots};
 use super::{AuthenticatedNativeImport, effects, remote_state, unavailable};
@@ -25,6 +25,7 @@ use gateway_auth_native_wire::native_read::{
 };
 use gateway_auth_primitives::crypto::base64url;
 use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_authority_native_records::import_effects::{NativeImportBinding, NativeImportMode};
 use gateway_source::error::GatewayError;
 use std::cell::Cell;
 use std::net::TcpStream;

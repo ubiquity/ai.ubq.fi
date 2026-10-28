@@ -1399,6 +1399,7 @@ dependencies = [
  "gateway-authority-keys",
  "gateway-authority-local-completion",
  "gateway-authority-manual-reset",
+ "gateway-authority-native-import",
  "gateway-authority-native-lifecycle",
  "gateway-authority-native-managed",
  "gateway-authority-native-preparation",
@@ -1723,6 +1724,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-native-import"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-contracts",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-wire",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-primitives",
+ "gateway-authority-actor-currentness",
+ "gateway-authority-actor-records",
+ "gateway-authority-contracts",
+ "gateway-authority-native-import-facts",
+ "gateway-authority-native-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-native-import-facts"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-primitives",
+ "gateway-authority-actor-currentness",
+ "gateway-authority-actor-records",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-native-records",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority-native-inference-facts"
 version = "0.1.0"
 dependencies = [
@@ -1770,6 +1819,7 @@ dependencies = [
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-native-context-facts",
+ "gateway-authority-native-import",
  "gateway-authority-native-managed",
  "gateway-authority-native-preparation",
  "gateway-authority-native-records",

@@ -613,9 +613,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     ) -> gateway_authority_actor_currentness::app::ActorService<'a, S, H> {
         gateway_authority_actor_currentness::app::ActorService::new(&self.store, host, config)
     }
-}
 
-impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     pub fn source_manual_resets<
         'a,
         H: gateway_auth_contracts::types::AuthHost
@@ -633,9 +631,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             config,
         )
     }
-}
 
-impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     pub fn source_native_renewals<
         'a,
         H: gateway_auth_contracts::types::AuthHost
@@ -662,9 +658,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             ),
         )
     }
-}
 
-impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     pub fn source_native_lifecycle<
         'a,
         H: gateway_auth_contracts::types::AuthHost
@@ -691,9 +685,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             ),
         )
     }
-}
 
-impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     pub fn source_native_managed<
         'a,
         H: gateway_auth_contracts::types::AuthHost
@@ -714,6 +706,33 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             host,
             config,
             gateway_authority_native_managed::SourceNativeManagedContext::configured(
+                identity,
+                registered,
+                cancellation,
+            ),
+        )
+    }
+
+    pub fn source_native_local_imports<
+        'a,
+        H: gateway_auth_contracts::types::AuthHost
+            + gateway_auth_passport_contracts::session::PassportDate,
+        C: gateway_authority_contracts::NativeRenewalCancellation,
+    >(
+        &'a self,
+        host: &'a H,
+        config: &'a gateway_auth_contracts::types::AuthConfig,
+        identity: &'a gateway_auth_native_proof::native_auth::NativeTransportIdentity,
+        registered: &'a gateway_authority_native_records::owner::RegisteredRenewalOwner,
+        cancellation: &'a C,
+    ) -> gateway_authority_native_import::SourceNativeLocalImportService<'a, S, I, H, C> {
+        gateway_authority_native_import::SourceNativeLocalImportService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+            host,
+            config,
+            gateway_authority_native_import::SourceNativeImportContext::configured(
                 identity,
                 registered,
                 cancellation,

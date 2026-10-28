@@ -2,13 +2,13 @@
 use super::*;
 use crate::native_control::custody::validate_native_control_custody;
 use crate::native_control::import::{
-    AuthenticatedNativeImport,
-    custody_session::ImportCustodyStartedRequest,
-    effects::{NativeImportClaim, NativeImportMode},
+    AuthenticatedNativeImport, custody_session::ImportCustodyStartedRequest,
+    effects::NativeImportClaim,
 };
 use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
 use gateway_auth_native_wire::native_read::{NATIVE_CONTROL_PATH, NATIVE_RENEWAL_AUTHORITY_PATH};
 use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_authority_native_records::import_effects::NativeImportMode;
 use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use std::sync::atomic::AtomicBool;
 #[derive(Default)]
