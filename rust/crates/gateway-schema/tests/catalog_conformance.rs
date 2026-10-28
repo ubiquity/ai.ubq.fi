@@ -397,3 +397,155 @@ fn capabilities_use_runtime_snapshot_when_optional_full_snapshot_is_unavailable(
     assert_eq!(result["data"][0]["default_reasoning_effort"], "ultra");
     assert_eq!(result["client_version"], "0.163.0");
 }
+
+#[test]
+fn configured_native_catalogs_serve_only_the_three_source_v2_policy_fields()
+-> Result<(), Box<dyn std::error::Error>> {
+    use gateway_source::source_serialization as source;
+    let mut input = CatalogInput::default();
+    for provider in ["deepseek", "lithos", "cerebras"] {
+        input.providers.insert(
+            provider.into(),
+            ProviderCatalog {
+                configured: true,
+                available: true,
+                ..ProviderCatalog::default()
+            },
+        );
+    }
+    for (provider, model) in [
+        (
+            "surplus",
+            json!({"id":"paid-declaration-fixture","owned_by":"vendor","supported_endpoint_types":["openai-response"]}),
+        ),
+        ("claude_code", json!({"id":"claude-declaration-fixture"})),
+    ] {
+        input.providers.insert(
+            provider.into(),
+            ProviderCatalog {
+                models: vec![source_value(model)],
+                configured: true,
+                available: true,
+                ..ProviderCatalog::default()
+            },
+        );
+    }
+    let catalogs = [
+        native_catalog(None, &input),
+        gateway_schema::native_catalog::native_catalog_fallback(&input)
+            .ok_or("missing configured fallback catalog")?,
+    ];
+    for catalog in catalogs {
+        assert!(source::member(&catalog, "data").is_none());
+        let rows = source::member(&catalog, "models")
+            .and_then(|value| source::array(&value))
+            .ok_or("missing native models")?;
+        for provider in ["deepseek", "lithos", "cerebras"] {
+            let configured: Vec<_> = rows
+                .iter()
+                .filter(|row| {
+                    source::member(row, "owned_by")
+                        .as_ref()
+                        .and_then(source::string)
+                        == Some(JsString16::from_utf8(provider))
+                })
+                .collect();
+            assert!(!configured.is_empty(), "missing {provider} variant");
+            for row in configured {
+                let policy = source::member(row, "forwarding_policy")
+                    .ok_or("missing native forwarding declaration")?;
+                assert_eq!(
+                    policy.as_str(),
+                    r#"{"version":"deepseek-forwarded-payload/v2","mode":"bytes","per_message_limit":65536}"#
+                );
+                assert_eq!(
+                    source::entries(&policy)
+                        .ok_or("policy is not an object")?
+                        .len(),
+                    3
+                );
+                for absent in ["perMessageLimit", "summaryExemption", "summary_exemption"] {
+                    assert!(
+                        source::member(&policy, absent).is_none(),
+                        "invented {absent}"
+                    );
+                }
+            }
+        }
+        for id in [
+            SYNTHETIC_MODEL,
+            "paid-declaration-fixture",
+            "claude-declaration-fixture",
+        ] {
+            let row = rows
+                .iter()
+                .find(|row| {
+                    source::member(row, "slug")
+                        .as_ref()
+                        .and_then(source::string)
+                        == Some(JsString16::from_utf8(id))
+                })
+                .ok_or("missing negative native row")?;
+            assert!(source::member(row, "forwarding_policy").is_none());
+        }
+    }
+    let ordinary = scalar(&ordinary_models(&input));
+    assert_eq!(ordinary["object"], "list");
+    assert_eq!(
+        ordinary
+            .as_object()
+            .ok_or("ordinary envelope is not an object")?
+            .len(),
+        2
+    );
+    for row in ordinary["data"].as_array().ok_or("missing ordinary rows")? {
+        assert_eq!(
+            row.as_object()
+                .ok_or("ordinary row is not an object")?
+                .len(),
+            4
+        );
+        assert!(row.get("forwarding_policy").is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn native_declaration_never_invents_uploaded_reasoning_tiers_or_defaults()
+-> Result<(), Box<dyn std::error::Error>> {
+    use gateway_source::source_serialization as source;
+    let stored = SourceJson::parse(
+        r#"{"models":[{"slug":"uploaded-custom","supported_reasoning_levels":[{"effort":"Custom"},{"effort":"\ud800"}]},{"slug":"uploaded-omitted"}]}"#,
+    )?;
+    let original = stored.as_str().to_owned();
+    let catalog = native_catalog(Some(&stored), &CatalogInput::default());
+    let rows = source::member(&catalog, "models")
+        .and_then(|value| source::array(&value))
+        .ok_or("missing uploaded models")?;
+    let expected = source::member(&stored, "models")
+        .and_then(|value| source::array(&value))
+        .ok_or("missing frozen uploaded rows")?;
+    for before in expected {
+        let row = rows
+            .iter()
+            .find(|row| source::member(row, "slug") == source::member(&before, "slug"))
+            .ok_or("uploaded row disappeared")?;
+        assert_eq!(
+            source::member(row, "supported_reasoning_levels"),
+            source::member(&before, "supported_reasoning_levels")
+        );
+        assert!(source::member(row, "default_reasoning_level").is_none());
+        assert!(source::member(row, "forwarding_policy").is_none());
+    }
+    let levels = source::member(&rows[0], "supported_reasoning_levels")
+        .and_then(|value| source::array(&value))
+        .ok_or("missing exact uploaded tiers")?;
+    assert_eq!(
+        source::member(&levels[1], "effort")
+            .as_ref()
+            .and_then(source::string),
+        Some(JsString16::from_units(vec![0xd800]))
+    );
+    assert_eq!(stored.as_str(), original);
+    Ok(())
+}

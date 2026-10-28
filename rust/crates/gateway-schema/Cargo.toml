@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 gateway-prompt-cache.workspace = true
+gateway-prompt-policy.workspace = true
 gateway-request-normalization.workspace = true
 gateway-model-selection.workspace = true
 gateway-chat-normalization.workspace = true

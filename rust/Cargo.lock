@@ -4645,6 +4645,7 @@ dependencies = [
  "gateway-local-refusal",
  "gateway-model-selection",
  "gateway-prompt-cache",
+ "gateway-prompt-policy",
  "gateway-request-normalization",
  "gateway-responses-normalization",
  "gateway-schema-values",

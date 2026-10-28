@@ -1,7 +1,7 @@
 //! Rich exact-client-version Codex catalog. Never substitute the official model-list envelope.
 use crate::{catalog::*, metadata::*, model_control as c, provider_catalog::*};
-use gateway_contracts::model::ModelId;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
+use {gateway_contracts::model::ModelId, gateway_prompt_policy::declaration};
 fn description(effort: &JsString16) -> JsString16 {
     if gateway_schema_values::source_view::matches(effort, "none") {
         "No reasoning".into()
@@ -32,14 +32,14 @@ fn common_fields(row: &mut SourceJson, priority: i64, forwarding: bool) {
     ] {
         c::set(row, key, value);
     }
-    if forwarding {
+    if let (true, policy) = (forwarding, declaration::FORWARDED_PAYLOAD_DECLARATION) {
         c::set(
             row,
             "forwarding_policy",
             c::object(vec![
-                ("version", c::json("deepseek-forwarded-payload/v1")),
-                ("mode", c::json("bytes")),
-                ("per_message_limit", c::json(&65_536)),
+                ("version", c::json(policy.version)),
+                ("mode", c::json(policy.mode)),
+                ("per_message_limit", c::json(&policy.per_message_limit)),
             ]),
         );
     }
