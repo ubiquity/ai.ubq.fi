@@ -116,6 +116,7 @@ export type ClaudeCodeUsageState = Readonly<{
   message: string | null;
   attempted_at_ms: number;
   observed_at_ms: number | null;
+  retry_at_ms?: number;
 }>;
 export type ClaudeCodePoolProof = Readonly<{
   kind: "auth_invalid" | "quota_exhausted";
@@ -358,6 +359,7 @@ const parseClaudeCodeUsageState = (value: unknown): ClaudeCodeUsageState | null 
   if (!isRecord(value) || value.source !== "oauth_usage" || typeof value.state !== "string" || !CLAUDE_CODE_USAGE_STATES.has(value.state)) return null;
   const attemptedAtMs = positiveSafeInteger(value.attempted_at_ms);
   const observedAtMs = value.observed_at_ms === null ? null : positiveSafeInteger(value.observed_at_ms);
+  const retryAtMs = positiveSafeInteger(value.retry_at_ms);
   if (attemptedAtMs === null || (value.observed_at_ms !== null && observedAtMs === null)) return null;
   if (value.status !== null && (typeof value.status !== "number" || !Number.isInteger(value.status) || value.status < 100 || value.status > 599)) return null;
   if (value.message !== null && typeof value.message !== "string") return null;
@@ -368,6 +370,7 @@ const parseClaudeCodeUsageState = (value: unknown): ClaudeCodeUsageState | null 
     message: sanitizeClaudeCodeErrorMessage(value.message),
     attempted_at_ms: attemptedAtMs,
     observed_at_ms: observedAtMs,
+    ...(value.state === "rate_limited" && retryAtMs !== null && retryAtMs > attemptedAtMs ? { retry_at_ms: retryAtMs } : {}),
   };
 };
 
