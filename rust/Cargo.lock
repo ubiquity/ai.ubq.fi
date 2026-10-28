@@ -5134,6 +5134,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "webauthn-rs-core"
+version = "0.6.1-dev"
+dependencies = [
+ "base64 0.21.7",
+ "crypto-glue",
+ "der-parser",
+ "ed25519-dalek",
+ "hex",
+ "nom",
+ "p521",
+ "rand 0.9.5",
+ "rand_chacha 0.9.0",
+ "rsa",
+ "serde",
+ "serde_cbor_2",
+ "serde_json",
+ "serde_with",
+ "sha1",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "tracing",
+ "url",
+ "uuid",
+ "webauthn-attestation-ca",
+ "webauthn-rs-proto",
+ "x509-parser",
+]
+
+[[package]]
 name = "webauthn-rs-proto"
 version = "0.6.1-dev"
 source = "registry+https://github.com/rust-lang/crates.io-index"
