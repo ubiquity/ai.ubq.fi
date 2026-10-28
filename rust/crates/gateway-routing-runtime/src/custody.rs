@@ -7,6 +7,7 @@ use gateway_core::source_control::decode_source_control_record;
 use gateway_core::state::StoredRecord;
 use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::{tuple_key::DecodedKeyPart, tuple_key::TupleKey};
+use gateway_local_journal::context::principal_has_non_whitespace;
 use gateway_source::error::GatewayError;
 use std::{collections::BTreeMap, collections::BTreeSet};
 
@@ -170,7 +171,9 @@ pub fn validate_journal_row(key: &RecordKey, record: &StoredRecord) -> Result<()
         return Err(invalid());
     }
     text(&row.context.request_id.0)?;
-    text(&row.context.principal.0)?;
+    if !principal_has_non_whitespace(&row.context.principal) {
+        return Err(invalid());
+    }
     text(&row.context.route)?;
     if let Some(key) = &row.context.key_id {
         text(&key.0)?;

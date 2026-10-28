@@ -8,6 +8,7 @@ use gateway_authority_keys as keys;
 use gateway_authority_paid_records::{PaidRequest, PaidReservation};
 use gateway_contracts::identity::RequestContext;
 use gateway_core::state::AuthorityStore;
+use gateway_local_journal::context::{decode_journal_context, principal_has_non_whitespace};
 use gateway_local_journal::local_work::LocalWorkPhase;
 use gateway_local_journal::local_work::journal_local_work;
 use gateway_source::error::GatewayError;
@@ -37,7 +38,7 @@ pub(super) async fn require_current<S: AuthorityStore>(
             .key_id
             .as_ref()
             .is_some_and(|key| key != &request.key_id)
-        || original.principal.0.trim().is_empty()
+        || !principal_has_non_whitespace(&original.principal)
     {
         return Err(error());
     }
@@ -59,7 +60,7 @@ pub(super) async fn require_current<S: AuthorityStore>(
     {
         return Err(error());
     }
-    let context: RequestContext = field(&journal, "context").ok_or_else(error)?;
+    let context = decode_journal_context(&journal).map_err(|_| error())?;
     if &context != original
         || field::<bool>(&journal, "finished") != Some(false)
         || field::<bool>(&journal, "recovering") != Some(false)

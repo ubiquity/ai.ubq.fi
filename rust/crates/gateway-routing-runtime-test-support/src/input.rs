@@ -60,7 +60,7 @@ pub fn input(id: &str, model: &str, providers: &[&str]) -> RoutingInput {
     RoutingInput {
         context: RequestContext {
             request_id: RequestId(id.into()),
-            principal: PrincipalId("fixture-principal".into()),
+            principal: PrincipalId::from_scalar("fixture-principal".into()),
             key_id: Some(ApiKeyId("key-a".into())),
             route: "responses".into(),
             started_at_ms: NOW,

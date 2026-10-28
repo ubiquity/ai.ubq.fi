@@ -54,6 +54,8 @@ gateway-local-refusal = { workspace = true }
 
 [dev-dependencies]
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-passport-contracts = { path = "../gateway-auth-passport-contracts" }
+gateway-auth-passport-sessions = { path = "../gateway-auth-passport-sessions" }
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
 gateway-routing-runtime-test-support = { workspace = true }
 gateway-source = { workspace = true }
