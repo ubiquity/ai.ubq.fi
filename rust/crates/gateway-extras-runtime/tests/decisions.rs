@@ -195,7 +195,7 @@ fn actual_extras_dispatch_uses_one_fixed_decisions_call_and_terminal_usage() -> 
         Some("openrouter")
     );
     assert_eq!(
-        serde_json::from_slice::<Value>(result.body.as_bytes())?["answers"],
+        result.body.deserialize::<Value>()?["answers"],
         json!({"go":true})
     );
     assert_eq!(

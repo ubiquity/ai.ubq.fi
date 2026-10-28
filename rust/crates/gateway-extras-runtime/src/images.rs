@@ -4,7 +4,7 @@ use gateway_extras_contract::types::{
     DispatchFailure, ExtrasDispatch, ExtrasHost, ExtrasRequest, ExtrasResponse, Headers, ImageKind,
     UpstreamResponse,
 };
-use gateway_provider_services::extras;
+use gateway_providers::extras;
 use gateway_schema_values::value::Value as SourceValue;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
@@ -89,9 +89,9 @@ pub(crate) async fn images<H: ExtrasHost>(
         return Ok(ExtrasResponse::error(error));
     }
     let parsed = if let Some(files) = &request.multipart {
-        gateway_provider_images::extras::parse_source_multipart_image(&request.body, files)
+        extras::parse_source_multipart_image(&request.body, files)
     } else {
-        gateway_provider_images::extras::parse_source_image(&request.body, kind == ImageKind::Edits)
+        extras::parse_source_image(&request.body, kind == ImageKind::Edits)
     };
     let parsed = match parsed {
         Ok(p) => p,
@@ -104,11 +104,7 @@ pub(crate) async fn images<H: ExtrasHost>(
             Some("model_unavailable"),
         )));
     };
-    let plan = gateway_provider_images::extras::image::prepare_parsed_image(
-        &parsed,
-        &model,
-        &request.context.request_id.0,
-    );
+    let plan = extras::image::prepare_parsed_image(&parsed, &model, &request.context.request_id.0);
     if plan.count > 1
         && serde_json::to_vec(&plan.responses)
             .map_err(|_| invalid_state())?
@@ -259,7 +255,7 @@ fn image_response(
             r.headers.extend(headers(&[result]));
             return Ok(r);
         }
-        let generated = gateway_provider_images::extras::extract_source_images(&payload.source()?);
+        let generated = extras::extract_source_images(&payload.source()?);
         let Some(image) = generated.first() else {
             let mut r = ExtrasResponse::error(GatewayError::new(
                 502,

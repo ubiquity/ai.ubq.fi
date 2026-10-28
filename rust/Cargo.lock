@@ -2668,6 +2668,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-extras-jobs"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-extras-contract",
+ "gateway-extras-primitives",
+ "gateway-extras-state",
+ "gateway-extras-voyage",
+ "gateway-kv-codec",
+ "gateway-provider-protocol",
+ "gateway-provider-services",
+ "gateway-providers",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "gateway-extras-primitives"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-primitives",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-extras-contract",
+ "gateway-kv-codec",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-extras-runtime"
 version = "0.1.0"
 dependencies = [
@@ -2682,13 +2719,18 @@ dependencies = [
  "gateway-core",
  "gateway-decision-runtime",
  "gateway-extras-contract",
+ "gateway-extras-jobs",
+ "gateway-extras-primitives",
  "gateway-extras-runtime-test-support",
+ "gateway-extras-state",
+ "gateway-extras-voyage",
  "gateway-kv-codec",
  "gateway-local-refusal",
  "gateway-provider-images",
  "gateway-provider-protocol",
  "gateway-provider-services",
  "gateway-provider-source",
+ "gateway-providers",
  "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
@@ -2701,9 +2743,43 @@ dependencies = [
 name = "gateway-extras-runtime-test-support"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-extras-contract",
+ "gateway-kv-codec",
+ "gateway-provider-protocol",
+ "gateway-providers",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-extras-state"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-extras-contract",
+ "gateway-extras-primitives",
  "gateway-kv-codec",
  "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-extras-voyage"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gateway-extras-contract",
+ "gateway-provider-protocol",
+ "gateway-provider-services",
+ "gateway-providers",
+ "gateway-source",
+ "serde",
  "serde_json",
 ]
 

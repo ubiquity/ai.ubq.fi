@@ -23,6 +23,11 @@ serde_json = { workspace = true }
 sha2 = "=0.10.9"
 base64 = "=0.22.1"
 chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
+gateway-extras-jobs.workspace = true
+gateway-extras-primitives.workspace = true
+gateway-extras-state.workspace = true
+gateway-extras-voyage.workspace = true
+gateway-providers.workspace = true
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
 gateway-provider-source = { workspace = true }
 gateway-provider-services = { workspace = true }

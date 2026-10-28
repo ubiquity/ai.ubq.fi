@@ -1,9 +1,10 @@
-use crate::store::{check, commit, decoded, hash, key, now, put};
-use gateway_source::error::GatewayError;
+use gateway_auth_primitives::store::{check, commit, put};
 use gateway_core::{query::QueryStore, state::RecordMutation, state::StoredRecord};
-use gateway_kv_codec::key::RecordKey;
 use gateway_extras_contract::errors::invalid_state;
 use gateway_extras_contract::types::{ExtrasHost, ExtrasResponse};
+use gateway_extras_primitives::value::{decoded, hash, key, now, uuid};
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 const DAY: i64 = 86_400_000;
@@ -33,13 +34,13 @@ struct Ledger {
     response_sha256: Option<String>,
 }
 #[derive(Clone)]
-pub(crate) struct Lease {
+pub struct Lease {
     key: RecordKey,
     response_prefix: Value,
     fingerprint: String,
     owner: String,
 }
-pub(crate) enum Acquired {
+pub enum Acquired {
     Lease(Lease),
     Response(ExtrasResponse),
 }
@@ -54,14 +55,14 @@ fn refusal(status: u16, message: &str, code: &str) -> ExtrasResponse {
             .with_param(None),
     )
 }
-pub(crate) fn unavailable() -> ExtrasResponse {
+pub fn unavailable() -> ExtrasResponse {
     refusal(
         503,
         "Idempotent embeddings requests require durable KV storage.",
         "embedding_idempotency_unavailable",
     )
 }
-pub(crate) fn indeterminate() -> ExtrasResponse {
+pub fn indeterminate() -> ExtrasResponse {
     refusal(
         409,
         "The embeddings request outcome is indeterminate and will not be dispatched again.",
@@ -123,7 +124,7 @@ fn retired(mut r: Ledger, at: i64) -> Ledger {
     r.response_sha256 = None;
     r
 }
-pub(crate) async fn acquire<S: QueryStore, H: ExtrasHost>(
+pub async fn acquire<S: QueryStore, H: ExtrasHost>(
     store: &S,
     host: &H,
     principal: &str,
@@ -189,7 +190,10 @@ async fn acquire_inner<S: QueryStore, H: ExtrasHost>(
                 if commit(
                     store,
                     vec![check(&lease.key, row.as_ref())],
-                    vec![put(host, lease.key.clone(), &r, Some(at + TTL))?],
+                    vec![
+                        put(lease.key.clone(), &r, Some(at + TTL), &uuid(host)?)
+                            .map_err(|_| invalid_state())?,
+                    ],
                 )
                 .await?
                 {
@@ -214,7 +218,10 @@ async fn acquire_inner<S: QueryStore, H: ExtrasHost>(
                 if commit(
                     store,
                     vec![check(&lease.key, row.as_ref())],
-                    vec![put(host, lease.key.clone(), &r, Some(at + TTL))?],
+                    vec![
+                        put(lease.key.clone(), &r, Some(at + TTL), &uuid(host)?)
+                            .map_err(|_| invalid_state())?,
+                    ],
                 )
                 .await?
                 {
@@ -245,7 +252,10 @@ async fn acquire_inner<S: QueryStore, H: ExtrasHost>(
         if commit(
             store,
             vec![check(&lease.key, row.as_ref())],
-            vec![put(host, lease.key.clone(), &next, Some(at + TTL))?],
+            vec![
+                put(lease.key.clone(), &next, Some(at + TTL), &uuid(host)?)
+                    .map_err(|_| invalid_state())?,
+            ],
         )
         .await?
         {
@@ -296,7 +306,7 @@ async fn replay<S: QueryStore, H: ExtrasHost>(
         .insert("x-uos-idempotency-replayed".into(), "true".into());
     Ok(Some(response))
 }
-pub(crate) async fn mark_dispatched<S: QueryStore, H: ExtrasHost>(
+pub async fn mark_dispatched<S: QueryStore, H: ExtrasHost>(
     store: &S,
     host: &H,
     lease: &Lease,
@@ -320,7 +330,10 @@ pub(crate) async fn mark_dispatched<S: QueryStore, H: ExtrasHost>(
             if commit(
                 store,
                 vec![check(&lease.key, row.as_ref())],
-                vec![put(host, lease.key.clone(), &r, Some(at + TTL))?],
+                vec![
+                    put(lease.key.clone(), &r, Some(at + TTL), &uuid(host)?)
+                        .map_err(|_| invalid_state())?,
+                ],
             )
             .await?
             {
@@ -331,7 +344,7 @@ pub(crate) async fn mark_dispatched<S: QueryStore, H: ExtrasHost>(
     };
     action.await.unwrap_or(false)
 }
-pub(crate) async fn release<S: QueryStore, H: ExtrasHost>(
+pub async fn release<S: QueryStore, H: ExtrasHost>(
     store: &S,
     host: &H,
     lease: &Lease,
@@ -366,11 +379,7 @@ pub(crate) async fn release<S: QueryStore, H: ExtrasHost>(
     };
     action.await.unwrap_or(false)
 }
-pub(crate) async fn mark_indeterminate<S: QueryStore, H: ExtrasHost>(
-    store: &S,
-    host: &H,
-    lease: &Lease,
-) {
+pub async fn mark_indeterminate<S: QueryStore, H: ExtrasHost>(store: &S, host: &H, lease: &Lease) {
     let action = async {
         for _ in 0..4 {
             let at = now(host)?;
@@ -386,12 +395,15 @@ pub(crate) async fn mark_indeterminate<S: QueryStore, H: ExtrasHost>(
             if commit(
                 store,
                 vec![check(&lease.key, row.as_ref())],
-                vec![put(
-                    host,
-                    lease.key.clone(),
-                    &retired(r, at),
-                    Some(at + TTL),
-                )?],
+                vec![
+                    put(
+                        lease.key.clone(),
+                        &retired(r, at),
+                        Some(at + TTL),
+                        &uuid(host)?,
+                    )
+                    .map_err(|_| invalid_state())?,
+                ],
             )
             .await?
             {
@@ -402,7 +414,7 @@ pub(crate) async fn mark_indeterminate<S: QueryStore, H: ExtrasHost>(
     };
     let _ = action.await;
 }
-pub(crate) async fn success<S: QueryStore, H: ExtrasHost>(
+pub async fn success<S: QueryStore, H: ExtrasHost>(
     store: &S,
     host: &H,
     lease: &Lease,
@@ -424,12 +436,15 @@ pub(crate) async fn success<S: QueryStore, H: ExtrasHost>(
             if !commit(
                 store,
                 vec![],
-                vec![put(
-                    host,
-                    chunk_key(lease, &lease.owner, index),
-                    chunk,
-                    Some(at + RESPONSE_TTL),
-                )?],
+                vec![
+                    put(
+                        chunk_key(lease, &lease.owner, index),
+                        chunk,
+                        Some(at + RESPONSE_TTL),
+                        &uuid(host)?,
+                    )
+                    .map_err(|_| invalid_state())?,
+                ],
             )
             .await?
             {
@@ -460,7 +475,10 @@ pub(crate) async fn success<S: QueryStore, H: ExtrasHost>(
             if commit(
                 store,
                 vec![check(&lease.key, row.as_ref())],
-                vec![put(host, lease.key.clone(), &r, Some(at + TTL))?],
+                vec![
+                    put(lease.key.clone(), &r, Some(at + TTL), &uuid(host)?)
+                        .map_err(|_| invalid_state())?,
+                ],
             )
             .await?
             {

@@ -1,154 +1,19 @@
-use crate::store::{hash, hash_source, js_whitespace, now, retry_seconds, uuid};
-use crate::{
-    cache::{TIMEOUT_MS, cache_best_effort, cached, chunks, estimate, reserve},
-    idempotency::{self, Acquired, Lease},
-};
-use chrono::{DateTime, Utc};
 use gateway_contracts::lifecycle::SemanticTerminal;
 use gateway_core::query::QueryStore;
 use gateway_extras_contract::errors::{cancelled, invalid, server};
-use gateway_extras_contract::types::{
-    DispatchFailure, DispatchFailureOrigin, ExtrasDispatch, ExtrasHost, ExtrasProvider,
-    ExtrasRequest, ExtrasResponse, Headers, PreparedCall,
+use gateway_extras_contract::types::{ExtrasHost, ExtrasProvider, ExtrasRequest, ExtrasResponse};
+use gateway_extras_primitives::value::{
+    hash, hash_source, js_whitespace, now, retry_seconds, source_utf8, uuid,
 };
-use gateway_provider_protocol::types::PrepareOptions;
-use gateway_provider_services::{extras, extras::EmbeddingsProfile};
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
-use serde_json::{Value, json};
+use gateway_extras_state::{
+    cache::{TIMEOUT_MS, cache_best_effort, cached, chunks, estimate, reserve},
+    idempotency::{self, Acquired, Lease},
+};
+use gateway_extras_voyage::{configured_error, fetch_chunk, result_body, retryable, usage};
+use gateway_providers::extras;
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use serde_json::json;
 use std::collections::BTreeMap;
-pub(crate) fn configured_error() -> GatewayError {
-    GatewayError::unavailable(
-        "Embeddings provider is not configured: set VOYAGEAI_API_KEY (or store it in Deno KV)",
-        "server_error",
-    )
-    .with_param(None)
-}
-fn retry_after(headers: &Headers, at: i64) -> Option<u64> {
-    let value = headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("Retry-After"))?
-        .1
-        .trim();
-    if let Ok(seconds) = value.parse::<f64>()
-        && seconds.is_finite()
-        && seconds > 0.0
-    {
-        return Some((seconds * 1000.0).trunc().min(60_000.0) as u64);
-    }
-    let when = DateTime::parse_from_rfc2822(value)
-        .ok()?
-        .with_timezone(&Utc)
-        .timestamp_millis();
-    (when > at).then_some((when - at).min(60_000) as u64)
-}
-pub(crate) fn retryable(status: u16) -> bool {
-    matches!(status, 429 | 500 | 502 | 503 | 504)
-}
-pub(crate) async fn fetch_chunk<H: ExtrasHost>(
-    host: &H,
-    profile: &EmbeddingsProfile,
-    inputs: &[JsString16],
-    options: &PrepareOptions,
-    deadline: i64,
-) -> Result<(Vec<Vec<f64>>, Option<u64>), DispatchFailure> {
-    #[derive(serde::Serialize)]
-    struct Chunk<'a> {
-        model: &'a str,
-        input: &'a [JsString16],
-        input_type: &'a str,
-        dimensions: u64,
-        encoding_format: &'a str,
-        truncation: bool,
-    }
-    let raw = SourceJson::from_serializable(&Chunk {
-        model: &profile.model,
-        input: inputs,
-        input_type: &profile.input_type,
-        dimensions: profile.dimensions,
-        encoding_format: "float",
-        truncation: profile.truncation,
-    })
-    .map_err(DispatchFailure::transport)?;
-    let call = PreparedCall::prepare(ExtrasProvider::Voyage, &raw, options, deadline)
-        .map_err(|error| DispatchFailure::transport(error.diagnostic().clone()))?;
-    let response = host.dispatch(ExtrasDispatch::Voyage(call)).await?;
-    if !(200..300).contains(&response.status) {
-        return Err(DispatchFailure {
-            origin: DispatchFailureOrigin::Upstream,
-            error: Box::new(server(
-                format!("Voyage embeddings failed ({}).", response.status),
-                "upstream_error",
-            )),
-            headers: response.headers.clone(),
-            quota_refusal: false,
-            upstream_status: Some(response.status),
-            retry_after_ms: retry_after(&response.headers, host.now_ms()),
-            before_transport: false,
-            raw_error_body: Some(response.body),
-        });
-    }
-    let payload: Value = serde_json::from_slice(&response.body).map_err(|_| {
-        DispatchFailure::transport(server(
-            "Voyage embeddings returned invalid JSON.",
-            "upstream_error",
-        ))
-    })?;
-    let rows = payload["data"].as_array().ok_or_else(|| {
-        DispatchFailure::transport(server(
-            "Voyage embeddings returned invalid JSON.",
-            "upstream_error",
-        ))
-    })?;
-    let mut vectors = Vec::new();
-    for row in rows {
-        let values = row["embedding"].as_array().ok_or_else(|| {
-            DispatchFailure::transport(server(
-                "Voyage embeddings response missing embedding vector.",
-                "upstream_error",
-            ))
-        })?;
-        let vector = values
-            .iter()
-            .map(|v| {
-                v.as_f64().filter(|n| n.is_finite()).ok_or_else(|| {
-                    DispatchFailure::transport(server(
-                        "Voyage embeddings response contained non-numeric values.",
-                        "upstream_error",
-                    ))
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        vectors.push(vector);
-    }
-    let tokens = payload["usage"]["total_tokens"]
-        .as_f64()
-        .filter(|v| v.is_finite())
-        .map(|v| v.max(0.0).trunc() as u64);
-    Ok((vectors, tokens))
-}
-pub(crate) fn result_body(profile: &EmbeddingsProfile, vectors: &[Vec<f64>], tokens: u64) -> Value {
-    let data: Vec<Value> = vectors
-        .iter()
-        .enumerate()
-        .map(|(index, vector)| {
-            let embedding = if profile.encoding_format == "base64" {
-                json!(gateway_provider_source::extras::base64_encode(
-                    &vector
-                        .iter()
-                        .flat_map(|v| (*v as f32).to_le_bytes())
-                        .collect::<Vec<_>>()
-                ))
-            } else {
-                json!(vector)
-            };
-            json!({"object":"embedding","index":index,"embedding":embedding})
-        })
-        .collect();
-    json!({"object":"list","data":data,"model":profile.model,"usage":{"prompt_tokens":tokens,"total_tokens":tokens}})
-}
-pub(crate) fn usage(tokens: u64) -> Value {
-    json!({"input_tokens":tokens,"output_tokens":0,"total_tokens":tokens})
-}
 struct SyncLease {
     lease: Option<Lease>,
     dispatched: bool,
@@ -205,11 +70,10 @@ pub(crate) async fn sync<S: QueryStore, H: ExtrasHost>(
     let owner = uuid(host)?;
     let started = now(host)?;
     let deadline = started + TIMEOUT_MS;
-    let profile =
-        match gateway_provider_services::extras::parse_source_embeddings(&request.body, false) {
-            Ok(p) => p,
-            Err(e) => return Ok(ExtrasResponse::source_error(e)),
-        };
+    let profile = match extras::parse_source_embeddings(&request.body, false) {
+        Ok(p) => p,
+        Err(e) => return Ok(ExtrasResponse::source_error(e)),
+    };
     let hashes: Vec<_> = profile.inputs.iter().map(hash_source).collect();
     let mut lease = SyncLease {
         lease: None,
@@ -226,7 +90,8 @@ pub(crate) async fn sync<S: QueryStore, H: ExtrasHost>(
                 None,
             )));
         }
-        let principal = request.context.principal.0.trim_matches(js_whitespace);
+        let principal = source_utf8(request.context.principal.as_source());
+        let principal = principal.trim_matches(js_whitespace);
         if principal.is_empty() {
             return Ok(idempotency::unavailable());
         }

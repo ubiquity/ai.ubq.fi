@@ -1,20 +1,18 @@
 //! Actual fixed embeddings/jobs/SystemOne routes; M15 owns their source behavior.
-use crate::catalog::CatalogState;
-use crate::extras_host::Host;
-use crate::host::PlatformClock;
-use crate::host::PlatformHost;
-use crate::host::PlatformTokens;
-use crate::inference::RequestResources;
-use crate::routing_host;
+use crate::{
+    catalog::CatalogState,
+    extras_host::Host,
+    host::{PlatformClock, PlatformHost, PlatformTokens},
+    inference::RequestResources,
+    routing_host,
+};
 use gateway_auth_contracts::types::{AuthMethod, AuthPrincipal};
 use gateway_authority_kernel_protocol::KernelTerminal;
-use gateway_contracts::{
-    identity::ApiKeyId, identity::PrincipalId, identity::RequestContext, identity::RequestId,
-};
-use gateway_extras_contract::errors::rendering as invalid;
-use gateway_extras_contract::family::ExtrasFamily;
-use gateway_extras_contract::types::{
-    ExtrasRequest, ExtrasResponse, ExtrasRoute, ImageKind, KernelDisposition,
+use gateway_contracts::identity::{ApiKeyId, RequestContext, RequestId};
+use gateway_extras_contract::{
+    errors::rendering as invalid,
+    family::ExtrasFamily,
+    types::{ExtrasRequest, ExtrasResponse, ExtrasRoute, ImageKind, KernelDisposition},
 };
 use gateway_extras_runtime::ExtrasRuntime;
 use gateway_provider_protocol::types::ClientSurface;
@@ -50,7 +48,7 @@ pub async fn run(
     };
     let original = RequestContext {
         request_id,
-        principal: PrincipalId(crate::lifecycle::principal_id(principal)),
+        principal: crate::lifecycle::principal_id(principal),
         key_id: match &principal.method {
             AuthMethod::KvApiKey { key_id, .. } => Some(ApiKeyId(key_id.clone())),
             _ => None,
