@@ -1,10 +1,9 @@
 // Native-only import authentication. Neither transport proof grants an effect.
-use crate::native_auth::{
-    NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
-};
+use crate::native_auth::{NativeAuthenticator, NativeTransportIdentity};
 use gateway_auth_native_contracts::{
     native_import::{NativeImportKind, NativeImportMetadata},
     nonce::NativeNonceAuthority,
+    transport::{NativeCapability, NativeImportAuthHeaders},
 };
 use gateway_auth_native_protocol::import_frame::signature_input;
 use gateway_auth_native_wire::native_read::NATIVE_AUTH_WINDOW_MS;
@@ -13,17 +12,14 @@ use gateway_source::error::GatewayError;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
-#[derive(Clone, Copy)]
-pub struct NativeImportAuthHeaders<'a> {
-    pub auth: NativeAuthHeaders<'a>,
-    pub body_sha256: &'a str,
-}
 /// Header admission only. Cannot be serialized, cloned, or used as effect authority.
 /// ```compile_fail
 /// use gateway_auth_native_proof::native_import::NativeImportAdmission;
 /// let forged:NativeImportAdmission=serde_json::from_str("{}").unwrap();
 /// ```
 pub struct NativeImportAdmission {
+    #[cfg(unix)]
+    admission_identity: std::sync::Arc<()>,
     kind: NativeImportKind,
     metadata: NativeImportMetadata,
     body_sha256: String,
@@ -81,6 +77,13 @@ pub struct VerifiedNativeImportBody {
     admission: NativeImportAdmission,
 }
 impl VerifiedNativeImportBody {
+    #[cfg(unix)]
+    pub fn require_context(
+        &self,
+        context: &crate::native_context::NativeControlContext<'_>,
+    ) -> Result<(), GatewayError> {
+        context.require_identity(&self.admission.admission_identity)
+    }
     pub fn kind(&self) -> NativeImportKind {
         self.admission.kind()
     }
@@ -120,6 +123,32 @@ impl NativeTransportIdentity {
     }
 }
 impl<R: NativeNonceAuthority> NativeAuthenticator<'_, R> {
+    #[cfg(unix)]
+    pub async fn admit_import_with_context<'c>(
+        &self,
+        kind: NativeImportKind,
+        headers: Result<NativeImportAuthHeaders<'_>, GatewayError>,
+        metadata: &NativeImportMetadata,
+        lifetime: crate::native_context::NativeRequestLifetime<'c>,
+    ) -> Result<
+        (
+            NativeImportAdmission,
+            crate::native_context::NativeControlContext<'c>,
+        ),
+        GatewayError,
+    > {
+        lifetime.check()?;
+        let headers = headers?;
+        let admission = self
+            .admit_import(kind, headers, metadata, crate::native_context::now_ms()?)
+            .await?;
+        let context = crate::native_context::NativeControlContext::admitted(
+            lifetime,
+            headers.auth,
+            admission.admission_identity.clone(),
+        );
+        Ok((admission, context))
+    }
     pub async fn admit_import(
         &self,
         kind: NativeImportKind,
@@ -170,6 +199,8 @@ impl<R: NativeNonceAuthority> NativeAuthenticator<'_, R> {
             .consume_nonce(auth.key_id, auth.nonce, valid_through_ms, now)
             .await?;
         Ok(NativeImportAdmission {
+            #[cfg(unix)]
+            admission_identity: std::sync::Arc::new(()),
             kind,
             metadata: metadata.clone(),
             body_sha256: headers.body_sha256.into(),

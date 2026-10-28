@@ -285,7 +285,7 @@ impl ImportPublicationHttp {
         let mut random = [0u8; 32];
         getrandom::fill(&mut random).map_err(|_| unavailable())?;
         let nonce = base64url(&random);
-        let now = gateway_native_http_framing::response::now_ms()?;
+        let now = gateway_auth_native_proof::native_context::now_ms()?;
         let mac = self
             .identity
             .sign(NATIVE_PUBLICATION_PATH, now, &nonce, &body)?;

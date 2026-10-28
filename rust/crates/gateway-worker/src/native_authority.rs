@@ -3,9 +3,8 @@ pub(crate) mod import_dispatch;
 use crate::host::PlatformClock;
 use crate::host::PlatformTokens;
 use crate::native_host::NativeBindings;
-use gateway_auth_native_proof::{
-    native_auth::NativeAuthHeaders, native_auth::NativeAuthenticator, native_auth::NativeCapability,
-};
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
+use gateway_auth_native_proof::native_auth::NativeAuthenticator;
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::{
     NATIVE_CONTROL_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER,

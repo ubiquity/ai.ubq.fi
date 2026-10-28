@@ -1,4 +1,5 @@
-use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_primitives::crypto::base64url;
 use gateway_native_authority_wire::{
     context::NativeRenewalContext,

@@ -4,10 +4,8 @@ use super::{
     dispatch_import,
 };
 use gateway_auth_native_contracts::native_import::NativeImportKind;
-use gateway_auth_native_proof::{
-    native_auth::{NativeAuthHeaders, NativeAuthenticator},
-    native_import::NativeImportAuthHeaders,
-};
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeImportAuthHeaders};
+use gateway_auth_native_proof::native_auth::NativeAuthenticator;
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_TIME_HEADER,

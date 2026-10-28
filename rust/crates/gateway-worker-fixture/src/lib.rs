@@ -2,9 +2,8 @@
 //! authority are gateway-worker; no request handler, ledger or upstream is copied.
 mod native_carrier;
 mod native_import;
-use gateway_auth_native_proof::{
-    native_auth::NativeCapability, native_auth::NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_publication_policy::control_publication::ConfiguredPaidInputs;
 use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_source::error::GatewayError;

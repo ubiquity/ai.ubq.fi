@@ -4,7 +4,8 @@ use gateway_auth_credentials::provider_credentials::{
     CodexNativeOwner, MANAGED_NATIVE_SOURCE_VERSION, ManagedNativeSource,
     codex_credential_identity, codex_source_pool_key, parse_codex_source_pool,
 };
-use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_passport_sessions::sessions::session_key;
 use gateway_auth_primitives::crypto::{Secret, base64url};
 use gateway_authority_keys as keys;
@@ -85,7 +86,8 @@ async fn signed_publication(
     body: &[u8],
     n: u8,
 ) -> Result<gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner, GatewayError> {
-    use gateway_auth_native_proof::native_auth::{NativeAuthHeaders, NativeAuthenticator};
+    use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+    use gateway_auth_native_proof::native_auth::NativeAuthenticator;
     let path = gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
     let nonce = base64url(&[n; 32]);
     let mac = identity.sign(path, NOW, &nonce, body)?;

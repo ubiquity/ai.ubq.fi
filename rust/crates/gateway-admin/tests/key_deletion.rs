@@ -266,9 +266,8 @@ async fn prepare_paid_fixture_custody(
     store: &Store,
     host: &Host,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gateway_auth_native_proof::{
-        native_auth::NativeCapability, native_auth::NativeTransportIdentity,
-    };
+    use gateway_auth_native_contracts::transport::NativeCapability;
+    use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
     use gateway_authority_keys as keys;
     use gateway_authority_paid_control_records::{self as paid_control, PaidRoutingPolicy};
     use gateway_contracts::provider::PaidProvider;

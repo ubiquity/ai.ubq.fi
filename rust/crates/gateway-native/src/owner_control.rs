@@ -1,6 +1,7 @@
 //! Fixed native owner-effect injection. The shared authority implementation
 //! owns action preparation, current-fact checks, claims and reconciliation.
-use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeAuthHeaders};
+use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
 use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlResponse};
 use gateway_source::error::GatewayError;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -8,7 +9,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 /// The context is reachable, but only the real receiver can construct it.
 /// ```compile_fail,E0624
 /// use gateway_native::owner_control::NativeControlContext;
-/// use gateway_auth_native_proof::native_auth::NativeAuthHeaders;
+/// use gateway_auth_native_contracts::transport::NativeAuthHeaders;
 /// let headers=NativeAuthHeaders {version:"1",key_id:"key",time_ms:"1",nonce:"nonce",mac:"mac"};
 /// let disconnected=||false;
 /// let _=NativeControlContext::admitted(std::time::Instant::now(),&disconnected,headers);
@@ -56,7 +57,7 @@ impl<'a> NativeControlContext<'a> {
     }
     pub fn check(&self) -> Result<(), GatewayError> {
         if self.cancelled() {
-            return Err(gateway_native_http_framing::error::control_interrupted());
+            return Err(gateway_auth_native_proof::native_context::control_interrupted());
         }
         Ok(())
     }

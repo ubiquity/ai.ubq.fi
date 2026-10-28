@@ -1,7 +1,8 @@
 use super::prepare_credential_catalog;
-use gateway_auth_native_proof::native_auth::NativeAuthHeaders;
+use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeAuthenticator;
 use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
-use gateway_auth_native_proof::{native_auth::NativeAuthenticator, native_auth::NativeCapability};
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
 use gateway_auth_primitives::{crypto::Secret, crypto::base64url};

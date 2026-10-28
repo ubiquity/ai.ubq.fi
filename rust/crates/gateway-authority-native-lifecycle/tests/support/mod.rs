@@ -7,7 +7,8 @@ use gateway_auth_contracts::{
 use gateway_auth_credentials::provider_credentials::{
     CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
 };
-use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_passport_contracts::session::PassportDate;
 use gateway_auth_passport_sessions::sessions::PassportSessions;
 use gateway_auth_primitives::crypto::Secret;
@@ -371,7 +372,8 @@ pub(super) async fn signed_owner(
     body: &[u8],
     n: u8,
 ) -> Result<gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner, GatewayError> {
-    use gateway_auth_native_proof::native_auth::{NativeAuthHeaders, NativeAuthenticator};
+    use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+    use gateway_auth_native_proof::native_auth::NativeAuthenticator;
     let path = gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
     let nonce = gateway_auth_primitives::crypto::base64url(&[n; 32]);
     let mac = identity.sign(path, NOW, &nonce, body)?;

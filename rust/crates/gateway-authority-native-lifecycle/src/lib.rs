@@ -2,9 +2,8 @@
 mod backend;
 use backend::Transaction;
 use gateway_auth_contracts::types::{AuthConfig, AuthHost};
-use gateway_auth_native_proof::native_auth::{
-    AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeTransportIdentity};
 use gateway_auth_native_wire::{
     control::{NATIVE_RENEWAL_MAX_MS, NativeControlEnvelope, NativeControlRequest},
     native_read::{NATIVE_CONTROL_PATH, NATIVE_RENEWAL_AUTHORITY_PATH},

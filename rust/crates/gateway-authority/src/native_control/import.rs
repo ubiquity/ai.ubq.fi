@@ -76,6 +76,16 @@ impl AuthenticatedNativeImport {
         }
         self.body.require_body(body, now)
     }
+    #[cfg(unix)]
+    pub fn require_original_context(
+        &self,
+        context: &gateway_auth_native_proof::native_context::NativeControlContext<'_>,
+        body: &[u8],
+    ) -> Result<(), GatewayError> {
+        let now = context.now_ms()?;
+        self.require_body(body, now)?;
+        self.body.require_context(context)
+    }
 }
 
 impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>

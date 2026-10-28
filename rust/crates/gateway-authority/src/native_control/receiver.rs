@@ -5,9 +5,8 @@ use super::{
 use crate::store::{Authority, Transaction};
 use crate::{add, text};
 use gateway_auth_contracts::types::{AuthConfig, AuthHost, AuthRequest};
-use gateway_auth_native_proof::native_auth::{
-    AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeTransportIdentity};
 use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlRequest};
 use gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
 use gateway_auth_primitives::crypto::sha256_hex;

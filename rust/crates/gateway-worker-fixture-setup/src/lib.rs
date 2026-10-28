@@ -5,10 +5,8 @@ use gateway_auth_credentials::{
     provider_credentials::CodexSourceAccount, provider_credentials::CodexSourcePool,
     provider_credentials::codex_source_pool_key, provider_credentials::parse_codex_source_pool,
 };
-use gateway_auth_native_proof::{
-    native_auth::NativeAuthHeaders, native_auth::NativeAuthenticator,
-    native_auth::NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+use gateway_auth_native_proof::native_auth::{NativeAuthenticator, NativeTransportIdentity};
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
 use gateway_auth_primitives::{crypto::Secret, crypto::base64url};
@@ -364,9 +362,8 @@ mod tests {
         rejected["accounts"][0]["refresh_token"] = serde_json::json!("");
         assert!(super::parse_codex_source_pool(&rejected).unwrap().is_none());
     }
-    use gateway_auth_native_proof::{
-        native_auth::NativeAuthHeaders, native_auth::NativeAuthenticator,
-    };
+    use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+    use gateway_auth_native_proof::native_auth::NativeAuthenticator;
     use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
     use gateway_auth_primitives::crypto::base64url;
     use gateway_core::{
@@ -396,7 +393,7 @@ mod tests {
             "fixture-matrix-epoch".into(),
             [31; 32],
             BTreeSet::from([
-                gateway_auth_native_proof::native_auth::NativeCapability::ConfigurationPublish,
+                gateway_auth_native_contracts::transport::NativeCapability::ConfigurationPublish,
             ]),
         )
     }

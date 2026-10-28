@@ -23,7 +23,9 @@ fn identity() -> NativeTransportIdentity {
         "owner".into(),
         "epoch".into(),
         [43; 32],
-        BTreeSet::from([gateway_auth_native_proof::native_auth::NativeCapability::CodexAuthImport]),
+        BTreeSet::from([
+            gateway_auth_native_contracts::transport::NativeCapability::CodexAuthImport,
+        ]),
     )
     .unwrap()
 }
@@ -231,7 +233,7 @@ fn actual_ordinary_private_https_reader_keeps_65536_even_for_a_new_import_body()
         .to_owned()]),
     )?;
     let nonce = base64url(&[7; 32]);
-    let now = gateway_native_http_framing::response::now_ms()?;
+    let now = gateway_auth_native_proof::native_context::now_ms()?;
     let id = identity();
     let headers = vec![
         (NATIVE_VERSION_HEADER.into(), "1".into()),

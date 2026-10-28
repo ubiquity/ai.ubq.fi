@@ -1,5 +1,6 @@
 use gateway_auth_credentials::provider_credentials::codex_credential_identity;
-use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_protocol::native_import::publication;
 use gateway_auth_native_protocol::native_import::publication::{
     NativeImportPublication, NativeImportPublicationDisposition,
