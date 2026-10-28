@@ -4,7 +4,8 @@ use crate::{
     ObservabilityRuntime, health, replay_values::SourceObject, store, types::ObservabilityHost,
 };
 use gateway_admin_runtime::capabilities::Context;
-use gateway_auth::{crypto::sha256_hex, types::AuthResponse};
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_capacity::CapacityOperations;
 use gateway_capacity_projection::scalars::{DAY, safe_i64, trim};
 use gateway_capacity_projection::shapes as shape;

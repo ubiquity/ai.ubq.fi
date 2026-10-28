@@ -848,7 +848,10 @@ dependencies = [
  "gateway-admin-test-support",
  "gateway-auth",
  "gateway-auth-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
+ "gateway-auth-passkeys",
  "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
  "gateway-authority",
@@ -864,7 +867,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
- "gateway-providers",
+ "gateway-provider-protocol",
  "gateway-publication-policy",
  "gateway-source",
  "serde",
@@ -877,6 +880,8 @@ name = "gateway-admin-contracts"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
@@ -912,6 +917,8 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-contracts",
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-core",
  "gateway-kv-codec",
@@ -927,6 +934,8 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-contracts",
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-api-protocol",
  "gateway-authority-keys",
@@ -950,7 +959,9 @@ dependencies = [
  "gateway-admin-keys",
  "gateway-admin-test-support",
  "gateway-auth",
+ "gateway-auth-contracts",
  "gateway-auth-native-wire",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-contracts",
  "gateway-authority-kernel",
@@ -961,6 +972,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-local-refusal",
  "gateway-profile-values",
  "gateway-redaction",
  "gateway-schema",
@@ -978,6 +990,8 @@ dependencies = [
  "gateway-admin-keys",
  "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-contracts",
  "gateway-authority-keys",
@@ -994,6 +1008,7 @@ name = "gateway-admission"
 version = "0.1.0"
 dependencies = [
  "gateway-contracts",
+ "gateway-local-refusal",
  "gateway-routing-runtime",
  "gateway-source",
  "serde_json",
@@ -1066,6 +1081,7 @@ dependencies = [
  "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
  "gateway-contracts",
+ "gateway-local-refusal",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1227,7 +1243,14 @@ name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
+ "gateway-auth-passkeys",
+ "gateway-auth-primitives",
  "gateway-authority-actor-records",
  "gateway-authority-api-protocol",
  "gateway-authority-api-quota",
@@ -1270,7 +1293,8 @@ dependencies = [
  "gateway-kv-codec",
  "gateway-local-journal",
  "gateway-native-authority-wire",
- "gateway-providers",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
  "gateway-source",
@@ -1347,6 +1371,7 @@ name = "gateway-authority-capacity"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
  "gateway-authority-capacity-policy",
  "gateway-authority-contracts",
  "gateway-authority-keys",
@@ -1403,10 +1428,13 @@ name = "gateway-authority-initial-owner"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-proof",
+ "gateway-auth-primitives",
  "gateway-authority-keys",
  "gateway-authority-paid-control-records",
  "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1513,6 +1541,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-contracts",
  "gateway-core",
+ "gateway-provider-protocol",
  "gateway-providers",
  "gateway-source",
  "serde",
@@ -1524,6 +1553,7 @@ name = "gateway-authority-paid-evidence"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
  "gateway-authority-api-protocol",
  "gateway-authority-contracts",
  "gateway-authority-kernel-protocol",
@@ -1535,6 +1565,8 @@ dependencies = [
  "gateway-core",
  "gateway-kv-codec",
  "gateway-local-journal",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
  "gateway-providers",
  "gateway-schema",
  "gateway-source",
@@ -1654,6 +1686,7 @@ name = "gateway-authority-reset-evidence"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-primitives",
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-reset-records",
@@ -1675,6 +1708,8 @@ name = "gateway-authority-reset-permit"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-reset-evidence",
@@ -1752,6 +1787,7 @@ name = "gateway-authority-routing-evidence"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-routing-records",
@@ -1793,6 +1829,7 @@ name = "gateway-authority-routing-selection"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
  "gateway-authority-capacity",
  "gateway-authority-capacity-policy",
  "gateway-authority-contracts",
@@ -1833,6 +1870,7 @@ name = "gateway-authority-test-support"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-api-quota",
  "gateway-authority-contracts",
@@ -1845,6 +1883,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-provider-protocol",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
  "gateway-source",
@@ -1857,6 +1896,7 @@ name = "gateway-cache-experiment-campaign"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
  "gateway-authority-contracts",
  "gateway-cache-experiment-evidence",
  "gateway-cache-experiment-records",
@@ -1874,6 +1914,8 @@ name = "gateway-cache-experiment-dispatch"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-routing-evidence",
@@ -1897,6 +1939,8 @@ name = "gateway-cache-experiment-evidence"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
  "gateway-authority-contracts",
  "gateway-cache-experiment-records",
  "gateway-contracts",
@@ -1951,6 +1995,8 @@ name = "gateway-capacity-recovery"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-capacity",
  "gateway-authority-contracts",
@@ -1975,11 +2021,12 @@ dependencies = [
 name = "gateway-catalog-provider"
 version = "0.1.0"
 dependencies = [
- "gateway-auth",
+ "gateway-auth-contracts",
  "gateway-contracts",
  "gateway-core",
  "gateway-decision-protocol",
- "gateway-providers",
+ "gateway-local-refusal",
+ "gateway-provider-policy",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1991,7 +2038,9 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-test-support",
  "gateway-auth",
+ "gateway-auth-native-proof",
  "gateway-auth-native-wire",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-api-protocol",
  "gateway-authority-api-quota",
@@ -2006,8 +2055,10 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-local-refusal",
  "gateway-native",
- "gateway-providers",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
  "gateway-publication-policy",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
@@ -2022,6 +2073,8 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
  "gateway-claude-runtime-test-support",
@@ -2031,7 +2084,8 @@ dependencies = [
  "gateway-core",
  "gateway-kv-codec",
  "gateway-profile-values",
- "gateway-providers",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
  "gateway-schema",
  "gateway-source",
  "rusqlite",
@@ -2045,6 +2099,8 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
  "gateway-claude-runtime",
@@ -2052,7 +2108,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
- "gateway-providers",
+ "gateway-provider-protocol",
  "gateway-schema",
  "gateway-source",
  "rusqlite",
@@ -2065,7 +2121,9 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-auth-contracts",
  "gateway-core",
+ "gateway-local-refusal",
  "gateway-source",
  "serde_json",
 ]
@@ -2075,6 +2133,7 @@ name = "gateway-claude-usage-history"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-primitives",
  "gateway-claude-usage-history-records",
  "gateway-claude-usage-protocol",
  "gateway-contracts",
@@ -2090,6 +2149,7 @@ name = "gateway-claude-usage-history-records"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-primitives",
  "gateway-claude-usage-protocol",
  "gateway-core",
  "gateway-kv-codec",
@@ -2128,6 +2188,8 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
  "gateway-claude-runtime",
  "gateway-claude-runtime-test-support",
  "gateway-claude-usage-protocol",
@@ -2250,7 +2312,7 @@ dependencies = [
  "gateway-decision-protocol",
  "gateway-extras-contract",
  "gateway-kv-codec",
- "gateway-providers",
+ "gateway-provider-services",
  "gateway-schema",
  "gateway-source",
  "serde_json",
@@ -2260,9 +2322,12 @@ dependencies = [
 name = "gateway-extras-contract"
 version = "0.1.0"
 dependencies = [
- "gateway-auth",
+ "gateway-auth-contracts",
  "gateway-contracts",
- "gateway-providers",
+ "gateway-local-refusal",
+ "gateway-provider-images",
+ "gateway-provider-protocol",
+ "gateway-provider-services",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -2278,13 +2343,19 @@ dependencies = [
  "chrono",
  "futures-util",
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
  "gateway-contracts",
  "gateway-core",
  "gateway-decision-runtime",
  "gateway-extras-contract",
  "gateway-extras-runtime-test-support",
  "gateway-kv-codec",
- "gateway-providers",
+ "gateway-local-refusal",
+ "gateway-provider-images",
+ "gateway-provider-protocol",
+ "gateway-provider-services",
+ "gateway-provider-source",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -2328,6 +2399,8 @@ name = "gateway-live-runtime"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
  "gateway-authority-routing-selection",
  "gateway-contracts",
  "gateway-core",
@@ -2345,6 +2418,15 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-local-refusal"
+version = "0.1.0"
+dependencies = [
  "gateway-source",
  "serde",
  "serde_json",
@@ -2388,6 +2470,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-local-refusal",
  "gateway-migration-copied-store-support",
  "gateway-migration-core-state",
  "gateway-migration-data",
@@ -3231,6 +3314,9 @@ dependencies = [
  "gateway-admin",
  "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-capacity",
  "gateway-authority-contracts",
@@ -3320,11 +3406,93 @@ dependencies = [
 ]
 
 [[package]]
-name = "gateway-providers"
+name = "gateway-provider-chat"
 version = "0.1.0"
 dependencies = [
  "gateway-contracts",
- "gateway-decision-protocol",
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-prompt-policy",
+ "gateway-provider-chat-controls",
+ "gateway-provider-history",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-provider-tool-grammar",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-chat-controls"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-provider-source",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-claude-body"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-provider-chat",
+ "gateway-provider-input",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-provider-tool-grammar",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-collector"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-provider-events",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-events"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-provider-source",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-history"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-prompt-policy",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-images"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-provider-source",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -3333,11 +3501,194 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-provider-input"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-provider-chat-controls",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-schema",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-policy"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-prompt-policy",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-protocol"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-prompt-policy",
+ "gateway-provider-events",
+ "gateway-provider-source",
+ "gateway-provider-tool-grammar",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-replay"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-provider-chat",
+ "gateway-provider-claude-body",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-provider-tool-grammar",
+ "gateway-source",
+]
+
+[[package]]
+name = "gateway-provider-response"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-decision-protocol",
+ "gateway-provider-collector",
+ "gateway-provider-events",
+ "gateway-provider-protocol",
+ "gateway-provider-services",
+ "gateway-provider-source",
+ "gateway-provider-stream",
+ "gateway-provider-tool-grammar",
+ "gateway-provider-writer",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-services"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-decision-protocol",
+ "gateway-local-refusal",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-provider-tool-grammar",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "gateway-provider-source"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-stream"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-provider-collector",
+ "gateway-provider-events",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-provider-writer",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-tool-grammar"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-provider-source",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-writer"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-provider-events",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-provider-tool-grammar",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-providers"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-prompt-policy",
+ "gateway-provider-chat",
+ "gateway-provider-chat-controls",
+ "gateway-provider-claude-body",
+ "gateway-provider-collector",
+ "gateway-provider-events",
+ "gateway-provider-history",
+ "gateway-provider-images",
+ "gateway-provider-input",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
+ "gateway-provider-replay",
+ "gateway-provider-response",
+ "gateway-provider-services",
+ "gateway-provider-source",
+ "gateway-provider-stream",
+ "gateway-provider-tool-grammar",
+ "gateway-provider-writer",
+ "gateway-schema",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-publication"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-native-proof",
  "gateway-auth-native-wire",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-keys",
  "gateway-authority-paid-control-records",
@@ -3357,7 +3708,9 @@ name = "gateway-publication-policy"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-proof",
  "gateway-auth-native-wire",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-keys",
  "gateway-authority-paid-control-records",
@@ -3374,7 +3727,10 @@ name = "gateway-publication-test-support"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-native-proof",
  "gateway-auth-native-wire",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-keys",
  "gateway-authority-routing-records",
@@ -3393,7 +3749,11 @@ name = "gateway-publication-transport"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-contracts",
  "gateway-core",
@@ -3448,6 +3808,9 @@ dependencies = [
  "chrono",
  "futures-util",
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-api-protocol",
  "gateway-authority-api-quota",
@@ -3474,6 +3837,12 @@ dependencies = [
  "gateway-extras-contract",
  "gateway-kv-codec",
  "gateway-local-journal",
+ "gateway-local-refusal",
+ "gateway-provider-claude-body",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
+ "gateway-provider-response",
+ "gateway-provider-stream",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
@@ -3488,6 +3857,9 @@ name = "gateway-routing-runtime-test-support"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-api-protocol",
  "gateway-authority-contracts",
@@ -3498,7 +3870,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
- "gateway-providers",
+ "gateway-provider-protocol",
  "gateway-routing-runtime",
  "gateway-schema",
  "gateway-source",
@@ -3516,6 +3888,7 @@ dependencies = [
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-kv-codec",
+ "gateway-local-refusal",
  "gateway-source",
  "indexmap 2.14.2",
  "ryu-js",
@@ -3575,7 +3948,13 @@ dependencies = [
  "gateway-admission",
  "gateway-auth",
  "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
+ "gateway-auth-passport",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-actor-records",
  "gateway-authority-capacity",
@@ -3621,6 +4000,7 @@ dependencies = [
  "gateway-extras-runtime",
  "gateway-kv-codec",
  "gateway-live-runtime",
+ "gateway-local-refusal",
  "gateway-migration",
  "gateway-migration-data",
  "gateway-migration-prepare",
@@ -3630,6 +4010,16 @@ dependencies = [
  "gateway-observability",
  "gateway-observability-test-support",
  "gateway-profile-values",
+ "gateway-provider-claude-body",
+ "gateway-provider-events",
+ "gateway-provider-images",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
+ "gateway-provider-replay",
+ "gateway-provider-response",
+ "gateway-provider-services",
+ "gateway-provider-source",
+ "gateway-provider-stream",
  "gateway-providers",
  "gateway-publication",
  "gateway-publication-policy",
@@ -3679,6 +4069,12 @@ name = "gateway-worker-fixture"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-passkeys",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-contracts",
  "gateway-authority-keys",
@@ -3703,7 +4099,11 @@ name = "gateway-worker-fixture-setup"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-keys",
  "gateway-authority-paid-control-records",
@@ -3727,7 +4127,8 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "gateway-contracts",
- "gateway-providers",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
  "gateway-source",
  "gateway-worker-platform",
  "serde_json",
@@ -3766,7 +4167,9 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "gateway-contracts",
- "gateway-providers",
+ "gateway-provider-events",
+ "gateway-provider-protocol",
+ "gateway-provider-stream",
  "gateway-source",
  "serde_json",
  "worker",

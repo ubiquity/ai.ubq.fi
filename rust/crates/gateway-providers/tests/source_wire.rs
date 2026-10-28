@@ -1,13 +1,12 @@
 //! Literal source-unit and actual Rust wire/echo fixtures. No JavaScript projector or live provider.
+use gateway_contracts::provider::UpstreamProvider;
+use gateway_provider_events::event::ProviderEvent;
+use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types::PrepareOptions};
+use gateway_provider_response::response::decode_response;
+use gateway_provider_tool_grammar::source_tools::ToolMap;
+use gateway_providers::source_request::prepare_source_request;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as json,
-};
-use gateway_contracts::provider::UpstreamProvider;
-use gateway_providers::{
-    response::decode_response,
-    source_request::prepare_source_request,
-    source_tools::ToolMap,
-    types::{AuthMaterial, ClientSurface, PrepareOptions, ProviderEvent},
 };
 fn parse(raw: &str) -> SourceJson {
     SourceJson::parse(raw).unwrap()
@@ -148,7 +147,7 @@ fn buffered_and_actual_sse_writer_created_progress_terminal_echo_the_same_source
     assert_echo(&decoded.body, &raw);
     let mut plan = prepared.decode.clone();
     plan.stream = true;
-    let mut decoder = gateway_providers::sse::StreamDecoder::new(plan);
+    let mut decoder = gateway_provider_stream::sse::StreamDecoder::new(plan);
     let mut events=decoder.push(b"data: {\"id\":\"chat_fixture\",\"object\":\"chat.completion.chunk\",\"created\":2,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n").map_err(|error| format!("{error:?}"))?;
     events.extend(decoder.finish().map_err(|error| format!("{error:?}"))?);
     for kind in [
@@ -175,9 +174,10 @@ fn buffered_and_actual_sse_writer_created_progress_terminal_echo_the_same_source
         assert_echo(&get(&parsed, "response"), &raw);
     }
     for reason in ["length", "aborted"] {
-        let mut writer = gateway_providers::writer::ResponseWriter::new(prepared.decode.clone());
+        let mut writer =
+            gateway_provider_writer::writer::ResponseWriter::new(prepared.decode.clone());
         writer.finish_reason = Some(reason.into());
-        let events = writer.finish();
+        let events = writer.finish().map_err(|error| format!("{error:?}"))?;
         assert_echo(
             &events
                 .last()
@@ -317,7 +317,7 @@ fn source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units() -> 
         parse(r#""input[0].output""#)
     );
     let expected = format!(
-        "input item input[0].output (tool call c{} carries 65537 bytes; this route forwards at most 65536 bytes per message under deepseek-forwarded-payload/v1, and the request set truncation 'disabled', so the gateway will not reduce it. Reduce the payload or send truncation 'auto' to allow the declared reduction.",
+        "input item input[0].output (tool call c{} carries 65537 bytes; this route forwards at most 65536 bytes per message under deepseek-forwarded-payload/v2, and the request set truncation 'disabled', so the gateway will not reduce it. Reduce the payload or send truncation 'auto' to allow the declared reduction.",
         ")"
     );
     let mut units = expected.encode_utf16().collect::<Vec<_>>();
@@ -431,7 +431,7 @@ fn source_original_tool_identity_survives_buffered_and_streamed_generated_items(
     )
     .map_err(|error| format!("{error:?}"))?
     .decode;
-    let identity = gateway_providers::types::ToolIdentity {
+    let identity = gateway_provider_source::types::ToolIdentity {
         name: JsString16::from_units(vec![102, 0xd800]),
         namespace: Some(JsString16::from_units(vec![110, 0xdc00])),
         custom: false,
@@ -452,11 +452,12 @@ fn source_original_tool_identity_survives_buffered_and_streamed_generated_items(
         text(&get(&item, "namespace")),
         identity.namespace.clone().ok_or("missing fixture value")?
     );
-    let mut writer = gateway_providers::writer::ResponseWriter::new(plan);
-    let mut events =
-        writer.tool_delta(0, Some("call_fixture"), Some("wire_ascii"), " { \"x\":1 } ");
+    let mut writer = gateway_provider_writer::writer::ResponseWriter::new(plan);
+    let mut events = writer
+        .tool_delta(0, Some("call_fixture"), Some("wire_ascii"), " { \"x\":1 } ")
+        .map_err(|error| format!("{error:?}"))?;
     writer.finish_reason = Some("tool_calls".into());
-    events.extend(writer.finish());
+    events.extend(writer.finish().map_err(|error| format!("{error:?}"))?);
     for event in events
         .iter()
         .filter(|event| event.type_name().as_deref() == Some("response.output_item.done"))
@@ -559,12 +560,13 @@ fn reasoning_refusal_and_agent_message_envelopes_preserve_literal_units() {
 }
 
 #[test]
-fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_boundary() {
+fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_boundary()
+-> Result<(), Box<dyn std::error::Error>> {
     let url = "https://x/".to_owned() + &"a".repeat(40_000);
     let raw = parse(&format!(
         r#"{{"model":"deepseek-flash","input":[{{"role":"user","content":[{{"type":"input_text","text":"\ud800{}"}},{{"type":"input_image","image_url":{}}}]}}]}}"#,
         "a".repeat(40_000),
-        serde_json::to_string(&url).unwrap()
+        serde_json::to_string(&url)?
     ));
     let prepared = prepare_source_request(
         UpstreamProvider::Deepseek,
@@ -573,7 +575,7 @@ fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_bounda
         &"deepseek-flash".into(),
         &options(),
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     let messages = rows(&get(&prepared.body, "messages"));
     let parts = rows(&get(&messages[0], "content"));
     assert_eq!(parts.len(), 2);
@@ -582,13 +584,13 @@ fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_bounda
     assert_eq!(
         text(&get(&parts[1], "text")),
         JsString16::from_utf8(&format!(
-            "[gateway: deepseek-forwarded-payload/v1 image omitted ({} bytes); the model did not receive this image; this route forwards at most 65536 bytes per message because the provider counts forwarded payloads as text tokens]",
+            "[gateway: deepseek-forwarded-payload/v2 image omitted ({} bytes); the model did not receive this image; this route forwards at most 65536 bytes per message because the provider counts forwarded payloads as text tokens]",
             url.len()
         ))
     );
-    let mut fields = json::entries(&raw).unwrap();
+    let mut fields = json::entries(&raw).ok_or("source fixture is not an object")?;
     fields.push((JsString16::from_utf8("truncation"), parse(r#""disabled""#)));
-    let disabled = json::object_keys(fields).unwrap();
+    let disabled = json::object_keys(fields)?;
     let error = prepare_source_request(
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
@@ -596,7 +598,8 @@ fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_bounda
         &"deepseek-flash".into(),
         &options(),
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected disabled payload refusal")?;
     assert_eq!(
         path(error.body(), &["error", "param"]),
         parse(r#""input[0].content""#)
@@ -607,10 +610,10 @@ fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_bounda
     );
     assert!(
         text(&path(error.body(), &["error", "message"]))
-            .try_utf8()
-            .unwrap()
+            .try_utf8()?
             .contains(&format!("carries {} bytes", 40_003 + url.len()))
     );
+    Ok(())
 }
 
 #[test]
@@ -619,21 +622,22 @@ fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mi
     let mut names = ToolMap::new();
     names.insert(
         "custom".into(),
-        gateway_providers::types::ToolIdentity {
+        gateway_provider_source::types::ToolIdentity {
             name: JsString16::from_units(vec![99, 0xd800]),
             namespace: None,
             custom: true,
         },
     );
     let arguments = r#" { "input" : "raw\udc00" } "#;
-    let item = gateway_providers::tools::function_item(
+    let item = gateway_provider_tool_grammar::tools::function_item(
         "ctc_fixture",
         "call_fixture",
         "custom",
         arguments,
         &names,
         "completed",
-    );
+    )
+    .map_err(|error| format!("{error:?}"))?;
     assert_eq!(get(&item, "input"), parse(r#""raw\udc00""#));
     let raw = parse(r#"{"model":"deepseek-flash","input":"x"}"#);
     let mut plan = prepare_source_request(
@@ -646,9 +650,11 @@ fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mi
     .map_err(|error| format!("{error:?}"))?
     .decode;
     plan.tool_names = names;
-    let mut writer = gateway_providers::writer::ResponseWriter::new(plan);
-    writer.tool_delta(0, Some("call_fixture"), Some("custom"), arguments);
-    let events = writer.finish();
+    let mut writer = gateway_provider_writer::writer::ResponseWriter::new(plan);
+    writer
+        .tool_delta(0, Some("call_fixture"), Some("custom"), arguments)
+        .map_err(|error| format!("{error:?}"))?;
+    let events = writer.finish().map_err(|error| format!("{error:?}"))?;
     let delta = events
         .iter()
         .find(|event| event.type_name().as_deref() == Some("response.custom_tool_call_input.delta"))
@@ -696,15 +702,17 @@ fn source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings
         // Select the existing scalar Chat upstream codec to exercise its synthesized
         // request-derived envelope; this is not a new router/provider selection.
         let mut plan = prepared.decode.clone();
-        plan.decode = gateway_providers::types::ResponseDecode::ChatToResponses(
-            gateway_providers::types::ChatProfile::Deepseek,
+        plan.decode = gateway_provider_protocol::types::ResponseDecode::ChatToResponses(
+            gateway_provider_source::types::ChatProfile::Deepseek,
         );
         let buffered = decode_response(&plan, 200, &Default::default(), reply())
             .map_err(|error| format!("{error:?}"))?;
         assert_eq!(text(&get(&buffered.body, "model")), model);
-        let mut writer = gateway_providers::writer::ResponseWriter::new(prepared.decode);
-        let mut events = writer.text("answer", false);
-        events.extend(writer.finish());
+        let mut writer = gateway_provider_writer::writer::ResponseWriter::new(prepared.decode);
+        let mut events = writer
+            .text("answer", false)
+            .map_err(|error| format!("{error:?}"))?;
+        events.extend(writer.finish().map_err(|error| format!("{error:?}"))?);
         for event in events
             .iter()
             .filter(|event| event.field("response").is_some())
@@ -753,9 +761,10 @@ fn opaque_model_refusal_body_does_not_replace_or_scalarize_request_units() {
 }
 
 #[test]
-fn paid_catalog_lookup_compares_source_model_units_and_retains_billing_fragments() {
+fn paid_catalog_lookup_compares_source_model_units_and_retains_billing_fragments()
+-> Result<(), String> {
     use gateway_contracts::{model::ModelId, provider::PaidProvider};
-    use gateway_providers::policy::{PaidRoutingInput, resolve_paid_route};
+    use gateway_provider_policy::{policy::PaidRoutingInput, policy::resolve_paid_route};
     let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
     let row = parse(
         r#"{"id":"\ud800","supported_endpoint_types":["openai-response"],"input_price_per_token":0.1,"output_price_per_token":0.2,"cache_read_price_per_token":"source\udc00"}"#,
@@ -776,15 +785,24 @@ fn paid_catalog_lookup_compares_source_model_units_and_retains_billing_fragments
         synthetic_hop: None,
         ubiquity_enabled: true,
     };
-    let plan = resolve_paid_route(&input);
+    let plan = resolve_paid_route(&input).map_err(|error| format!("{error:?}"))?;
     assert_eq!(plan.providers, vec![PaidProvider::Surplus]);
     assert_eq!(
         get(
-            plan.surplus_billing.as_ref().unwrap(),
+            plan.surplus_billing
+                .as_ref()
+                .ok_or("missing expected fixture value")?,
             "cache_read_price_per_token"
         ),
         get(&row, "cache_read_price_per_token")
     );
     input.model = r"\ud800".into();
-    assert!(resolve_paid_route(&input).providers.is_empty());
+    assert!(
+        resolve_paid_route(&input)
+            .map_err(|error| format!("{error:?}"))?
+            .providers
+            .is_empty()
+    );
+
+    Ok(())
 }

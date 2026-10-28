@@ -12,8 +12,10 @@ use gateway_admin_contracts::fields;
 use gateway_admin_contracts::{
     operations::AdminInput, routes::AdminOperation, source_input as body,
 };
-use gateway_auth::store::{check, commit, put};
-use gateway_auth::types::{AuthHost, AuthResponse, conflict, invalid};
+use gateway_auth_contracts::{
+    types::AuthHost, types::AuthResponse, types::conflict, types::invalid,
+};
+use gateway_auth_primitives::{store::check, store::commit, store::put};
 use gateway_authority_kernel_protocol::{KernelDefaults, KernelReservation, KernelTerminal};
 use gateway_authority_keys as keys;
 use gateway_core::query::QueryStore;

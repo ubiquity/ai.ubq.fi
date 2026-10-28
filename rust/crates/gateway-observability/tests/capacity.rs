@@ -7,10 +7,11 @@ use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_evidence::capacity::parse_capacity_store;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 mod support;
-use gateway_auth::{
-    crypto::Secret,
-    provider_credentials::{CodexSourceAccount, CodexSourcePool, codex_source_pool_key},
+use gateway_auth_credentials::{
+    provider_credentials::CodexSourceAccount, provider_credentials::CodexSourcePool,
+    provider_credentials::codex_source_pool_key,
 };
+use gateway_auth_primitives::crypto::Secret;
 use gateway_authority::store::Authority;
 use gateway_authority_keys as keys;
 use gateway_contracts::identity::PoolVersionstamp;
@@ -38,7 +39,7 @@ impl AuthorityClock for Clock {
 struct Tokens(Host);
 impl TokenSource for Tokens {
     fn next_token(&self) -> Result<String, GatewayError> {
-        gateway_auth::crypto::uuid_from_random(&self.0.random_bytes(16)?)
+        gateway_auth_primitives::crypto::uuid_from_random(&self.0.random_bytes(16)?)
     }
 }
 struct CapacityHost {

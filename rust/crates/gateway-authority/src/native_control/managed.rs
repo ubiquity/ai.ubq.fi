@@ -7,17 +7,18 @@ use super::{
     },
 };
 use crate::{store::Transaction, text};
-use gateway_auth::{
-    crypto::{Secret, sha256_hex},
-    native_auth::{AuthenticatedNativeOwner, NativeCapability},
-    native_credentials::native_refresh_time_ns,
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, MANAGED_NATIVE_SOURCE_VERSION, ManagedNativeSource,
-        codex_access_expiry_ms, codex_credential_identity, codex_source_pool_key,
-        parse_codex_source_pool, valid_native_generation,
-    },
+use gateway_auth_credentials::{
+    native_credentials::native_refresh_time_ns, provider_credentials::CodexNativeOwner,
+    provider_credentials::CodexSourceAccount, provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
+    provider_credentials::ManagedNativeSource, provider_credentials::codex_access_expiry_ms,
+    provider_credentials::codex_credential_identity, provider_credentials::codex_source_pool_key,
+    provider_credentials::parse_codex_source_pool, provider_credentials::valid_native_generation,
+};
+use gateway_auth_native_proof::{
+    native_auth::AuthenticatedNativeOwner, native_auth::NativeCapability,
 };
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
+use gateway_auth_primitives::{crypto::Secret, crypto::sha256_hex};
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};

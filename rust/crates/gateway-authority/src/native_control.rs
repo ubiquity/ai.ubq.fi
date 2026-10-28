@@ -1,6 +1,6 @@
 //! Fixed owner-renewal coordination in the existing authority store.
 //! Wire selectors and fence DTOs are observations, never permissions to mutate native state.
-use gateway_auth::native_auth::AuthenticatedNativeOwner;
+use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
 use gateway_native_authority_wire::renewal::{NativeRenewalFence, NativeRenewalMode};
 use gateway_source::error::GatewayError;
 use std::future::Future;

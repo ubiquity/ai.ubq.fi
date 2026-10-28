@@ -1,6 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_core::{query::*, state::*};
-use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_core::query::*;
+use gateway_core::state::*;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::TupleKey;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeValue;
@@ -11,11 +13,14 @@ use gateway_migration_graph::transport as graph_transport;
 use gateway_migration_prepare::engine::prepare_native;
 use gateway_migration_protocol::staged::execute_staged;
 use gateway_migration_stage::plan::StagePlan;
-use gateway_migration_test_support::fixture::{Directory, run};
+use gateway_migration_test_support::fixture::Directory;
+use gateway_migration_test_support::fixture::run;
 use gateway_migration_test_support::sqlite_store::SqliteStore;
-use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
 use gateway_source_graph::graph::*;
-use serde_json::{Value, json};
+use serde_json::Value;
+use serde_json::json;
 use std::cell::Cell;
 
 fn graph(value: &Value) -> SourceGraph {

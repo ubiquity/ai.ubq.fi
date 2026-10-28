@@ -1,7 +1,7 @@
 use gateway_capacity_projection::shapes::{history_point, unavailable_snapshot};
 mod support;
 use gateway_admin_runtime::capabilities::{Context, ProviderRequest};
-use gateway_auth::crypto::sha256_hex;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_core::state::StoredRecord;
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_observability::{

@@ -2,7 +2,8 @@
 use crate::{journal, journal::Journal, policy::RoutePlan, session::RoutingSession};
 use crate::{session::reserve_original, types::RecoveredSession, types::RevisionCheckWire};
 use crate::{types::RoutingHost, types::RoutingResult};
-use gateway_auth::{crypto::sha256_hex, types::AuthPrincipal};
+use gateway_auth_contracts::types::AuthPrincipal;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
 use gateway_authority_api_release::ApiReleaseOperations;
@@ -123,7 +124,7 @@ fn admitting_local_journal<I: TokenSource>(
 ) -> Result<(Journal, String), GatewayError> {
     let context = &input.metadata.context;
     let expected_key = match &input.metadata.principal.method {
-        gateway_auth::types::AuthMethod::KvApiKey { key_id, .. } => Some(key_id.as_str()),
+        gateway_auth_contracts::types::AuthMethod::KvApiKey { key_id, .. } => Some(key_id.as_str()),
         _ => None,
     };
     if !(0..=MAX_SAFE_INTEGER).contains(&now)

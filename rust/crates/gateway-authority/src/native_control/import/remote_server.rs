@@ -8,18 +8,26 @@ use super::custody_session::ImportCustodyStartedRequest;
 use super::effects::{self, NativeImportMode};
 use super::remote_state::{self, ImportActionState};
 use super::{publication, publication_current, unavailable};
-use gateway_auth::native_import::{NativeImportKind, NativeImportMetadata};
-use gateway_auth::{
-    native_auth::{
-        AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
-    },
-    native_import::authority::{
-        IMPORT_STARTED_OPERATION, ImportAuthorityClaimMode, ImportAuthorityCommand as Command,
-        ImportAuthorityRequestData as Request, ImportAuthorityStateData as State,
-        ImportAuthorityTerminalData, ImportCustodyStartedReplyData, ImportCustodyStartedWire,
-        completion::{ImportCompletionData, ImportCompletionModelsData},
-        result::{ImportAuthorityReplyData as Reply, ImportAuthorityResult as ResultData},
-    },
+use gateway_auth_native_contracts::{
+    native_import::NativeImportKind, native_import::NativeImportMetadata,
+};
+use gateway_auth_native_contracts::{
+    native_import::authority::IMPORT_STARTED_OPERATION,
+    native_import::authority::ImportAuthorityClaimMode,
+    native_import::authority::ImportAuthorityCommand as Command,
+    native_import::authority::ImportAuthorityRequestData as Request,
+    native_import::authority::ImportAuthorityStateData as State,
+    native_import::authority::ImportAuthorityTerminalData,
+    native_import::authority::ImportCustodyStartedReplyData,
+    native_import::authority::ImportCustodyStartedWire,
+    native_import::authority::completion::ImportCompletionData,
+    native_import::authority::completion::ImportCompletionModelsData,
+    native_import::authority::result::ImportAuthorityReplyData as Reply,
+    native_import::authority::result::ImportAuthorityResult as ResultData,
+};
+use gateway_auth_native_proof::{
+    native_auth::AuthenticatedNativeOwner, native_auth::NativeAuthHeaders,
+    native_auth::NativeAuthenticator, native_auth::NativeCapability,
 };
 use gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH;
 use gateway_authority_contracts::TokenSource;
@@ -40,7 +48,9 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         headers: NativeAuthHeaders<'_>,
         body: &[u8],
     ) -> Result<AuthenticatedNativeOwner, GatewayError> {
-        let replay = gateway_auth::native_replay::StoreNonceAuthority::new(&self.authority.store);
+        let replay = gateway_auth_native_protocol::native_replay::StoreNonceAuthority::new(
+            &self.authority.store,
+        );
         let peer = NativeAuthenticator::new(self.identity, &replay)
             .authenticate(NATIVE_RENEWAL_AUTHORITY_PATH, headers, body, self.time(0)?)
             .await?;

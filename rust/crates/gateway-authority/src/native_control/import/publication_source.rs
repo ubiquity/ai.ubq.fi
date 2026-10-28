@@ -1,14 +1,14 @@
 //! Fixed source/normalized/catalog mutations for one verified original import.
 use super::*;
 use crate::store::Transaction;
-use gateway_auth::{
-    crypto::Secret,
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
-        ManagedNativeSource, codex_source_pool_key, parse_codex_source_pool,
-    },
+use gateway_auth_credentials::{
+    provider_credentials::CodexNativeOwner, provider_credentials::CodexSourceAccount,
+    provider_credentials::CodexSourcePool, provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
+    provider_credentials::ManagedNativeSource, provider_credentials::codex_source_pool_key,
+    provider_credentials::parse_codex_source_pool,
 };
 use gateway_auth_native_wire::publication_command as command;
+use gateway_auth_primitives::crypto::Secret;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_contracts::identity::PoolVersionstamp;
@@ -45,7 +45,7 @@ pub(super) async fn prepare<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
         return Err(unavailable());
     }
     let access = Secret::new(wire.document.access_token.clone());
-    let identity = gateway_auth::provider_credentials::codex_credential_identity(
+    let identity = gateway_auth_credentials::provider_credentials::codex_credential_identity(
         &wire.document.account_id,
         &access,
         &Secret::new(String::new()),

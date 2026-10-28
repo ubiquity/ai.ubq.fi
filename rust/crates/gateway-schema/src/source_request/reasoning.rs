@@ -1,5 +1,6 @@
 //! Open-string reasoning syntax over original UTF16 values, independent of catalogs.
-use super::{error::SourceRequestError, trim};
+use super::trim;
+use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
@@ -36,16 +37,13 @@ pub fn parse_reasoning(
         .position(|(key, _)| key.as_units().iter().copied().eq("effort".encode_utf16()))
     {
         match parse_effort(Some(&entries[index].1), "reasoning.effort").map_err(|error| {
-            let message = source::member(error.body(), "error")
-                .and_then(|value| source::member(&value, "message"))
-                .and_then(|value| source::string(&value))
-                .expect("Source error message");
+            let message = error.body().message().clone();
             // Reuse the same exact message, but source attaches all reasoning syntax to its parent param.
             SourceRequestError::invalid(message, Some(JsString16::from_utf8("reasoning")))
         })? {
             Some(effort) => {
                 entries[index].1 =
-                    source::quoted(&effort).map_err(SourceRequestError::from_scalar)?
+                    source::quoted(&effort).map_err(SourceRequestError::from_gateway)?
             }
             None => {
                 entries.remove(index);
@@ -72,6 +70,6 @@ pub fn parse_reasoning(
     } else {
         source::object_keys(entries)
             .map(Some)
-            .map_err(SourceRequestError::from_scalar)
+            .map_err(SourceRequestError::from_gateway)
     }
 }

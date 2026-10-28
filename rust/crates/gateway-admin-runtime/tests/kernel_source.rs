@@ -1,36 +1,41 @@
 //! Real Rust administrative operations over a deterministic atomic test store;
 //! these records are not live-runtime, signed-issuer or backend acceptance.
-use gateway_admin_contracts::{
-    operations::{AdminHost, AdminInput},
-    routes::AdminOperation,
-    source_input as body,
-};
-use gateway_admin_runtime::{AdminRuntime, RuntimeConfig, capabilities::UnboundCapabilities};
-use gateway_auth::{
-    types::{AuthHost, AuthMethod, AuthPrincipal, AuthResponse},
-    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
-    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
-};
+use gateway_admin_contracts::operations::AdminHost;
+use gateway_admin_contracts::operations::AdminInput;
+use gateway_admin_contracts::routes::AdminOperation;
+use gateway_admin_contracts::source_input as body;
+use gateway_admin_runtime::AdminRuntime;
+use gateway_admin_runtime::RuntimeConfig;
+use gateway_admin_runtime::capabilities::UnboundCapabilities;
+use gateway_auth_contracts::types::AuthHost;
+use gateway_auth_contracts::types::AuthMethod;
+use gateway_auth_contracts::types::AuthPrincipal;
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_contracts::upstream::AuthUpstreamRequest;
+use gateway_auth_contracts::upstream::AuthUpstreamResponse;
+use gateway_auth_contracts::webauthn::CosePublicKey;
+use gateway_auth_contracts::webauthn::SignatureInput;
+use gateway_auth_contracts::webauthn::WebAuthnCrypto;
 use gateway_authority_kernel::KernelOperations;
-use gateway_core::{
-    query::*, source_control::decode_source_control_record,
-    source_control::encode_source_control_record, state::*,
-};
+use gateway_core::query::*;
+use gateway_core::source_control::decode_source_control_record;
+use gateway_core::source_control::encode_source_control_record;
+use gateway_core::state::*;
 use gateway_kv_codec::key::RecordKey;
-use gateway_kv_codec::key::RecordKey;
-use gateway_source::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source,
-};
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
 use serde::Deserialize;
 use serde_json::json;
-use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    future::Future,
-    rc::Rc,
-    task::{Context, Poll, Waker},
-};
+use std::cell::Cell;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::future::Future;
+use std::rc::Rc;
+use std::task::Context;
+use std::task::Poll;
+use std::task::Waker;
 const NOW: i64 = 1_800_000_000_000;
 
 #[derive(Clone, Default)]
@@ -510,7 +515,7 @@ fn queue_keeps_original_broader_labels_and_actual_source_presence_filter() {
         capabilities: &UnboundCapabilities,
         config: &config,
     };
-    let key = gateway_auth::store::key(json!(["uos_ai", "kernel_policy_queue"]));
+    let key = gateway_auth_primitives::store::key(json!(["uos_ai", "kernel_policy_queue"]));
     store.rows.borrow_mut().insert(
         key.0,
         encode_source_control_record("actual-queue-input", &fixture.input_rows, None).unwrap(),

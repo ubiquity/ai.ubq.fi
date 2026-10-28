@@ -9,13 +9,13 @@ use gateway_admin_runtime::{
 use gateway_catalog_provider::host::ProviderBinding;
 use gateway_catalog_runtime::state::checks_current;
 use gateway_contracts::{claude::ClaudeErrorEvidence as ErrorEvidence, model::ModelId};
+use gateway_core::{state::AuthorityStore, state::RevisionCheck};
+use gateway_provider_protocol::types::Headers;
+use gateway_schema::selection::ProviderSelection;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_core::state::{AuthorityStore, RevisionCheck};
-use gateway_providers::types::Headers;
-use gateway_schema::selection::ProviderSelection;
 use serde::Serialize;
 use std::{
     cell::{Cell, RefCell},
@@ -65,7 +65,7 @@ impl ClaudePoolSession {
         host: &H,
         input: host::SelectionInput<'_>,
     ) -> Result<host::PoolSelection, GatewayError> {
-        if !gateway_providers::anthropic::is_claude_model(input.model)
+        if !gateway_provider_source::anthropic::is_claude_model(input.model)
             || !ProviderSelection::enabled(input.selection, "claude_code")
         {
             return Ok(host::PoolSelection::NotApplicable);
@@ -312,7 +312,8 @@ impl ClaudePoolSession {
         response: host::ResponseObservation,
     ) -> Result<host::AcceptedHead, GatewayError> {
         if !(100..=599).contains(&response.status)
-            || !(1..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&response.observed_at_ms)
+            || !(1..=gateway_contracts::identity::MAX_SAFE_INTEGER)
+                .contains(&response.observed_at_ms)
         {
             return Err(crate::invalid("Claude actual response receipt is invalid."));
         }

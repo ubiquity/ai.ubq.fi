@@ -3,9 +3,10 @@
 use crate::native_control::actor;
 use crate::native_control::actor::NativeRenewalActor;
 use crate::{routing, routing::RoutingView, store::Authority, store::Transaction};
-use gateway_auth::provider_credentials::codex_access_expiry_ms;
-use gateway_auth::provider_credentials::codex_source_pool_key;
-use gateway_auth::{provider_credentials::parse_codex_source_pool, types::AuthConfig};
+use gateway_auth_contracts::types::AuthConfig;
+use gateway_auth_credentials::provider_credentials::codex_access_expiry_ms;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::parse_codex_source_pool;
 use gateway_authority_actor_records::legacy::StoredNativeActor;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_capacity_policy as capacity_rules;

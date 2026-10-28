@@ -1,17 +1,22 @@
 #![cfg(all(unix, not(target_arch = "wasm32")))]
 use gateway_migration_graph::transport as graph_transport;
 
+use gateway_auth_credentials::native_credentials::NativeOwnerId;
+use gateway_auth_credentials::native_credentials::OwnerFence;
+use gateway_auth_credentials::native_credentials::parse_native_document;
 use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
-use gateway_auth_credentials::{
-    native_credentials::NativeOwnerId, native_credentials::OwnerFence,
-    native_credentials::parse_native_document,
-};
 use gateway_auth_native_proof::native_auth::NativeNonceAuthority;
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_primitives::crypto::base64url;
-use gateway_core::{query::QueryRequest, query::QuerySelector, query::QueryStore, state::*};
-use gateway_kv_codec::{key::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey};
-use gateway_migration_copied_store_support::{driver, store::ReadonlyStore};
+use gateway_core::query::QueryRequest;
+use gateway_core::query::QuerySelector;
+use gateway_core::query::QueryStore;
+use gateway_core::state::*;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::KeyPart;
+use gateway_kv_codec::tuple_key::TupleKey;
+use gateway_migration_copied_store_support::driver;
+use gateway_migration_copied_store_support::store::ReadonlyStore;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeRevision;
@@ -20,18 +25,24 @@ use gateway_migration_native_custody::registry::NativeCustodyRegistration;
 use gateway_migration_native_custody::registry::prepare_local_bootstrap;
 use gateway_migration_prepare::engine::adopt_empty;
 use gateway_migration_prepare::engine::prepare_native;
-use gateway_migration_test_support::fixture::{Directory, run};
+use gateway_migration_test_support::fixture::Directory;
+use gateway_migration_test_support::fixture::run;
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_source::js_string::JsString16;
-use gateway_source_graph::{graph::GraphAtom, graph::GraphNode, graph::SourceGraph};
-use rusqlite::{Connection, params};
-use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-use std::{
-    fs,
-    os::unix::fs::{MetadataExt, PermissionsExt},
-    path::{Path, PathBuf},
-};
+use gateway_source_graph::graph::GraphAtom;
+use gateway_source_graph::graph::GraphNode;
+use gateway_source_graph::graph::SourceGraph;
+use rusqlite::Connection;
+use rusqlite::params;
+use serde_json::Value;
+use serde_json::json;
+use sha2::Digest;
+use sha2::Sha256;
+use std::fs;
+use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+use std::path::PathBuf;
 
 const NOW: i64 = 2400;
 const METADATA: &str = "CREATE TABLE uos_authority_metadata (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), schema_version INTEGER NOT NULL, key_codec TEXT NOT NULL, value_codec TEXT NOT NULL)";

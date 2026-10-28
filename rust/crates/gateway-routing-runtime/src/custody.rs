@@ -282,7 +282,8 @@ pub fn validate_journal_row(key: &RecordKey, record: &StoredRecord) -> Result<()
                     return Err(invalid());
                 }
                 TupleKey::from_record_key(source_key)?.validate_stored_key()?;
-                if *source_key != gateway_auth::provider_credentials::codex_source_pool_key()
+                if *source_key
+                    != gateway_auth_credentials::provider_credentials::codex_source_pool_key()
                     || admission.binding.pool_versionstamp.0 != *source_revision
                 {
                     return Err(invalid());
@@ -506,7 +507,7 @@ mod tests {
                 route: "responses".into(),
                 started_at_ms: 1_800_000_000_000,
             },
-            gateway_auth::crypto::sha256_hex(b"{}"),
+            gateway_auth_primitives::crypto::sha256_hex(b"{}"),
             1_800_000_060_000,
             1_800_000_000_000,
         );

@@ -6,15 +6,12 @@ use gateway_admin_contracts::{
 };
 use gateway_admin_kernel::kernel_keys;
 use gateway_admin_keys::keys;
-use gateway_auth::{
-    crypto::Secret,
-    resolve::AuthService,
-    types::{
-        AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest, AuthResponse, NativePeer,
-    },
-    upstream::*,
+use gateway_auth::resolve::AuthService;
+use gateway_auth_contracts::{
+    types::AuthConfig, types::AuthHost, types::AuthMethod, types::AuthPrincipal,
+    types::AuthRequest, types::AuthResponse, types::NativePeer, upstream::*,
 };
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_auth_primitives::crypto::Secret;
 use gateway_contracts::model::ModelId;
 use gateway_core::{
     query::QueryPage, query::QueryRequest, query::QueryStore,
@@ -22,6 +19,7 @@ use gateway_core::{
     state::CommitOutcome, state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
 use gateway_kv_codec::{key::RecordKey, value::ValueEncoding};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
@@ -435,7 +433,7 @@ fn paid_model_name_and_ordinary_json_map_keys_roundtrip_named_profile_record() {
         let id = field_text(&response_source(&created), "id")
             .try_utf8()
             .unwrap();
-        let key = gateway_auth::api_keys::id_key(&id);
+        let key = gateway_auth_primitives::api_keys::id_key(&id);
         let row = store.read(&key).await.unwrap().unwrap();
         assert_eq!(row.value_encoding, ValueEncoding::ProfileV2);
         let record = keys::decode_id_record(&key, &row).unwrap();
@@ -458,7 +456,7 @@ fn paid_model_name_and_ordinary_json_map_keys_roundtrip_named_profile_record() {
             "source-id-hash-policy",
             &[
                 key.clone(),
-                gateway_auth::api_keys::hash_key(&record.hash),
+                gateway_auth_primitives::api_keys::hash_key(&record.hash),
                 keys::authority_policy_key(&id),
             ],
         );
@@ -488,13 +486,16 @@ fn paid_model_name_and_ordinary_json_map_keys_roundtrip_named_profile_record() {
                 .unwrap()
                 .is_none()
         );
-        assert!(keys::decode_id_record(&gateway_auth::api_keys::id_key("another"), &row).is_err());
+        assert!(
+            keys::decode_id_record(&gateway_auth_primitives::api_keys::id_key("another"), &row)
+                .is_err()
+        );
         assert!(
             keys::decode_record(&StoredRecord::json("partial", json!({"id":id}), None)).is_err()
         );
         assert!(
             keys::record_mutation(
-                gateway_auth::api_keys::id_key("another"),
+                gateway_auth_primitives::api_keys::id_key("another"),
                 &record,
                 None,
                 "r"
@@ -502,9 +503,11 @@ fn paid_model_name_and_ordinary_json_map_keys_roundtrip_named_profile_record() {
             .is_err()
         );
         assert_eq!(
-            gateway_auth::store::decode::<gateway_auth::api_keys::ApiKeyHashRecord>(
+            gateway_auth_primitives::store::decode::<
+                gateway_auth_primitives::api_keys::ApiKeyHashRecord,
+            >(
                 store
-                    .read(&gateway_auth::api_keys::hash_key(&record.hash))
+                    .read(&gateway_auth_primitives::api_keys::hash_key(&record.hash))
                     .await
                     .unwrap()
                     .as_ref(),
@@ -539,7 +542,7 @@ fn scalar_key_record_retains_json_and_revision_fenced_updates() {
         let id = field_text(&response_source(&created), "id")
             .try_utf8()
             .unwrap();
-        let key = gateway_auth::api_keys::id_key(&id);
+        let key = gateway_auth_primitives::api_keys::id_key(&id);
         let before = store.read(&key).await.unwrap().unwrap();
         assert_eq!(before.value_encoding, ValueEncoding::Json);
         let scalar_record = keys::decode_id_record(&key, &before).unwrap();
@@ -548,7 +551,7 @@ fn scalar_key_record_retains_json_and_revision_fenced_updates() {
             "scalar-id-hash-policy",
             &[
                 key.clone(),
-                gateway_auth::api_keys::hash_key(&scalar_record.hash),
+                gateway_auth_primitives::api_keys::hash_key(&scalar_record.hash),
                 keys::authority_policy_key(&id),
             ],
         );
@@ -673,10 +676,10 @@ fn kernel_public_source_row_stays_listable_before_crypto_projection() {
     });
 }
 
-impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
-        _: &gateway_auth::webauthn::CosePublicKey,
+        _: &gateway_auth_contracts::webauthn::CosePublicKey,
     ) -> Result<(), GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",
@@ -685,7 +688,7 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
     }
     async fn verify_signature(
         &self,
-        _: gateway_auth::webauthn::SignatureInput,
+        _: gateway_auth_contracts::webauthn::SignatureInput,
     ) -> Result<bool, GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",
@@ -707,7 +710,7 @@ fn export_writer_records(store: &Store, family: &str, keys: &[RecordKey]) {
         "scope":"Actual synthetic test Store records, not recreated source JSON",
         "family":family,
         "source_manifest":env!("CARGO_MANIFEST_DIR"),
-        "test_source_sha256":gateway_auth::crypto::sha256_hex(include_bytes!("source_policy.rs")),
+        "test_source_sha256":gateway_auth_primitives::crypto::sha256_hex(include_bytes!("source_policy.rs")),
         "records":records
     });
     let root = std::path::Path::new(
@@ -752,7 +755,7 @@ fn local_development_named_metadata_preserves_paired_auth_after_source_update() 
         let generated = field_text(&response_source(&created), "id")
             .try_utf8()
             .unwrap();
-        let previous_key = gateway_auth::api_keys::id_key(&generated);
+        let previous_key = gateway_auth_primitives::api_keys::id_key(&generated);
         let mut record = keys::decode_id_record(
             &previous_key,
             &store.read(&previous_key).await.unwrap().unwrap(),
@@ -761,11 +764,11 @@ fn local_development_named_metadata_preserves_paired_auth_after_source_update() 
         // Controlled bootstrap data only. The following update still executes
         // the real named KeyService writer and original ID/hash/policy CAS.
         record.policy.id = "local-development".into();
-        let local_key = gateway_auth::api_keys::id_key(&record.policy.id);
+        let local_key = gateway_auth_primitives::api_keys::id_key(&record.policy.id);
         let metadata =
             keys::record_mutation(local_key.clone(), &record, None, "local-bootstrap").unwrap();
-        let hash = gateway_auth::store::put(
-            gateway_auth::api_keys::hash_key(&record.hash),
+        let hash = gateway_auth_primitives::store::put(
+            gateway_auth_primitives::api_keys::hash_key(&record.hash),
             &record.policy,
             None,
             "local-bootstrap",

@@ -6,11 +6,9 @@ use gateway_admin_contracts::{
 use gateway_admin_runtime::{
     AdminRuntime, RuntimeConfig, capabilities::RuntimeCapabilities, claude_access, parse,
 };
-use gateway_auth::{
-    types::{AuthHost, AuthMethod, AuthPrincipal, AuthResponse},
-    upstream::*,
+use gateway_auth_contracts::{
+    types::AuthHost, types::AuthMethod, types::AuthPrincipal, types::AuthResponse, upstream::*,
 };
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_contracts::model::ModelId;
 use gateway_core::{
     query::{QueryPage, QueryRequest, QueryStore},
@@ -18,6 +16,7 @@ use gateway_core::{
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
 use gateway_kv_codec::{key::RecordKey, value::ValueEncoding};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
@@ -113,10 +112,10 @@ impl AuthHost for Host {
         ))
     }
 }
-impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
-        _: &gateway_auth::webauthn::CosePublicKey,
+        _: &gateway_auth_contracts::webauthn::CosePublicKey,
     ) -> Result<(), GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",
@@ -125,7 +124,7 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
     }
     async fn verify_signature(
         &self,
-        _: gateway_auth::webauthn::SignatureInput,
+        _: gateway_auth_contracts::webauthn::SignatureInput,
     ) -> Result<bool, GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",

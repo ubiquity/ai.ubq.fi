@@ -1,11 +1,11 @@
-use gateway_auth::crypto::{sha256_hex, uuid_from_random};
-use gateway_source::error::GatewayError;
+use gateway_auth_primitives::{crypto::sha256_hex, crypto::uuid_from_random};
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
-use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_extras_contract::errors::invalid_state;
 use gateway_extras_contract::types::ExtrasHost;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_source::error::GatewayError;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 

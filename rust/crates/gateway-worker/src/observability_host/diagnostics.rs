@@ -1,6 +1,6 @@
 //! Source read-only reset-credit and overage displays. These GETs never authorize a redemption.
 use super::{RequestHost, unavailable};
-use gateway_auth::provider_credentials::CodexSourceAccount;
+use gateway_auth_credentials::provider_credentials::CodexSourceAccount;
 use gateway_observability::host_types::{CapacityAccountRef, ResetCreditDiagnostic};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::Value;

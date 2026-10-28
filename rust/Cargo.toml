@@ -38,6 +38,24 @@ members = [
   "crates/gateway-authority-test-support",
   "crates/gateway-cache-experiment-records",
   "crates/gateway-authority-keys",
+  "crates/gateway-provider-tool-grammar",
+  "crates/gateway-provider-events",
+  "crates/gateway-provider-chat-controls",
+  "crates/gateway-provider-services",
+  "crates/gateway-provider-images",
+  "crates/gateway-provider-response",
+  "crates/gateway-provider-stream",
+  "crates/gateway-provider-collector",
+  "crates/gateway-provider-writer",
+  "crates/gateway-provider-replay",
+  "crates/gateway-provider-claude-body",
+  "crates/gateway-provider-chat",
+  "crates/gateway-provider-history",
+  "crates/gateway-provider-input",
+  "crates/gateway-provider-policy",
+  "crates/gateway-provider-protocol",
+  "crates/gateway-provider-source",
+  "crates/gateway-local-refusal",
   "crates/gateway-claude-usage-admin",
   "crates/gateway-claude-usage-history",
   "crates/gateway-claude-usage-history-records",
@@ -208,6 +226,24 @@ gateway-authority-paid-control-records = { path = "crates/gateway-authority-paid
 gateway-authority-test-support = { path = "crates/gateway-authority-test-support" }
 gateway-cache-experiment-records = { path = "crates/gateway-cache-experiment-records" }
 gateway-authority-keys = { path = "crates/gateway-authority-keys" }
+gateway-provider-tool-grammar = { path = "crates/gateway-provider-tool-grammar" }
+gateway-provider-events = { path = "crates/gateway-provider-events" }
+gateway-provider-chat-controls = { path = "crates/gateway-provider-chat-controls" }
+gateway-provider-services = { path = "crates/gateway-provider-services" }
+gateway-provider-images = { path = "crates/gateway-provider-images" }
+gateway-provider-response = { path = "crates/gateway-provider-response" }
+gateway-provider-stream = { path = "crates/gateway-provider-stream" }
+gateway-provider-collector = { path = "crates/gateway-provider-collector" }
+gateway-provider-writer = { path = "crates/gateway-provider-writer" }
+gateway-provider-replay = { path = "crates/gateway-provider-replay" }
+gateway-provider-claude-body = { path = "crates/gateway-provider-claude-body" }
+gateway-provider-chat = { path = "crates/gateway-provider-chat" }
+gateway-provider-history = { path = "crates/gateway-provider-history" }
+gateway-provider-input = { path = "crates/gateway-provider-input" }
+gateway-provider-policy = { path = "crates/gateway-provider-policy" }
+gateway-provider-protocol = { path = "crates/gateway-provider-protocol" }
+gateway-provider-source = { path = "crates/gateway-provider-source" }
+gateway-local-refusal = { path = "crates/gateway-local-refusal" }
 gateway-claude-usage-admin = { path = "crates/gateway-claude-usage-admin" }
 gateway-claude-usage-history = { path = "crates/gateway-claude-usage-history" }
 gateway-claude-usage-history-records = { path = "crates/gateway-claude-usage-history-records" }

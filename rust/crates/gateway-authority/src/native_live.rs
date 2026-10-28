@@ -3,13 +3,13 @@ use crate::native_control::actor;
 use crate::native_control::actor::NativeRenewalActor;
 use crate::store::Authority;
 use crate::store::Transaction;
-use gateway_auth::{
-    native_auth::NativeTransportIdentity,
-    native_live::AuthenticatedNativeLive,
-    provider_credentials::{
-        codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
-    },
-    types::AuthConfig,
+use gateway_auth_contracts::types::AuthConfig;
+use gateway_auth_credentials::{
+    provider_credentials::codex_access_expiry_ms, provider_credentials::codex_source_pool_key,
+    provider_credentials::parse_codex_source_pool,
+};
+use gateway_auth_native_proof::{
+    native_auth::NativeTransportIdentity, native_live::AuthenticatedNativeLive,
 };
 use gateway_authority_actor_records::legacy::StoredNativeActor;
 use gateway_authority_actor_records::scope::NativeActorScope;

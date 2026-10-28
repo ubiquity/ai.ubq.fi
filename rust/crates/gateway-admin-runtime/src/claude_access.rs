@@ -1,19 +1,17 @@
 //! Source Claude principal policy. Parsing data never mints a routing/cohort capability.
 use crate::store;
 use gateway_admin_contracts::source_input::{trim, whitespace};
-use gateway_auth::{
-    store::{check, commit},
-    types::{AuthHost, conflict, invalid},
-};
-use gateway_source::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source,
-};
+use gateway_auth_contracts::{types::AuthHost, types::conflict, types::invalid};
+use gateway_auth_primitives::{store::check, store::commit};
 use gateway_core::{
     source_control::{decode_source_control_record, encode_source_control_record},
     state::{AuthorityStore, RevisionCheck, StoredRecord},
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{cmp::Ordering, collections::BTreeSet};

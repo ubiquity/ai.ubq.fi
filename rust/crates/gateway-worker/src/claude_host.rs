@@ -5,19 +5,20 @@ pub(crate) mod platform;
 
 use crate::host::PlatformHost;
 use gateway_admin_runtime::claude_generation::StateGeneration;
-use gateway_auth::types::{AuthMethod, AuthPrincipal};
+use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
 use gateway_claude_runtime::{
     host::{OutcomeDecision, PoolConfig, PoolSelection, SelectedAccount, SelectionInput},
     pool::ClaudePoolSession,
 };
 use gateway_contracts::{claude::ClaudeErrorEvidence, model::ModelId};
-use gateway_source::{error::GatewayError, source_json::SourceJson};
-use gateway_providers::replay::{ReplayContext, ReplayStore, ReplayTransport};
+use gateway_provider_protocol::replay::ReplayTransport;
+use gateway_provider_replay::{replay::ReplayContext, replay::ReplayStore};
 use gateway_routing_runtime::types::{
     ClaudeOutcome, ClaudeSelection, CredentialFence, PreparedAttempt, PreparedWireRequest,
     PublishedCredential, ResponseHead,
 };
 use gateway_schema::selection::ProviderSelection;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
@@ -109,7 +110,7 @@ impl Binding {
         let AuthMethod::KvApiKey { key_id, .. } = &principal.method else {
             return Ok(ClaudeSelection::NotApplicable);
         };
-        if !gateway_providers::anthropic::is_claude_model(model) {
+        if !gateway_provider_source::anthropic::is_claude_model(model) {
             return Ok(ClaudeSelection::NotApplicable);
         }
         let selection = gateway_catalog_runtime::state::read_json(
@@ -220,10 +221,10 @@ impl Binding {
         &self,
         fence: &CredentialFence,
         model: &ModelId,
-        body: &gateway_providers::types::PreparedClaudeBody,
+        body: &gateway_provider_claude_body::types::PreparedClaudeBody,
     ) -> Result<
         crate::transport::outbound::ConstructedRequest,
-        gateway_routing_runtime::types::RoutingError,
+        gateway_local_refusal::routing_error::RoutingError,
     > {
         let (_request, selected) = self.selected(fence, model)?;
         platform::physical_request(selected.binding(), body)
@@ -353,11 +354,11 @@ fn credential(selected: &SelectedAccount) -> PublishedCredential {
     }
     PublishedCredential::Claude {
         fence: credential_fence(selected),
-        body_options: gateway_providers::types::ClaudeBodyOptions {
+        body_options: gateway_provider_claude_body::types::ClaudeBodyOptions {
             native_reasoning_efforts: options.native_reasoning_efforts,
             supports_disabled_thinking: options.supports_disabled_thinking,
             restored_native_messages: options.restored_native_messages,
-            ..gateway_providers::types::ClaudeBodyOptions::new(kind)
+            ..gateway_provider_claude_body::types::ClaudeBodyOptions::new(kind)
         },
     }
 }

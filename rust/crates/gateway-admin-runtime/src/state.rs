@@ -7,12 +7,13 @@ use gateway_admin_contracts::fields;
 use gateway_admin_contracts::{
     operations::AdminInput, routes::AdminOperation, source_input as source_body,
 };
-use gateway_auth::{
+use gateway_auth_contracts::types::{AuthHost, AuthResponse};
+use gateway_auth_primitives::{
+    error::{conflict, invalid},
     store::{check, commit, put},
-    types::{AuthHost, AuthResponse, conflict, invalid},
 };
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_core::query::QueryStore;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -226,17 +227,16 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             if let Ok(message) = message.try_utf8() {
                 return Err(invalid(&message));
             }
-            let error = gateway_schema::source_request::error::SourceRequestError::new(
+            let error = gateway_local_refusal::source_error::SourceRequestError::new(
                 400,
                 message,
                 "invalid_request_error",
                 Some("invalid_request_error"),
                 None,
             );
-            return Ok(AuthResponse::source_json(
-                error.status,
-                error.body().clone(),
-            ));
+            let status = error.status;
+            let body = error.body().clone();
+            return Ok(AuthResponse::closed_error(status, body));
         }
         // Every accepted provider label has the independently closed ASCII
         // roster/hash grammar above; only that proven field becomes scalar.

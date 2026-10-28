@@ -4,16 +4,13 @@ use crate::{
     response::{Classification, ResponseKind},
 };
 use gateway_admin_runtime::claude::{self, AccountBinding, RosterRead};
-use gateway_auth::{
-    crypto::uuid_from_random,
-    store::{check, commit, key},
-    types::AuthHost,
-};
+use gateway_auth_contracts::types::AuthHost;
+use gateway_auth_primitives::{crypto::uuid_from_random, store::check, store::commit, store::key};
 use gateway_claude_usage_quota::{QuotaError, QuotaState};
-use gateway_source::error::GatewayError;
 use gateway_contracts::model::ModelId;
 use gateway_core::state::{AuthorityStore, RecordMutation, RevisionCheck};
 use gateway_kv_codec::key::RecordKey;
+use gateway_source::error::GatewayError;
 use serde_json::json;
 
 pub fn quota_key(binding: &AccountBinding) -> RecordKey {

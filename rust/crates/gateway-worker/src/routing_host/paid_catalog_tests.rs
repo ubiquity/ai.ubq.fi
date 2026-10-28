@@ -1,8 +1,10 @@
 use super::prepare_credential_catalog;
-use gateway_auth::{crypto::Secret, crypto::base64url, native_auth::NativeAuthHeaders};
-use gateway_auth::{native_auth::NativeAuthenticator, native_auth::NativeCapability};
-use gateway_auth::{native_auth::NativeTransportIdentity, native_replay::StoreNonceAuthority};
+use gateway_auth_native_proof::native_auth::NativeAuthHeaders;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_native_proof::{native_auth::NativeAuthenticator, native_auth::NativeCapability};
+use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
+use gateway_auth_primitives::{crypto::Secret, crypto::base64url};
 use gateway_authority::store::Authority;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
@@ -14,7 +16,6 @@ use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
     ProviderBinding,
 };
-use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_contracts::{identity::ApiKeyId, identity::PaidAttemptId, identity::RequestId};
 use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
 use gateway_core::{
@@ -32,6 +33,7 @@ use gateway_publication_policy::protocol::{
 };
 use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_routing_runtime_test_support::source_catalog;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::{cell::Cell, cell::RefCell, collections::BTreeMap, collections::BTreeSet};
 use std::{future::Future, rc::Rc, sync::Arc, task::Context, task::Poll, task::Waker};
@@ -259,7 +261,7 @@ fn request() -> Result<(PaidRequest, PaidRequestContext), GatewayError> {
         PaidRequestContext {
             original_model: "gpt-known".into(),
             body: SourceJson::parse(r#"{"model":"gpt-known","input":"test"}"#)?,
-            surface: gateway_providers::types::ClientSurface::Responses,
+            surface: gateway_provider_protocol::types::ClientSurface::Responses,
             synthetic_hop: None,
         },
     ))

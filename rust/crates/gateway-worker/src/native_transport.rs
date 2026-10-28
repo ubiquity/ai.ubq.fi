@@ -1,7 +1,7 @@
 //! Constructor-only native transport. Service bindings use a synthetic origin;
 //! HTTPS carriers pin their origin before any request-owned input is available.
 use crate::host::PlatformHost;
-use gateway_auth::{crypto::base64url, native_auth::NativeTransportIdentity};
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::{
     control::{NATIVE_CONTROL_MAX_BYTES, unverified},
     native_read::{
@@ -10,6 +10,7 @@ use gateway_auth_native_wire::{
         NATIVE_VERSION_HEADER,
     },
 };
+use gateway_auth_primitives::crypto::base64url;
 use gateway_source::error::GatewayError;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::cancellation::Deadline;
@@ -120,7 +121,9 @@ impl NativeTransport {
         action_ref: &str,
         platform: &PlatformHost,
     ) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
-        use gateway_auth::native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_PATH};
+        use gateway_auth_native_proof::{
+            native_live::NATIVE_LIVE_ACTION_HEADER, native_live::NATIVE_LIVE_PATH,
+        };
         let now = gateway_worker_storage::store::now_ms()?;
         let nonce = base64url(&random::random_bytes(32)?);
         let mac = self.identity.sign_live_request(now, &nonce, action_ref)?;

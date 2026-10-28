@@ -3,19 +3,16 @@ use gateway_admin_contracts::{
     source_input as input,
 };
 use gateway_admin_keys::keys::{ApiKeyRecord, public_record};
-use gateway_auth::{
-    api_keys,
-    passkeys::{PasskeyUser, user_wire},
-    store,
-    types::{AuthResponse, invalid},
-};
-use gateway_source::{
-    error::GatewayError, source_json::SourceJson, source_serialization as source,
-};
+use gateway_auth_contracts::{types::AuthResponse, types::invalid};
+use gateway_auth_passkeys::{passkeys::PasskeyUser, passkeys::user_wire};
+use gateway_auth_primitives::{api_keys, store};
 use gateway_core::{
     query::QueryRequest, query::QuerySelector, query::QueryStore, state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::json;
 
 /// Each storage call is bounded; source list endpoints exhaust the cursor rather than truncate silently.

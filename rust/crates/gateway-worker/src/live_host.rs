@@ -7,14 +7,16 @@ mod platform;
 use crate::host::PlatformClock;
 use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
-use gateway_auth::types::{AuthConfig, AuthMethod, AuthPrincipal, AuthRequest};
+use gateway_auth_contracts::{
+    types::AuthConfig, types::AuthMethod, types::AuthPrincipal, types::AuthRequest,
+};
 use gateway_authority::{
     native_control::actor::NativeRenewalActor, native_control::actor::authenticate_client_actor,
     store::Authority,
 };
-use gateway_source::error::GatewayError;
 use gateway_contracts::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
 use gateway_live_runtime::protocol::{LiveRoute, live_route, principal_id};
+use gateway_source::error::GatewayError;
 use gateway_worker_storage::store::now_ms;
 use std::rc::Rc;
 use worker::Context;

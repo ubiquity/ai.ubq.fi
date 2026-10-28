@@ -5,38 +5,41 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
+gateway-auth-passkeys = { path = "../gateway-auth-passkeys" }
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
 gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
-gateway-contracts.workspace = true
-gateway-kv-codec.workspace = true
-gateway-source.workspace = true
-gateway-admin-contracts.workspace = true
-gateway-admin-kernel.workspace = true
-gateway-admin-keys.workspace = true
+gateway-contracts = { workspace = true }
+gateway-kv-codec = { workspace = true }
+gateway-source = { workspace = true }
+gateway-admin-contracts = { workspace = true }
+gateway-admin-kernel = { workspace = true }
+gateway-admin-keys = { workspace = true }
 gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-authority = { path = "../gateway-authority" }
-serde.workspace = true
-serde_json.workspace = true
+serde = { workspace = true }
+serde_json = { workspace = true }
 url = "=2.5.8"
+gateway-provider-protocol = { workspace = true }
 
 [dev-dependencies]
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-native-protocol = { path = "../gateway-auth-native-protocol" }
 gateway-authority-paid-admission = { path = "../gateway-authority-paid-admission" }
 gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
 gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
-gateway-auth-contracts.workspace = true
-gateway-auth-primitives.workspace = true
-gateway-auth-passport-contracts.workspace = true
-gateway-source.workspace = true
-gateway-auth-native-wire.workspace = true
-gateway-admin-test-support.workspace = true
-gateway-publication-policy.workspace = true
-gateway-providers = { path = "../gateway-providers" }
-
-[lints]
-workspace = true
+gateway-auth-contracts = { workspace = true }
+gateway-auth-primitives = { workspace = true }
+gateway-auth-passport-contracts = { workspace = true }
+gateway-source = { workspace = true }
+gateway-auth-native-wire = { workspace = true }
+gateway-admin-test-support = { workspace = true }
+gateway-publication-policy = { workspace = true }

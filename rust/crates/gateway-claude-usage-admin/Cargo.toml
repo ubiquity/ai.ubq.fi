@@ -9,8 +9,12 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-gateway-source.workspace = true
-serde_json.workspace = true
-gateway-core.workspace = true
-gateway-auth.workspace = true
-gateway-admin-runtime.workspace = true
+gateway-source = { workspace = true }
+serde_json = { workspace = true }
+gateway-core = { workspace = true }
+gateway-auth = { workspace = true }
+gateway-admin-runtime = { workspace = true }
+gateway-auth-contracts = { workspace = true }
+
+[dev-dependencies]
+gateway-local-refusal = { workspace = true }

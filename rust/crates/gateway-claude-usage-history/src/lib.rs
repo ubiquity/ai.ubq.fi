@@ -1,21 +1,21 @@
 //! Finite retained-history store/query capability. Cannot mint account or quota authority.
 mod store;
 pub mod usage;
-use gateway_auth::store as atomic;
+use gateway_auth_primitives::store as atomic;
 use gateway_claude_usage_history_records::{
     BUCKET_MS, Bucket, HOUR_MS, LIMIT, Point, RETENTION_MS, Rollup, STALE_MS, WINDOWS,
     claude_history_bucket_record_source, claude_rollup_record_source, merge_source,
     object::SourceObject, point_for_observation, retain_source, types::ClaudeAcceptedObservation,
-};
-use gateway_source::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source,
 };
 use gateway_core::{
     query::QuerySelector, query::QueryStore, source_control::encode_source_control_record,
     state::RecordMutation,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
 use serde_json::json;
 use store::{error, now, scan_selector, uuid};
 pub trait HistoryHost {

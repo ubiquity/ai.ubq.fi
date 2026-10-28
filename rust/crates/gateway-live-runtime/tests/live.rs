@@ -1,8 +1,5 @@
-use gateway_auth::{
-    crypto::Secret,
-    types::{AuthMethod, AuthPrincipal},
-};
-use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
+use gateway_auth_primitives::crypto::Secret;
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
 };
@@ -19,6 +16,7 @@ use gateway_live_runtime::{
         LiveDispatchAttempt, LiveDispatchFailure, LiveHost, LiveResponse,
     },
 };
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
@@ -806,7 +804,7 @@ fn authenticated_principal_methods_match_source() {
         principal_id(&p),
         format!(
             "bearer-sha256:{}",
-            gateway_auth::crypto::sha256_hex(b"synthetic-bearer")
+            gateway_auth_primitives::crypto::sha256_hex(b"synthetic-bearer")
         )
     );
 }

@@ -8,15 +8,16 @@ use crate::{
     store::{Authority, Transaction},
     text,
 };
-use gateway_auth::{
-    crypto::sha256_hex,
-    native_auth::{AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity},
-    types::{AuthConfig, AuthHost, AuthRequest},
+use gateway_auth_contracts::{types::AuthConfig, types::AuthHost, types::AuthRequest};
+use gateway_auth_native_proof::{
+    native_auth::AuthenticatedNativeOwner, native_auth::NativeCapability,
+    native_auth::NativeTransportIdentity,
 };
 use gateway_auth_native_wire::{
     control::{NativeControlEnvelope, NativeControlRequest},
     native_read::NATIVE_CONTROL_PATH,
 };
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_contracts::TokenSource;
 use gateway_core::state::AuthorityStore;
 use gateway_native_authority_wire::renewal::{NativeRenewalFence, NativeRenewalMode};

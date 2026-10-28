@@ -4,13 +4,15 @@ use crate::native_control::owners::RegisteredRenewalOwners;
 use crate::native_control::receiver::{NativeRenewalAuthority, RegisteredRenewalOwner};
 use crate::native_control::{NativeRenewalCancellation, NativeRenewalControl};
 use crate::native_control::{custody::validate_native_control_custody, facts, rows};
-use gateway_auth::native_auth::{
-    NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeNonceAuthority,
-    NativeTransportIdentity,
+use gateway_auth_credentials::{
+    provider_credentials::CodexNativeOwner, provider_credentials::CodexSourceAccount,
+    provider_credentials::CodexSourcePool, provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
+    provider_credentials::ManagedNativeSource, provider_credentials::codex_source_pool_key,
 };
-use gateway_auth::provider_credentials::{
-    CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
-    ManagedNativeSource, codex_source_pool_key,
+use gateway_auth_native_proof::{
+    native_auth::NativeAuthHeaders, native_auth::NativeAuthenticator,
+    native_auth::NativeCapability, native_auth::NativeNonceAuthority,
+    native_auth::NativeTransportIdentity,
 };
 use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlRequest};
 use gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
@@ -80,7 +82,7 @@ fn mapping_key() -> RecordKey {
 fn seed_owned(store: &Store, id: &NativeTransportIdentity) {
     let access = format!(
         "e30.{}.synthetic",
-        gateway_auth::crypto::base64url(br#"{"exp":1030}"#)
+        gateway_auth_primitives::crypto::base64url(br#"{"exp":1030}"#)
     );
     let mut account = CodexSourceAccount {
         account_id: "renew-account".into(),
@@ -170,8 +172,8 @@ async fn owner_proof(
     identity: &NativeTransportIdentity,
     body: &[u8],
     n: u8,
-) -> gateway_auth::native_auth::AuthenticatedNativeOwner {
-    let nonce = gateway_auth::crypto::base64url(&[n; 32]);
+) -> gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner {
+    let nonce = gateway_auth_primitives::crypto::base64url(&[n; 32]);
     let mac = identity
         .sign(NATIVE_CONTROL_PATH, 1_000_000, &nonce, body)
         .unwrap();
@@ -196,9 +198,9 @@ async fn publication_proof(
     identity: &NativeTransportIdentity,
     body: &[u8],
     n: u8,
-) -> gateway_auth::native_auth::AuthenticatedNativeOwner {
+) -> gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner {
     let path = gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
-    let nonce = gateway_auth::crypto::base64url(&[n; 32]);
+    let nonce = gateway_auth_primitives::crypto::base64url(&[n; 32]);
     let mac = identity.sign(path, 1_000_000, &nonce, body).unwrap();
     NativeAuthenticator::new(identity, &Nonces::default())
         .authenticate(
@@ -451,7 +453,7 @@ fn seed_opaque_source(store: &Store) -> TestResult {
         .ok_or("missing value")?
         .json_value()?
         .clone();
-    let mut source = gateway_auth::provider_credentials::parse_codex_source_pool(&raw)?
+    let mut source = gateway_auth_credentials::provider_credentials::parse_codex_source_pool(&raw)?
         .ok_or("missing value")?;
     source.accounts[0].access_token = Secret::new("OPAQUE_SYNTHETIC_ACCESS".into());
     source.accounts[0].updated_at_ms = 0.0;
@@ -522,13 +524,14 @@ fn opaque_old_access_adopts_only_current_usable_publication_without_a_fabricated
         service.start(&mut claim).await?;
         let access = format!(
             "e30.{}.synthetic",
-            gateway_auth::crypto::base64url(br#"{"exp":3000}"#)
+            gateway_auth_primitives::crypto::base64url(br#"{"exp":3000}"#)
         );
-        let identity_new = gateway_auth::provider_credentials::codex_credential_identity(
-            "renew-account",
-            &Secret::new(access.clone()),
-            &Secret::new(String::new()),
-        );
+        let identity_new =
+            gateway_auth_credentials::provider_credentials::codex_credential_identity(
+                "renew-account",
+                &Secret::new(access.clone()),
+                &Secret::new(String::new()),
+            );
         let fence = action.fence();
         let wire = json!({"operation":"managed_access_publish","v":2,"action_ref":action.action_ref(),"operation_id":"opaque-operation","native_owner_id":fence.native_owner_id,"owner_revision":fence.owner_revision,"source_revision":fence.source_revision,"normalized_revision":fence.normalized_revision,"publication_revision":"opaque-publication","account_id_hash":fence.account_id_hash,"previous_native_source_generation":fence.source_native_generation,"native_source_generation":"c".repeat(64),"access_generation":identity_new.native_generation_hash,"document":{"account_id":"renew-account","access_token":access,"native_refreshed_at":null}});
         let mut stale = wire.clone();
@@ -588,8 +591,9 @@ fn fixed_registry_selects_the_second_mapped_owner_without_home_or_environment_gu
             .ok_or("missing value")?
             .json_value()?
             .clone();
-        let mut source = gateway_auth::provider_credentials::parse_codex_source_pool(&raw)?
-            .ok_or("missing value")?;
+        let mut source =
+            gateway_auth_credentials::provider_credentials::parse_codex_source_pool(&raw)?
+                .ok_or("missing value")?;
         let mut second = source.accounts[0].clone();
         second.account_id = "renew-account-two".into();
         let identity_two = second.identity();
@@ -805,7 +809,7 @@ fn native_action_source_custody_is_lossless_data_not_an_operation_capability() -
         assert_eq!(serde_json::to_vec(&scalar)?, frozen);
         assert_eq!(
             facts::digest(&scalar)?,
-            gateway_auth::crypto::sha256_hex(frozen)
+            gateway_auth_primitives::crypto::sha256_hex(frozen)
         );
         assert_eq!(host.fetches.load(Ordering::SeqCst), 0);
         Ok(())

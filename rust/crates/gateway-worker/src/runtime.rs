@@ -4,11 +4,10 @@ use crate::host::PlatformHost;
 use crate::host::auth_config;
 use crate::inference;
 use gateway_admin::service::AdminService;
-use gateway_auth::{
-    resolve::AuthService,
-    types::{AuthConfig, AuthPrincipal, AuthRequest, AuthResponse},
+use gateway_auth::resolve::AuthService;
+use gateway_auth_contracts::{
+    types::AuthConfig, types::AuthPrincipal, types::AuthRequest, types::AuthResponse,
 };
-use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_contracts::identity::RequestId;
 use gateway_core::state::AuthorityStore;
 use gateway_live_runtime::{
@@ -19,6 +18,7 @@ use gateway_schema::{
     catalog_cache::{CacheState, CatalogResponse, LoadedCatalog},
     catalog_store,
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body;
 use gateway_worker_platform::cancellation::Cancellation;
@@ -94,7 +94,7 @@ pub async fn route(
         None
     };
     if let Some(route) = live_route(&auth_request.method, &path) {
-        let principal = principal.ok_or_else(gateway_auth::types::unauthorized)?;
+        let principal = principal.ok_or_else(gateway_auth_contracts::types::unauthorized)?;
         return live_response(
             request,
             route,
@@ -117,14 +117,14 @@ pub async fn route(
     if path == "/uos/agent-messages" {
         return crate::agent_messages::handle(
             request,
-            &principal.ok_or_else(gateway_auth::types::unauthorized)?,
+            &principal.ok_or_else(gateway_auth_contracts::types::unauthorized)?,
             &store,
         )
         .await
         .map(Into::into);
     }
     if let Some(target) = terminal_target(&path, &request)? {
-        let principal = principal.ok_or_else(gateway_auth::types::unauthorized)?;
+        let principal = principal.ok_or_else(gateway_auth_contracts::types::unauthorized)?;
         return terminal_response(
             request,
             principal,
@@ -294,7 +294,7 @@ async fn administrative_route(
             gateway_authority::native_control::actor::principal_id(&principal),
         ),
         key_id: match &principal.method {
-            gateway_auth::types::AuthMethod::KvApiKey { key_id, .. } => {
+            gateway_auth_contracts::types::AuthMethod::KvApiKey { key_id, .. } => {
                 Some(gateway_contracts::identity::ApiKeyId(key_id.clone()))
             }
             _ => None,
@@ -595,7 +595,7 @@ fn decorate_api_policy(
     response: &mut Response,
     principal: &AuthPrincipal,
 ) -> Result<(), GatewayError> {
-    if let gateway_auth::types::AuthMethod::KvApiKey { policy, .. } = &principal.method
+    if let gateway_auth_contracts::types::AuthMethod::KvApiKey { policy, .. } = &principal.method
         && policy.usage_limit_requests != -1
     {
         response

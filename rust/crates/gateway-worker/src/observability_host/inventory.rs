@@ -1,18 +1,18 @@
 //! Passive provider metadata over the same request-owned authority; never refreshes credentials.
 use super::RequestHost;
 use gateway_admin_runtime::{capabilities::Context, claude, claude_access};
-use gateway_auth::{
-    crypto::sha256_hex,
-    provider_credentials::{self as codex, CodexSourceAccount},
+use gateway_auth_credentials::{
+    provider_credentials as codex, provider_credentials::CodexSourceAccount,
 };
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_claude_usage_history_records::types::CredentialKind;
-use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::state::{AuthorityStore, RevisionCheck};
 use gateway_observability::{
     host_types::*,
     types::{HealthProvider, HealthTarget},
 };
 use gateway_schema::selection::ProviderSelection;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::collections::BTreeSet;
 
@@ -105,7 +105,8 @@ impl RequestHost {
         {
             configured.insert(HealthProvider::Metered);
         }
-        let selection_key = gateway_auth::store::key(json!(["uos_ai", "provider_selection", "v1"]));
+        let selection_key =
+            gateway_auth_primitives::store::key(json!(["uos_ai", "provider_selection", "v1"]));
         let selection = self
             .store
             .read(&selection_key)

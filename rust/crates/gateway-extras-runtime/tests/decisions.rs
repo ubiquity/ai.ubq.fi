@@ -1,8 +1,5 @@
-use gateway_auth::{
-    api_keys::ApiKeyPolicy,
-    types::{AuthMethod, AuthPrincipal},
-};
-use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_auth_contracts::types::{AuthMethod, AuthPrincipal};
+use gateway_auth_primitives::api_keys::ApiKeyPolicy;
 use gateway_contracts::{
     identity::PrincipalId, identity::RequestContext, identity::RequestId, model::ModelId,
 };
@@ -12,7 +9,8 @@ use gateway_extras_contract::types::{
 };
 use gateway_extras_runtime::ExtrasRuntime;
 use gateway_extras_runtime_test_support::fixture::Memory;
-use gateway_providers::types::PrepareOptions;
+use gateway_provider_protocol::types::PrepareOptions;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
@@ -79,7 +77,7 @@ impl ExtrasHost for Host {
     ) -> Result<Option<PrepareOptions>, GatewayError> {
         assert_eq!(provider, ExtrasProvider::Decisions);
         Ok(self.configured.get().then(|| PrepareOptions {
-            auth: gateway_providers::types::AuthMaterial {
+            auth: gateway_provider_protocol::types::AuthMaterial {
                 secret: "fixture-decision-key".into(),
                 ..Default::default()
             },
@@ -168,7 +166,7 @@ fn request(body: Value) -> Result<ExtrasRequest<'static>, GatewayError> {
     static CONTEXT: std::sync::LazyLock<RequestContext> =
         std::sync::LazyLock::new(|| RequestContext {
             request_id: RequestId("decision-original".into()),
-            principal: PrincipalId("api-key:fixture".into()),
+            principal: PrincipalId::from_scalar("api-key:fixture".into()),
             key_id: None,
             route: "decisions".into(),
             started_at_ms: 1_000_000,
@@ -197,7 +195,7 @@ fn actual_extras_dispatch_uses_one_fixed_decisions_call_and_terminal_usage() -> 
         Some("openrouter")
     );
     assert_eq!(
-        result.body.deserialize::<Value>()?["answers"],
+        serde_json::from_slice::<Value>(result.body.as_bytes())?["answers"],
         json!({"go":true})
     );
     assert_eq!(

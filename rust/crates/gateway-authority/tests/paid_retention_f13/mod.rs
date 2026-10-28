@@ -19,7 +19,7 @@ use gateway_contracts::{identity::ApiKeyId, identity::PaidAttemptId, provider::U
 use gateway_contracts::{identity::RequestId, provider::PaidProvider};
 use gateway_core::state::AuthorityStore;
 use gateway_kv_codec::key::RecordKey;
-use gateway_providers::types::ClientSurface;
+use gateway_provider_protocol::types::ClientSurface;
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
 use gateway_routing_runtime_test_support::{authority::TestAuthority, authority::authority};
 use gateway_routing_runtime_test_support::{authority::policy, authority::run};

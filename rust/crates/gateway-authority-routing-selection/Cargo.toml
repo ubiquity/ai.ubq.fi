@@ -22,6 +22,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-contracts.workspace = true
 gateway-kv-codec.workspace = true
 gateway-source.workspace = true

@@ -1,11 +1,11 @@
-use gateway_source::source_json::SourceJson;
-use gateway_providers::types::ClientSurface;
+use gateway_provider_protocol::types::ClientSurface;
 use gateway_routing_runtime::policy;
 use gateway_routing_runtime_test_support::{
     input::{NOW, input},
     source_catalog::Collator,
 };
 use gateway_schema::selection::ProviderSelection;
+use gateway_source::source_json::SourceJson;
 use serde_json::json;
 #[test]
 fn decision_models_cannot_enter_either_text_wire() -> Result<(), Box<dyn std::error::Error>> {

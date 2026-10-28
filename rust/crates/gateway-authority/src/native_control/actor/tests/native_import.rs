@@ -4,17 +4,17 @@ use crate::native_control::{
     NativeRenewalCancellation, actor, receiver::NativeRenewalAuthority,
     receiver::RegisteredRenewalOwner,
 };
-use gateway_auth::{
-    crypto::{base64url, sha256_hex},
-    native_auth::{
-        NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeNonceAuthority,
-        NativeTransportIdentity,
-    },
-    native_import::*,
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
-    },
+use gateway_auth_credentials::{
+    provider_credentials::CodexNativeOwner, provider_credentials::CodexSourceAccount,
+    provider_credentials::CodexSourcePool, provider_credentials::codex_source_pool_key,
 };
+use gateway_auth_native_contracts::native_import::*;
+use gateway_auth_native_proof::{
+    native_auth::NativeAuthHeaders, native_auth::NativeAuthenticator,
+    native_auth::NativeCapability, native_auth::NativeNonceAuthority,
+    native_auth::NativeTransportIdentity,
+};
+use gateway_auth_primitives::{crypto::base64url, crypto::sha256_hex};
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };
@@ -65,7 +65,7 @@ fn seed(store: &Store, id: &NativeTransportIdentity) -> String {
             key_fingerprint: id.key_fingerprint().into(),
         },
     );
-    let runtime = gateway_auth::store::key(json!(["uos_ai", "runtime_config", "v2"]));
+    let runtime = gateway_auth_primitives::store::key(json!(["uos_ai", "runtime_config", "v2"]));
     store.seed(
         keys::paid_control_config(),
         "config-1",
@@ -94,8 +94,8 @@ fn seed(store: &Store, id: &NativeTransportIdentity) -> String {
             generation_hash: sha256_hex(b"native-generation"),
             native_refreshed_at: None,
             external_user_id: None,
-            managed_source: Some(gateway_auth::provider_credentials::ManagedNativeSource {
-                v: gateway_auth::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
+            managed_source: Some(gateway_auth_credentials::provider_credentials::ManagedNativeSource {
+                v: gateway_auth_credentials::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
                 generation_hash: sha256_hex(b"physical-native-generation"),
             }),
         }),

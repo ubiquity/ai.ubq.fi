@@ -17,7 +17,7 @@ fn second_account(f: &Fixture) {
     extra["native_owner"]["codex_home"] = json!("/tmp/native-import-other-owner");
     extra["native_owner"]["managed_source"]["generation_hash"] =
         json!(sha256_hex(b"other-physical-source"));
-    let identity = gateway_auth::provider_credentials::codex_credential_identity(
+    let identity = gateway_auth_credentials::provider_credentials::codex_credential_identity(
         "other-existing-account",
         &Secret::new("OTHER_SYNTHETIC_ACCESS".into()),
         &Secret::new(String::new()),

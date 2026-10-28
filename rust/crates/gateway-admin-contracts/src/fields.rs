@@ -1,9 +1,9 @@
 //! Source-compatible scalar and query field parsers; decoded values carry no authority.
 use crate::source_input as source_body;
-use gateway_auth::types::invalid;
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_auth_contracts::types::invalid;
 use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_profile_values::coercion::js_number;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::Value;
 use std::collections::BTreeMap;
 

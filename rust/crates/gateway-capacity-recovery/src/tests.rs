@@ -1,8 +1,9 @@
 use super::*;
-use gateway_auth::provider_credentials::CodexSourceAccount;
-use gateway_auth::provider_credentials::CodexSourcePool;
-use gateway_auth::provider_credentials::codex_source_pool_key;
-use gateway_auth::{crypto::Secret, crypto::base64url, provider_credentials::CodexNativeOwner};
+use gateway_auth_credentials::provider_credentials::CodexNativeOwner;
+use gateway_auth_credentials::provider_credentials::CodexSourceAccount;
+use gateway_auth_credentials::provider_credentials::CodexSourcePool;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_primitives::{crypto::Secret, crypto::base64url};
 use gateway_authority_capacity::CodexCapacitySample;
 use gateway_authority_capacity::{AcceptedCodexCapacityObservations, CapacityOperations};
 use gateway_authority_capacity::{CodexCapacityAccountRef, CodexCapacityObservationFence};
@@ -34,7 +35,7 @@ impl AuthorityClock for Clock {
 struct Tokens(Host);
 impl TokenSource for Tokens {
     fn next_token(&self) -> Result<String, GatewayError> {
-        gateway_auth::crypto::uuid_from_random(&self.0.random_bytes(16)?)
+        gateway_auth_primitives::crypto::uuid_from_random(&self.0.random_bytes(16)?)
     }
 }
 #[derive(Clone, Copy)]

@@ -1,13 +1,14 @@
 //! Real same-store finite phase handler; no private proof is decoded from DATA.
 use super::*;
-use gateway_auth::native_import::{
-    authority::{
-        ImportAuthorityClaimMode, ImportAuthorityCommand as Command,
-        ImportAuthorityRequestData as Request, ImportAuthorityStateData as State,
-        result::{ImportAuthorityReplyData as Reply, ImportAuthorityResult as ResultData},
-    },
-    publication::NativeImportPublicationDisposition,
+use gateway_auth_native_contracts::{
+    native_import::authority::ImportAuthorityClaimMode,
+    native_import::authority::ImportAuthorityCommand as Command,
+    native_import::authority::ImportAuthorityRequestData as Request,
+    native_import::authority::ImportAuthorityStateData as State,
+    native_import::authority::result::ImportAuthorityReplyData as Reply,
+    native_import::authority::result::ImportAuthorityResult as ResultData,
 };
+use gateway_auth_native_protocol::native_import::publication::NativeImportPublicationDisposition;
 
 impl Fixture {
     async fn phase_preparation(&self) -> NativeImportMetadata {
@@ -146,8 +147,8 @@ fn real_finite_claim_start_and_bare_b1_preserve_one_original_lifetime() {
             .await
             .unwrap();
         let wire =
-            gateway_auth::native_import::authority::ImportCustodyStartedWire::parse(&body).unwrap();
-        gateway_auth::native_import::authority::ImportCustodyStartedReplyData::parse_for(
+            gateway_auth_native_contracts::native_import::authority::ImportCustodyStartedWire::parse(&body).unwrap();
+        gateway_auth_native_contracts::native_import::authority::ImportCustodyStartedReplyData::parse_for(
             &reply, &wire,
         )
         .unwrap();
@@ -222,7 +223,7 @@ fn phase_peer_body_replacement_revocation_and_expiry_cannot_create_effects() {
                     .rows
                     .lock()
                     .unwrap()
-                    .remove(&gateway_auth::passkeys::key("users", "user-fixture").0);
+                    .remove(&gateway_auth_passkeys::passkeys::key("users", "user-fixture").0);
             }
             if failure == 2 {
                 f.store.now.store(state.deadline_ms, Ordering::SeqCst);

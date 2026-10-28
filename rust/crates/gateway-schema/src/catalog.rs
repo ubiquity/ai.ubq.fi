@@ -1,8 +1,10 @@
 //! Catalog assembly consumes observations; network, authentication and refresh are adapter-owned.
 use crate::metadata::{MetadataHint, MetadataSources, ResolvedMetadata, resolve_metadata};
 use crate::selection::{ModelWhitelist, ProviderSelection};
+use crate::snapshot::ModelSnapshot;
 use crate::{aliases::FLASH_ORDER, model_control as c, reasoning::ModelReasoning};
-use crate::{snapshot::ModelSnapshot, source_request::error::SourceRequestError};
+use gateway_contracts::model::ModelId;
+use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
@@ -21,7 +23,7 @@ pub struct CatalogInput {
     pub snapshot: Option<ModelSnapshot>,
     pub full_snapshot: Option<ModelSnapshot>,
     pub providers: BTreeMap<String, ProviderCatalog>,
-    pub enrichment: BTreeMap<gateway_contracts::model::ModelId, MetadataHint>,
+    pub enrichment: BTreeMap<ModelId, MetadataHint>,
     pub selection: Option<ProviderSelection>,
     pub whitelist: Option<ModelWhitelist>,
 }
@@ -50,7 +52,7 @@ impl CatalogInput {
     }
     pub fn metadata(
         &self,
-        id: &gateway_contracts::model::ModelId,
+        id: &ModelId,
         codex: Option<&SourceJson>,
         provider: Option<MetadataHint>,
         subscription: bool,
@@ -182,7 +184,7 @@ pub fn filter_whitelist(
             };
             id.is_some_and(|id| {
                 let id = if native { c::trim(&id) } else { id };
-                ModelWhitelist::permits(whitelist, &gateway_contracts::model::ModelId::from_source(id))
+                ModelWhitelist::permits(whitelist, &ModelId::from_source(id))
             })
         })
         .collect()
@@ -216,7 +218,7 @@ impl RequestModelMetadata {
 }
 pub fn request_model_metadata(
     input: &CatalogInput,
-    model: &gateway_contracts::model::ModelId,
+    model: &ModelId,
     responses: bool,
     now_ms: i64,
 ) -> RequestModelMetadata {
@@ -328,7 +330,7 @@ pub fn request_model_metadata(
     }
 }
 pub fn validate_model_available(
-    model: &gateway_contracts::model::ModelId,
+    model: &ModelId,
     responses: bool,
     metadata: &RequestModelMetadata,
 ) -> Result<(), SourceRequestError> {

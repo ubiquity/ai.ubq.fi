@@ -1,8 +1,7 @@
 use gateway_admin_runtime::claude::{self, AccountBinding};
-use gateway_auth::{
-    types::AuthHost,
-    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
-    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
+use gateway_auth_contracts::{
+    types::AuthHost, upstream::AuthUpstreamRequest, upstream::AuthUpstreamResponse,
+    webauthn::CosePublicKey, webauthn::SignatureInput, webauthn::WebAuthnCrypto,
 };
 use gateway_claude_runtime::host::ClaudePoolHost;
 use gateway_claude_runtime_test_support::fixture::{Host, NOW, Store, account, run, seed};
@@ -13,11 +12,11 @@ use gateway_claude_usage_runtime::{
     collect::{self, Refresh},
     fetch::{self, Response, ResultData, UsageHost},
 };
+use gateway_core::state::StoredRecord;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_core::state::StoredRecord;
 use serde::Deserialize;
 use serde_json::json;
 use std::{
@@ -131,7 +130,7 @@ impl UsageHost for Fixture {
     }
 }
 fn body(
-    response: gateway_auth::types::AuthResponse,
+    response: gateway_auth_contracts::types::AuthResponse,
 ) -> Result<SourceJson, Box<dyn std::error::Error>> {
     Ok(SourceJson::parse_bytes(&response.body.to_bytes()?)?)
 }
@@ -200,7 +199,7 @@ fn inference_recency_is_independent_and_usage_failure_never_mints_pool_proof() -
         &|_| None,
     )
     .ok_or("observation absent")?;
-    run(gateway_claude_runtime::quota::record_usage(
+    run(gateway_claude_usage_quota::record_usage(
         &store,
         &host,
         &a,
@@ -453,7 +452,7 @@ fn older_attempts_and_snapshots_do_not_replace_newer_success_and_restart_retains
             &|_| None,
         )
         .ok_or("observation absent")?;
-        run(gateway_claude_runtime::quota::record_usage(
+        run(gateway_claude_usage_quota::record_usage(
             &store,
             &host,
             &a,
@@ -487,7 +486,7 @@ fn a_refresh_committing_before_claim_is_found_by_the_second_freshness_check() ->
         gateway_claude_runtime::persistence::quota_key(&a),
         Box::new(move || {
             let h = Host::new(&s);
-            let result = run(gateway_claude_runtime::quota::record_usage(
+            let result = run(gateway_claude_usage_quota::record_usage(
                 &s,
                 &h,
                 &binding,
@@ -545,7 +544,7 @@ fn pristine_bootstrap_returns_empty_before_legacy_workspace_and_tombstone_preven
     let read = std::rc::Rc::new(Cell::new(false));
     let mark = read.clone();
     *store.after_read.borrow_mut() = Some((
-        gateway_auth::store::key(json!(["ubq_ai", "claude_code_workspace"])),
+        gateway_auth_primitives::store::key(json!(["ubq_ai", "claude_code_workspace"])),
         Box::new(move || mark.set(true)),
     ));
     let empty = run(claude::load_roster(

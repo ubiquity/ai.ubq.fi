@@ -1,10 +1,11 @@
 use super::rows::fail;
 use super::rows::session_key;
 use crate::store::Transaction;
-use gateway_auth::crypto::sha256_hex;
-use gateway_auth::provider_credentials::{
-    codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
+use gateway_auth_credentials::{
+    provider_credentials::codex_access_expiry_ms, provider_credentials::codex_source_pool_key,
+    provider_credentials::parse_codex_source_pool,
 };
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_actor_records::legacy::StoredNativeActor as Actor;
 use gateway_authority_api_protocol::{
     ApiKeyPolicy, ApiReservation, ApiUsageRequest, ApiUsageState,
@@ -98,8 +99,8 @@ pub(super) async fn read_control<S: AuthorityStore, I: TokenSource>(
     actor: &Actor,
     request_id: &str,
     expected_attempt: Option<&str>,
-    identity: &gateway_auth::native_auth::NativeTransportIdentity,
-    current_config: &gateway_auth::types::AuthConfig,
+    identity: &gateway_auth_native_proof::native_auth::NativeTransportIdentity,
+    current_config: &gateway_auth_contracts::types::AuthConfig,
 ) -> Result<ControlFacts, GatewayError> {
     let owner: PaidControlOwner = tx
         .read(&keys::paid_control_owner())
@@ -248,8 +249,8 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
     actor: &Actor,
     request_id: &str,
     expected_attempt: Option<&str>,
-    identity: &gateway_auth::native_auth::NativeTransportIdentity,
-    current_config: &gateway_auth::types::AuthConfig,
+    identity: &gateway_auth_native_proof::native_auth::NativeTransportIdentity,
+    current_config: &gateway_auth_contracts::types::AuthConfig,
     registered: &super::receiver::RegisteredRenewalOwner,
 ) -> Result<Facts, GatewayError> {
     let control = read_control(

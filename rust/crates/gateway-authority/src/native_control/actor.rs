@@ -1,12 +1,14 @@
 //! Original-request identity, rechecked from fixed source rows. Never a native operation grant.
 use crate::store::{Authority, Transaction};
-use gateway_auth::api_keys;
-use gateway_auth::crypto::{decode_base64url, sha256_hex};
-use gateway_auth::passkeys::{self, PasskeySession, PasskeyUser};
 use gateway_auth::resolve::AuthService;
-use gateway_auth::session_index;
-use gateway_auth::types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest};
-use gateway_auth::upstream;
+use gateway_auth_contracts::upstream;
+use gateway_auth_contracts::{
+    types::AuthConfig, types::AuthHost, types::AuthMethod, types::AuthPrincipal, types::AuthRequest,
+};
+use gateway_auth_passkeys::session_index;
+use gateway_auth_passkeys::{passkeys, passkeys::PasskeySession, passkeys::PasskeyUser};
+use gateway_auth_primitives::api_keys;
+use gateway_auth_primitives::{crypto::decode_base64url, crypto::sha256_hex};
 use gateway_authority_actor_records::{
     legacy::{ConfigMethod, SourceActor, StoredNativeActor, config_digest, policy_digest},
     scope::NativeActorScope,
@@ -604,7 +606,7 @@ pub fn principal_id(principal: &AuthPrincipal) -> String {
     }
 }
 fn runtime_key() -> RecordKey {
-    gateway_auth::store::key(json!(["uos_ai", "runtime_config", "v2"]))
+    gateway_auth_primitives::store::key(json!(["uos_ai", "runtime_config", "v2"]))
 }
 fn fail() -> GatewayError {
     GatewayError::unavailable(

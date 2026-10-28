@@ -12,10 +12,11 @@ use super::rows::conflict;
 use super::rows::fail;
 use crate::native_live::mapping_key;
 use crate::store::Transaction;
-use gateway_auth::crypto::sha256_hex;
-use gateway_auth::provider_credentials::{
-    codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
+use gateway_auth_credentials::{
+    provider_credentials::codex_access_expiry_ms, provider_credentials::codex_source_pool_key,
+    provider_credentials::parse_codex_source_pool,
 };
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_actor_records::legacy::StoredNativeActor;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;

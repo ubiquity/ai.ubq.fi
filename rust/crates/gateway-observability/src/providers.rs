@@ -8,10 +8,10 @@ use crate::{
     types::{HealthProvider, HealthTarget, ObservabilityHost},
 };
 use gateway_admin_runtime::capabilities::Context;
-use gateway_auth::types::AuthResponse;
+use gateway_auth_contracts::types::AuthResponse;
 use gateway_claude_usage_protocol::readback::quota as quota_readback;
-use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::query::QueryStore;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
 #[derive(Clone)]

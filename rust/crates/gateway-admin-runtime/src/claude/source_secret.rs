@@ -1,5 +1,5 @@
 //! Claude record data, not a validated token, header or runtime permission.
-use gateway_auth::crypto::Secret;
+use gateway_auth_primitives::crypto::Secret;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 
 #[derive(Eq, PartialEq)]

@@ -1,7 +1,7 @@
 //! Source analytics-only chart observations. These keys never enter routing/reset state.
 use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
 use gateway_admin_runtime::capabilities::Context;
-use gateway_auth::types::AuthResponse;
+use gateway_auth_contracts::types::AuthResponse;
 use gateway_capacity_projection::scalars::safe_i64;
 use gateway_capacity_projection::{
     math::bucketed,

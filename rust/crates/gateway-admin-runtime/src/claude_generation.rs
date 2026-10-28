@@ -2,7 +2,7 @@
 use std::{cell::Cell, rc::Rc};
 
 use crate::claude::{AccountBinding, Credential, CredentialKind};
-use gateway_auth::crypto::sha256_hex;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };

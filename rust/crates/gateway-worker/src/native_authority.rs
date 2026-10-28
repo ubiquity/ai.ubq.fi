@@ -3,10 +3,10 @@ pub(crate) mod import_dispatch;
 use crate::host::PlatformClock;
 use crate::host::PlatformTokens;
 use crate::native_host::NativeBindings;
-use gateway_auth::{
-    native_auth::{NativeAuthHeaders, NativeAuthenticator, NativeCapability},
-    native_replay::StoreNonceAuthority,
+use gateway_auth_native_proof::{
+    native_auth::NativeAuthHeaders, native_auth::NativeAuthenticator, native_auth::NativeCapability,
 };
+use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::{
     NATIVE_CONTROL_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER,
     NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH, NATIVE_RESPONSE_MAC_HEADER,
@@ -30,7 +30,7 @@ use worker::{Env, Method, Request, Response};
 
 pub fn is_path(path: &str) -> bool {
     path == NATIVE_RENEWAL_AUTHORITY_PATH
-        || path == gateway_auth::native_live::NATIVE_LIVE_AUTHORITY_PATH
+        || path == gateway_auth_native_proof::native_live::NATIVE_LIVE_AUTHORITY_PATH
 }
 struct Incoming(Cancellation);
 impl NativeRenewalCancellation for Incoming {
@@ -137,7 +137,7 @@ pub async fn handle(
         // The authenticator still applies each complete typed operation's old/new limit.
         gateway_auth_native_wire::native_read::NATIVE_MAX_BODY_BYTES
     } else {
-        gateway_auth::native_live::NATIVE_LIVE_AUTHORITY_MAX_BYTES
+        gateway_auth_native_proof::native_live::NATIVE_LIVE_AUTHORITY_MAX_BYTES
     };
     let bytes = request_bytes(&mut request, maximum).await?;
     let store = RemoteAuthorityStore::from_env(env)?;
@@ -145,11 +145,13 @@ pub async fn handle(
     let authority = Authority::with_clock(store.clone(), PlatformTokens, PlatformClock);
     let config = crate::host::auth_config(env);
     let now = now_ms()?;
-    if path == gateway_auth::native_live::NATIVE_LIVE_AUTHORITY_PATH {
-        let proof =
-            gateway_auth::native_live::NativeLiveAuthenticator::new(&transport.identity, &replay)
-                .authenticate_authority(headers.borrowed(), &bytes, now)
-                .await?;
+    if path == gateway_auth_native_proof::native_live::NATIVE_LIVE_AUTHORITY_PATH {
+        let proof = gateway_auth_native_proof::native_live::NativeLiveAuthenticator::new(
+            &transport.identity,
+            &replay,
+        )
+        .authenticate_authority(headers.borrowed(), &bytes, now)
+        .await?;
         let receiver = gateway_authority::native_live::NativeLiveAuthority::configured(
             &authority,
             &transport.identity,
@@ -246,7 +248,7 @@ pub async fn handle(
 
 async fn execute_renewal<C: NativeRenewalCancellation>(
     receiver: &NativeRenewalAuthority<'_, RemoteAuthorityStore, PlatformTokens, C>,
-    identity: &gateway_auth::native_auth::NativeTransportIdentity,
+    identity: &gateway_auth_native_proof::native_auth::NativeTransportIdentity,
     replay: &StoreNonceAuthority<'_, RemoteAuthorityStore>,
     bytes: &[u8],
 ) -> Result<RenewalResponse, GatewayError> {

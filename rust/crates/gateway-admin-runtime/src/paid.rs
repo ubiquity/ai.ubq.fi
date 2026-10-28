@@ -1,10 +1,8 @@
 use crate::{AdminRuntime, capabilities::RuntimeCapabilities, store};
 use gateway_admin_contracts::{operations::PaidKeyFields, source_input as input};
 use gateway_admin_keys::keys::current_record;
-use gateway_auth::{
-    store::{check, commit, put},
-    types::{AuthHost, conflict, invalid},
-};
+use gateway_auth_contracts::{types::AuthHost, types::conflict, types::invalid};
+use gateway_auth_primitives::{store::check, store::commit, store::put};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_records::{PaidAttempt, PaidWindow, ReconciliationGate};
 use gateway_contracts::{identity::MAX_SAFE_INTEGER, lifecycle::BillingState, model::ModelId};
@@ -169,7 +167,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         id: &str,
     ) -> Result<Vec<RevisionCheck>, GatewayError> {
         let now = self.host.now_ms();
-        let id_key = gateway_auth::api_keys::id_key(id);
+        let id_key = gateway_auth_primitives::api_keys::id_key(id);
         let id_row = self.store.read(&id_key).await?;
         let value = current_record(&id_key, id_row.as_ref(), now)?
             .ok_or_else(|| GatewayError::new(404, "Not found", Some("not_found")))?;
@@ -356,7 +354,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         prepared: &[RevisionCheck],
     ) -> Result<(), GatewayError> {
         let guard = self.deletion_fence(id, prepared).await?;
-        let id_key = gateway_auth::api_keys::id_key(id);
+        let id_key = gateway_auth_primitives::api_keys::id_key(id);
         if self.store.read(&id_key).await?.is_some() {
             return Err(conflict("API key deletion ownership changed"));
         }
@@ -428,7 +426,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             return Ok(());
         }
         let guard = self.deletion_fence(id, prepared).await?;
-        let id_key = gateway_auth::api_keys::id_key(id);
+        let id_key = gateway_auth_primitives::api_keys::id_key(id);
         let id_row = self.store.read(&id_key).await?;
         let Some(key_value) = current_record(&id_key, id_row.as_ref(), self.host.now_ms())? else {
             return Ok(());
@@ -509,7 +507,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     self.store,
                     vec![
                         guard.clone(),
-                        check(&gateway_auth::api_keys::id_key(id), None),
+                        check(&gateway_auth_primitives::api_keys::id_key(id), None),
                         check(&entry.key, Some(&entry.record)),
                     ],
                     vec![RecordMutation::Delete { key: entry.key }],

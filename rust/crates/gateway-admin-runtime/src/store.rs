@@ -1,15 +1,16 @@
-use gateway_auth::{crypto::uuid_from_random, types::AuthHost};
-use gateway_source::error::GatewayError;
+use gateway_auth_contracts::types::AuthHost;
+use gateway_auth_primitives::crypto::uuid_from_random;
 use gateway_core::{
     query::{QueryEntry, QueryRequest, QuerySelector, QueryStore},
     state::{AuthorityStore, StoredRecord},
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
 pub fn key(parts: Value) -> RecordKey {
-    gateway_auth::store::key(parts)
+    gateway_auth_primitives::store::key(parts)
 }
 pub fn revision<H: AuthHost>(host: &H) -> Result<String, GatewayError> {
     uuid_from_random(&host.random_bytes(16)?)

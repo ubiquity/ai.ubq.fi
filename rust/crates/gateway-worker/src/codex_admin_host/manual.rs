@@ -4,9 +4,9 @@ use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
-use gateway_auth::{
-    provider_credentials::{CodexSourceAccount, read_codex_source_pool},
-    types::{AuthConfig, AuthResponse},
+use gateway_auth_contracts::{types::AuthConfig, types::AuthResponse};
+use gateway_auth_credentials::{
+    provider_credentials::CodexSourceAccount, provider_credentials::read_codex_source_pool,
 };
 use gateway_authority::{
     manual_reset::ManualResetPreparation, manual_reset::ManualResetTarget,

@@ -3,7 +3,7 @@ use super::super::rows::{GenerationEffect, OperationRow, Phase};
 use super::custody_session::ImportCustodyStartedRequest;
 use super::*;
 use crate::store::Transaction;
-use gateway_auth::crypto::sha256_hex;
+use gateway_auth_primitives::crypto::sha256_hex;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeImportBinding {

@@ -68,7 +68,7 @@ pub struct DispatchTicket {
 #[derive(Clone, Debug)]
 pub struct ImageChildAttempt {
     scope: ChildScope,
-    pub request: gateway_providers::types::PreparedRequest,
+    pub request: gateway_provider_protocol::types::PreparedRequest,
     pub credential: CredentialFence,
 }
 impl ImageChildAttempt {
@@ -191,7 +191,7 @@ impl<
                 .await?;
             let mut input = self.input.clone();
             input.raw = body.clone();
-            input.surface = gateway_providers::types::ClientSurface::Responses;
+            input.surface = gateway_provider_protocol::types::ClientSurface::Responses;
             let request = crate::wire::prepare(
                 &input,
                 &child.nonce,
@@ -340,8 +340,8 @@ impl<
             || self.host.cancelled()
             || matches!(
                 failure.failure,
-                gateway_providers::policy::HopFailure::Cancelled
-                    | gateway_providers::policy::HopFailure::Deadline
+                gateway_provider_policy::policy::HopFailure::Cancelled
+                    | gateway_provider_policy::policy::HopFailure::Deadline
             )
         {
             return Ok(RefusalDecision::Abort);

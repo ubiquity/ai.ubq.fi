@@ -6,7 +6,7 @@ use gateway_admin_test_support::{
     runtime_host::{Host, run},
     runtime_store::Store,
 };
-use gateway_auth::types::{AuthConfig, AuthRequest};
+use gateway_auth_contracts::{types::AuthConfig, types::AuthRequest};
 use gateway_contracts::model::ModelId;
 use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation};
 use serde_json::json;
@@ -69,7 +69,7 @@ fn deletion_refuses_pending_markers_and_returns_actual_guard_fences() {
             .is_some()
     );
     store.rows.borrow_mut().remove(
-        &gateway_auth::store::key(json!([
+        &gateway_auth_primitives::store::key(json!([
             "uos_ai",
             "paid_fallback",
             "v3",
@@ -178,7 +178,7 @@ fn deletion_cleans_settled_state_then_owned_history_and_retains_ordinary_guard()
     let outcome = run(store.commit(AtomicTransition {
         checks: fences.clone(),
         mutations: vec![RecordMutation::Delete {
-            key: gateway_auth::api_keys::id_key("key"),
+            key: gateway_auth_primitives::api_keys::id_key("key"),
         }],
     }))
     .unwrap();
@@ -254,7 +254,7 @@ fn local_development_deletion_releases_only_owner_marker_and_completes_after_abs
     assert!(guard["local_deletion"]["owner"].is_null());
     assert!(guard["local_deletion"]["completed_at_ms"].is_null());
     store.rows.borrow_mut().remove(
-        &gateway_auth::store::key(json!([
+        &gateway_auth_primitives::store::key(json!([
             "uos_ai",
             "paid_fallback",
             "v3",
@@ -279,7 +279,7 @@ fn local_development_deletion_releases_only_owner_marker_and_completes_after_abs
     run(store.commit(AtomicTransition {
         checks: next.clone(),
         mutations: vec![RecordMutation::Delete {
-            key: gateway_auth::api_keys::id_key(id),
+            key: gateway_auth_primitives::api_keys::id_key(id),
         }],
     }))
     .unwrap();
@@ -296,7 +296,9 @@ fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() -> TestR
     let config = RuntimeConfig::default();
     let runtime = runtime(&store, &host, &config);
     let auth = AuthConfig {
-        admin_tokens: vec![gateway_auth::crypto::Secret::new("fixture-admin".into())],
+        admin_tokens: vec![gateway_auth_primitives::crypto::Secret::new(
+            "fixture-admin".into(),
+        )],
         ..AuthConfig::default()
     };
     let admin = gateway_admin::service::AdminService {

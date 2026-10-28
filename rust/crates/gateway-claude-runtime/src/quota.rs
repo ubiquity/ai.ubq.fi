@@ -1,16 +1,18 @@
 //! Current-account quota outcome authority; codecs are defined in the data owner.
 use gateway_admin_runtime::claude::AccountBinding;
-use gateway_auth::types::AuthHost;
+use gateway_auth_contracts::types::AuthHost;
 use gateway_claude_usage_quota::{
     AUTH_INVALID_PROOF_TTL_MS, CONFIG_COOLDOWN_MS, Exhaustion, MIN_BLOCK_MS, PoolProof, QuotaError,
     QuotaObservation, QuotaState, RESET_MARGIN_MS, TRANSIENT_COOLDOWN_MS,
 };
-use gateway_source::js_string::JsString16;
 use gateway_contracts::model::ModelId;
 use gateway_core::state::AuthorityStore;
+use gateway_source::js_string::JsString16;
 use std::collections::BTreeMap;
 fn safe_integer(n: f64) -> bool {
-    n.is_finite() && n.fract() == 0.0 && n.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64
+    n.is_finite()
+        && n.fract() == 0.0
+        && n.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64
 }
 pub(crate) struct Outcome<'a> {
     pub model: &'a ModelId,
@@ -193,7 +195,7 @@ pub async fn record_usage<S: AuthorityStore, H: AuthHost>(
     observation: Option<&QuotaObservation>,
     usage: &gateway_claude_usage_protocol::state::UsageState,
 ) -> Result<Option<QuotaState>, gateway_source::error::GatewayError> {
-    use gateway_auth::store::{check, commit};
+    use gateway_auth_primitives::{store::check, store::commit};
     use gateway_core::state::RecordMutation;
     let now = usage.attempted_at_ms;
     for _ in 0..9 {
@@ -239,7 +241,7 @@ pub async fn record_usage<S: AuthorityStore, H: AuthHost>(
         next.updated_at_ms = now as f64;
         // A bound source outcome records an empty proof map when no proof exists.
         next.pool_proofs = Some(next.pool_proofs.take().unwrap_or_default());
-        let revision = gateway_auth::crypto::uuid_from_random(&host.random_bytes(16)?)?;
+        let revision = gateway_auth_primitives::crypto::uuid_from_random(&host.random_bytes(16)?)?;
         let record = gateway_claude_usage_quota::stored_state(&next, revision)?;
         if commit(
             store,

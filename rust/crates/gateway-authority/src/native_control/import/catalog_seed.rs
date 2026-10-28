@@ -1,9 +1,10 @@
 //! One optional original-import cache adapter; never a new effect/start lifetime.
 use super::*;
-use gateway_auth::native_auth::AuthenticatedNativeOwner;
-use gateway_auth::native_import::catalog_seed::{
-    ImportCatalogSeedReplyData as Reply, ImportCatalogSeedRequestData as Request,
+use gateway_auth_native_contracts::{
+    native_import::catalog_seed::ImportCatalogSeedReplyData as Reply,
+    native_import::catalog_seed::ImportCatalogSeedRequestData as Request,
 };
+use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
 use gateway_auth_native_wire::publication_data::ImportCatalogDisposition;
 use gateway_core::{
     query::QueryStore,

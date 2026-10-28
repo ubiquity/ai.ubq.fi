@@ -1,4 +1,4 @@
-use gateway_auth::types::AuthMethod;
+use gateway_auth_contracts::types::AuthMethod;
 use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::ApiReservation;
 use gateway_authority_contracts::{AuthorityClock, REQUEST_LEASE_MS};

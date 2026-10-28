@@ -2,7 +2,7 @@
 //! No reservation/index permission, new namespace, or generic storage interpretation.
 use crate::store;
 use gateway_admin_contracts::{fields, source_input as body};
-use gateway_auth::types::invalid;
+use gateway_auth_contracts::types::invalid;
 use gateway_authority_kernel_protocol::{KernelPolicy, KernelWindow};
 use gateway_core::{
     source_control::decode_source_control_record, source_control::encode_source_control_record,

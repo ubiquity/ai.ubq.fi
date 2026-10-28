@@ -18,7 +18,8 @@ use gateway_observability::{
     ObservabilityRuntime,
     types::{HealthEvent, HealthTarget, ObservabilityHost},
 };
-use gateway_providers::sse::{MAX_RESPONSES_EVENT_BYTES, SseParser};
+use gateway_provider_events::framing::SseParser;
+use gateway_provider_stream::sse::MAX_RESPONSES_EVENT_BYTES;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::cancellation::Cancellation;
@@ -268,9 +269,10 @@ impl ExperimentIo for Host<'_> {
         let status = raw.status_code();
         let id = request_id(raw);
         let observed_at = now_ms()?;
-        let expired =
-            gateway_auth::provider_credentials::codex_access_expiry_ms(dispatch.access_token())
-                .is_some_and(|exp| exp <= observed_at as f64);
+        let expired = gateway_auth_credentials::provider_credentials::codex_access_expiry_ms(
+            dispatch.access_token(),
+        )
+        .is_some_and(|exp| exp <= observed_at as f64);
         let event = if status == 401 || (status == 403 && expired) {
             Some(HealthEvent::AuthInvalid)
         } else if status == 429 {

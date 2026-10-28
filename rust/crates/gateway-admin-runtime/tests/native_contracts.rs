@@ -11,7 +11,7 @@ use gateway_admin_test_support::{
     runtime_host::{Host, run},
     runtime_store::Store,
 };
-use gateway_auth::types::AuthResponse;
+use gateway_auth_contracts::types::AuthResponse;
 use gateway_auth_native_wire::native_read::NativeReadRequest;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};

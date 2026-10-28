@@ -4,14 +4,14 @@ use gateway_admin_runtime::{
     claude::{AccountBinding, Bootstrap},
     claude_generation::{StateGeneration, StateSnapshot},
 };
-use gateway_auth::types::AuthHost;
+use gateway_auth_contracts::types::AuthHost;
 use gateway_catalog_provider::host::ProviderBinding;
 use gateway_claude_usage_quota::{QuotaObservation, QuotaState, observation::AcceptedObservation};
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_contracts::model::ModelId;
 use gateway_core::state::RevisionCheck;
-use gateway_providers::types::{Headers, PrepareOptions};
+use gateway_provider_protocol::{types::Headers, types::PrepareOptions};
 use gateway_schema::{catalog::ProviderCatalog, selection::ProviderSelection};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use std::{cmp::Ordering, future::Future};
 
 #[derive(Clone, Debug, Default)]

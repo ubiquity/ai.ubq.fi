@@ -1,7 +1,9 @@
-use gateway_auth::crypto::base64url;
-use gateway_auth::native_auth::NativeCapability;
-use gateway_auth::native_credentials::NativeOwnerId;
-use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
+use gateway_auth_credentials::native_credentials::NativeOwnerId;
+use gateway_auth_credentials::{
+    provider_credentials::codex_source_pool_key, provider_credentials::read_codex_source_pool,
+};
+use gateway_auth_native_proof::native_auth::NativeCapability;
+use gateway_auth_primitives::crypto::base64url;
 use gateway_authority_keys as keys;
 use gateway_core::state::AuthorityStore;
 use gateway_publication::access_publication::{PreparedAccessPublication, RegisteredAccessOwner};

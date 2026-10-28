@@ -69,7 +69,7 @@ fn paid_limit_updates_and_disabling_preserve_source_pricing_without_provider_rei
                 .unwrap();
             assert_eq!(caps.inputs.borrow().len(), 1);
             let row = store
-                .read(&gateway_auth::api_keys::id_key(id))
+                .read(&gateway_auth_primitives::api_keys::id_key(id))
                 .await
                 .unwrap()
                 .unwrap();
@@ -169,10 +169,10 @@ fn key_creation_commits_identity_policy_window_and_audit_together() {
         let result_body = wire_json(&result.body);
         let id = result_body["id"].as_str().unwrap();
         let token = result_body["token"].as_str().unwrap();
-        assert!(gateway_auth::api_keys::api_key_shape(token));
+        assert!(gateway_auth_primitives::api_keys::api_key_shape(token));
         assert!(
             store
-                .read(&gateway_auth::api_keys::id_key(id))
+                .read(&gateway_auth_primitives::api_keys::id_key(id))
                 .await
                 .unwrap()
                 .is_some()
@@ -188,7 +188,7 @@ fn key_creation_commits_identity_policy_window_and_audit_together() {
             store
                 .read(&gateway_authority_keys::api_window(
                     id,
-                    &format!("v3:{}", gateway_auth::api_keys::WEEK_MS),
+                    &format!("v3:{}", gateway_auth_primitives::api_keys::WEEK_MS),
                     1_000_000
                 ))
                 .await

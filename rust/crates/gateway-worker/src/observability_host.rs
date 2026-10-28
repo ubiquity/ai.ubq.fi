@@ -140,9 +140,9 @@ fn bind_request(
     ObservabilityRuntime::with_state(store, host, shared_state())
 }
 /// Source /health is release liveness and does no provider or authority I/O.
-pub fn health_response() -> Result<gateway_auth::types::AuthResponse, GatewayError> {
+pub fn health_response() -> Result<gateway_auth_contracts::types::AuthResponse, GatewayError> {
     let identity = Host.build_identity()?;
-    let mut response = gateway_auth::types::AuthResponse::json(
+    let mut response = gateway_auth_contracts::types::AuthResponse::json(
         200,
         serde_json::json!({"status":"available","release":{"git_sha":identity.git_sha,"deployment_id":identity.deployment_id}}),
     );
@@ -338,8 +338,9 @@ impl ObservabilityHost for RequestHost {
         self.inventory(context).await
     }
     async fn metered_balance_fingerprint(&self) -> Result<Option<String>, GatewayError> {
-        Ok(inventory::monitoring_key(&self.platform.env)
-            .map(|key| gateway_auth::crypto::sha256_hex(key.as_bytes())[..16].to_owned()))
+        Ok(inventory::monitoring_key(&self.platform.env).map(|key| {
+            gateway_auth_primitives::crypto::sha256_hex(key.as_bytes())[..16].to_owned()
+        }))
     }
     async fn metered_quota_snapshot(
         &self,

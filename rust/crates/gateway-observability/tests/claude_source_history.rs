@@ -84,7 +84,9 @@ fn replace(value: &SourceJson, name: &str, replacement: SourceJson) -> SourceJso
 fn rows(value: &SourceJson) -> Vec<SourceJson> {
     member(value, "points").array_items().unwrap()
 }
-fn response(value: gateway_auth::types::AuthResponse) -> Result<SourceJson, GatewayError> {
+fn response(
+    value: gateway_auth_contracts::types::AuthResponse,
+) -> Result<SourceJson, GatewayError> {
     assert_eq!(value.status, 200);
     assert_eq!(value.headers["cache-control"], "no-store");
     SourceJson::parse_bytes(&value.body.to_bytes()?)

@@ -3,10 +3,10 @@ use gateway_admin_contracts::fields::{
     boolean, bounded_positive, cursor, digits, first, truth, uuid,
 };
 use gateway_admin_contracts::{operations::AdminInput, source_input as source_body};
-use gateway_auth::types::invalid;
-use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_auth_contracts::types::invalid;
 use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_profile_values::coercion::js_number;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::Value;
 use std::collections::BTreeSet;
 

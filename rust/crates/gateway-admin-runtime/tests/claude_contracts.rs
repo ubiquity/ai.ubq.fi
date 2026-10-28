@@ -5,9 +5,9 @@ use gateway_admin_test_support::{
     runtime_host::{Host, run},
     runtime_store::Store,
 };
-use gateway_auth::types::AuthHost;
-use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_auth_contracts::types::AuthHost;
 use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome};
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde_json::{Value, json};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -125,7 +125,7 @@ fn claude_tombstone_refuses_legacy_or_environment_resurrection() {
     )
     .unwrap();
     store.rows.borrow_mut().insert(
-        gateway_auth::store::key(json!(["ubq_ai", "claude_code_auth"])).0,
+        gateway_auth_primitives::store::key(json!(["ubq_ai", "claude_code_auth"])).0,
         gateway_admin_runtime::claude::encode_credential_record("fixture", &credential, None)
             .unwrap(),
     );

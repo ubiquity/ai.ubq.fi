@@ -20,10 +20,10 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
     source_input as source_body,
 };
-use gateway_auth::types::{AuthHost, AuthResponse, invalid};
+use gateway_auth_contracts::{types::AuthHost, types::AuthResponse, types::invalid};
 use gateway_auth_native_wire::native_read::NativeReadRequest;
-use gateway_source::error::GatewayError;
 use gateway_core::{query::QueryStore, state::RevisionCheck};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Default)]
@@ -47,7 +47,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
     ) -> Result<AuthResponse, GatewayError> {
         // Defense in depth for callers outside AdminService. There is deliberately no super-admin tier.
         if !input.actor.is_admin {
-            return Err(gateway_auth::types::unauthorized());
+            return Err(gateway_auth_contracts::types::unauthorized());
         }
         if !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&input.now_ms) {
             return Err(invalid("Admin request clock is invalid"));
@@ -422,7 +422,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     .ok_or_else(|| invalid("Invalid API key id"))?;
                 if store::read(
                     self.store,
-                    &gateway_auth::api_keys::id_key(id),
+                    &gateway_auth_primitives::api_keys::id_key(id),
                     input.now_ms,
                 )
                 .await?
@@ -528,9 +528,9 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             })
             && ["model", "effort", "state"].into_iter().all(nullable)
             && ["sampledAtMs", "generatedAtMs"].into_iter().all(|name| {
-                body.get(name)
-                    .and_then(Value::as_i64)
-                    .is_some_and(|n| (0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&n))
+                body.get(name).and_then(Value::as_i64).is_some_and(|n| {
+                    (0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&n)
+                })
             })
             && transcript.and_then(Value::as_object).is_some_and(|v| {
                 v.keys()
@@ -587,7 +587,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         Ok(response)
     }
     async fn purge_prompts(&self, now: i64) -> Result<AuthResponse, GatewayError> {
-        use gateway_auth::store::{check, commit};
+        use gateway_auth_primitives::{store::check, store::commit};
         use gateway_core::state::RecordMutation;
         let key = store::key(json!(["uos_ai", "codex_instructions"]));
         let row = self.store.read(&key).await?;
@@ -600,7 +600,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             )
             .await?
             {
-                return Err(gateway_auth::types::conflict(
+                return Err(gateway_auth_contracts::types::conflict(
                     "Prompt instructions changed concurrently; retry",
                 ));
             }
@@ -621,7 +621,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             )
             .await?
             {
-                return Err(gateway_auth::types::conflict(
+                return Err(gateway_auth_contracts::types::conflict(
                     "Prompt instructions changed concurrently; retry",
                 ));
             }

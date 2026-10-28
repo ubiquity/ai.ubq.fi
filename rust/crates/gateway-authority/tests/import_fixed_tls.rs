@@ -1,8 +1,8 @@
 #![cfg(unix)]
 //! Actual path-module transport checks, not production registration or private proof tests.
 mod remote_tls;
-use gateway_auth::crypto::base64url;
 use gateway_auth_native_wire::native_read::*;
+use gateway_auth_primitives::crypto::base64url;
 use remote_tls::{ImportAuthorityTls, Roots};
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
 use std::{

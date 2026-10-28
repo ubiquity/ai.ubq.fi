@@ -1,5 +1,5 @@
 pub mod support;
-use gateway_auth::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
 use gateway_authority_contracts::invalid;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};

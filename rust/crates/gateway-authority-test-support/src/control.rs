@@ -11,7 +11,7 @@ use gateway_contracts::provider::PaidProvider;
 use gateway_core::{state::AtomicTransition, state::AuthorityStore};
 use gateway_core::{state::RecordMutation, state::RevisionCheck};
 use gateway_kv_codec::key::RecordKey;
-use gateway_providers::types::ClientSurface;
+use gateway_provider_protocol::types::ClientSurface;
 use gateway_routing_runtime_test_support::authority::NOW;
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::run};
 use serde_json::{Value, json};

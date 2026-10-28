@@ -7,8 +7,11 @@ use crate::{
 use gateway_admin_contracts::{
     fields, operations::AdminInput, routes::AdminOperation, source_input as source_body,
 };
-use gateway_auth::store::{check, commit, put};
-use gateway_auth::types::{AuthHost, AuthResponse, conflict, invalid};
+use gateway_auth_contracts::types::{AuthHost, AuthResponse};
+use gateway_auth_primitives::{
+    error::{conflict, invalid},
+    store::{check, commit, put},
+};
 use gateway_authority_kernel_protocol::KernelDefaults;
 use gateway_authority_keys as keys;
 use gateway_contracts::model::ModelId;
@@ -22,9 +25,7 @@ use gateway_schema::runtime_config::{
     build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
 };
 use gateway_schema::snapshot::ModelSnapshot;
-use gateway_source::error::GatewayError;
-use gateway_source::js_string::JsString16;
-use gateway_source::source_json::SourceJson;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::json;
 
 fn response(model: &ModelId, effort: &JsString16, defaults: &KernelDefaults) -> SourceJson {
@@ -243,17 +244,16 @@ fn validate_defaults_fields(body: &SourceJson) -> Result<Option<AuthResponse>, G
                 .encode_utf16()
                 .collect::<Vec<_>>();
             units.extend_from_slice(name.as_units());
-            let error = gateway_schema::source_request::error::SourceRequestError::new(
+            let error = gateway_local_refusal::source_error::SourceRequestError::new(
                 400,
                 JsString16::from_units(units),
                 "invalid_request_error",
                 Some("invalid_request_error"),
                 None,
             );
-            return Ok(Some(AuthResponse::source_json(
-                error.status,
-                error.body().clone(),
-            )));
+            let status = error.status;
+            let body = error.body().clone();
+            return Ok(Some(AuthResponse::closed_error(status, body)));
         }
     }
     Ok(None)
@@ -327,10 +327,11 @@ fn defaults_runtime(
                 // The original scalar error path remains unchanged;
                 // only an actual source-reflected opaque message needs
                 // the existing lossless source response rail.
-                if SourceJson::from_serializable(&error.diagnostic().envelope)? == *error.body() {
+                let scalar_body = SourceJson::from_serializable(&error.diagnostic().envelope)?;
+                if scalar_body.as_bytes() == error.body().as_bytes() {
                     return Err(error.diagnostic().clone());
                 }
-                return Ok(DefaultRuntime::Break(AuthResponse::source_json(
+                return Ok(DefaultRuntime::Break(AuthResponse::closed_error(
                     error.status,
                     error.body().clone(),
                 )));

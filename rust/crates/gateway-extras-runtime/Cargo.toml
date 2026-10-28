@@ -5,26 +5,33 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
-gateway-contracts.workspace = true
-gateway-kv-codec.workspace = true
-gateway-source.workspace = true
-gateway-decision-runtime.workspace = true
-gateway-extras-contract.workspace = true
+gateway-contracts = { workspace = true }
+gateway-kv-codec = { workspace = true }
+gateway-source = { workspace = true }
+gateway-decision-runtime = { workspace = true }
+gateway-extras-contract = { workspace = true }
 gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-schema = { path = "../gateway-schema" }
-gateway-providers = { path = "../gateway-providers" }
-serde.workspace = true
-serde_json.workspace = true
+serde = { workspace = true }
+serde_json = { workspace = true }
 sha2 = "=0.10.9"
 base64 = "=0.22.1"
 chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+gateway-provider-source = { workspace = true }
+gateway-provider-services = { workspace = true }
+gateway-provider-protocol = { workspace = true }
+gateway-provider-images = { workspace = true }
 
 [dev-dependencies]
-gateway-extras-runtime-test-support.workspace = true
+gateway-extras-runtime-test-support = { workspace = true }
 aes-gcm = { version = "=0.10.3", default-features = false, features = ["aes", "alloc"] }
-
-[lints]
-workspace = true
+gateway-auth-contracts = { workspace = true }
+gateway-auth-primitives = { workspace = true }
+gateway-source = { workspace = true }
+gateway-local-refusal = { workspace = true }

@@ -1,0 +1,2602 @@
+{
+  "classification": "PROVISIONAL_SOURCE_ONLY_CLOSED_BODY_CARRIER_API_V3_NOT_BUILD_OR_RUNTIME_ACCEPTANCE",
+  "baseHead": "1cad4dd8bf3bf99db517b8c136e572bbb5d5d94f",
+  "baseTree": "837b0aafa82afe5093508ec44233a95b496cf356",
+  "branch": "codex/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3",
+  "requestedModel": "gpt-6.1-sol",
+  "requestedEffort": "max",
+  "actualModelFromTrustedMetadata": "unknown",
+  "actualEffortFromTrustedMetadata": "unknown",
+  "rootApproval": "2026-10-27T21:54; exact frozen producer map and named carrier/observation cut",
+  "inputs": {
+    "lease": {
+      "path": "/workspace/.ai-rust-inputs/continuation-01a17ebe/implementation-v3/implementation-leases-v3.md",
+      "bytes": 8747,
+      "sha256": "ff7f1fd71fee4f2a3c8b9e94a4ae3252acd40ce2f03868a451d8cfdffdd7b01c"
+    },
+    "contract": {
+      "path": "/workspace/.ai-rust-inputs/continuation-01a17ebe/implementation-v3/CONTRACT-v2.md",
+      "bytes": 4589,
+      "sha256": "79dcec08c738a37513320cf8ba2197cfbf0cb370e4ac1c443306559306aca492"
+    },
+    "approvedProducerMap": {
+      "path": "docs/research/provider-prompt-family/closed-body-producer-api-v3.md",
+      "bytes": 13105,
+      "sha256": "d2b46636dc9521fbcfb3daf84c338a1f074950fe7d6c1639fee2da21a91b08b9"
+    },
+    "approvedProducerJson": {
+      "path": "docs/research/provider-prompt-family/closed-body-producer-api-v3.json",
+      "bytes": 28639,
+      "sha256": "5a60adff102b361b14ff8aacc02fcad8c27040b9f8d36b6382b5cc90c2f48856"
+    }
+  },
+  "privateClosedFields": {
+    "message": "JsString16",
+    "error_type": "String (supplied untrimmed wire type)",
+    "code": "Option<String> (None omitted)",
+    "param": "Option<Option<JsString16>> (None omitted; Some(None) null; Some(Some) exact text)",
+    "wire": "String (immutable original snapshot)"
+  },
+  "wireContract": "Fixed error/message,type,optional code,optional param order; exact UTF16/control/NUL/lone/paired encoder. Status/private kind never serialized. Direct bytes JSON MIME for Json and ClosedError; fixed Internal Server Error remains text/plain; charset=utf-8. Arbitrary validated SourceJson/Value/Empty/plain remain distinct.",
+  "genericSerializeContract": "Finite fields at the actual Result<S::Ok,S::Error> boundary. Existing JsString16 serde remains fallible. No generic total serializer, RawValue assertion, unchecked source constructor, new HTTP failure, fallback/null/success or postterminal failure channel.",
+  "producerConsumerMap": [
+    {
+      "file": {
+        "path": "rust/crates/gateway-local-refusal/src/closed_error_body.rs",
+        "bytes": 3620,
+        "sha256": "9b27a6757d5bd45eff331959e6cc01f4f570c4481de6de425a99c969a59f4146"
+      },
+      "symbols": {
+        "pub struct ClosedErrorBody": [
+          5
+        ],
+        "impl serde::Serialize": [
+          85
+        ],
+        "fn serialize": [
+          86
+        ]
+      },
+      "before": "Opaque immutable closed body; no Serialize",
+      "after": "Add finite borrowed Envelope/Fields Serialize; private constructors/wire/observations unchanged",
+      "returnType": "Serialize -> Result<S::Ok,S::Error>; all existing Self producers remain Self",
+      "phase": "Pure immutable DATA; no effects or delivery"
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-auth-contracts/src/types.rs",
+        "bytes": 10279,
+        "sha256": "5a4ce026528ae9aaeb3ff0f7cfb93115d1ec67d18e5ab29609d40df6f52519f5"
+      },
+      "symbols": {
+        "pub enum AuthResponseBody": [
+          71
+        ],
+        "pub fn as_json": [
+          78
+        ],
+        "pub fn to_bytes": [
+          85
+        ],
+        "impl serde::Serialize": [
+          99
+        ],
+        "pub fn closed_error": [
+          156
+        ],
+        "pub fn error": [
+          175
+        ]
+      },
+      "before": "Empty | Json(Value) | SourceJson(SourceJson)",
+      "after": "Add ClosedError(ClosedErrorBody); direct bytes and total closed_error constructor; as_json stays Json-only; generic trait delegates fallibly",
+      "returnType": "closed_error(u16,ClosedErrorBody)->Self; to_bytes()->Result<Vec<u8>,GatewayError>; Serialize->Result<S::Ok,S::Error>",
+      "phase": "Pure response DATA; scalar error/json/source_json/stream APIs retain behavior"
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-extras-contract/src/response_body.rs",
+        "bytes": 1083,
+        "sha256": "1330a9a7431d1c1f9f4af563075151633faeb27ae61dacfd86aacedca56ddef3"
+      },
+      "symbols": {
+        "pub enum ExtrasResponseBody": [
+          6
+        ],
+        "pub fn as_str": [
+          11
+        ],
+        "pub fn as_bytes": [
+          17
+        ],
+        "impl PartialEq": [
+          21
+        ],
+        "impl serde::Serialize": [
+          27
+        ]
+      },
+      "before": "ExtrasResponse.body: SourceJson",
+      "after": "ExtrasResponseBody::Json(SourceJson) | ClosedError(ClosedErrorBody); borrowed wire/bytes; byte equality; finite Serialize delegation",
+      "returnType": "as_str()->&str; as_bytes()->&[u8]; Serialize->Result<S::Ok,S::Error>",
+      "phase": "Pure DATA; no admission/dispatch/refund/receipt/settlement"
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-extras-contract/src/types.rs",
+        "bytes": 9556,
+        "sha256": "d3a0eaa77a2b710f4ec37dfb15e08d85e1ae35cb08bbf994c1b45a4ac56fcf93"
+      },
+      "symbols": {
+        "pub struct ExtrasResponse": [
+          187
+        ],
+        "pub fn source_error": [
+          206
+        ],
+        "pub fn source_json": [
+          212
+        ],
+        "fn with_body": [
+          215
+        ],
+        "pub fn json": [
+          200
+        ],
+        "pub fn error": [
+          228
+        ]
+      },
+      "before": "source_error delegates source_json(status,error.body().clone())",
+      "after": "source_error creates finite ClosedError; source_json creates Json; private with_body preserves exact metadata defaults; scalar json/error unchanged",
+      "returnType": "source_error(SourceRequestError)->Self; source_json(u16,SourceJson)->Self",
+      "phase": "Pure carrier assembly; callers span pretransport errors and postdispatch/terminal outcomes; their bodies unchanged"
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-schema/src/source_request/reasoning.rs",
+        "bytes": 2772,
+        "sha256": "d9d580d856a1e5e7c63f8aa77c5518dd40f5aaee00bd2f12c315418c00d30cd6"
+      },
+      "symbols": {
+        "pub fn parse_reasoning": [
+          26
+        ],
+        "let message =": [
+          40
+        ]
+      },
+      "before": "Parse fixed message field then expect",
+      "after": "body().message().clone(); same parent reasoning param and original order",
+      "returnType": "Result<Option<SourceJson>,SourceRequestError>",
+      "phase": "Pretransport/presemantic syntax; no effects"
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-catalog-runtime/src/admin.rs",
+        "bytes": 19890,
+        "sha256": "6a776de7995210a64a9aab2353a500d988a14b061e04e2e42565a1216a403f25"
+      },
+      "symbols": {
+        "fn runtime_error": [
+          62,
+          457
+        ],
+        "let message =": [
+          63,
+          458
+        ],
+        "fn runtime_error_keeps_opaque_model_units_and_original_status_mapping": [
+          457
+        ]
+      },
+      "before": "Parse fixed message then expect",
+      "after": "Typed message getter; exact code/byte test observations; same 413 too-large/4-KiB versus409 classification",
+      "returnType": "SourceRequestError -> SourceRequestError",
+      "phase": "Pure projection following failed runtime-config validation; no operation body edits"
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-catalog-provider/src/response.rs",
+        "bytes": 1225,
+        "sha256": "a0dfff696ddcb4b9a0f5a32fe2084241bbf6890b40f6c4d47b3e42de6c76721f"
+      },
+      "symbols": {
+        "pub fn into_auth_response": [
+          26
+        ],
+        "AuthResponse::closed_error": [
+          35
+        ]
+      },
+      "before": "source_json for source error",
+      "after": "closed_error for finite body; success source JSON/status/header extension unchanged",
+      "returnType": "Result<AdminCatalogResponse,SourceRequestError> -> AuthResponse",
+      "phase": "No-effect rendering after selected catalog operation; prior effects remain owned"
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-admin-runtime/src/defaults.rs",
+        "bytes": 13908,
+        "sha256": "1b1a41839eb3eebbd59f4fd527c8bc03fa157d64fdbf909437d2f3d75d7de995"
+      },
+      "symbols": {
+        "fn validate_defaults_fields": [
+          226
+        ],
+        "fn defaults_runtime": [
+          263
+        ],
+        "let scalar_body =": [
+          328
+        ],
+        "AuthResponse::closed_error": [
+          254,
+          332
+        ]
+      },
+      "before": "source_json for opaque errors; SourceJson diagnostic equality at existing ?",
+      "after": "closed_error with identical evaluation order; exact byte comparison after same diagnostic conversion",
+      "returnType": "validate_defaults_fields: Result<Option<AuthResponse>,GatewayError>; defaults_runtime: Result<ControlFlow<AuthResponse,(ModelId,JsString16,Option<SourceJson>)>,GatewayError>",
+      "phase": "Unknown-field validation before defaults reads/CAS; runtime/default conversion after same reads and before writes; scalar Err/opaque Break unchanged"
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-admin-runtime/src/state.rs",
+        "bytes": 12340,
+        "sha256": "eed5f0e8a28ac8847df76ea63b1a4d7e448c1ddc7897bc8e8ada41b10cb29b2e"
+      },
+      "symbols": {
+        "async fn selection": [
+          173
+        ],
+        "AuthResponse::closed_error": [
+          239
+        ]
+      },
+      "before": "source_json for opaque unknown-ID error",
+      "after": "closed_error with same original status/body; ID order and early return unchanged",
+      "returnType": "Result<AuthResponse,GatewayError>",
+      "phase": "After authorization, before selection read/CAS; no effects moved"
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-worker/src/inference_source.rs",
+        "bytes": 2128,
+        "sha256": "1deb2cffca8060be38805ce6064b22b604c92992ed20949df79149d70567dd38"
+      },
+      "symbols": {
+        "pub(crate) async fn error_response": [
+          8
+        ],
+        "body.content_type()": [
+          15
+        ],
+        "capture.immediate": [
+          33
+        ]
+      },
+      "before": "Exhaustive Json/plain MIME match",
+      "after": "Pure content_type observation for Json/ClosedError/plain; original bytes/status/no-store/header overrides then awaited capture",
+      "returnType": "Result<worker::Response,GatewayError>",
+      "phase": "Before body delivery; may follow dispatch/selected-response preparation/cleanup; real platform errors retained"
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-worker/src/inference_local_lifecycle.rs",
+        "bytes": 6982,
+        "sha256": "0edd00d2374567777f809be6d976ddd5d04f2e5e021b09b5f0508f1cf1191610"
+      },
+      "symbols": {
+        "pub(crate) fn response_error": [
+          148
+        ],
+        "body.content_type()": [
+          156
+        ],
+        "pub(super) fn wrapper_error": [
+          175
+        ]
+      },
+      "before": "Exhaustive Json/plain MIME match",
+      "after": "Same-point content_type observation; wrapper error, lifetime and header ordering unchanged",
+      "returnType": "Result<worker::Response,RoutingError>",
+      "phase": "After local selected QuotaReplacement choice, before wrapper/delivery; no cleanup/accounting change"
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-worker/src/runtime.rs",
+        "bytes": 23890,
+        "sha256": "1472360ccf18d2a918e90bb338eea79c3042a1ae9f940d4efeceb3098030e6df"
+      },
+      "symbols": {
+        "pub fn auth_response": [
+          147
+        ],
+        "response.body.to_bytes()": [
+          154
+        ],
+        "for cookie in response.set_cookies": [
+          162,
+          186
+        ]
+      },
+      "before": "to_bytes()? and actual response/status/headers/cookie append",
+      "after": "Unchanged source; finite carrier already supplies exact bytes",
+      "returnType": "Result<worker::Response,GatewayError>",
+      "phase": "After selected operation before delivery; real platform failures and separate Set-Cookie append unchanged"
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-worker/src/admin_support_host.rs",
+        "bytes": 7626,
+        "sha256": "d4ceb8175d4419034ed9e3cdc5ef3464d2ed85b2ee354f5f7df612c7381c60ea"
+      },
+      "symbols": {
+        "fn catalogue_error": [
+          178
+        ],
+        "fn catalogue_lift_preserves_the_exact_original_gateway_error": [
+          187
+        ]
+      },
+      "before": "diagnostic().clone() and test byte observation",
+      "after": "Unchanged source",
+      "returnType": "GatewayError; test Result<(),Box<dyn Error>>",
+      "phase": "Pure diagnostic lift/test observation; no fetch or mutation transfer"
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-routing-runtime/src/session.rs",
+        "bytes": 19157,
+        "sha256": "4ef98e820650c45a8edd5ae8670ecfd0ae5e477d401f7137dd464180cc642eb9"
+      },
+      "symbols": {
+        "fn from_local_admission": [
+          204
+        ],
+        "with_cleanup_diagnostic": [
+          232
+        ]
+      },
+      "before": "Total cleanup snapshots original wire",
+      "after": "Unchanged source; no Result port needed",
+      "returnType": "RoutingResult<Self>",
+      "phase": "Pretransport planning after same original admission; original-error/fail_planning/one-cleanup order unchanged"
+    }
+  ],
+  "unlistedOwnerFollowupsUnchanged": [
+    {
+      "file": {
+        "path": "rust/crates/gateway-claude-usage-admin/src/readback.rs",
+        "bytes": 2787,
+        "sha256": "6665427a7c9780902baaee6f88602e3965dbdaed4d9f424b2275b64d35c36f22"
+      },
+      "symbols": {
+        "pub fn subscription_block": [
+          5
+        ],
+        "match body": [
+          6
+        ],
+        "AuthResponseBody::SourceJson": [
+          11,
+          36,
+          59
+        ]
+      },
+      "before": "Current source retained",
+      "after": "Owner port required; no implementation here",
+      "returnType": "Unchanged",
+      "phase": "Result<SourceJson,GatewayError>; admin readback DATA projection",
+      "owner": "Claude-usage/A2",
+      "issue": "Exhaustive AuthResponseBody match needs finite ClosedError coverage. Existing SourceJson missing claude_code branch returns checked null; no new null/failure arm or collector behavior supplied by D."
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-worker/src/extras.rs",
+        "bytes": 10038,
+        "sha256": "4bd36c6a7d96d8700ae931123b5b84aa803d417bbf9b12e5923e6e254af75fe1"
+      },
+      "symbols": {
+        "fn render_response": [
+          270
+        ],
+        "result: (SourceJson": [
+          271
+        ],
+        "AuthResponse::source_json": [
+          255
+        ],
+        "ExtrasBody::Rejected": [
+          50,
+          254
+        ]
+      },
+      "before": "Current source retained",
+      "after": "Owner port required; no implementation here",
+      "returnType": "Unchanged",
+      "phase": "Result<Response,GatewayError>; parse rejection before admission, render after runtime/child completion before delivery",
+      "owner": "Worker Extras",
+      "issue": "Use actual ExtrasResponseBody tuple with existing as_bytes, and closed_error at the same parse-rejection point. FinishHook/settle_child/dispatch/refund/accounting are unchanged and unleased."
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "bytes": 9777,
+        "sha256": "c719bbf814270f935ea2f6d0a735105071f3b102839887f41a78c6fb34895ba8"
+      },
+      "symbols": {
+        "fn body(response: AuthResponse)": [
+          51
+        ],
+        "match response.body": [
+          54
+        ]
+      },
+      "before": "Current source retained",
+      "after": "Owner port required; no implementation here",
+      "returnType": "Unchanged",
+      "phase": "Value-returning test-only scalar observation",
+      "owner": "Migration tests",
+      "issue": "Exhaustive AuthResponseBody match needs explicit finite-body test observation preserving all scalar fixtures/assertions; D invents no panic/default/null arm."
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "bytes": 33515,
+        "sha256": "e657d36f4215ce018b466cb613c61eff0233d758441974238d9cf04ecaedb2b4"
+      },
+      "symbols": {
+        "fn scalar_source": [
+          992
+        ]
+      },
+      "before": "Current source retained",
+      "after": "Owner port required; no implementation here",
+      "returnType": "Unchanged",
+      "phase": "Value-returning test-only scalar observation",
+      "owner": "Extras runtime tests",
+      "issue": "SourceJson helper parameter does not accept ExtrasResponseBody; owner must select explicit checked byte observation, retaining all cases/assertions."
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "bytes": 11226,
+        "sha256": "1fc9bbbf74569ca3db7afa1d837df1535bc2ff259763a5fa7c7a45ca0a0a3f81"
+      },
+      "symbols": {
+        "result.body.deserialize": [
+          202
+        ],
+        "fn actual_extras_dispatch": [
+          192
+        ]
+      },
+      "before": "Current source retained",
+      "after": "Owner port required; no implementation here",
+      "returnType": "Unchanged",
+      "phase": "Result-capable test-only response observation",
+      "owner": "Extras runtime tests",
+      "issue": "SourceJson-specific body read needs explicit checked finite-carrier bytes. Decisions/image/dispatch semantics remain held."
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-worker/src/inference_local_lifecycle.rs",
+        "bytes": 6982,
+        "sha256": "0edd00d2374567777f809be6d976ddd5d04f2e5e021b09b5f0508f1cf1191610"
+      },
+      "symbols": {
+        "pub(super) fn wrapper_error": [
+          175
+        ],
+        "RoutingError {": [
+          175,
+          176
+        ]
+      },
+      "before": "Current source retained",
+      "after": "Owner port required; no implementation here",
+      "returnType": "Unchanged",
+      "phase": "RoutingError-returning physical wrapper-failure path",
+      "owner": "Worker/routing constructor integration",
+      "issue": "Pre-existing literal cannot construct private routing kind. Same-data ordinary RoutingError::new port remains outside this MIME-only cut; preserve plain500/status/headers/false tag/evaluation order."
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-schema/tests/source_request.rs",
+        "bytes": 3765,
+        "sha256": "ed95d12e6757bd5a23b333fd79c78c96af1b24059fde5d800b97e9992ea70444"
+      },
+      "symbols": {
+        "error.body().deserialize": [
+          41,
+          78
+        ]
+      },
+      "before": "Current source retained",
+      "after": "Owner port required; no implementation here",
+      "returnType": "Unchanged",
+      "phase": "Test-only scalar error message/param observations",
+      "owner": "Schema tests/controller",
+      "issue": "Pre-existing body-specific deserialize reads need typed or explicit checked byte observations. No generic deserialize facade added to ClosedErrorBody."
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-routing-runtime/tests/source_plan.rs",
+        "bytes": 4346,
+        "sha256": "fbfb8e3d15eceb0f9fdfb7a727143af6aab17a30888b1cfe4d3061775b496455"
+      },
+      "symbols": {
+        "fn error_field": [
+          30
+        ],
+        "SourceRefusalBody::Json(body)": [
+          31
+        ]
+      },
+      "before": "Current source retained",
+      "after": "Owner port required; no implementation here",
+      "returnType": "Unchanged",
+      "phase": "Test-only source validation observation",
+      "owner": "Routing tests/controller",
+      "issue": "Locally constructed errors are ClosedError; retained arbitrary upstream Json remains valid. Preserve message/param assertions through explicit finite observations."
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "bytes": 11249,
+        "sha256": "c2074bbe176f3b617bb29d081e23e7c2dcfc6fb08b31bd00c62ac49254c23000"
+      },
+      "symbols": {
+        "fn local_factory_source_failure": [
+          119
+        ],
+        "SourceRefusalBody::Json(body)": [
+          132
+        ]
+      },
+      "before": "Current source retained",
+      "after": "Owner port required; no implementation here",
+      "returnType": "Unchanged",
+      "phase": "Test-only pretransport original-admission cleanup assertions",
+      "owner": "Routing tests/controller",
+      "issue": "Finite-body observation port needed; preserve reservation/commit/pool assertions and original one-cleanup order."
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "bytes": 53010,
+        "sha256": "5a5e647b46cff0178dbb18dbf342b1a87c75608e78d7583f15b6afcf4dfd392b"
+      },
+      "symbols": {
+        "fn source_deepseek_extension": [
+          1164
+        ],
+        "SourceRefusalBody::Json(body)": [
+          1180
+        ]
+      },
+      "before": "Current source retained",
+      "after": "Owner port required; no implementation here",
+      "returnType": "Unchanged",
+      "phase": "Test-only source-plan error observation before captured-selection work",
+      "owner": "Routing tests/controller",
+      "issue": "Finite message/param port needed; retained target is already oversized and full structural extension is separately held."
+    },
+    {
+      "file": {
+        "path": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "bytes": 24806,
+        "sha256": "25cc1ad3fee3313d5b432c141e0f1a5e94e8661f417cfe30500b74a62f388d94"
+      },
+      "symbols": {
+        "Some(SourceRefusalBody::Json(_))": [
+          271
+        ]
+      },
+      "before": "Current source retained",
+      "after": "Owner port required; no implementation here",
+      "returnType": "Unchanged",
+      "phase": "Test-only staged preparation rejection",
+      "owner": "Routing tests/controller",
+      "issue": "Explicit ClosedError observation needed for local source error; sealed Claude phase/body and admission/settlement assertions remain exact."
+    }
+  ],
+  "heldSevenPolicies": [
+    "ReplayStore preparation versus postterminal remember; canonical bytes/depth64/source parity and actual publication/failure disposition remain held.",
+    "ProviderEvent<Value> scalar construction versus validated SourceJson source constructors and failure_event phase remain held.",
+    "resolve_paid_route closed billing and actual Authority/routing same-phase callers remain held.",
+    "Image plans/extract source carriers and their actual child-dispatch/accounting consumers remain held.",
+    "The total forwarded_payload_policy declaration and actual native_catalog rendering/casing remain held.",
+    "Typed local aggregate-overflow termination stays preserved; native created+exactly-one-failed physical stream mapping/client/workerd acceptance remain held.",
+    "Non-JSON raw refusal bytes/status/headers retain their legacy raw_body plus internal JSON-null sentinel representation; no absence/raw redesign here."
+  ],
+  "dag": "gateway-source -> gateway-local-refusal (serde) -> gateway-auth-contracts / gateway-extras-contract / gateway-schema -> direct catalog/admin/Worker consumers. Arrows denote producer to consumer; manifest edge directions are recorded separately. No source/local-refusal dependency on auth/Worker/Authority; no authority/currentness constructor.",
+  "mechanicalPatchManifest": {
+    "path": "/workspace/.ai-rust-output/D/continuation-01a17ebe/closed-body-carriers-v3/mechanical-patch-manifest.json",
+    "bytes": 9287,
+    "sha256": "d301defe69756775ab7f23af2fcf79dab1e6e0453648a505521c6fa1a0976e01"
+  },
+  "sourcePostimageManifest": {
+    "path": "/workspace/.ai-rust-output/D/continuation-01a17ebe/closed-body-carriers-v3/source-postimages.json",
+    "bytes": 5899,
+    "sha256": "e3a0c76300dddafbb7aed618120c9e0a48c8e297db3c9314e74ad4eef7dd320f"
+  },
+  "sourceInventory": {
+    "production": [
+      {
+        "crate": "gateway-admin-runtime",
+        "beforePhysicalOwnedRustLines": 5483,
+        "afterPhysicalOwnedRustLines": 5483,
+        "files": [
+          "rust/crates/gateway-admin-runtime/src/brief.rs",
+          "rust/crates/gateway-admin-runtime/src/capabilities.rs",
+          "rust/crates/gateway-admin-runtime/src/claude/source_secret.rs",
+          "rust/crates/gateway-admin-runtime/src/claude/source_tests.rs",
+          "rust/crates/gateway-admin-runtime/src/claude.rs",
+          "rust/crates/gateway-admin-runtime/src/claude_access.rs",
+          "rust/crates/gateway-admin-runtime/src/claude_generation.rs",
+          "rust/crates/gateway-admin-runtime/src/defaults.rs",
+          "rust/crates/gateway-admin-runtime/src/errors.rs",
+          "rust/crates/gateway-admin-runtime/src/kernel.rs",
+          "rust/crates/gateway-admin-runtime/src/kernel_data.rs",
+          "rust/crates/gateway-admin-runtime/src/lib.rs",
+          "rust/crates/gateway-admin-runtime/src/paid.rs",
+          "rust/crates/gateway-admin-runtime/src/parse.rs",
+          "rust/crates/gateway-admin-runtime/src/state.rs",
+          "rust/crates/gateway-admin-runtime/src/store.rs"
+        ],
+        "under1000": false,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-auth-contracts",
+        "beforePhysicalOwnedRustLines": 839,
+        "afterPhysicalOwnedRustLines": 855,
+        "files": [
+          "rust/crates/gateway-auth-contracts/src/bootstrap.rs",
+          "rust/crates/gateway-auth-contracts/src/lib.rs",
+          "rust/crates/gateway-auth-contracts/src/passkeys.rs",
+          "rust/crates/gateway-auth-contracts/src/passport_serde.rs",
+          "rust/crates/gateway-auth-contracts/src/types.rs",
+          "rust/crates/gateway-auth-contracts/src/upstream.rs",
+          "rust/crates/gateway-auth-contracts/src/webauthn.rs"
+        ],
+        "under1000": true,
+        "delta": 16,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-catalog-provider",
+        "beforePhysicalOwnedRustLines": 946,
+        "afterPhysicalOwnedRustLines": 944,
+        "files": [
+          "rust/crates/gateway-catalog-provider/src/host.rs",
+          "rust/crates/gateway-catalog-provider/src/lib.rs",
+          "rust/crates/gateway-catalog-provider/src/model.rs",
+          "rust/crates/gateway-catalog-provider/src/providers.rs",
+          "rust/crates/gateway-catalog-provider/src/response.rs"
+        ],
+        "under1000": true,
+        "delta": -2,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-catalog-runtime",
+        "beforePhysicalOwnedRustLines": 3354,
+        "afterPhysicalOwnedRustLines": 3344,
+        "files": [
+          "rust/crates/gateway-catalog-runtime/src/admin.rs",
+          "rust/crates/gateway-catalog-runtime/src/control.rs",
+          "rust/crates/gateway-catalog-runtime/src/inference.rs",
+          "rust/crates/gateway-catalog-runtime/src/lib.rs",
+          "rust/crates/gateway-catalog-runtime/src/state.rs",
+          "rust/crates/gateway-catalog-runtime/src/versioned.rs"
+        ],
+        "under1000": false,
+        "delta": -10,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-extras-contract",
+        "beforePhysicalOwnedRustLines": 400,
+        "afterPhysicalOwnedRustLines": 440,
+        "files": [
+          "rust/crates/gateway-extras-contract/src/errors.rs",
+          "rust/crates/gateway-extras-contract/src/family.rs",
+          "rust/crates/gateway-extras-contract/src/lib.rs",
+          "rust/crates/gateway-extras-contract/src/model.rs",
+          "rust/crates/gateway-extras-contract/src/response_body.rs",
+          "rust/crates/gateway-extras-contract/src/route.rs",
+          "rust/crates/gateway-extras-contract/src/types.rs"
+        ],
+        "under1000": true,
+        "delta": 40,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-local-refusal",
+        "beforePhysicalOwnedRustLines": 294,
+        "afterPhysicalOwnedRustLines": 325,
+        "files": [
+          "rust/crates/gateway-local-refusal/src/closed_error_body.rs",
+          "rust/crates/gateway-local-refusal/src/lib.rs",
+          "rust/crates/gateway-local-refusal/src/routing_error.rs",
+          "rust/crates/gateway-local-refusal/src/source_error.rs"
+        ],
+        "under1000": true,
+        "delta": 31,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-prompt-policy",
+        "beforePhysicalOwnedRustLines": 501,
+        "afterPhysicalOwnedRustLines": 501,
+        "files": [
+          "rust/crates/gateway-prompt-policy/src/admission.rs",
+          "rust/crates/gateway-prompt-policy/src/lib.rs",
+          "rust/crates/gateway-prompt-policy/src/payload.rs",
+          "rust/crates/gateway-prompt-policy/src/summary.rs",
+          "rust/crates/gateway-prompt-policy/src/tokens.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-chat",
+        "beforePhysicalOwnedRustLines": 841,
+        "afterPhysicalOwnedRustLines": 841,
+        "files": [
+          "rust/crates/gateway-provider-chat/src/lib.rs",
+          "rust/crates/gateway-provider-chat/src/source_anthropic.rs",
+          "rust/crates/gateway-provider-chat/src/source_chat.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-chat-controls",
+        "beforePhysicalOwnedRustLines": 195,
+        "afterPhysicalOwnedRustLines": 195,
+        "files": [
+          "rust/crates/gateway-provider-chat-controls/src/lib.rs",
+          "rust/crates/gateway-provider-chat-controls/src/projection.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-claude-body",
+        "beforePhysicalOwnedRustLines": 811,
+        "afterPhysicalOwnedRustLines": 811,
+        "files": [
+          "rust/crates/gateway-provider-claude-body/src/finalize.rs",
+          "rust/crates/gateway-provider-claude-body/src/lib.rs",
+          "rust/crates/gateway-provider-claude-body/src/source_anthropic.rs",
+          "rust/crates/gateway-provider-claude-body/src/source_controls.rs",
+          "rust/crates/gateway-provider-claude-body/src/source_request.rs",
+          "rust/crates/gateway-provider-claude-body/src/types.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-collector",
+        "beforePhysicalOwnedRustLines": 709,
+        "afterPhysicalOwnedRustLines": 709,
+        "files": [
+          "rust/crates/gateway-provider-collector/src/claude_chat_stream.rs",
+          "rust/crates/gateway-provider-collector/src/lib.rs",
+          "rust/crates/gateway-provider-collector/src/parts.rs",
+          "rust/crates/gateway-provider-collector/src/source_collector.rs",
+          "rust/crates/gateway-provider-collector/src/source_response.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-events",
+        "beforePhysicalOwnedRustLines": 246,
+        "afterPhysicalOwnedRustLines": 246,
+        "files": [
+          "rust/crates/gateway-provider-events/src/event.rs",
+          "rust/crates/gateway-provider-events/src/framing.rs",
+          "rust/crates/gateway-provider-events/src/lib.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-history",
+        "beforePhysicalOwnedRustLines": 637,
+        "afterPhysicalOwnedRustLines": 637,
+        "files": [
+          "rust/crates/gateway-provider-history/src/chat/unicode_tests.rs",
+          "rust/crates/gateway-provider-history/src/chat.rs",
+          "rust/crates/gateway-provider-history/src/lib.rs",
+          "rust/crates/gateway-provider-history/src/source_chat.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-images",
+        "beforePhysicalOwnedRustLines": 723,
+        "afterPhysicalOwnedRustLines": 723,
+        "files": [
+          "rust/crates/gateway-provider-images/src/extras/image.rs",
+          "rust/crates/gateway-provider-images/src/extras.rs",
+          "rust/crates/gateway-provider-images/src/lib.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-input",
+        "beforePhysicalOwnedRustLines": 493,
+        "afterPhysicalOwnedRustLines": 493,
+        "files": [
+          "rust/crates/gateway-provider-input/src/lib.rs",
+          "rust/crates/gateway-provider-input/src/request.rs",
+          "rust/crates/gateway-provider-input/src/source_controls.rs",
+          "rust/crates/gateway-provider-input/src/source_request.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-policy",
+        "beforePhysicalOwnedRustLines": 687,
+        "afterPhysicalOwnedRustLines": 687,
+        "files": [
+          "rust/crates/gateway-provider-policy/src/anthropic.rs",
+          "rust/crates/gateway-provider-policy/src/lib.rs",
+          "rust/crates/gateway-provider-policy/src/lithos.rs",
+          "rust/crates/gateway-provider-policy/src/policy.rs",
+          "rust/crates/gateway-provider-policy/src/request.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-protocol",
+        "beforePhysicalOwnedRustLines": 612,
+        "afterPhysicalOwnedRustLines": 612,
+        "files": [
+          "rust/crates/gateway-provider-protocol/src/chat.rs",
+          "rust/crates/gateway-provider-protocol/src/lib.rs",
+          "rust/crates/gateway-provider-protocol/src/replay.rs",
+          "rust/crates/gateway-provider-protocol/src/response.rs",
+          "rust/crates/gateway-provider-protocol/src/source_chat.rs",
+          "rust/crates/gateway-provider-protocol/src/source_echo.rs",
+          "rust/crates/gateway-provider-protocol/src/source_response.rs",
+          "rust/crates/gateway-provider-protocol/src/types.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-replay",
+        "beforePhysicalOwnedRustLines": 635,
+        "afterPhysicalOwnedRustLines": 635,
+        "files": [
+          "rust/crates/gateway-provider-replay/src/lib.rs",
+          "rust/crates/gateway-provider-replay/src/replay.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-response",
+        "beforePhysicalOwnedRustLines": 642,
+        "afterPhysicalOwnedRustLines": 642,
+        "files": [
+          "rust/crates/gateway-provider-response/src/lib.rs",
+          "rust/crates/gateway-provider-response/src/response.rs",
+          "rust/crates/gateway-provider-response/src/source_embeddings.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-services",
+        "beforePhysicalOwnedRustLines": 814,
+        "afterPhysicalOwnedRustLines": 814,
+        "files": [
+          "rust/crates/gateway-provider-services/src/extras.rs",
+          "rust/crates/gateway-provider-services/src/lib.rs",
+          "rust/crates/gateway-provider-services/src/paid_lookup.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-source",
+        "beforePhysicalOwnedRustLines": 579,
+        "afterPhysicalOwnedRustLines": 579,
+        "files": [
+          "rust/crates/gateway-provider-source/src/anthropic.rs",
+          "rust/crates/gateway-provider-source/src/extras.rs",
+          "rust/crates/gateway-provider-source/src/lib.rs",
+          "rust/crates/gateway-provider-source/src/policy.rs",
+          "rust/crates/gateway-provider-source/src/source.rs",
+          "rust/crates/gateway-provider-source/src/source_collector.rs",
+          "rust/crates/gateway-provider-source/src/source_policy.rs",
+          "rust/crates/gateway-provider-source/src/types.rs",
+          "rust/crates/gateway-provider-source/src/usage.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-stream",
+        "beforePhysicalOwnedRustLines": 718,
+        "afterPhysicalOwnedRustLines": 718,
+        "files": [
+          "rust/crates/gateway-provider-stream/src/codex_failure.rs",
+          "rust/crates/gateway-provider-stream/src/lib.rs",
+          "rust/crates/gateway-provider-stream/src/response.rs",
+          "rust/crates/gateway-provider-stream/src/sse.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-tool-grammar",
+        "beforePhysicalOwnedRustLines": 389,
+        "afterPhysicalOwnedRustLines": 389,
+        "files": [
+          "rust/crates/gateway-provider-tool-grammar/src/lib.rs",
+          "rust/crates/gateway-provider-tool-grammar/src/source_tools.rs",
+          "rust/crates/gateway-provider-tool-grammar/src/tools.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-provider-writer",
+        "beforePhysicalOwnedRustLines": 658,
+        "afterPhysicalOwnedRustLines": 658,
+        "files": [
+          "rust/crates/gateway-provider-writer/src/finalize.rs",
+          "rust/crates/gateway-provider-writer/src/lib.rs",
+          "rust/crates/gateway-provider-writer/src/writer.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-providers",
+        "beforePhysicalOwnedRustLines": 620,
+        "afterPhysicalOwnedRustLines": 620,
+        "files": [
+          "rust/crates/gateway-providers/src/anthropic.rs",
+          "rust/crates/gateway-providers/src/chat.rs",
+          "rust/crates/gateway-providers/src/lib.rs",
+          "rust/crates/gateway-providers/src/request.rs",
+          "rust/crates/gateway-providers/src/source_request.rs"
+        ],
+        "under1000": true,
+        "delta": 0,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-schema",
+        "beforePhysicalOwnedRustLines": 7497,
+        "afterPhysicalOwnedRustLines": 7494,
+        "files": [
+          "rust/crates/gateway-schema/src/aliases.rs",
+          "rust/crates/gateway-schema/src/allowlists.rs",
+          "rust/crates/gateway-schema/src/catalog.rs",
+          "rust/crates/gateway-schema/src/catalog_cache.rs",
+          "rust/crates/gateway-schema/src/catalog_store.rs",
+          "rust/crates/gateway-schema/src/catalog_views.rs",
+          "rust/crates/gateway-schema/src/content.rs",
+          "rust/crates/gateway-schema/src/lib.rs",
+          "rust/crates/gateway-schema/src/metadata.rs",
+          "rust/crates/gateway-schema/src/model_control.rs",
+          "rust/crates/gateway-schema/src/native_catalog.rs",
+          "rust/crates/gateway-schema/src/prompt_cache.rs",
+          "rust/crates/gateway-schema/src/provider_catalog.rs",
+          "rust/crates/gateway-schema/src/reasoning.rs",
+          "rust/crates/gateway-schema/src/request.rs",
+          "rust/crates/gateway-schema/src/runtime_config.rs",
+          "rust/crates/gateway-schema/src/selection.rs",
+          "rust/crates/gateway-schema/src/snapshot.rs",
+          "rust/crates/gateway-schema/src/source_request/cache_capability.rs",
+          "rust/crates/gateway-schema/src/source_request/cache_metadata.rs",
+          "rust/crates/gateway-schema/src/source_request/chat_engine.rs",
+          "rust/crates/gateway-schema/src/source_request/content_engine.rs",
+          "rust/crates/gateway-schema/src/source_request/controls.rs",
+          "rust/crates/gateway-schema/src/source_request/fields.rs",
+          "rust/crates/gateway-schema/src/source_request/normalized.rs",
+          "rust/crates/gateway-schema/src/source_request/ordinary.rs",
+          "rust/crates/gateway-schema/src/source_request/reasoning.rs",
+          "rust/crates/gateway-schema/src/source_request/value.rs",
+          "rust/crates/gateway-schema/src/source_request.rs",
+          "rust/crates/gateway-schema/src/util.rs"
+        ],
+        "under1000": false,
+        "delta": -3,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      },
+      {
+        "crate": "gateway-worker",
+        "beforePhysicalOwnedRustLines": 18553,
+        "afterPhysicalOwnedRustLines": 18540,
+        "files": [
+          "rust/crates/gateway-worker/src/admin_host.rs",
+          "rust/crates/gateway-worker/src/admin_support_host/picker.rs",
+          "rust/crates/gateway-worker/src/admin_support_host/pricing.rs",
+          "rust/crates/gateway-worker/src/admin_support_host.rs",
+          "rust/crates/gateway-worker/src/admission.rs",
+          "rust/crates/gateway-worker/src/agent_messages.rs",
+          "rust/crates/gateway-worker/src/auth_passport_host.rs",
+          "rust/crates/gateway-worker/src/authority.rs",
+          "rust/crates/gateway-worker/src/cache_experiment_host/sample.rs",
+          "rust/crates/gateway-worker/src/cache_experiment_host.rs",
+          "rust/crates/gateway-worker/src/candidate_bindings/tests.rs",
+          "rust/crates/gateway-worker/src/candidate_bindings.rs",
+          "rust/crates/gateway-worker/src/catalog.rs",
+          "rust/crates/gateway-worker/src/catalog_host.rs",
+          "rust/crates/gateway-worker/src/claude_host/admin.rs",
+          "rust/crates/gateway-worker/src/claude_host/catalog.rs",
+          "rust/crates/gateway-worker/src/claude_host/platform.rs",
+          "rust/crates/gateway-worker/src/claude_host.rs",
+          "rust/crates/gateway-worker/src/codex_admin_host/automatic.rs",
+          "rust/crates/gateway-worker/src/codex_admin_host/manual.rs",
+          "rust/crates/gateway-worker/src/codex_admin_host/source_inventory.rs",
+          "rust/crates/gateway-worker/src/codex_admin_host.rs",
+          "rust/crates/gateway-worker/src/compaction_host/protocol/tests.rs",
+          "rust/crates/gateway-worker/src/compaction_host/protocol.rs",
+          "rust/crates/gateway-worker/src/compaction_host.rs",
+          "rust/crates/gateway-worker/src/cors.rs",
+          "rust/crates/gateway-worker/src/extras.rs",
+          "rust/crates/gateway-worker/src/extras_host.rs",
+          "rust/crates/gateway-worker/src/host.rs",
+          "rust/crates/gateway-worker/src/image_host.rs",
+          "rust/crates/gateway-worker/src/inference/late_failure.rs",
+          "rust/crates/gateway-worker/src/inference/pending_tests.rs",
+          "rust/crates/gateway-worker/src/inference/stream.rs",
+          "rust/crates/gateway-worker/src/inference/task.rs",
+          "rust/crates/gateway-worker/src/inference.rs",
+          "rust/crates/gateway-worker/src/inference_capture.rs",
+          "rust/crates/gateway-worker/src/inference_currentness.rs",
+          "rust/crates/gateway-worker/src/inference_head.rs",
+          "rust/crates/gateway-worker/src/inference_lifecycle.rs",
+          "rust/crates/gateway-worker/src/inference_local.rs",
+          "rust/crates/gateway-worker/src/inference_local_lifecycle.rs",
+          "rust/crates/gateway-worker/src/inference_source.rs",
+          "rust/crates/gateway-worker/src/lib.rs",
+          "rust/crates/gateway-worker/src/lifecycle.rs",
+          "rust/crates/gateway-worker/src/live_host/account.rs",
+          "rust/crates/gateway-worker/src/live_host/body.rs",
+          "rust/crates/gateway-worker/src/live_host/health.rs",
+          "rust/crates/gateway-worker/src/live_host/platform.rs",
+          "rust/crates/gateway-worker/src/live_host.rs",
+          "rust/crates/gateway-worker/src/live_http.rs",
+          "rust/crates/gateway-worker/src/migration_host.rs",
+          "rust/crates/gateway-worker/src/native_authority/import_dispatch.rs",
+          "rust/crates/gateway-worker/src/native_authority.rs",
+          "rust/crates/gateway-worker/src/native_host.rs",
+          "rust/crates/gateway-worker/src/native_transport.rs",
+          "rust/crates/gateway-worker/src/observability_host/admin.rs",
+          "rust/crates/gateway-worker/src/observability_host/diagnostics.rs",
+          "rust/crates/gateway-worker/src/observability_host/inventory.rs",
+          "rust/crates/gateway-worker/src/observability_host/probe.rs",
+          "rust/crates/gateway-worker/src/observability_host.rs",
+          "rust/crates/gateway-worker/src/paid_lookup.rs",
+          "rust/crates/gateway-worker/src/private_installer.rs",
+          "rust/crates/gateway-worker/src/publication.rs",
+          "rust/crates/gateway-worker/src/routing_host/paid_catalog_tests.rs",
+          "rust/crates/gateway-worker/src/routing_host.rs",
+          "rust/crates/gateway-worker/src/runtime.rs",
+          "rust/crates/gateway-worker/src/transport/mod.rs",
+          "rust/crates/gateway-worker/src/transport/outbound.rs"
+        ],
+        "under1000": false,
+        "delta": -13,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      }
+    ],
+    "targets": [
+      {
+        "root": "rust/crates/gateway-admin-runtime/tests/brief.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-admin-runtime/tests/brief.rs"
+        ],
+        "physicalOwnedRustLines": 75,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-admin-runtime/tests/claude_contracts.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-admin-runtime/tests/claude_contracts.rs"
+        ],
+        "physicalOwnedRustLines": 295,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-admin-runtime/tests/claude_generation.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-admin-runtime/tests/claude_generation.rs"
+        ],
+        "physicalOwnedRustLines": 73,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-admin-runtime/tests/contracts.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-admin-runtime/tests/contracts.rs",
+          "rust/crates/gateway-admin-runtime/tests/manual_reset/mod.rs"
+        ],
+        "physicalOwnedRustLines": 366,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-admin-runtime/tests/errors_utf16.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-admin-runtime/tests/errors_utf16.rs"
+        ],
+        "physicalOwnedRustLines": 362,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-admin-runtime/tests/kernel_source.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-admin-runtime/tests/kernel_source.rs"
+        ],
+        "physicalOwnedRustLines": 662,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-admin-runtime/tests/key_deletion.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-admin-runtime/tests/key_deletion.rs"
+        ],
+        "physicalOwnedRustLines": 374,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-admin-runtime/tests/native_contracts.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-admin-runtime/tests/native_contracts.rs"
+        ],
+        "physicalOwnedRustLines": 328,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-admin-runtime/tests/source_controls.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-admin-runtime/tests/source_controls.rs"
+        ],
+        "physicalOwnedRustLines": 593,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-auth-contracts/tests/closed_error_body.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-auth-contracts/tests/closed_error_body.rs"
+        ],
+        "physicalOwnedRustLines": 66,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-auth-contracts/tests/passport_data.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-auth-contracts/tests/passport_data.rs"
+        ],
+        "physicalOwnedRustLines": 51,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-catalog-provider/tests/response.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-catalog-provider/tests/response.rs"
+        ],
+        "physicalOwnedRustLines": 33,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-catalog-runtime/tests/admin.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-catalog-runtime/tests/admin.rs"
+        ],
+        "physicalOwnedRustLines": 1018,
+        "under1000": false,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-catalog-runtime/tests/control.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-catalog-runtime/tests/control.rs",
+          "rust/crates/gateway-catalog-runtime/tests/original_request_fixture/mod.rs"
+        ],
+        "physicalOwnedRustLines": 1306,
+        "under1000": false,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-catalog-runtime/tests/inference.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-catalog-runtime/tests/inference.rs"
+        ],
+        "physicalOwnedRustLines": 291,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-catalog-runtime/tests/runtime.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-catalog-runtime/tests/runtime.rs"
+        ],
+        "physicalOwnedRustLines": 1520,
+        "under1000": false,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-catalog-runtime/tests/source_loader.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-catalog-runtime/tests/source_loader.rs"
+        ],
+        "physicalOwnedRustLines": 88,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-catalog-runtime/tests/source_snapshot_label.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-catalog-runtime/tests/source_snapshot_label.rs"
+        ],
+        "physicalOwnedRustLines": 48,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-extras-contract/tests/closed_error_body.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-extras-contract/tests/closed_error_body.rs"
+        ],
+        "physicalOwnedRustLines": 66,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-extras-contract/tests/model.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-extras-contract/tests/model.rs"
+        ],
+        "physicalOwnedRustLines": 10,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-local-refusal/tests/closed_error_body.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-local-refusal/tests/closed_error_body.rs"
+        ],
+        "physicalOwnedRustLines": 256,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-local-refusal/tests/closed_error_serialize.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-local-refusal/tests/closed_error_serialize.rs"
+        ],
+        "physicalOwnedRustLines": 40,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-local-refusal/tests/local_refusal.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-local-refusal/tests/local_refusal.rs"
+        ],
+        "physicalOwnedRustLines": 109,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/buffered_terminal.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/buffered_terminal.rs"
+        ],
+        "physicalOwnedRustLines": 247,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/claude_body_stage.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/claude_body_stage.rs"
+        ],
+        "physicalOwnedRustLines": 185,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/claude_ordinary_phase.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/claude_ordinary_phase.rs"
+        ],
+        "physicalOwnedRustLines": 350,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/conformance.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/conformance.rs"
+        ],
+        "physicalOwnedRustLines": 881,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/current_source_decode.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/current_source_decode.rs"
+        ],
+        "physicalOwnedRustLines": 115,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/extras_source_carriers.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/extras_source_carriers.rs"
+        ],
+        "physicalOwnedRustLines": 95,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/extras_source_golden.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/extras_source_golden.rs"
+        ],
+        "physicalOwnedRustLines": 572,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/final_edges.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/final_edges.rs"
+        ],
+        "physicalOwnedRustLines": 259,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/forwarding_unicode.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/forwarding_unicode.rs"
+        ],
+        "physicalOwnedRustLines": 256,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/ordinary_preparation.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/ordinary_preparation.rs"
+        ],
+        "physicalOwnedRustLines": 360,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/paid_lookup.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/paid_lookup.rs"
+        ],
+        "physicalOwnedRustLines": 191,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/prompt_policy.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/prompt_policy.rs"
+        ],
+        "physicalOwnedRustLines": 317,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/replay_runtime.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/replay_runtime.rs"
+        ],
+        "physicalOwnedRustLines": 363,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/source_currency.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/source_currency.rs"
+        ],
+        "physicalOwnedRustLines": 127,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/source_wire.rs"
+        ],
+        "physicalOwnedRustLines": 808,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/sse_boundaries.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/sse_boundaries.rs"
+        ],
+        "physicalOwnedRustLines": 37,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/surplus_masking.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/surplus_masking.rs"
+        ],
+        "physicalOwnedRustLines": 71,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-providers/tests/terminal_conformance.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-providers/tests/terminal_conformance.rs"
+        ],
+        "physicalOwnedRustLines": 191,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/cache_conformance.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-schema/tests/cache_conformance.rs"
+        ],
+        "physicalOwnedRustLines": 572,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/catalog_conformance.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-schema/tests/catalog_conformance.rs"
+        ],
+        "physicalOwnedRustLines": 399,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/closed_reasoning_message.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-schema/tests/closed_reasoning_message.rs"
+        ],
+        "physicalOwnedRustLines": 42,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/decision_catalog.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-schema/tests/decision_catalog.rs"
+        ],
+        "physicalOwnedRustLines": 128,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/model_controls.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-schema/tests/model_controls.rs"
+        ],
+        "physicalOwnedRustLines": 334,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/request_conformance.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-schema/tests/request_conformance.rs"
+        ],
+        "physicalOwnedRustLines": 357,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/source_cache_capability.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-schema/tests/source_cache_capability.rs"
+        ],
+        "physicalOwnedRustLines": 218,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/source_cache_metadata.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-schema/tests/source_cache_metadata.rs"
+        ],
+        "physicalOwnedRustLines": 135,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/source_catalog_views.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-schema/tests/source_catalog_views.rs",
+          "rust/crates/gateway-schema/tests/support/mod.rs"
+        ],
+        "physicalOwnedRustLines": 244,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/source_currency.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-schema/tests/source_currency.rs",
+          "rust/crates/gateway-schema/tests/support/mod.rs"
+        ],
+        "physicalOwnedRustLines": 163,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/source_normalization.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-schema/tests/source_normalization.rs"
+        ],
+        "physicalOwnedRustLines": 214,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/source_request.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-schema/tests/source_request.rs"
+        ],
+        "physicalOwnedRustLines": 95,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/source_value_facade.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-schema/tests/source_value_facade.rs"
+        ],
+        "physicalOwnedRustLines": 167,
+        "under1000": true,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-prompt-policy/tests/source_contracts.rs",
+        "conventionalObservedFiles": [
+          "rust/crates/gateway-prompt-policy/tests/source_contracts.rs"
+        ],
+        "physicalOwnedRustLines": 288,
+        "under1000": true,
+        "classification": "PHYSICAL_SOURCE_INVENTORY_NOT_AST_RECEIPT"
+      }
+    ],
+    "newAuthoredTests": {
+      "rust/crates/gateway-auth-contracts/tests/closed_error_body.rs": [
+        "closed_auth_response_keeps_defaults_utf16_and_original_status",
+        "closed_auth_generic_json_and_direct_wire_views_match",
+        "existing_auth_source_json_and_empty_body_contracts_stay_distinct"
+      ],
+      "rust/crates/gateway-extras-contract/tests/closed_error_body.rs": [
+        "closed_extras_response_keeps_defaults_and_original_utf16_bytes",
+        "extras_json_and_closed_wire_equality_keeps_original_source_identity",
+        "extras_generic_serializer_retains_its_actual_failure_boundary"
+      ],
+      "rust/crates/gateway-local-refusal/tests/closed_error_serialize.rs": [
+        "finite_generic_serialization_matches_wire_without_serializing_the_private_kind",
+        "finite_generic_serializer_preserves_actual_writer_failure"
+      ],
+      "rust/crates/gateway-schema/tests/closed_reasoning_message.rs": [
+        "reasoning_error_message_and_parent_param_stay_at_the_original_validation_point",
+        "nonempty_lone_unit_reasoning_remains_open_source_data"
+      ],
+      "rust/crates/gateway-admin-runtime/tests/errors_utf16.rs": [
+        "closed_validation_errors_keep_original_bytes_before_defaults_or_selection_effects"
+      ]
+    },
+    "newAuthoredCount": 11,
+    "newExecution": "NOT_RUN_SOURCE_ONLY",
+    "originalProviderCasesRetained": 109,
+    "priorProviderRegressionsRetained": 15,
+    "cases": [
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/buffered_terminal.rs",
+        "name": "buffered_error_only_retains_source502_envelope_and_error_settlement",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/buffered_terminal.rs",
+        "name": "created_before_error_is_not_misreported_as_completed_response",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/buffered_terminal.rs",
+        "name": "streaming_flat_and_nested_errors_preserve_actual_events_and_original_status",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/buffered_terminal.rs",
+        "name": "source_default_error_fields_are_used_for_buffered_nested_terminal",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/buffered_terminal.rs",
+        "name": "truncated_or_missing_terminal_still_fails_closed",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/buffered_terminal.rs",
+        "name": "first_completed_terminal_survives_a_later_error_in_both_client_modes",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/buffered_terminal.rs",
+        "name": "successful_codex_without_media_type_uses_strict_sse_in_both_client_modes",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/buffered_terminal.rs",
+        "name": "absent_codex_media_type_never_accepts_non_sse_or_missing_terminal_as_completion",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/buffered_terminal.rs",
+        "name": "missing_media_type_is_inferred_only_for_successful_fixed_codex_protocol",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/claude_body_stage.rs",
+        "name": "staged_scalar_bodies_and_decode_match_one_legacy_implementation",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/claude_body_stage.rs",
+        "name": "pure_stage_has_no_material_port_and_retains_original_body_error",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/claude_body_stage.rs",
+        "name": "stage_keeps_source_effort_payload_and_actual_disabled_capability",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/claude_body_stage.rs",
+        "name": "plain_api_body_retains_scalar_golden_bytes_without_attribution",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/claude_ordinary_phase.rs",
+        "name": "effective_omitted_default_is_observed_before_capabilities_and_finalized_once",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/claude_ordinary_phase.rs",
+        "name": "original_high_only_catalog_remains_an_explicit_default_medium_negative",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/claude_ordinary_phase.rs",
+        "name": "explicit_none_nonstream_and_observed_high_keep_their_real_proof_rules",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/claude_ordinary_phase.rs",
+        "name": "absent_effort_and_opaque_mapped_default_retain_exact_source_data",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/claude_ordinary_phase.rs",
+        "name": "source_input_cache_reasoning_priority_finishes_before_any_capability_input",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/claude_ordinary_phase.rs",
+        "name": "phased_and_existing_convenience_use_identical_normalized_body_and_decode",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/claude_ordinary_phase.rs",
+        "name": "cloned_phase_retries_keep_one_normalized_outcome_and_actual_selected_kind",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "frozen_waterfalls_distinguish_quota_from_serving_failure",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "codex_replay_repair_is_exact_and_does_not_damage_provider_history",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "namespace_and_freeform_round_trip_keeps_identity",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "thinking_conflict_and_reasoning_profiles_are_provider_specific",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "declared_payload_bound_keeps_unicode_and_disabled_rejects",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/terminal_conformance.rs",
+        "name": "reasoning_closes_before_text_and_fragmented_tools_keep_announced_indexes",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/terminal_conformance.rs",
+        "name": "truthful_terminals_distinguish_explicit_truncation_and_empty_stop",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/terminal_conformance.rs",
+        "name": "sse_incremental_utf8_mixed_line_endings_and_eof_fail_closed",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "usage_preserves_missingness_and_native_cache_gross_input",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "transport_profiles_cerebras_and_openrouter_preserve_actual_wires",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "cerebras_schema_preserves_property_names_and_collapses_root_union",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "native_disabled_thinking_requires_exact_independent_proof",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "native_replay_is_scoped_complete_expiring_and_never_publicly_signed",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "lithos_rung_windows_recover_independently",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "additional_inference_routes_have_provider_payloads_and_image_billing_boundary",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "chat_tool_calls_null_is_absent_in_buffered_responses",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "direct_chat_empty_stop_is_preserved_while_responses_rejects_it",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "signed_claude_chat_details_are_private_and_do_not_duplicate_reasoning",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "direct_paid_and_synthetic_pins_preserve_catalog_admission",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "responses_chat_reconciles_terminal_only_output_without_duplicate_deltas",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "codex_transport_strips_accepted_ignored_controls_and_keeps_session_scope",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "previous_response_id_provider_matrix_matches_typescript_parity",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "name": "native_messages_unclosed_blocks_fail_before_terminal",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_carriers.rs",
+        "name": "image_source_prompt_user_model_default_and_unknown_key_error_remain_original",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_carriers.rs",
+        "name": "embedding_and_systemone_use_the_same_source_engine_without_scalar_payloads",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_carriers.rs",
+        "name": "source_upstream_response_text_is_retained_in_existing_json_shape",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_golden.rs",
+        "name": "embeddings_model_is_mandatory_and_never_trimmed_into_a_different_model",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_golden.rs",
+        "name": "embeddings_scalar_errors_and_precedence_match_source",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_golden.rs",
+        "name": "embeddings_job_requires_input_type_and_float_format",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_golden.rs",
+        "name": "embeddings_limits_use_utf16_characters_and_utf8_token_estimates",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_golden.rs",
+        "name": "image_reference_urls_preserve_source_case_normalization_and_url_validation",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_golden.rs",
+        "name": "image_base64_uses_source_syntax_without_inventing_a_canonical_padding_rule",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_golden.rs",
+        "name": "image_unknown_null_fields_fail_before_scalar_validation_and_nullable_options_disappear",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_golden.rs",
+        "name": "image_scalar_error_order_and_child_identity_follow_source",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_golden.rs",
+        "name": "systemone_default_and_exact_error_envelopes_follow_source",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_golden.rs",
+        "name": "opaque_image_parse_precedes_host_model_resolution_and_keeps_operation_kind",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/extras_source_golden.rs",
+        "name": "multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validation",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/final_edges.rs",
+        "name": "explicit_null_reasoning_length_cerebras_is502_not_an_incompletion",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/final_edges.rs",
+        "name": "claude_oauth_has_native_attribution_and_console_key_does_not",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/final_edges.rs",
+        "name": "buffered_cerebras_chat_client_stream_replays_real_finish_and_usage",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/final_edges.rs",
+        "name": "lithos_header_precedence_and_streamed_final_refusal_stay_in_band",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/final_edges.rs",
+        "name": "lithos_streamed_refusal_parity_is_exposed_for_both_client_surfaces",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/final_edges.rs",
+        "name": "codex_error_bytes_are_available_unchanged_before_authority_classification",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/final_edges.rs",
+        "name": "buffered_chat_retains_usage_without_requesting_a_stream_usage_chunk",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/final_edges.rs",
+        "name": "image_fanout_measures_every_replayed_input_byte",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/forwarding_unicode.rs",
+        "name": "source_bmp_prefix_is_exactly_31343_code_units",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/forwarding_unicode.rs",
+        "name": "five_source_unicode_seams_match_exact_prefix_marker_counts_and_call_id",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/forwarding_unicode.rs",
+        "name": "in_budget_unicode_is_verbatim_for_every_reduction_setting",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/forwarding_unicode.rs",
+        "name": "disabled_unicode_refuses_preparation_with_exact_source_error",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/ordinary_preparation.rs",
+        "name": "responses_input_cache_reasoning_instructions_order_matches_the_source",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/ordinary_preparation.rs",
+        "name": "chat_syntax_stream_conversion_cache_then_selected_mapping_is_distinct",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/ordinary_preparation.rs",
+        "name": "actual_host_default_and_catalog_wire_map_do_not_become_a_tier_allowlist",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/ordinary_preparation.rs",
+        "name": "absent_catalog_is_unknown_and_source_reasoning_fields_stay_authoritative",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/ordinary_preparation.rs",
+        "name": "selected_context_is_immutable_and_none_is_only_the_explicit_legacy_adapter_contract",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/ordinary_preparation.rs",
+        "name": "selected_ordinary_metadata_does_not_prevalidate_direct_or_openrouter_branches",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/ordinary_preparation.rs",
+        "name": "opaque_model_and_effort_wire_map_units_are_data_not_scalar_fallbacks",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/paid_lookup.rs",
+        "name": "exact_source_log_normalization_preserves_numeric_and_cache_contracts",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/paid_lookup.rs",
+        "name": "fixed_query_matches_source_time_rounding_and_encodes_only_owned_key",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/paid_lookup.rs",
+        "name": "source_page_scenarios_match_last_valid_row_and_unresolved_outcomes",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/paid_lookup.rs",
+        "name": "unsupported_provider_and_missing_reference_never_create_http_or_zero_cost",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/paid_lookup.rs",
+        "name": "page_request_cannot_correlate_another_attempt_and_debug_redacts_secret_url",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/paid_lookup.rs",
+        "name": "explicit_zero_is_matched_evidence_and_malformed_zero_is_not",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/replay_runtime.rs",
+        "name": "decoded_messages_replay_publishes_and_restores_through_prepare_options",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/replay_runtime.rs",
+        "name": "decoded_chat_replay_keeps_reasoning_details_and_tool_calls_through_prepare_options",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/replay_runtime.rs",
+        "name": "lone_surrogate_native_replay_survives_prepare_source_request",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/replay_runtime.rs",
+        "name": "native_replay_arguments_require_matching_valid_object_bytes",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_currency.rs",
+        "name": "ba5ef_source_projection_vectors_match",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_currency.rs",
+        "name": "prepared_provider_wire_keeps_source_sampling_warnings_and_zero",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_currency.rs",
+        "name": "lithos_tier_windows_use_same_case_and_trim_identity_as_dispatch",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "literal_source_units_reach_direct_provider_wire_and_input_is_immutable",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "actual_stringify_boundary_uses_shared_duplicate_integer_key_and_number_semantics",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "buffered_and_actual_sse_writer_created_progress_terminal_echo_the_same_source",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "utf16_tool_prefix_collision_namespace_and_map_wire_are_source_strings",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "direct_native_and_ordinary_branches_keep_the_source_phase_boundary",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "codex_replay_and_direct_chat_do_not_lose_source_text",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "semantic_and_usage_accessors_observe_the_authoritative_event_only",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "paid_and_native_claude_source_wire_and_request_echo_keep_text_and_schema_units",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "source_original_tool_identity_survives_buffered_and_streamed_generated_items",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "selected_provider_phase_errors_and_open_effort_do_not_scalarize_source_controls",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "reasoning_refusal_and_agent_message_envelopes_preserve_literal_units",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "combined_image_text_reduction_preserves_source_parts_and_exact_refusal_boundary",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mirror",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "opaque_model_refusal_body_does_not_replace_or_scalarize_request_units",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "name": "paid_catalog_lookup_compares_source_model_units_and_retains_billing_fragments",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/sse_boundaries.rs",
+        "name": "mixed_line_endings_frame_every_byte_split_without_merging_events",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/surplus_masking.rs",
+        "name": "every_surplus_inference_post_opts_in_exactly_once_in_both_wire_and_client_modes",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "original",
+        "path": "rust/crates/gateway-providers/tests/surplus_masking.rs",
+        "name": "masking_opt_in_does_not_escape_to_other_bearer_provider_requests",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/prompt_policy.rs",
+        "name": "exact_summary_is_whole_unicode_and_all_earlier_steers_survive_every_mode",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/prompt_policy.rs",
+        "name": "malformed_and_multiple_summary_envelopes_fail_before_item_projection",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/prompt_policy.rs",
+        "name": "parseable_argument_elision_accounts_for_every_omitted_byte",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/prompt_policy.rs",
+        "name": "all_profile_windows_reserves_and_safe_integer_validation_are_real",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/prompt_policy.rs",
+        "name": "complete_body_counts_and_cerebras_real_dropped_projection_are_bound",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/prompt_policy.rs",
+        "name": "aggregate_overflow_is_typed_for_all_profiles_and_all_history_modes",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/prompt_policy.rs",
+        "name": "native_metadata_never_exempts_ordinary_messages_and_lone_summary_units_survive",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/prompt_policy.rs",
+        "name": "nonempty_reasoning_tiers_remain_verbatim_and_policy_advertises_v2",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/current_source_decode.rs",
+        "name": "item_alias_done_without_output_index_does_not_duplicate_text_or_refusal",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/current_source_decode.rs",
+        "name": "identity_less_aggregate_terminal_uses_insertion_order_and_ignores_alias_duplicates",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/current_source_decode.rs",
+        "name": "conflicting_terminal_still_errors_and_eof_is_not_a_terminal",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/current_source_decode.rs",
+        "name": "codex_exact_context_terminal_preserves_template_output_sequence_and_original_observation",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/current_source_decode.rs",
+        "name": "codex_normalization_requires_exact_code_provider_and_observed_identity",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-providers/tests/current_source_decode.rs",
+        "name": "native_responses_decoder_preserves_lone_utf16_error_fields",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      },
+      {
+        "group": "new",
+        "path": "rust/crates/gateway-routing-runtime/tests/local_aggregate.rs",
+        "name": "local_aggregate_error_never_mints_attempt_or_paid_dispatch_and_cleanup_is_once",
+        "retainedExactlyAgainstPhaseBase": true,
+        "execution": "NOT_RUN_CURRENT_TREE"
+      }
+    ],
+    "fixtures": [
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/forwarding-unicode-source-v1.json",
+        "bytes": 6649,
+        "sha256": "50d51dadfbb45c9a8e2a69be52211a7109ae4d66de0802975d60b2a4f632475a"
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/paid-lookup-golden.json",
+        "bytes": 14958,
+        "sha256": "c9a098b4d3773573e2e0897a628ef67cc7059dc9d7613aa454411c31d38bf0c9"
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/paid-lookup-oracle.json",
+        "bytes": 1426,
+        "sha256": "7b9dbaf0b7edebdb1c00f65e0c667b737862b588681f7fc5c8709df2e848377e"
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/source-currency-golden.json",
+        "bytes": 10929,
+        "sha256": "6e4ea94ae6fb4b003b1cc0de6894b228b23d0b86c53584a2c78ca7b61d731f0d"
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/source-currency-oracle.json",
+        "bytes": 2349,
+        "sha256": "74332e04c70073583a740b06a2e50457644433618ef2f3c06f988e4ad4b7fefa"
+      }
+    ],
+    "disclaimer": "Physical/module observations do not replace the required committed Rust AST structural gate or compiler/runtime evidence.",
+    "providerPromptRefusalFamilyCrateCount": 20,
+    "separatelyHeldStructuralRemainder": [
+      {
+        "crate": "gateway-routing-runtime",
+        "physicalRustLines": 7867,
+        "structuralExtensionGranted": false,
+        "touched": false
+      }
+    ]
+  },
+  "qualification": {
+    "compiler": "NOT_RUN_PROHIBITED_THIS_TURN",
+    "tests": "NOT_RUN_PROHIBITED_THIS_TURN",
+    "rustfmt": "one pinned mutation pass on17 exact files; exact-file check exit0",
+    "gitDiffCheckExit": 0,
+    "sourceManifestDagAcyclic": true,
+    "officialAstStructuralGate": "PENDING",
+    "strictNativeWasmComparator": "PENDING",
+    "worker16NativeClientMac": "PENDING",
+    "sourceMilestoneIsWholeFamilyAcceptance": false
+  },
+  "newAuthoredCaseCount": 11,
+  "newCases": {
+    "rust/crates/gateway-auth-contracts/tests/closed_error_body.rs": [
+      "closed_auth_response_keeps_defaults_utf16_and_original_status",
+      "closed_auth_generic_json_and_direct_wire_views_match",
+      "existing_auth_source_json_and_empty_body_contracts_stay_distinct"
+    ],
+    "rust/crates/gateway-extras-contract/tests/closed_error_body.rs": [
+      "closed_extras_response_keeps_defaults_and_original_utf16_bytes",
+      "extras_json_and_closed_wire_equality_keeps_original_source_identity",
+      "extras_generic_serializer_retains_its_actual_failure_boundary"
+    ],
+    "rust/crates/gateway-local-refusal/tests/closed_error_serialize.rs": [
+      "finite_generic_serialization_matches_wire_without_serializing_the_private_kind",
+      "finite_generic_serializer_preserves_actual_writer_failure"
+    ],
+    "rust/crates/gateway-schema/tests/closed_reasoning_message.rs": [
+      "reasoning_error_message_and_parent_param_stay_at_the_original_validation_point",
+      "nonempty_lone_unit_reasoning_remains_open_source_data"
+    ],
+    "rust/crates/gateway-admin-runtime/tests/errors_utf16.rs": [
+      "closed_validation_errors_keep_original_bytes_before_defaults_or_selection_effects"
+    ]
+  },
+  "retainedScope": {
+    "originalProviderCases": 109,
+    "priorRegressions": 15,
+    "fixtureCount": 5,
+    "currentExecution": "NOT_RUN",
+    "allProviderSourceAndTestsUnchangedAgainstPhaseBase": true,
+    "baselineProfilesExternalLocksSourcePrimitivesUnchanged": true
+  },
+  "durability": "Commit is provisional source only; final actual head/tree/parents and seven artifacts are bound by PRESERVE_READY. Stop after publication until LOCAL_PRESERVED."
+}

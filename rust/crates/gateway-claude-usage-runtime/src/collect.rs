@@ -1,14 +1,11 @@
 use crate::fetch::{self, ResultData, UsageHost};
 use gateway_admin_runtime::claude::{self, AccountBinding};
-use gateway_auth::{
-    crypto::uuid_from_random,
-    store::{check, commit, key},
-};
+use gateway_auth_primitives::{crypto::uuid_from_random, store::check, store::commit, store::key};
 use gateway_claude_usage_protocol::state::UsageState;
 use gateway_claude_usage_quota::QuotaState;
-use gateway_source::error::GatewayError;
 use gateway_core::state::{AuthorityStore, RecordMutation, StoredRecord};
 use gateway_kv_codec::key::RecordKey;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -73,7 +70,7 @@ pub async fn refresh<S: AuthorityStore, H: UsageHost>(
     }
     let key = lease_key(account);
     let row = store.read(&key).await?;
-    let lease = gateway_auth::store::decode::<Lease>(row.as_ref(), now)?;
+    let lease = gateway_auth_primitives::store::decode::<Lease>(row.as_ref(), now)?;
     if lease.is_some_and(|v| v.until_ms > now) {
         return Ok(Refresh::Busy);
     }
@@ -102,7 +99,7 @@ pub async fn refresh<S: AuthorityStore, H: UsageHost>(
     let result = collect_claimed(store, host, account).await;
     let cleanup = async {
         let row = store.read(&key).await?;
-        if gateway_auth::store::decode::<Lease>(row.as_ref(), host.now_ms())?
+        if gateway_auth_primitives::store::decode::<Lease>(row.as_ref(), host.now_ms())?
             .is_some_and(|l| l.owner == owner)
         {
             let _ = commit(
@@ -145,7 +142,7 @@ async fn collect_claimed<S: AuthorityStore, H: UsageHost>(
     }
     let result = fetch::fetch(host, account).await?;
     let usage = result.usage();
-    let Some(state) = gateway_claude_runtime::quota::record_usage(
+    let Some(state) = gateway_claude_usage_quota::record_usage(
         store,
         host,
         account,
@@ -171,8 +168,8 @@ async fn collect_claimed<S: AuthorityStore, H: UsageHost>(
             source_observed_at_ms: usage.observed_at_ms,
             sampled_at_ms: usage.attempted_at_ms,
             response_status: usage.status,
-            state: if gateway_claude_runtime::quota::blocked(Some(&state), usage.attempted_at_ms)
-                || gateway_claude_runtime::quota::cooling_down(Some(&state), usage.attempted_at_ms)
+            state: if gateway_claude_usage_quota::blocked(Some(&state), usage.attempted_at_ms)
+                || gateway_claude_usage_quota::cooling_down(Some(&state), usage.attempted_at_ms)
             {
                 "unavailable"
             } else {

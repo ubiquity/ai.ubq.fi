@@ -5,9 +5,10 @@ use super::actor;
 use super::actor::NativeRenewalActor;
 use super::receiver::NativeRenewalAuthority;
 use super::rows;
-use gateway_auth::native_import::{
-    NativeImportAdmission, NativeImportKind, NativeImportMetadata, NativeImportTarget,
-    VerifiedNativeImportBody,
+use gateway_auth_native_contracts::{
+    native_import::NativeImportAdmission, native_import::NativeImportKind,
+    native_import::NativeImportMetadata, native_import::NativeImportTarget,
+    native_import::VerifiedNativeImportBody,
 };
 use gateway_authority_actor_records::legacy::StoredNativeActor;
 use gateway_authority_actor_records::scope::NativeActorScope;

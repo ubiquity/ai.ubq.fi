@@ -26,7 +26,7 @@ fn declined(reason: &str) -> GatewayError {
     GatewayError::unavailable("Automatic banked reset is not authorized.", reason)
 }
 fn marker_key() -> gateway_kv_codec::key::RecordKey {
-    gateway_auth::store::key(json!([
+    gateway_auth_primitives::store::key(json!([
         "uos_ai",
         "migrations",
         "codex_reset_usage_legacy_global_v1"

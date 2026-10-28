@@ -1,14 +1,14 @@
 use futures_util::future::join_all;
-use gateway_source::{
-    error::GatewayError, source_json::SourceJson, source_serialization as source,
-};
 use gateway_extras_contract::errors::{invalid, invalid_state};
 use gateway_extras_contract::types::{
     DispatchFailure, ExtrasDispatch, ExtrasHost, ExtrasRequest, ExtrasResponse, Headers, ImageKind,
     UpstreamResponse,
 };
-use gateway_providers::extras;
+use gateway_provider_services::extras;
 use gateway_schema::source_request::value::Value as SourceValue;
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::{Value, json};
 use std::{cell::Cell, rc::Rc};
 const INPUT_BYTES: usize = 50 * 1024 * 1024;
@@ -89,9 +89,9 @@ pub(crate) async fn images<H: ExtrasHost>(
         return Ok(ExtrasResponse::error(error));
     }
     let parsed = if let Some(files) = &request.multipart {
-        extras::parse_source_multipart_image(&request.body, files)
+        gateway_provider_images::extras::parse_source_multipart_image(&request.body, files)
     } else {
-        extras::parse_source_image(&request.body, kind == ImageKind::Edits)
+        gateway_provider_images::extras::parse_source_image(&request.body, kind == ImageKind::Edits)
     };
     let parsed = match parsed {
         Ok(p) => p,
@@ -104,7 +104,11 @@ pub(crate) async fn images<H: ExtrasHost>(
             Some("model_unavailable"),
         )));
     };
-    let plan = extras::image::prepare_parsed_image(&parsed, &model, &request.context.request_id.0);
+    let plan = gateway_provider_images::extras::image::prepare_parsed_image(
+        &parsed,
+        &model,
+        &request.context.request_id.0,
+    );
     if plan.count > 1
         && serde_json::to_vec(&plan.responses)
             .map_err(|_| invalid_state())?
@@ -255,7 +259,7 @@ fn image_response(
             r.headers.extend(headers(&[result]));
             return Ok(r);
         }
-        let generated = extras::extract_source_images(&payload.source()?);
+        let generated = gateway_provider_images::extras::extract_source_images(&payload.source()?);
         let Some(image) = generated.first() else {
             let mut r = ExtrasResponse::error(GatewayError::new(
                 502,

@@ -6,7 +6,7 @@ use crate::native_control::import::{
     custody_session::ImportCustodyStartedRequest,
     effects::{NativeImportClaim, NativeImportMode},
 };
-use gateway_auth::native_auth::AuthenticatedNativeOwner;
+use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
 use gateway_auth_native_wire::native_read::{NATIVE_CONTROL_PATH, NATIVE_RENEWAL_AUTHORITY_PATH};
 use std::sync::atomic::AtomicBool;
 #[derive(Default)]
@@ -455,7 +455,11 @@ fn current_admin_session_owner_source_config_time_cancellation_and_cas_races_ref
                         "owner" => keys::paid_control_owner(),
                         "source" => codex_source_pool_key(),
                         "config" => keys::paid_control_config(),
-                        _ => gateway_auth::store::key(json!(["uos_ai", "runtime_config", "v2"])),
+                        _ => gateway_auth_primitives::store::key(json!([
+                            "uos_ai",
+                            "runtime_config",
+                            "v2"
+                        ])),
                     };
                     let mut rows = f.store.rows.lock().unwrap();
                     if let Some(row) = rows.get_mut(&key.0) {

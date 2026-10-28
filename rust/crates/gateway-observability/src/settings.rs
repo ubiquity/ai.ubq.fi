@@ -4,11 +4,11 @@ use crate::{
     ObservabilityRuntime, host_types::CapacityAccountRef, store, types::ObservabilityHost,
 };
 use gateway_admin_runtime::capabilities::{CodexRequest, Context};
-use gateway_auth::{
-    crypto::sha256_hex,
-    provider_credentials::{codex_source_pool_key, parse_codex_source_pool},
-    types::AuthResponse,
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_credentials::{
+    provider_credentials::codex_source_pool_key, provider_credentials::parse_codex_source_pool,
 };
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_capacity_projection::scalars::{is_record, safe_i64, trim};
 use gateway_core::query::QueryStore;
 use gateway_source::{

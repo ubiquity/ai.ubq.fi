@@ -1,17 +1,19 @@
 //! Synthetic constructors only. All HTTP protocol handlers stay in gateway-worker.
 use super::*;
-use gateway_auth::{
-    crypto::{Secret, sha256_hex},
-    passkeys::{self, PasskeySession, PasskeyUser},
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_credential_identity,
-        codex_source_pool_key,
-    },
-    session_index,
-    types::{AuthConfig, AuthHost, AuthRequest},
-    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
-    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
+use gateway_auth_contracts::{
+    types::AuthConfig, types::AuthHost, types::AuthRequest, upstream::AuthUpstreamRequest,
+    upstream::AuthUpstreamResponse, webauthn::CosePublicKey, webauthn::SignatureInput,
+    webauthn::WebAuthnCrypto,
 };
+use gateway_auth_credentials::{
+    provider_credentials::CodexNativeOwner, provider_credentials::CodexSourceAccount,
+    provider_credentials::CodexSourcePool, provider_credentials::codex_credential_identity,
+    provider_credentials::codex_source_pool_key,
+};
+use gateway_auth_passkeys::{
+    passkeys, passkeys::PasskeySession, passkeys::PasskeyUser, session_index,
+};
+use gateway_auth_primitives::{crypto::Secret, crypto::sha256_hex};
 use gateway_authority::{
     native_control::NativeRenewalCancellation, native_control::actor::authenticate_admin_actor,
     native_control::owners::RegisteredRenewalOwners,
@@ -156,8 +158,8 @@ pub(super) async fn initialize(
             generation_hash: sha256_hex(b"physical-before-import"),
             native_refreshed_at: None,
             external_user_id: None,
-            managed_source: Some(gateway_auth::provider_credentials::ManagedNativeSource {
-                v: gateway_auth::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
+            managed_source: Some(gateway_auth_credentials::provider_credentials::ManagedNativeSource {
+                v: gateway_auth_credentials::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
                 generation_hash: sha256_hex(b"physical-before-import"),
             }),
         }),
@@ -290,7 +292,7 @@ pub(super) async fn initialize(
     let prepared = control
         .prepare_import(
             &actor,
-            gateway_auth::native_import::NativeImportTarget::ExistingAccount {
+            gateway_auth_native_contracts::native_import::NativeImportTarget::ExistingAccount {
                 account_id_hash: credential.routing_account_hash.0,
             },
         )
@@ -306,7 +308,7 @@ pub(super) async fn initialize(
         "parent_refused": RegisteredRenewalOwner::configured("parent-control".into(), "../profile".into()).is_err()
     });
     let meta = serde_json::json!({"path_controls":path_controls,"metadata":prepared.metadata(),"account_id":account_id,"access_token":"fixture-import-new-access","access_generation":next.native_generation_hash,"native_source_generation":sha256_hex(b"physical-after-import"),"updated_at_ms":time});
-    Ok(Some(gateway_auth::crypto::base64url(
+    Ok(Some(gateway_auth_primitives::crypto::base64url(
         &serde_json::to_vec(&meta).map_err(|_| invalid())?,
     )))
 }

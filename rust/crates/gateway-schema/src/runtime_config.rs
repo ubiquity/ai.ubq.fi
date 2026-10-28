@@ -1,13 +1,14 @@
 //! Small runtime catalog projection; source model/effort controls never pass through Value.
 use crate::{
     model_control as c, prompt_cache::compact_capabilities_source, reasoning::ModelReasoning,
-    snapshot::ModelSnapshot, source_request::error::SourceRequestError,
+    snapshot::ModelSnapshot,
 };
+use gateway_contracts::model::ModelId;
+use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_contracts::model::ModelId;
 fn error(message: impl Into<String>) -> GatewayError {
     GatewayError::new(503, message, Some("runtime_config_invalid"))
 }

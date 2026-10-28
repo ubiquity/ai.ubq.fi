@@ -11,7 +11,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     pub async fn recheck_codex_slot(
         &self,
         actor: &NativeRenewalActor,
-        config: &gateway_auth::types::AuthConfig,
+        config: &gateway_auth_contracts::types::AuthConfig,
         slot_number: u8,
     ) -> Result<bool, GatewayError> {
         if !(1..=2).contains(&slot_number) {

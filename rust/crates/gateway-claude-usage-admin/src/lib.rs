@@ -2,12 +2,12 @@
 //! Inputs remain data; account mutations stay with their existing authority.
 pub mod readback;
 use gateway_admin_runtime::claude::{self, AccountBinding, Workspace};
-use gateway_auth::types::AuthHost;
+use gateway_auth_contracts::types::AuthHost;
+use gateway_core::state::AuthorityStore;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_core::state::AuthorityStore;
 pub fn check_target_cohort(
     targeted: bool,
     original_leaf: Option<&SourceJson>,
@@ -15,7 +15,7 @@ pub fn check_target_cohort(
 ) -> Result<(), GatewayError> {
     let cohort = original_leaf.and_then(source::string);
     if targeted && cohort.is_none() {
-        return Err(gateway_auth::types::invalid(
+        return Err(gateway_auth_contracts::types::invalid(
             "account_cohort_id is required for a targeted clear",
         ));
     }

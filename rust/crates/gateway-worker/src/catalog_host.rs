@@ -4,8 +4,8 @@ use crate::host::provider_secret;
 use crate::host::response_bytes;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
-use gateway_auth::provider_credentials::codex_source_pool_key;
-use gateway_auth::provider_credentials::read_codex_source_pool;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::read_codex_source_pool;
 use gateway_catalog_provider::host::CatalogFetch;
 use gateway_catalog_provider::host::CatalogFetchResponse;
 use gateway_catalog_provider::host::CatalogHost;
@@ -74,14 +74,16 @@ fn binding(provider: &str, secret: &str) -> ProviderBinding {
         return ProviderBinding {
             identity: gateway_publication_policy::control_publication::configured_paid_binding(
                 provider,
-                &gateway_auth::crypto::Secret::new(secret.to_owned()),
+                &gateway_auth_primitives::crypto::Secret::new(secret.to_owned()),
             ),
         };
     }
     // This private memo identity preserves source cache invalidation when a
     // configured key changes. It is never a Codex routing/credential fingerprint.
     ProviderBinding {
-        identity: gateway_auth::crypto::sha256_hex(format!("{provider}\0{secret}").as_bytes()),
+        identity: gateway_auth_primitives::crypto::sha256_hex(
+            format!("{provider}\0{secret}").as_bytes(),
+        ),
     }
 }
 

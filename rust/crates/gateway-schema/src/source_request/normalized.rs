@@ -1,5 +1,6 @@
 //! Public source normalization results borrow no scalar transcript representation.
-use super::{SourceRequestDocument, error::SourceRequestError, value::Value};
+use super::{SourceRequestDocument, value::Value};
+use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 #[derive(Clone, Debug, PartialEq)]
 pub struct SourceChatMessage {
@@ -13,7 +14,7 @@ pub struct SourceChatInput {
     pub instructions: Option<JsString16>,
 }
 fn output(value: Value) -> Result<SourceJson, SourceRequestError> {
-    value.source().map_err(SourceRequestError::from_scalar)
+    value.source().map_err(SourceRequestError::from_gateway)
 }
 fn values(values: Vec<Value>) -> Result<Vec<SourceJson>, SourceRequestError> {
     values.into_iter().map(output).collect()

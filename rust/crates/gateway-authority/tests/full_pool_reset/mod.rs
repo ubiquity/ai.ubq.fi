@@ -83,7 +83,7 @@ fn setup_with_config(mode: Option<ResetMode>) -> TestResult<ResetSetup> {
         store.seed(keys::reset_config(), &config(mode));
     }
     store.seed(
-        gateway_auth::store::key(json!([
+        gateway_auth_primitives::store::key(json!([
             "uos_ai",
             "migrations",
             "codex_reset_usage_legacy_global_v1"

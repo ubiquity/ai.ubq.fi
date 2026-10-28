@@ -6,8 +6,9 @@ use super::super::rows::{self, GenerationEffect, OperationRow, Phase, TerminalPu
 use super::super::{NativeRenewalCancellation, OWNER_RENEWAL_MAX_MS};
 use super::{action::ImportActionRow, effects, unavailable};
 use crate::store::Transaction;
-use gateway_auth::provider_credentials::{
-    MANAGED_NATIVE_SOURCE_VERSION, codex_source_pool_key, parse_codex_source_pool,
+use gateway_auth_credentials::{
+    provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
+    provider_credentials::codex_source_pool_key, provider_credentials::parse_codex_source_pool,
 };
 use gateway_auth_native_wire::publication_data::{
     ImportCatalogDisposition, ImportPublicationDataV1,

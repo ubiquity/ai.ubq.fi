@@ -5,10 +5,10 @@ use gateway_admin_runtime::{
         AnalyticsRequest, CatalogRequest, Context, ProviderRequest, RuntimeCapabilities,
     },
 };
-use gateway_auth::types::AuthResponse;
-use gateway_source::error::GatewayError;
+use gateway_auth_contracts::types::AuthResponse;
 use gateway_contracts::identity::RequestId;
 use gateway_schema::util::js_trim;
+use gateway_source::error::GatewayError;
 use std::cmp::Ordering;
 use worker::{
     Env,
@@ -39,8 +39,8 @@ pub struct Capabilities {
     catalog_host: crate::catalog_host::Host,
     observations: crate::observability_host::Runtime,
     support: crate::admin_support_host::Binding,
-    original: gateway_auth::types::AuthRequest,
-    auth_config: gateway_auth::types::AuthConfig,
+    original: gateway_auth_contracts::types::AuthRequest,
+    auth_config: gateway_auth_contracts::types::AuthConfig,
     actor: std::rc::Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
 }
 
@@ -48,7 +48,7 @@ impl Capabilities {
     pub fn new(
         request_id: &RequestId,
         original_body: &[u8],
-        original_request: &gateway_auth::types::AuthRequest,
+        original_request: &gateway_auth_contracts::types::AuthRequest,
         store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
         platform: &crate::host::PlatformHost,
         context: std::rc::Rc<worker::Context>,
@@ -72,7 +72,7 @@ impl Capabilities {
             crate::admin_support_host::Binding::new(catalog_host.clone(), observations.clone());
         // AuthService consumes the exact original authentication metadata. Its
         // raw body stays in the separately measured request receipt, not a second copy.
-        let original = gateway_auth::types::AuthRequest {
+        let original = gateway_auth_contracts::types::AuthRequest {
             method: original_request.method.clone(),
             url: original_request.url.clone(),
             headers: original_request.headers.clone(),

@@ -1,14 +1,16 @@
 //! Access-only publication from one constructor-registered native owner. This
 //! invokes no OAuth refresh and writes secrets only in the existing raw auth row.
-use gateway_auth::{
-    crypto::Secret,
-    native_auth::{AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity},
-    native_credentials::{NativeCredentials, NativeOwnerId, generation_failed, verify_generation},
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, codex_source_pool_key, read_codex_source_pool,
-    },
-    store,
+use gateway_auth_credentials::{
+    native_credentials::NativeCredentials, native_credentials::NativeOwnerId,
+    native_credentials::generation_failed, native_credentials::verify_generation,
+    provider_credentials::CodexNativeOwner, provider_credentials::CodexSourceAccount,
+    provider_credentials::codex_source_pool_key, provider_credentials::read_codex_source_pool,
 };
+use gateway_auth_native_proof::{
+    native_auth::AuthenticatedNativeOwner, native_auth::NativeCapability,
+    native_auth::NativeTransportIdentity,
+};
+use gateway_auth_primitives::{crypto::Secret, store};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};

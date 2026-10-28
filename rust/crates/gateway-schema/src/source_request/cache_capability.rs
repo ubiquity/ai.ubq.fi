@@ -1,6 +1,7 @@
 //! One source-aware selected-model cache capability policy; payloads never enter scalar Value.
-use super::{error::SourceRequestError, value::Value as View};
+use super::value::Value as View;
 use crate::prompt_cache::CODEX_PROVIDER;
+use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 fn refusal(model: &JsString16, prefix: &str, param: &str) -> SourceRequestError {
     let mut units = prefix.encode_utf16().collect::<Vec<_>>();

@@ -7,7 +7,9 @@ use super::{
 };
 use crate::host::PlatformClock;
 use crate::host::PlatformTokens;
-use gateway_auth::provider_credentials::{codex_access_expiry_ms, read_codex_source_pool};
+use gateway_auth_credentials::{
+    provider_credentials::codex_access_expiry_ms, provider_credentials::read_codex_source_pool,
+};
 use gateway_authority::store::Authority;
 use gateway_authority_routing_selection::SelectionOperations;
 use gateway_authority_routing_selection::{types::LiveAccountSelection, types::LiveRouteSelection};

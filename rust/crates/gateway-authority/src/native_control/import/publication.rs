@@ -6,18 +6,21 @@ use super::super::rows::{self, GenerationEffect, OperationRow, Phase, TerminalPu
 use super::super::{NativeRenewalCancellation, OWNER_RENEWAL_MAX_MS};
 use super::{action::ImportActionRow, effects, unavailable};
 use crate::store::Transaction;
-use gateway_auth::crypto::{Secret, sha256_hex};
-use gateway_auth::native_auth::{AuthenticatedNativeOwner, NativeCapability};
-use gateway_auth::native_import::NativeImportKind;
-use gateway_auth::native_import::publication::{
-    NativeImportPublication, NativeImportPublicationDisposition,
+use gateway_auth_credentials::provider_credentials::codex_credential_identity;
+use gateway_auth_native_contracts::native_import::NativeImportKind;
+use gateway_auth_native_proof::{
+    native_auth::AuthenticatedNativeOwner, native_auth::NativeCapability,
 };
-use gateway_auth::provider_credentials::codex_credential_identity;
+use gateway_auth_native_protocol::{
+    native_import::publication::NativeImportPublication,
+    native_import::publication::NativeImportPublicationDisposition,
+};
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
 use gateway_auth_native_wire::{
     publication_command::{ImportPublicationCommandData, import_publication_max_bytes},
     publication_data::{ImportCatalogDisposition, ImportPublicationDataV1},
 };
+use gateway_auth_primitives::{crypto::Secret, crypto::sha256_hex};
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
@@ -296,15 +299,19 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
     /// route, capability or raw credential/body relay is exposed.
     pub async fn authenticate_import_publication(
         &self,
-        headers: gateway_auth::native_auth::NativeAuthHeaders<'_>,
+        headers: gateway_auth_native_proof::native_auth::NativeAuthHeaders<'_>,
         body: &[u8],
     ) -> Result<AuthenticatedNativeOwner, GatewayError> {
         if body.len() > import_publication_max_bytes() {
             return Err(unavailable());
         }
-        let replay = gateway_auth::native_replay::StoreNonceAuthority::new(&self.authority.store);
-        let authenticator =
-            gateway_auth::native_auth::NativeAuthenticator::new(self.identity, &replay);
+        let replay = gateway_auth_native_protocol::native_replay::StoreNonceAuthority::new(
+            &self.authority.store,
+        );
+        let authenticator = gateway_auth_native_proof::native_auth::NativeAuthenticator::new(
+            self.identity,
+            &replay,
+        );
         let peer = authenticator
             .authenticate(NATIVE_PUBLICATION_PATH, headers, body, self.time(0)?)
             .await?;

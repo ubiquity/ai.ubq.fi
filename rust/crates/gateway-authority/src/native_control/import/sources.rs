@@ -1,9 +1,9 @@
 use super::*;
 use crate::store::Transaction;
-use gateway_auth::{
-    native_import::NativeImportTarget,
-    provider_credentials::{codex_source_pool_key, parse_codex_source_pool},
+use gateway_auth_credentials::{
+    provider_credentials::codex_source_pool_key, provider_credentials::parse_codex_source_pool,
 };
+use gateway_auth_native_contracts::native_import::NativeImportTarget;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
@@ -56,7 +56,8 @@ pub(super) async fn read<
         .read(&keys::paid_control_config())
         .await?
         .ok_or_else(unavailable)?;
-    let runtime = gateway_auth::store::key(serde_json::json!(["uos_ai", "runtime_config", "v2"]));
+    let runtime =
+        gateway_auth_primitives::store::key(serde_json::json!(["uos_ai", "runtime_config", "v2"]));
     tx.observe_revision(&runtime).await?;
     if config.v != PAID_CONTROL_CONFIG_VERSION
         || config.owner_id != owner.owner_id
@@ -109,7 +110,7 @@ pub(super) async fn read<
                 .managed_source
                 .as_ref()
                 .filter(|source| {
-                    source.v == gateway_auth::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION
+                    source.v == gateway_auth_credentials::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION
                 })
                 .ok_or_else(unavailable)?;
             if native.external_user_id.is_some() || !account.refresh_token.expose().is_empty() {
@@ -151,7 +152,8 @@ pub(super) fn control_digest(
 ) -> Result<String, GatewayError> {
     let source = codex_source_pool_key();
     let pool = keys::pool();
-    let runtime = gateway_auth::store::key(serde_json::json!(["uos_ai", "runtime_config", "v2"]));
+    let runtime =
+        gateway_auth_primitives::store::key(serde_json::json!(["uos_ai", "runtime_config", "v2"]));
     super::super::facts::checks_digest(
         &checks
             .iter()

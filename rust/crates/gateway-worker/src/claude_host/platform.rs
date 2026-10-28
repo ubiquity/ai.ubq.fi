@@ -3,21 +3,20 @@ use crate::{
     observability_host,
 };
 use gateway_admin_runtime::claude::{self, AccountBinding, Bootstrap, CredentialKind};
-use gateway_auth::{
-    types::AuthHost,
-    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
-    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
+use gateway_auth_contracts::{
+    types::AuthHost, upstream::AuthUpstreamRequest, upstream::AuthUpstreamResponse,
+    webauthn::CosePublicKey, webauthn::SignatureInput, webauthn::WebAuthnCrypto,
 };
 use gateway_catalog_provider::host::ProviderBinding;
 use gateway_claude_runtime::host::{ClaudePoolHost, HealthObservation, WorkspaceResponse};
 use gateway_claude_usage_quota::observation::AcceptedObservation;
-use gateway_source::error::GatewayError;
 use gateway_core::state::RevisionCheck;
 use gateway_observability::{
     ObservabilityRuntime,
     types::{HealthEvent, HealthProvider, HealthTarget},
 };
 use gateway_schema::catalog::ProviderCatalog;
+use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use serde_json::json;
 use std::{cmp::Ordering, rc::Rc};
@@ -220,10 +219,10 @@ pub(super) struct ConstructionFailure;
 
 pub(super) fn credential_kind(
     credential: &claude::Credential,
-) -> gateway_providers::types::ClaudeCredentialKind {
+) -> gateway_provider_claude_body::types::ClaudeCredentialKind {
     match credential.kind {
-        CredentialKind::Oauth => gateway_providers::types::ClaudeCredentialKind::Oauth,
-        CredentialKind::ApiKey => gateway_providers::types::ClaudeCredentialKind::ApiKey,
+        CredentialKind::Oauth => gateway_provider_claude_body::types::ClaudeCredentialKind::Oauth,
+        CredentialKind::ApiKey => gateway_provider_claude_body::types::ClaudeCredentialKind::ApiKey,
     }
 }
 
@@ -314,7 +313,7 @@ fn trim_workspace(
 
 pub(super) fn physical_request(
     binding: &AccountBinding,
-    body: &gateway_providers::types::PreparedClaudeBody,
+    body: &gateway_provider_claude_body::types::PreparedClaudeBody,
 ) -> Result<crate::transport::outbound::ConstructedRequest, ConstructionFailure> {
     if body.kind() != credential_kind(&binding.credential) {
         return Err(ConstructionFailure);
@@ -367,10 +366,11 @@ mod physical_tests {
         use gateway_admin_runtime::claude::{
             AccountBinding, Credential, CredentialKind, source_secret::ClaudeSourceSecret,
         };
-        use gateway_source::source_json::SourceJson;
-        use gateway_providers::types::{
-            ClaudeBodyOptions, ClaudeCredentialKind, ClientSurface, PreparedClaudeBody,
+        use gateway_provider_claude_body::{
+            types::ClaudeBodyOptions, types::ClaudeCredentialKind, types::PreparedClaudeBody,
         };
+        use gateway_provider_protocol::types::ClientSurface;
+        use gateway_source::source_json::SourceJson;
         let binding = AccountBinding {
             account_id: "fixture-account".into(),
             account_cohort_id: "fixture-cohort".into(),

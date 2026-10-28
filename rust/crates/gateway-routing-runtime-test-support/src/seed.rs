@@ -1,5 +1,5 @@
 use crate::{input::NOW, store::Store};
-use gateway_auth::crypto::Secret;
+use gateway_auth_primitives::crypto::Secret;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_contracts::{identity::ApiKeyId, identity::PoolVersionstamp};
@@ -34,8 +34,10 @@ pub fn seed_key(store: &Store) {
         },
     );
 }
-pub fn source_account(id: &str) -> gateway_auth::provider_credentials::CodexSourceAccount {
-    gateway_auth::provider_credentials::CodexSourceAccount {
+pub fn source_account(
+    id: &str,
+) -> gateway_auth_credentials::provider_credentials::CodexSourceAccount {
+    gateway_auth_credentials::provider_credentials::CodexSourceAccount {
         access_token: Secret::new(format!("fixture-access-{id}")),
         refresh_token: Secret::new(format!("fixture-refresh-{id}")),
         account_id: id.into(),
@@ -45,7 +47,7 @@ pub fn source_account(id: &str) -> gateway_auth::provider_credentials::CodexSour
 }
 pub fn seed_pool(store: &Store) {
     let accounts = ["a", "b"].map(source_account).to_vec();
-    let source = gateway_auth::provider_credentials::CodexSourcePool {
+    let source = gateway_auth_credentials::provider_credentials::CodexSourcePool {
         accounts: accounts.clone(),
         updated_at_ms: NOW as f64,
     };
@@ -75,7 +77,7 @@ pub fn seed_pool(store: &Store) {
     );
 }
 pub fn source_key() -> RecordKey {
-    gateway_auth::provider_credentials::codex_source_pool_key()
+    gateway_auth_credentials::provider_credentials::codex_source_pool_key()
 }
 pub fn window(store: &Store) -> Value {
     store.value(keys::api_window(

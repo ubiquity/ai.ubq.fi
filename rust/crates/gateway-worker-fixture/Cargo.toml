@@ -14,6 +14,12 @@ entrypoint = []
 stream-drop-fixture = ["entrypoint", "gateway-worker/fixture-stream-drop"]
 
 [dependencies]
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-passkeys = { path = "../gateway-auth-passkeys" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-worker-authority-binding.workspace = true
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }

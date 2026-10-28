@@ -2,7 +2,7 @@ use gateway_authority_contracts::AuthorityClock;
 use gateway_contracts::lifecycle::TransportObservation;
 use gateway_core::{source_control::decode_source_control_record, state::AuthorityStore};
 use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
-use gateway_providers::policy::HopFailure;
+use gateway_provider_policy::policy::HopFailure;
 use gateway_routing_runtime::{
     session::RoutingSession,
     types::{AttemptFailure, FailureOrigin, RoutingHost, TransportState},

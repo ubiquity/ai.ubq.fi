@@ -6,7 +6,7 @@ use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
 use crate::inference::RequestResources;
 use crate::routing_host;
-use gateway_auth::types::{AuthMethod, AuthPrincipal};
+use gateway_auth_contracts::types::{AuthMethod, AuthPrincipal};
 use gateway_authority_kernel_protocol::KernelTerminal;
 use gateway_contracts::{
     identity::ApiKeyId, identity::PrincipalId, identity::RequestContext, identity::RequestId,
@@ -17,7 +17,7 @@ use gateway_extras_contract::types::{
     ExtrasRequest, ExtrasResponse, ExtrasRoute, ImageKind, KernelDisposition,
 };
 use gateway_extras_runtime::ExtrasRuntime;
-use gateway_providers::types::ClientSurface;
+use gateway_provider_protocol::types::ClientSurface;
 use gateway_routing_runtime::{session::RoutingSession, types::RoutingInput};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
@@ -190,10 +190,10 @@ fn completion(
 enum ExtrasBody {
     Parsed(
         SourceJson,
-        Option<Vec<gateway_providers::extras::MultipartFile>>,
+        Option<Vec<gateway_provider_images::extras::MultipartFile>>,
         usize,
     ),
-    Rejected(gateway_auth::types::AuthResponse, Vec<u8>),
+    Rejected(gateway_auth_contracts::types::AuthResponse, Vec<u8>),
 }
 async fn request_body(
     request: &mut Request,
@@ -251,7 +251,7 @@ async fn request_body(
             Ok(raw) => raw,
             Err(error) => {
                 return Ok(ExtrasBody::Rejected(
-                    gateway_auth::types::AuthResponse::source_json(
+                    gateway_auth_contracts::types::AuthResponse::closed_error(
                         error.status,
                         error.body().clone(),
                     ),
@@ -267,7 +267,11 @@ async fn request_body(
 }
 
 fn render_response(
-    result: (SourceJson, u16, gateway_extras_contract::types::Headers),
+    result: (
+        gateway_extras_contract::response_body::ExtrasResponseBody,
+        u16,
+        gateway_extras_contract::types::Headers,
+    ),
     observation: ObservationHandle,
     context: Rc<worker::Context>,
     platform: &PlatformHost,

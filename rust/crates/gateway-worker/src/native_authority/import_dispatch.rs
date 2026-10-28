@@ -1,16 +1,15 @@
 //! Exact existing import operations on the canonical Worker/carrier path.
 use super::*;
-use gateway_auth::{
-    native_auth::AuthenticatedNativeOwner,
-    native_import::{
-        authority::{
-            IMPORT_AUTHORITY_OPERATION, ImportAuthorityCommand, ImportAuthorityRequestData,
-            ImportCustodyStartedWire,
-        },
-        catalog_seed::{IMPORT_CATALOG_SEED_OPERATION, ImportCatalogSeedRequestData},
-    },
-    types::AuthConfig,
+use gateway_auth_contracts::types::AuthConfig;
+use gateway_auth_native_contracts::{
+    native_import::authority::IMPORT_AUTHORITY_OPERATION,
+    native_import::authority::ImportAuthorityCommand,
+    native_import::authority::ImportAuthorityRequestData,
+    native_import::authority::ImportCustodyStartedWire,
+    native_import::catalog_seed::IMPORT_CATALOG_SEED_OPERATION,
+    native_import::catalog_seed::ImportCatalogSeedRequestData,
 };
+use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
 use gateway_publication_transport::transport::PublicationReceiver;
 
 #[derive(serde::Deserialize)]

@@ -2,10 +2,9 @@ use gateway_admin_runtime::{
     capabilities::Context,
     claude::{self, AccountBinding},
 };
-use gateway_auth::{
-    types::AuthHost,
-    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
-    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
+use gateway_auth_contracts::{
+    types::AuthHost, upstream::AuthUpstreamRequest, upstream::AuthUpstreamResponse,
+    webauthn::CosePublicKey, webauthn::SignatureInput, webauthn::WebAuthnCrypto,
 };
 use gateway_claude_runtime_test_support::fixture::{NOW, account};
 use gateway_claude_usage_history::{History, HistoryHost};
@@ -13,10 +12,6 @@ use gateway_claude_usage_history_records::types::{ClaudeAcceptedObservation, Cre
 use gateway_claude_usage_runtime::{
     collect,
     fetch::{Response, UsageHost},
-};
-use gateway_source::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source,
 };
 use gateway_core::state::{AuthorityStore, RevisionCheck, StoredRecord};
 use gateway_observability::{
@@ -28,6 +23,10 @@ use gateway_observability::{
     types::{HealthProvider, HealthTarget, ObservabilityHost},
 };
 use gateway_observability_test_support::runtime::{Host, Memory, run};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
 use serde_json::json;
 use std::{
     cell::{Cell, RefCell},
@@ -250,7 +249,9 @@ fn context() -> Context {
         now_ms: NOW,
     }
 }
-fn document(response: gateway_auth::types::AuthResponse) -> Result<SourceJson, GatewayError> {
+fn document(
+    response: gateway_auth_contracts::types::AuthResponse,
+) -> Result<SourceJson, GatewayError> {
     SourceJson::parse_bytes(&response.body.to_bytes()?)
 }
 fn member(v: &SourceJson, n: &str) -> Result<SourceJson, GatewayError> {
@@ -559,7 +560,7 @@ impl gateway_admin_runtime::capabilities::RuntimeCapabilities for AdminCompositi
         &self,
         request: gateway_admin_runtime::capabilities::ClaudeRequest,
         context: Context,
-    ) -> Result<gateway_auth::types::AuthResponse, GatewayError> {
+    ) -> Result<gateway_auth_contracts::types::AuthResponse, GatewayError> {
         let gateway_admin_runtime::capabilities::ClaudeRequest::RefreshUsage { document } = request
         else {
             return Err(missing());
@@ -583,10 +584,8 @@ impl gateway_admin_runtime::capabilities::RuntimeCapabilities for AdminCompositi
 #[test]
 fn authenticated_admin_service_dispatch_executes_real_account_fenced_collector_and_updated_block()
 -> TestResult {
-    use gateway_auth::{
-        crypto::Secret,
-        types::{AuthConfig, AuthRequest},
-    };
+    use gateway_auth_contracts::{types::AuthConfig, types::AuthRequest};
+    use gateway_auth_primitives::crypto::Secret;
     let host = Fixture::new();
     let a = account(1);
     host.seed(vec![a.clone()])?;

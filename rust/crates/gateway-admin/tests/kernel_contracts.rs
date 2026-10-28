@@ -1,8 +1,8 @@
 use gateway_admin_kernel::kernel_auth;
 use gateway_admin_test_support::{contract_host::Host, runtime_host::run, source_store::Store};
-use gateway_source::error::GatewayError;
 use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, StoredRecord};
 use gateway_kv_codec::key::RecordKey;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::cell::Cell;
 
@@ -56,7 +56,7 @@ fn kernel_auth_validates_both_source_policies_before_repo_precedence() {
         assert_eq!(result.queue_recorded, None);
         assert!(
             store
-                .read(&gateway_auth::store::key(json!([
+                .read(&gateway_auth_primitives::store::key(json!([
                     "uos_ai",
                     "kernel_policy_queue"
                 ])))
@@ -88,7 +88,7 @@ fn kernel_missing_policy_queue_retries_cas_without_double_counting_and_keeps_200
             store: &store,
             host: &host,
         };
-        let key = gateway_auth::store::key(json!(["uos_ai", "kernel_policy_queue"]));
+        let key = gateway_auth_primitives::store::key(json!(["uos_ai", "kernel_policy_queue"]));
         let mut rows: Vec<Value> = (0..201).map(|index| json!({"owner":"other","repo":format!("repo-{index}"),"request_count":1,"first_seen_at_ms":index,"last_seen_at_ms":index,"last_route":"/old"})).collect();
         rows.push(json!({"owner":" owner ","repo":" repo ","request_count":5.9,"first_seen_at_ms":10,"last_seen_at_ms":20,"last_route":"/original"}));
         rows.push(json!({"owner":"","repo":"invalid"}));

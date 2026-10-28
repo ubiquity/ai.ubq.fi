@@ -4,15 +4,14 @@ use gateway_admin_contracts::{
     source_input as input,
 };
 use gateway_admin_keys::keys::KeyService;
-use gateway_auth::{
-    crypto::uuid_from_random,
-    passkeys::{PasskeyUser, user_wire},
-    resolve::AuthService,
-    store,
-    types::{AuthHost, AuthMethod, AuthRequest, AuthResponse, invalid},
+use gateway_auth::resolve::AuthService;
+use gateway_auth_contracts::{
+    types::AuthHost, types::AuthMethod, types::AuthRequest, types::AuthResponse, types::invalid,
 };
-use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_auth_passkeys::{passkeys::PasskeyUser, passkeys::user_wire};
+use gateway_auth_primitives::{crypto::uuid_from_random, store};
 use gateway_core::query::QueryStore;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use url::Url;
 
@@ -20,7 +19,7 @@ pub struct AdminService<'a, S, H, A> {
     pub store: &'a S,
     pub host: &'a H,
     pub capabilities: &'a A,
-    pub config: &'a gateway_auth::types::AuthConfig,
+    pub config: &'a gateway_auth_contracts::types::AuthConfig,
     pub release: &'a str,
 }
 
@@ -109,7 +108,7 @@ impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
                 )
                 .await?
                 {
-                    return Err(gateway_auth::types::conflict(
+                    return Err(gateway_auth_contracts::types::conflict(
                         "Passkey user was modified concurrently; retry",
                     ));
                 }
@@ -255,7 +254,9 @@ fn decode_parameter(value: &str) -> Result<String, GatewayError> {
 }
 
 /// A shared credential is never mislabeled as a human identity in the admin audit.
-pub fn identified_admin(principal: &gateway_auth::types::AuthPrincipal) -> Option<(&str, &str)> {
+pub fn identified_admin(
+    principal: &gateway_auth_contracts::types::AuthPrincipal,
+) -> Option<(&str, &str)> {
     if let AuthMethod::PasskeySession {
         user_id, handle, ..
     } = &principal.method

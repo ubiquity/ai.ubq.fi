@@ -9,6 +9,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-contracts.workspace = true
 gateway-kv-codec.workspace = true
 gateway-source.workspace = true
@@ -24,4 +26,6 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-claude-runtime-test-support.workspace = true

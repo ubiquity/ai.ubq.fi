@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_core::state::*;
-use gateway_kv_codec::{key::RecordKey, value::PortableValue};
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::value::PortableValue;
 use gateway_migration_data::capture::PrivateCapture;
 use gateway_migration_data::capture::SourceEntry;
 use gateway_migration_data::custody::ArtifactContext;
@@ -8,11 +9,13 @@ use gateway_migration_inverse::inverse::export_latest;
 use gateway_migration_inverse::inverse::export_rollback_bundle;
 use gateway_migration_prepare::engine::adopt_empty;
 use gateway_migration_prepare::engine::prepare;
-use gateway_migration_test_support::fixture::{Directory, run};
+use gateway_migration_test_support::fixture::Directory;
+use gateway_migration_test_support::fixture::run;
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::to_source_profile;
 use gateway_profile_values::date::CanonicalDates;
-use serde_json::{Value, json};
+use serde_json::Value;
+use serde_json::json;
 
 fn source(parts: Value, value: Value) -> SourceEntry {
     SourceEntry {

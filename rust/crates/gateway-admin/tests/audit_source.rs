@@ -1,11 +1,11 @@
 use gateway_admin::reads;
 use gateway_admin_contracts::audit::{self, KeyChange, SourceChangeInput};
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_core::{
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
     state::{RecordMutation, StoredRecord},
 };
 use gateway_kv_codec::value::ValueEncoding;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -149,7 +149,7 @@ fn source_audit_utf16_caps_persist_and_read_lone_surrogates_without_replacement(
         assert_eq!(record.expires_at_ms, Some(NOW + audit::RETENTION_MS));
         assert_eq!(
             key,
-            gateway_auth::store::key(json!([
+            gateway_auth_primitives::store::key(json!([
                 "uos_ai",
                 "api_keys",
                 "change",
@@ -198,7 +198,9 @@ fn source_audit_visibility_is_timestamp_only_including_exact_cutoff() {
         assert_eq!(retained, row["expected"].as_bool().unwrap());
         expected += usize::from(retained);
         entries.push(QueryEntry {
-            key: gateway_auth::store::key(json!(["uos_ai", "api_keys", "change", index])),
+            key: gateway_auth_primitives::store::key(json!([
+                "uos_ai", "api_keys", "change", index
+            ])),
             record,
         });
     }

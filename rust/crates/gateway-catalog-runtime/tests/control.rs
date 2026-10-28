@@ -847,7 +847,7 @@ fn context(model: &str) -> Result<PaidRequestContext, GatewayError> {
         body: SourceJson::from_serializable(
             &json!({"model":model,"input":"controlled fixture","stream":false,"tools":[]}),
         )?,
-        surface: gateway_providers::types::ClientSurface::Responses,
+        surface: gateway_provider_protocol::types::ClientSurface::Responses,
         synthetic_hop: None,
     })
 }
@@ -1019,14 +1019,13 @@ fn synthetic_override_requires_the_server_owned_hop_not_a_body_shortcut() -> Tes
 #[cfg(not(target_arch = "wasm32"))]
 mod native_configuration {
     use super::*;
-    use gateway_auth::{
-        crypto::{Secret, base64url},
-        native_auth::{
-            AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
-            NativeNonceAuthority, NativeTransportIdentity,
-        },
+    use gateway_auth_native_proof::{
+        native_auth::AuthenticatedNativeOwner, native_auth::NativeAuthHeaders,
+        native_auth::NativeAuthenticator, native_auth::NativeCapability,
+        native_auth::NativeNonceAuthority, native_auth::NativeTransportIdentity,
     };
     use gateway_auth_native_wire::native_read::NATIVE_RPC_PATH;
+    use gateway_auth_primitives::{crypto::Secret, crypto::base64url};
     use gateway_publication_policy::control_publication::{
         ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
         fixture_owner_statement,

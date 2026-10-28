@@ -3,8 +3,8 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 mod live_manual;
 mod native_import;
 mod renewal_v2;
-use gateway_auth::crypto::{Secret, sha256_base64url};
-use gateway_auth::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
+use gateway_auth_contracts::{upstream::AuthUpstreamRequest, upstream::AuthUpstreamResponse};
+use gateway_auth_primitives::{crypto::Secret, crypto::sha256_base64url};
 use gateway_contracts::identity::{ApiKeyId, PrincipalId, RequestId};
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, StoredRecord};
 use std::{
@@ -120,16 +120,16 @@ impl Host {
         }
     }
 }
-impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
-        _: &gateway_auth::webauthn::CosePublicKey,
+        _: &gateway_auth_contracts::webauthn::CosePublicKey,
     ) -> Result<(), GatewayError> {
         Err(fail())
     }
     async fn verify_signature(
         &self,
-        _: gateway_auth::webauthn::SignatureInput,
+        _: gateway_auth_contracts::webauthn::SignatureInput,
     ) -> Result<bool, GatewayError> {
         Err(fail())
     }

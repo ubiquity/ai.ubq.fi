@@ -1,25 +1,20 @@
-use gateway_authority_api_protocol::ApiReservation;
-use gateway_authority_api_release::ApiReleaseOperations;
-use gateway_authority_kernel_protocol::KernelTerminal;
-use gateway_authority_paid_control_records::PaidRoutingProjection;
-use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidSourceCheck};
-use gateway_authority_paid_control_records::{PaidControlConfig, PaidControlOwner};
-use gateway_authority_paid_control_records::{PaidProjectionProvenance, PaidProviderObservation};
-use gateway_contracts::{lifecycle::BodyOutcome, lifecycle::DeliveryOutcome};
-use gateway_contracts::{lifecycle::ReaderTermination, lifecycle::SemanticTerminal};
 use gateway_contracts::{
-    lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
+    lifecycle::BodyOutcome, lifecycle::DeliveryOutcome, lifecycle::ReaderTermination,
+    lifecycle::SemanticTerminal, lifecycle::TransportObservation, model::ModelId,
+    provider::UpstreamProvider,
 };
-use gateway_providers::policy::HopFailure;
-use gateway_routing_runtime::{classify, policy, session::RoutingSession};
-use gateway_routing_runtime::{settlement::recover_pending, types::AttemptFailure};
-use gateway_routing_runtime::{types::AttemptUsage, types::PreparedAttempt};
-use gateway_routing_runtime::{types::PreparedWireRequest, types::RefusalDecision};
-use gateway_routing_runtime::{types::RoutingHost, types::RoutingInput, types::RoutingResult};
-use gateway_routing_runtime::{types::SourceRefusalBody, types::TransportState};
+use gateway_local_refusal::routing_error::SourceRefusalBody;
+use gateway_provider_policy::policy::HopFailure;
+use gateway_routing_runtime::{
+    classify, policy, session::RoutingSession, settlement::recover_pending, types::AttemptFailure,
+    types::AttemptUsage, types::PreparedAttempt, types::PreparedWireRequest,
+    types::RefusalDecision, types::RoutingHost, types::RoutingInput, types::RoutingResult,
+    types::TransportState,
+};
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
-use gateway_source::js_string::JsString16;
-use gateway_source::{source_json::SourceJson, source_serialization as source};
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::atomic::Ordering};
 
@@ -63,7 +58,7 @@ fn fixture_collator_refuses_unproven_operands_even_when_equal() {
 
 fn paid_input(store: &Store, id: &str, model: &str) -> TestResult<RoutingInput> {
     use gateway_authority_keys as keys;
-    use gateway_authority_paid_evidence::paid_projection_source_keys;
+    use gateway_authority_paid_control_records::*;
     use gateway_contracts::provider::PaidProvider;
     use gateway_core::state::AuthorityStore;
     let mut request = input(id, model, &["surplus", "openlux"]);
@@ -134,7 +129,7 @@ fn paid_input(store: &Store, id: &str, model: &str) -> TestResult<RoutingInput> 
     store.seed(
         keys::paid_routing(),
         PaidRoutingProjection {
-            policy: gateway_authority_paid_control_records::PaidRoutingPolicy {
+            policy: gateway_authority_paid_records::PaidRoutingPolicy {
                 v: 2,
                 codex_enabled: true,
                 codex_models: vec!["gpt-test".into()],
@@ -234,6 +229,7 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() -> T
 #[test]
 fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
     use gateway_authority::store::Authority;
+    use gateway_authority_api_protocol::ApiReservation;
     use gateway_authority_keys as keys;
     use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 
@@ -264,10 +260,7 @@ fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
             .await?;
         assert!(session.next_attempt().await.is_err());
         assert_eq!(
-            store.value(keys::paid_window(
-                "key-a",
-                NOW + gateway_authority_contracts::DAY_MS
-            )),
+            store.value(keys::paid_window("key-a", NOW + gateway_authority::DAY_MS)),
             Value::Null,
             "A stale original API owner must fail before any paid exposure is created"
         );
@@ -297,7 +290,7 @@ fn paid_dispatch_missing_active_history_cannot_recreate_exposure() -> TestResult
         let paid = attempt.paid.as_ref().ok_or("missing paid reservation")?;
         let key = keys::paid_attempt(&paid.key_id.0, &paid.attempt_id.0);
         let record = store.read(&key).await?.ok_or("missing fixture value")?;
-        let window_key = keys::paid_window("key-a", NOW + gateway_authority_contracts::DAY_MS);
+        let window_key = keys::paid_window("key-a", NOW + gateway_authority::DAY_MS);
         let exposure = store.value(window_key.clone());
         assert_ne!(exposure, Value::Null);
         assert_eq!(
@@ -343,7 +336,7 @@ fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity()
         let reservation = first.paid.as_ref().ok_or("missing paid reservation")?;
         assert_eq!(
             reservation.attempt_id.0,
-            gateway_providers::policy::paid_hop_identity(
+            gateway_provider_policy::policy::paid_hop_identity(
                 "synthetic-paid",
                 gateway_contracts::provider::PaidProvider::Surplus
             )
@@ -476,7 +469,7 @@ fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() -> T
         let handle = session.admission_handle();
         let children = handle.children(1).await?;
         handle.before_dispatch(&children[0]).await?;
-        store.advance(gateway_authority_contracts::REQUEST_LEASE_MS + 1);
+        store.advance(gateway_authority::REQUEST_LEASE_MS + 1);
         let recovered = recover_pending(
             store.clone(),
             Host::new(&store),
@@ -660,16 +653,16 @@ fn complete() -> TransportObservation {
 #[test]
 fn paid_capability_endpoint_and_logical_model_stay_separate_from_wire_alias() -> TestResult {
     assert_eq!(
-        policy::endpoint(gateway_providers::types::ClientSurface::Responses),
+        policy::endpoint(gateway_provider_protocol::types::ClientSurface::Responses),
         "openai-response"
     );
     assert_eq!(
-        policy::endpoint(gateway_providers::types::ClientSurface::Chat),
+        policy::endpoint(gateway_provider_protocol::types::ClientSurface::Chat),
         "openai"
     );
     let raw = json!({"model":"gpt-5.6-sol","input":"source fixture","reasoning":{"effort":"none"}});
-    let options = gateway_providers::types::PrepareOptions {
-        auth: gateway_providers::types::AuthMaterial {
+    let options = gateway_provider_protocol::types::PrepareOptions {
+        auth: gateway_provider_protocol::types::AuthMaterial {
             secret: "fixture".into(),
             ..Default::default()
         },
@@ -677,7 +670,7 @@ fn paid_capability_endpoint_and_logical_model_stay_separate_from_wire_alias() ->
     };
     let prepared = gateway_providers::request::prepare_request(
         UpstreamProvider::Metered,
-        gateway_providers::types::ClientSurface::Responses,
+        gateway_provider_protocol::types::ClientSurface::Responses,
         &raw,
         &options,
     )?;
@@ -727,7 +720,7 @@ fn source_availability_gate_preserves_full_compact_paid_and_reserve_cases() -> T
         &json!({"id":"paid-model","supported_endpoint_types":["openai"],"input_price_per_token":0.001,"output_price_per_token":0.002}),
     )];
     assert!(source_plan(&paid).is_err_and(|error| error.error.status == 404));
-    paid.surface = gateway_providers::types::ClientSurface::Chat;
+    paid.surface = gateway_provider_protocol::types::ClientSurface::Chat;
     // Keep the model/content/control intent in the actual Chat envelope.
     paid.raw = fixture(&json!({
         "model":"paid-model",
@@ -744,7 +737,7 @@ fn frozen_source_classifier_quota_classes_and_fallback_matrix() {
     assert_eq!(golden["quota"].as_array().unwrap().len(), 16);
     for case in golden["classes"].as_array().unwrap() {
         assert_eq!(
-            gateway_authority_routing_records::slot::class_name(policy::class(&ModelId::from(
+            gateway_authority::routing::class_name(policy::class(&ModelId::from(
                 case["model"].as_str().unwrap_or("")
             ))),
             case["expected"].as_str().unwrap()
@@ -753,8 +746,8 @@ fn frozen_source_classifier_quota_classes_and_fallback_matrix() {
     for case in golden["statuses"].as_array().unwrap() {
         let status = case["status"].as_u64().unwrap() as u16;
         let actual =
-            gateway_providers::policy::deepseek_decision(HopFailure::Status(status), false)
-                == gateway_providers::policy::HopDecision::Advance;
+            gateway_provider_policy::policy::deepseek_decision(HopFailure::Status(status), false)
+                == gateway_provider_policy::policy::HopDecision::Advance;
         assert_eq!(actual, case["expected"] == true);
     }
     for case in golden["quota"].as_array().unwrap() {
@@ -1094,7 +1087,7 @@ fn expired_journal_recovery_never_replays_or_refunds_started_work() {
         let attempt = session.next_attempt().await.unwrap().unwrap();
         session.before_dispatch(&attempt).await.unwrap();
         session.transport_started(&attempt).await.unwrap();
-        store.advance(gateway_authority_contracts::REQUEST_LEASE_MS + 1);
+        store.advance(gateway_authority::REQUEST_LEASE_MS + 1);
         let recovered = recover_pending(
             store.clone(),
             host.clone(),
@@ -1175,7 +1168,7 @@ fn source_deepseek_extension_uses_one_captured_route_selection() -> TestResult {
         let store = Store::new();
         seed_key(&store);
         let mut request = input("captured-selection", "deepseek-flash", &["deepseek"]);
-        request.surface = gateway_providers::types::ClientSurface::Chat;
+        request.surface = gateway_provider_protocol::types::ClientSurface::Chat;
         request.raw = fixture(
             &json!({"model":"deepseek-flash","messages":[{"role":"user","content":"fixture"}],"thinking":{"type":"disabled"}}),
         );
@@ -1186,14 +1179,13 @@ fn source_deepseek_extension_uses_one_captured_route_selection() -> TestResult {
             .err()
             .ok_or("expected source rejection")?;
         assert_eq!(error.error.status, 400);
-        let SourceRefusalBody::Json(body) =
+        let SourceRefusalBody::ClosedError(body) =
             error.source_body.ok_or("missing source refusal body")?
         else {
             panic!("expected the original source request error body")
         };
-        let source_error = source::member(&body, "error").ok_or("missing source error")?;
         assert_eq!(
-            source::member(&source_error, "param").map(|param| source::string(&param)),
+            body.param().map(|param| param.cloned()),
             Some(Some("thinking".into()))
         );
         request.catalog.selection = None;

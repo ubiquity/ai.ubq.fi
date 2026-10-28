@@ -1,9 +1,9 @@
-use gateway_auth::crypto::uuid_from_random;
-use gateway_auth::store;
-use gateway_auth::types::{AuthHost, AuthMethod, AuthPrincipal};
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
-use gateway_kv_codec::{key::RecordKey, value::PortableValue};
+use gateway_auth_contracts::{types::AuthHost, types::AuthMethod, types::AuthPrincipal};
+use gateway_auth_primitives::crypto::uuid_from_random;
+use gateway_auth_primitives::store;
 use gateway_core::state::{RecordMutation, StoredRecord};
+use gateway_kv_codec::{key::RecordKey, value::PortableValue};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

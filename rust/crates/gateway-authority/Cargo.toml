@@ -5,11 +5,33 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+getrandom = "=0.4.3"
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
+url = "=2.5.8"
+
+[target.'cfg(unix)'.dev-dependencies]
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
+
+[features]
+default = []
+native-import-fixture = []
+
+[lints]
+workspace = true
+
 [dependencies]
-gateway-native-authority-wire.workspace = true
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-native-protocol = { path = "../gateway-auth-native-protocol" }
+gateway-auth-passkeys = { path = "../gateway-auth-passkeys" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-native-authority-wire = { workspace = true }
 gateway-authority-actor-records = { path = "../gateway-authority-actor-records" }
 gateway-cache-experiment-runner = { path = "../gateway-cache-experiment-runner" }
-gateway-source.workspace = true
+gateway-source = { workspace = true }
 gateway-cache-experiment-dispatch = { path = "../gateway-cache-experiment-dispatch" }
 gateway-cache-experiment-campaign = { path = "../gateway-cache-experiment-campaign" }
 gateway-cache-experiment-evidence = { path = "../gateway-cache-experiment-evidence" }
@@ -42,37 +64,24 @@ gateway-authority-paid-control-records = { path = "../gateway-authority-paid-con
 gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
-gateway-contracts.workspace = true
-gateway-kv-codec.workspace = true
-gateway-local-journal.workspace = true
-gateway-auth-native-wire.workspace = true
+gateway-contracts = { workspace = true }
+gateway-kv-codec = { workspace = true }
+gateway-local-journal = { workspace = true }
+gateway-auth-native-wire = { workspace = true }
 gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }
-gateway-providers = { path = "../gateway-providers" }
 gateway-schema = { path = "../gateway-schema" }
-serde.workspace = true
-serde_json.workspace = true
-# Reuse the exact SHA-256 implementation already pinned in tools/native-kv/Cargo.lock.
+serde = { workspace = true }
+serde_json = { workspace = true }
 sha2 = "=0.11.0"
+gateway-provider-protocol = { workspace = true }
+gateway-provider-policy = { workspace = true }
 
 [dev-dependencies]
-gateway-authority-paid-test-support.workspace = true
-gateway-source.workspace = true
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-authority-paid-test-support = { workspace = true }
+gateway-source = { workspace = true }
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
 gateway-authority-test-support = { path = "../gateway-authority-test-support" }
-gateway-routing-runtime-test-support.workspace = true
-
-[target.'cfg(unix)'.dependencies]
-getrandom = "=0.4.3"
-ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
-url = "=2.5.8"
-
-[target.'cfg(unix)'.dev-dependencies]
-rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
-
-[features]
-default = []
-native-import-fixture = []
-
-[lints]
-workspace = true
+gateway-routing-runtime-test-support = { workspace = true }
