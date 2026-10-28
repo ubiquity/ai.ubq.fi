@@ -3,24 +3,15 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { openKv, type Kv } from "#kv";
-import { handleAdminClaudeCodeQuotaRefresh } from "../src/admin/claude-code.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { resolveClaudeCodeAccount, type ClaudeCodeAccountBinding } from "../src/provider/claude-code-accounts.ts";
+import { resolveClaudeCodeAccount } from "../src/provider/claude-code-accounts.ts";
 import { resetClaudeCodeCredentialCacheForTest, storeClaudeCodeStoredCredential } from "../src/provider/claude-code-credentials.ts";
 import { claudeCodeQuotaKey, loadClaudeCodeQuotaState, recordClaudeCodeQuotaOutcome } from "../src/provider/claude-code-quota.ts";
 import { refreshClaudeCodeUsage } from "../src/provider/claude-code-usage-refresh.ts";
-import { sampleProviderCapacityOnEvent } from "../src/provider/capacity.ts";
 
 const usagePayload = { five_hour: { utilization: 42, resets_at: null }, seven_day: { utilization: 12, resets_at: null } };
 const nullEnv = () => null;
-const manualRequest = (binding: ClaudeCodeAccountBinding) =>
-  new Request("https://ai.ubq.fi/admin/providers/claude-code/quota/refresh", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ account_id: binding.account_id, account_cohort_id: binding.account_cohort_id }),
-  });
-
-test("usage Retry-After survives native reopen and suppresses automatic and manual collection", async () => {
+test("legacy usage Retry-After survives native reopen without changing inference state", async () => {
   const root = resolve(".cleanup-evidence/claude-usage-retry");
   mkdirSync(root, { recursive: true });
   const directory = mkdtempSync(`${root}/case-`);
@@ -53,12 +44,8 @@ test("usage Retry-After survives native reopen and suppresses automatic and manu
     kv = await openKv(path);
     setKvForTest(kv);
 
-    await sampleProviderCapacityOnEvent({ kv, now: () => now + 31_000, fetcher: limited });
-    assert.equal(calls, 1, "automatic collection must respect the provider deadline after reopening KV");
-    const manual = await handleAdminClaudeCodeQuotaRefresh(manualRequest(account), { now: () => now + 61_000, fetcher: limited, env: nullEnv });
-    assert.equal(manual.status, 429);
-    assert.equal(manual.headers.get("Retry-After"), "59");
-    assert.equal(calls, 1, "manual collection shares the durable retry deadline");
+    assert.equal((await refreshClaudeCodeUsage(kv, account, { now: () => now + 31_000, fetcher: limited })).kind, "fresh");
+    assert.equal(calls, 1, "the archived direct helper retains its durable retry deadline");
     const retained = await loadClaudeCodeQuotaState(kv, account);
     assert.deepEqual(retained?.usage_snapshot, previous.usage_snapshot);
     assert.deepEqual(retained.windows, previous.windows);
@@ -66,16 +53,14 @@ test("usage Retry-After survives native reopen and suppresses automatic and manu
     assert.equal(retained.blocked_until_ms, previous.blocked_until_ms);
     assert.deepEqual(retained.pool_proofs, previous.pool_proofs);
 
-    const retry = await handleAdminClaudeCodeQuotaRefresh(manualRequest(account), {
+    const retry = await refreshClaudeCodeUsage(kv, account, {
       now: () => now + 120_000,
-      env: nullEnv,
       fetcher: () => {
         calls += 1;
         return Promise.resolve(Response.json(usagePayload));
       },
     });
-    assert.equal(retry.status, 200);
-    assert.equal((await retry.json()).refreshed, true);
+    assert.equal(retry.kind, "completed");
     assert.equal(calls, 2);
     const recovered = await loadClaudeCodeQuotaState(kv, account);
     assert.equal(recovered?.usage?.state, "ok");
@@ -103,8 +88,7 @@ test("a usage 429 without Retry-After retains the existing thirty-second attempt
       calls += 1;
       return Promise.resolve(new Response("Too many usage reads", { status: 429 }));
     };
-    const first = await handleAdminClaudeCodeQuotaRefresh(manualRequest(account), { now: () => now, fetcher, env: nullEnv });
-    assert.equal(first.status, 429, "the manual route preserves the actual upstream rate-limit status");
+    assert.equal((await refreshClaudeCodeUsage(kv, account, { now: () => now, fetcher })).kind, "completed");
     assert.equal((await refreshClaudeCodeUsage(kv, account, { now: () => now + 29_000, fetcher })).kind, "fresh");
     assert.equal(calls, 1);
     assert.equal((await refreshClaudeCodeUsage(kv, account, { now: () => now + 31_000, fetcher })).kind, "completed");

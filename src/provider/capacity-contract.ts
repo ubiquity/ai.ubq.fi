@@ -179,6 +179,7 @@ export type ProviderCapacityView = Readonly<
 
 /** Additive Claude evidence; never widen the persisted Codex/metered tuple. */
 export type ClaudeCapacityHistoryPoint = Readonly<{
+  source?: "response_headers";
   usage_snapshot?: ClaudeCodeUsageSnapshot;
   v: 1;
   point_id: string;
