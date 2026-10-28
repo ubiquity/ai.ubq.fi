@@ -28,3 +28,15 @@ pub struct ConnectionRow {
     pub upstream_status: Option<u16>,
     pub retired: bool,
 }
+
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::ScalarKeyPart::String as Text, tuple_key::TupleKey,
+};
+pub fn mapping_key(call: &str, pending: bool) -> RecordKey {
+    let mut parts = vec![Text("uos_ai"), Text("codex_live_calls"), Text("v1")];
+    if pending {
+        parts.push(Text("pending_retirement"));
+    }
+    parts.push(Text(call));
+    TupleKey::from_scalar_parts(&parts).to_record_key()
+}

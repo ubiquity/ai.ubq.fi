@@ -1533,6 +1533,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-native-context-facts"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-proof",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-passport-sessions",
+ "gateway-auth-primitives",
+ "gateway-authority-actor-currentness",
+ "gateway-authority-actor-records",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-native-records",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-cache-experiment-evidence",
+ "gateway-cache-experiment-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-native-authority-wire",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority-native-records"
 version = "0.1.0"
 dependencies = [
@@ -5218,6 +5248,35 @@ dependencies = [
  "serde_with",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "webauthn-rs-core"
+version = "0.6.1-dev"
+dependencies = [
+ "base64 0.21.7",
+ "crypto-glue",
+ "der-parser",
+ "ed25519-dalek",
+ "hex",
+ "nom",
+ "p521",
+ "rand 0.9.5",
+ "rand_chacha 0.9.0",
+ "rsa",
+ "serde",
+ "serde_cbor_2",
+ "serde_json",
+ "serde_with",
+ "sha1",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "tracing",
+ "url",
+ "uuid",
+ "webauthn-attestation-ca",
+ "webauthn-rs-proto",
+ "x509-parser",
 ]
 
 [[package]]
