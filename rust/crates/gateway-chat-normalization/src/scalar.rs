@@ -1,5 +1,5 @@
 //! Scalar compatibility entrypoints delegate to the one lossless source engine.
-use crate::source_request as source;
+use crate::normalized as source;
 use serde_json::Value;
 fn raw(
     value: &Value,
@@ -21,7 +21,7 @@ pub fn normalize_chat_message(
     value: &Value,
     index: usize,
 ) -> Result<ChatMessage, gateway_source::error::GatewayError> {
-    let value = source::normalized::normalize_chat_message(&raw(value)?, index)
+    let value = source::normalize_chat_message(&raw(value)?, index)
         .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?;
     Ok(ChatMessage {
         instruction: value
@@ -47,7 +47,7 @@ pub struct ChatInput {
 pub fn normalize_chat_messages(
     value: &Value,
 ) -> Result<ChatInput, gateway_source::error::GatewayError> {
-    let value = source::normalized::normalize_chat_messages(&raw(value)?)
+    let value = source::normalize_chat_messages(&raw(value)?)
         .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?;
     Ok(ChatInput {
         input: value

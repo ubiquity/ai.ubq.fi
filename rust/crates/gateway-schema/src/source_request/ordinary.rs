@@ -2,9 +2,9 @@
 use super::{
     SourceRequestDocument,
     fields::{parse_chat_stream_options, parse_max_completion_tokens},
-    normalized::SourceChatInput,
     reasoning::parse_effort,
 };
+use gateway_chat_normalization::normalized::SourceChatInput;
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_schema_values::request::{
     RequestExtensions, RequestSurface, SourceField, SourceModelRequest,

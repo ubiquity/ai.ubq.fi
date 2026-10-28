@@ -1,12 +1,9 @@
 //! Selected metadata and request/model/error strings remain UTF16 SourceJson.
+use gateway_chat_normalization::normalized::normalize_chat_messages;
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_responses_normalization::normalized::normalize_responses_input;
 use gateway_schema::{
-    prompt_cache,
-    source_request::{
-        cache_capability::validate_known_unsupported_prompt_cache,
-        normalized::normalize_chat_messages,
-    },
+    prompt_cache, source_request::cache_capability::validate_known_unsupported_prompt_cache,
 };
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,

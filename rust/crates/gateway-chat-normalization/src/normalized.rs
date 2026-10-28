@@ -23,8 +23,7 @@ pub fn normalize_chat_message(
     value: &SourceJson,
     index: usize,
 ) -> Result<SourceChatMessage, SourceRequestError> {
-    let value =
-        super::chat_engine::normalize_chat_message(&Value::from_source(value.clone()), index)?;
+    let value = crate::engine::normalize_chat_message(&Value::from_source(value.clone()), index)?;
     Ok(SourceChatMessage {
         instruction: value.instruction.map(|text| text.core()),
         instruction_content: value.instruction_content.map(values).transpose()?,
@@ -32,7 +31,7 @@ pub fn normalize_chat_message(
     })
 }
 pub fn normalize_chat_messages(value: &SourceJson) -> Result<SourceChatInput, SourceRequestError> {
-    let value = super::chat_engine::normalize_chat_messages(&Value::from_source(value.clone()))?;
+    let value = crate::engine::normalize_chat_messages(&Value::from_source(value.clone()))?;
     Ok(SourceChatInput {
         input: values(value.input)?,
         instructions: value.instructions.map(|text| text.core()),

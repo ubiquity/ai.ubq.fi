@@ -10,9 +10,7 @@ macro_rules! json {
 }
 pub mod cache_capability;
 pub(crate) mod cache_metadata;
-mod chat_engine;
 pub mod fields;
-pub mod normalized;
 pub mod ordinary;
 pub mod reasoning;
 use self::{
@@ -165,9 +163,9 @@ impl SourceRequestDocument {
     /// Explicit Codex/paid Chat phase, never an unconditional direct-provider gate.
     pub fn normalize_chat_for_codex(
         &self,
-    ) -> Result<normalized::SourceChatInput, SourceRequestError> {
+    ) -> Result<gateway_chat_normalization::normalized::SourceChatInput, SourceRequestError> {
         let value = member(self.original_source(), "messages")?
             .ok_or_else(|| SourceRequestError::scalar("messages must be an array", None))?;
-        normalized::normalize_chat_messages(&value)
+        gateway_chat_normalization::normalized::normalize_chat_messages(&value)
     }
 }

@@ -2346,6 +2346,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-chat-normalization"
+version = "0.1.0"
+dependencies = [
+ "gateway-local-refusal",
+ "gateway-responses-normalization",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-claude-policy"
 version = "0.1.0"
 dependencies = [
@@ -4253,6 +4264,7 @@ name = "gateway-schema"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "gateway-chat-normalization",
  "gateway-contracts",
  "gateway-core",
  "gateway-decision-protocol",
