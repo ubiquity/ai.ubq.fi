@@ -224,109 +224,87 @@ test("clearing account guards preserves observations and account removal remains
   });
 });
 
-test("the Claude meter refresh reads direct OAuth usage and updates the existing quota state", async () => {
-  await withAdminKv(async (kv) => {
-    resetClaudeCodeModelsCacheForTest();
-    const now = Date.now();
-    await withStubbedAnthropic(modelsOk, async () => {
-      const stored = await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-oat-fixture-meter-refresh" }));
-      assert.equal(stored.status, 200);
-    });
-    const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
-    assert(account);
-    const calls: StubCall[] = [];
-    const usageRead = (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = requestUrl(input);
-      const requestInit = init ?? {};
-      calls.push({ url, method: requestInit.method ?? "GET", headers: new Headers(requestInit.headers) });
-      assert.equal(url, "https://api.anthropic.com/api/oauth/usage");
-      assert.equal(requestInit.method, "GET");
-      assert.equal(requestInit.body, undefined, "usage refresh never sends an inference body");
-      assert.equal(new Headers(requestInit.headers).get("authorization"), "Bearer sk-ant-oat-fixture-meter-refresh");
-      assert.doesNotMatch(url, /\/v1\/messages/);
-      return Promise.resolve(
-        Response.json({
-          five_hour: { utilization: 42, resets_at: new Date(now + 18_000_000).toISOString() },
-          seven_day: { utilization: 12, resets_at: new Date(now + 86_400_000).toISOString() },
-        })
-      );
-    };
-    const request = new Request("https://ai.ubq.fi/admin/providers/claude-code/quota/refresh", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ account_id: account.account_id, account_cohort_id: account.account_cohort_id }),
-    });
-    const response = await handleAdminClaudeCodeQuotaRefresh(request, { fetcher: usageRead, now: () => now });
-    assert.equal(response.status, 200, await response.clone().text());
-    const payload = await response.json();
-    assert.equal(payload.refreshed, true);
-    assert.equal(payload.source, "oauth_usage");
-    assert.equal(payload.usage.state, "ok");
-    assert.equal(calls.length, 1);
-    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
-    assert(quota);
-    assert.equal(quota.windows["5h"]?.utilization, 0.42);
-    assert.equal(quota.windows["7d"]?.utilization, 0.12);
-    const quotaUsage = quota.usage;
-    assert(quotaUsage);
-    assert.equal(quotaUsage.state, "ok");
-    assert.equal(quotaUsage.source, "oauth_usage");
-
-    const duplicate = await handleAdminClaudeCodeQuotaRefresh(
-      new Request("https://ai.ubq.fi/admin/providers/claude-code/quota/refresh", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ account_id: account.account_id, account_cohort_id: account.account_cohort_id }),
-      }),
-      { fetcher: usageRead, now: () => now + 1_000 }
-    );
-    assert.equal(duplicate.status, 200);
-    const duplicatePayload = await duplicate.json();
-    assert.equal(duplicatePayload.refreshed, false);
-    assert.equal(duplicatePayload.reason, "fresh");
-    assert.equal(calls.length, 1, "a fresh usage attempt avoids another provider request");
-  });
-});
-
-test("an admin usage refresh records a missing profile scope without blocking inference", async () => {
+test("the former Claude meter refresh is a passive read of accepted normal response headers", async () => {
   await withAdminKv(async (kv) => {
     resetClaudeCodeModelsCacheForTest();
     await withStubbedAnthropic(modelsOk, async () => {
-      const stored = await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-oat-fixture-scope-missing" }));
-      assert.equal(stored.status, 200);
+      assert.equal((await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-oat-fixture-header-read" }))).status, 200);
     });
     const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
     assert(account);
     const now = Date.now();
+    await recordClaudeCodeQuotaOutcome(kv as unknown as Kv, {
+      binding: account,
+      observation_source: "response_headers",
+      observation: {
+        windows: { "5h": { status: "allowed", utilization: 0.42, reset_at_ms: null, observed_at_ms: now } },
+        standard: {},
+        representative_claim: null,
+        observed_at_ms: now,
+      },
+      nowMs: now,
+    });
+    let calls = 0;
     const response = await handleAdminClaudeCodeQuotaRefresh(
       new Request("https://ai.ubq.fi/admin/providers/claude-code/quota/refresh", {
         method: "POST",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify({ account_id: account.account_id, account_cohort_id: account.account_cohort_id }),
       }),
       {
-        fetcher: () =>
-          Promise.resolve(
-            Response.json({ type: "error", error: { type: "permission_error", message: "OAuth token is missing the user:profile scope" } }, { status: 403 })
-          ),
-        now: () => now,
+        now: () => now + 1_000,
+        fetcher: () => {
+          calls += 1;
+          return Promise.resolve(Response.json({}));
+        },
       }
     );
-    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal(response.status, 200);
     const payload = await response.json();
     assert.equal(payload.refreshed, false);
-    assert.equal(payload.reason, "scope_missing");
-    assert.match(payload.message, /user:profile/);
-    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
-    assert(quota);
-    const quotaUsage = quota.usage;
-    assert(quotaUsage);
-    assert.equal(quotaUsage.state, "scope_missing");
-    assert.equal(quotaUsage.status, 403);
-    assert.equal(quotaUsage.observed_at_ms, null);
-    assert.equal(quota.blocked_until_ms, null, "usage scope is not inference exhaustion");
-    assert.equal(quota.cooldown_until_ms, null, "usage scope does not cool down inference");
-    assert.equal(quota.last_error, null, "usage scope is not a provider routing error");
+    assert.equal(payload.reason, "response_headers");
+    assert.equal(payload.observed_at_ms, now);
+    assert.equal(payload.usage, null);
+    assert.equal(calls, 0);
+  });
+});
+
+test("a passive meter read does not refresh or display historical OAuth errors", async () => {
+  await withAdminKv(async (kv) => {
+    resetClaudeCodeModelsCacheForTest();
+    await withStubbedAnthropic(modelsOk, async () => {
+      assert.equal((await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-oat-fixture-old-usage" }))).status, 200);
+    });
+    const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
+    assert(account);
+    const now = Date.now();
+    await recordClaudeCodeQuotaOutcome(kv as unknown as Kv, {
+      binding: account,
+      observation: null,
+      usage: { source: "oauth_usage", state: "scope_missing", status: 403, message: "historical profile error", attempted_at_ms: now, observed_at_ms: null },
+      nowMs: now,
+    });
+    const before = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
+    let calls = 0;
+    const response = await handleAdminClaudeCodeQuotaRefresh(
+      new Request("https://ai.ubq.fi/admin/providers/claude-code/quota/refresh", {
+        method: "POST",
+        body: JSON.stringify({ account_id: account.account_id, account_cohort_id: account.account_cohort_id }),
+      }),
+      {
+        now: () => now + 31_000,
+        fetcher: () => {
+          calls += 1;
+          return Promise.resolve(Response.json({}));
+        },
+      }
+    );
+    const payload = await response.json();
+    assert.equal(payload.refreshed, false);
+    assert.equal(payload.reason, "response_headers");
+    assert.equal(payload.observed_at_ms, null);
+    assert.equal(payload.usage, null);
+    assert.equal(calls, 0);
+    assert.deepEqual(await loadClaudeCodeQuotaState(kv as unknown as Kv, account), before);
   });
 });
 

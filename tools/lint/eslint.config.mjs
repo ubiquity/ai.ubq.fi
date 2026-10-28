@@ -315,11 +315,12 @@ export default tsEslint.config(
     // and checkbox listener the same way, pass; code-eval alone flags their
     // VM call. Keep the exception to these named tests.
     // Measured 2026-10-25: two shipped meter/chart VM calls in the focused usage fixture hit this rule.
+    // Measured 2026-10-28: those two bounded calls moved to the header-only UI fixture; all four shipped-asset VM cases pass.
     files: [
       "tests/admin-auth-ui.test.ts",
       "tests/admin-capacity-status.test.ts",
       "tests/admin-models-save-pending.test.ts",
-      "tests/claude-usage-meters.test.ts",
+      "tests/claude-header-meter-ui.test.ts",
     ],
     rules: { "sonarjs/code-eval": "off" },
   },

@@ -115,6 +115,7 @@ const recordAccountOutcome = async (
       response_status: result.response.status,
       response_observed_at_ms: result.observed_at_ms,
       observation: result.quota,
+      observation_source: "response_headers",
       exhaustion: classification.exhaustion,
       auth_invalid: classification.kind === "auth_invalid",
       transient: classification.kind === "transient_rate_limited" ? { retry_after_ms: classification.retry_after_ms } : null,
