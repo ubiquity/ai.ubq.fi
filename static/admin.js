@@ -1535,13 +1535,27 @@ const claudeCapacityWindowForDisplay = (window) => {
   };
 };
 
+const claudeHeaderProjectionForDisplay = (source) =>
+  source.quota_source === "response_headers"
+    ? source
+    : {
+        ...source,
+        windows: { five_hour: null, seven_day: null },
+        standard: [],
+        source_observed_at_ms: null,
+        snapshot_at_ms: null,
+        usage: null,
+        usage_snapshot: undefined,
+      };
+
 /**
  * The Claude subscription row keeps the Codex layout with a last-observed
  * badge, the response-header windows as remaining capacity, and the
  * diagnostics the tier itself recorded (credential direction, workspace,
  * guards, last upstream outcome, and Console API-key limits when present).
  */
-const renderClaudeCapacitySource = (source) => {
+const renderClaudeCapacitySource = (rawSource) => {
+  const source = claudeHeaderProjectionForDisplay(rawSource);
   const row = document.createElement("div");
   row.dataset.capacitySource = "claude_code";
   row.dataset.state = source.state;
@@ -1603,9 +1617,9 @@ const renderClaudeCapacitySource = (source) => {
 };
 
 const claudeCapacitySourcesForDisplay = (claude, claudeAccounts) =>
-  (Array.isArray(claudeAccounts) ? claudeAccounts : [claude]).filter(
-    (source) => source && typeof source === "object" && source.source === "claude_code"
-  );
+  (Array.isArray(claudeAccounts) ? claudeAccounts : [claude])
+    .filter((source) => source && typeof source === "object" && source.source === "claude_code")
+    .map(claudeHeaderProjectionForDisplay);
 
 const renderProviderCapacityList = (sources, claude = null, claudeAccounts = null) => {
   const expanded = new Map(
@@ -1692,7 +1706,8 @@ const claudeCapacityChartSeries = (snapshot, accountId) => {
       if (point.windows?.[entry.window]) series.set(entry.window, entry);
   };
   for (const point of snapshot?.claude_history?.points ?? []) if (isClaudeHeaderCapacityPoint(point)) add(point);
-  for (const row of snapshot?.claude_accounts ?? [snapshot?.claude]) add(row);
+  for (const row of snapshot?.claude_accounts ?? [snapshot?.claude])
+    if (row?.quota_source === "response_headers") add(row);
   return Array.from(series.values());
 };
 /** Raw observed points only: never reuse a live value at browser-now. */

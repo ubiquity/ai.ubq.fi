@@ -298,6 +298,7 @@ const claudeLatestObservationMs = (quota: Pick<ClaudeCodeQuotaState, "windows" |
 /** The Claude subscription row for a caller that has no tier state to read. */
 export const unavailableClaudeCapacitySource = (snapshotAtMs: number): ProviderCapacityClaudeSource => ({
   source: "claude_code",
+  quota_source: "response_headers",
   label: "Claude subscription",
   state: "unavailable",
   source_observed_at_ms: null,
@@ -353,6 +354,7 @@ const capacitySourceForClaudeAccount = async (
   if (failureStatus === null && cooling) failureStatus = health?.last_status ?? null;
   return {
     source: "claude_code",
+    quota_source: "response_headers",
     label: "Claude subscription",
     account_id: binding?.account_id ?? null,
     account_cohort_id: binding?.account_cohort_id ?? null,

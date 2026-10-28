@@ -180,6 +180,7 @@ const render = runInNewContext(
 test("shipped Claude renderer uses header values and clocks despite old direct snapshots or errors", () => {
   const source = {
     source: "claude_code",
+    quota_source: "response_headers",
     state: "available",
     account_id: "a",
     source_observed_at_ms: AT,
@@ -216,4 +217,19 @@ test("shipped Claude renderer awaits headers without manufacturing subscription 
   assert.doesNotMatch(text, /remaining|Live|OAuth|Refresh/);
   assert.equal(descendants(result).filter((element) => element.attributes["aria-valuenow"] !== undefined).length, 0);
   assert.doesNotMatch(script, /claudeUsageReadLabel|refreshClaudeUsage|\/admin\/providers\/claude-code\/quota\/refresh|Reads Anthropic's OAuth usage endpoint/);
+});
+
+test("shipped Claude renderer hides every unmarked cached current measurement", () => {
+  const row = render({
+    source: "claude_code",
+    state: "available",
+    source_observed_at_ms: AT,
+    snapshot_at_ms: AT,
+    windows: { five_hour: { used_percent: 98, observed_at_ms: AT, reset_at_ms: AT + 100 } },
+    standard: [{ family: "requests", limit: 50, remaining: 2 }],
+  });
+  const text = elementText(row);
+  assert.match(text, /Awaiting response headers/);
+  assert.doesNotMatch(text, /remaining|1800000000000/);
+  assert.equal(descendants(row).filter((element) => element.attributes["aria-valuenow"] !== undefined).length, 0);
 });

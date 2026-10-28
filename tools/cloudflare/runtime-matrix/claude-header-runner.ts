@@ -233,7 +233,9 @@ function context(session: Session): MatrixContext {
 }
 const adminHeaders = { authorization: "Bearer fixture-admin", connection: "close" };
 async function capacity(ctx: MatrixContext): Promise<Record<string, unknown>> {
-  return json(await fetch(ctx.url("/admin/providers/capacity"), { headers: adminHeaders }));
+  const snapshot = await json(await fetch(ctx.url("/admin/providers/capacity"), { headers: adminHeaders }));
+  assert.equal(object(snapshot.claude).quota_source, "response_headers", "Current Claude capacity must identify its header-only projection.");
+  return snapshot;
 }
 async function attempts(ctx: MatrixContext): Promise<Record<string, unknown>[]> {
   return (await ctx.events()).map(object).filter((event) => event.kind === ATTEMPT);

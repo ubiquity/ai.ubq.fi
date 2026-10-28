@@ -299,6 +299,10 @@ fn passive_capacity_uses_explicit_headers_and_never_collects_unused_or_guarded_a
         let body = document(run(runtime.capacity_response(live, context()))?)?;
         let active = member(&body, "claude")?;
         assert_eq!(
+            member(&active, "quota_source")?.as_str(),
+            "\"response_headers\""
+        );
+        assert_eq!(
             member(&active, "account_id")?.as_str(),
             SourceJson::from_serializable(&a.account_id)?.as_str()
         );

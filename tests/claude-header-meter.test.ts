@@ -129,6 +129,7 @@ test("normal streaming, nonstream and error HTTP headers update the meter withou
     assert.equal(streaming.windows.five_hour?.used_percent, 40);
     assert.equal(streaming.windows.seven_day?.used_percent, 20);
     assert.equal(streaming.state, "available");
+    assert.equal(streaming.quota_source, "response_headers");
     assert.equal(streaming.usage, null);
     assert.equal(streaming.usage_snapshot, undefined);
     current.reply.headers = new Headers({ "anthropic-ratelimit-unified-5h-utilization": "0.6" });

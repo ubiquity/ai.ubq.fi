@@ -53,6 +53,7 @@ test("an unconfigured tier reports not_configured without inventing a credential
   await withKv(async (kv) => {
     const source = await claudeCapacitySource(kv as unknown as Kv, NOW_MS, nullEnv);
     assert.equal(source.source, "claude_code");
+    assert.equal(source.quota_source, "response_headers");
     assert.equal(source.state, "unavailable");
     assert.equal(source.failure_kind, "not_configured");
     assert.equal(source.credential_kind, null);
@@ -91,6 +92,7 @@ test("a configured tier reports its credential, workspace, and observed subscrip
     });
     const source = await claudeCapacitySource(store, NOW_MS, nullEnv);
     assert.equal(source.state, "available");
+    assert.equal(source.quota_source, "response_headers");
     assert.equal(source.credential_kind, "api_key");
     assert.equal(source.workspace_id, "wrkspc_01ErorW3iFLRvQy55cpNWtEt");
     assert.equal(source.failure_kind, null);

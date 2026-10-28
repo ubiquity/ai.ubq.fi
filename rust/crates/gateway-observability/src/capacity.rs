@@ -46,7 +46,7 @@ fn view(
     out
 }
 pub fn unavailable_claude(at: i64) -> Value {
-    json!({"source":"claude_code","label":"Claude subscription","state":"unavailable","source_observed_at_ms":null,"snapshot_at_ms":at,"failure_kind":"not_configured","failure_status":null,"credential_kind":null,"workspace_id":null,"windows":{"five_hour":null,"seven_day":null},"standard":[],"usage":null,"blocked_until_ms":null,"cooldown_until_ms":null,"last_error":null})
+    json!({"source":"claude_code","quota_source":"response_headers","label":"Claude subscription","state":"unavailable","source_observed_at_ms":null,"snapshot_at_ms":at,"failure_kind":"not_configured","failure_status":null,"credential_kind":null,"workspace_id":null,"windows":{"five_hour":null,"seven_day":null},"standard":[],"usage":null,"blocked_until_ms":null,"cooldown_until_ms":null,"last_error":null})
 }
 pub fn claude_source(
     account: &ClaudeAccountReadback,
@@ -151,7 +151,7 @@ pub fn claude_source(
         }
     }
     let mut document = SourceObject::parse(&SourceJson::from_serializable(
-        &json!({"source":"claude_code","label":"Claude subscription","account_id":account.account_id,"account_cohort_id":account.account_cohort_id,"state":state,"source_observed_at_ms":observed,"snapshot_at_ms":at,"failure_kind":if failing{Some("upstream_error")}else{None},"failure_status":failure_status,"credential_kind":account.credential.kind}),
+        &json!({"source":"claude_code","quota_source":"response_headers","label":"Claude subscription","account_id":account.account_id,"account_cohort_id":account.account_cohort_id,"state":state,"source_observed_at_ms":observed,"snapshot_at_ms":at,"failure_kind":if failing{Some("upstream_error")}else{None},"failure_status":failure_status,"credential_kind":account.credential.kind}),
     )?)?;
     document.set("workspace_id", &account.workspace.as_ref().map(|w| &w.id))?;
     document.set(

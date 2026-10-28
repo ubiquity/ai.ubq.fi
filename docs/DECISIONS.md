@@ -6,6 +6,12 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Cached Claude projections require explicit header provenance - 2026-10-28
+
+Every new admin Claude capacity row carries `quota_source: "response_headers"` to identify the header-only projection contract. The marker does not assert that measurements exist. Browser snapshots without that marker remain cached, but their current Claude windows, observation clocks, standard limits and current-row chart contributions are hidden until a marked projection arrives. Account identity, serving state, Codex/other cached providers and independently proven header history remain available. Both the TypeScript and Rust producers emit the same marker; no OpenAI wire schema, IndexedDB migration, cache wipe or retention deadline changes.
+
+Reason: pre-change IndexedDB snapshots could contain OAuth-derived values that the newer renderer mislabeled as response headers when the fresh fetch failed. The renderer now rejects that unproven current projection at the display boundary without rewriting the stored payload.
+
 ## Rust Auth key construction uses closed typed producers - 2026-10-28
 
 The shared Auth `key(Value)` constructor and its Admin and migration forwarding constructors are retired. Fixed scalar producers use the existing defining `TupleKey::from_scalar_parts` and `ScalarKeyPart` contract, while finite-float and genuinely dynamic derived keys use the existing checked tuple APIs at their original construction sites. The bounded Claude history/rollup DATA methods return their existing family errors for nonfinite input while retaining every finite number bit pattern, signed zero and the exact absent-reset string discriminator. Profile scan inputs are actual typed keys; derived window and retirement probes retain their existing fallible planning boundary and original raw keys.

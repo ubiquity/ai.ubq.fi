@@ -59,6 +59,10 @@ const context = {
   formatOptionalText: (value: unknown) => (typeof value === "string" ? value : "unknown"),
 };
 const sourceText = adminScript;
+const claudeProjectionSource = sourceText.slice(
+  sourceText.indexOf("const claudeHeaderProjectionForDisplay ="),
+  sourceText.indexOf("const renderClaudeCapacitySource =")
+);
 // Execute the shipped presenters, including their DOM fact writer. No copy of
 // their status conditions or network/application bootstrap runs in this fixture.
 runInNewContext(
@@ -318,7 +322,8 @@ test("shipped shared capacity list supports legacy singleton and distinct roster
     },
   };
   runInNewContext(
-    sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const unavailableCodexCapacitySource =")) +
+    claudeProjectionSource +
+      sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const unavailableCodexCapacitySource =")) +
       "\nglobalThis.render = renderProviderCapacityList;",
     fixture
   );
@@ -490,7 +495,8 @@ test("shipped capacity summary counts exactly displayed Claude roster or legacy 
     formatCapacityTimestamp: () => "observed",
   };
   runInNewContext(
-    sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const renderProviderCapacityList =")) +
+    claudeProjectionSource +
+      sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const renderProviderCapacityList =")) +
       sourceText.slice(sourceText.indexOf("const unavailableCodexCapacitySource ="), sourceText.indexOf("const CAPACITY_CHART_SVG_NS =")) +
       sourceText.slice(sourceText.indexOf("const renderProviderCapacity ="), sourceText.indexOf("const loadProviderCapacity =")) +
       "\nglobalThis.render = renderProviderCapacity;",
