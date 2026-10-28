@@ -14,7 +14,6 @@ pub struct MetadataHint {
 }
 impl MetadataHint {
     pub fn codex(record: &SourceJson) -> Self {
-        use crate::model_control as c;
         Self {
             context_window_tokens: gateway_schema_values::source_view::positive(
                 gateway_source::source_serialization::member(record, "context_window").as_ref(),
@@ -72,7 +71,6 @@ impl MetadataHint {
         }
     }
     pub fn from_openrouter(record: &SourceJson) -> Self {
-        use crate::model_control as c;
         let reasoning = gateway_source::source_serialization::member(record, "reasoning");
         Self {
             context_window_tokens: gateway_schema_values::source_view::positive(
