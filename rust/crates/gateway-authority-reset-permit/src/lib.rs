@@ -16,7 +16,7 @@ use gateway_contracts::identity::RequestContext;
 use gateway_core::state::AuthorityStore;
 use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_kv_codec::value::ValueEncoding;
-use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use types::{AutomaticResetPermit, FullPoolEvaluation, FullPoolPreparation, FullPoolResetPlan};
 fn invalid() -> GatewayError {
@@ -64,9 +64,7 @@ async fn read_audit<S: AuthorityStore, I: TokenSource>(
         None => false,
         Some(row) => match row.value_encoding {
             ValueEncoding::Json => !row.json_value()?.is_null(),
-            ValueEncoding::ProfileV2 => {
-                SourceJson::from_portable_json(&row.profile_v2_value()?)?.as_str() != "null"
-            }
+            ValueEncoding::ProfileV2 => row.profile_v2_source_json()?.as_str() != "null",
             _ => true,
         },
     };
