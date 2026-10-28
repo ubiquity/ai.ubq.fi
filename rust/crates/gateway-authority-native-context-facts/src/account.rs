@@ -7,6 +7,7 @@ use gateway_authority_native_records::{live::mapping_key, rows::fail};
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_contracts::identity::ActiveSelection;
 use gateway_core::state::AuthorityStore;
+use gateway_model_selection::selection as model_selection;
 use gateway_native_authority_wire::context::NativeRenewalContext;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
@@ -54,8 +55,7 @@ impl<S: AuthorityStore, C: NativeRenewalCancellation> SourceNativeContextFactsRe
                 }
                 let selection: Option<Value> = self.cache.read(&keys::provider_selection()).await?;
                 if selection.as_ref().is_some_and(|v| {
-                    !v.is_null()
-                        && gateway_schema::selection::ProviderSelection::normalize(v).is_none()
+                    !v.is_null() && model_selection::ProviderSelection::normalize(v).is_none()
                 }) {
                     return Err(fail());
                 }

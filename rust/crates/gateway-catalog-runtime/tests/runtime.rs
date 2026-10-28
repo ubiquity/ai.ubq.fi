@@ -1,4 +1,5 @@
 use gateway_catalog_runtime::CatalogRuntime;
+use gateway_model_selection::aliases as model_aliases;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogMaintenance, CatalogObservation,
@@ -6,7 +7,6 @@ use gateway_catalog_provider::host::{
 };
 use gateway_catalog_provider::providers;
 use gateway_catalog_runtime::state::{self, source_key};
-use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::query::{QueryEntry, QueryPage, QueryRequest, QueryStore};
 use gateway_core::{
     state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
@@ -16,6 +16,7 @@ use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_routing_runtime_test_support::source_catalog::{self, Collator};
 use gateway_schema::catalog_cache::{self, CatalogResponse};
 use gateway_schema::catalog_store;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
@@ -237,7 +238,7 @@ impl Host {
     }
 }
 impl CatalogHost for Host {
-    fn source_string_collator(&self) -> Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> Arc<dyn model_aliases::SourceStringCollator> {
         Arc::new(source_catalog::Collator::captured())
     }
     fn now_ms(&self) -> i64 {
@@ -1452,8 +1453,8 @@ fn pre_save_selection_read_cannot_replace_newer_pending_or_current_catalog_views
 #[test]
 fn versioned_union_and_persisted_account_evidence_keep_source_model_and_effort_units() {
     use gateway_core::source_control::decode_source_control_record;
-    use gateway_source::source_serialization as source;
     use gateway_kv_codec::value::ValueEncoding;
+    use gateway_source::source_serialization as source;
     let store = Store::new();
     let host = Host::new(&store);
     let runtime = CatalogRuntime::new();

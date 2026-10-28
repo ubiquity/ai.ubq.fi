@@ -11,13 +11,13 @@ use gateway_claude_runtime::{
     host::OutcomeDecision, host::PoolSelection, host::SelectedAccount, pool::ClaudePoolSession,
 };
 use gateway_contracts::{claude::ClaudeErrorEvidence, model::ModelId};
+use gateway_model_selection::selection::ProviderSelection;
 use gateway_provider_protocol::replay::ReplayTransport;
 use gateway_provider_replay::{replay::ReplayContext, replay::ReplayStore};
 use gateway_routing_runtime::types::{
     ClaudeOutcome, ClaudeSelection, CredentialFence, PreparedAttempt, PreparedWireRequest,
     PublishedCredential, ResponseHead,
 };
-use gateway_schema::selection::ProviderSelection;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use serde_json::Value;

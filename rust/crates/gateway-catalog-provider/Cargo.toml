@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-model-selection.workspace = true
 gateway-schema-values.workspace = true
 gateway-contracts = { workspace = true }
 gateway-source = { workspace = true }

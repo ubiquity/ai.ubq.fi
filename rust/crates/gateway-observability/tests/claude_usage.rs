@@ -12,6 +12,7 @@ use gateway_claude_usage_runtime::{
     fetch::{Response, UsageHost},
 };
 use gateway_core::state::{AuthorityStore, RevisionCheck, StoredRecord};
+use gateway_model_selection::aliases as model_aliases;
 use gateway_observability::{
     ObservabilityRuntime,
     host_types::{
@@ -137,7 +138,7 @@ impl UsageHost for Fixture {
     }
 }
 impl ObservabilityHost for Fixture {
-    fn source_string_collator(&self) -> Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> Arc<dyn model_aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {

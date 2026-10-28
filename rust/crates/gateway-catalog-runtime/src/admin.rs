@@ -8,6 +8,7 @@ use gateway_core::{
     state::{AtomicTransition, CommitOutcome, RecordMutation},
 };
 use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_model_selection::selection::{ModelWhitelist, normalize_whitelist_ids};
 use gateway_schema::{
     catalog::ProviderCatalog,
     catalog_store,
@@ -15,7 +16,6 @@ use gateway_schema::{
     runtime_config::{
         build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
     },
-    selection::{ModelWhitelist, normalize_whitelist_ids},
     snapshot::{SnapshotOverrides, normalize_snapshot},
 };
 use gateway_schema_values::scalar as util;

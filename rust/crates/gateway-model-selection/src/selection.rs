@@ -179,12 +179,7 @@ impl AccountModelsStore {
         let mut next = self.clone();
         let entries = next.unsupported.entry(account.into()).or_default();
         entries.insert(model.clone(), at_ms);
-        let raw = source::object_keys(
-            entries
-                .iter()
-                .map(|(model, at)| (model.as_js_string().clone(), crate::model_control::json(at)))
-                .collect(),
-        )?;
+        let raw = encode_model_times(entries)?;
         // Object.entries enumerates numeric keys first, even after inserting a new numeric-looking model.
         let mut ordered = source::entries(&raw)
             .ok_or_else(|| {
@@ -244,12 +239,11 @@ impl AccountModelsStore {
         result
     }
     pub fn parse(value: &SourceJson) -> Option<Self> {
-        use crate::model_control as c;
         use gateway_source::source_serialization as source;
         let accounts =
-            gateway_source::source_serialization::member(value, "accounts").filter(c::is_record);
+            gateway_source::source_serialization::member(value, "accounts").filter(is_record);
         let unsupported =
-            gateway_source::source_serialization::member(value, "unsupported").filter(c::is_record);
+            gateway_source::source_serialization::member(value, "unsupported").filter(is_record);
         if accounts.is_none() && unsupported.is_none() {
             return None;
         }
@@ -331,36 +325,26 @@ impl AccountModelsStore {
         }
         Some(store)
     }
-    pub fn to_source_json(&self) -> SourceJson {
+    pub fn to_source_json(&self) -> Result<SourceJson, GatewayError> {
         use gateway_source::{js_string::JsString16, source_serialization as source};
         let rows = self
             .unsupported
             .iter()
             .map(|(account, entries)| {
-                let row = source::object_keys(
-                    entries
-                        .iter()
-                        .map(|(model, at)| {
-                            (model.as_js_string().clone(), crate::model_control::json(at))
-                        })
-                        .collect(),
-                )
-                .expect("model-keyed source record");
-                (JsString16::from_utf8(account), row)
+                Ok((JsString16::from_utf8(account), encode_model_times(entries)?))
             })
-            .collect();
-        crate::model_control::object(vec![
-            ("accounts", crate::model_control::json(&self.accounts)),
-            (
-                "unsupported",
-                source::object_keys(rows).expect("account-keyed source record"),
-            ),
+            .collect::<Result<Vec<_>, GatewayError>>()?;
+        source::object(vec![
+            ("accounts", SourceJson::from_serializable(&self.accounts)?),
+            ("unsupported", source::object_keys(rows)?),
         ])
     }
 }
 impl Serialize for AccountModelsStore {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.to_source_json().serialize(serializer)
+        self.to_source_json()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
     }
 }
 impl<'de> Deserialize<'de> for AccountModelsStore {
@@ -369,4 +353,25 @@ impl<'de> Deserialize<'de> for AccountModelsStore {
         Self::parse(&raw)
             .ok_or_else(|| serde::de::Error::custom("Malformed source account-model record"))
     }
+}
+
+// Closed source object classification retained from the existing selection parser.
+fn is_record(value: &SourceJson) -> bool {
+    value.as_str().starts_with('{') || value.as_str().starts_with('[')
+}
+
+// One finite model-key/i64 codec for both existing producers; no semantic validation or effects.
+fn encode_model_times(entries: &IndexMap<ModelId, i64>) -> Result<SourceJson, GatewayError> {
+    use gateway_source::source_serialization as source;
+    source::object_keys(
+        entries
+            .iter()
+            .map(|(model, at)| {
+                Ok((
+                    model.as_js_string().clone(),
+                    SourceJson::from_serializable(at)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, GatewayError>>()?,
+    )
 }

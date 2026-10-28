@@ -24,6 +24,7 @@ use gateway_core::{
     state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -640,7 +641,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> KernelAdmin<'_, S, H, C
             };
             records.push(self.usage_record(owner, repo, input.now_ms, true).await?);
         }
-        let records = gateway_schema::aliases::sort_source(records, &|a: &Value, b: &Value| {
+        let records = model_aliases::sort_source(records, &|a: &Value, b: &Value| {
             for field in ["owner", "repo"] {
                 let order = self.capabilities.compare_admin_labels(
                     &JsString16::from_utf8(a[field].as_str().unwrap_or("")),
@@ -698,12 +699,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> KernelAdmin<'_, S, H, C
             }
             records.push((owner, repo, row));
         }
-        let records = gateway_schema::aliases::sort_source(records, &|a: &(
+        let records = model_aliases::sort_source(records, &|a: &(
             JsString16,
             Option<JsString16>,
             SourceJson,
         ),
-                                                                      b: &(
+                                                            b: &(
             JsString16,
             Option<JsString16>,
             SourceJson,

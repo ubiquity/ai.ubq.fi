@@ -7,8 +7,8 @@ use gateway_extras_contract::types::{
 };
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 mod state;
+use gateway_model_selection::selection::ProviderSelection;
 use gateway_provider_services::extras;
-use gateway_schema::selection::ProviderSelection;
 use state::{now, selection};
 fn health(provider: ExtrasProvider, status: Option<u16>, kind: HealthKind) -> HealthObservation {
     HealthObservation {

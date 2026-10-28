@@ -1,5 +1,5 @@
 //! Trusted platform collation only; alias policy remains in the shared Rust resolver.
-use gateway_schema::aliases::SourceStringCollator;
+use gateway_model_selection::aliases::SourceStringCollator;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use std::{
     cmp::Ordering,

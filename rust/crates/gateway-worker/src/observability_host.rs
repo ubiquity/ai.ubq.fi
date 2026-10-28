@@ -3,6 +3,7 @@ use gateway_admin_runtime_contracts::capabilities::{Context, ErrorDiagnostics};
 use gateway_authority_capacity::CapacityOperations;
 use gateway_cache_experiment_runner::CacheRunOperations;
 use gateway_contracts::identity::RequestId;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_observability::{ObservabilityRuntime, ObservabilityState, host_types::BuildIdentity};
 use gateway_observability::{replay_crypto::ReplayBody, types::ObservabilityHost};
 use std::{cell::Cell, cell::RefCell, rc::Rc};
@@ -204,9 +205,7 @@ impl ObservabilityHost for Host {
         gateway_claude_usage_runtime::platform::parse_date(text)
     }
 
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         gateway_worker_platform::source_collator::shared()
     }
 
@@ -255,9 +254,7 @@ impl ObservabilityHost for RequestHost {
         Ok(())
     }
 
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         gateway_worker_platform::source_collator::shared()
     }
 

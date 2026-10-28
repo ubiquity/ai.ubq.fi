@@ -24,6 +24,7 @@ use gateway_cache_experiment_evidence::CacheEvidenceReader;
 use gateway_cache_experiment_records::RefreshContext;
 use gateway_contracts::identity::{PrincipalId, RequestContext};
 use gateway_core::state::{AuthorityStore, RevisionCheck};
+use gateway_model_selection::selection as model_selection;
 use gateway_native_authority_wire::{
     context::NativeRenewalContext, source_fence::SourceNativeRenewalFenceV3,
 };
@@ -194,7 +195,7 @@ impl<'a, S: AuthorityStore, C: NativeRenewalCancellation> SourceNativeContextFac
                 .as_ref()
                 .filter(|v| !v.is_null())
                 .is_some_and(|v| {
-                    gateway_schema::selection::ProviderSelection::normalize(v)
+                    model_selection::ProviderSelection::normalize(v)
                         .is_none_or(|s| !s.account_eligible(&id.administrative_account_hash.0))
                 })
             {

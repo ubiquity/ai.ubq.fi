@@ -14,6 +14,7 @@ use gateway_contracts::{identity::ApiKeyId, identity::PaidAttemptId, identity::R
 use gateway_core::state::AtomicTransition;
 use gateway_core::{state::RecordMutation, state::RevisionCheck};
 use gateway_kv_codec::key::RecordKey;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_protocol::types::ClientSurface;
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::authority};
 use gateway_routing_runtime_test_support::{authority::NOW, authority::policy, authority::run};
@@ -252,7 +253,7 @@ fn synthetic_scope_is_server_owned_and_matches_current_source_alias() {
     let mut input = paid_request("synthetic", PaidProvider::Metered);
     input.model = "deepseek-v4.1-flash".into();
     let mut ctx = context(&input);
-    ctx.original_model = gateway_schema::aliases::SYNTHETIC_MODEL.into();
+    ctx.original_model = model_aliases::SYNTHETIC_MODEL.into();
     set_body(&mut ctx.body, "model", json!(ctx.original_model));
     set_body(&mut ctx.body, "synthetic_hop", json!("openlux"));
     assert!(run(authority.authorize_paid_route(&input, &ctx, NOW)).is_err());

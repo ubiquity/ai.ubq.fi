@@ -8,6 +8,7 @@ use gateway_contracts::{
 };
 use gateway_core::state::RevisionCheck;
 use gateway_kv_codec::key::RecordKey;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::PreparedClaudeBody};
 use gateway_provider_protocol::{
     types::AuthMaterial, types::ClientSurface, types::DecodePlan, types::Headers,
@@ -295,9 +296,7 @@ impl WorkspaceContinuation {
 /// paths, JSON-RPC methods, uploaded proofs or refresh credentials.
 pub trait RoutingHost {
     type ClaudeHead;
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>;
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator>;
     fn cancelled(&self) -> bool;
     fn cancellation_error(&self) -> GatewayError;
     fn wait(&self, milliseconds: i64) -> impl Future<Output = WaitOutcome>;

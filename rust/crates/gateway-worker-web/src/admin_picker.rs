@@ -1,3 +1,4 @@
+use gateway_model_selection::selection as model_selection;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
@@ -171,7 +172,7 @@ mod tests {
         )
         .unwrap();
         let providers = result["providers"].as_array().unwrap();
-        assert_eq!(providers.len(), gateway_schema::selection::PROVIDERS.len());
+        assert_eq!(providers.len(), model_selection::PROVIDERS.len());
         assert_eq!(providers[0]["model_count"], 1);
         assert_eq!(providers[0]["configured"], false);
         assert_eq!(providers.last().unwrap()["configured"], false);

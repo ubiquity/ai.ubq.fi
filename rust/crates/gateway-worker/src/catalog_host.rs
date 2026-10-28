@@ -15,6 +15,7 @@ use gateway_catalog_provider::host::CredentialPublication;
 use gateway_catalog_provider::host::ProviderBinding;
 use gateway_core::state::AuthorityStore;
 use gateway_core::state::RevisionCheck;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::random;
@@ -120,9 +121,7 @@ impl gateway_catalog_runtime::admin::AdminCatalogHost for Host {
 }
 
 impl CatalogHost for Host {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         gateway_worker_platform::source_collator::shared()
     }
     fn now_ms(&self) -> i64 {

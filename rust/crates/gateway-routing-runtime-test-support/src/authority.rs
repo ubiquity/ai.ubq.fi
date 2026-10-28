@@ -204,7 +204,7 @@ impl TokenSource for Tokens {
 }
 pub type TestAuthority = Authority<MemoryStore, Tokens>;
 struct FixtureCollator;
-impl gateway_schema::aliases::SourceStringCollator for FixtureCollator {
+impl gateway_model_selection::aliases::SourceStringCollator for FixtureCollator {
     fn compare(
         &self,
         left: &gateway_source::js_string::JsString16,

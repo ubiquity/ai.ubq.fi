@@ -18,6 +18,7 @@ use gateway_core::{query::QueryRequest, query::QueryStore};
 use gateway_core::{state::AtomicTransition, state::AuthorityStore, state::CommitOutcome};
 use gateway_core::{state::RecordMutation, state::StoredRecord};
 use gateway_kv_codec::key::RecordKey;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_routing_runtime_test_support::source_catalog;
 use gateway_schema::runtime_config::build_runtime_config;
 use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
@@ -272,7 +273,7 @@ impl Host {
     }
 }
 impl CatalogHost for Host {
-    fn source_string_collator(&self) -> Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> Arc<dyn model_aliases::SourceStringCollator> {
         Arc::new(source_catalog::Collator::captured())
     }
     fn now_ms(&self) -> i64 {

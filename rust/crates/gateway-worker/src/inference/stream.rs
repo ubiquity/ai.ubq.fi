@@ -5,6 +5,7 @@ use crate::routing_host;
 use gateway_admission::handoff::{Pending, enqueue};
 use gateway_contracts::{lifecycle::SemanticTerminal, provider::UpstreamProvider};
 use gateway_local_refusal::routing_error::RoutingError;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_events::event::ProviderEvent;
 use gateway_provider_protocol::types::DecodePlan;
 use gateway_provider_protocol::types::Headers;
@@ -88,7 +89,7 @@ impl Selected {
         }
     }
     pub(super) fn needs_preparation(&self, session: &crate::inference_lifecycle::Session) -> bool {
-        gateway_schema::aliases::is_synthetic(session.selected_model())
+        model_aliases::is_synthetic(session.selected_model())
             && self.attempt.paid.is_none()
             && self.attempt.request.stream()
             && self.plan.surface == gateway_provider_protocol::types::ClientSurface::Responses

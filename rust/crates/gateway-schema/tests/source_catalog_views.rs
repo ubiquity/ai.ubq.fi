@@ -1,17 +1,16 @@
 mod support;
-use gateway_source::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source,
-};
 use gateway_contracts::model::ModelId;
+use gateway_model_selection::{aliases::SourceStringCollator, selection::ModelWhitelist};
 use gateway_schema::{
-    aliases::SourceStringCollator,
     catalog::{CatalogInput, ProviderCatalog},
     catalog_views::{build_catalog_snapshot, capabilities, ordinary_models, public_catalog},
     metadata::MetadataHint,
     native_catalog::native_catalog,
-    selection::ModelWhitelist,
     snapshot::ModelSnapshot,
+};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
 use support::*;
 

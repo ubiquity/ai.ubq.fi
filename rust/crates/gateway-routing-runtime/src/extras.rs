@@ -13,10 +13,10 @@ use gateway_contracts::{
     lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
 };
 use gateway_core::query::QueryStore;
-use gateway_source::source_json::SourceJson;
-use gateway_source::{error::GatewayError, source_serialization as source};
+use gateway_source::source_serialization as source;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
-use std::rc::Rc;
+use {gateway_model_selection::aliases as model_aliases, std::rc::Rc};
 
 use gateway_extras_contract::family::ExtrasFamily;
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -85,7 +85,7 @@ pub struct AdmissionHandle<S, I, C, H> {
     parent: String,
     lock: Rc<Mutex<()>>,
     input: RoutingInput,
-    source_collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
+    source_collator: std::sync::Arc<dyn model_aliases::SourceStringCollator>,
 }
 impl<
     S: QueryStore + Clone,

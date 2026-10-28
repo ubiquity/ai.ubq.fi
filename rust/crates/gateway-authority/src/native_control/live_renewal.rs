@@ -21,6 +21,7 @@ use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_authority_routing_selection::types::LiveAccountSelection;
 use gateway_contracts::identity::ActiveSelection;
 use gateway_core::state::AuthorityStore;
+use gateway_model_selection::selection as model_selection;
 use gateway_native_authority_wire::context::NativeRenewalContext;
 use gateway_native_authority_wire::renewal::{NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalFence};
 use gateway_schema::catalog_store::runtime_config_key;
@@ -273,8 +274,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 }
                 let selection: Option<Value> = tx.read(&keys::provider_selection()).await?;
                 if selection.as_ref().is_some_and(|v| {
-                    !v.is_null()
-                        && gateway_schema::selection::ProviderSelection::normalize(v).is_none()
+                    !v.is_null() && model_selection::ProviderSelection::normalize(v).is_none()
                 }) {
                     return Err(fail());
                 }
@@ -370,7 +370,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 .as_ref()
                 .filter(|v| !v.is_null())
                 .is_some_and(|v| {
-                    gateway_schema::selection::ProviderSelection::normalize(v)
+                    model_selection::ProviderSelection::normalize(v)
                         .is_none_or(|s| !s.account_eligible(&id.administrative_account_hash.0))
                 })
             {

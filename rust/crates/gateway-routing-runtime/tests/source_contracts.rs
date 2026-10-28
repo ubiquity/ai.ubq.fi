@@ -4,6 +4,7 @@ use gateway_contracts::{
     provider::UpstreamProvider,
 };
 use gateway_local_refusal::routing_error::SourceRefusalBody;
+use gateway_model_selection::selection as model_selection;
 use gateway_provider_policy::policy::HopFailure;
 use gateway_routing_runtime::{
     classify, policy, session::RoutingSession, settlement::recover_pending, types::AttemptFailure,
@@ -1172,7 +1173,7 @@ fn source_deepseek_extension_uses_one_captured_route_selection() -> TestResult {
         request.raw = fixture(
             &json!({"model":"deepseek-flash","messages":[{"role":"user","content":"fixture"}],"thinking":{"type":"disabled"}}),
         );
-        request.catalog.selection = gateway_schema::selection::ProviderSelection::normalize(
+        request.catalog.selection = model_selection::ProviderSelection::normalize(
             &json!({"provider_ids":["cerebras"],"updated_at_ms":NOW}),
         );
         let error = source_plan(&request)
@@ -1197,7 +1198,7 @@ fn source_deepseek_extension_uses_one_captured_route_selection() -> TestResult {
             store.clone(),
         )
         .await?;
-        request.catalog.selection = gateway_schema::selection::ProviderSelection::normalize(
+        request.catalog.selection = model_selection::ProviderSelection::normalize(
             &json!({"provider_ids":["cerebras"],"updated_at_ms":NOW+1}),
         );
         assert!(!request.catalog.enabled("deepseek"));

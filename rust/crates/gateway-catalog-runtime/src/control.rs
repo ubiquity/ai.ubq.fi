@@ -15,6 +15,7 @@ use gateway_core::{
     state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_model_selection::selection::ProviderSelection;
 use gateway_provider_policy::{
     policy::DeepseekHop, policy::PaidRoutingInput, policy::paid_order, policy::resolve_paid_route,
 };
@@ -22,7 +23,6 @@ use gateway_schema::{
     catalog::{CatalogInput, ProviderCatalog},
     catalog_store,
     runtime_config::normalize_runtime_config,
-    selection::ProviderSelection,
     snapshot::ModelSnapshot,
 };
 use gateway_schema_values::source_view::js_trim_source;

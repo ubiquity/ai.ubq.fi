@@ -1,7 +1,8 @@
 //! Adapt the one raw source account-model record; never persist normalized hash-keyed hints there.
 use gateway_authority_contracts::invalid;
 use gateway_contracts::model::ModelId;
-use gateway_schema::selection::AccountModelsStore;
+use gateway_model_selection::aliases as model_aliases;
+use gateway_model_selection::selection::AccountModelsStore;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_source::{source_json::SourceJson, source_serialization as source};
 
@@ -10,7 +11,7 @@ pub fn learn(
     id: &str,
     model: &ModelId,
     now: i64,
-    collator: &dyn gateway_schema::aliases::SourceStringCollator,
+    collator: &dyn model_aliases::SourceStringCollator,
 ) -> Result<SourceJson, GatewayError> {
     let parsed = AccountModelsStore::parse(raw)
         .unwrap_or_default()

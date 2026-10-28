@@ -19,6 +19,7 @@ use gateway_authority_routing_selection::{SelectionOperations, types::CohortProo
 use gateway_authority_routing_signal::SignalOperations;
 use gateway_contracts::{identity::PoolVersionstamp, provider::CodexQuotaClass};
 use gateway_core::state::StoredRecord;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_observability::host_types::*;
 use gateway_observability_test_support::{runtime::Host, runtime::Memory, runtime::run};
 use serde_json::{Value, json};
@@ -78,9 +79,7 @@ impl Probe {
     }
 }
 impl ObservabilityHost for Probe {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {

@@ -11,8 +11,8 @@ use gateway_core::{
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_model_selection::aliases::SourceStringCollator;
 use gateway_schema::{
-    aliases::SourceStringCollator,
     catalog_store,
     catalog_views::{
         ordinary_models as ordinary_models_source, public_catalog as public_catalog_source,

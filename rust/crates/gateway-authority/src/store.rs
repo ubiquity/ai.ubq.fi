@@ -6,7 +6,7 @@ use gateway_core::state::StoredRecord;
 use gateway_core::{state::AtomicTransition, state::RecordMutation};
 use gateway_core::{state::AuthorityStore, state::CommitOutcome, state::RevisionCheck};
 use gateway_kv_codec::key::RecordKey;
-use gateway_schema::aliases::SourceStringCollator;
+use gateway_model_selection::aliases::SourceStringCollator;
 use gateway_source::error::GatewayError;
 use gateway_source::source_json::SourceJson;
 use serde::{Serialize, de::DeserializeOwned};

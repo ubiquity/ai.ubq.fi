@@ -2,9 +2,8 @@ use crate::{seed::source_key, source_catalog::Collator, store::Store};
 use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_auth_primitives::crypto::Secret;
 use gateway_authority::routing_types::CohortProof;
-use gateway_authority_keys as keys;
 use gateway_authority_paid_records::{PaidReservation, PaidUsage};
-use gateway_core::state::AuthorityStore;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_protocol::{types::AuthMaterial, types::PrepareOptions};
 use gateway_routing_runtime::types::{
     ClaudeOutcome, ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest,
@@ -19,6 +18,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
+use {gateway_authority_keys as keys, gateway_core::state::AuthorityStore};
 #[derive(Clone)]
 pub struct Host {
     pub claude_internal_error: bool,
@@ -60,7 +60,7 @@ impl Host {
 }
 impl RoutingHost for Host {
     type ClaudeHead = u64;
-    fn source_string_collator(&self) -> Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> Arc<dyn model_aliases::SourceStringCollator> {
         Arc::new(Collator::captured())
     }
     fn cancelled(&self) -> bool {

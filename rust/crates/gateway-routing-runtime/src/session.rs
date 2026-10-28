@@ -16,6 +16,7 @@ use gateway_authority_paid_control_records::{
 use gateway_authority_paid_records::PaidAuthorization;
 use gateway_contracts::{identity::ApiKeyId, model::ModelId, provider::UpstreamProvider};
 use gateway_core::query::QueryStore;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_claude_body::types::PreparedClaudeOrdinary;
 use gateway_provider_policy::{policy::LithosWindows, policy::WaitBudget};
 use gateway_source::error::GatewayError;
@@ -37,7 +38,7 @@ pub struct RoutingSession<S, I, C, H> {
     pub(crate) waits: RefCell<WaitBudget>,
     conversation_id: String,
     pub(crate) elapsed_wait_ms: std::cell::Cell<i64>,
-    pub(crate) source_collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
+    pub(crate) source_collator: std::sync::Arc<dyn model_aliases::SourceStringCollator>,
     pub(crate) extra_lock: std::rc::Rc<futures_util::lock::Mutex<()>>,
 }
 impl<
