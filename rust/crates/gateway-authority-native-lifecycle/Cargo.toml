@@ -25,6 +25,16 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-auth = { path = "../gateway-auth" }
+gateway-routing-runtime = { path = "../gateway-routing-runtime" }
+gateway-routing-runtime-test-support = { path = "../gateway-routing-runtime-test-support" }
+gateway-local-journal = { path = "../gateway-local-journal" }
+gateway-provider-policy = { path = "../gateway-provider-policy" }
+gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
+gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
+gateway-wait-observation = { path = "../gateway-wait-observation" }
 gateway-authority-native-managed = { path = "../gateway-authority-native-managed" }
 gateway-authority-native-preparation = { path = "../gateway-authority-native-preparation" }
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }

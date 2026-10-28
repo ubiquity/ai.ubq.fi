@@ -1696,6 +1696,7 @@ dependencies = [
  "gateway-authority-actor-records",
  "gateway-authority-contracts",
  "gateway-authority-keys",
+ "gateway-authority-native-inference-facts",
  "gateway-authority-native-records",
  "gateway-authority-paid-control-records",
  "gateway-authority-routing-evidence",
@@ -1713,9 +1714,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-native-inference-facts"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-native-proof",
+ "gateway-auth-primitives",
+ "gateway-authority-actor-currentness",
+ "gateway-authority-actor-records",
+ "gateway-authority-api-protocol",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-native-records",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-policy",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-local-journal",
+ "gateway-native-authority-wire",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority-native-lifecycle"
 version = "0.1.0"
 dependencies = [
+ "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-credentials",
  "gateway-auth-native-contracts",
@@ -1726,6 +1757,7 @@ dependencies = [
  "gateway-auth-primitives",
  "gateway-authority-actor-currentness",
  "gateway-authority-actor-records",
+ "gateway-authority-api-protocol",
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-native-context-facts",
@@ -1733,14 +1765,22 @@ dependencies = [
  "gateway-authority-native-preparation",
  "gateway-authority-native-records",
  "gateway-authority-paid-control-records",
+ "gateway-authority-paid-evidence",
+ "gateway-authority-paid-records",
  "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-local-journal",
  "gateway-native-authority-request",
  "gateway-native-authority-wire",
+ "gateway-provider-policy",
+ "gateway-routing-runtime",
+ "gateway-routing-runtime-test-support",
  "gateway-schema",
  "gateway-source",
+ "gateway-wait-observation",
  "serde",
  "serde_json",
 ]

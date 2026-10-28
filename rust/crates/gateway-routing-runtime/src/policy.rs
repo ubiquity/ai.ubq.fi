@@ -58,7 +58,7 @@ pub(crate) fn admission_plan(input: &RoutingInput) -> RoutePlan {
     }
 }
 pub fn class(model: &ModelId) -> CodexQuotaClass {
-    gateway_authority::routing::model_quota_class(model)
+    gateway_authority_routing_evidence::models::model_quota_class(model)
 }
 fn ids(rows: &[SourceJson]) -> Vec<ModelId> {
     rows.iter()

@@ -1,7 +1,7 @@
 use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_auth_primitives::crypto::Secret;
-use gateway_authority::{routing_types::AdmittedAccount, routing_types::CohortProof};
 use gateway_authority_paid_records::{PaidReservation, PaidUsage};
+use gateway_authority_routing_selection::types::{AdmittedAccount, CohortProof};
 use gateway_contracts::{
     identity::RequestContext, lifecycle::TransportObservation, model::ModelId,
     provider::UpstreamProvider,
