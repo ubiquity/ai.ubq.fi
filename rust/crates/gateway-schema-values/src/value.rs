@@ -70,6 +70,8 @@ pub enum Value {
     Null,
     Bool(bool),
     Number(SourceJson),
+    // Finite typed producer DATA; parsed input keeps its original Number lexeme.
+    Integer(i64),
     String(Text),
     Array(Vec<Value>),
     Object(Vec<(JsString16, Value)>),
@@ -137,6 +139,7 @@ impl Value {
         match self {
             Self::Null => SourceJson::parse("null"),
             Self::Bool(v) => SourceJson::from_serializable(v),
+            Self::Integer(v) => SourceJson::from_serializable(v),
             Self::Number(v) | Self::Raw(v, _) => Ok(v.clone()),
             Self::String(v) => source::quoted(&v.units),
             Self::Array(v) => {
@@ -171,10 +174,10 @@ impl Value {
         }
     }
     pub fn as_f64(&self) -> Option<f64> {
-        if let Self::Number(raw) = self {
-            source::number(raw)
-        } else {
-            None
+        match self {
+            Self::Number(raw) => source::number(raw),
+            Self::Integer(value) => Some(*value as f64),
+            _ => None,
         }
     }
     pub fn as_bool(&self) -> Option<bool> {
@@ -185,7 +188,7 @@ impl Value {
         }
     }
     pub fn is_number(&self) -> bool {
-        matches!(self, Self::Number(_))
+        matches!(self, Self::Number(_) | Self::Integer(_))
     }
     pub fn remove(&mut self, key: &str) -> Option<Self> {
         let Self::Object(fields) = self.mutable() else {
@@ -203,10 +206,10 @@ impl Value {
         matches!(self, Self::Bool(_))
     }
     pub fn as_i64(&self) -> Option<i64> {
-        if let Self::Number(raw) = self {
-            raw.deserialize().ok()
-        } else {
-            None
+        match self {
+            Self::Number(raw) => raw.deserialize().ok(),
+            Self::Integer(value) => Some(*value),
+            _ => None,
         }
     }
     pub fn is_array(&self) -> bool {
