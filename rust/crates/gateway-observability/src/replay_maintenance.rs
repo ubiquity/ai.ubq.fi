@@ -3,10 +3,10 @@ use crate::ObservabilityRuntime;
 use gateway_core::query::QueryStore;
 use gateway_observability_contracts::{data, types::ObservabilityHost};
 use gateway_observability_replay_model::replay_model as model;
-use gateway_observability_replay_records::{accounting::self as schema, accounting::RetentionLimits};
+use gateway_observability_replay_records::{accounting as schema, accounting::RetentionLimits};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
-impl<S: QueryStore,H: ObservabilityHost> ObservabilityRuntime<S,H> {
+impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     pub async fn replay_retention_status(&self, limits: RetentionLimits) -> Value {
         match schema::read_ledger(self.store.as_ref(), limits).await {
             Ok((ledger, _)) => {
@@ -23,11 +23,14 @@ impl<S: QueryStore,H: ObservabilityHost> ObservabilityRuntime<S,H> {
         if !self.replay_state().bootstrap_replays(limits, at).await? {
             return Ok(self.replay_retention_status(limits).await);
         }
-        self.retention().reap_replay_reservations(at, limits).await?;
+        self.retention()
+            .reap_replay_reservations(at, limits)
+            .await?;
         self.retention().reclaim_expired_replays(at, limits).await?;
         let (ledger, _) = schema::read_ledger(self.store.as_ref(), limits).await?;
         if ledger.stored_bytes + ledger.reserved_bytes > limits.payload() {
-            self.retention().evict_replays(at, limits, (limits.payload() * 0.9).floor(), None)
+            self.retention()
+                .evict_replays(at, limits, (limits.payload() * 0.9).floor(), None)
                 .await?;
         }
         let marker = self.store.read(&model::key("metadata_reconciled")).await?;

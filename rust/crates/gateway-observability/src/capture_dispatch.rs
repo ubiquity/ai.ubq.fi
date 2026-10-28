@@ -5,7 +5,7 @@ use gateway_auth_contracts::types::AuthResponse;
 use gateway_core::query::QueryStore;
 use gateway_observability_contracts::types::ObservabilityHost;
 use gateway_source::error::GatewayError;
-impl<S:QueryStore,H:ObservabilityHost> ObservabilityRuntime<S,H> {
+impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     pub async fn capture(
         &self,
         request: CaptureRequest,
@@ -20,14 +20,16 @@ impl<S:QueryStore,H:ObservabilityHost> ObservabilityRuntime<S,H> {
                 before_ms,
                 cursor,
             } => {
-                self.exports().export_capture_interval(after_ms, before_ms, cursor.as_deref())
+                self.exports()
+                    .export_capture_interval(after_ms, before_ms, cursor.as_deref())
                     .await
             }
             CaptureRequest::Incident {
                 incident_id,
                 cursor,
             } => {
-                self.exports().export_incident_captures(&incident_id, cursor.as_deref())
+                self.exports()
+                    .export_incident_captures(&incident_id, cursor.as_deref())
                     .await
             }
             CaptureRequest::Incidents {
@@ -35,7 +37,8 @@ impl<S:QueryStore,H:ObservabilityHost> ObservabilityRuntime<S,H> {
                 cursor,
                 limit,
             } => {
-                self.incidents().list_incidents(incident_id.as_deref(), cursor.as_deref(), limit)
+                self.incidents()
+                    .list_incidents(incident_id.as_deref(), cursor.as_deref(), limit)
                     .await
             }
         }

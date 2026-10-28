@@ -4,12 +4,16 @@ use gateway_admin_runtime::capabilities::Context;
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_capacity_projection::{scalars::DAY, scalars::safe_i64, shapes as shape};
 use gateway_core::query::QueryStore;
-use gateway_observability_contracts::{data, source_object::SourceObject, types::ObservabilityHost};
-use gateway_observability_health::health;
-use gateway_source::{error::GatewayError, source_json::SourceJson, source_serialization as source};
-use serde_json::json;
 use gateway_observability_capacity::{capacity::claude_source, capacity::unavailable_claude};
-impl<S:QueryStore,H:ObservabilityHost> ObservabilityRuntime<S,H> {
+use gateway_observability_contracts::{
+    data, source_object::SourceObject, types::ObservabilityHost,
+};
+use gateway_observability_health::health;
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
+use serde_json::json;
+impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     pub async fn capacity_response(
         &self,
         live: bool,
@@ -70,7 +74,8 @@ impl<S:QueryStore,H:ObservabilityHost> ObservabilityRuntime<S,H> {
         body["prompt_cache"] = self.prompt().prompt_analytics(&[]).await?;
         body["ledger_growth"] = self.ledger().ledger_growth(at).await;
         let remote = self
-            .events().remote_capacity_observations(at)
+            .events()
+            .remote_capacity_observations(at)
             .await
             .unwrap_or_default();
         if !remote.is_empty() {
@@ -101,7 +106,8 @@ impl<S:QueryStore,H:ObservabilityHost> ObservabilityRuntime<S,H> {
         let at = data::now(self.host.as_ref())?;
         let window = i64::from(days) * DAY;
         let points = self
-            .capacity().capacity_rollup_points((at - window).max(0), at)
+            .capacity()
+            .capacity_rollup_points((at - window).max(0), at)
             .await
             .ok();
         let claude = self.claude_capacity_rollups((at - window).max(0), at).await;
