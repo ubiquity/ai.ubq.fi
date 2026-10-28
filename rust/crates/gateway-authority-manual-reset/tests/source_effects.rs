@@ -31,11 +31,9 @@ use gateway_auth_contracts::{
 use gateway_auth_passport_contracts::actor_data::PassportActorDataV2;
 use gateway_auth_passport_contracts::session::PassportDate;
 use gateway_auth_passport_sessions::sessions::{PassportSessions, session_key};
-use gateway_authority_actor_currentness::app::ActorService;
 use gateway_authority_actor_records::{
     legacy::config_digest, scope::NativeActorScope, source::StoredNativeActorV2,
 };
-use gateway_contracts::{identity::PrincipalId, identity::RequestContext, identity::RequestId};
 use gateway_core::{
     state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
     state::StoredRecord,
