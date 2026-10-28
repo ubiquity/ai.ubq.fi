@@ -72,6 +72,7 @@ path = "src/bin/uos-native.rs"
 landlock = "=0.4.7"
 
 [dev-dependencies]
+gateway-schema.workspace = true
 gateway-kv-codec.workspace = true
 gateway-native-https-test-support.workspace = true
 gateway-native-import-test-support.workspace = true

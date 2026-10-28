@@ -4,9 +4,10 @@ use gateway_core::{
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
     state::{RecordMutation, StoredRecord},
 };
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_kv_codec::value::ValueEncoding;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     cell::RefCell,
     collections::BTreeMap,
@@ -149,13 +150,14 @@ fn source_audit_utf16_caps_persist_and_read_lone_surrogates_without_replacement(
         assert_eq!(record.expires_at_ms, Some(NOW + audit::RETENTION_MS));
         assert_eq!(
             key,
-            gateway_auth_primitives::store::key(json!([
-                "uos_ai",
-                "api_keys",
-                "change",
-                gateway_contracts::identity::MAX_SAFE_INTEGER - NOW,
-                ID
-            ]))
+            TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("api_keys"),
+                ScalarKeyPart::String("change"),
+                ScalarKeyPart::Number(gateway_contracts::identity::MAX_SAFE_INTEGER - NOW),
+                ScalarKeyPart::String(ID)
+            ])
+            .to_record_key()
         );
         let restored: StoredRecord =
             serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
@@ -186,7 +188,8 @@ fn source_audit_utf16_caps_persist_and_read_lone_surrogates_without_replacement(
 }
 
 #[test]
-fn source_audit_visibility_is_timestamp_only_including_exact_cutoff() {
+fn source_audit_visibility_is_timestamp_only_including_exact_cutoff()
+-> Result<(), Box<dyn std::error::Error>> {
     let fixture = golden();
     let cutoff = fixture["cutoff"].as_i64().unwrap();
     let mut entries = Vec::new();
@@ -198,9 +201,13 @@ fn source_audit_visibility_is_timestamp_only_including_exact_cutoff() {
         assert_eq!(retained, row["expected"].as_bool().unwrap());
         expected += usize::from(retained);
         entries.push(QueryEntry {
-            key: gateway_auth_primitives::store::key(json!([
-                "uos_ai", "api_keys", "change", index
-            ])),
+            key: TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("api_keys"),
+                ScalarKeyPart::String("change"),
+                ScalarKeyPart::Number(i64::try_from(index)?),
+            ])
+            .to_record_key(),
             record,
         });
     }
@@ -210,6 +217,7 @@ fn source_audit_visibility_is_timestamp_only_including_exact_cutoff() {
         raw_field(&body, "data").array_items().unwrap().len(),
         expected
     );
+    Ok(())
 }
 
 #[test]

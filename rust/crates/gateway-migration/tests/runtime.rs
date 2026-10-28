@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 type FixtureResult<T> = Result<T, Box<dyn std::error::Error>>;
-use gateway_auth_primitives::store::key;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_contracts::identity::ApiKeyId;
 use gateway_contracts::identity::RequestId;
@@ -116,7 +117,12 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
     assert_eq!(reservation.request_id.0, "new-request");
     drop(authority);
     // Real same-authority write after restart; deleting an adopted row must not resurrect it.
-    let debug = key(json!(["uos_ai", "debug_routing", "v1"]));
+    let debug = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("debug_routing"),
+        ScalarKeyPart::String("v1"),
+    ])
+    .to_record_key();
     let old = run(store.read(&debug))?.ok_or("Expected retained fixture row")?;
     run(store.commit(AtomicTransition {
         checks: vec![RevisionCheck {
@@ -168,7 +174,13 @@ fn adoption_conflict_never_partially_writes_and_keeps_foreign_state() -> Fixture
     let store = SqliteStore::open(&directory.file("conflict.sqlite3"));
     let (capture, _) = fixture()?;
     let prepared = prepare(&capture, &CanonicalDates)?;
-    let foreign_key = key(json!(["ubq_ai", "api_keys", "id", "fixture-key"]));
+    let foreign_key = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("ubq_ai"),
+        ScalarKeyPart::String("api_keys"),
+        ScalarKeyPart::String("id"),
+        ScalarKeyPart::String("fixture-key"),
+    ])
+    .to_record_key();
     *store.before_commit.borrow_mut() = Some((
         foreign_key.clone(),
         StoredRecord::json("foreign-owner", json!({"preserved":true}), None),
@@ -180,7 +192,18 @@ fn adoption_conflict_never_partially_writes_and_keeps_foreign_state() -> Fixture
             .revision,
         "foreign-owner"
     );
-    assert!(run(store.read(&key(json!(["uos_ai", "migration", "v3", "manifest"]))))?.is_none());
+    assert!(
+        run(store.read(
+            &TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("migration"),
+                ScalarKeyPart::String("v3"),
+                ScalarKeyPart::String("manifest")
+            ])
+            .to_record_key()
+        ))?
+        .is_none()
+    );
     assert!(run(store.read(&gateway_authority_keys::api_policy("fixture-key")))?.is_none());
     Ok(())
 }

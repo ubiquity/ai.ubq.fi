@@ -32,6 +32,7 @@ use gateway_core::{
     state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde::Serialize;
 use serde_json::json;
@@ -266,11 +267,12 @@ impl Fixture {
                 openlux_discovery_binding: None,
                 openlux_binding: None,
                 source_checks: vec![PaidSourceCheck {
-                    key: gateway_auth_primitives::store::key(json!([
-                        "uos_ai",
-                        "runtime_config",
-                        "v2"
-                    ]))
+                    key: TupleKey::from_scalar_parts(&[
+                        ScalarKeyPart::String("uos_ai"),
+                        ScalarKeyPart::String("runtime_config"),
+                        ScalarKeyPart::String("v2"),
+                    ])
+                    .to_record_key()
                     .0,
                     expected_revision: None,
                 }],

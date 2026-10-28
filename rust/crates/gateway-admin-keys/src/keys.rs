@@ -18,10 +18,11 @@ use gateway_core::{
     state::AuthorityStore, state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_profile_values::coercion::js_number;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ApiKeyRecord {
@@ -567,10 +568,22 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
                     RecordMutation::Delete { key: hk.clone() },
                     RecordMutation::Delete { key: pk.clone() },
                     RecordMutation::Delete {
-                        key: store::key(json!(["ubq_ai", "api_keys", "usage", id])),
+                        key: TupleKey::from_scalar_parts(&[
+                            ScalarKeyPart::String("ubq_ai"),
+                            ScalarKeyPart::String("api_keys"),
+                            ScalarKeyPart::String("usage"),
+                            ScalarKeyPart::String(id),
+                        ])
+                        .to_record_key(),
                     },
                     RecordMutation::Delete {
-                        key: store::key(json!(["ubq_ai", "api_keys", "usage_daily", id])),
+                        key: TupleKey::from_scalar_parts(&[
+                            ScalarKeyPart::String("ubq_ai"),
+                            ScalarKeyPart::String("api_keys"),
+                            ScalarKeyPart::String("usage_daily"),
+                            ScalarKeyPart::String(id),
+                        ])
+                        .to_record_key(),
                     },
                 ]);
                 "delete"

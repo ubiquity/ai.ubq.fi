@@ -10,6 +10,7 @@ use gateway_auth_primitives::{
     store::{check, commit, put},
 };
 use gateway_core::query::QueryStore;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -80,7 +81,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> SettingsAdmin<'_, S, H,
         operation: AdminOperation,
         input: &AdminInput,
     ) -> Result<AuthResponse, GatewayError> {
-        let key = store::key(json!(["uos_ai", "debug_routing", "v1"]));
+        let key = TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("debug_routing"),
+            ScalarKeyPart::String("v1"),
+        ])
+        .to_record_key();
         let normal =
             || json!({"scenario":"normal","expires_at_ms":null,"updated_at_ms":input.now_ms});
         const SCENARIOS: [&str; 7] = [
@@ -172,7 +178,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> SettingsAdmin<'_, S, H,
         operation: AdminOperation,
         input: &AdminInput,
     ) -> Result<AuthResponse, GatewayError> {
-        let key = store::key(json!(["uos_ai", "provider_selection", "v1"]));
+        let key = TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("provider_selection"),
+            ScalarKeyPart::String("v1"),
+        ])
+        .to_record_key();
         if operation == AdminOperation::ProviderSelectionGet {
             let selected = selection(store::read(self.store, &key, input.now_ms).await?.as_ref())
                 .unwrap_or_else(|| json!({"provider_ids":[],"updated_at_ms":0}));
@@ -265,7 +276,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> SettingsAdmin<'_, S, H,
         operation: AdminOperation,
         input: &AdminInput,
     ) -> Result<AuthResponse, GatewayError> {
-        let key = store::key(json!(["uos_ai", "claude_code_access", "v1"]));
+        let key = TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("claude_code_access"),
+            ScalarKeyPart::String("v1"),
+        ])
+        .to_record_key();
         let policy = if operation == AdminOperation::ClaudeAccessSet {
             let ids = self.sorted_principals(
                 &source_body::member(&input.body, "allowed_key_ids")

@@ -24,6 +24,7 @@ use gateway_core::{
     state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -152,7 +153,13 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> KernelAdmin<'_, S, H, C
     }
     pub async fn live_default_reservations(&self, now: i64) -> Result<bool, GatewayError> {
         for (name, repo_scope) in [("repo_window", true), ("org_window", false)] {
-            let prefix = store::key(json!(["uos_ai", "kernel_quota", "v2", name]));
+            let prefix = TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("kernel_quota"),
+                ScalarKeyPart::String("v2"),
+                ScalarKeyPart::String(name),
+            ])
+            .to_record_key();
             for entry in store::scan(self.store, prefix, false, now).await? {
                 let raw = decode_source_control_record(&entry.record)?;
                 let owner = body::member(&raw, "owner")
@@ -270,7 +277,11 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> KernelAdmin<'_, S, H, C
         if op == AdminOperation::KernelQueue {
             let raw = data_read(
                 self.store,
-                &store::key(json!(["uos_ai", "kernel_policy_queue"])),
+                &TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("kernel_policy_queue"),
+                ])
+                .to_record_key(),
                 now,
             )
             .await?;
@@ -621,7 +632,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> KernelAdmin<'_, S, H, C
         input: &AdminInput,
     ) -> Result<AuthResponse, GatewayError> {
         let family = if org { "org_usage" } else { "usage" };
-        let prefix = store::key(json!(["ubq_ai", "kernel_auth", family]));
+        let prefix = TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("ubq_ai"),
+            ScalarKeyPart::String("kernel_auth"),
+            ScalarKeyPart::String(family),
+        ])
+        .to_record_key();
         let mut records = Vec::new();
         for entry in store::scan(self.store, prefix, false, input.now_ms).await? {
             let raw = entry.record.json_value()?;
@@ -663,12 +679,13 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> KernelAdmin<'_, S, H, C
         include: bool,
         input: &AdminInput,
     ) -> Result<AuthResponse, GatewayError> {
-        let prefix = store::key(json!([
-            "uos_ai",
-            "kernel_quota",
-            "v2",
-            if org { "org_policy" } else { "repo_policy" }
-        ]));
+        let prefix = TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("kernel_quota"),
+            ScalarKeyPart::String("v2"),
+            ScalarKeyPart::String(if org { "org_policy" } else { "repo_policy" }),
+        ])
+        .to_record_key();
         let mut records = Vec::new();
         for entry in store::scan(self.store, prefix, false, input.now_ms).await? {
             let Some((owner, repo)) = physical_labels(&entry.key, org)? else {
@@ -740,9 +757,22 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> KernelAdmin<'_, S, H, C
         daily: bool,
     ) -> Result<Value, GatewayError> {
         let key = if let Some(repo) = repo {
-            store::key(json!(["ubq_ai", "kernel_auth", "usage", owner, repo]))
+            TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("ubq_ai"),
+                ScalarKeyPart::String("kernel_auth"),
+                ScalarKeyPart::String("usage"),
+                ScalarKeyPart::String(owner),
+                ScalarKeyPart::String(repo),
+            ])
+            .to_record_key()
         } else {
-            store::key(json!(["ubq_ai", "kernel_auth", "org_usage", owner]))
+            TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("ubq_ai"),
+                ScalarKeyPart::String("kernel_auth"),
+                ScalarKeyPart::String("org_usage"),
+                ScalarKeyPart::String(owner),
+            ])
+            .to_record_key()
         };
         let Some(raw) = store::read(self.store, &key, now).await? else {
             return Ok(Value::Null);
@@ -788,9 +818,22 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> KernelAdmin<'_, S, H, C
         }
         if daily {
             let key = if let Some(repo) = repo {
-                store::key(json!(["ubq_ai", "kernel_auth", "usage_daily", owner, repo]))
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("ubq_ai"),
+                    ScalarKeyPart::String("kernel_auth"),
+                    ScalarKeyPart::String("usage_daily"),
+                    ScalarKeyPart::String(owner),
+                    ScalarKeyPart::String(repo),
+                ])
+                .to_record_key()
             } else {
-                store::key(json!(["ubq_ai", "kernel_auth", "org_usage_daily", owner]))
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("ubq_ai"),
+                    ScalarKeyPart::String("kernel_auth"),
+                    ScalarKeyPart::String("org_usage_daily"),
+                    ScalarKeyPart::String(owner),
+                ])
+                .to_record_key()
             };
             let raw = store::read(self.store, &key, now).await?;
             let mut counts = BTreeMap::new();

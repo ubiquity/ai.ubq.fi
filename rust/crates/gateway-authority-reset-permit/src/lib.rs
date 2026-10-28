@@ -14,6 +14,7 @@ use gateway_authority_reset_records::{full_pool::SourceCreditCollation, full_poo
 use gateway_authority_routing_selection::types::CohortProof;
 use gateway_contracts::identity::RequestContext;
 use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_kv_codec::value::ValueEncoding;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
@@ -35,14 +36,20 @@ fn reason(error: GatewayError) -> String {
         .unwrap_or_else(|| "configuration_unavailable".into())
 }
 fn marker_key() -> gateway_kv_codec::key::RecordKey {
-    gateway_auth_primitives::store::key(json!([
-        "uos_ai",
-        "migrations",
-        "codex_reset_usage_legacy_global_v1"
-    ]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("migrations"),
+        ScalarKeyPart::String("codex_reset_usage_legacy_global_v1"),
+    ])
+    .to_record_key()
 }
 fn legacy_key() -> gateway_kv_codec::key::RecordKey {
-    gateway_auth_primitives::store::key(json!(["uos_ai", "codex_banked_reset_usage", "v1"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("codex_banked_reset_usage"),
+        ScalarKeyPart::String("v1"),
+    ])
+    .to_record_key()
 }
 fn opt_out(value: Option<&Value>) -> bool {
     value.is_some_and(|value| *value == false || (!value.is_null() && !value.is_boolean()))

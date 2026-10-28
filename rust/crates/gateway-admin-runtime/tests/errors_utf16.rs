@@ -14,6 +14,7 @@ use gateway_auth_contracts::{
 };
 use gateway_core::{query::*, state::*};
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::ScalarKeyPart;
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey, value::PortableValue};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
@@ -41,13 +42,14 @@ struct Store {
 impl Store {
     fn put(&mut self, time: i64, id: &str, record: StoredRecord) {
         self.rows.insert(
-            gateway_auth_primitives::store::key(json!([
-                "uos_ai",
-                "admin_error_log",
-                "v1",
-                time,
-                id
-            ]))
+            TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("admin_error_log"),
+                ScalarKeyPart::String("v1"),
+                ScalarKeyPart::Number(time),
+                ScalarKeyPart::String(id),
+            ])
+            .to_record_key()
             .0,
             record,
         );

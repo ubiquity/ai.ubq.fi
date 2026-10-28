@@ -68,7 +68,7 @@ fn seed(store: &Store, id: &NativeTransportIdentity) -> String {
             key_fingerprint: id.key_fingerprint().into(),
         },
     );
-    let runtime = gateway_auth_primitives::store::key(json!(["uos_ai", "runtime_config", "v2"]));
+    let runtime = gateway_schema::catalog_store::runtime_config_key();
     store.seed(
         keys::paid_control_config(),
         "config-1",

@@ -8,7 +8,8 @@ use gateway_auth_passport_contracts::{
     actor_data::{PassportActorDataV2, PassportJwtBindingV2, PassportSessionData},
     session::PassportDate,
 };
-use gateway_auth_primitives::store;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+
 use gateway_authority_actor_records::{
     legacy::config_digest, scope::NativeActorScope, source::StoredNativeActorV2,
 };
@@ -20,7 +21,6 @@ use gateway_core::{
 };
 use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
-use serde_json::json;
 
 /// Only actual C authentication mints this original-request proof.
 /// ```compile_fail
@@ -315,7 +315,12 @@ async fn observed<S: AuthorityStore>(
     Ok(cache.revision(key))
 }
 fn runtime_key() -> RecordKey {
-    store::key(json!(["uos_ai", "runtime_config", "v2"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("runtime_config"),
+        ScalarKeyPart::String("v2"),
+    ])
+    .to_record_key()
 }
 fn fail() -> GatewayError {
     GatewayError::unavailable(

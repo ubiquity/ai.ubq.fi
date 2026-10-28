@@ -3438,6 +3438,7 @@ dependencies = [
  "gateway-publication",
  "gateway-publication-policy",
  "gateway-publication-transport",
+ "gateway-schema",
  "gateway-source",
  "getrandom 0.4.3",
  "httparse",

@@ -3,7 +3,8 @@
 use gateway_admin_contracts::operations::{AdminHost, AdminInput};
 use gateway_admin_contracts::routes::AdminOperation;
 use gateway_auth_contracts::types::AuthHost;
-use gateway_auth_primitives::store::key;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+
 use gateway_authority::store::Authority;
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_keys::{api_request, api_window};
@@ -139,7 +140,12 @@ pub fn exercise(
         AdminOperation::DebugSet,
         admin(json!({"scenario":"normal","duration_ms":0}), now)?,
     ))?;
-    let debug = key(json!(["uos_ai", "debug_routing", "v1"]));
+    let debug = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("debug_routing"),
+        ScalarKeyPart::String("v1"),
+    ])
+    .to_record_key();
     let updated = support_run(store.read(&debug))?
         .ok_or_else(|| port::error("Admin producer did not write"))?;
     if updated.json_value()?["scenario"] != "normal" {
@@ -158,7 +164,12 @@ pub fn exercise(
     if support_run(store.read(&debug))?.is_some() {
         return Err(port::error("Deleted adopted row reappeared"));
     }
-    let graph_key = key(json!(["default", "native-graph", 0]));
+    let graph_key = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("default"),
+        ScalarKeyPart::String("native-graph"),
+        ScalarKeyPart::Number(0),
+    ])
+    .to_record_key();
     let original = support_run(store.read(&graph_key))?
         .ok_or_else(|| port::error("Original shared graph missing"))?;
     let mut graph = original.source_graph_value()?;

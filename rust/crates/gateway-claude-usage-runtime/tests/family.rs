@@ -13,6 +13,7 @@ use gateway_claude_usage_runtime::{
     fetch::{self, Response, ResultData, UsageHost},
 };
 use gateway_core::state::StoredRecord;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -544,7 +545,11 @@ fn pristine_bootstrap_returns_empty_before_legacy_workspace_and_tombstone_preven
     let read = std::rc::Rc::new(Cell::new(false));
     let mark = read.clone();
     *store.after_read.borrow_mut() = Some((
-        gateway_auth_primitives::store::key(json!(["ubq_ai", "claude_code_workspace"])),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("ubq_ai"),
+            ScalarKeyPart::String("claude_code_workspace"),
+        ])
+        .to_record_key(),
         Box::new(move || mark.set(true)),
     ));
     let empty = run(claude::load_roster(

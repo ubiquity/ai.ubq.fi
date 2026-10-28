@@ -6,6 +6,12 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Rust Auth key construction uses closed typed producers - 2026-10-28
+
+The shared Auth `key(Value)` constructor and its Admin and migration forwarding constructors are retired. Fixed scalar producers use the existing defining `TupleKey::from_scalar_parts` and `ScalarKeyPart` contract, while finite-float and genuinely dynamic derived keys use the existing checked tuple APIs at their original construction sites. The bounded Claude history/rollup DATA methods return their existing family errors for nonfinite input while retaining every finite number bit pattern, signed zero and the exact absent-reset string discriminator. Profile scan inputs are actual typed keys; derived window and retirement probes retain their existing fallible planning boundary and original raw keys.
+
+Part order, literal namespaces, NUL escaping, JSON-number rounding, source UTF16 TextEncoder conversion, raw accepted tuple bytes, expiry and stored-key versus selector validation remain unchanged. The same reads, clocks, revision/token observations, retries and final CAS own all effects. Test-only convenience storage accepts actual typed keys; no generic unchecked, panic, default/null key, public proof or secret-bearing key constructor replaces the old assertions. Independent Observability and Extras key helpers remain separately owned. These source changes and authored byte/operation-sequence cases do not establish compiler, runtime, migration, client or deployment acceptance.
+
 ## Ordinary Rust journal v3 retains the source principal domain - 2026-10-28
 
 Fresh ordinary routing journals use their existing logical v3 and the defining `RequestContext::to_source_json` / `from_source_json` codec for their explicitly annotated context field. The lower `gateway-local-journal::context` DATA reader selects that codec only from the actual stored integer `v`; historical v1 and local-origin v2 retain scalar context decoding, and unknown, missing or fractional versions refuse without fallback. General `RequestContext` and `PrincipalId` serde stays scalar. The complete Journal writer and decoder retain full shape equality before the original session/pending CAS; legacy non-scalar writes still fail at their original encoding step after the same token and expiry observations.

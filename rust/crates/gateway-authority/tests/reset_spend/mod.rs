@@ -17,6 +17,7 @@ use gateway_authority_test_support::{TestResult, fixture_json, fixture_row};
 use gateway_contracts::identity::PrincipalId;
 use gateway_contracts::{identity::RequestContext, identity::RequestId, provider::CodexQuotaClass};
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
 use gateway_routing_runtime_test_support::{authority::TestAuthority, authority::admitted};
 use gateway_routing_runtime_test_support::{authority::authority, authority::block};
@@ -61,11 +62,12 @@ fn setup() -> (MemoryStore, TestAuthority) {
     }
     store.seed(keys::reset_config(), &config());
     store.seed(
-        gateway_auth_primitives::store::key(json!([
-            "uos_ai",
-            "migrations",
-            "codex_reset_usage_legacy_global_v1"
-        ])),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("migrations"),
+            ScalarKeyPart::String("codex_reset_usage_legacy_global_v1"),
+        ])
+        .to_record_key(),
         &json!({"completed_at_ms":NOW,"preserved_opt_out":false}),
     );
     (store, authority)

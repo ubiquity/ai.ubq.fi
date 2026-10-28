@@ -49,7 +49,12 @@ pub struct AccessRead {
     pub check: RevisionCheck,
 }
 pub fn policy_key() -> RecordKey {
-    store::key(json!(["uos_ai", "claude_code_access", "v1"]))
+    gateway_kv_codec::tuple_key::TupleKey::from_scalar_parts(&[
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("uos_ai"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("claude_code_access"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("v1"),
+    ])
+    .to_record_key()
 }
 fn unique_source_ids(value: &SourceJson) -> Result<Vec<JsString16>, GatewayError> {
     let values = source::array(value)

@@ -18,8 +18,9 @@ use gateway_authority_keys as keys;
 use gateway_contracts::identity::RequestContext;
 use gateway_core::state::{AuthorityStore, RevisionCheck};
 use gateway_kv_codec::key::RecordKey;
+use gateway_schema::catalog_store::runtime_config_key as runtime_key;
 use gateway_source::error::GatewayError;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// Minted only by real AuthService authentication of the original request.
 /// ```compile_fail
@@ -443,9 +444,7 @@ pub fn principal_id(principal: &AuthPrincipal) -> gateway_contracts::identity::P
         .method
         .principal_id(principal.token.as_ref().map(|token| token.expose()))
 }
-fn runtime_key() -> RecordKey {
-    gateway_auth_primitives::store::key(json!(["uos_ai", "runtime_config", "v2"]))
-}
+
 fn fail() -> GatewayError {
     GatewayError::unavailable(
         "Original-request native actor authority is unavailable or changed.",

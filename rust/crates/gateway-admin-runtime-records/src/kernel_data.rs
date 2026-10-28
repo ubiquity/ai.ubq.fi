@@ -266,11 +266,16 @@ pub fn physical_labels(
 }
 
 pub fn default_limit_key() -> RecordKey {
-    store::key(serde_json::json!([
-        "default",
-        "kernel_policy_limit_requests"
-    ]))
+    gateway_kv_codec::tuple_key::TupleKey::from_scalar_parts(&[
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("default"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("kernel_policy_limit_requests"),
+    ])
+    .to_record_key()
 }
 pub fn default_window_key() -> RecordKey {
-    store::key(serde_json::json!(["default", "kernel_policy_window_ms"]))
+    gateway_kv_codec::tuple_key::TupleKey::from_scalar_parts(&[
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("default"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("kernel_policy_window_ms"),
+    ])
+    .to_record_key()
 }

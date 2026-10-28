@@ -18,6 +18,7 @@ use gateway_core::{
 };
 use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -510,7 +511,11 @@ fn queue_keeps_original_broader_labels_and_actual_source_presence_filter() {
         capabilities: &UnboundCapabilities,
         config: &config,
     };
-    let key = gateway_auth_primitives::store::key(json!(["uos_ai", "kernel_policy_queue"]));
+    let key = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("kernel_policy_queue"),
+    ])
+    .to_record_key();
     store.rows.borrow_mut().insert(
         key.0,
         encode_source_control_record("actual-queue-input", &fixture.input_rows, None).unwrap(),

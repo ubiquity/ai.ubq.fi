@@ -6,7 +6,7 @@ use gateway_auth_passport_contracts::{
     actor_data::{PassportActorDataV2, PassportAppSessionBinding},
     session::PassportDate,
 };
-use gateway_auth_primitives::{crypto::sha256_hex, store};
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_actor_records::{
     legacy::config_digest, scope::NativeActorScope, source::StoredNativeActorV2,
 };
@@ -14,9 +14,10 @@ use gateway_authority_keys as keys;
 use gateway_contracts::{identity::PrincipalId, identity::RequestContext};
 use gateway_core::{state::AuthorityStore, state::RevisionCheck};
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde::Deserialize;
-use serde_json::json;
+
 pub struct ActorService<'a, S, H> {
     pub(crate) store: &'a S,
     pub(crate) host: &'a H,
@@ -187,10 +188,22 @@ async fn observed<S: AuthorityStore>(
     Ok(cache.revision(key))
 }
 fn runtime_key() -> RecordKey {
-    store::key(json!(["uos_ai", "runtime_config", "v2"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("runtime_config"),
+        ScalarKeyPart::String("v2"),
+    ])
+    .to_record_key()
 }
 fn app_key(digest: &str) -> RecordKey {
-    store::key(json!(["uos_ai", "auth", "passport", "sessions", digest]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("auth"),
+        ScalarKeyPart::String("passport"),
+        ScalarKeyPart::String("sessions"),
+        ScalarKeyPart::String(digest),
+    ])
+    .to_record_key()
 }
 fn fail() -> GatewayError {
     GatewayError::unavailable(

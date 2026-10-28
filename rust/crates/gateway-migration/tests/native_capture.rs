@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_auth_primitives::store::key;
+use gateway_kv_codec::tuple_key::ScalarKeyPart;
+
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_core::query::*;
 use gateway_core::state::*;
@@ -26,7 +27,12 @@ fn fixture() -> NativeCapture {
     serde_json::from_str(include_str!("fixtures/native-source.json")).unwrap()
 }
 fn graph_key(index: i64) -> RecordKey {
-    key(json!(["default", "native-graph", index]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("default"),
+        ScalarKeyPart::String("native-graph"),
+        ScalarKeyPart::Number(index),
+    ])
+    .to_record_key()
 }
 struct Tokens(std::sync::atomic::AtomicU64);
 impl gateway_authority_contracts::TokenSource for Tokens {
@@ -103,7 +109,11 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse()
     );
     let page = run(store.query(QueryRequest {
         selector: QuerySelector::Prefix {
-            prefix: key(json!(["default", "native-graph"])),
+            prefix: TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("default"),
+                ScalarKeyPart::String("native-graph"),
+            ])
+            .to_record_key(),
             start: None,
             end: None,
         },
@@ -239,18 +249,25 @@ fn malformed_raw_keys_graphs_counters_queues_and_business_aliases_are_atomic_ref
 #[test]
 fn pending_retirement_and_suppressed_mapping_remain_only_in_private_custody() {
     let mut input = fixture();
-    let mapping = key(json!(["uos_ai", "codex_live_calls", "v1", "fixture-call"]));
+    let mapping = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("codex_live_calls"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String("fixture-call"),
+    ])
+    .to_record_key();
     input.entries.push(NativeEntry{raw_key:TupleKey::from_record_key(&mapping).unwrap().sort_bytes().to_vec(),value:NativeValue::SourceGraphV1(gateway_source::source_json::SourceJson::parse(r#"{"root":{"type":"ref","ref":0},"nodes":[{"type":"object","entries":[["account_id",{"type":"string","value":"fixture-account"}],["principal_id",{"type":"string","value":"fixture-principal"}]]}]}"#).unwrap()),revision:NativeRevision{version:"14".into(),sequence:"0".into()},expiration_ms:3600000});
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("retirement.sqlite3"));
     run(adopt_empty(&store, &prepare_native(&input).unwrap())).unwrap();
-    let marker = key(json!([
-        "uos_ai",
-        "codex_live_calls",
-        "v1",
-        "pending_retirement",
-        "fixture-call"
-    ]));
+    let marker = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("codex_live_calls"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String("pending_retirement"),
+        ScalarKeyPart::String("fixture-call"),
+    ])
+    .to_record_key();
     store.put(marker.clone(),StoredRecord::json("pending-delete",json!({"schema_version":1,"call_id":"fixture-call","upstream_status":410,"created_at_ms":2300}),None));
     assert!(run(export_native_latest(&store, 2400)).is_err());
     let context = ArtifactContext {

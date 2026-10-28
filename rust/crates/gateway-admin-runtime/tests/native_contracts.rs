@@ -13,6 +13,7 @@ use gateway_admin_test_support::{
 };
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_auth_native_wire::native_read::NativeReadRequest;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::cell::RefCell;
@@ -100,7 +101,7 @@ fn errors_limit_does_not_truncate_five_xx_buckets() {
     let config = RuntimeConfig::default();
     let service = runtime(&store, &host, &config);
     for i in 0..205 {
-        store.put(json!(["uos_ai","admin_error_log","v1",900000+i,format!("req-{i}")]),json!({"version":1,"request_id":format!("req-{i}"),"route":"/v1/responses","status":502,"provider":"codex","model":null,"reasoning":null,"stream":true,"terminal_type":"error","failure_kind":"upstream","delivery_outcome":"unobserved","created_at_ms":900000+i,"latency_ms":100,"git_sha":null,"deno_revision":null}));
+        store.put(TupleKey::from_scalar_parts(&[ScalarKeyPart::String("uos_ai"),ScalarKeyPart::String("admin_error_log"),ScalarKeyPart::String("v1"),ScalarKeyPart::Number(900000+i),ScalarKeyPart::String(&format!("req-{i}"))]).to_record_key(),json!({"version":1,"request_id":format!("req-{i}"),"route":"/v1/responses","status":502,"provider":"codex","model":null,"reasoning":null,"stream":true,"terminal_type":"error","failure_kind":"upstream","delivery_outcome":"unobserved","created_at_ms":900000+i,"latency_ms":100,"git_sha":null,"deno_revision":null}));
     }
     let mut request = input(Value::Null);
     request.query.insert("limit".into(), vec!["1".into()]);
@@ -122,10 +123,16 @@ fn kernel_usage_daily_series_uses_source_thirty_day_utc_window() {
     let config = RuntimeConfig::default();
     let service = runtime(&store, &host, &config);
     store.put(
-        json!(["ubq_ai", "kernel_auth", "org_usage", "owner"]),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("ubq_ai"),
+            ScalarKeyPart::String("kernel_auth"),
+            ScalarKeyPart::String("org_usage"),
+            ScalarKeyPart::String("owner"),
+        ])
+        .to_record_key(),
         json!({"owner":"owner","total_requests":5,"last_seen_at_ms":900000}),
     );
-    store.put(json!(["ubq_ai","kernel_auth","org_usage_daily","owner"]),json!({"owner":"owner","days":[{"day":"1970-01-01","request_count":5}],"updated_at_ms":900000}));
+    store.put(TupleKey::from_scalar_parts(&[ScalarKeyPart::String("ubq_ai"),ScalarKeyPart::String("kernel_auth"),ScalarKeyPart::String("org_usage_daily"),ScalarKeyPart::String("owner")]).to_record_key(),json!({"owner":"owner","days":[{"day":"1970-01-01","request_count":5}],"updated_at_ms":900000}));
     let mut request = input(Value::Null);
     request.query.insert("scope".into(), vec!["org".into()]);
     request.query.insert("owner".into(), vec!["owner".into()]);

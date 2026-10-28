@@ -12,6 +12,7 @@ use gateway_auth_primitives::crypto::Secret;
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
@@ -160,14 +161,15 @@ impl AdminHost for ClaimedDeletion<'_> {
         );
         let mut checks = prepared.to_vec();
         checks.push(gateway_auth_primitives::store::check(&key, row.as_ref()));
-        let history = gateway_auth_primitives::store::key(json!([
-            "uos_ai",
-            "paid_fallback",
-            "ledger",
-            id,
-            1,
-            "fixture-history"
-        ]));
+        let history = TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("paid_fallback"),
+            ScalarKeyPart::String("ledger"),
+            ScalarKeyPart::String(id),
+            ScalarKeyPart::Number(1),
+            ScalarKeyPart::String("fixture-history"),
+        ])
+        .to_record_key();
         let result = self
             .store
             .commit(AtomicTransition {

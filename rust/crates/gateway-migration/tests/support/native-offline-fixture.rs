@@ -1,5 +1,6 @@
 //! Fixed synthetic source -> one persisted authority -> latest native inverse.
 use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 #[cfg(not(target_arch = "wasm32"))]
 use gateway_migration_test_support::fixture;
 #[cfg(not(target_arch = "wasm32"))]
@@ -13,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "The fixture accepts no source, credential or target arguments"
     );
     use fixture::{Directory, run};
-    use gateway_auth_primitives::store::key;
+
     use gateway_core::state::*;
     use gateway_migration_data::native_capture::NativeCapture;
     use gateway_migration_inverse::native_inverse::export_native_latest;
@@ -64,7 +65,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         2300,
     ))?;
     drop(authority);
-    let key = key(serde_json::json!(["default", "native-graph", 0]));
+    let key = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("default"),
+        ScalarKeyPart::String("native-graph"),
+        ScalarKeyPart::Number(0),
+    ])
+    .to_record_key();
     let original = run(store.read(&key))?.ok_or("Expected retained fixture row")?;
     let mut graph = original.source_graph_value()?;
     for node in &mut graph.nodes {

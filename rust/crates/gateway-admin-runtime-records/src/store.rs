@@ -9,9 +9,6 @@ use gateway_source::error::GatewayError;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
-pub fn key(parts: Value) -> RecordKey {
-    gateway_auth_primitives::store::key(parts)
-}
 pub fn revision<H: AuthHost>(host: &H) -> Result<String, GatewayError> {
     uuid_from_random(&host.random_bytes(16)?)
 }

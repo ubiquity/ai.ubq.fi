@@ -11,8 +11,9 @@ use gateway_authority_actor_records::{
 use gateway_authority_keys as keys;
 use gateway_core::{state::AuthorityStore, state::RevisionCheck};
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
-use serde_json::json;
+
 struct CurrentNativeActor {
     principal: String,
     scope: NativeActorScope,
@@ -203,7 +204,12 @@ async fn observed<S: AuthorityStore>(
     Ok(tx.revision(key))
 }
 fn runtime_key() -> RecordKey {
-    gateway_auth_primitives::store::key(json!(["uos_ai", "runtime_config", "v2"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("runtime_config"),
+        ScalarKeyPart::String("v2"),
+    ])
+    .to_record_key()
 }
 fn fail() -> GatewayError {
     GatewayError::unavailable(

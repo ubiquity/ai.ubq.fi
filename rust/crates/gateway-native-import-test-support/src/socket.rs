@@ -3,6 +3,7 @@ use crate::fixture::{Fixture, Store, Tokens, fail, now_ms, run};
 use gateway_auth_native_contracts::native_import::NativeImportMetadata;
 use gateway_auth_primitives::crypto::base64url;
 use gateway_authority::store::Authority;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_native_import_client::client::NativeImportClient;
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use std::{
@@ -78,15 +79,17 @@ impl SocketRequest {
         }
         head.extend_from_slice(b"\r\n");
         let metadata = upload.metadata().clone();
-        *f.store.action_key.lock().map_err(|_| fail())? =
-            Some(gateway_auth_primitives::store::key(serde_json::json!([
-                "uos_ai",
-                "authority",
-                "native_owner_renewal",
-                "v1",
-                "action",
-                metadata.action_ref
-            ])));
+        *f.store.action_key.lock().map_err(|_| fail())? = Some(
+            TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("authority"),
+                ScalarKeyPart::String("native_owner_renewal"),
+                ScalarKeyPart::String("v1"),
+                ScalarKeyPart::String("action"),
+                ScalarKeyPart::String(&metadata.action_ref),
+            ])
+            .to_record_key(),
+        );
         let client = TcpStream::connect(endpoint).map_err(|_| fail())?;
         let (accepted, _) = listener.accept().map_err(|_| fail())?;
         Ok(Self {

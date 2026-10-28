@@ -19,6 +19,7 @@ use gateway_core::{
     state::RevisionCheck, state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::{
@@ -116,22 +117,29 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
                 )
                 .await
                 .unwrap();
-            let legacy =
-                gateway_auth_primitives::store::key(json!(["ubq_ai", "api_keys", "usage", id]));
-            let daily = gateway_auth_primitives::store::key(json!([
-                "ubq_ai",
-                "api_keys",
-                "usage_daily",
-                id
-            ]));
-            let history = gateway_auth_primitives::store::key(json!([
-                "uos_ai",
-                "paid_fallback",
-                "ledger",
-                id,
-                1,
-                "fixture-history"
-            ]));
+            let legacy = TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("ubq_ai"),
+                ScalarKeyPart::String("api_keys"),
+                ScalarKeyPart::String("usage"),
+                ScalarKeyPart::String(id),
+            ])
+            .to_record_key();
+            let daily = TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("ubq_ai"),
+                ScalarKeyPart::String("api_keys"),
+                ScalarKeyPart::String("usage_daily"),
+                ScalarKeyPart::String(id),
+            ])
+            .to_record_key();
+            let history = TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("paid_fallback"),
+                ScalarKeyPart::String("ledger"),
+                ScalarKeyPart::String(id),
+                ScalarKeyPart::Number(1),
+                ScalarKeyPart::String("fixture-history"),
+            ])
+            .to_record_key();
             for key in [&legacy, &daily, &history] {
                 store.rows.borrow_mut().insert(
                     key.0.clone(),
@@ -521,13 +529,14 @@ async fn bind_paid_fixture_original(
             1_000_000,
         )
         .await?;
-    let journal_key = gateway_auth_primitives::store::key(json!([
-        "uos_ai",
-        "routing_runtime",
-        "v1",
-        "session",
-        request.request_id.0
-    ]));
+    let journal_key = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("routing_runtime"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String("session"),
+        ScalarKeyPart::String(&request.request_id.0),
+    ])
+    .to_record_key();
     store.rows.borrow_mut().insert(
         journal_key.0,
         StoredRecord::json(
