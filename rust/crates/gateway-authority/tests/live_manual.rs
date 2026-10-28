@@ -1,7 +1,22 @@
-use super::*;
-use crate::manual_reset::*;
-use crate::native_live::wire::*;
-use crate::native_live::*;
+use gateway_auth_primitives::crypto::Secret;
+use gateway_authority::native_control::actor::{
+    authenticate_admin_actor, authenticate_client_actor,
+};
+use gateway_authority::store::Authority;
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_keys as keys;
+use gateway_authority_test_support::native_actor::{
+    Host, Store, config, context, request, run, session_setup,
+};
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::error::GatewayError;
+use serde_json::json;
+use std::sync::{
+    Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
+type TestResult = Result<(), Box<dyn std::error::Error>>;
 use gateway_auth_credentials::provider_credentials::CodexSourceAccount;
 use gateway_auth_credentials::provider_credentials::CodexSourcePool;
 use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
@@ -10,6 +25,10 @@ use gateway_auth_native_contracts::transport::NativeAuthHeaders;
 use gateway_auth_native_contracts::transport::NativeCapability;
 use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_proof::native_live::NativeLiveAuthenticator;
+use gateway_authority::manual_reset::*;
+use gateway_authority::native_live::wire::*;
+use gateway_authority::native_live::*;
+use gateway_authority_reset_records::manual::intent_key;
 use gateway_authority_reset_records::{AccountDayBudget, ResetState, manual::parse_manual_intent};
 use gateway_authority_reset_records::{ResetClaim, ResetConfig, ResetMode};
 use gateway_authority_reset_spend::ResetSpendOperations;
@@ -546,4 +565,11 @@ fn admin_recheck_writes_only_routing_and_retains_ambiguous_reset_identity() -> T
         assert_eq!(host.fetches.load(Ordering::SeqCst), 0);
         Ok(())
     })
+}
+
+fn fail() -> GatewayError {
+    GatewayError::unavailable(
+        "Original-request native actor authority is unavailable or changed.",
+        "native_actor_unavailable",
+    )
 }

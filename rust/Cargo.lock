@@ -2309,6 +2309,9 @@ name = "gateway-authority-test-support"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-passkeys",
+ "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-api-quota",

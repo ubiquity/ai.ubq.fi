@@ -1,9 +1,20 @@
-use super::*;
-use crate::native_control::NativeRenewalControl;
-use crate::native_control::custody::validate_native_control_custody;
-use crate::native_control::facts;
-use crate::native_control::owners::RegisteredRenewalOwners;
-use crate::native_control::receiver::NativeRenewalAuthority;
+use gateway_auth_primitives::crypto::Secret;
+use gateway_authority::native_control::actor::authenticate_client_actor;
+use gateway_authority::store::Authority;
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_keys as keys;
+use gateway_authority_test_support::native_actor::{
+    Host, Store, config, context, request, run, session_setup,
+};
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::error::GatewayError;
+use serde_json::{Value, json};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
+type TestResult = Result<(), Box<dyn std::error::Error>>;
 use gateway_auth_credentials::provider_credentials::{
     CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
     ManagedNativeSource, codex_source_pool_key,
@@ -15,6 +26,10 @@ use gateway_auth_native_wire::{
     control::{NativeControlEnvelope, NativeControlRequest},
     native_read::NATIVE_CONTROL_PATH,
 };
+use gateway_authority::native_control::NativeRenewalControl;
+use gateway_authority::native_control::custody::validate_native_control_custody;
+use gateway_authority::native_control::owners::RegisteredRenewalOwners;
+use gateway_authority::native_control::receiver::NativeRenewalAuthority;
 use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_native_records::managed::NativeManagedPublicationDisposition;
 use gateway_authority_native_records::{owner::RegisteredRenewalOwner, rows};
@@ -809,4 +824,15 @@ fn native_action_source_custody_is_lossless_data_not_an_operation_capability() -
         assert_eq!(host.fetches.load(Ordering::SeqCst), 0);
         Ok(())
     })
+}
+
+mod facts {
+    pub(super) fn digest<T: serde::Serialize>(
+        value: &T,
+    ) -> Result<String, gateway_source::error::GatewayError> {
+        Ok(gateway_auth_primitives::crypto::sha256_hex(
+            &serde_json::to_vec(value)
+                .map_err(|_| gateway_authority_native_records::rows::fail())?,
+        ))
+    }
 }
