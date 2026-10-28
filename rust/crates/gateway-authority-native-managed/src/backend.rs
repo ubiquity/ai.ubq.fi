@@ -8,6 +8,11 @@ use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;
+fn decode_json_record<T: DeserializeOwned>(row: &StoredRecord) -> Result<T, GatewayError> {
+    serde_json::from_value(row.json_value()?.clone())
+        .map_err(|_| invalid("Malformed authority record."))
+}
+
 pub(crate) struct Transaction<'a, S> {
     store: &'a S,
     pub(crate) now: i64,
