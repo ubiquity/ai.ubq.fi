@@ -1,4 +1,3 @@
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_contracts::model::ModelId;
 use gateway_schema::{
     aliases::*,
@@ -11,6 +10,8 @@ use gateway_schema::{
     selection::*,
     snapshot::*,
 };
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+
 use serde_json::{Value, json};
 // Scalar-only legacy fixtures use explicit views; opaque controls have separate source tests.
 fn source_value(value: Value) -> SourceJson {

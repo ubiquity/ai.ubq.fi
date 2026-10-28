@@ -1,3 +1,6 @@
+use gateway_responses_normalization::scalar::{
+    normalize_response_content, normalize_responses_input,
+};
 use gateway_schema::{content::*, prompt_cache::*, reasoning::*, request::*};
 use gateway_schema_values::{
     allowlists::*,

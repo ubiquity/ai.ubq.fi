@@ -11,8 +11,6 @@ macro_rules! json {
 pub mod cache_capability;
 pub(crate) mod cache_metadata;
 mod chat_engine;
-mod content_engine;
-mod controls;
 pub mod fields;
 pub mod normalized;
 pub mod ordinary;
@@ -156,4 +154,20 @@ pub(crate) fn scalar_value(
     value: Option<&serde_json::Value>,
 ) -> Result<Option<SourceJson>, GatewayError> {
     value.map(SourceJson::from_serializable).transpose()
+}
+
+impl SourceRequestDocument {
+    pub fn normalize_responses_input(&self) -> Result<Vec<SourceJson>, SourceRequestError> {
+        gateway_responses_normalization::normalized::normalize_responses_input(
+            member(self.original_source(), "input")?.as_ref(),
+        )
+    }
+    /// Explicit Codex/paid Chat phase, never an unconditional direct-provider gate.
+    pub fn normalize_chat_for_codex(
+        &self,
+    ) -> Result<normalized::SourceChatInput, SourceRequestError> {
+        let value = member(self.original_source(), "messages")?
+            .ok_or_else(|| SourceRequestError::scalar("messages must be an array", None))?;
+        normalized::normalize_chat_messages(&value)
+    }
 }

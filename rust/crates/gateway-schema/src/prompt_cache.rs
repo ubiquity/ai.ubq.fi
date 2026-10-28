@@ -2,18 +2,6 @@
 use {gateway_source::error::GatewayError, serde_json::Value};
 pub const SCOPE_PROFILE: &str = "responses_implicit_input_text_keyed_cycle_isolated_v5";
 pub const CODEX_PROVIDER: &str = "codex_chatgpt";
-pub fn normalize_breakpoint(
-    value: Option<&Value>,
-    param: &str,
-) -> Result<Option<Value>, GatewayError> {
-    let value = value
-        .map(gateway_source::source_json::SourceJson::from_serializable)
-        .transpose()?;
-    crate::source_request::normalized::normalize_breakpoint(value.as_ref(), param)
-        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
-        .map(|value| value.deserialize())
-        .transpose()
-}
 
 pub fn validate_prompt_cache_controls(body: &Value) -> Result<(), GatewayError> {
     crate::source_request::fields::validate_prompt_cache_controls(
