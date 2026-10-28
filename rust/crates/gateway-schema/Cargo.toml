@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-chat-normalization.workspace = true
 gateway-responses-normalization.workspace = true
 gateway-schema-values.workspace = true
 gateway-contracts = { workspace = true }

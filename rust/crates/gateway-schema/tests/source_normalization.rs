@@ -1,11 +1,11 @@
 //! Pinned Bun source oracles plus neutral construction/error-phase invariants.
+use gateway_chat_normalization::normalized::normalize_chat_message;
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_responses_normalization::normalized::{
     normalize_function_output, normalize_response_content, normalize_response_message,
 };
 use gateway_schema::source_request::{
     SourceRequestDocument, fields::validate_prompt_cache_controls,
-    normalized::normalize_chat_message,
 };
 use gateway_schema_values::request::{RequestExtensions, RequestSurface};
 use gateway_source::{

@@ -4,7 +4,6 @@ pub mod catalog;
 pub mod catalog_cache;
 pub mod catalog_store;
 pub mod catalog_views;
-pub mod content;
 pub mod metadata;
 pub(crate) mod model_control;
 pub mod native_catalog;
