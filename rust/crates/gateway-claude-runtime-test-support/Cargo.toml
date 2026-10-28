@@ -14,7 +14,6 @@ gateway-auth-contracts.workspace = true
 gateway-admin-runtime-records.workspace = true
 gateway-claude-usage-quota.workspace = true
 gateway-catalog-provider.workspace = true
-gateway-admin-runtime.workspace = true
 gateway-auth.workspace = true
 gateway-catalog-runtime.workspace = true
 gateway-claude-runtime.workspace = true

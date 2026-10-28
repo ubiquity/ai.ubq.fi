@@ -20,7 +20,6 @@ worker.workspace = true
 gateway-profile-values.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
-gateway-admin-runtime.workspace = true
 gateway-claude-runtime.workspace = true
 gateway-claude-usage-quota.workspace = true
 gateway-claude-usage-protocol.workspace = true
