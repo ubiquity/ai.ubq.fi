@@ -8,9 +8,8 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
 use gateway_auth_primitives::crypto::base64url;
-use gateway_authority::native_live::wire::{
-    NativeLiveAccess, NativeLiveAuthorityRequest as Request,
-};
+use gateway_authority::native_live::wire::NativeLiveAccess;
+use gateway_native_authority_request::live::NativeLiveAuthorityRequest as Request;
 use gateway_native_authority_wire::live::{
     NativeLiveAuthorityResponse as Response, NativeLiveFence, NativeLiveRetirement,
 };

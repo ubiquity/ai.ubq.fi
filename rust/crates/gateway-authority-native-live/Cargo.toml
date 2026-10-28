@@ -1,0 +1,37 @@
+[package]
+name = "gateway-authority-native-live"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-passport-contracts = { path = "../gateway-auth-passport-contracts" }
+gateway-authority-actor-currentness = { path = "../gateway-authority-actor-currentness" }
+gateway-authority-actor-records = { path = "../gateway-authority-actor-records" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
+gateway-core = { path = "../gateway-core" }
+gateway-kv-codec = { path = "../gateway-kv-codec" }
+gateway-native-authority-request = { path = "../gateway-native-authority-request" }
+gateway-native-authority-wire = { path = "../gateway-native-authority-wire" }
+gateway-source = { path = "../gateway-source" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }
+gateway-auth-native-wire = { path = "../gateway-auth-native-wire" }
+gateway-auth-passport-sessions = { path = "../gateway-auth-passport-sessions" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-contracts = { path = "../gateway-contracts" }
+
+[lints]
+workspace = true

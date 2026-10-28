@@ -713,6 +713,26 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         )
     }
 
+    pub fn source_native_live<
+        'a,
+        H: gateway_auth_contracts::types::AuthHost
+            + gateway_auth_passport_contracts::session::PassportDate,
+    >(
+        &'a self,
+        host: &'a H,
+        config: &'a gateway_auth_contracts::types::AuthConfig,
+        identity: &'a gateway_auth_native_proof::native_auth::NativeTransportIdentity,
+    ) -> gateway_authority_native_live::SourceNativeLiveService<'a, S, I, H> {
+        gateway_authority_native_live::SourceNativeLiveService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+            identity,
+            host,
+            config,
+        )
+    }
+
     pub fn source_native_local_imports<
         'a,
         H: gateway_auth_contracts::types::AuthHost

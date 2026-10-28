@@ -21,6 +21,8 @@ native-import-fixture = []
 workspace = true
 
 [dependencies]
+gateway-authority-native-live = { path = "../gateway-authority-native-live" }
+gateway-native-authority-request = { path = "../gateway-native-authority-request" }
 gateway-authority-native-import = { path = "../gateway-authority-native-import" }
 gateway-model-selection.workspace = true
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
