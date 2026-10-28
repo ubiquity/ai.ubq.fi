@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-catalog-inputs = { path = "../gateway-catalog-inputs" }
 gateway-model-selection.workspace = true
 gateway-source.workspace = true
 gateway-claude-roster.workspace = true

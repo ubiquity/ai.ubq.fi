@@ -3,7 +3,6 @@ use gateway_admin_runtime_contracts::{
     RuntimeConfig, capabilities::AnalyticsRequest, capabilities::CatalogRequest,
     capabilities::Context, capabilities::ProviderRequest, capabilities::RuntimeCapabilities,
 };
-use gateway_auth_contracts::types::AuthResponse;
 use gateway_contracts::identity::RequestId;
 use gateway_source::error::GatewayError;
 use worker::{
@@ -11,6 +10,7 @@ use worker::{
     js_sys::{Function, Reflect},
     wasm_bindgen::{JsCast, JsValue},
 };
+use {gateway_auth_contracts::types::AuthResponse, gateway_catalog_admin::admin::CatalogAdmin};
 use {gateway_schema_values::scalar::js_trim, std::cmp::Ordering};
 
 pub fn config(env: &Env) -> RuntimeConfig {
@@ -228,7 +228,7 @@ impl RuntimeCapabilities for Capabilities {
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;
-        use gateway_catalog_runtime::admin::AdminCatalogOperation as Operation;
+        use gateway_catalog_admin::admin::AdminCatalogOperation as Operation;
         let operation = match request {
             CatalogRequest::CodexModelsGet => Operation::CodexModelsGet,
             CatalogRequest::CodexModelsSet { document } => Operation::CodexModelsSet { document },
@@ -237,7 +237,7 @@ impl RuntimeCapabilities for Capabilities {
             CatalogRequest::Catalog => Operation::Catalog,
             CatalogRequest::Refresh => Operation::Refresh,
         };
-        Ok(gateway_catalog_provider::response::into_auth_response(
+        Ok(gateway_catalog_admin::response::into_auth_response(
             self.catalog_service
                 .admin_catalog(&self.catalog_host.store, &self.catalog_host, operation)
                 .await,

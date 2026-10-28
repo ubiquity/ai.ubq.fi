@@ -88,7 +88,7 @@ fn binding(provider: &str, secret: &str) -> ProviderBinding {
     }
 }
 
-impl gateway_catalog_runtime::admin::AdminCatalogHost for Host {
+impl gateway_catalog_admin::admin::AdminCatalogHost for Host {
     fn warm_openrouter(&self) {
         let service = crate::catalog::service();
         let mut host = self.clone();

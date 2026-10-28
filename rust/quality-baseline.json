@@ -2,7 +2,6 @@
   "crates": {
     "gateway-admin-runtime": 5479,
     "gateway-authority": 32264,
-    "gateway-catalog-runtime": 3353,
     "gateway-claude-runtime": 1727,
     "gateway-compaction": 3177,
     "gateway-extras-runtime": 2434,
@@ -15,9 +14,6 @@
   },
   "targets": {
     "gateway-authority/test/conformance": 5554,
-    "gateway-catalog-runtime/test/admin": 1016,
-    "gateway-catalog-runtime/test/control": 1306,
-    "gateway-catalog-runtime/test/runtime": 1518,
     "gateway-routing-runtime/test/source_contracts": 1461
   },
   "violations": {

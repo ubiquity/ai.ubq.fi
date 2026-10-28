@@ -2666,6 +2666,12 @@ Reason: catalog discovery without a matching Rust wire advertised decision model
 
 ## Rust Claude direct usage is independent of inference - 2026-10-27
 
+## Catalog capabilities keep private memo and publication ownership - 2026-10-27
+
+The bounded catalog family keeps provider memo, current binding checks and observation writes with the runtime owner, and exact-version lease, heartbeat and fenced publication with the versioned operation owner. Named catalog input reads and finite upstream reads return data; complete admin and paid provenance operations retain their existing authorization and currentness boundaries. Consumers import the defining operations directly. This structural split changes no wire, provider selection, reasoning metadata, source UTF16/collation, cold-discovery or cost authority rule, and introduces no public memo, secret, lease or publication-proof constructor. Catalog ID generation returns its actual platform error before the effect consuming that ID; prior legitimate memo/evidence effects and existing lease cleanup remain unchanged, without an entropy fallback. Test partitions preserve the existing public-behavior cases and private fixture scope. Source structure is not runtime or deployment acceptance.
+
+## Admin Rust code uses defining contract, key, kernel and dispatch crates - 2026-10-25
+
 The authenticated Claude quota refresh and the existing capacity capture share the fixed OAuth usage GET, a durable account/cohort lease and an independent 30-second attempt clock. The current roster revision fences lease acquisition and quota persistence; usage failures remain diagnostics and never mint credential-invalidity or pool-exhaustion proof. The quota data codec retains complete successful snapshot provenance across inference and failed attempts. Source payloads, UTF16 meter identities, dynamic-array precedence, nullable fields and unknown payload fields remain on the source JSON rail.
 
 The bounded usage protocol, collector, quota-data and history packages keep authority with the existing roster/quota owners. Accepted observations retain complete snapshots and update the original bounded history bucket and canonical/direct-meter rollups atomically. Capacity rebuilds the roster and history after collection; health and the unchanged UI consume the same evidence. Source-only Cloud checks remain separate from Darwin confinement, installed-client and production acceptance; these inputs and this candidate require parent acceptance.

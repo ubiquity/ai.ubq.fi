@@ -2368,6 +2368,67 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-catalog-admin"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-catalog-inputs",
+ "gateway-catalog-provider",
+ "gateway-catalog-runtime",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-local-refusal",
+ "gateway-model-selection",
+ "gateway-schema",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-catalog-control"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-records",
+ "gateway-catalog-inputs",
+ "gateway-catalog-provider",
+ "gateway-catalog-runtime",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-model-selection",
+ "gateway-provider-policy",
+ "gateway-providers",
+ "gateway-schema",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-catalog-inputs"
+version = "0.1.0"
+dependencies = [
+ "gateway-catalog-provider",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-model-selection",
+ "gateway-provider-policy",
+ "gateway-providers",
+ "gateway-schema",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-catalog-provider"
 version = "0.1.0"
 dependencies = [
@@ -2403,7 +2464,11 @@ dependencies = [
  "gateway-authority-paid-evidence",
  "gateway-authority-paid-records",
  "gateway-authority-paid-route",
+ "gateway-catalog-admin",
+ "gateway-catalog-control",
+ "gateway-catalog-inputs",
  "gateway-catalog-provider",
+ "gateway-catalog-versioned",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
@@ -2412,12 +2477,29 @@ dependencies = [
  "gateway-native",
  "gateway-provider-policy",
  "gateway-provider-protocol",
+ "gateway-providers",
  "gateway-publication-policy",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-catalog-versioned"
+version = "0.1.0"
+dependencies = [
+ "gateway-catalog-inputs",
+ "gateway-catalog-provider",
+ "gateway-catalog-runtime",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-model-selection",
+ "gateway-schema",
+ "gateway-source",
  "serde_json",
 ]
 
@@ -2483,6 +2565,7 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-primitives",
+ "gateway-catalog-inputs",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
  "gateway-claude-policy",
@@ -4567,8 +4650,12 @@ dependencies = [
  "gateway-cache-experiment-runner",
  "gateway-capacity-projection",
  "gateway-capacity-recovery",
+ "gateway-catalog-admin",
+ "gateway-catalog-control",
+ "gateway-catalog-inputs",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
+ "gateway-catalog-versioned",
  "gateway-claude-policy",
  "gateway-claude-roster",
  "gateway-claude-runtime",

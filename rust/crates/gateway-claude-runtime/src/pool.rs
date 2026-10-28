@@ -3,8 +3,8 @@ use crate::{
     persistence,
 };
 use gateway_admin_runtime_records::claude_access;
+use gateway_catalog_inputs::state::checks_current;
 use gateway_catalog_provider::host::ProviderBinding;
-use gateway_catalog_runtime::state::checks_current;
 use gateway_claude_policy::error::invalid;
 use gateway_claude_policy::error::unavailable;
 use gateway_claude_policy::host::now;

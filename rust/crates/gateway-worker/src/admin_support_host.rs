@@ -1,15 +1,15 @@
 //! Fixed administrator read/summary operations over the current request's hosts.
 use gateway_admin_diagnostics_runtime::brief;
-use gateway_admin_runtime_contracts::{capabilities::Context, capabilities::ErrorDiagnostics, capabilities::PricingSnapshot, capabilities::SupervisorBriefTarget};
-use gateway_catalog_runtime::admin::AdminCatalogOperation;
+use gateway_admin_runtime_contracts::capabilities::{
+    Context, ErrorDiagnostics, PricingSnapshot, SupervisorBriefTarget,
+};
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_native_wire::native_read::NativeReadRequest;
+use gateway_catalog_admin::admin::{AdminCatalogOperation, CatalogAdmin};
 use gateway_source::error::GatewayError;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use worker::Method;
-use {
-    gateway_auth_contracts::types::AuthResponse,
-    gateway_auth_native_wire::native_read::NativeReadRequest,
-};
 
 mod picker;
 mod pricing;

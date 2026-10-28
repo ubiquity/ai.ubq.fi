@@ -8,7 +8,6 @@ use gateway_auth_primitives::crypto::Secret;
 use gateway_authority_paid_records::{PaidReservation, PaidUsage};
 use gateway_authority_routing_selection::types::CohortProof;
 use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
-use gateway_core::state::AuthorityStore;
 use gateway_kv_codec::key::RecordKey;
 use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_protocol::{types::AuthMaterial, types::PrepareOptions};
@@ -21,6 +20,7 @@ use gateway_wait_observation::outcome::WaitOutcome;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_storage::store::now_ms;
 use worker::Env;
+use {gateway_catalog_control::control::publish_paid_routing, gateway_core::state::AuthorityStore};
 
 #[derive(Clone)]
 pub struct Host {

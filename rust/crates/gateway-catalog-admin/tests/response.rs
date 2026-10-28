@@ -1,7 +1,6 @@
-use gateway_catalog_provider::response::{AdminCatalogResponse, into_auth_response};
+use gateway_catalog_admin::response::{AdminCatalogResponse, into_auth_response};
 use gateway_local_refusal::source_error::SourceRequestError;
-use gateway_source::js_string::JsString16;
-use gateway_source::source_json::SourceJson;
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use std::collections::BTreeMap;
 
 #[test]

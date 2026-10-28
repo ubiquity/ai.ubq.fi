@@ -1,10 +1,10 @@
+use gateway_catalog_inputs::state;
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
     ProviderBinding,
 };
-use gateway_catalog_runtime::{CatalogRuntime, state};
+use gateway_catalog_runtime::CatalogRuntime;
 use gateway_contracts::model::ModelId;
-use gateway_model_selection::aliases as model_aliases;
 use gateway_routing_runtime_test_support::{
     exec::run, input::NOW, source_catalog::Collator, store::Store,
 };
@@ -56,7 +56,9 @@ impl Host {
     }
 }
 impl CatalogHost for Host {
-    fn source_string_collator(&self) -> Arc<dyn model_aliases::SourceStringCollator> {
+    fn source_string_collator(
+        &self,
+    ) -> Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         Arc::new(Collator::captured())
     }
     fn now_ms(&self) -> i64 {

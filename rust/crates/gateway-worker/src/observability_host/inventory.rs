@@ -106,7 +106,7 @@ impl RequestHost {
         {
             configured.insert(HealthProvider::Metered);
         }
-        let selection_key = gateway_catalog_runtime::state::selection_key();
+        let selection_key = gateway_catalog_inputs::state::selection_key();
         let selection = self
             .store
             .read(&selection_key)
