@@ -10,6 +10,7 @@ use gateway_authority_routing_selection::types::CohortProof;
 use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
 use gateway_core::state::AuthorityStore;
 use gateway_kv_codec::key::RecordKey;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_protocol::{types::AuthMaterial, types::PrepareOptions};
 use gateway_routing_runtime::types::{
     ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
@@ -43,9 +44,7 @@ fn provider_name(provider: UpstreamProvider) -> Option<&'static str> {
 
 impl RoutingHost for Host {
     type ClaudeHead = crate::claude_host::Head;
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         gateway_worker_platform::source_collator::shared()
     }
     fn cancelled(&self) -> bool {

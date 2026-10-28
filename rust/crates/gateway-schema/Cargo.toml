@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-model-selection.workspace = true
 gateway-chat-normalization.workspace = true
 gateway-responses-normalization.workspace = true
 gateway-schema-values.workspace = true
@@ -16,7 +17,6 @@ gateway-contracts = { workspace = true }
 gateway-kv-codec = { workspace = true }
 gateway-source = { workspace = true }
 gateway-decision-protocol = { workspace = true }
-indexmap = "=2.14.2"
 gateway-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["arbitrary_precision"] }

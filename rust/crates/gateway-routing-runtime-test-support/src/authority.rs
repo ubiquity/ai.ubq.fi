@@ -18,6 +18,7 @@ use gateway_core::{
     state::StoredRecord,
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_model_selection::aliases as model_aliases;
 use gateway_source::error::GatewayError;
 use serde::Serialize;
 use std::{
@@ -204,7 +205,7 @@ impl TokenSource for Tokens {
 }
 pub type TestAuthority = Authority<MemoryStore, Tokens>;
 struct FixtureCollator;
-impl gateway_schema::aliases::SourceStringCollator for FixtureCollator {
+impl model_aliases::SourceStringCollator for FixtureCollator {
     fn compare(
         &self,
         left: &gateway_source::js_string::JsString16,

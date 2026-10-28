@@ -1,5 +1,6 @@
 //! Request-owned catalog runtime. Network and credential ownership are typed host capabilities.
 use gateway_catalog_provider::providers;
+use gateway_model_selection::aliases as model_aliases;
 pub mod admin;
 pub mod control;
 mod inference;
@@ -9,11 +10,11 @@ mod versioned;
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogHost, CatalogProvider, CredentialPublication, ProviderBinding, unavailable,
 };
+use gateway_core::query::QueryStore;
+use gateway_schema::{catalog::ProviderCatalog, catalog_cache::CatalogResponse};
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
-use gateway_core::query::QueryStore;
-use gateway_schema::{catalog::ProviderCatalog, catalog_cache::CatalogResponse};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -71,8 +72,7 @@ impl Drop for PendingGuard {
 #[derive(Clone, Default)]
 pub struct CatalogRuntime {
     memo: Rc<RefCell<Memo>>,
-    source_string_collator:
-        Option<std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>>,
+    source_string_collator: Option<std::sync::Arc<dyn model_aliases::SourceStringCollator>>,
 }
 impl CatalogRuntime {
     pub fn new() -> Self {
@@ -80,7 +80,7 @@ impl CatalogRuntime {
     }
     pub fn with_source_string_collator(
         mut self,
-        collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
+        collator: std::sync::Arc<dyn model_aliases::SourceStringCollator>,
     ) -> Self {
         self.source_string_collator = Some(collator);
         self
@@ -88,7 +88,7 @@ impl CatalogRuntime {
     pub(crate) fn source_string_collator<H: CatalogHost>(
         &self,
         host: &H,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    ) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         self.source_string_collator
             .clone()
             .unwrap_or_else(|| host.source_string_collator())

@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-model-selection.workspace = true
 gateway-source.workspace = true
 gateway-claude-roster.workspace = true
 gateway-claude-policy.workspace = true

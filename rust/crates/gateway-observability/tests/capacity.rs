@@ -6,6 +6,7 @@ use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_evidence::capacity::parse_capacity_store;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
+use gateway_model_selection::aliases as model_aliases;
 mod support;
 use gateway_auth_credentials::{
     provider_credentials::CodexSourceAccount, provider_credentials::CodexSourcePool,
@@ -59,9 +60,7 @@ impl CapacityHost {
     }
 }
 impl ObservabilityHost for CapacityHost {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {

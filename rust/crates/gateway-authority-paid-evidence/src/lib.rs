@@ -13,11 +13,13 @@ use gateway_core::state::AuthorityStore;
 use gateway_core::state::RevisionCheck;
 use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_model_selection::aliases as model_aliases;
+use gateway_model_selection::selection::ProviderSelection;
 use gateway_provider_policy::policy::DeepseekHop;
 use gateway_provider_policy::policy::PaidRoutingInput;
 use gateway_provider_protocol::types::ClientSurface;
 use gateway_providers::policy;
-use gateway_schema::{catalog_store, selection::ProviderSelection};
+use gateway_schema::catalog_store;
 use gateway_source::source_serialization as source;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::Value;
@@ -254,7 +256,7 @@ async fn route_current<S: AuthorityStore>(
     tx: &mut ReadTransaction<'_, S>,
     request: &PaidRequest,
     context: &PaidRequestContext,
-    collator: &dyn gateway_schema::aliases::SourceStringCollator,
+    collator: &dyn model_aliases::SourceStringCollator,
 ) -> Result<RouteView, GatewayError> {
     if source::member(&context.body, "model")
         .as_ref()
@@ -280,9 +282,7 @@ async fn route_current<S: AuthorityStore>(
             "An ordinary paid request cannot substitute a logical model.",
         ));
     }
-    if context.synthetic_hop.is_some()
-        && !gateway_schema::aliases::is_synthetic(&context.original_model)
-    {
+    if context.synthetic_hop.is_some() && !model_aliases::is_synthetic(&context.original_model) {
         return Err(control_error(
             "Only the source synthetic alias can use a server-owned paid hop.",
         ));
@@ -302,7 +302,7 @@ async fn route_current<S: AuthorityStore>(
             .ok_or_else(|| {
                 control_error("Paid source clock cannot resolve the synthetic alias.")
             })?;
-        let aliases = gateway_schema::aliases::resolve_flash_aliases(
+        let aliases = model_aliases::resolve_flash_aliases(
             None,
             None,
             surplus_catalog.as_deref(),
@@ -415,7 +415,7 @@ pub async fn capture_route<S: AuthorityStore>(
     request: &PaidRequest,
     context: &PaidRequestContext,
     now: i64,
-    collator: &dyn gateway_schema::aliases::SourceStringCollator,
+    collator: &dyn model_aliases::SourceStringCollator,
 ) -> Result<PaidRouteEvidence, GatewayError> {
     let mut tx = ReadTransaction::new(store, now)?;
     let route = route_current(&mut tx, request, context, collator).await?;

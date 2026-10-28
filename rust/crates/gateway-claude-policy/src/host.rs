@@ -8,8 +8,9 @@ use gateway_claude_roster::{
 use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_contracts::model::ModelId;
 use gateway_core::state::RevisionCheck;
+use gateway_model_selection::selection::ProviderSelection;
 use gateway_provider_protocol::types::Headers;
-use gateway_schema::{catalog::ProviderCatalog, selection::ProviderSelection};
+use gateway_schema::catalog::ProviderCatalog;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use std::{cmp::Ordering, future::Future};
 

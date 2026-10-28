@@ -7,11 +7,11 @@ use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_claude_roster::claude;
 use gateway_claude_usage_history_records::types::CredentialKind;
 use gateway_core::state::{AuthorityStore, RevisionCheck};
+use gateway_model_selection::selection::ProviderSelection;
 use gateway_observability::{
     host_types::*,
     types::{HealthProvider, HealthTarget},
 };
-use gateway_schema::selection::ProviderSelection;
 use gateway_schema_values::scalar as util;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;

@@ -11,6 +11,7 @@ use gateway_core::{
     state::AuthorityStore, state::RevisionCheck, state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -78,7 +79,7 @@ fn sort_ids(
     ids: Vec<JsString16>,
     compare: &impl Fn(&JsString16, &JsString16) -> Result<Ordering, GatewayError>,
 ) -> Result<Vec<JsString16>, GatewayError> {
-    gateway_schema::aliases::sort_source(ids, compare)
+    model_aliases::sort_source(ids, compare)
 }
 pub fn parse_source_ids(
     value: &SourceJson,

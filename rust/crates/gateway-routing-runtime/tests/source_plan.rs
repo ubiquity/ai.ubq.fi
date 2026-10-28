@@ -1,3 +1,4 @@
+use gateway_model_selection::aliases as model_aliases;
 use gateway_source::error::GatewayError;
 mod source_input;
 use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
@@ -10,7 +11,7 @@ fn fixture_json<T: serde::Serialize + ?Sized>(value: &T) -> SourceJson {
     SourceJson::from_serializable(value).unwrap()
 }
 struct NoSortingExpected;
-impl gateway_schema::aliases::SourceStringCollator for NoSortingExpected {
+impl model_aliases::SourceStringCollator for NoSortingExpected {
     fn compare(
         &self,
         _left: &JsString16,

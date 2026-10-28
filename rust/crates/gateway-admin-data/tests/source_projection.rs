@@ -1,12 +1,12 @@
 mod source_fixture;
 
+use gateway_model_selection::aliases::SourceStringCollator;
+use gateway_quota_projection::quota::project_quota;
+use gateway_quota_projection::source::project_quota_source;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_quota_projection::quota::project_quota;
-use gateway_quota_projection::source::project_quota_source;
-use gateway_schema::aliases::SourceStringCollator;
 use serde_json::Value;
 use source_fixture::{CapturedCollator, assert_source_eq, fixture};
 struct NoComparisons;

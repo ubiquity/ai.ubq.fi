@@ -1,14 +1,16 @@
 //! Catalog assembly consumes observations; network, authentication and refresh are adapter-owned.
 use crate::{
-    aliases::FLASH_ORDER,
     metadata::{MetadataHint, MetadataSources, ResolvedMetadata, resolve_metadata},
     model_control as c,
     reasoning::ModelReasoning,
-    selection::{ModelWhitelist, ProviderSelection},
     snapshot::ModelSnapshot,
 };
 use gateway_contracts::model::ModelId;
 use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_model_selection::{
+    aliases::FLASH_ORDER,
+    selection::{ModelWhitelist, ProviderSelection},
+};
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };

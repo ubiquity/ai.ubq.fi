@@ -7,6 +7,7 @@ use gateway_kv_codec::{
     key::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey, value::PortableValue,
     value::ValueEncoding,
 };
+use gateway_model_selection::aliases::SourceStringCollator;
 use gateway_observability::{
     ObservabilityRuntime, ledger::terminal_rollup::TerminalUsageRollup,
     records::usage_rollup_record_source, types::ObservabilityHost,
@@ -14,7 +15,6 @@ use gateway_observability::{
 use gateway_observability_test_support::source_fixture::{
     CapturedCollator, assert_source_eq, fixture,
 };
-use gateway_schema::aliases::SourceStringCollator;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,

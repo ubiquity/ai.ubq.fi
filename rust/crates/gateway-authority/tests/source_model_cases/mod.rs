@@ -11,10 +11,10 @@ use gateway_contracts::model::ModelId;
 use gateway_contracts::provider::{CodexQuotaClass, PaidProvider};
 use gateway_core::source_control;
 use gateway_kv_codec::value::ValueEncoding;
+use gateway_model_selection::selection::AccountModelsStore;
 use gateway_routing_runtime_test_support::authority::{
     MemoryStore, NOW, admin_hash, admitted, authority, block, pool, routing_hash, run, seed_pool,
 };
-use gateway_schema::selection::AccountModelsStore;
 use gateway_source::js_string::JsString16;
 use gateway_source::source_json::SourceJson;
 use gateway_source::source_serialization as source;

@@ -1,6 +1,7 @@
 //! The owner publishes references, never bearer tokens, into this catalog boundary.
-use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_core::state::RevisionCheck;
+use gateway_model_selection::aliases as model_aliases;
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, future::Future};
 
@@ -223,9 +224,7 @@ pub enum CatalogMaintenance {
 /// exact current reference before sending; a different credential may not be substituted.
 pub trait CatalogHost {
     /// Same trusted constructor-owned source ordering used by routing/authority; never request data.
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>;
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator>;
     fn now_ms(&self) -> i64;
     fn unique_id(&self) -> Result<String, GatewayError>;
     fn wait(&self, milliseconds: u32) -> impl Future<Output = Result<(), GatewayError>>;

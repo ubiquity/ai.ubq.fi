@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-model-selection.workspace = true
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }

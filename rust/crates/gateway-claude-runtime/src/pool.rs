@@ -21,8 +21,8 @@ use gateway_claude_roster::{
 };
 use gateway_contracts::{claude::ClaudeErrorEvidence as ErrorEvidence, model::ModelId};
 use gateway_core::{state::AuthorityStore, state::RevisionCheck};
+use gateway_model_selection::selection::ProviderSelection;
 use gateway_provider_protocol::types::Headers;
-use gateway_schema::selection::ProviderSelection;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,

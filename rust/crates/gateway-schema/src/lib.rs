@@ -1,5 +1,4 @@
 //! Source-derived OpenAI/Codex request and catalog domain. No credentials or provider I/O.
-pub mod aliases;
 pub mod catalog;
 pub mod catalog_cache;
 pub mod catalog_store;
@@ -12,6 +11,5 @@ pub mod provider_catalog;
 pub mod reasoning;
 pub mod request;
 pub mod runtime_config;
-pub mod selection;
 pub mod snapshot;
 pub mod source_request;

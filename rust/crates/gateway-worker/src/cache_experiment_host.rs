@@ -2,6 +2,7 @@
 use gateway_cache_experiment_dispatch::CacheDispatchOperations;
 use gateway_cache_experiment_runner::io::{ExperimentIo, ReadSample};
 use gateway_cache_experiment_runner::{CacheRunOperations, PreparedTarget};
+use gateway_model_selection::aliases as model_aliases;
 use {futures_util::StreamExt, gateway_schema_values::scalar as util};
 mod sample;
 use crate::host::{PlatformClock, PlatformHost, PlatformTokens};
@@ -107,9 +108,7 @@ impl Drop for Host<'_> {
 }
 struct ClockHost;
 impl ObservabilityHost for ClockHost {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         gateway_worker_platform::source_collator::shared()
     }
 

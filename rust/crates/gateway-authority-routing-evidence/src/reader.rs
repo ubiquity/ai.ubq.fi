@@ -18,7 +18,7 @@ use gateway_core::{
     state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
-use gateway_schema::selection::{AccountModelsStore, ProviderSelection};
+use gateway_model_selection::selection::{AccountModelsStore, ProviderSelection};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::de::DeserializeOwned;
 use serde_json::Value;

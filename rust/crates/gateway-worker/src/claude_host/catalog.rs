@@ -11,6 +11,7 @@ use gateway_catalog_provider::host::{
 use gateway_claude_policy::host::ClaudePoolHost;
 use gateway_claude_roster::{claude, claude::AccountBinding, claude_generation::StateSnapshot};
 use gateway_core::state::RevisionCheck;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_schema::catalog::ProviderCatalog;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
@@ -80,9 +81,7 @@ struct AccountCatalog<'a> {
     generation: StateSnapshot,
 }
 impl CatalogHost for AccountCatalog<'_> {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         gateway_worker_platform::source_collator::shared()
     }
     fn now_ms(&self) -> i64 {

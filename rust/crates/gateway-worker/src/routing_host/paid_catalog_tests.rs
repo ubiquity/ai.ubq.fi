@@ -24,6 +24,7 @@ use gateway_core::{
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_publication_policy::control_publication::{
     ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
     fixture_owner_statement, runtime_config_key,
@@ -202,7 +203,7 @@ impl Host {
     }
 }
 impl CatalogHost for Host {
-    fn source_string_collator(&self) -> Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> Arc<dyn model_aliases::SourceStringCollator> {
         Arc::new(source_catalog::Collator::captured())
     }
     fn now_ms(&self) -> i64 {

@@ -1,5 +1,6 @@
 use gateway_admin_runtime_contracts::capabilities::Context;
 use gateway_core::state::RevisionCheck;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -109,9 +110,7 @@ pub trait ObservabilityHost {
 
     /// The same trusted pure runtime capability used by source model controls.
     /// It is never supplied by a request/body and has no scalar fallback.
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>;
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator>;
     fn now_ms(&self) -> i64;
     fn compare_labels(
         &self,

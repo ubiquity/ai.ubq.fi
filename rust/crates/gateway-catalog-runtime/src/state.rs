@@ -14,15 +14,15 @@ use gateway_schema::{
     catalog_cache::{PreparedCatalog, REFRESH_LEASE_MS},
     catalog_store::{self, RefreshLease},
     runtime_config::normalize_runtime_config,
-    selection::{AccountModelCatalog, AccountModelsStore, ModelWhitelist, ProviderSelection},
     snapshot::ModelSnapshot,
 };
 use gateway_schema_values::{scalar as schema_scalar, source_view::js_trim_source};
-use gateway_source::{
-    error::GatewayError, source_json::SourceJson, source_serialization as source,
-};
+use gateway_source::source_serialization as source;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use models::selection::{AccountModelCatalog, AccountModelsStore};
+use models::selection::{ModelWhitelist, ProviderSelection};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use {gateway_model_selection as models, std::collections::BTreeMap};
 #[derive(Clone, Debug)]
 pub struct CatalogState {
     pub input: CatalogInput,
@@ -430,7 +430,7 @@ pub(crate) async fn publish_account_models<S: AuthorityStore>(
                 checks,
                 mutations: vec![source_mutation(
                     account_models_key(),
-                    &next.to_source_json(),
+                    &next.to_source_json()?,
                     revision,
                     None,
                 )?],

@@ -1,8 +1,8 @@
-use gateway_source::error::GatewayError;
 use gateway_core::query::QueryStore;
-use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_extras_contract::types::ExtrasHost;
-use gateway_schema::selection::ProviderSelection;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_model_selection::selection::ProviderSelection;
+use gateway_source::error::GatewayError;
 fn invalid() -> GatewayError {
     GatewayError::unavailable(
         "Embeddings durable state is invalid.",

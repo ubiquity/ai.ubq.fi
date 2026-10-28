@@ -1,10 +1,11 @@
 mod support;
-use gateway_source::error::GatewayError;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_observability::{
     ObservabilityRuntime, ObservabilityState,
     host_types::*,
     types::{HealthEvent as E, HealthTarget, HealthWrite as W, ObservabilityHost},
 };
+use gateway_source::error::GatewayError;
 use std::{
     cell::Cell,
     future::Future,
@@ -25,9 +26,7 @@ impl Drop for RequestHost {
     }
 }
 impl ObservabilityHost for RequestHost {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {
