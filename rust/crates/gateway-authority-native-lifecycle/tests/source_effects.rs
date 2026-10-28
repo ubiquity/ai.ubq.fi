@@ -1,4 +1,4 @@
-//! Actual C source actors and complete private action CAS; no native effect/provider/network.
+//! Actual C source actors, complete action CAS and signed same-store native lifecycle; no external provider/network.
 use gateway_auth_contracts::{
     types::{AuthConfig, AuthHost},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
@@ -51,6 +51,14 @@ impl AuthorityStore for Store {
         Ok(self.0.borrow().get(&key.0).cloned())
     }
     async fn commit(&self, tx: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
+        if tx
+            .checks
+            .iter()
+            .any(|check| check.key == mapping_key("call", false))
+            && let Some(key) = self.1.borrow_mut().take()
+        {
+            self.0.borrow_mut().remove(&key.0);
+        }
         let mut rows = self.0.borrow_mut();
         if tx
             .checks
@@ -497,6 +505,255 @@ fn cancellation_keeps_the_original_499_before_new_action_effects() -> TestResult
                 .keys()
                 .any(|key| key.starts_with(&rows::prefix().0))
         );
+        Ok(())
+    })
+}
+
+#[derive(Default)]
+struct Nonces(RefCell<std::collections::BTreeSet<String>>);
+impl gateway_auth_native_contracts::nonce::NativeNonceAuthority for Nonces {
+    async fn consume_nonce(
+        &self,
+        _: &str,
+        nonce: &str,
+        _: i64,
+        _: i64,
+    ) -> Result<(), GatewayError> {
+        if self.0.borrow_mut().insert(nonce.into()) {
+            Ok(())
+        } else {
+            Err(unavailable())
+        }
+    }
+}
+fn control_body(action: &str, operation: &str) -> Result<Vec<u8>, GatewayError> {
+    serde_json::to_vec(&gateway_auth_native_wire::control::NativeControlEnvelope {
+        v: 1,
+        operation_id: operation.into(),
+        request: gateway_auth_native_wire::control::NativeControlRequest::CodexRenewAccess {
+            action_ref: action.into(),
+        },
+    })
+    .map_err(|_| unavailable())
+}
+async fn signed_owner(
+    identity: &NativeTransportIdentity,
+    body: &[u8],
+    n: u8,
+) -> Result<gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner, GatewayError> {
+    use gateway_auth_native_proof::native_auth::{NativeAuthHeaders, NativeAuthenticator};
+    let path = gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
+    let nonce = gateway_auth_primitives::crypto::base64url(&[n; 32]);
+    let mac = identity.sign(path, NOW, &nonce, body)?;
+    NativeAuthenticator::new(identity, &Nonces::default())
+        .authenticate(
+            path,
+            NativeAuthHeaders {
+                version: "1",
+                key_id: identity.key_id(),
+                time_ms: &NOW.to_string(),
+                nonce: &nonce,
+                mac: &mac,
+            },
+            body,
+            NOW,
+        )
+        .await
+}
+#[test]
+fn signed_source_claim_consumes_one_start_and_shares_original_generation_namespace() -> TestResult {
+    run(async {
+        let store = Store::default();
+        let host = Host::default();
+        let config = AuthConfig::default();
+        let tokens = Tokens::default();
+        let id = identity()?;
+        fixture(&store, &id, None)?;
+        let (actor, _) = actor(&store, &host, &config).await?;
+        let owner =
+            RegisteredRenewalOwner::configured("native".into(), "/tmp/native-source".into())?;
+        let cancel = Cancel(false);
+        let prep = SourceNativeRenewalService::new(
+            &store,
+            &tokens,
+            Some(&host),
+            &host,
+            &config,
+            SourceNativePreparationContext::configured(&id, &owner, &cancel),
+        );
+        let action = prep
+            .prepare_source_live_mapped_renewal(&actor, "call")
+            .await?;
+        let service = gateway_authority_native_lifecycle::SourceNativeLifecycleService::new(
+            &store,
+            &tokens,
+            Some(&host),
+            &host,
+            &config,
+            gateway_authority_native_lifecycle::SourceNativeLifecycleContext::configured(
+                &id, &owner, &cancel,
+            ),
+        );
+        let body = control_body(action.action_ref(), "operation1")?;
+        let proof = signed_owner(&id, &body, 1).await?;
+        let mut claim = service
+            .claim(&proof, action.action_ref(), "operation1", &body)
+            .await?;
+        use gateway_native_authority_wire::renewal::NativeRenewalMode;
+        assert_eq!(claim.mode(), NativeRenewalMode::RenewOnce);
+        assert_eq!(claim.fence(), action.fence());
+        assert_eq!(
+            service.start(&mut claim).await?,
+            NativeRenewalMode::RenewOnce
+        );
+        assert_eq!(
+            service.start(&mut claim).await?,
+            NativeRenewalMode::ReconcileOnly
+        );
+        let body = control_body(action.action_ref(), "operation1")?;
+        let proof = signed_owner(&id, &body, 2).await?;
+        let repeated = service
+            .claim(&proof, action.action_ref(), "operation1", &body)
+            .await?;
+        assert_eq!(repeated.mode(), NativeRenewalMode::ReconcileOnly);
+        assert!(repeated.start_permit().is_none());
+        let key = rows::generation_key_parts(
+            &action.fence().native_owner_id,
+            &action.fence().account_id_hash,
+            &action.fence().source_native_generation,
+        )?;
+        let row = store.read(&key).await?.ok_or("generation")?;
+        let generation: rows::GenerationEffect = serde_json::from_value(row.json_value()?.clone())?;
+        assert_eq!(generation.v, 1);
+        assert_eq!(generation.operation_id, "operation1");
+        assert_eq!(generation.claim_ref, claim.claim_ref());
+        Ok(())
+    })
+}
+#[test]
+fn logout_during_real_start_currentness_refuses_start_but_owned_unknown_still_settles() -> TestResult
+{
+    run(async {
+        let store = Store::default();
+        let host = Host::default();
+        let config = AuthConfig::default();
+        let tokens = Tokens::default();
+        let id = identity()?;
+        fixture(&store, &id, None)?;
+        let (actor, token) = actor(&store, &host, &config).await?;
+        let owner =
+            RegisteredRenewalOwner::configured("native".into(), "/tmp/native-source".into())?;
+        let cancel = Cancel(false);
+        let prep = SourceNativeRenewalService::new(
+            &store,
+            &tokens,
+            Some(&host),
+            &host,
+            &config,
+            SourceNativePreparationContext::configured(&id, &owner, &cancel),
+        );
+        let action = prep
+            .prepare_source_live_mapped_renewal(&actor, "call")
+            .await?;
+        let service = gateway_authority_native_lifecycle::SourceNativeLifecycleService::new(
+            &store,
+            &tokens,
+            Some(&host),
+            &host,
+            &config,
+            gateway_authority_native_lifecycle::SourceNativeLifecycleContext::configured(
+                &id, &owner, &cancel,
+            ),
+        );
+        let body = control_body(action.action_ref(), "operation")?;
+        let proof = signed_owner(&id, &body, 3).await?;
+        let mut claim = service
+            .claim(&proof, action.action_ref(), "operation", &body)
+            .await?;
+        let calls = host.calls.get();
+        host.hold.set(true);
+        let mut start = Box::pin(service.start(&mut claim));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(start.as_mut().poll(&mut cx).is_pending());
+        assert!(host.calls.get() > calls);
+        store.0.borrow_mut().remove(&session_key(&token).0);
+        host.hold.set(false);
+        assert!(start.await.is_err());
+        let before = host.calls.get();
+        service.unknown(&claim).await?;
+        assert_eq!(host.calls.get(), before);
+        let row = store
+            .read(&rows::key("operation", "operation"))
+            .await?
+            .ok_or("operation")?;
+        let operation: rows::OperationRow = serde_json::from_value(row.json_value()?.clone())?;
+        assert_eq!(operation.phase, rows::Phase::Unknown);
+        assert!(operation.terminal.is_none());
+        assert!(service.recheck(&claim).await.is_err());
+        Ok(())
+    })
+}
+#[test]
+fn logout_at_original_claim_cas_leaves_no_operation_or_generation_effect() -> TestResult {
+    run(async {
+        let store = Store::default();
+        let host = Host::default();
+        let config = AuthConfig::default();
+        let tokens = Tokens::default();
+        let id = identity()?;
+        fixture(&store, &id, None)?;
+        let (actor, token) = actor(&store, &host, &config).await?;
+        let owner =
+            RegisteredRenewalOwner::configured("native".into(), "/tmp/native-source".into())?;
+        let cancel = Cancel(false);
+        let prep = SourceNativeRenewalService::new(
+            &store,
+            &tokens,
+            Some(&host),
+            &host,
+            &config,
+            SourceNativePreparationContext::configured(&id, &owner, &cancel),
+        );
+        let action = prep
+            .prepare_source_live_mapped_renewal(&actor, "call")
+            .await?;
+        let service = gateway_authority_native_lifecycle::SourceNativeLifecycleService::new(
+            &store,
+            &tokens,
+            Some(&host),
+            &host,
+            &config,
+            gateway_authority_native_lifecycle::SourceNativeLifecycleContext::configured(
+                &id, &owner, &cancel,
+            ),
+        );
+        let body = control_body(action.action_ref(), "operation")?;
+        let proof = signed_owner(&id, &body, 4).await?;
+        *store.1.borrow_mut() = Some(session_key(&token));
+        assert!(
+            service
+                .claim(&proof, action.action_ref(), "operation", &body)
+                .await
+                .is_err()
+        );
+        assert!(
+            store
+                .read(&rows::key("operation", "operation"))
+                .await?
+                .is_none()
+        );
+        let key = rows::generation_key_parts(
+            &action.fence().native_owner_id,
+            &action.fence().account_id_hash,
+            &action.fence().source_native_generation,
+        )?;
+        assert!(store.read(&key).await?.is_none());
+        let row = store
+            .read(&rows::key("action", action.action_ref()))
+            .await?
+            .ok_or("action")?;
+        let row = SourceRenewalActionRowV3::from_source_json(&decode_source_control_record(&row)?)?;
+        assert!(row.operation_id.is_none());
         Ok(())
     })
 }

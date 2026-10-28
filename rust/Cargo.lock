@@ -1564,6 +1564,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-native-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-wire",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-passport-sessions",
+ "gateway-auth-primitives",
+ "gateway-authority-actor-currentness",
+ "gateway-authority-actor-records",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-native-context-facts",
+ "gateway-authority-native-preparation",
+ "gateway-authority-native-records",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-native-authority-wire",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority-native-preparation"
 version = "0.1.0"
 dependencies = [
