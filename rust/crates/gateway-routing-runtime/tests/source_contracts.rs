@@ -722,7 +722,6 @@ fn source_availability_gate_preserves_full_compact_paid_and_reserve_cases() -> T
     )];
     assert!(source_plan(&paid).is_err_and(|error| error.error.status == 404));
     paid.surface = gateway_provider_protocol::types::ClientSurface::Chat;
-    // Keep the model/content/control intent in the actual Chat envelope.
     paid.raw = fixture(&json!({
         "model":"paid-model",
         "messages":[{"role":"user","content":"source fixture"}],
