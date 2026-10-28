@@ -12,6 +12,8 @@ The Claude meter and current capacity projection use an explicitly marked respon
 
 The capacity sampler never calls Claude's OAuth usage endpoint, and direct-usage freshness cannot force a capacity refresh. The former manual refresh route is a passive compatibility read that reports `refreshed: false` with a response-headers reason. The visible meter waits for normal Claude traffic when no proven headers exist. This supersedes the 2026-10-25 direct-usage collection decision and adds no OAuth grant, credential work, synthetic inference, timer or service activation.
 
+Claude history follows the active account in each capacity snapshot without an account dropdown or a pinned manual selection. A missing active projection may use matching subscription metadata, but an explicit empty projection or account/cohort mismatch remains empty. This is a view-only choice: retained history is preserved and other provider charts are unchanged.
+
 ## Direct Claude usage honors the provider retry deadline - 2026-10-27
 
 A direct usage HTTP 429 with a valid `Retry-After` stores an absolute retry deadline in that account cohort's usage metadata. Automatic capacity collection and manual usage refresh share the deadline across KV reopen and process restart. A suppressed manual refresh returns HTTP 429 with the remaining `Retry-After`; a successful read clears the deadline. Missing or malformed deadlines retain the existing 30-second attempt freshness, and an expired deadline does not extend that freshness. Failed reads preserve the last successful meter snapshot and never set an inference quota block or cooldown.

@@ -741,6 +741,7 @@ test("shipped retention renderer refuses incomplete, errored, unavailable or cor
 });
 
 const claudeChartContext = {
+  latestClaudeSubscription: null,
   CAPACITY_CHART_BUCKET_MS: 900_000,
   clampCapacityChartPercent: (value: number) => Math.max(0, Math.min(100, value)),
   formatCapacityTimestamp: (value: unknown) => {
@@ -802,9 +803,9 @@ test("shipped Claude chart breaks cohort, reset, unavailable and missing-bucket 
   const aggregate = /const CAPACITY_CHART_SERIES = ([^;]+);/.exec(sourceText)?.[1] ?? "";
   assert.doesNotMatch(aggregate, /claude/, "Claude never changes Codex aggregate membership");
   assert.doesNotMatch(
-    sourceText.slice(sourceText.indexOf("const renderClaudeHistorySelector ="), sourceText.indexOf("const renderClaudeHistoryPaths =")),
+    sourceText.slice(sourceText.indexOf("const claudeHistoryAccountId ="), sourceText.indexOf("const renderClaudeHistoryPaths =")),
     /fetch\(|mutateClaude|activate/,
-    "history selection is view-only"
+    "automatic history account selection is view-only"
   );
 });
 
