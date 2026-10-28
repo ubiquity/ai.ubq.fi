@@ -1,16 +1,15 @@
 //! Closed HTTP import adapter. Actual shared authority mints every proof; no effect implementation.
-use crate::{
-    native_import::{NativeImportHandler, dispatch_import},
-    owner_control::NativeControlContext,
-};
+use crate::native_import::{NativeImportHandler, dispatch_import};
 use gateway_auth_contracts::types::AuthConfig;
 use gateway_auth_native_contracts::native_import::{
     NATIVE_IMPORT_ACTION_HEADER, NATIVE_IMPORT_BODY_HEADER, NATIVE_IMPORT_OPERATION_HEADER,
     NativeImportKind, NativeImportMetadata,
 };
 use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeImportAuthHeaders};
-use gateway_auth_native_proof::native_auth::{NativeAuthenticator, NativeTransportIdentity};
-use gateway_auth_native_proof::native_context::now_ms;
+use gateway_auth_native_proof::{
+    native_auth::{NativeAuthenticator, NativeTransportIdentity},
+    native_context::{NativeControlContext, NativeRequestLifetime},
+};
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::{
     control::NATIVE_RENEWAL_MAX_MS,
@@ -26,7 +25,7 @@ use gateway_authority_contracts::TokenSource;
 use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_core::state::AuthorityStore;
 use gateway_native_http_framing::{
-    import_body::{RawImportDocument, read_import_body},
+    import_body::read_import_body,
     import_head::ImportHead,
     response::{disconnected, write_import_response},
 };
@@ -154,17 +153,16 @@ where
         identity: &NativeTransportIdentity,
         nonces: &SqliteNonceStore,
     ) -> Result<gateway_native_import_source::result::NativeImportResult, GatewayError> {
-        let auth = auth_headers(&head)?;
+        auth_headers(&head)?;
         let metadata = metadata(&head)?;
         let watch = stream.try_clone().map_err(|_| unavailable())?;
         let cancelled = || disconnected(&watch);
-        let original = NativeControlContext::admitted(
+        let lifetime = NativeRequestLifetime::until(
             Instant::now() + Duration::from_millis(NATIVE_RENEWAL_MAX_MS as u64),
             &cancelled,
-            auth,
         );
-        original.check()?;
-        let header_proof = admit_headers(&head, identity, nonces, &metadata, &original)?;
+        lifetime.check()?;
+        let (header_proof, original) = admit_headers(&head, identity, nonces, &metadata, lifetime)?;
         let cancellation = OriginalCancellation(&original);
         let authority = NativeRenewalAuthority::configured(
             self.authority,
@@ -235,70 +233,57 @@ where
     }
     .dispatch(stream, head, identity, nonces)
 }
-fn admit_headers(
+// Ordinary immutable header DATA/error construction only; no clock, socket, MAC or nonce.
+fn import_auth_headers(head: &ImportHead) -> Result<NativeImportAuthHeaders<'_>, GatewayError> {
+    Ok(NativeImportAuthHeaders {
+        auth: auth_headers(head)?,
+        body_sha256: one(head, NATIVE_IMPORT_BODY_HEADER)?,
+    })
+}
+fn admit_headers<'c>(
     head: &ImportHead,
     identity: &NativeTransportIdentity,
     nonces: &SqliteNonceStore,
     metadata: &NativeImportMetadata,
-    original: &NativeControlContext<'_>,
-) -> Result<gateway_auth_native_proof::native_import::NativeImportAdmission, GatewayError> {
-    original.check()?;
+    lifetime: NativeRequestLifetime<'c>,
+) -> Result<
+    (
+        gateway_auth_native_proof::native_import::NativeImportAdmission,
+        NativeControlContext<'c>,
+    ),
+    GatewayError,
+> {
     let replay = StoreNonceAuthority::new(nonces);
-    futures_executor::block_on(NativeAuthenticator::new(identity, &replay).admit_import(
-        head.kind,
-        NativeImportAuthHeaders {
-            auth: original.original_auth_headers(),
-            body_sha256: one(head, NATIVE_IMPORT_BODY_HEADER)?,
-        },
-        metadata,
-        now_ms()?,
-    ))
+    futures_executor::block_on(
+        NativeAuthenticator::new(identity, &replay).admit_import_with_context(
+            head.kind,
+            import_auth_headers(head),
+            metadata,
+            lifetime,
+        ),
+    )
 }
-/// Original accepted request DATA and genuine actual-remote proof. No decoder or
-/// second nonce store is introduced for the dedicated actor.
-pub(crate) struct RemoteImportDocument {
-    pub(crate) proof: gateway_authority::native_control::import::AuthenticatedNativeImport,
-    pub(crate) metadata: NativeImportMetadata,
-    raw: RawImportDocument,
+/// Header shape DATA only; preserves early malformed-auth refusal before fixed remote dials.
+pub fn check_import_auth_headers(head: &ImportHead) -> Result<(), GatewayError> {
+    auth_headers(head).map(|_| ())
 }
-impl RemoteImportDocument {
-    pub(crate) fn body(&self) -> &[u8] {
-        self.raw.as_bytes()
-    }
-}
-pub(crate) fn read_remote_import<C: NativeRenewalCancellation>(
-    stream: &mut TcpStream,
+/// Actual MAC/nonce/time admission, never a parsed-head dispatch or effect constructor.
+pub fn admit_import_head<'c>(
     head: &ImportHead,
     identity: &NativeTransportIdentity,
     nonces: &SqliteNonceStore,
-    authority: &gateway_authority::native_control::import::remote::RemoteImportAuthority<'_, C>,
-    original: &NativeControlContext<'_>,
-    registered_target: (&str, &str),
-) -> Result<RemoteImportDocument, GatewayError> {
-    let (native_owner_id, account_id_hash) = registered_target;
+    lifetime: NativeRequestLifetime<'c>,
+) -> Result<
+    (
+        NativeImportMetadata,
+        gateway_auth_native_proof::native_import::NativeImportAdmission,
+        NativeControlContext<'c>,
+    ),
+    GatewayError,
+> {
     let metadata = metadata(head)?;
-    let header = admit_headers(head, identity, nonces, &metadata, original)?;
-    let admitted = authority.admit_import(header)?;
-    original.check()?;
-    if admitted.native_owner_id() != native_owner_id
-        || admitted.account_id_hash() != account_id_hash
-        || !matches!(admitted.target(), gateway_auth_native_contracts::native_import::NativeImportTarget::ExistingAccount { account_id_hash: actual } if actual == account_id_hash)
-    {
-        return Err(unavailable());
-    }
-    if head.kind != NativeImportKind::CodexAuth || head.path != head.kind.path() {
-        return Err(unavailable());
-    }
-    let raw = read_import_body(stream, head, &OriginalCancellation(original))?;
-    original.check()?;
-    let proof = authority.finish_import(admitted, raw.as_bytes())?;
-    authority.recheck_import(&proof)?;
-    original.check()?;
-    Ok(RemoteImportDocument {
-        proof,
-        metadata,
-        raw,
-    })
+    let (admission, context) = admit_headers(head, identity, nonces, &metadata, lifetime)?;
+    Ok((metadata, admission, context))
 }
 fn unavailable() -> GatewayError {
     GatewayError::unavailable(

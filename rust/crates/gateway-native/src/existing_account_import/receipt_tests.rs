@@ -1,13 +1,9 @@
 //! Synthetic-only private durable operation cases; no proof/claim/receipt leaves the admitted callback.
 use super::{ExistingAccountImportStore, durability::DurableNativeImport};
-use crate::{
-    import_ingress::receive_import_connection,
-    native_import::{NativeImportContext, NativeImportHandler},
-    owner_control::NativeControlContext,
-};
 use gateway_auth_credentials::native_credentials::parse_native_document;
 use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
 use gateway_auth_native_contracts::native_import::NativeImportMetadata;
+use gateway_auth_native_proof::native_context::NativeControlContext;
 use gateway_auth_passkeys::passkeys;
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority::native_control::import::AuthenticatedNativeImport;
@@ -16,6 +12,10 @@ use gateway_authority::native_control::import::effects::NativeImportMode;
 use gateway_authority::native_control::receiver::NativeRenewalAuthority;
 use gateway_authority::store::Authority;
 use gateway_authority_native_records::owner::RegisteredRenewalOwner;
+use gateway_native_http_admission::{
+    import_ingress::receive_import_connection,
+    native_import::{NativeImportContext, NativeImportHandler},
+};
 use gateway_native_import_source::result::{NativeImportCompletion, NativeImportResult};
 use gateway_native_import_test_support::{
     fixture::{Cancel, Fixture, Store, Tokens, fail, now_ms, run},

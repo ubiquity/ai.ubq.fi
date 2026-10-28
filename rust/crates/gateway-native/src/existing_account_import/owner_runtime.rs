@@ -1,6 +1,5 @@
 //! Owned-process custody only. Dirty state never becomes another import start permit.
 use super::exclusive_owner::{ExclusiveManagedOwner, PinnedExecutable, fail};
-use crate::native_import::NativeImportContext;
 use gateway_authority::native_control::import::AuthenticatedNativeImport;
 use gateway_authority::native_control::import::effects::NativeImportBinding;
 use gateway_authority::native_control::import::effects::NativeImportStart;
@@ -9,6 +8,7 @@ use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::TokenSource;
 use gateway_core::state::AuthorityStore;
 use gateway_native_confinement::file_observation::Facts;
+use gateway_native_http_admission::native_import::NativeImportContext;
 use gateway_source::error::GatewayError;
 use rustix::fs::{AtFlags, FlockOperation, Mode, OFlags, flock, fsync, openat, renameat, statat};
 use serde::{Deserialize, Serialize};

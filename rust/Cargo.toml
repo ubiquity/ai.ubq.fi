@@ -176,6 +176,7 @@ members = [
   "crates/gateway-native-connector",
   "crates/gateway-native-connected-io",
   "crates/gateway-native-custody-wire",
+  "crates/gateway-native-http-admission",
   "crates/gateway-native-http-framing",
   "crates/gateway-native-https-test-support",
   "crates/gateway-native-import-client",
@@ -221,6 +222,7 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-native-http-admission = { path = "crates/gateway-native-http-admission" }
 gateway-authority-actor-records = { path = "crates/gateway-authority-actor-records" }
 gateway-authority-routing-signal = { path = "crates/gateway-authority-routing-signal" }
 gateway-authority-reset-authorization = { path = "crates/gateway-authority-reset-authorization" }

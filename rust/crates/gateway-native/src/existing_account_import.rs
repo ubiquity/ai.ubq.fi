@@ -29,16 +29,16 @@ mod validation;
 struct NativeImportInputs<'a> {
     proof: &'a AuthenticatedNativeImport,
     body: &'a [u8],
-    context: &'a crate::native_import::NativeImportContext<'a>,
-    original: &'a crate::owner_control::NativeControlContext<'a>,
+    context: &'a gateway_native_http_admission::native_import::NativeImportContext<'a>,
+    original: &'a gateway_auth_native_proof::native_context::NativeControlContext<'a>,
 }
 impl<'a> NativeImportInputs<'a> {
     fn checked(
         proof: &'a AuthenticatedNativeImport,
         metadata: &'a NativeImportMetadata,
         body: &'a [u8],
-        context: &'a crate::native_import::NativeImportContext<'a>,
-        original: &'a crate::owner_control::NativeControlContext<'a>,
+        context: &'a gateway_native_http_admission::native_import::NativeImportContext<'a>,
+        original: &'a gateway_auth_native_proof::native_context::NativeControlContext<'a>,
     ) -> Result<Self, GatewayError> {
         context.require_original(original)?;
         context.check_document(proof, metadata, body)?;
@@ -55,7 +55,7 @@ impl<'a> NativeImportInputs<'a> {
     fn original_body(&self) -> &'a [u8] {
         self.body
     }
-    fn auth_data(&self) -> &crate::native_import::NativeAuthImportData<'_> {
+    fn auth_data(&self) -> &gateway_native_http_admission::native_import::NativeAuthImportData<'_> {
         self.context.auth_data()
     }
     fn check(&self) -> Result<(), GatewayError> {
@@ -189,8 +189,8 @@ impl ExistingAccountImportStore {
         start: gateway_authority::native_control::import::effects::NativeImportStart<'_>,
         proof: &AuthenticatedNativeImport,
         original_body: &[u8],
-        context: &crate::native_import::NativeImportContext<'_>,
-        original: &crate::owner_control::NativeControlContext<'_>,
+        context: &gateway_native_http_admission::native_import::NativeImportContext<'_>,
+        original: &gateway_auth_native_proof::native_context::NativeControlContext<'_>,
         now_ms: i64,
     ) -> Result<durability::DurableNativeImport, GatewayError> {
         let inputs =

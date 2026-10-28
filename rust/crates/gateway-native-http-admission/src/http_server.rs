@@ -1,20 +1,16 @@
 //! Fixed authenticated HTTP companion. No generic URL, command, file or
 //! configuration ingress. Supervisor data remains readonly and source sampled.
-use crate::live_bridge::{NativeLiveHandler, NativeLiveUpgradeRequest};
-use crate::owner_control::{NativeControlContext, NativeOwnerRenewalHandler};
+use crate::owner_control::NativeOwnerRenewalHandler;
 use gateway_auth_native_contracts::native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_PATH};
-use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
-use gateway_auth_native_proof::native_context::now_ms;
+use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+use gateway_auth_native_proof::native_context::{now_ms, unavailable};
 use gateway_auth_native_proof::{
-    native_auth::{AuthenticatedNativeOwner, NativeAuthenticator, NativeTransportIdentity},
+    native_auth::{NativeAuthenticator, NativeTransportIdentity},
     native_live::NativeLiveAuthenticator,
 };
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::{
-    control::{
-        NATIVE_RENEWAL_MAX_MS, NativeControlDisposition, NativeControlEnvelope,
-        NativeControlReason, NativeControlResponse,
-    },
+    control::{NativeControlDisposition, NativeControlReason, NativeControlResponse},
     native_read::{
         NATIVE_CONTROL_PATH, NATIVE_FOLLOW_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER,
         NATIVE_NONCE_HEADER, NATIVE_RESPONSE_MAC_HEADER, NATIVE_RPC_PATH, NATIVE_TIME_HEADER,
@@ -25,6 +21,7 @@ use gateway_native_http_framing::{
     request::{HttpRequest, IncomingRequest, read_request, validate_live_upgrade},
     response::{disconnected, write_error},
 };
+use gateway_native_live_buffer::upgrade::{NativeLiveHandler, NativeLiveUpgradeRequest};
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use gateway_native_supervisor_data::data::SupervisorData;
 use gateway_source::error::GatewayError;
@@ -35,7 +32,7 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 pub struct NativeHttpService {
@@ -120,12 +117,20 @@ impl NativeHttpService {
         }
         Ok(())
     }
-    pub(crate) fn serve_connection(&self, stream: &mut TcpStream) -> Result<(), GatewayError> {
+    pub fn serve_connection(&self, stream: &mut TcpStream) -> Result<(), GatewayError> {
         gateway_native_connector::artifact::require_production_artifact()?;
         if let Err(error) = self.handle(stream) {
             write_error(stream, error)?;
         }
         Ok(())
+    }
+    pub fn receive_connection(&self, stream: &mut TcpStream) -> Result<(), GatewayError> {
+        gateway_native_connector::artifact::require_production_artifact()?;
+        self.handle(stream)
+    }
+    #[cfg(feature = "native-import-fixture")]
+    pub fn receive_fixture_connection(&self, stream: &mut TcpStream) -> Result<(), GatewayError> {
+        self.handle(stream)
     }
     fn handle(&self, stream: &mut TcpStream) -> Result<(), GatewayError> {
         let peer = stream.peer_addr().map_err(|_| unavailable())?;
@@ -194,6 +199,9 @@ impl NativeHttpService {
                 )
                 .map(|_transport_outcome| ());
         }
+        if request.path == NATIVE_CONTROL_PATH {
+            return self.renew_control(stream, &request, headers);
+        }
         let proof = futures_executor::block_on(
             NativeAuthenticator::new(&self.identity, &authority).authenticate(
                 &request.path,
@@ -202,9 +210,6 @@ impl NativeHttpService {
                 now_ms()?,
             ),
         )?;
-        if request.path == NATIVE_CONTROL_PATH {
-            return self.renew_control(stream, &request, &proof, headers);
-        }
         gateway_native_supervisor_http::supervisor_http::receive_supervisor_request(
             stream, &request, &proof, &self.data,
         )
@@ -213,22 +218,17 @@ impl NativeHttpService {
         &self,
         stream: &mut TcpStream,
         request: &HttpRequest,
-        proof: &AuthenticatedNativeOwner,
         headers: NativeAuthHeaders<'_>,
     ) -> Result<(), GatewayError> {
-        proof.require_request(
-            NativeCapability::OwnerRenewal,
-            NATIVE_CONTROL_PATH,
-            &request.body,
-            now_ms()?,
-        )?;
-        let envelope = NativeControlEnvelope::parse(&request.body)?;
+        let authority = StoreNonceAuthority::new(&self.nonces);
         let disconnected = || disconnected(stream);
-        let context = NativeControlContext::admitted(
-            Instant::now() + Duration::from_millis(NATIVE_RENEWAL_MAX_MS as u64),
-            &disconnected,
-            headers,
-        );
+        let (proof, envelope, context) = futures_executor::block_on(
+            NativeAuthenticator::new(&self.identity, &authority).authenticate_control_request(
+                headers,
+                &request.body,
+                &disconnected,
+            ),
+        )?;
         context.check()?;
         let result = self.renewal.as_ref().map_or_else(
             || {
@@ -240,7 +240,7 @@ impl NativeHttpService {
                     reason: Some(NativeControlReason::OwnerUnavailable),
                 })
             },
-            |handler| handler.renew(proof, &envelope, &request.body, &context),
+            |handler| handler.renew(&proof, &envelope, &request.body, &context),
         );
         let response = match result {
             Ok(response) => response,
@@ -290,19 +290,6 @@ fn request_header<'a>(request: &'a HttpRequest, name: &str) -> Result<&'a str, G
     }
     Ok(values[0].1.as_str())
 }
-fn unavailable() -> GatewayError {
-    GatewayError::unavailable(
-        "Native operation is unavailable",
-        "native_operation_unavailable",
-    )
-}
-fn invalid() -> GatewayError {
-    GatewayError::new(
-        400,
-        "Invalid native HTTP request",
-        Some("native_request_invalid"),
-    )
-}
 fn forbidden() -> GatewayError {
     GatewayError::new(
         401,
@@ -310,12 +297,3 @@ fn forbidden() -> GatewayError {
         Some("native_auth_invalid"),
     )
 }
-
-#[cfg(all(test, target_os = "linux"))]
-mod owner_control_tests;
-
-#[cfg(test)]
-mod live_http_tests;
-
-#[cfg(test)]
-pub(crate) mod import_http_tests;

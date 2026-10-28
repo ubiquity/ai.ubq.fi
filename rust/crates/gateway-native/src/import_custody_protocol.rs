@@ -1,10 +1,10 @@
 //! Original-context guarded actual custody TCP framing; decoded wire DATA is no live grant.
-use crate::native_import::NativeImportContext;
 #[cfg(test)]
 use gateway_authority::native_control::import::custody_session::ImportCustodyStartedRequest;
 use gateway_native_custody_wire::wire::{CUSTODY_FRAME_MAX, Frame};
 #[cfg(test)]
 use gateway_native_custody_wire::wire::{Header, Release, STARTED_BINDING_MAX, Stopped};
+use gateway_native_http_admission::native_import::NativeImportContext;
 use gateway_source::error::GatewayError;
 use std::{
     io::{Read, Write},

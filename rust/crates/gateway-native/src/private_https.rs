@@ -16,6 +16,8 @@ use ureq::{
     },
 };
 
+pub(crate) const NATIVE_HTTPS_SEND_TIMEOUT: Duration = Duration::from_secs(45);
+
 #[derive(Debug)]
 struct FixedResolver {
     uri: Uri,
@@ -117,7 +119,7 @@ impl PrivateHttps {
             .proxy(None)
             .max_redirects(0)
             .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(45)))
+            .timeout_global(Some(NATIVE_HTTPS_SEND_TIMEOUT))
             .max_idle_connections(1)
             .max_idle_connections_per_host(1)
             .max_idle_age(Duration::from_secs(600))
