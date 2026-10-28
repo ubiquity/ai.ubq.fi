@@ -60,29 +60,8 @@ struct Wire {
     document: Document,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NativeManagedPublicationDisposition {
-    Applied,
-    AlreadyCurrent,
-}
-pub struct NativeManagedPublication {
-    pub disposition: NativeManagedPublicationDisposition,
-    pub owner_id: String,
-    pub owner_epoch: String,
-    pub action_ref: String,
-    pub operation_id: String,
-    pub native_owner_id: String,
-    pub owner_revision: String,
-    pub source_revision: String,
-    pub normalized_revision: String,
-    pub publication_revision: String,
-    pub current_source_revision: String,
-    pub current_normalized_revision: String,
-    pub previous_native_source_generation: String,
-    pub native_source_generation: String,
-    pub access_generation: String,
-}
-
+use gateway_authority_native_records::managed::NativeManagedPublication;
+use gateway_authority_native_records::managed::NativeManagedPublicationDisposition;
 impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
     NativeRenewalAuthority<'_, S, I, C>
 {
@@ -351,7 +330,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                     refresh_token: Secret::new(String::new()),
                     updated_at_ms: tx.now as f64,
                     native_owner: Some(CodexNativeOwner {
-                        codex_home: self.registered.registered_home().clone(),
+                        codex_home: self.registered.registered_home().to_owned(),
                         generation_hash: w.access_generation.clone(),
                         native_refreshed_at: w.document.native_refreshed_at.clone(),
                         external_user_id: None,

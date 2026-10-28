@@ -491,3 +491,217 @@ fn constructor_cancellation_keeps_original_499_and_never_mints_a_native_effect()
         Ok(())
     })
 }
+
+fn known_managed_publication(
+    store: &Store,
+) -> Result<gateway_authority_native_records::rows::TerminalPublication, GatewayError> {
+    let header = gateway_auth_primitives::crypto::base64url(b"{}");
+    let payload = gateway_auth_primitives::crypto::base64url(
+        serde_json::to_vec(&serde_json::json!({"exp":NOW/1000+600}))
+            .map_err(|_| unavailable())?
+            .as_slice(),
+    );
+    let mut account = CodexSourceAccount {
+        account_id: "account".into(),
+        access_token: Secret::new(format!("{header}.{payload}.synthetic")),
+        refresh_token: Secret::new(String::new()),
+        updated_at_ms: NOW as f64,
+        native_owner: None,
+    };
+    let identity = account.identity();
+    let physical = "c".repeat(64);
+    account.native_owner = Some(CodexNativeOwner {
+        codex_home: "/tmp/native-source".into(),
+        generation_hash: identity.native_generation_hash.clone(),
+        native_refreshed_at: None,
+        external_user_id: None,
+        managed_source: Some(
+            gateway_auth_credentials::provider_credentials::ManagedNativeSource {
+                v: gateway_auth_credentials::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
+                generation_hash: physical.clone(),
+            },
+        ),
+    });
+    let pool = SubscriptionPool {
+        v: 1,
+        pool_versionstamp: PoolVersionstamp("publication".into()),
+        accounts: vec![PoolAccount {
+            account_id_hash: identity.routing_account_hash,
+            admin_account_hash: identity.administrative_account_hash,
+            credential_version: identity.credential_version.clone(),
+            enabled: true,
+        }],
+    };
+    seed(
+        store,
+        codex_source_pool_key(),
+        "publication",
+        CodexSourcePool {
+            accounts: vec![account],
+            updated_at_ms: NOW as f64,
+        }
+        .private_source_value(),
+    )?;
+    seed(store, keys::pool(), "publication", pool)?;
+    Ok(
+        gateway_authority_native_records::rows::TerminalPublication {
+            publication_revision: "publication".into(),
+            source_revision: "publication".into(),
+            normalized_revision: "publication".into(),
+            native_source_generation: physical,
+            access_generation: identity.native_generation_hash,
+            credential_version: identity.credential_version.0,
+            publication_request_digest: Some("request-digest".into()),
+        },
+    )
+}
+
+#[test]
+fn known_terminal_checks_original_control_and_actual_new_managed_generation() -> TestResult {
+    run(async {
+        let store = Store::default();
+        let host = Host::default();
+        let config = AuthConfig::default();
+        let id = identity()?;
+        fixture(&store, &id, None)?;
+        let (phase, _) = phase(&store, &host, &config).await?;
+        let owner =
+            RegisteredRenewalOwner::configured("native".into(), "/tmp/native-source".into())?;
+        let before = SourceNativeContextFactsReader::new(
+            &store,
+            &id,
+            &owner,
+            Some(&host),
+            &Cancel(false),
+            NOW,
+        )?
+        .read_context(
+            phase.actor_data(),
+            phase.context(),
+            phase.current_data(),
+            &context(),
+        )
+        .await?;
+        let action = gateway_authority_native_records::source_rows::SourceRenewalActionRowV3 {
+            v: 3,
+            action_ref: "action".into(),
+            actor: phase.actor_data().clone(),
+            context: phase.context().clone(),
+            created_at_ms: NOW,
+            deadline_ms: NOW + 45_000,
+            fence: before.fence().clone(),
+            checks_digest: before.checks_digest().into(),
+            control_checks_digest: before.control_checks_digest().into(),
+            account_digests: before.account_digests().to_vec(),
+            operation_id: Some("operation".into()),
+        };
+        let terminal = known_managed_publication(&store)?;
+        let current = ActorService::new(&store, &host, &config)
+            .check_stored_source_phase(
+                &action.actor,
+                &action.context,
+                NativeActorScope::Client,
+                NOW,
+            )
+            .await?;
+        let control = SourceNativeContextFactsReader::new(
+            &store,
+            &id,
+            &owner,
+            Some(&host),
+            &Cancel(false),
+            NOW,
+        )?
+        .read_control(&action.actor, &action.context, &current, &context())
+        .await?;
+        assert_eq!(control.control_digest(), action.control_checks_digest);
+        let data = SourceNativeContextFactsReader::new(
+            &store,
+            &id,
+            &owner,
+            Some(&host),
+            &Cancel(false),
+            NOW,
+        )?
+        .read_terminal(&action, &current, &terminal)
+        .await?;
+        assert_eq!(data.fence().source_revision, "publication");
+        assert_eq!(
+            data.fence().source_native_generation,
+            terminal.native_source_generation
+        );
+        assert_eq!(data.fence().access_generation, terminal.access_generation);
+        assert_ne!(
+            data.fence().credential_version,
+            action.fence.credential_version
+        );
+        assert_eq!(data.fence().principal, action.fence.principal);
+        Ok(())
+    })
+}
+
+#[test]
+fn terminal_data_with_wrong_physical_generation_never_verifies_as_current() -> TestResult {
+    run(async {
+        let store = Store::default();
+        let host = Host::default();
+        let config = AuthConfig::default();
+        let id = identity()?;
+        fixture(&store, &id, None)?;
+        let (phase, _) = phase(&store, &host, &config).await?;
+        let owner =
+            RegisteredRenewalOwner::configured("native".into(), "/tmp/native-source".into())?;
+        let before = SourceNativeContextFactsReader::new(
+            &store,
+            &id,
+            &owner,
+            Some(&host),
+            &Cancel(false),
+            NOW,
+        )?
+        .read_context(
+            phase.actor_data(),
+            phase.context(),
+            phase.current_data(),
+            &context(),
+        )
+        .await?;
+        let action = gateway_authority_native_records::source_rows::SourceRenewalActionRowV3 {
+            v: 3,
+            action_ref: "action".into(),
+            actor: phase.actor_data().clone(),
+            context: phase.context().clone(),
+            created_at_ms: NOW,
+            deadline_ms: NOW + 45_000,
+            fence: before.fence().clone(),
+            checks_digest: before.checks_digest().into(),
+            control_checks_digest: before.control_checks_digest().into(),
+            account_digests: before.account_digests().to_vec(),
+            operation_id: Some("operation".into()),
+        };
+        let mut terminal = known_managed_publication(&store)?;
+        terminal.native_source_generation = "d".repeat(64);
+        let current = ActorService::new(&store, &host, &config)
+            .check_stored_source_phase(
+                &action.actor,
+                &action.context,
+                NativeActorScope::Client,
+                NOW,
+            )
+            .await?;
+        assert!(
+            SourceNativeContextFactsReader::new(
+                &store,
+                &id,
+                &owner,
+                Some(&host),
+                &Cancel(false),
+                NOW
+            )?
+            .read_terminal(&action, &current, &terminal)
+            .await
+            .is_err()
+        );
+        Ok(())
+    })
+}

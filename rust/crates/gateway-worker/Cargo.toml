@@ -27,6 +27,7 @@ gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }
 gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
 gateway-auth-native-protocol = { path = "../gateway-auth-native-protocol" }
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
 gateway-auth-passport = { path = "../gateway-auth-passport" }
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-provider-services = { path = "../gateway-provider-services" }

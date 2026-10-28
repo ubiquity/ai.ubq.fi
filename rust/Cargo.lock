@@ -4337,6 +4337,7 @@ dependencies = [
  "gateway-authority-kernel",
  "gateway-authority-kernel-protocol",
  "gateway-authority-keys",
+ "gateway-authority-native-records",
  "gateway-authority-paid-backfill",
  "gateway-authority-paid-control-records",
  "gateway-authority-paid-evidence",

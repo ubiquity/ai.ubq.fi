@@ -2,6 +2,7 @@
 pub mod import_action;
 pub mod import_facts;
 pub mod live;
+pub mod managed;
 pub mod owner;
 mod required;
 pub mod rows;
