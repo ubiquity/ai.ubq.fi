@@ -383,7 +383,7 @@ pub async fn managed_publication(
         &config,
         &incoming,
     );
-    use gateway_authority::native_control::managed::NativeManagedPublicationDisposition as Disposition;
+    use gateway_authority_native_records::managed::NativeManagedPublicationDisposition as Disposition;
     use gateway_publication::wire::PublicationDisposition;
     let applied = receiver
         .publish_managed(&proof, bytes)

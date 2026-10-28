@@ -14,6 +14,7 @@ entrypoint = []
 fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 
 [dependencies]
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
 gateway-auth-passport = { path = "../gateway-auth-passport" }
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-native-authority-wire.workspace = true

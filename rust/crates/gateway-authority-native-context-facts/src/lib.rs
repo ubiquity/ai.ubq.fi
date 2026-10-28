@@ -1,6 +1,7 @@
 //! Complete fixed non-inference native context observations. DATA never grants a native effect.
 mod account;
 mod cache;
+pub mod terminal;
 use cache::ReadCache;
 use gateway_auth_credentials::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
@@ -43,6 +44,34 @@ struct CredentialData<'a> {
     source_key: gateway_kv_codec::key::RecordKey,
     physical: String,
     expiry: Option<i64>,
+}
+pub struct SourceNativeControlFactsData {
+    principal: PrincipalId,
+    policy_digest: String,
+    account_hash: String,
+    control_digest: String,
+    checks: Vec<RevisionCheck>,
+    observed_at_ms: i64,
+}
+impl SourceNativeControlFactsData {
+    pub fn principal(&self) -> &PrincipalId {
+        &self.principal
+    }
+    pub fn policy_digest(&self) -> &str {
+        &self.policy_digest
+    }
+    pub fn account_hash(&self) -> &str {
+        &self.account_hash
+    }
+    pub fn control_digest(&self) -> &str {
+        &self.control_digest
+    }
+    pub fn revision_checks(&self) -> &[RevisionCheck] {
+        &self.checks
+    }
+    pub fn observed_at_ms(&self) -> i64 {
+        self.observed_at_ms
+    }
 }
 pub struct SourceNativeContextFactsData {
     fence: SourceNativeRenewalFenceV3,
@@ -94,6 +123,26 @@ impl<'a, S: AuthorityStore, C: NativeRenewalCancellation> SourceNativeContextFac
             registered,
             clock,
             cancellation,
+        })
+    }
+    pub async fn read_control(
+        mut self,
+        actor: &StoredNativeActorV2,
+        original: &RequestContext,
+        phase: &SourceActorCurrentData,
+        context: &NativeRenewalContext,
+    ) -> Result<SourceNativeControlFactsData, GatewayError> {
+        if matches!(context, NativeRenewalContext::Inference { .. }) {
+            return Err(fail());
+        }
+        let control = self.live_control(actor, original, phase, context).await?;
+        Ok(SourceNativeControlFactsData {
+            principal: control.principal,
+            policy_digest: control.policy_digest,
+            account_hash: control.account_hash,
+            control_digest: control.checks_digest,
+            checks: self.cache.checks(),
+            observed_at_ms: self.cache.now,
         })
     }
     pub async fn read_context(
