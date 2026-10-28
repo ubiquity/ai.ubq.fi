@@ -10,15 +10,12 @@ use gateway_auth_native_proof::native_live::AuthenticatedNativeLive;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
-use gateway_authority_native_records::live::{ActionRow, ConnectionRow, mapping_key};
+use gateway_authority_native_records::live::{ActionRow, ConnectionRow, custody_key, mapping_key};
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation};
 use gateway_kv_codec::key::RecordKey;
-use gateway_kv_codec::tuple_key::{
-    ScalarKeyPart::{self, String as Text},
-    TupleKey,
-};
+use gateway_kv_codec::tuple_key::{ScalarKeyPart::String as Text, TupleKey};
 use gateway_native_authority_wire::live::{
     NativeLiveAuthorityResponse, NativeLiveFence, NativeLiveRetirement,
 };
@@ -28,17 +25,6 @@ use serde_json::Value;
 use wire::{NativeLiveAccess, NativeLiveAuthorityRequest};
 pub mod wire;
 
-/// Nonexpiring secretless control custody, NOT a second routing/accounting ledger.
-pub fn custody_key(kind: &str, reference: &str) -> RecordKey {
-    TupleKey::from_scalar_parts(&[
-        ScalarKeyPart::String("uos_ai"),
-        ScalarKeyPart::String("native_live"),
-        ScalarKeyPart::String("v1"),
-        ScalarKeyPart::String(kind),
-        ScalarKeyPart::String(reference),
-    ])
-    .to_record_key()
-}
 /// Server-created selector, deliberately neither Serialize nor Deserialize.
 pub struct NativeLiveAction {
     action_ref: String,

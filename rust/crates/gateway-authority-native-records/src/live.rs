@@ -40,3 +40,15 @@ pub fn mapping_key(call: &str, pending: bool) -> RecordKey {
     parts.push(Text(call));
     TupleKey::from_scalar_parts(&parts).to_record_key()
 }
+
+/// Nonexpiring secretless control custody, NOT a second routing/accounting ledger.
+pub fn custody_key(kind: &str, reference: &str) -> RecordKey {
+    TupleKey::from_scalar_parts(&[
+        Text("uos_ai"),
+        Text("native_live"),
+        Text("v1"),
+        Text(kind),
+        Text(reference),
+    ])
+    .to_record_key()
+}
