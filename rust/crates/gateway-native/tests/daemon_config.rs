@@ -1,8 +1,7 @@
 #![cfg(unix)]
 use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
-use gateway_auth_native_proof::native_auth::{
-    AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
-};
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
+use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeAuthenticator};
 use gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
 use gateway_auth_primitives::crypto::base64url;
 use gateway_native::daemon_config::{NativeDaemonConfig, PreparedNativeDaemonConfig};

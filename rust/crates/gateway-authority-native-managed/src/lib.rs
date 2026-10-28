@@ -10,9 +10,8 @@ use gateway_auth_credentials::{
         codex_source_pool_key, parse_codex_source_pool, valid_native_generation,
     },
 };
-use gateway_auth_native_proof::native_auth::{
-    AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeTransportIdentity};
 use gateway_auth_native_wire::{
     control::NATIVE_RENEWAL_MAX_MS, native_read::NATIVE_PUBLICATION_PATH,
 };

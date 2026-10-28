@@ -1,8 +1,7 @@
 use super::*;
 use crate::managed_publication_http::NativeAccessPublicationHttp;
-use gateway_auth_native_proof::native_auth::{
-    NativeAuthHeaders, NativeCapability, NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::native_read::{
     NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH,
 };

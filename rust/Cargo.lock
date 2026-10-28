@@ -848,6 +848,7 @@ dependencies = [
  "gateway-admin-test-support",
  "gateway-auth",
  "gateway-auth-contracts",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
@@ -1588,6 +1589,7 @@ name = "gateway-authority-initial-owner"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-primitives",
  "gateway-authority-keys",
@@ -1688,6 +1690,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth-contracts",
  "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-passport-contracts",
  "gateway-auth-passport-sessions",
@@ -1751,6 +1754,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth-contracts",
  "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-auth-passport-contracts",
@@ -2377,6 +2381,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-test-support",
  "gateway-auth",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-auth-primitives",
@@ -2928,6 +2933,7 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
@@ -3534,6 +3540,7 @@ dependencies = [
 name = "gateway-native-authority-request"
 version = "0.1.0"
 dependencies = [
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-auth-primitives",
@@ -3546,6 +3553,7 @@ dependencies = [
 name = "gateway-native-authority-wire"
 version = "0.1.0"
 dependencies = [
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-primitives",
  "gateway-authority-actor-records",
@@ -3602,6 +3610,7 @@ name = "gateway-native-http-framing"
 version = "0.1.0"
 dependencies = [
  "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-authority-contracts",
@@ -3722,6 +3731,7 @@ version = "0.1.0"
 dependencies = [
  "futures-executor",
  "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-authority",
@@ -3792,6 +3802,7 @@ name = "gateway-native-supervisor-http"
 version = "0.1.0"
 dependencies = [
  "futures-executor",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-native-http-framing",
@@ -4208,6 +4219,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-auth-primitives",
@@ -4230,6 +4242,7 @@ name = "gateway-publication-policy"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-auth-primitives",
@@ -4250,6 +4263,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-auth-primitives",
@@ -4272,6 +4286,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
@@ -4661,6 +4676,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-native-protocol",
  "gateway-auth-native-wire",

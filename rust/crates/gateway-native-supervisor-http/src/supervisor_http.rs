@@ -1,12 +1,14 @@
 //! Complete readonly native supervisor operation, bound to the original authenticated request.
-use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeCapability};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
+use gateway_auth_native_proof::native_context::now_ms;
 use gateway_auth_native_wire::native_read::{
     AuthStream, NATIVE_FOLLOW_PATH, NATIVE_MAX_BODY_BYTES, NATIVE_RPC_PATH, NativeReadRequest,
     NativeRpcEnvelope, NativeRpcResponse,
 };
 use gateway_native_http_framing::{
     request::HttpRequest,
-    response::{disconnected, now_ms, write_json},
+    response::{disconnected, write_json},
 };
 use gateway_native_local_transport::unix::UnixSupervisor;
 use gateway_native_supervisor::supervisor::{

@@ -9,11 +9,11 @@ use gateway_auth_native_contracts::native_import::{
     NativeImportKind, NativeImportMetadata, NativeImportTarget,
 };
 use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
+use gateway_auth_native_contracts::transport::NativeImportAuthHeaders;
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
 use gateway_auth_native_import_data::native_import::authority;
-use gateway_auth_native_proof::native_auth::{
-    NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
-};
-use gateway_auth_native_proof::native_import::{NativeImportAdmission, NativeImportAuthHeaders};
+use gateway_auth_native_proof::native_auth::{NativeAuthenticator, NativeTransportIdentity};
+use gateway_auth_native_proof::native_import::NativeImportAdmission;
 use gateway_auth_native_protocol::native_import::publication;
 use gateway_auth_primitives::crypto::{base64url, sha256_hex};
 use gateway_authority_contracts::NativeRenewalCancellation;

@@ -1,5 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_auth_native_proof::native_auth::NativeCapability;
+use gateway_auth_native_contracts::transport::NativeCapability;
 use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_primitives::crypto::Secret;
 use gateway_auth_primitives::crypto::sha256_hex;

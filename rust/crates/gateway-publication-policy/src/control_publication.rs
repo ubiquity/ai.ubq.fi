@@ -1,9 +1,7 @@
 //! Fixed same-authority control publication by an authenticated configuration
 //! owner. Constructor inputs are trusted runtime configuration, never HTTP JSON.
-use gateway_auth_native_proof::{
-    native_auth::AuthenticatedNativeOwner, native_auth::NativeCapability,
-    native_auth::NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeTransportIdentity};
 use gateway_auth_primitives::{crypto::Secret, crypto::sha256_hex, store};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{

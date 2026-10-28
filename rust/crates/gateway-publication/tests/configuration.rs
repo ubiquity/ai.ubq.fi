@@ -1,6 +1,5 @@
-use gateway_auth_native_proof::{
-    native_auth::NativeCapability, native_auth::NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_primitives::crypto::Secret;
 use gateway_auth_primitives::store;
 use gateway_authority_keys as keys;

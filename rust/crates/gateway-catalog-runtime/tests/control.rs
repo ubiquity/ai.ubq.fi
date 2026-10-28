@@ -1019,10 +1019,10 @@ fn synthetic_override_requires_the_server_owned_hop_not_a_body_shortcut() -> Tes
 #[cfg(not(target_arch = "wasm32"))]
 mod native_configuration {
     use super::*;
-    use gateway_auth_native_proof::{
-        native_auth::AuthenticatedNativeOwner, native_auth::NativeAuthHeaders,
-        native_auth::NativeAuthenticator, native_auth::NativeCapability,
-        native_auth::NativeNonceAuthority, native_auth::NativeTransportIdentity,
+    use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
+    use gateway_auth_native_proof::native_auth::{
+        AuthenticatedNativeOwner, NativeAuthenticator, NativeNonceAuthority,
+        NativeTransportIdentity,
     };
     use gateway_auth_native_wire::native_read::NATIVE_RPC_PATH;
     use gateway_auth_primitives::{crypto::Secret, crypto::base64url};

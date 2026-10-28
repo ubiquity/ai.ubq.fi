@@ -1,10 +1,4 @@
 use gateway_source::error::GatewayError;
-pub fn control_interrupted() -> GatewayError {
-    GatewayError::unavailable(
-        "Native control was interrupted; reconcile the original action",
-        "native_control_outcome_unknown",
-    )
-}
 pub(crate) fn invalid() -> GatewayError {
     GatewayError::new(
         400,
@@ -17,11 +11,5 @@ pub(crate) fn too_large() -> GatewayError {
         413,
         "Native request body is too large",
         Some("native_body_too_large"),
-    )
-}
-pub(crate) fn unavailable() -> GatewayError {
-    GatewayError::unavailable(
-        "Native operation is unavailable",
-        "native_operation_unavailable",
     )
 }

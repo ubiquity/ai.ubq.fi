@@ -1,9 +1,7 @@
 //! One fixed private native publication route. The HTTP adapter only carries
 //! bytes; this receiver owns parsing, authentication, durable fences and CAS.
-use gateway_auth_native_proof::{
-    native_auth::NativeAuthHeaders, native_auth::NativeAuthenticator,
-    native_auth::NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+use gateway_auth_native_proof::native_auth::{NativeAuthenticator, NativeTransportIdentity};
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::{
     NATIVE_MAX_BODY_BYTES, NATIVE_PUBLICATION_PATH, NATIVE_RESPONSE_MAC_HEADER,

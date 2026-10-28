@@ -5,9 +5,8 @@ use crate::{
     native_transport::{NativeTransport, unavailable},
 };
 use gateway_auth_contracts::types::AuthResponse;
-use gateway_auth_native_proof::{
-    native_auth::NativeCapability, native_auth::NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::{
     control::NATIVE_CONTROL_MAX_BYTES, control::NATIVE_RENEWAL_MAX_MS,
     control::NativeControlDisposition, control::NativeControlEnvelope,

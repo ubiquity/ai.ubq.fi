@@ -106,7 +106,8 @@ fn actual_separate_prelaunch_profiles_enforce_files_processes_and_network() {
 #[test]
 fn actual_request_worker_uses_inherited_client_and_one_persistent_replay_fence()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+    use gateway_auth_native_contracts::transport::NativeCapability;
+    use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
     use gateway_auth_primitives::crypto::base64url;
     use std::{
         collections::BTreeSet,
@@ -165,7 +166,7 @@ fn actual_request_worker_uses_inherited_client_and_one_persistent_replay_fence()
         BTreeSet::from([NativeCapability::SupervisorRead]),
     )?;
     let body = br#"{"v":1,"request":{"operation":"supervisor_sessions"}}"#;
-    let now = gateway_native_http_framing::response::now_ms()?;
+    let now = gateway_auth_native_proof::native_context::now_ms()?;
     let nonce = base64url(&[19; 32]);
     let mac = identity.sign(
         gateway_auth_native_wire::native_read::NATIVE_RPC_PATH,

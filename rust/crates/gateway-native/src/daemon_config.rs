@@ -1,6 +1,7 @@
 //! Trusted local startup input only. There is no dotenv discovery, default
 //! listener, public configuration route, command or caller-selected source path.
-use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_primitives::crypto::{base64url, decode_base64url};
 use gateway_native_supervisor::supervisor::SourceId;
 use gateway_source::error::GatewayError;

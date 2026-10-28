@@ -5,10 +5,8 @@ use crate::wire::{ConfigWire, PublicationDisposition, PublicationReceipt, WireCo
 use gateway_auth_credentials::{
     native_credentials::NativeCredentials, native_credentials::NativeOwnerId,
 };
-use gateway_auth_native_proof::{
-    native_auth::AuthenticatedNativeOwner, native_auth::NativeCapability,
-    native_auth::NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeTransportIdentity};
 use gateway_core::state::AuthorityStore;
 use gateway_publication_policy::control_publication::{
     ConfiguredPaidInputs, PreparedConfigurationPublication, conflict,

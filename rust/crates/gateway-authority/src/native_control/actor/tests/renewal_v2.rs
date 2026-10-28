@@ -9,9 +9,8 @@ use gateway_auth_credentials::provider_credentials::{
     ManagedNativeSource, codex_source_pool_key,
 };
 use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
-use gateway_auth_native_proof::native_auth::{
-    NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
+use gateway_auth_native_proof::native_auth::{NativeAuthenticator, NativeTransportIdentity};
 use gateway_auth_native_wire::{
     control::{NativeControlEnvelope, NativeControlRequest},
     native_read::NATIVE_CONTROL_PATH,

@@ -1,8 +1,6 @@
 use super::*;
-use gateway_auth_native_proof::{
-    native_auth::NativeAuthHeaders, native_auth::NativeAuthenticator,
-    native_auth::NativeNonceAuthority,
-};
+use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+use gateway_auth_native_proof::native_auth::{NativeAuthenticator, NativeNonceAuthority};
 use gateway_auth_native_wire::native_read::NATIVE_RPC_PATH;
 use serde_json::{Value, json};
 use std::{

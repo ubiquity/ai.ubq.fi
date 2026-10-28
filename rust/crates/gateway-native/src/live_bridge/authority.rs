@@ -91,7 +91,7 @@ impl NativeLiveAuthorityHttp {
         let mut bytes = [0; 32];
         getrandom::fill(&mut bytes).map_err(|_| super::unavailable())?;
         let nonce = base64url(&bytes);
-        let now = gateway_native_http_framing::response::now_ms()?;
+        let now = gateway_auth_native_proof::native_context::now_ms()?;
         let mac = self
             .identity
             .sign_live_authority_request(now, &nonce, &body)?;
