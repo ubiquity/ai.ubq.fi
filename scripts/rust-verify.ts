@@ -859,8 +859,12 @@ const prepareCi = async (root: string, stage: RustStage): Promise<void> => {
   }
   if (stage === "wasm") {
     await checkedRun(["cargo", "install", "worker-build", "--version", `=${WORKER_BUILD_VERSION}`, "--locked", "--root", tools], root, environment);
-    await checkedRun(["cargo", "install", "wasm-bindgen-cli", "--version", "=0.2.129", "--locked", "--root", tools], root, environment);
     for (const [name, url, checksum] of [
+      [
+        "wasm-bindgen",
+        "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.129/wasm-bindgen-0.2.129-aarch64-unknown-linux-gnu.tar.gz",
+        "1797c349a0f45d30946e8986b184135e12839ab576c9a04203e85febfc5dcb35",
+      ],
       [
         "binaryen",
         "https://github.com/WebAssembly/binaryen/releases/download/version_132/binaryen-version_132-aarch64-linux.tar.gz",
@@ -879,7 +883,7 @@ const prepareCi = async (root: string, stage: RustStage): Promise<void> => {
       await fetchArchive(url, archive, checksum);
       await checkedRun(["/usr/bin/tar", "-xzf", archive, "--strip-components=1", "-C", destination], root, environment);
     }
-    environment.WASM_BINDGEN_BIN = join(tools, "bin/wasm-bindgen");
+    environment.WASM_BINDGEN_BIN = join(tools, "wasm-bindgen/wasm-bindgen");
     environment.WASM_OPT_BIN = join(tools, "binaryen/bin/wasm-opt");
     environment.ESBUILD_BIN = join(tools, "esbuild/bin/esbuild");
   }
@@ -911,12 +915,7 @@ const verifyTools = async (stage: RustStage, environment: Record<string, string>
     [["cargo", "--version"], `cargo ${RUST_VERSION} `],
     [["rustfmt", "--version"], RUST_REVISION],
     [["cargo-clippy", "--version"], RUST_REVISION],
-    ...(stage === "wasm"
-      ? [
-          [["worker-build", "--version"], WORKER_BUILD_VERSION],
-          [["wasm-bindgen", "--version"], "0.2.129"],
-        ]
-      : []),
+    ...(stage === "wasm" ? [[["worker-build", "--version"], WORKER_BUILD_VERSION]] : []),
   ] as [string[], string][]) {
     const version = await checkedRun(argv, ROOT, environment);
     if (!version.includes(expected)) throw new Error(`Pinned Rust tool version mismatch: ${argv[0]}`);

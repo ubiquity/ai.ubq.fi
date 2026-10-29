@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## CI runs native test profiles after portable gates and uses pinned prebuilt wasm-bindgen - 2026-10-29
+
+After portable validation succeeds, the Linux native job runs the existing deploy-guards, vps, main, sentinel, quality and benchmark profiles with its independently bound native KV receipt. It retains frozen lint-tool preparation, the Bun type patch and native preflight fixtures, and aggregates profile failures. The portable strict TypeScript preflight remains because the scoped aggregate can select zero tests and exit before static gates. Local `verify.sh` keeps its complete aggregate default.
+
+WASM preparation supports Linux ARM64 only and downloads the official `wasm-bindgen` 0.2.129 GNU archive with SHA256 `1797c349a0f45d30946e8986b184135e12839ab576c9a04203e85febfc5dcb35`. The existing checked archive extraction places the binary under the fresh task's `tools/wasm-bindgen`; `WASM_BINDGEN_BIN` binds that absolute path for both version verification and Worker compilation. `worker-build` 0.8.7 remains a locked source install. Fresh application targets, frozen source receipts and offline verification remain required.
+
+Reason: Actions run `40168689356` repeated about 338.3 seconds of portable static gates in the native job, and WASM preparation serially compiled wasm-bindgen from source. This removes those repeated invocations without changing selected native-mode tests or release profiles. The sampled public-repository timing API reported zero billable milliseconds; these are runner-work reductions, not measured quota savings or candidate hosted timings. The manually disabled workflow stays disabled.
+
 ## Native catalog windows carry their automatic compaction policy - 2026-10-29
 
 First-party Codex catalog records carry the existing shared automatic compaction policy alongside their context window. The limit is the earlier valid source limit or the shared 85-percent-or-50,000-token-reserve derivation. A 1,050,000-token GPT window therefore carries an 892,500-token limit; an earlier source limit remains authoritative. This repairs native records that previously widened their window while leaving clients to derive a later default trigger.
