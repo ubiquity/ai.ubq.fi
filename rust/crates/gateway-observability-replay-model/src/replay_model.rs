@@ -56,12 +56,12 @@ pub fn cursor_shape(s: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
 }
-pub(crate) fn nullable<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+pub fn nullable<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
     d: D,
 ) -> Result<Option<T>, D::Error> {
     Option::<T>::deserialize(d)
 }
-pub(crate) fn optional_nonnull<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+pub fn optional_nonnull<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
     d: D,
 ) -> Result<Option<T>, D::Error> {
     T::deserialize(d).map(Some)
