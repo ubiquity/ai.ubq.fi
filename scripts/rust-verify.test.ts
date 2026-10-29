@@ -1,3 +1,4 @@
+import { NATIVE_IMPORT_CHILDREN, NATIVE_IMPORT_ROLES, NATIVE_IMPORT_PACKAGES, requireNativeImportRole } from "./rust-native-import-contract.ts";
 import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -561,7 +562,7 @@ const nativeArtifacts = () => {
   const prelaunch = selected.at(-1);
   assert.ok(prelaunch);
   const library = selected[0];
-  const libraryNames = [...ownedChildCases, "ordinary_library_case", ownedChildCases[0] + "_neighbor"];
+  const libraryNames = ["ordinary_library_case", ownedChildCases[0] + "_neighbor"];
   const environment = {
     HOME: task,
     PATH: bin,
@@ -623,13 +624,13 @@ test("Darwin native packages alone select the source-bound prelaunch split; Linu
 
 test("Darwin exact emitted inventory runs each lib/bin/test plus doctests once without broad unconfined Cargo", async () => {
   const fixture = nativeArtifacts();
-  assert.equal(await executeDarwinNativeTests(fixture.cwd, fixture.environment, "package", fixture.run), 7);
+  assert.equal(await executeDarwinNativeTests(fixture.cwd, fixture.environment, "package", fixture.run), 5);
   const unconfined = fixture.calls.filter((command) => command.argv[0] !== "git" && !command.isolated);
-  assert.equal(unconfined.length, 6);
+  assert.equal(unconfined.length, 2);
   assert.equal(unconfined.filter((command) => command.argv[0] === fixture.prelaunch.executable).length, 2);
   for (const name of ownedChildCases) {
     const exact = unconfined.filter((command) => command.argv[0] === fixture.library.executable && command.argv.includes(name));
-    assert.equal(exact.length, 2);
+    assert.equal(exact.length, 0);
     assert.ok(exact.every((command) => command.argv.includes("--exact")));
   }
   const normal = fixture.calls.filter(
@@ -649,7 +650,7 @@ test("Darwin exact emitted inventory runs each lib/bin/test plus doctests once w
 test("nested-sandbox tests are excluded from the outer profile and run once directly", async () => {
   const fixture = nativeArtifacts();
   fixture.libraryNames.push(...DARWIN_NESTED_SANDBOX_CASES);
-  assert.equal(await executeDarwinNativeTests(fixture.cwd, fixture.environment, "package", fixture.run), 9);
+  assert.equal(await executeDarwinNativeTests(fixture.cwd, fixture.environment, "package", fixture.run), 7);
   const wrapped = fixture.calls.filter((command) => command.isolated && command.argv.includes("--skip") && !command.argv.includes("--list"));
   const skipped = (command: RustCommand) => command.argv.flatMap((value, index) => (command.argv[index - 1] === "--skip" ? [value] : []));
   assert.equal(wrapped.length, 1);
@@ -683,7 +684,7 @@ test("Darwin runtime TMPDIR is private outside compiler/cache ancestry and is cl
       return fixture.run(command, environment);
     };
     if (fail) await assert.rejects(executeDarwinNativeTests(fixture.cwd, inherited, "package", run), /fixed runtime failure/);
-    else assert.equal(await executeDarwinNativeTests(fixture.cwd, inherited, "package", run), 7);
+    else assert.equal(await executeDarwinNativeTests(fixture.cwd, inherited, "package", run), 5);
     assert.equal(directories.size, 1);
     for (const directory of directories) assert.equal(existsSync(directory), false);
   }
@@ -691,7 +692,7 @@ test("Darwin runtime TMPDIR is private outside compiler/cache ancestry and is cl
 
 test("focused internal acceptance compiles and executes only the exact prelaunch target with all its cases", async () => {
   const fixture = nativeArtifacts();
-  assert.equal(await executeDarwinNativeTests(fixture.cwd, fixture.environment, "prelaunch", fixture.run), 3);
+  assert.equal(await executeDarwinNativeTests(fixture.cwd, fixture.environment, "prelaunch", fixture.run), 1);
   const compile = fixture.calls.find((command) => command.argv.includes("--no-run"));
   assert.ok(compile?.isolated);
   assert.ok(compile.argv.includes("--lib") && compile.argv.includes("--test") && compile.argv.includes("connector_confinement"));
@@ -738,7 +739,7 @@ test("prelaunch dispatch rechecks artifact hashes between listing and execution 
 test("Darwin retains Cargo's actual disabled doc-test selection instead of forcing extra cases", async () => {
   const fixture = nativeArtifacts();
   fixture.selected[0].target.doctest = false;
-  assert.equal(await executeDarwinNativeTests(fixture.cwd, fixture.environment, "package", fixture.run), 6);
+  assert.equal(await executeDarwinNativeTests(fixture.cwd, fixture.environment, "package", fixture.run), 4);
   assert.ok(!fixture.calls.some((command) => command.argv.includes("--doc")));
 });
 
@@ -757,51 +758,26 @@ test("prelaunch refuses duplicate or missing executable artifacts and zero execu
   }
 });
 
-test("the serial native library retains ordinary tests and excludes only the two exact owned-child cases", async () => {
+test("ordinary feature-off inventory rejects fixture parents and ignored writer without losing neighbors", async () => {
   const fixture = nativeArtifacts();
   await executeDarwinNativeTests(fixture.cwd, fixture.environment, "package", fixture.run);
-  const wrapped = fixture.calls.filter((command) => command.argv.includes("--skip"));
-  assert.ok(
-    wrapped.length > 0 &&
-      wrapped.every(
-        (command) => command.isolated && command.argv.includes("--lib") && command.argv.includes("--exact") && command.argv.includes("--test-threads=1")
-      )
-  );
-  for (const command of wrapped)
-    assert.deepEqual(
-      command.argv.filter((value, index) => command.argv[index - 1] === "--skip"),
-      ownedChildCases
-    );
-  const actual = fixture.calls.filter((command) => !command.isolated && command.argv[0] === fixture.library.executable && !command.argv.includes("--list"));
-  assert.deepEqual(
-    actual.map((command) => command.argv[1]),
-    ownedChildCases
-  );
-  assert.ok(actual.every((command) => command.argv.includes("--exact")));
-  for (const host of [darwin, linux]) {
-    const ordinary = planRustVerification(fixture.root, ["rust/crates/gateway-core/src/lib.rs"], "native", false, host).commands.filter(
-      (command) => command.testRun === true || command.testListing === true
-    );
-    assert.ok(ordinary.length > 0 && ordinary.every((command) => !command.argv.includes("--test-threads=1")));
+  assert.ok(fixture.libraryNames.includes(ownedChildCases[0] + "_neighbor"));
+  assert.ok(!fixture.calls.some((command) => !command.isolated && command.argv[0] === fixture.library.executable));
+  for (const name of [...ownedChildCases, "existing_account_import::foundation_tests::controlled_async_writer_child"]) {
+    const leaked = nativeArtifacts();
+    leaked.libraryNames.push(name);
+    await assert.rejects(executeDarwinNativeTests(leaked.cwd, leaked.environment, "package", leaked.run), /fixture.*ordinary/);
   }
 });
 
-test("missing lib artifacts, missing exact cases, overbroad filtered inventory and lib hash drift refuse dispatch", async () => {
-  for (const corrupt of ["library", "case", "overbroad", "hash"] as const) {
-    const fixture = nativeArtifacts();
-    const run: CommandRunner = async (command, environment) => {
-      if (command.argv.includes("--no-run") && corrupt === "library") return { code: 0, stdout: fixture.json([fixture.prelaunch]), stderr: "" };
-      const result = await fixture.run(command, environment);
-      if (command.argv.includes("--list") && command.argv.includes("--lib")) {
-        if (corrupt === "case" && !command.argv.includes("--skip")) return { ...result, stdout: "ordinary_library_case: test\n" };
-        if (corrupt === "overbroad" && command.argv.includes("--skip")) return { ...result, stdout: "ordinary_library_case: test\n" };
-        if (corrupt === "hash") writeFileSync(fixture.library.executable, "changed source-bound library\n");
-      }
-      return result;
-    };
-    await assert.rejects(executeDarwinNativeTests(fixture.cwd, fixture.environment, "prelaunch", run), /missing|inventory mismatch|hash changed/);
-    assert.ok(!fixture.calls.some((command) => !command.isolated && command.argv[0] === fixture.library.executable));
-  }
+test("ordinary artifact or inventory hash mismatch still refuses dispatch", async () => {
+  const fixture = nativeArtifacts();
+  const run: CommandRunner = async (command, environment) => {
+    const result = await fixture.run(command, environment);
+    if (command.argv.includes("--list") && command.argv.includes("--lib")) writeFileSync(fixture.library.executable, "changed source-bound library\n");
+    return result;
+  };
+  await assert.rejects(executeDarwinNativeTests(fixture.cwd, fixture.environment, "prelaunch", run), /hash changed/);
 });
 
 const importFixture = () => {
@@ -812,98 +788,117 @@ const importFixture = () => {
   writeFileSync(join(task, "mac-bootstrap/check.sb"), "(version 1) (deny network*)");
   const environment = { ...fixture.environment, TMPDIR: join(task, "tmp") };
   mkdirSync(environment.TMPDIR, { recursive: true });
-  const directory = join(fixture.root, "rust/crates/gateway-native");
-  const make = (name: string, kind: string, test: boolean) => {
-    let source = kind === "lib" ? "src/lib.rs" : `src/bin/${name}.rs`;
-    if (kind === "test") source = `tests/${name}.rs`;
+  const make = (name: string, kind: string, test: boolean, packageName: string, source: string) => {
+    const directory = join(fixture.root, "rust/crates", packageName);
     const src = join(directory, source);
-    const runtimePath = kind === "example" ? `examples/${name}` : name;
-    const executable = join(target, "debug", test ? `deps/${name}-cargo-emitted` : runtimePath);
+    const executable = join(target, "debug", test ? `deps/${name}-cargo-emitted` : kind === "example" ? `examples/${name}` : name);
     mkdirSync(join(src, ".."), { recursive: true });
     mkdirSync(join(executable, ".."), { recursive: true });
-    writeFileSync(src, "// fixture\n");
+    writeFileSync(src, "// source fixture\n");
+    writeFileSync(join(directory, "Cargo.toml"), "[package]\nname=" + JSON.stringify(packageName));
     writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
     return {
       reason: "compiler-artifact",
       manifest_path: join(directory, "Cargo.toml"),
       package_id: `path+file://${realpathSync(directory)}#0.1.0`,
-      target: { name, kind: [kind], src_path: src, doctest: true },
+      target: { name, kind: [kind], src_path: src, doctest: kind === "lib" },
       profile: { test, opt_level: "3", debug_assertions: true },
-      features: ["native-import-fixture"],
+      features: packageName === "gateway-native-custody-wire" ? [] : ["native-import-fixture"],
       executable,
     };
   };
-  const library = make("gateway_native", "lib", true);
-  const policy = make("import_policy", "test", true);
+  const roles = NATIVE_IMPORT_ROLES.map((role) => make(role.name, role.kind, true, NATIVE_IMPORT_PACKAGES[role.package], role.source));
   const built = ["uos-native-owner-inspect", "uos-native", "uos-native-supervisor", "uos-native-request", "uos-native-connector", "uos-native-import"].map(
-    (name) => make(name, "bin", false)
+    (name) => make(name, "bin", false, "gateway-native", `src/bin/${name}.rs`)
   );
-  built.push(make("uos-native-import-fixture", "example", false), make("uos-native-connector-fixture", "example", false));
+  built.push(make("uos-native-import-fixture", "example", false, "gateway-native", "tests/support/import_fixture.rs"));
+  built.push(make("uos-native-connector-fixture", "example", false, "gateway-native", "tests/support/connector_fixture.rs"));
   const calls: RustCommand[] = [];
   const payloads: { argv: string[]; seconds: number; environment: Record<string, string> }[] = [];
-  const run: CommandRunner = (command, environment) => {
+  const run: CommandRunner = (command, inherited) => {
     calls.push(command);
-    if (command.argv[0] === "git") return fixture.run(command, environment);
-    if (command.argv.includes("--no-run")) return Promise.resolve({ code: 0, stdout: fixture.json([library, policy]), stderr: "" });
+    if (command.argv[0] === "git") return fixture.run(command, inherited);
+    if (command.argv.includes("--no-run")) {
+      const packageName = command.argv[command.argv.indexOf("-p") + 1];
+      return Promise.resolve({ code: 0, stdout: fixture.json(roles.filter((item) => item.manifest_path.endsWith(`/${packageName}/Cargo.toml`))), stderr: "" });
+    }
     if (command.argv.includes("--message-format=json")) return Promise.resolve({ code: 0, stdout: fixture.json(built), stderr: "" });
     if (command.argv.includes("--list")) {
-      const cases = NATIVE_IMPORT_CASES.filter((item) => "target" in item === (command.argv[0] === policy.executable));
-      return Promise.resolve({ code: 0, stdout: cases.map((item) => item.name + ": test\n").join(""), stderr: "" });
+      const index = roles.findIndex((role) => role.executable === command.argv[0]);
+      assert.ok(index >= 0);
+      const tag = NATIVE_IMPORT_ROLES[index].tag;
+      const names = [...NATIVE_IMPORT_CASES.filter((item) => item.role === tag).map((item) => item.name), ...NATIVE_IMPORT_CHILDREN[tag]];
+      return Promise.resolve({ code: 0, stdout: names.map((name) => name + ": test\n").join(""), stderr: "" });
     }
     assert.equal(command.argv[0], "/usr/bin/python3");
     assert.ok(command.ownedImportDriver);
     payloads.push(JSON.parse(command.argv.at(-1) ?? ""));
     return Promise.resolve({ code: 0, stdout: "test result: ok. 1 passed; 0 failed; 0 ignored;\n", stderr: "" });
   };
-  return { ...fixture, environment, calls, payloads, run, library, policy, built };
+  return { ...fixture, environment, calls, payloads, run, roles, library: roles[0], built };
 };
 
-test("finite native import stage is Darwin/native only and never changes production Worker features", () => {
+test("finite native import stage stays Darwin-only and never changes Worker features", () => {
   const fixture = nativeArtifacts();
-  const paths = ["rust/crates/gateway-native/src/lib.rs"];
-  const mac = planRustVerification(fixture.root, paths, "native", false, darwin);
+  const mac = planRustVerification(fixture.root, ["rust/crates/gateway-native/src/lib.rs"], "native", false, darwin);
   assert.equal(mac.commands.filter((command) => command.nativeImportFixture).length, 1);
   assert.equal(mac.commands.filter((command) => command.darwinNativeTests).length, 1);
-  assert.ok(!planRustVerification(fixture.root, paths, "native", false, linux).commands.some((command) => command.nativeImportFixture));
+  assert.ok(!planRustVerification(fixture.root, ["rust/crates/gateway-native/src/lib.rs"], "native", false, linux).commands.some((command) => command.nativeImportFixture));
   const wasm = planRustVerification(fixture.root, ["rust/crates/gateway-core/src/lib.rs"], "wasm", false, darwin);
   assert.ok(!wasm.commands.some((command) => command.argv.includes("native-import-fixture")));
   assert.deepEqual(wasm.commands.at(-1)?.argv, ["worker-build", "--release", "--locked"]);
 });
 
-test("finite optimized-debug import selector runs exactly11 cases with8 prelaunch2 loopback1 offline and verified role artifacts", async () => {
+test("finite optimized-debug import selector runs exact19 cases through six fixed roles", async () => {
   const fixture = importFixture();
   const before = fixture.environment.CARGO_TARGET_DIR;
-  assert.equal(await executeDarwinNativeImportTests(fixture.cwd, fixture.environment, fixture.run), 11);
+  assert.equal(await executeDarwinNativeImportTests(fixture.cwd, fixture.environment, fixture.run), 19);
   assert.equal(fixture.environment.CARGO_TARGET_DIR, before);
-  assert.equal(fixture.payloads.length, 11);
+  assert.equal(fixture.payloads.length, 19);
   for (const [index, payload] of fixture.payloads.entries()) {
     const expected = NATIVE_IMPORT_CASES[index];
+    const role = requireNativeImportRole(expected.role);
+    const artifact = fixture.roles.find((item) => item.target.name === role.name);
+    assert.ok(artifact);
     assert.equal(payload.seconds, expected.seconds);
-    assert.ok(JSON.stringify(payload.argv).includes("--exact"));
     assert.ok(payload.argv.includes(expected.name) || JSON.stringify(payload.argv).includes(expected.name));
+    assert.ok(JSON.stringify(payload.argv).includes("--exact"));
     assert.ok(!("UNLISTED_CREDENTIAL_PROBE" in payload.environment));
-    if (expected.boundary === "prelaunch") assert.equal(payload.argv[0], "target" in expected ? fixture.policy.executable : fixture.library.executable);
+    if (expected.boundary === "prelaunch") assert.equal(payload.argv[0], artifact.executable);
     if (expected.boundary === "offline") assert.deepEqual(payload.argv.slice(0, 2), ["/usr/bin/sandbox-exec", "-f"]);
+    if (expected.boundary === "loopback") assert.notEqual(payload.argv[0], artifact.executable);
   }
   const compilation = fixture.calls.filter((command) => command.argv.includes("--message-format=json"));
-  assert.equal(compilation.length, 2);
-  assert.ok(
-    compilation.every(
-      (command) => command.argv[0] === "/usr/bin/sandbox-exec" && command.argv.includes("profile.test.opt-level=3") && !command.argv.includes("--release")
-    )
-  );
+  assert.equal(compilation.length, 5);
+  assert.ok(compilation.every((command) => command.argv[0] === "/usr/bin/sandbox-exec" && command.argv.includes("profile.test.opt-level=3") && command.argv.includes("profile.dev.opt-level=3") && !command.argv.includes("--release")));
+  assert.equal(NATIVE_IMPORT_CASES.filter((item) => item.role === "custody_identity").length, 6);
+  assert.equal(NATIVE_IMPORT_CHILDREN.import_owned_children.length, 1);
+  assert.equal(NATIVE_IMPORT_CHILDREN.import_flow_positive.length, 2);
+  assert.equal(NATIVE_IMPORT_CHILDREN.import_flow_negative.length, 2);
+  assert.throws(() => requireNativeImportRole("unknown"), /Unknown fixed/);
 });
 
-test("finite import selector refuses missing names, wrong optimized profile and failed cases without continuing", async () => {
-  for (const corrupt of ["inventory", "profile", "failure"] as const) {
+test("finite import selector fails closed for missing/duplicate names, roles and artifact identity", async () => {
+  for (const corrupt of ["inventory", "child", "duplicate-name", "missing-role", "duplicate", "profile", "feature", "package", "source", "kind", "hash", "failure"] as const) {
     const fixture = importFixture();
-    if (corrupt === "profile") fixture.library.profile.debug_assertions = false;
-    const run: CommandRunner = (command, environment) => {
-      if (corrupt === "inventory" && command.argv.includes("--list")) return Promise.resolve({ code: 0, stdout: "unrelated: test\n", stderr: "" });
-      if (corrupt === "failure" && command.ownedImportDriver) return Promise.resolve({ code: 7, stdout: "original failure retained", stderr: "" });
-      return fixture.run(command, environment);
+    if (corrupt === "profile") fixture.roles[0].profile.debug_assertions = false;
+    if (corrupt === "feature") fixture.roles[0].features = [];
+    if (corrupt === "package") fixture.roles[0].package_id += "wrong";
+    if (corrupt === "source") fixture.roles[0].target.src_path = fixture.roles[1].target.src_path;
+    if (corrupt === "kind") fixture.roles[0].target.kind = ["bin"];
+    const run: CommandRunner = async (command, environment) => {
+      if (corrupt === "failure" && command.ownedImportDriver) return { code: 7, stdout: "original failure retained", stderr: "" };
+      const result = await fixture.run(command, environment);
+      if (corrupt === "missing-role" && command.argv.includes("--no-run")) return { ...result, stdout: fixture.json([]) };
+      if (corrupt === "duplicate-name" && command.argv.includes("--list")) return { ...result, stdout: result.stdout + result.stdout.split("\n")[0] + "\n" };
+      if (corrupt === "inventory" && command.argv.includes("--list")) return { ...result, stdout: "unrelated: test\n" };
+      if (corrupt === "child" && command.argv.includes("--list")) return { ...result, stdout: result.stdout.replace(/.*controlled_async_writer_child: test\n/, "") };
+      if (corrupt === "duplicate" && command.argv.includes("--no-run")) return { ...result, stdout: fixture.json([fixture.roles[0], fixture.roles[0]]) };
+      if (corrupt === "hash" && command.argv.includes("--list")) writeFileSync(fixture.roles[0].executable, "changed artifact\n");
+      if (corrupt === "failure" && command.ownedImportDriver) return { code: 7, stdout: "original failure retained", stderr: "" };
+      return result;
     };
-    await assert.rejects(executeDarwinNativeImportTests(fixture.cwd, fixture.environment, run), /Missing exact|optimized-debug|failed \(7\)/);
+    await assert.rejects(executeDarwinNativeImportTests(fixture.cwd, fixture.environment, run), /fixed|Missing|duplicate|identity|optimized-debug|hash changed|failed \(7\)/);
     assert.equal(fixture.payloads.length, 0);
   }
 });

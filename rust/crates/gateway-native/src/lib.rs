@@ -6,8 +6,6 @@ pub mod connector_supervisor;
 #[cfg(unix)]
 mod daemon_startup;
 #[cfg(unix)]
-pub mod existing_account_import;
-#[cfg(unix)]
 pub mod live_bridge;
 #[cfg(unix)]
 pub mod managed_publication_http;

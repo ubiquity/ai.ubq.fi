@@ -1,2 +1,10 @@
 pub mod bootstrap;
+pub mod bootstrap_bound;
+pub mod epoch;
+pub mod generation_policy;
+pub mod identity_policy;
+pub mod owner_file_policy;
+pub mod peer_policy;
+pub mod session_policy;
+pub mod stopped_policy;
 pub mod wire;

@@ -1,0 +1,28 @@
+[package]
+name = "gateway-native-import-actor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+native-import-fixture = ["gateway-native-import-context/native-import-fixture", "gateway-native-import-publication-http/native-import-fixture", "gateway-native-import-request/native-import-fixture", "gateway-native-import-store/native-import-fixture", "gateway-native-import-validation/native-import-fixture", "gateway-authority/native-import-fixture"]
+
+[dependencies]
+gateway-auth-native-proof.workspace = true
+gateway-authority.workspace = true
+gateway-authority-contracts.workspace = true
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
+gateway-native-connector.workspace = true
+gateway-native-custody-io.workspace = true
+gateway-native-import-context = { path = "../gateway-native-import-context" }
+gateway-native-import-publication-http = { path = "../gateway-native-import-publication-http" }
+gateway-native-import-request = { path = "../gateway-native-import-request" }
+gateway-native-import-source.workspace = true
+gateway-native-import-store = { path = "../gateway-native-import-store" }
+gateway-native-import-validation = { path = "../gateway-native-import-validation" }
+gateway-source.workspace = true
+
+[lints]
+workspace = true

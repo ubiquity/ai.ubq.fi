@@ -7,9 +7,11 @@ publish.workspace = true
 
 [features]
 default = []
-native-import-fixture = ["gateway-authority/native-import-fixture", "gateway-native-http-admission/native-import-fixture"]
+native-import-fixture = ["gateway-authority/native-import-fixture", "gateway-native-http-admission/native-import-fixture", "gateway-native-import-actor/native-import-fixture"]
 
 [dependencies]
+gateway-native-import-actor = { path = "../gateway-native-import-actor" }
+gateway-native-owner-inspector = { path = "../gateway-native-owner-inspector" }
 gateway-native-daemon-config.workspace = true
 gateway-native-http-admission.workspace = true
 gateway-authority-actor-records.workspace = true
