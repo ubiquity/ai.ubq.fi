@@ -2,6 +2,7 @@
 use gateway_chat_normalization::normalized::normalize_chat_messages;
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_prompt_cache::capability::validate_known_unsupported_prompt_cache;
+use gateway_prompt_cache::profile::CODEX_PROVIDER;
 use gateway_responses_normalization::normalized::normalize_responses_input;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
@@ -16,15 +17,14 @@ fn capabilities(controls: Value) -> Value {
     for (key, value) in controls.as_object().unwrap() {
         record[key] = value.clone();
     }
-    json!({"version":1,"providers":[{"id":prompt_cache::CODEX_PROVIDER,"controls":record}]})
+    json!({"version":1,"providers":[{"id":CODEX_PROVIDER,"controls":record}]})
 }
 fn param(error: &SourceRequestError) -> String {
-    source::string(
-        &source::member(&source::member(error.body(), "error").unwrap(), "param").unwrap(),
-    )
-    .unwrap()
-    .try_utf8()
-    .unwrap()
+    let wire = SourceJson::parse(error.body().as_str()).unwrap();
+    source::string(&source::member(&source::member(&wire, "error").unwrap(), "param").unwrap())
+        .unwrap()
+        .try_utf8()
+        .unwrap()
 }
 fn check(
     model: &JsString16,
@@ -51,7 +51,8 @@ fn false_capability_preserves_lone_model_and_original_payload() -> TestResult {
         .ok_or("expected fixture error")?;
     assert_eq!(param(&error), "prompt_cache_key");
     assert_eq!(body, before);
-    let actual = source::member(error.body(), "error").ok_or("missing fixture value")?;
+    let wire = SourceJson::parse(error.body().as_str())?;
+    let actual = source::member(&wire, "error").ok_or("missing fixture value")?;
     let message =
         source::string(&source::member(&actual, "message").ok_or("missing fixture value")?)
             .ok_or("missing fixture value")?;
@@ -74,7 +75,7 @@ fn missing_other_provider_and_omitted_controls_remain_unknown() {
             json!({"version":1,"providers":[{"id":"other","controls":{"source":"catalog","verified_at_ms":1,"explicit_breakpoints":false}}]}),
         ),
         Some(capabilities(json!({}))),
-        Some(json!({"version":1,"providers":[{"id":prompt_cache::CODEX_PROVIDER}]})),
+        Some(json!({"version":1,"providers":[{"id":CODEX_PROVIDER}]})),
     ] {
         check(&model, metadata.as_ref(), &body, &[], "input").unwrap();
     }
@@ -185,8 +186,9 @@ fn legacy_scalar_wrapper_delegates_without_error_envelope_change() {
         "input",
     )
     .unwrap_err();
+    let wire = SourceJson::parse(source.body().as_str()).unwrap();
     assert_eq!(
-        source.body(),
+        &wire,
         &SourceJson::from_serializable(&scalar.envelope).unwrap()
     );
 }

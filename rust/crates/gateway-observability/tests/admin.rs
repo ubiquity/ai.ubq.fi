@@ -5,9 +5,9 @@ use gateway_core::state::StoredRecord;
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_observability::{ObservabilityRuntime, api::*};
 use gateway_observability_contracts::{host_types::*, types::ObservabilityHost};
+use gateway_observability_test_support::runtime::{Host, Memory, run};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
-use support::{Host, Memory, run};
 
 fn key(parts: Value) -> RecordKey {
     TupleKey::from_json_parts(parts.as_array().unwrap())

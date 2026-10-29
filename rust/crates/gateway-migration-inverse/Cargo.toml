@@ -9,6 +9,7 @@ publish.workspace = true
 gateway-authority-native-custody = { path = "../gateway-authority-native-custody" }
 gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }
 gateway-auth-native-protocol = { path = "../gateway-auth-native-protocol" }
+gateway-auth-native-wire.workspace = true
 gateway-auth-passkeys = { path = "../gateway-auth-passkeys" }
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }

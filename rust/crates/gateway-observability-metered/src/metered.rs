@@ -1,6 +1,6 @@
 //! Source metered-quota.ts monitoring only; this never authorizes a paid request.
 use crate::store;
-use gateway_capacity_projection::scalars::is_record;
+use gateway_capacity_projection::scalars::{is_record, safe_i64};
 use gateway_core::{state::AuthorityStore, state::RecordMutation};
 use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{data, types::ObservabilityHost};
@@ -20,6 +20,21 @@ fn safe(v: &Value) -> bool {
 fn counter(v: &Value) -> bool {
     safe(v) && v.as_f64().is_some_and(|n| n >= 0.0)
 }
+pub fn valid_balance_sample(v: &Value) -> bool {
+    v["v"] == 1
+        && safe_i64(&v["bucket_start_at_ms"]).is_some()
+        && safe_i64(&v["observed_at_ms"]).is_some()
+        && safe(&v["balance_quota"])
+        && safe(&v["baseline_quota"])
+        && safe_i64(&v["quota_per_credit"]).is_some_and(|n| n > 0)
+        && v.get("remaining_percent")
+            .is_some_and(|v| v.is_null() || v.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0))
+        && v.get("unlimited_quota").is_none_or(Value::is_boolean)
+        && ["total_available", "total_granted", "total_used"]
+            .iter()
+            .all(|f| v.get(f).is_none_or(|v| v.is_null() || safe(v)))
+}
+
 pub fn valid_state(v: &Value) -> bool {
     is_record(v)
         && ["current_balance_quota", "post_refill_baseline_quota"]
@@ -370,7 +385,7 @@ pub async fn balance_sample<S: AuthorityStore, H: ObservabilityHost>(
     for _ in 0..3 {
         let row = store.read(&key).await?;
         if data::value(row.as_ref(), at)?
-            .filter(|v| crate::api::valid_balance_sample(v))
+            .filter(|v| valid_balance_sample(v))
             .is_some_and(|v| v["observed_at_ms"].as_f64().is_some_and(|n| n >= at as f64))
         {
             return Ok(());

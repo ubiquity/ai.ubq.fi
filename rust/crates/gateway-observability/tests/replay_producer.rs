@@ -18,13 +18,13 @@ use gateway_observability_replay_observation::{
 };
 use gateway_observability_replay_read::duplicate::PersistResult;
 use gateway_observability_replay_records::accounting::RetentionLimits;
+use gateway_observability_test_support::runtime::{Host, Memory, run};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
 use serde_json::Value;
 use std::{cell::Cell, cell::RefCell, collections::BTreeMap, rc::Rc};
-use support::{Host, Memory, run};
 #[derive(Clone)]
 struct CaptureHost {
     clock: Host,

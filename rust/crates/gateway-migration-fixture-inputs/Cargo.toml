@@ -23,6 +23,7 @@ serde_json.workspace = true
 workspace = true
 
 [dependencies]
+gateway-admin-runtime-contracts.workspace = true
 gateway-admin-contracts = { path = "../gateway-admin-contracts" }
 gateway-admin-runtime = { path = "../gateway-admin-runtime" }
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }

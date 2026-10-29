@@ -10,34 +10,17 @@ use gateway_observability_capacity_events::remote_capacity::MAX_BODY_BYTES;
 use gateway_observability_contracts::{
     data, query, query::ObservationRead, types::ObservabilityHost,
 };
+use gateway_observability_metered::metered::valid_balance_sample;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 const HOUR: i64 = 3_600_000;
-fn signed_safe(v: &Value) -> bool {
-    v.as_f64()
-        .is_some_and(|n| n.is_finite() && n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0)
-}
 pub fn valid_usage_rollup(v: &Value) -> bool {
     gateway_source::source_json::SourceJson::from_serializable(v).is_ok_and(|document| {
         gateway_observability_ledger::records::valid_usage_rollup_source(&document)
     })
 }
 
-pub fn valid_balance_sample(v: &Value) -> bool {
-    v["v"] == 1
-        && safe_i64(&v["bucket_start_at_ms"]).is_some()
-        && safe_i64(&v["observed_at_ms"]).is_some()
-        && signed_safe(&v["balance_quota"])
-        && signed_safe(&v["baseline_quota"])
-        && safe_i64(&v["quota_per_credit"]).is_some_and(|n| n > 0)
-        && v.get("remaining_percent")
-            .is_some_and(|v| v.is_null() || v.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0))
-        && v.get("unlimited_quota").is_none_or(Value::is_boolean)
-        && ["total_available", "total_granted", "total_used"]
-            .iter()
-            .all(|f| v.get(f).is_none_or(|v| v.is_null() || signed_safe(v)))
-}
 pub fn resample_balance(samples: &[Value], bucket: i64, limit: usize) -> Vec<Value> {
     if bucket <= 0 || limit == 0 {
         return Vec::new();

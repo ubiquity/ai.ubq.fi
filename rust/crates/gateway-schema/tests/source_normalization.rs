@@ -81,7 +81,8 @@ fn source_normalization_matches_pinned_bun_utf16_oracles() -> TestResult {
                 source::object(fields)?
             }
             Err(error) => {
-                let error = source::member(error.body(), "error").ok_or("missing fixture value")?;
+                let wire = SourceJson::parse(error.body().as_str())?;
+                let error = source::member(&wire, "error").ok_or("missing fixture value")?;
                 let mut fields = vec![
                     ("ok", raw("false")),
                     (
@@ -142,7 +143,8 @@ fn envelope_order_matches_source_max_output_parallel_then_max_tool() {
         let error = request
             .validate_fields(&RequestExtensions::default())
             .unwrap_err();
-        let body = source::member(error.body(), "error").unwrap();
+        let wire = SourceJson::parse(error.body().as_str()).unwrap();
+        let body = source::member(&wire, "error").unwrap();
         assert_eq!(
             source::string(&source::member(&body, "param").unwrap()).unwrap(),
             JsString16::from_utf8(expected)
@@ -181,7 +183,7 @@ fn reasoning_keeps_open_utf16_tiers_and_opaque_keys() {
         .reasoning()
         .unwrap_err();
     same(
-        error.body(),
+        &SourceJson::parse(error.body().as_str()).unwrap(),
         r#"{"error":{"message":"reasoning.effort must be a string","type":"invalid_request_error","code":"invalid_request_error","param":"reasoning"}}"#,
     );
 }
@@ -196,12 +198,12 @@ fn public_error_factory_and_scalar_lift_keep_exact_existing_envelope() {
     );
     assert_eq!(error.status, 422);
     same(
-        error.body(),
+        &SourceJson::parse(error.body().as_str()).unwrap(),
         r#"{"error":{"message":"\ud800","type":"existing_type","code":"existing_code","param":"\udfff"}}"#,
     );
     let null = SourceRequestError::new(409, "conflict", "server_error", None, Some(None));
     same(
-        null.body(),
+        &SourceJson::parse(null.body().as_str()).unwrap(),
         r#"{"error":{"message":"conflict","type":"server_error","param":null}}"#,
     );
     let scalar = GatewayError::new(503, "busy", Some("capacity"))
@@ -210,5 +212,8 @@ fn public_error_factory_and_scalar_lift_keep_exact_existing_envelope() {
     let expected = SourceJson::from_serializable(&scalar.envelope).unwrap();
     let lifted = SourceRequestError::from_gateway(scalar);
     assert_eq!(lifted.status, 503);
-    assert_eq!(lifted.body(), &expected);
+    assert_eq!(
+        &SourceJson::parse(lifted.body().as_str()).unwrap(),
+        &expected
+    );
 }

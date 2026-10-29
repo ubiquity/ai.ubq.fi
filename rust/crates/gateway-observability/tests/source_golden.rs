@@ -85,7 +85,9 @@ fn frozen_typescript_source_parser_and_projection_goldens() {
                 input["complete"].as_bool().unwrap(),
             ))
             .unwrap(),
-            "balance_valid" => json!(api::valid_balance_sample(input)),
+            "balance_valid" => {
+                json!(gateway_observability_metered::metered::valid_balance_sample(input))
+            }
             "balance_resample" => json!(api::resample_balance(
                 input["samples"].as_array().unwrap(),
                 input["bucket"].as_i64().unwrap(),

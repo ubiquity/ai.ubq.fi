@@ -1,7 +1,7 @@
 //! Retained v3 terminal consistency only, never current authorization or a lease.
 use super::DiskMap;
 use gateway_auth_native_contracts::native_import::NativeImportKind;
-use gateway_auth_native_protocol::native_import::publication::data::ImportPublicationDataV1;
+use gateway_auth_native_wire::publication_data::ImportPublicationDataV1;
 use gateway_core::source_control::decode_source_control_record;
 use gateway_core::state::StoredRecord;
 use gateway_kv_codec::key::RecordKey;

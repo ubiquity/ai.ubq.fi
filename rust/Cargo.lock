@@ -3442,6 +3442,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-contracts",
  "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-credentials",
@@ -3543,6 +3544,7 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-native-contracts",
  "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
  "gateway-auth-passkeys",
  "gateway-auth-primitives",
  "gateway-authority",
@@ -3575,6 +3577,7 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-native-contracts",
  "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
  "gateway-auth-passkeys",
  "gateway-auth-primitives",
  "gateway-authority",
@@ -4315,6 +4318,7 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-credentials",
+ "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-capacity",
@@ -4503,6 +4507,7 @@ dependencies = [
 name = "gateway-observability-metered"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "gateway-capacity-projection",
  "gateway-contracts",
  "gateway-core",

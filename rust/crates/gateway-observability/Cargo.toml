@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-observability-metered.workspace = true
 gateway-observability-control = { workspace = true }
 gateway-observability-capacity = { workspace = true }
 gateway-observability-capacity-events = { workspace = true }
@@ -66,6 +67,7 @@ gateway-claude-policy = { path = "../gateway-claude-policy" }
 gateway-claude-roster = { path = "../gateway-claude-roster" }
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-passport-contracts.workspace = true
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
