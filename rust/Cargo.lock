@@ -5386,6 +5386,7 @@ dependencies = [
  "gateway-worker-storage",
  "gateway-worker-stream",
  "gateway-worker-web",
+ "gateway-worker-wire-observation",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -5568,6 +5569,10 @@ dependencies = [
  "serde_json",
  "worker",
 ]
+
+[[package]]
+name = "gateway-worker-wire-observation"
+version = "0.1.0"
 
 [[package]]
 name = "generic-array"

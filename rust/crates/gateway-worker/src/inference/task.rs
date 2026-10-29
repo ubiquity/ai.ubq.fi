@@ -1,11 +1,12 @@
 //! Closed actual request execution. A task is not admission or semantic proof.
 use super::{Inference, OwnedRequest, ResponseResult, late_failure};
-use crate::{inference_capture::Capture, inference_head::HeadState};
+use crate::inference_capture::Capture;
 use futures_util::{Stream, future::poll_fn};
-use gateway_source::error::GatewayError;
 use gateway_contracts::lifecycle::TransportObservation;
+use gateway_source::error::GatewayError;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
+use gateway_worker_wire_observation::head::HeadState;
 use std::{
     cell::Cell,
     future::Future,

@@ -92,6 +92,7 @@ gateway-admin-kernel = { workspace = true }
 gateway-wait-observation = { workspace = true }
 gateway-worker-http-body = { workspace = true }
 gateway-worker-web = { workspace = true }
+gateway-worker-wire-observation = { workspace = true }
 gateway-worker-platform = { workspace = true }
 gateway-worker-storage = { workspace = true }
 gateway-decision-protocol = { workspace = true }

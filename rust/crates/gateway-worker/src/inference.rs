@@ -29,6 +29,7 @@ use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::{body, protocol::correlation};
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
+use gateway_worker_wire_observation::head::HeadState;
 use std::{cell::RefCell, rc::Rc};
 use worker::{Context, Method, Request, Response};
 use {crate::routing_host, gateway_schema_values::request::RequestSurface};
@@ -391,7 +392,7 @@ struct Inference<'a> {
     context: Rc<Context>,
     capture: &'a Rc<Capture>,
     responses: bool,
-    head: Rc<crate::inference_head::HeadState>,
+    head: Rc<HeadState>,
 }
 impl Inference<'_> {
     async fn execute(

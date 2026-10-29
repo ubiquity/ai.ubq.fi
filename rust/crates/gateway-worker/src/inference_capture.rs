@@ -18,6 +18,7 @@ use gateway_source::{
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
+use gateway_worker_wire_observation::head::HeadState;
 use std::{
     cell::{Cell, RefCell},
     pin::Pin,
@@ -38,7 +39,7 @@ pub struct Capture {
     terminal_request: RefCell<Option<TerminalRequest>>,
     provider_request_id: RefCell<Option<String>>,
     client: RefCell<ClientWire>,
-    head: RefCell<Option<Rc<crate::inference_head::HeadState>>>,
+    head: RefCell<Option<Rc<HeadState>>>,
     deferred_http: Cell<bool>,
     original_http_failure: RefCell<Option<SourceJson>>,
 }
@@ -346,7 +347,7 @@ impl Capture {
     pub fn correlate(&self, provider_request_id: Option<&str>) {
         *self.provider_request_id.borrow_mut() = provider_request_id.map(str::to_owned);
     }
-    pub(crate) fn bind_head(&self, head: Rc<crate::inference_head::HeadState>) {
+    pub(crate) fn bind_head(&self, head: Rc<HeadState>) {
         *self.head.borrow_mut() = Some(head);
     }
     fn expects_provisional_stream(&self) -> bool {

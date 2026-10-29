@@ -225,6 +225,7 @@ members = [
   "crates/gateway-worker-authority-binding",
   "crates/gateway-worker-http-body",
   "crates/gateway-worker-web",
+  "crates/gateway-worker-wire-observation",
   "crates/gateway-worker-platform",
   "crates/gateway-worker-storage",
   "crates/gateway-worker-stream",
@@ -459,6 +460,7 @@ gateway-live-runtime = { path = "crates/gateway-live-runtime" }
 gateway-wait-observation = { path = "crates/gateway-wait-observation" }
 gateway-worker-http-body = { path = "crates/gateway-worker-http-body" }
 gateway-worker-web = { path = "crates/gateway-worker-web" }
+gateway-worker-wire-observation = { path = "crates/gateway-worker-wire-observation" }
 gateway-worker-platform = { path = "crates/gateway-worker-platform" }
 gateway-worker-storage = { path = "crates/gateway-worker-storage" }
 gateway-worker-agent-messages = { path = "crates/gateway-worker-agent-messages" }
