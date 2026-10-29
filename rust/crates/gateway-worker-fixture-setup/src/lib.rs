@@ -1,5 +1,7 @@
 //! Fixture-only authority initialization and configuration publication.
 //! HTTP protocol composition stays in gateway-worker-fixture.
+pub mod native_config;
+pub mod runtime_configuration;
 
 use gateway_auth_credentials::{
     provider_credentials::CodexSourceAccount, provider_credentials::CodexSourcePool,

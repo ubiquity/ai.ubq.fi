@@ -108,7 +108,7 @@ pub async fn publication(
         gateway_auth_native_wire::publication_command::ImportPublicationCommandData::parse(bytes)?;
     let transport = native.transport()?;
     let headers = Headers::read(request)?;
-    let incoming = Incoming(Cancellation::from_request(request)?);
+    let incoming = Incoming(std::rc::Rc::new(Cancellation::from_request(request)?));
     let replay = StoreNonceAuthority::new(store);
     let peer = NativeAuthenticator::new(&transport.identity, &replay)
         .authenticate(

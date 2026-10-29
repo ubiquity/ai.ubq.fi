@@ -1,24 +1,16 @@
 //! Test-only constructor composition. The actual application and coordination
 //! authority are gateway-worker; no request handler, ledger or upstream is copied.
-mod native_callback;
 mod native_carrier;
-mod native_import;
 use gateway_auth_native_contracts::transport::NativeCapability;
 use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
-use gateway_publication_policy::control_publication::ConfiguredPaidInputs;
 use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_source::error::GatewayError;
+use gateway_worker_fixture_setup::native_config::{inputs, now};
 use gateway_worker_fixture_setup::{initialize, invalid};
+use gateway_worker_native_fixture::{native_callback, native_import};
 use std::collections::BTreeSet;
 use worker::{Context, Env, Request};
 
-pub const SURPLUS_SECRET: &str = "fixture-matrix-surplus";
-pub const OPENLUX_DISCOVERY_SECRET: &str = "fixture-matrix-openlux-discovery";
-pub const OPENLUX_SPEND_SECRET: &str = "fixture-matrix-openlux-spend";
-
-fn now() -> i64 {
-    gateway_worker_storage::store::now_ms().unwrap_or(i64::MAX)
-}
 fn identity() -> Result<NativeTransportIdentity, GatewayError> {
     NativeTransportIdentity::new(
         "fixture-matrix-key".into(),
@@ -26,15 +18,6 @@ fn identity() -> Result<NativeTransportIdentity, GatewayError> {
         "fixture-matrix-epoch".into(),
         [31; 32],
         BTreeSet::from([NativeCapability::ConfigurationPublish]),
-    )
-}
-fn inputs() -> Result<ConfiguredPaidInputs, GatewayError> {
-    use gateway_auth_primitives::crypto::Secret;
-    ConfiguredPaidInputs::new(
-        Some(Secret::new(SURPLUS_SECRET.into())),
-        Some(Secret::new(OPENLUX_DISCOVERY_SECRET.into())),
-        Some(Secret::new(OPENLUX_SPEND_SECRET.into())),
-        serde_json::json!({"fixture":"runtime-matrix-v1"}),
     )
 }
 
@@ -46,6 +29,14 @@ pub async fn fetch(
     env: Env,
     context: Context,
 ) -> worker::Result<gateway_worker_web::response::GatewayResponse> {
+    #[cfg(not(feature = "stream-drop-fixture"))]
+    if env
+        .var("UOS_MATRIX_SCENARIO")
+        .ok()
+        .is_some_and(|v| v.to_string() == "native-source-external")
+    {
+        return gateway_worker_native_external_fixture::fetch(request, env, context).await;
+    }
     if env.var("UOS_MATRIX_SCENARIO").ok().is_some_and(|v| {
         matches!(
             v.to_string().as_str(),

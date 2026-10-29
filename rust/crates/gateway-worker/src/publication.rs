@@ -1,8 +1,8 @@
 //! Raw adapter for the fixed private route; all publication policy is shared.
 use gateway_auth_native_wire::native_read::NATIVE_MAX_BODY_BYTES;
-use gateway_source::error::GatewayError;
 use gateway_publication_policy::protocol::{OwnedNativeAuthHeaders, PublicationRequest};
 use gateway_publication_transport::transport::PublicationReceiver;
+use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body::request_bytes;
 use gateway_worker_platform::headers::{HeaderLimits, bounded_headers};
@@ -13,6 +13,7 @@ pub async fn handle(
     env: &Env,
     receiver: Option<&PublicationReceiver>,
     native: &crate::native_host::NativeBindings,
+    request_id: &str,
 ) -> Result<Response, GatewayError> {
     bounded_headers(
         &request,
@@ -30,6 +31,15 @@ pub async fn handle(
     #[derive(serde::Deserialize)]
     struct Operation {
         operation: String,
+    }
+    if serde_json::from_slice::<Operation>(&raw_body)
+        .ok()
+        .is_some_and(|value| value.operation == "source_external_access_publish")
+    {
+        return crate::native_authority::source_external_publication(
+            &request, env, native, &store, &raw_body, request_id,
+        )
+        .await;
     }
     if serde_json::from_slice::<Operation>(&raw_body)
         .ok()

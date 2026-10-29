@@ -381,7 +381,7 @@ async fn setup(
     .await?;
     Ok(encoded)
 }
-pub(super) async fn fetch(
+pub async fn fetch(
     request: Request,
     env: Env,
     context: Context,

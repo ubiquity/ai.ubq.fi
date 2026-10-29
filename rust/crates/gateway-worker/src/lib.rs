@@ -110,10 +110,11 @@ pub async fn fetch_with_bindings(
         return Ok(response.into());
     }
     if request.path() == gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH {
-        let mut response = match publication::handle(request, &env, receiver, &native).await {
-            Ok(response) => response,
-            Err(error) => error_response(error)?,
-        };
+        let mut response =
+            match publication::handle(request, &env, receiver, &native, &request_id).await {
+                Ok(response) => response,
+                Err(error) => error_response(error)?,
+            };
         response.headers_mut().set("Cache-Control", "no-store")?;
         response
             .headers_mut()

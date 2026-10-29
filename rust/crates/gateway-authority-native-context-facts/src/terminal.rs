@@ -85,11 +85,17 @@ impl<S: AuthorityStore, C: NativeRenewalCancellation> SourceNativeContextFactsRe
         }
         let account = pool.accounts.get(slot).ok_or_else(fail)?;
         let native = account.native_owner.as_ref().ok_or_else(fail)?;
-        let physical = native
-            .managed_source
-            .as_ref()
-            .filter(|v| v.v == MANAGED_NATIVE_SOURCE_VERSION)
-            .ok_or_else(fail)?;
+        let external = native.managed_source.is_none() && native.external_user_id.is_some();
+        let physical = if external {
+            native.generation_hash.as_str()
+        } else {
+            &native
+                .managed_source
+                .as_ref()
+                .filter(|v| v.v == MANAGED_NATIVE_SOURCE_VERSION)
+                .ok_or_else(fail)?
+                .generation_hash
+        };
         let id = account.identity();
         let expiry = codex_access_expiry_ms(&account.access_token).ok_or_else(fail)?;
         self.cache.now = self.time(self.cache.now)?;
@@ -97,13 +103,13 @@ impl<S: AuthorityStore, C: NativeRenewalCancellation> SourceNativeContextFactsRe
         if self.cache.now >= action.deadline_ms
             || expiry <= self.cache.now.saturating_add(120_000) as f64
             || native.codex_home != self.registered.registered_home()
-            || native.external_user_id.is_some()
+            || (!external && native.external_user_id.is_some())
             || !account.refresh_token.expose().is_empty()
             || id.routing_account_hash.0 != action.fence.account_id_hash
             || id.credential_version.0 != terminal.credential_version
             || id.native_generation_hash != terminal.access_generation
             || native.generation_hash != terminal.access_generation
-            || physical.generation_hash != terminal.native_source_generation
+            || physical != terminal.native_source_generation
         {
             return Err(fail());
         }

@@ -3,24 +3,20 @@ pub(crate) mod import_dispatch;
 use crate::host::PlatformClock;
 use crate::host::PlatformTokens;
 use crate::native_host::NativeBindings;
-use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
+use gateway_auth_native_contracts::transport::NativeCapability;
 use gateway_auth_native_proof::native_auth::NativeAuthenticator;
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::{
-    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_PUBLICATION_PATH,
-    NATIVE_RENEWAL_AUTHORITY_PATH, NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER,
-    NATIVE_VERSION_HEADER,
+    NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH,
 };
 use gateway_authority::native_control::receiver::NativeRenewalAuthority;
 use gateway_authority::store::Authority;
-use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_native_authority_request::NativeRenewalAuthorityRequest as RenewalRequest;
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body::request_bytes;
 use gateway_worker_platform::cancellation::Cancellation;
-use gateway_worker_platform::headers::HeaderLimits;
-use gateway_worker_platform::headers::bounded_headers;
+use gateway_worker_platform::native_authority_headers::{Headers, Incoming, invalid, response};
 use gateway_worker_storage::store::now_ms;
 use serde::Serialize;
 use worker::{Env, Method, Request, Response};
@@ -28,65 +24,6 @@ use worker::{Env, Method, Request, Response};
 pub fn is_path(path: &str) -> bool {
     path == NATIVE_RENEWAL_AUTHORITY_PATH
         || path == gateway_auth_native_proof::native_live::NATIVE_LIVE_AUTHORITY_PATH
-}
-struct Incoming(std::rc::Rc<Cancellation>);
-impl NativeRenewalCancellation for Incoming {
-    fn cancelled(&self) -> bool {
-        self.0.signal().aborted()
-    }
-}
-struct Headers {
-    version: String,
-    key_id: String,
-    time_ms: String,
-    nonce: String,
-    mac: String,
-}
-impl Headers {
-    fn read(request: &Request) -> Result<Self, GatewayError> {
-        let values = bounded_headers(
-            request,
-            HeaderLimits {
-                total_bytes: 16_384,
-                value_bytes: 256,
-                fields: 2000,
-            },
-        )?;
-        let one = |name: &str| {
-            let entries = values
-                .iter()
-                .filter(|(key, _)| key.eq_ignore_ascii_case(name))
-                .collect::<Vec<_>>();
-            if entries.len() != 1 {
-                Err(invalid())
-            } else {
-                Ok(entries[0].1.clone())
-            }
-        };
-        Ok(Self {
-            version: one(NATIVE_VERSION_HEADER)?,
-            key_id: one(NATIVE_KEY_HEADER)?,
-            time_ms: one(NATIVE_TIME_HEADER)?,
-            nonce: one(NATIVE_NONCE_HEADER)?,
-            mac: one(NATIVE_MAC_HEADER)?,
-        })
-    }
-    fn borrowed(&self) -> NativeAuthHeaders<'_> {
-        NativeAuthHeaders {
-            version: &self.version,
-            key_id: &self.key_id,
-            time_ms: &self.time_ms,
-            nonce: &self.nonce,
-            mac: &self.mac,
-        }
-    }
-}
-fn invalid() -> GatewayError {
-    GatewayError::new(
-        400,
-        "Native authority request is invalid",
-        Some("native_authority_invalid"),
-    )
 }
 fn body<T: Serialize>(value: &T) -> Result<Vec<u8>, GatewayError> {
     serde_json::to_vec(value).map_err(|_| invalid())
@@ -96,22 +33,6 @@ fn result<T: Serialize>(response: Result<T, GatewayError>) -> Result<(u16, Vec<u
         Ok(value) => Ok((200, body(&value)?)),
         Err(error) => Ok((error.status, body(&error.envelope)?)),
     }
-}
-fn response(status: u16, body: Vec<u8>, mac: String) -> Result<Response, GatewayError> {
-    let mut response = Response::from_bytes(body)
-        .map_err(|_| invalid())?
-        .with_status(status);
-    for (key, value) in [
-        ("Content-Type", "application/json"),
-        ("Cache-Control", "no-store"),
-        (NATIVE_RESPONSE_MAC_HEADER, &mac),
-    ] {
-        response
-            .headers_mut()
-            .set(key, value)
-            .map_err(|_| invalid())?;
-    }
-    Ok(response)
 }
 
 pub async fn handle(
@@ -328,6 +249,68 @@ pub async fn managed_publication(
             }
         });
     let (status, output) = result(applied)?;
+    let mac =
+        transport
+            .identity
+            .sign_publication_response(&headers.nonce, bytes, status, &output)?;
+    response(status, output, mac)
+}
+
+pub async fn source_external_publication(
+    request: &Request,
+    env: &Env,
+    native: &NativeBindings,
+    store: &RemoteAuthorityStore,
+    bytes: &[u8],
+    request_id: &str,
+) -> Result<Response, GatewayError> {
+    if request.method() != Method::Post || bytes.len() > 65_536 {
+        return Err(invalid());
+    }
+    let transport = native.transport()?;
+    let headers = Headers::read(request)?;
+    let cancellation = std::rc::Rc::new(Cancellation::from_request(request)?);
+    let incoming = Incoming(cancellation.clone());
+    let replay = StoreNonceAuthority::new(store);
+    let proof = NativeAuthenticator::new(&transport.identity, &replay)
+        .authenticate(
+            NATIVE_PUBLICATION_PATH,
+            headers.borrowed(),
+            bytes,
+            now_ms()?,
+        )
+        .await?;
+    let parsed =
+        gateway_native_external_publication_wire::request::SourceExternalAccessRequest::parse(
+            bytes,
+        )?;
+    let owners = native.renewal_owners()?;
+    let owner = owners.for_source_publication(&parsed.native_owner_id)?;
+    let (_, original) = crate::runtime::original_auth_request(request, &request.path())?;
+    let host = crate::host::PlatformHost {
+        cancellation,
+        store: store.clone(),
+        env: env.clone(),
+        native: native.clone(),
+        original,
+        request_id: gateway_contracts::identity::RequestId(request_id.into()),
+    };
+    let config = crate::host::auth_config(env);
+    let clock = PlatformClock;
+    let tokens = PlatformTokens;
+    let receiver = gateway_authority_native_external::SourceNativeExternalService::new(
+        store,
+        &tokens,
+        Some(&clock),
+        &host,
+        &config,
+        gateway_authority_native_external::SourceNativeExternalContext::configured(
+            &transport.identity,
+            owner,
+            &incoming,
+        ),
+    );
+    let (status, output) = result(receiver.publish_external(&proof, bytes).await)?;
     let mac =
         transport
             .identity
