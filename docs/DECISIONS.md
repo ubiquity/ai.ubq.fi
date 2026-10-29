@@ -12,6 +12,10 @@ Every new admin Claude capacity row carries `quota_source: "response_headers"` t
 
 Reason: pre-change IndexedDB snapshots could contain OAuth-derived values that the newer renderer mislabeled as response headers when the fresh fetch failed. The renderer now rejects that unproven current projection at the display boundary without rewriting the stored payload.
 
+## Native catalog compaction projection belongs to snapshot DATA - 2026-10-29
+
+The Rust port follows [fc97e130](https://github.com/ubiquity/ai.ubq.fi/commit/fc97e130c824748dff83f6811aa20af3abd46e0e) by keeping the complete pure native window and compaction projection in `gateway-model-snapshot::catalog_projection`. Publication selects the earlier valid source limit or shared compaction policy after window widening, and verified cache loads project before client ETag validation. Source chunks, integrity metadata and upstream ETags remain unchanged; unknown rich fields, UTF16 strings, reasoning tiers, the official unversioned model-list shape and forwarding declarations retain their existing semantics.
+
 ## Rust routing journals have one complete stored-DATA owner - 2026-10-28
 
 The complete routing journal schema, validated tuple-key serde, source codec, session key and expiry-aware reader belong to `gateway-routing-journal`. Ordinary public stored DATA serves all production readers and does not mint admission, currentness, paid, native or mutation authority. Reads retain source-control encoding/version checks, local-work then version-selected context decoding, complete nested serde and round-trip shape equality, request-id binding and original errors; no field-only reader substitutes.

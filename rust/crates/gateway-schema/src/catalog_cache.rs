@@ -2,6 +2,7 @@
 use crate::model_control as c;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use gateway_model_metadata::metadata::MetadataHint;
+use gateway_model_snapshot::catalog_projection::{Projection, project_native_catalog};
 use gateway_schema_values::scalar::sha256;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
@@ -137,57 +138,6 @@ pub fn decode_chunks(
     }
     String::from_utf8(bytes).ok()
 }
-pub fn widen_catalog_windows(
-    body: &str,
-    enrichment: &std::collections::BTreeMap<gateway_contracts::model::ModelId, MetadataHint>,
-) -> Option<String> {
-    let mut parsed = parse_catalog(body)?;
-    let mut changed = false;
-    let mut models = gateway_source::source_serialization::member(&parsed, "models")
-        .as_ref()
-        .and_then(gateway_source::source_serialization::array)?;
-    for model in &mut models {
-        let Some(id) = gateway_schema_values::source_view::model(model) else {
-            continue;
-        };
-        let Some(hint) = enrichment.get(&id) else {
-            continue;
-        };
-        let endpoint = gateway_schema_values::source_view::positive(
-            gateway_source::source_serialization::member(model, "context_window").as_ref(),
-        );
-        let ceiling = gateway_schema_values::source_view::positive(
-            gateway_source::source_serialization::member(model, "max_context_window").as_ref(),
-        );
-        let widest = [
-            endpoint,
-            ceiling,
-            hint.context_window_tokens,
-            hint.max_context_window_tokens,
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|n| *n > 0)
-        .max();
-        let Some(widest) = widest else {
-            continue;
-        };
-        if endpoint.is_none_or(|n| widest > n) {
-            c::set(model, "context_window", c::json(&widest));
-            changed = true;
-        }
-        if ceiling.is_none_or(|n| widest > n) {
-            c::set(model, "max_context_window", c::json(&widest));
-            changed = true;
-        }
-    }
-    if changed {
-        c::set(&mut parsed, "models", c::json(&models));
-        Some(source_stringify(&parsed))
-    } else {
-        None
-    }
-}
 pub struct CatalogIdentity<'a> {
     pub client_version: &'a str,
     pub auth_generation: &'a str,
@@ -201,17 +151,23 @@ pub fn prepare_catalog(
     fetched_at_ms: i64,
     enrichment: &std::collections::BTreeMap<gateway_contracts::model::ModelId, MetadataHint>,
 ) -> Result<PreparedCatalog, GatewayError> {
-    if gateway_model_snapshot::snapshot::parse_client_version(identity.client_version).is_none()
-        || parse_catalog(source_body).is_none()
+    let parsed = if gateway_model_snapshot::snapshot::parse_client_version(identity.client_version)
+        .is_some()
     {
+        parse_catalog(source_body)
+    } else {
+        None
+    };
+    let Some(parsed) = parsed else {
         return Err(GatewayError::new(
             502,
             "Codex upstream did not return a valid model catalog",
             Some("codex_catalog_unavailable"),
         ));
-    }
-    let body =
-        widen_catalog_windows(source_body, enrichment).unwrap_or_else(|| source_body.to_owned());
+    };
+    let body = project_native_catalog(&parsed, Projection::Publication(enrichment))?
+        .map(|value| value.as_str().to_owned())
+        .unwrap_or_else(|| source_body.to_owned());
     let compressed = gzip(&body)?;
     let source_compressed = gzip(source_body)?;
     let chunks = compressed

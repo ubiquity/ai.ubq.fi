@@ -9,6 +9,7 @@ use gateway_core::{
 use gateway_kv_codec::{
     key::RecordKey, tuple_key::KeyPart, tuple_key::ScalarKeyPart, tuple_key::TupleKey,
 };
+use gateway_model_snapshot::catalog_projection::{Projection, project_native_catalog};
 use gateway_model_snapshot::snapshot::{
     ModelSnapshot, SnapshotOverrides, compare_client_versions, normalize_snapshot,
 };
@@ -146,6 +147,11 @@ pub async fn load_catalog<S: AuthorityStore>(
     };
     let Some(parsed) = parse_catalog(&body) else {
         return Ok(None);
+    };
+    let projected = project_native_catalog(&parsed, Projection::VerifiedCache)?;
+    let (body, parsed) = match projected {
+        Some(parsed) => (parsed.as_str().to_owned(), parsed),
+        None => (body, parsed),
     };
     let source_body = if let Some(count) = metadata.source_chunk_count {
         if let Some(chunks) = chunks(store, &metadata, true, count).await? {
