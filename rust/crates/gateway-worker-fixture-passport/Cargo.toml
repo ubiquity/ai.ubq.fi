@@ -1,0 +1,18 @@
+[package]
+name = "gateway-worker-fixture-passport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-passport-contracts = { path = "../gateway-auth-passport-contracts" }
+gateway-source = { path = "../gateway-source" }
+gateway-worker-platform = { path = "../gateway-worker-platform" }
+gateway-worker-storage = { path = "../gateway-worker-storage" }
+worker.workspace = true

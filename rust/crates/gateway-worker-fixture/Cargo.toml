@@ -14,6 +14,14 @@ entrypoint = []
 stream-drop-fixture = ["entrypoint", "gateway-worker/fixture-stream-drop"]
 
 [dependencies]
+gateway-kv-codec = { path = "../gateway-kv-codec" }
+gateway-authority-native-managed = { path = "../gateway-authority-native-managed" }
+gateway-authority-native-lifecycle = { path = "../gateway-authority-native-lifecycle" }
+gateway-authority-native-preparation = { path = "../gateway-authority-native-preparation" }
+gateway-authority-actor-currentness = { path = "../gateway-authority-actor-currentness" }
+gateway-auth-passport-sessions = { path = "../gateway-auth-passport-sessions" }
+gateway-auth-native-protocol = { path = "../gateway-auth-native-protocol" }
+gateway-worker-fixture-passport = { path = "../gateway-worker-fixture-passport" }
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }

@@ -1,5 +1,6 @@
 //! Test-only constructor composition. The actual application and coordination
 //! authority are gateway-worker; no request handler, ledger or upstream is copied.
+mod native_callback;
 mod native_carrier;
 mod native_import;
 use gateway_auth_native_contracts::transport::NativeCapability;
@@ -45,6 +46,17 @@ pub async fn fetch(
     env: Env,
     context: Context,
 ) -> worker::Result<gateway_worker_web::response::GatewayResponse> {
+    if env.var("UOS_MATRIX_SCENARIO").ok().is_some_and(|v| {
+        matches!(
+            v.to_string().as_str(),
+            "native-callback-legacy"
+                | "native-callback-source"
+                | "native-callback-published"
+                | "native-callback-unknown"
+        )
+    }) {
+        return native_callback::fetch(request, env, context).await;
+    }
     if env
         .var("UOS_MATRIX_SCENARIO")
         .ok()
