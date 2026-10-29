@@ -20,7 +20,7 @@ impl<S: QueryStore, H: ObservabilityHost> ReplayRetention<'_, S, H> {
     pub(crate) async fn new_capture_index_publication(
         &self,
         binding: &NewCaptureIndex<'_>,
-        manifest: &replay_model::Manifest,
+        manifest: &model::Manifest,
         manifest_key: &RecordKey,
     ) -> Result<Option<IndexPublication>, GatewayError> {
         if !model::digest(binding.fingerprint) || !model::digest(binding.ciphertext_sha256) {

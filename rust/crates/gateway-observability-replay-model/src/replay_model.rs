@@ -66,7 +66,7 @@ pub fn optional_nonnull<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
 ) -> Result<Option<T>, D::Error> {
     T::deserialize(d).map(Some)
 }
-pub(crate) fn url_decode(s: &str) -> Result<Vec<u8>, GatewayError> {
+pub fn url_decode(s: &str) -> Result<Vec<u8>, GatewayError> {
     GeneralPurpose::new(
         &alphabet::URL_SAFE,
         GeneralPurposeConfig::new()
@@ -313,7 +313,7 @@ impl StatusDocument {
     }
 }
 /// Public base64url contains the unchanged core query payload, not its internal hexadecimal wrapper.
-pub(crate) fn wire_cursor(core: &str) -> Result<String, GatewayError> {
+pub fn wire_cursor(core: &str) -> Result<String, GatewayError> {
     let bytes = core
         .strip_prefix("query-v1:")
         .ok_or_else(|| data::error("Unsupported replay query cursor version"))?;
@@ -336,7 +336,7 @@ pub(crate) fn wire_cursor(core: &str) -> Result<String, GatewayError> {
     }
     Ok(token)
 }
-pub(crate) fn core_cursor(wire: &str) -> Result<String, GatewayError> {
+pub fn core_cursor(wire: &str) -> Result<String, GatewayError> {
     if !cursor_shape(wire) {
         return Err(data::invalid("Invalid replay export cursor"));
     }
