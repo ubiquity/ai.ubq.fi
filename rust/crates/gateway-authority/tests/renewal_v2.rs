@@ -301,6 +301,36 @@ fn live_renewal_v2_mints_from_actual_actor_without_inference_state_and_preserves
             )
             .is_err()
         );
+        // C3-CALLBACK-1: the original genuine legacy action still emits response1.
+        let original = body(action.action_ref(), "legacy-callback-operation");
+        let nonce = gateway_auth_primitives::crypto::base64url(&[84; 32]);
+        let callback = serde_json::to_vec(
+            &gateway_native_authority_request::NativeRenewalAuthorityRequest::Claim {
+                v: 1,
+                original_control_body_base64url: gateway_auth_primitives::crypto::base64url(
+                    &original,
+                ),
+                original_auth_headers: gateway_native_authority_request::OriginalControlHeaders {
+                    version: "1".into(),
+                    key_id: id.key_id().into(),
+                    time_ms: "1000000".into(),
+                    nonce: nonce.clone(),
+                    mac: id
+                        .sign(NATIVE_CONTROL_PATH, 1_000_000, &nonce, &original)
+                        .unwrap(),
+                },
+            },
+        )
+        .unwrap();
+        let replay = gateway_auth_native_protocol::native_replay::StoreNonceAuthority::new(&store);
+        let reply = gateway_authority_native_callback::execute_legacy(
+            &service, &id, &replay, &store, &callback,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(reply, gateway_native_authority_wire::renewal_response::NativeRenewalAuthorityResponse::Claim { v: 1, .. }));
+        assert_eq!(serde_json::to_value(&reply).unwrap()["v"], 1);
+        // End C3-CALLBACK-1 assertion extension.
         assert_eq!(host.fetches.load(Ordering::SeqCst), 0);
     });
 }

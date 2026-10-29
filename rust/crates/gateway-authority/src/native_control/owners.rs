@@ -11,8 +11,6 @@ use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_native_records::live::mapping_key;
 use gateway_authority_native_records::owner::RegisteredRenewalOwner;
-use gateway_authority_native_records::rows;
-use gateway_authority_native_records::rows::ActionRow;
 use gateway_authority_native_records::rows::fail;
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_authority_routing_selection::SelectionOperations;
@@ -225,88 +223,36 @@ impl RegisteredRenewalOwners {
         Err(fail())
     }
 
-    /// Only the stored server action chooses an owner; the wire carries no profile/home selector.
     pub async fn for_action<'a, S: AuthorityStore, I: TokenSource>(
         &'a self,
         authority: &Authority<S, I>,
         action_ref: &str,
     ) -> Result<&'a RegisteredRenewalOwner, GatewayError> {
-        crate::text(action_ref)?;
-        for _ in 0..3 {
-            let mut tx = authority.transaction(authority.fresh_time(0)?)?;
-            let action: ActionRow = tx
-                .read(&rows::key("action", action_ref))
-                .await?
-                .ok_or_else(fail)?;
-            if action.v != 2
-                || action.action_ref != action_ref
-                || action.fence.v
-                    != gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION
-            {
-                return Err(fail());
-            }
-            let owner = self
-                .account(
-                    &mut tx,
-                    &action.fence.account_id_hash,
-                    None,
-                    Some(&action.fence.native_owner_id),
-                )
-                .await?;
-            authority.fresh_time(tx.now)?;
-            if tx.commit().await? {
-                return Ok(owner);
-            }
-        }
-        Err(fail())
+        authority
+            .callback_owner_selector(&self.owners)
+            .legacy_action(action_ref)
+            .await
     }
-
-    /// Reverse callbacks resolve only the server operation+claim binding, never a request home.
     pub async fn for_operation<'a, S: AuthorityStore, I: TokenSource>(
         &'a self,
         authority: &Authority<S, I>,
         operation_id: &str,
         claim_ref: &str,
     ) -> Result<&'a RegisteredRenewalOwner, GatewayError> {
-        crate::text(operation_id)?;
-        crate::text(claim_ref)?;
-        for _ in 0..3 {
-            let mut tx = authority.transaction(authority.fresh_time(0)?)?;
-            let operation: rows::OperationRow = tx
-                .read(&rows::key("operation", operation_id))
-                .await?
-                .ok_or_else(fail)?;
-            if operation.v != 1
-                || operation.operation_id != operation_id
-                || operation.claim_ref != claim_ref
-            {
-                return Err(fail());
-            }
-            let action: ActionRow = tx
-                .read(&rows::key("action", &operation.action_ref))
-                .await?
-                .ok_or_else(fail)?;
-            if action.v != 2
-                || action.action_ref != operation.action_ref
-                || action.operation_id.as_deref() != Some(operation_id)
-                || action.fence.v
-                    != gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION
-            {
-                return Err(fail());
-            }
-            let owner = self
-                .account(
-                    &mut tx,
-                    &action.fence.account_id_hash,
-                    None,
-                    Some(&action.fence.native_owner_id),
-                )
-                .await?;
-            authority.fresh_time(tx.now)?;
-            if tx.commit().await? {
-                return Ok(owner);
-            }
-        }
-        Err(fail())
+        authority
+            .callback_owner_selector(&self.owners)
+            .legacy_operation(operation_id, claim_ref)
+            .await
+    }
+    pub async fn for_callback<'a, S: AuthorityStore, I: TokenSource>(
+        &'a self,
+        authority: &Authority<S, I>,
+        request: &gateway_native_authority_request::NativeRenewalAuthorityRequest,
+    ) -> Result<gateway_authority_native_callback_owner::SelectedCallbackOwner<'a>, GatewayError>
+    {
+        authority
+            .callback_owner_selector(&self.owners)
+            .callback(request)
+            .await
     }
 }

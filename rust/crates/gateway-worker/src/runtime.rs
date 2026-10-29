@@ -213,7 +213,7 @@ async fn durable_catalog(
     catalog_store::load_catalog(store, version, generation, now).await
 }
 
-fn original_auth_request(
+pub(crate) fn original_auth_request(
     request: &Request,
     path: &str,
 ) -> Result<(worker::Url, AuthRequest), GatewayError> {

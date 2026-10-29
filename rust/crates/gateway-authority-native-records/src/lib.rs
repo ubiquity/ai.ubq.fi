@@ -8,3 +8,5 @@ pub mod owner;
 mod required;
 pub mod rows;
 pub mod source_rows;
+
+pub mod lifecycle_data;

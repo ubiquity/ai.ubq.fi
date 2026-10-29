@@ -1409,6 +1409,8 @@ dependencies = [
  "gateway-authority-keys",
  "gateway-authority-local-completion",
  "gateway-authority-manual-reset",
+ "gateway-authority-native-callback",
+ "gateway-authority-native-callback-owner",
  "gateway-authority-native-custody",
  "gateway-authority-native-import",
  "gateway-authority-native-lifecycle",
@@ -1738,6 +1740,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-native-callback"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
+ "gateway-auth-passport-contracts",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-native-lifecycle",
+ "gateway-core",
+ "gateway-native-authority-request",
+ "gateway-native-authority-wire",
+ "gateway-source",
+]
+
+[[package]]
+name = "gateway-authority-native-callback-owner"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-native-wire",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-native-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-native-authority-request",
+ "gateway-native-authority-wire",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority-native-custody"
 version = "0.1.0"
 dependencies = [
@@ -1842,6 +1882,7 @@ dependencies = [
  "gateway-auth-credentials",
  "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
  "gateway-auth-passport-contracts",
  "gateway-auth-passport-sessions",
@@ -1851,6 +1892,8 @@ dependencies = [
  "gateway-authority-api-protocol",
  "gateway-authority-contracts",
  "gateway-authority-keys",
+ "gateway-authority-native-callback",
+ "gateway-authority-native-callback-owner",
  "gateway-authority-native-context-facts",
  "gateway-authority-native-import",
  "gateway-authority-native-managed",
@@ -5294,6 +5337,8 @@ dependencies = [
  "gateway-authority-kernel",
  "gateway-authority-kernel-protocol",
  "gateway-authority-keys",
+ "gateway-authority-native-callback",
+ "gateway-authority-native-callback-owner",
  "gateway-authority-native-records",
  "gateway-authority-paid-backfill",
  "gateway-authority-paid-control-records",

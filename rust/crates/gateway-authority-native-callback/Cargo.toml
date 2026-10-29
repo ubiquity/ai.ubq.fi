@@ -1,0 +1,23 @@
+[package]
+name = "gateway-authority-native-callback"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-native-protocol = { path = "../gateway-auth-native-protocol" }
+gateway-auth-native-wire = { path = "../gateway-auth-native-wire" }
+gateway-auth-passport-contracts = { path = "../gateway-auth-passport-contracts" }
+gateway-authority = { path = "../gateway-authority" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-native-lifecycle = { path = "../gateway-authority-native-lifecycle" }
+gateway-core = { path = "../gateway-core" }
+gateway-native-authority-request = { path = "../gateway-native-authority-request" }
+gateway-native-authority-wire = { path = "../gateway-native-authority-wire" }
+gateway-source = { path = "../gateway-source" }
