@@ -109,7 +109,7 @@ fn closed_source_callback_emits_response_two_and_owned_unknown_needs_no_new_pass
             mode: NativeRenewalMode::RenewOnce,
             fence,
             ..
-        } = execute_source(&service, &peer, &id, &replay, &host, &raw).await?
+        } = execute_source(&service, &peer, &id, &replay, &host.now, &raw).await?
         else {
             return Err("source claim".into());
         };
@@ -122,7 +122,7 @@ fn closed_source_callback_emits_response_two_and_owned_unknown_needs_no_new_pass
         })?;
         let peer = authority_peer(&id, &replay, &raw, NOW, 13).await?;
         assert!(matches!(
-            execute_source(&service, &peer, &id, &replay, &host, &raw).await?,
+            execute_source(&service, &peer, &id, &replay, &host.now, &raw).await?,
             Response::Start {
                 v: 2,
                 mode: NativeRenewalMode::RenewOnce
@@ -135,11 +135,11 @@ fn closed_source_callback_emits_response_two_and_owned_unknown_needs_no_new_pass
         })?;
         let peer = authority_peer(&id, &replay, &raw, NOW, 14).await?;
         assert!(matches!(
-            execute_source(&service, &peer, &id, &replay, &host, &raw).await?,
+            execute_source(&service, &peer, &id, &replay, &host.now, &raw).await?,
             Response::Recheck { v: 2, .. }
         ));
         assert!(
-            execute_source(&service, &peer, &id, &replay, &host, b"{}")
+            execute_source(&service, &peer, &id, &replay, &host.now, b"{}")
                 .await
                 .is_err()
         );
@@ -151,7 +151,7 @@ fn closed_source_callback_emits_response_two_and_owned_unknown_needs_no_new_pass
         })?;
         let peer = authority_peer(&id, &replay, &raw, NOW, 15).await?;
         assert!(
-            execute_source(&service, &peer, &id, &replay, &host, &raw)
+            execute_source(&service, &peer, &id, &replay, &host.now, &raw)
                 .await
                 .is_err()
         );
@@ -181,7 +181,7 @@ fn closed_source_callback_emits_response_two_and_owned_unknown_needs_no_new_pass
         let peer =
             authority_peer(&id, &replay, &raw, host.now.0.load(Ordering::SeqCst), 16).await?;
         assert!(matches!(
-            execute_source(&cleanup, &peer, &id, &replay, &host, &raw).await?,
+            execute_source(&cleanup, &peer, &id, &replay, &host.now, &raw).await?,
             Response::Unknown { v: 2 }
         ));
         assert_eq!(host.calls.get(), calls);

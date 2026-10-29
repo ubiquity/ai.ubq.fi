@@ -95,7 +95,7 @@ fn callback_outer_peer_epoch_fingerprint_path_body_nonce_and_replay_refuse() -> 
             .await?;
             assert!(
                 gateway_authority_native_callback::execute_source(
-                    &service, &proof, &id, &replay, &host, &bytes
+                    &service, &proof, &id, &replay, &host.now, &bytes
                 )
                 .await
                 .is_err()
@@ -108,7 +108,7 @@ fn callback_outer_peer_epoch_fingerprint_path_body_nonce_and_replay_refuse() -> 
                 &wrong_path,
                 &id,
                 &replay,
-                &host,
+                &host.now,
                 &bytes
             )
             .await
@@ -119,7 +119,7 @@ fn callback_outer_peer_epoch_fingerprint_path_body_nonce_and_replay_refuse() -> 
         changed.push(b' ');
         assert!(
             gateway_authority_native_callback::execute_source(
-                &service, &proof, &id, &replay, &host, &changed
+                &service, &proof, &id, &replay, &host.now, &changed
             )
             .await
             .is_err()
@@ -132,7 +132,7 @@ fn callback_outer_peer_epoch_fingerprint_path_body_nonce_and_replay_refuse() -> 
         assert_eq!(host.calls.get(), calls);
         assert!(matches!(
             gateway_authority_native_callback::execute_source(
-                &service, &proof, &id, &replay, &host, &bytes
+                &service, &proof, &id, &replay, &host.now, &bytes
             )
             .await?,
             Response::Recheck { v: 2, .. }

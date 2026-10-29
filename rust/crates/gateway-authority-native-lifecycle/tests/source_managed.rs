@@ -210,7 +210,7 @@ fn actual_source_managed_publication_atomically_advances_generation_and_replays_
             )
             .await?;
         let reply = gateway_authority_native_callback::execute_source(
-            &lifecycle, &peer, &id, &replay, &host, &callback,
+            &lifecycle, &peer, &id, &replay, &host.now, &callback,
         )
         .await?;
         assert!(

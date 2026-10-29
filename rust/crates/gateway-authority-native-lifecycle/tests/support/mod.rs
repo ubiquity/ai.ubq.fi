@@ -214,8 +214,10 @@ pub(super) fn fixture(
 ) -> Result<(), GatewayError> {
     let mut account = CodexSourceAccount {
         account_id: "account".into(),
-        access_token: Secret::new("SYNTHETIC_ACCESS".into()),
-        refresh_token: Secret::new("SYNTHETIC_REFRESH".into()),
+        access_token: Secret::new(
+            "e30.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF91c2VyX2lkIjoibmF0aXZlLXVzZXIiLCJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2NvdW50In19.fixture".into(),
+        ),
+        refresh_token: Secret::new(String::new()),
         updated_at_ms: (NOW - 420_001) as f64,
         native_owner: None,
     };
