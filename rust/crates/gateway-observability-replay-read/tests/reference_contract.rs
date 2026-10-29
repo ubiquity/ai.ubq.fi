@@ -129,8 +129,9 @@ fn request_export_reads_the_original_scalar_key_before_missing_manifest_fallback
         ]
     );
     assert_eq!(store.memory.commits.get(), 0);
-    assert!(response.body.as_str().contains("\\udfff"));
-    assert!(response.body.as_str().contains("manifest_unavailable"));
+    let body = String::from_utf8(response.body.to_bytes()?)?;
+    assert!(body.contains("\\udfff"));
+    assert!(body.contains("manifest_unavailable"));
     Ok(())
 }
 

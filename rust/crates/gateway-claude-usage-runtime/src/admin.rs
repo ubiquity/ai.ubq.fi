@@ -34,7 +34,7 @@ pub async fn passive_read<S: AuthorityStore, H: AuthHost>(
     })
 }
 pub fn passive_response(read: PassiveRead, data: SourceJson) -> Result<AuthResponse, GatewayError> {
-    AuthResponse::source_json(
+    Ok(AuthResponse::source_json(
         200,
         source::object(vec![
             ("data", data),
@@ -47,7 +47,7 @@ pub fn passive_response(read: PassiveRead, data: SourceJson) -> Result<AuthRespo
                 raw(&"Quota updates from response headers on ordinary Claude requests.")?,
             ),
         ])?,
-    )
+    ))
 }
 /// Existing authenticated composition owns access; this owns the complete fenced action.
 pub async fn refresh<S: AuthorityStore, H: UsageHost>(
