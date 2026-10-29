@@ -1,160 +1,27 @@
-use std::sync::atomic::Ordering;
-mod callback_support;
+mod callback_inference_fixture;
 mod inference_fixture;
-mod support;
-use gateway_auth::resolve::AuthService;
-use gateway_auth_contracts::types::{AuthConfig, AuthRequest};
-use gateway_auth_credentials::provider_credentials::{
-    CodexNativeOwner, codex_source_pool_key, parse_codex_source_pool,
+use callback_inference_fixture::{
+    Cancel, Host, TestResult, control_body, execute, inference_input, peer, refusal, run,
 };
-use gateway_auth_passport_contracts::passport::{PASSPORT_COOKIE, PassportConfig};
-use gateway_auth_passport_sessions::sessions::PassportSessions;
 use gateway_authority_actor_currentness::app::ActorService;
-use gateway_authority_keys as keys;
 use gateway_authority_native_preparation::{
     SourceNativePreparationContext, SourceNativeRenewalService,
 };
 use gateway_authority_native_records::{owner::RegisteredRenewalOwner, rows};
-use gateway_authority_paid_control_records::{
-    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
-};
-use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::{source_control::decode_source_control_record, state::AuthorityStore};
 use gateway_kv_codec::value::ValueEncoding;
 use gateway_local_journal::context::decode_journal_context;
-use gateway_provider_policy::policy::HopFailure;
-use gateway_routing_runtime::{
-    session::RoutingSession,
-    types::{AttemptFailure, FailureOrigin, TransportState},
-};
+use gateway_routing_runtime::session::RoutingSession;
 use gateway_routing_runtime_test_support::{
-    input::{NOW as RUNTIME_NOW, input},
-    seed::seed_pool,
-    store::Store as RuntimeStore,
+    input::NOW as RUNTIME_NOW, store::Store as RuntimeStore,
 };
-use gateway_source::{
-    js_string::JsString16, source_json::SourceJson, source_serialization as source,
-};
+use gateway_source::source_serialization as source;
 use inference_fixture::NativeRefreshHost;
 use std::{
-    collections::BTreeMap,
     future::Future,
     task::{Context, Waker},
 };
-use support::{
-    Cancel, Host, Store, TestResult, Tokens, actor, control_body, fixture, identity, run,
-    signed_owner,
-};
-async fn inference_input(
-    store: &RuntimeStore,
-    host: &Host,
-    id: &str,
-) -> TestResult<(
-    gateway_routing_runtime::types::RoutingInput,
-    AuthRequest,
-    gateway_auth_native_proof::native_auth::NativeTransportIdentity,
-    AuthConfig,
-)> {
-    seed_pool(store);
-    host.now.0.store(RUNTIME_NOW, Ordering::SeqCst);
-    let native = identity()?;
-    let raw = store
-        .read(&codex_source_pool_key())
-        .await?
-        .ok_or("source")?;
-    let mut pool = parse_codex_source_pool(raw.json_value()?)?.ok_or("pool")?;
-    let account = &mut pool.accounts[0];
-    let account_identity = account.identity();
-    account.native_owner = Some(CodexNativeOwner {
-        codex_home: "/tmp/native-source".into(),
-        generation_hash: account_identity.native_generation_hash,
-        native_refreshed_at: None,
-        external_user_id: Some("native-user".into()),
-        managed_source: None,
-    });
-    store.seed(codex_source_pool_key(), pool.private_source_value());
-    let source_revision = store
-        .read(&codex_source_pool_key())
-        .await?
-        .ok_or("new source")?
-        .revision;
-    let raw = store.read(&keys::pool()).await?.ok_or("normalized")?;
-    let mut normalized: SubscriptionPool = serde_json::from_value(raw.json_value()?.clone())?;
-    normalized.pool_versionstamp.0 = source_revision;
-    store.seed(keys::pool(), normalized);
-    let runtime = gateway_schema::catalog_store::runtime_config_key();
-    store.seed(runtime.clone(), serde_json::json!({}));
-    let runtime_revision = store.read(&runtime).await?.ok_or("runtime")?.revision;
-    store.seed(
-        keys::paid_control_owner(),
-        PaidControlOwner {
-            v: 1,
-            owner_id: native.owner_id().into(),
-            owner_epoch: native.owner_epoch().into(),
-            key_fingerprint: native.key_fingerprint().into(),
-        },
-    );
-    store.seed(
-        keys::paid_control_config(),
-        PaidControlConfig {
-            v: PAID_CONTROL_CONFIG_VERSION,
-            owner_id: native.owner_id().into(),
-            owner_epoch: native.owner_epoch().into(),
-            generation: "configuration".into(),
-            configuration_fingerprint: "fingerprint".into(),
-            surplus_binding: None,
-            openlux_discovery_binding: None,
-            openlux_binding: None,
-            source_checks: vec![PaidSourceCheck {
-                key: runtime.0,
-                expected_revision: Some(runtime_revision),
-            }],
-        },
-    );
-    let grant = SourceJson::parse(&format!(
-        r#"{{"subject":"\ud800\u0000","clientId":"ai","audience":"ai","origin":"https://ai.ubq.fi","redirectUri":"https://ai.ubq.fi/auth/callback","createdAt":"10/27/2026","token":"uos_app_session_{}"}}"#,
-        "A".repeat(43)
-    ))?;
-    let cookie = PassportSessions { store, host }
-        .create(&grant, &JsString16::from_units(vec![0xd800, 0]), None)
-        .await?;
-    let request = AuthRequest {
-        method: "POST".into(),
-        url: "https://ai.ubq.fi/v1/responses".into(),
-        headers: BTreeMap::from([("cookie".into(), format!("{PASSPORT_COOKIE}={cookie}"))]),
-        ..Default::default()
-    };
-    let config = AuthConfig {
-        passport: Some(PassportConfig::production()),
-        ..Default::default()
-    };
-    let principal = AuthService::new(store, host, &config)
-        .authenticate_client(&request)
-        .await?;
-    let mut input = input(id, "gpt-test", &[]);
-    input.context.principal = principal.method.principal_id(
-        principal
-            .token
-            .as_ref()
-            .map(gateway_auth_primitives::crypto::Secret::expose),
-    );
-    input.context.key_id = None;
-    input.principal = principal;
-    Ok((input, request, native, config))
-}
-fn refusal() -> AttemptFailure {
-    AttemptFailure {
-        origin: FailureOrigin::Provider,
-        status: Some(401),
-        headers: BTreeMap::new(),
-        body: vec![],
-        body_complete: true,
-        failure: HopFailure::Status(401),
-        transport: TransportState::Started,
-        semantic_committed: false,
-        cancelled: false,
-    }
-}
+
 #[test]
 fn source_callback_inference_pairs_response2_and_original_utf16_context() -> TestResult {
     run(async {
@@ -274,8 +141,7 @@ fn source_callback_inference_pairs_response2_and_original_utf16_context() -> Tes
             ),
         );
         let now = gateway_authority_contracts::AuthorityClock::now_ms(&store)?;
-        let original_control =
-            support::control_body(action.action_ref(), "callback-inference-operation")?;
+        let original_control = control_body(action.action_ref(), "callback-inference-operation")?;
         let nonce = gateway_auth_primitives::crypto::base64url(&[180; 32]);
         let request = gateway_native_authority_request::NativeRenewalAuthorityRequest::Claim {
             v: 1,
@@ -297,7 +163,7 @@ fn source_callback_inference_pairs_response2_and_original_utf16_context() -> Tes
         };
         let raw = serde_json::to_vec(&request)?;
         let replay = gateway_auth_native_protocol::native_replay::StoreNonceAuthority::new(&store);
-        let peer = callback_support::peer(
+        let peer = peer(
             &native,
             &replay,
             gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH,
@@ -320,7 +186,7 @@ fn source_callback_inference_pairs_response2_and_original_utf16_context() -> Tes
             operation_id: "callback-inference-operation".into(),
             claim_ref,
         };
-        assert!(matches!(callback_support::execute(&lifecycle,&store,&auth,&native,&recheck,182).await?,gateway_native_authority_wire::source_response::SourceNativeRenewalAuthorityResponseV2::Recheck{v:2,..}));
+        assert!(matches!(execute(&lifecycle,&store,&auth,&native,&recheck,182).await?,gateway_native_authority_wire::source_response::SourceNativeRenewalAuthorityResponseV2::Recheck{v:2,..}));
         pause.release();
         refresh.await.map_err(|error| *error.error)?;
         assert!(
