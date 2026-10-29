@@ -5,8 +5,9 @@ use gateway_auth_contracts::{
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
-use gateway_auth_credentials::provider_credentials::{
-    CodexNativeOwner, codex_source_pool_key, parse_codex_source_pool,
+use gateway_auth_credentials::{
+    native_credentials::parse_native_document,
+    provider_credentials::{CodexNativeOwner, codex_source_pool_key, parse_codex_source_pool},
 };
 use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
 use gateway_auth_native_proof::native_auth::{
@@ -241,15 +242,29 @@ pub(super) async fn inference_input(
         .ok_or("source")?;
     let mut pool = parse_codex_source_pool(raw.json_value()?)?.ok_or("pool")?;
     let account = &mut pool.accounts[0];
-    let account_identity = account.identity();
+    let payload = serde_json::json!({"https://api.openai.com/auth":{
+        "chatgpt_user_id":"native-user","chatgpt_account_id":account.account_id
+    }});
+    let access = format!("e30.{}.fixture", base64url(&serde_json::to_vec(&payload)?));
+    let credentials = parse_native_document(&serde_json::json!({
+        "auth_mode":"chatgptAuthTokens", "OPENAI_API_KEY":null,
+        "tokens":{"account_id":account.account_id,"access_token":access,
+            "id_token":access,"refresh_token":""}
+    }))?;
+    let generation_hash = credentials.generation_hash();
+    account.access_token = credentials.access_token;
+    account.refresh_token = credentials.refresh_token;
     account.native_owner = Some(CodexNativeOwner {
         codex_home: "/tmp/native-source".into(),
-        generation_hash: account_identity.native_generation_hash,
-        native_refreshed_at: None,
-        external_user_id: Some("native-user".into()),
+        generation_hash,
+        native_refreshed_at: credentials.native_refreshed_at,
+        external_user_id: credentials.external_user_id,
         managed_source: None,
     });
-    store.seed(codex_source_pool_key(), pool.private_source_value());
+    let account_identity = account.identity();
+    let source = pool.private_source_value();
+    parse_codex_source_pool(&source)?.ok_or("external pool")?;
+    store.seed(codex_source_pool_key(), source);
     let source_revision = store
         .read(&codex_source_pool_key())
         .await?
@@ -257,6 +272,9 @@ pub(super) async fn inference_input(
         .revision;
     let raw = store.read(&keys::pool()).await?.ok_or("normalized")?;
     let mut normalized: SubscriptionPool = serde_json::from_value(raw.json_value()?.clone())?;
+    normalized.accounts[0].account_id_hash = account_identity.routing_account_hash;
+    normalized.accounts[0].admin_account_hash = account_identity.administrative_account_hash;
+    normalized.accounts[0].credential_version = account_identity.credential_version;
     normalized.pool_versionstamp.0 = source_revision;
     store.seed(keys::pool(), normalized);
     let runtime = gateway_schema::catalog_store::runtime_config_key();
