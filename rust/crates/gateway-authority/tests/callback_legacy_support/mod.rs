@@ -178,7 +178,7 @@ impl NativeNonceAuthority for Nonces {
         if self.0.lock().unwrap().insert(n.into()) {
             Ok(())
         } else {
-            Err(fail())
+            Err(rows::fail())
         }
     }
 }

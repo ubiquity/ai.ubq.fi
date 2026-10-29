@@ -30,6 +30,7 @@ use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_authority_routing_selection::{SelectionOperations, types::LiveRouteSelection};
 use gateway_contracts::{identity::PoolVersionstamp, model::ModelId};
 use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
+use gateway_core::state::AuthorityStore;
 use gateway_kv_codec::{
     tuple_key::{ScalarKeyPart, TupleKey},
     value::ValueEncoding,

@@ -33,10 +33,11 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     future::Future,
+    sync::atomic::{AtomicI64, Ordering},
     task::{Context, Poll, Waker},
 };
 pub(super) const NOW: i64 = 1_793_059_200_000;
-pub(super) type TestResult = Result<(), Box<dyn std::error::Error>>;
+pub(super) type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 #[derive(Default)]
 pub(super) struct Store(
     pub(super) RefCell<BTreeMap<String, StoredRecord>>,
@@ -76,12 +77,13 @@ impl AuthorityStore for Store {
         Ok(CommitOutcome::Committed)
     }
 }
+pub(super) struct Clock(pub(super) AtomicI64);
 pub(super) struct Host {
     pub(super) status: Cell<u16>,
     pub(super) hold: Cell<bool>,
     pub(super) admin: Cell<bool>,
     pub(super) calls: Cell<usize>,
-    pub(super) now: Cell<i64>,
+    pub(super) now: Clock,
 }
 impl Default for Host {
     fn default() -> Self {
@@ -90,7 +92,7 @@ impl Default for Host {
             hold: Cell::new(false),
             admin: Cell::new(true),
             calls: Cell::new(0),
-            now: Cell::new(NOW),
+            now: Clock(AtomicI64::new(NOW)),
         }
     }
 }
@@ -116,7 +118,7 @@ impl WebAuthnCrypto for Host {
 }
 impl AuthHost for Host {
     fn now_ms(&self) -> i64 {
-        self.now.get()
+        self.now.0.load(Ordering::SeqCst)
     }
     fn random_bytes(&self, n: usize) -> Result<Vec<u8>, GatewayError> {
         Ok(vec![7; n])
@@ -288,9 +290,9 @@ pub(super) fn fixture(
     Ok(())
 }
 
-impl AuthorityClock for Host {
+impl AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
-        Ok(self.now.get())
+        Ok(self.0.load(Ordering::SeqCst))
     }
 }
 pub(super) struct Cancel(pub(super) bool);

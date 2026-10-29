@@ -34,7 +34,7 @@ fn callback_outer_peer_epoch_fingerprint_path_body_nonce_and_replay_refuse() -> 
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -45,7 +45,7 @@ fn callback_outer_peer_epoch_fingerprint_path_body_nonce_and_replay_refuse() -> 
         let service = SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativeLifecycleContext::configured(&id, &owner, &cancel),
@@ -157,7 +157,7 @@ fn callback_nested_original_control_authentication_and_replay_refuse() -> TestRe
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -168,7 +168,7 @@ fn callback_nested_original_control_authentication_and_replay_refuse() -> TestRe
         let service = SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativeLifecycleContext::configured(&id, &owner, &cancel),

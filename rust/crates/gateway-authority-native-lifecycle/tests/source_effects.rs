@@ -33,7 +33,7 @@ fn actual_source_actor_and_complete_cas_mint_one_bound_v3_action_with_original_c
         let service = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -83,7 +83,7 @@ fn logout_at_mapping_revision_cas_never_mints_or_publishes_a_source_action() -> 
         let service = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -122,7 +122,7 @@ fn opaque_actor_from_same_typed_foreign_store_cannot_prepare_here() -> TestResul
         let service = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -159,7 +159,7 @@ fn cancellation_keeps_the_original_499_before_new_action_effects() -> TestResult
         let service = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -198,7 +198,7 @@ fn logout_during_real_start_currentness_refuses_start_but_owned_unknown_still_se
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -209,7 +209,7 @@ fn logout_during_real_start_currentness_refuses_start_but_owned_unknown_still_se
         let service = gateway_authority_native_lifecycle::SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             gateway_authority_native_lifecycle::SourceNativeLifecycleContext::configured(
@@ -260,7 +260,7 @@ fn logout_at_original_claim_cas_leaves_no_operation_or_generation_effect() -> Te
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -271,7 +271,7 @@ fn logout_at_original_claim_cas_leaves_no_operation_or_generation_effect() -> Te
         let service = gateway_authority_native_lifecycle::SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             gateway_authority_native_lifecycle::SourceNativeLifecycleContext::configured(

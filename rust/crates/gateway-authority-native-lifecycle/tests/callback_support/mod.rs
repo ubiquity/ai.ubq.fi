@@ -75,12 +75,12 @@ pub(super) async fn execute<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
         &replay,
         NATIVE_RENEWAL_AUTHORITY_PATH,
         &bytes,
-        AuthorityClock::now_ms(host)?,
+        AuthorityClock::now_ms(&host.now)?,
         n,
     )
     .await?;
     gateway_authority_native_callback::execute_source(
-        service, &proof, identity, &replay, host, &bytes,
+        service, &proof, identity, &replay, &host.now, &bytes,
     )
     .await
 }

@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 mod inference_fixture;
 mod support;
 use gateway_auth::resolve::AuthService;
@@ -54,7 +55,7 @@ async fn inference_input(
     AuthConfig,
 )> {
     seed_pool(store);
-    host.now.set(RUNTIME_NOW);
+    host.now.0.store(RUNTIME_NOW, Ordering::SeqCst);
     let native = identity()?;
     let raw = store
         .read(&codex_source_pool_key())
@@ -169,7 +170,7 @@ fn signed_source_claim_consumes_one_start_and_shares_original_generation_namespa
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -180,7 +181,7 @@ fn signed_source_claim_consumes_one_start_and_shares_original_generation_namespa
         let service = gateway_authority_native_lifecycle::SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             gateway_authority_native_lifecycle::SourceNativeLifecycleContext::configured(
