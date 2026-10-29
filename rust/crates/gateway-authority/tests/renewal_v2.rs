@@ -27,10 +27,10 @@ use gateway_auth_native_wire::{
     native_read::NATIVE_CONTROL_PATH,
 };
 use gateway_authority::native_control::NativeRenewalControl;
-use gateway_authority::native_control::custody::validate_native_control_custody;
 use gateway_authority::native_control::owners::RegisteredRenewalOwners;
 use gateway_authority::native_control::receiver::NativeRenewalAuthority;
 use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_authority_native_custody::renewal::validate_native_control_custody;
 use gateway_authority_native_records::managed::NativeManagedPublicationDisposition;
 use gateway_authority_native_records::{owner::RegisteredRenewalOwner, rows};
 use gateway_authority_paid_control_records::{

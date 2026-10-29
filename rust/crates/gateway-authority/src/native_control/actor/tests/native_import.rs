@@ -1,7 +1,5 @@
 use super::*;
-use crate::native_control::{
-    actor, custody::validate_native_control_custody, receiver::NativeRenewalAuthority,
-};
+use crate::native_control::{actor, receiver::NativeRenewalAuthority};
 use gateway_auth_credentials::provider_credentials::{
     CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
 };
@@ -17,6 +15,7 @@ use gateway_auth_native_proof::native_import::NativeImportAdmission;
 use gateway_auth_native_protocol::native_import::publication;
 use gateway_auth_primitives::crypto::{base64url, sha256_hex};
 use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_authority_native_custody::renewal::validate_native_control_custody;
 use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,

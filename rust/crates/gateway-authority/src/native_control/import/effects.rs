@@ -4,6 +4,7 @@ use super::*;
 use crate::store::Transaction;
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_authority_native_custody::OWNER_RENEWAL_MAX_MS;
 use gateway_authority_native_records::import_effects::{NativeImportBinding, NativeImportMode};
 use gateway_authority_native_records::rows::{self, GenerationEffect, OperationRow, Phase};
 pub struct NativeImportClaim {

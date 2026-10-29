@@ -1409,6 +1409,7 @@ dependencies = [
  "gateway-authority-keys",
  "gateway-authority-local-completion",
  "gateway-authority-manual-reset",
+ "gateway-authority-native-custody",
  "gateway-authority-native-import",
  "gateway-authority-native-lifecycle",
  "gateway-authority-native-live",
@@ -1731,6 +1732,25 @@ dependencies = [
  "gateway-model-selection",
  "gateway-native-authority-wire",
  "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-native-custody"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-native-contracts",
+ "gateway-authority-actor-records",
+ "gateway-authority-contracts",
+ "gateway-authority-native-records",
+ "gateway-authority-routing-evidence",
+ "gateway-cache-experiment-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-native-authority-wire",
  "gateway-source",
  "serde",
  "serde_json",
@@ -3194,6 +3214,7 @@ dependencies = [
  "gateway-authority-kernel",
  "gateway-authority-kernel-protocol",
  "gateway-authority-keys",
+ "gateway-authority-native-custody",
  "gateway-authority-paid-control-records",
  "gateway-authority-paid-ledger",
  "gateway-authority-paid-records",
@@ -3441,6 +3462,7 @@ dependencies = [
  "gateway-authority-api-protocol",
  "gateway-authority-kernel-protocol",
  "gateway-authority-keys",
+ "gateway-authority-native-custody",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
@@ -3472,6 +3494,7 @@ dependencies = [
  "gateway-authority-api-protocol",
  "gateway-authority-kernel-protocol",
  "gateway-authority-keys",
+ "gateway-authority-native-custody",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",

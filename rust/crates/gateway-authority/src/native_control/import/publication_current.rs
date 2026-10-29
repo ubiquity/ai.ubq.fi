@@ -1,7 +1,7 @@
 //! Recognize only the exact already-published group owned by this original import.
 //! This private issuer never accepts arbitrary revisions, flags or ignored keys.
 use super::{
-    super::{OWNER_RENEWAL_MAX_MS, actor, receiver::NativeRenewalAuthority},
+    super::{actor, receiver::NativeRenewalAuthority},
     effects, unavailable,
 };
 use crate::store::Transaction;
@@ -14,6 +14,7 @@ use gateway_auth_native_wire::publication_data::{
 use gateway_authority_actor_records::{legacy::StoredNativeActor, scope::NativeActorScope};
 use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_native_custody::OWNER_RENEWAL_MAX_MS;
 use gateway_authority_native_records::{
     import_action::ImportActionRow,
     rows::{self, GenerationEffect, OperationRow, Phase, TerminalPublication},

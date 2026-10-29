@@ -99,7 +99,7 @@ fn control_row(key: &RecordKey, p: &[Value], record: &StoredRecord) -> Result<bo
         return Ok(true);
     }
     if starts(p, &["uos_ai", "authority", "native_owner_renewal"]) {
-        gateway_authority::native_control::custody::validate_native_control_custody(key, record)?;
+        gateway_authority_native_custody::renewal::validate_native_control_custody(key, record)?;
         return Ok(true);
     }
     Ok(false)
