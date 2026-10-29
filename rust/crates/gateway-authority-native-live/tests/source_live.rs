@@ -6,6 +6,7 @@ use gateway_core::{
     state::AuthorityStore,
 };
 use gateway_native_authority_request::live::NativeLiveAuthorityRequest as Request;
+use gateway_native_authority_wire::source_access::NativeLiveAccessWire;
 use gateway_native_authority_wire::source_response::SourceNativeLiveAuthorityResponseV2 as Response;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use std::{
@@ -59,6 +60,19 @@ fn actual_c_live2_access_only_source_units_signed_reply_and_current_credential_r
                 raw.as_bytes(),
                 &signature,
             )?;
+            let wire: Response<NativeLiveAccessWire> = raw.deserialize()?;
+            let Response::Authorize {
+                v: 2,
+                fence: wire_fence,
+                access: wire_access,
+                ..
+            } = wire
+            else {
+                return Err("wire response version".into());
+            };
+            assert_eq!(&wire_fence.principal, f.principal().as_source());
+            assert_eq!(wire_fence.v, 2);
+            assert_eq!(wire_access.expose(), "SYNTHETIC_ACCESS");
             let mut altered = raw.as_bytes().to_vec();
             altered.push(b' ');
             assert!(
