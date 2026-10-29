@@ -55,7 +55,9 @@ fn every_listing_surface_preserves_decision_modality_and_native_excludes_it()
             .iter()
             .any(|row| row["id"] == "a/image")
     );
-    let capabilities = catalog_views::capabilities(&input).deserialize::<Value>()?;
+    let capabilities = catalog_views::capabilities(&input)
+        .unwrap()
+        .deserialize::<Value>()?;
     let decision = capabilities["data"]
         .as_array()
         .ok_or("missing capabilities")?

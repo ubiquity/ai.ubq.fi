@@ -1,6 +1,5 @@
 use super::{
-    NativeRenewalAction, NativeRenewalClaim, NativeRenewalControl, NativeRenewalPublished,
-    OWNER_RENEWAL_MAX_MS, facts,
+    NativeRenewalAction, NativeRenewalClaim, NativeRenewalControl, NativeRenewalPublished, facts,
 };
 use crate::store::{Authority, Transaction};
 use crate::{add, text};
@@ -11,6 +10,7 @@ use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlRequ
 use gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
+use gateway_authority_native_custody::OWNER_RENEWAL_MAX_MS;
 use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_authority_native_records::rows;
 use gateway_authority_native_records::rows::{

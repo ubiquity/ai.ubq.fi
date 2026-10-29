@@ -110,11 +110,11 @@ pub async fn route(
     }
     if path == "/uos/models/capabilities" && request.method() == Method::Get {
         let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
-        return json_response(gateway_schema::catalog_views::capabilities(&state.input))
+        return json_response(gateway_schema::catalog_views::capabilities(&state.input)?)
             .map(Into::into);
     }
     if path == "/uos/agent-messages" {
-        return crate::agent_messages::handle(
+        return gateway_worker_agent_messages::http::handle(
             request,
             &principal.ok_or_else(gateway_auth_primitives::error::unauthorized)?,
             &store,

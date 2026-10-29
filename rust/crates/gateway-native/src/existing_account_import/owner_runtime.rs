@@ -2,11 +2,11 @@
 use super::exclusive_owner::{ExclusiveManagedOwner, PinnedExecutable, fail};
 use crate::native_import::NativeImportContext;
 use gateway_authority::native_control::import::AuthenticatedNativeImport;
-use gateway_authority::native_control::import::effects::NativeImportBinding;
 use gateway_authority::native_control::import::effects::NativeImportStart;
 use gateway_authority::native_control::receiver::NativeRenewalAuthority;
 use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::TokenSource;
+use gateway_authority_native_records::import_effects::NativeImportBinding;
 use gateway_core::state::AuthorityStore;
 use gateway_native_confinement::file_observation::Facts;
 use gateway_source::error::GatewayError;

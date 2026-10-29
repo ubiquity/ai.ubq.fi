@@ -1,6 +1,8 @@
 //! 131 cases executed against frozen source with pinned Bun1.4, no dotenv/install and OS network denial.
 use gateway_capacity_projection::shapes;
-use gateway_observability::{api, health, types::HealthProvider};
+use gateway_observability::api;
+use gateway_observability_contracts::types::HealthProvider;
+use gateway_observability_health::health;
 use serde_json::{Value, json};
 // Bun JSON has one Number kind; serde_json distinguishes integral and float encodings.
 // Compare numeric values, while retaining every key, array position, and nonnumeric type.

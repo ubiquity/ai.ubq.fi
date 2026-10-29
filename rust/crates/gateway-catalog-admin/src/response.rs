@@ -34,7 +34,7 @@ pub fn into_auth_response(
             wire.headers.extend(response.headers);
             wire
         }
-        Err(error) => gateway_auth_contracts::types::AuthResponse::source_json(
+        Err(error) => gateway_auth_contracts::types::AuthResponse::closed_error(
             error.status,
             error.body().clone(),
         ),

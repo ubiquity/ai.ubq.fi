@@ -1,5 +1,5 @@
 //! Data-only custody of the actual private routing journal. Never mints a runtime capability.
-use crate::{journal, journal::Journal, types::CredentialFence};
+use crate::journal;
 use gateway_authority_contracts::TokenSource;
 use gateway_contracts::{identity::MAX_SAFE_INTEGER, model::ModelId};
 use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
@@ -7,6 +7,8 @@ use gateway_core::source_control::decode_source_control_record;
 use gateway_core::state::StoredRecord;
 use gateway_kv_codec::{tuple_key::DecodedKeyPart, tuple_key::TupleKey};
 use gateway_local_journal::context::principal_has_non_whitespace;
+use gateway_routing_journal::reader;
+use gateway_routing_journal::record::{CredentialFence, Journal};
 use gateway_source::error::GatewayError;
 use std::{collections::BTreeMap, collections::BTreeSet};
 use {gateway_kv_codec::key::RecordKey, gateway_schema_values::scalar as util};
@@ -85,7 +87,7 @@ pub fn validate_pending_journal_row(
     let row = Journal::decode(&decode_source_control_record(session)?).map_err(|_| invalid())?;
     if row.finished
         || row.context.request_id.0 != id
-        || session_key != &journal::key(&id)
+        || session_key != &reader::session_key(&id)
         || pending.revision != format!("{}:pending", session.revision)
     {
         return Err(invalid());
@@ -166,7 +168,7 @@ pub fn validate_journal_row(key: &RecordKey, record: &StoredRecord) -> Result<()
     // Option/default fields and unknown nested members may not be silently lost
     // during private rollback. This is the current writer's full exact shape.
     // Journal::decode owns complete shape equality and the ONE shared phase/version parser.
-    if journal::key(&row.context.request_id.0) != *key {
+    if reader::session_key(&row.context.request_id.0) != *key {
         return Err(invalid());
     }
     text(&row.context.request_id.0)?;
@@ -500,7 +502,7 @@ mod tests {
     }
 
     fn row(finished: bool) -> TestResult<(RecordKey, StoredRecord)> {
-        let mut journal = Journal::empty(
+        let mut journal = journal::empty(
             1,
             RequestContext {
                 request_id: RequestId("custody-request".into()),
@@ -519,7 +521,7 @@ mod tests {
             journal.context.started_at_ms + gateway_authority_contracts::PAID_RETENTION_MS,
         );
         Ok((
-            journal::key(&journal.context.request_id.0),
+            reader::session_key(&journal.context.request_id.0),
             StoredRecord::json("fixture-revision", serde_json::to_value(journal)?, expiry),
         ))
     }
@@ -562,7 +564,7 @@ mod tests {
             }
             assert!(validate_journal_row(&key, &bad).is_err(), "{mutation}");
         }
-        assert!(validate_journal_row(&journal::key("other"), &record).is_err());
+        assert!(validate_journal_row(&reader::session_key("other"), &record).is_err());
         Ok(())
     }
 
@@ -620,7 +622,7 @@ mod tests {
                 json!({"v": version, "phase": "finished", "rows": finished.iter().map(|(key, record)| json!({"key":key,"record":record})).collect::<Vec<_>>()})
             );
             let session = finished
-                .get(&journal::key("custody-request").0)
+                .get(&reader::session_key("custody-request").0)
                 .ok_or("missing finished session row")?;
             assert_eq!(
                 session.expires_at_ms,
@@ -644,7 +646,7 @@ mod tests {
             let (_, records) = writer_rows(version)?;
             let session = records
                 .iter()
-                .find(|(key, _)| *key == journal::key("custody-request"))
+                .find(|(key, _)| *key == reader::session_key("custody-request"))
                 .ok_or("missing session row")?
                 .clone();
             let pending = records

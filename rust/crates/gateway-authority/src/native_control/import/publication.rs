@@ -1,7 +1,7 @@
 //! One authenticated/current opaque plan and one fixed import publication CAS.
 //! Config DATA is supplied only by the trusted publication receiver, never wire.
 use super::{
-    super::{OWNER_RENEWAL_MAX_MS, actor, receiver::NativeRenewalAuthority},
+    super::{actor, receiver::NativeRenewalAuthority},
     effects, unavailable,
 };
 use crate::store::Transaction;
@@ -21,6 +21,7 @@ use gateway_auth_primitives::crypto::{Secret, sha256_hex};
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_native_custody::OWNER_RENEWAL_MAX_MS;
 use gateway_authority_native_records::{
     import_action::ImportActionRow,
     rows::{self, GenerationEffect, OperationRow, Phase, TerminalPublication},
@@ -390,7 +391,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             {
                 return Err(conflict());
             }
-            super::super::custody::hash(&config.configuration_fingerprint)?;
+            gateway_authority_native_custody::renewal::hash(&config.configuration_fingerprint)?;
             if self.replay {
                 if config != self.previous_configuration {
                     return Err(conflict());

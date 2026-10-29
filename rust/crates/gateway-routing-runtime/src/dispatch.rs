@@ -1,22 +1,30 @@
 use crate::{
     classify,
-    journal::{self, AttemptRecord, BillingUsage, Journal, Phase, unavailable},
+    journal::{self, unavailable},
     session::RoutingSession,
     settlement,
     types::{
-        AttemptFailure, AttemptUsage, CredentialFence, FailureOrigin, PreparedAttempt,
-        RecoveredSession, RefreshOutcome, RefusalDecision, RevisionCheckWire, RoutingHost,
-        RoutingResult, TransportState,
+        AttemptFailure, AttemptUsage, FailureOrigin, PreparedAttempt, RecoveredSession,
+        RefreshOutcome, RefusalDecision, RoutingHost, RoutingResult, TransportState,
     },
 };
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
+use gateway_authority_paid_ledger::PaidLedgerOperations;
+use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_authority_routing_signal::SignalOperations;
+use gateway_contracts::lifecycle::{PaidTerminalState, SemanticTerminal, TransportObservation};
 use gateway_contracts::provider::UpstreamProvider;
-use gateway_contracts::{
-    lifecycle::PaidTerminalState, lifecycle::SemanticTerminal, lifecycle::TransportObservation,
-};
 use gateway_core::query::QueryStore;
 use gateway_provider_policy::{policy::HopDecision, policy::HopFailure};
+use gateway_routing_journal::reader;
+use gateway_routing_journal::record::{
+    AttemptRecord, BillingUsage, CredentialFence, Journal, Phase, RevisionCheckWire,
+};
 use gateway_source::error::GatewayError;
 
 impl<
@@ -30,7 +38,7 @@ impl<
         &self,
         attempt: &PreparedAttempt,
     ) -> Result<(Journal, AttemptRecord), GatewayError> {
-        let (_, row) = journal::load(&self.store, self.id()).await?;
+        let (_, row) = reader::load(&self.store, self.id()).await?;
         settlement::ensure_active(&row)?;
         let record = row
             .attempts
@@ -176,7 +184,7 @@ impl<
                 .await?;
             Self::check_paid_credential(&record.fence, &receipt)?;
             let authorization = if synthetic {
-                gateway_authority_paid_records::PaidAuthorization::DirectPaidModel
+                PaidAuthorization::DirectPaidModel
             } else {
                 self.paid_authorization(row).await?
             };
@@ -527,7 +535,7 @@ impl<
         &self,
         observation: TransportObservation,
     ) -> RoutingResult<RecoveredSession> {
-        if journal::load(&self.store, self.id())
+        if reader::load(&self.store, self.id())
             .await?
             .1
             .extras_family

@@ -2,12 +2,9 @@ mod support;
 use gateway_contracts::lifecycle::DeliveryOutcome;
 use gateway_core::state::StoredRecord;
 use gateway_kv_codec::{tuple_key::TupleKey, value::PortableValue};
-use gateway_observability::{
-    ObservabilityRuntime,
-    ledger::{ErrorObservation, REQUEST_RETENTION_MS},
-    prompt::PromptEvent,
-    telemetry::*,
-};
+use gateway_observability::{ObservabilityRuntime, telemetry::*};
+use gateway_observability_ledger::{ledger::ErrorObservation, ledger::REQUEST_RETENTION_MS};
+use gateway_observability_prompt::prompt::PromptEvent;
 use serde_json::{Value, json};
 use support::{Host, Memory, run};
 fn event(model: &str) -> PromptEvent {
@@ -34,17 +31,17 @@ fn existing_request_ledger_retries_preserves_creation_retention_and_restarts() {
     host.at.set(1000);
     let r = ObservabilityRuntime::new(memory.clone(), host.clone());
     memory.conflicts.set(2);
-    run(r.record_request_log("key",&json!({"id":"request","route":"responses","created_at_ms":500,"method":"post","status_code":200,"provider":"unknown"}))).unwrap();
+    run(r.ledger().record_request_log("key",&json!({"id":"request","route":"responses","created_at_ms":500,"method":"post","status_code":200,"provider":"unknown"}))).unwrap();
     assert_eq!(memory.commits.get(), 3);
     host.at.set(2000);
-    run(r.update_request_log(
+    run(r.ledger().update_request_log(
         "key",
         500,
         "request",
         &json!({"input_tokens":12.9,"provider":"surplus","status_code":700,"id":"must-not-change"}),
     ))
     .unwrap();
-    let logs = run(r.request_logs("key", 20)).unwrap();
+    let logs = run(r.ledger().request_logs("key", 20)).unwrap();
     let record: Value = logs[0].deserialize().unwrap();
     assert_eq!(record["id"], "request");
     assert_eq!(record["provider"], "surplus");
@@ -55,9 +52,15 @@ fn existing_request_ledger_retries_preserves_creation_retention_and_restarts() {
         Some(500 + REQUEST_RETENTION_MS)
     );
     let restarted = ObservabilityRuntime::new(memory.clone(), host);
-    assert_eq!(run(restarted.request_logs("key", 20)).unwrap(), logs);
+    assert_eq!(
+        run(restarted.ledger().request_logs("key", 20)).unwrap(),
+        logs
+    );
     let before = memory.rows.borrow().len();
-    run(r.update_request_log("key", 500, "absent", &json!({"status_code":200}))).unwrap();
+    run(r
+        .ledger()
+        .update_request_log("key", 500, "absent", &json!({"status_code":200})))
+    .unwrap();
     assert_eq!(memory.rows.borrow().len(), before);
 }
 #[test]
@@ -82,14 +85,14 @@ fn gateway_auth401_and_success_keep_zero_kv_and_error_expiry_uses_write_clock() 
         git_sha: None,
         deno_revision: None,
     };
-    assert!(!run(r.record_admin_error(&e)).unwrap());
+    assert!(!run(r.ledger().record_admin_error(&e)).unwrap());
     assert_eq!((memory.reads.get(), memory.commits.get()), (0, 0));
     e.status = 200;
     e.provider = "codex".into();
-    assert!(!run(r.record_admin_error(&e)).unwrap());
+    assert!(!run(r.ledger().record_admin_error(&e)).unwrap());
     assert_eq!(memory.commits.get(), 0);
     e.status = 502;
-    assert!(run(r.record_admin_error(&e)).unwrap());
+    assert!(run(r.ledger().record_admin_error(&e)).unwrap());
     let rows = memory.rows.borrow();
     let row = rows.values().next().unwrap();
     assert_eq!(row.expires_at_ms, Some(1000 + 7 * 86_400_000));
@@ -105,14 +108,14 @@ fn counters_are_real_u64_and_valid_zero_cache_fields_stay_present() {
     let r = ObservabilityRuntime::new(memory.clone(), host.clone());
     let e = event("private-model-name");
     assert_eq!(
-        run(r.record_prompt_analytics(&e, "abcdef0"))["status"],
+        run(r.prompt().record_prompt_analytics(&e, "abcdef0"))["status"],
         "recorded"
     );
     assert_eq!(
-        run(r.record_prompt_telemetry(&e, "abcdef0"))["status"],
+        run(r.prompt().record_prompt_telemetry(&e, "abcdef0"))["status"],
         "recorded"
     );
-    let view = run(r.prompt_analytics(&["key_presence".into()])).unwrap();
+    let view = run(r.prompt().prompt_analytics(&["key_presence".into()])).unwrap();
     assert_eq!(view["status"], "ready");
     let b = &view["buckets"][0];
     assert_eq!(b["cache_write_input_tokens"], 0);
@@ -129,7 +132,10 @@ fn counters_are_real_u64_and_valid_zero_cache_fields_stay_present() {
     }
     let restarted = ObservabilityRuntime::new(memory, host);
     assert_eq!(
-        run(restarted.prompt_analytics(&["key_presence".into()])).unwrap(),
+        run(restarted
+            .prompt()
+            .prompt_analytics(&["key_presence".into()]))
+        .unwrap(),
         view
     );
 }
@@ -140,7 +146,9 @@ fn fixed_cohort_cap_keeps_aggregate_and_marks_incomplete_overflow() {
     host.at.set(1_800_000);
     let r = ObservabilityRuntime::new(memory, host);
     for i in 0..34 {
-        let v = run(r.record_prompt_analytics(&event(&format!("model-{i}")), "abcdef0"));
+        let v = run(r
+            .prompt()
+            .record_prompt_analytics(&event(&format!("model-{i}")), "abcdef0"));
         assert_eq!(
             v["reason"],
             if i < 32 {
@@ -150,7 +158,7 @@ fn fixed_cohort_cap_keeps_aggregate_and_marks_incomplete_overflow() {
             }
         );
     }
-    let view = run(r.prompt_analytics(&["model".into()])).unwrap();
+    let view = run(r.prompt().prompt_analytics(&["model".into()])).unwrap();
     assert_eq!(view["cardinality_limited"], true);
     assert_eq!(view["truncated"], true);
     assert_eq!(view["buckets"].as_array().unwrap().len(), 33);
@@ -198,7 +206,9 @@ fn gate_baseline_uses_original_u64_ratio_and_never_accepts_malformed_json_counte
         }
     }
     assert_eq!(
-        run(r.prompt_telemetry_baseline("chatgpt_codex", "m", "abcdef0"))["status"],
+        run(r
+            .prompt()
+            .prompt_telemetry_baseline("chatgpt_codex", "m", "abcdef0"))["status"],
         "eligible"
     );
     let key = TupleKey::from_json_parts(
@@ -221,7 +231,9 @@ fn gate_baseline_uses_original_u64_ratio_and_never_accepts_malformed_json_counte
         key.0,
         StoredRecord::json("bad", json!({"value":"9000"}), None),
     );
-    let view = run(r.prompt_telemetry_baseline("chatgpt_codex", "m", "abcdef0"));
+    let view = run(r
+        .prompt()
+        .prompt_telemetry_baseline("chatgpt_codex", "m", "abcdef0"));
     assert_eq!(view["status"], "not_ready");
     assert_eq!(view["reason"], "invalid_counter");
 }
@@ -233,23 +245,23 @@ fn ignored_optional_telemetry_has_no_kv_side_effect_and_failures_remain_unavaila
     let mut e = event("m");
     e.completed = false;
     assert_eq!(
-        run(r.record_prompt_analytics(&e, "abcdef0"))["reason"],
+        run(r.prompt().record_prompt_analytics(&e, "abcdef0"))["reason"],
         "not_completed_2xx"
     );
     assert_eq!(memory.reads.get(), 0);
     e.completed = true;
     assert_eq!(
-        run(r.record_prompt_analytics(&e, "unknown"))["reason"],
+        run(r.prompt().record_prompt_analytics(&e, "unknown"))["reason"],
         "unknown_release"
     );
     assert_eq!(memory.reads.get(), 0);
     memory.unavailable.set(true);
     assert_eq!(
-        run(r.record_prompt_analytics(&e, "abcdef0"))["status"],
+        run(r.prompt().record_prompt_analytics(&e, "abcdef0"))["status"],
         "unavailable"
     );
     assert_eq!(
-        run(r.prompt_analytics(&[])).unwrap()["status"],
+        run(r.prompt().prompt_analytics(&[])).unwrap()["status"],
         "unavailable"
     );
 }
@@ -260,7 +272,7 @@ fn fault_only_incomplete_and_explicit_failures_get_upstream_error_attribution() 
             "response.incomplete",
             &json!({"response":{"incomplete_details":{"reason":"max_output_tokens"}}})
         ),
-        Some(gateway_observability::types::HealthEvent::Reachable)
+        Some(gateway_observability_contracts::types::HealthEvent::Reachable)
     );
     assert_eq!(
         response_incomplete_failure_kind(
@@ -273,10 +285,10 @@ fn fault_only_incomplete_and_explicit_failures_get_upstream_error_attribution() 
             "response.incomplete",
             &json!({"response":{"incomplete_details":{"reason":"server_error"}}})
         ),
-        Some(gateway_observability::types::HealthEvent::UpstreamError)
+        Some(gateway_observability_contracts::types::HealthEvent::UpstreamError)
     );
     assert_eq!(
         responses_terminal_health("response.failed", &Value::Null),
-        Some(gateway_observability::types::HealthEvent::UpstreamError)
+        Some(gateway_observability_contracts::types::HealthEvent::UpstreamError)
     );
 }

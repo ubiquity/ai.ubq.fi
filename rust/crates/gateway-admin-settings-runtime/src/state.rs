@@ -242,7 +242,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> SettingsAdmin<'_, S, H,
                 Some("invalid_request_error"),
                 None,
             );
-            return Ok(AuthResponse::source_json(
+            return Ok(AuthResponse::closed_error(
                 error.status,
                 error.body().clone(),
             ));

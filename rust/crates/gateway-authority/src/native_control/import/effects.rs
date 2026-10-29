@@ -4,25 +4,9 @@ use super::*;
 use crate::store::Transaction;
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_authority_native_custody::OWNER_RENEWAL_MAX_MS;
+use gateway_authority_native_records::import_effects::{NativeImportBinding, NativeImportMode};
 use gateway_authority_native_records::rows::{self, GenerationEffect, OperationRow, Phase};
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NativeImportBinding {
-    pub action_ref: String,
-    pub operation_id: String,
-    pub claim_ref: String,
-    pub native_owner_id: String,
-    pub account_id_hash: String,
-    pub source_native_generation: String,
-    pub owner_revision: String,
-    pub source_revision: String,
-    pub normalized_revision: String,
-}
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NativeImportMode {
-    ImportOnce,
-    ReconcileOnly,
-}
 pub struct NativeImportClaim {
     pub(super) binding: NativeImportBinding,
     pub(super) state: ImportActionState,

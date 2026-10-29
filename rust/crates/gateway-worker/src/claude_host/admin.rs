@@ -10,7 +10,8 @@ use gateway_claude_usage_admin::{
     check_target_cohort, matching_target, readback::subscription_block, select_source_account,
     submitted_workspace,
 };
-use gateway_observability::{ObservabilityRuntime, types::ObservabilityHost};
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::types::ObservabilityHost;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -345,6 +346,7 @@ async fn block<H: ObservabilityHost>(
     context: Context,
 ) -> Result<SourceJson, GatewayError> {
     let response = observations
+        .health()
         .passive_provider_response(true, context)
         .await?;
     subscription_block(response.body)

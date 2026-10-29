@@ -388,7 +388,7 @@ fn unfinished_v3_does_not_require_missing_rows_or_reject_unrelated_generation_hi
 #[test]
 fn valid_legacy_renewal_utf16_models_are_untouched_by_v3_terminal_dispatch()
 -> Result<(), Box<dyn std::error::Error>> {
-    use gateway_authority::native_control::custody::validate_native_control_custody;
+    use gateway_authority_native_custody::renewal::validate_native_control_custody;
     use gateway_contracts::model::ModelId;
     use gateway_core::source_control::encode_source_control_record;
     use gateway_native_authority_wire::{

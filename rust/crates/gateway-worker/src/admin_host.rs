@@ -120,7 +120,10 @@ impl RuntimeCapabilities for Capabilities {
         use gateway_admin_runtime_contracts::capabilities::CaptureRequest;
         match request {
             CaptureRequest::Request { request_id } => {
-                self.observations.export_capture_request(&request_id).await
+                self.observations
+                    .exports()
+                    .export_capture_request(&request_id)
+                    .await
             }
             CaptureRequest::Interval {
                 after_ms,
@@ -128,6 +131,7 @@ impl RuntimeCapabilities for Capabilities {
                 cursor,
             } => {
                 self.observations
+                    .exports()
                     .export_capture_interval(after_ms, before_ms, cursor.as_deref())
                     .await
             }
@@ -136,6 +140,7 @@ impl RuntimeCapabilities for Capabilities {
                 cursor,
             } => {
                 self.observations
+                    .exports()
                     .export_incident_captures(&incident_id, cursor.as_deref())
                     .await
             }
@@ -145,6 +150,7 @@ impl RuntimeCapabilities for Capabilities {
                 limit,
             } => {
                 self.observations
+                    .incidents()
                     .list_incidents(incident_id.as_deref(), cursor.as_deref(), limit)
                     .await
             }

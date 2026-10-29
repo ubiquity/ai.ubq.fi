@@ -1,5 +1,5 @@
 //! Telemetry classifiers consume actual observations; none authorizes quota or settlement.
-use crate::types::HealthEvent;
+use gateway_observability_contracts::types::HealthEvent;
 use serde_json::Value;
 
 pub fn response_incomplete_failure_kind(event: &Value) -> Option<String> {

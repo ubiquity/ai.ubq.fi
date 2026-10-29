@@ -7,9 +7,10 @@ use gateway_authority_paid_records::{PaidReservation, PaidUsage};
 use gateway_authority_routing_selection::types::CohortProof;
 use gateway_contracts::{claude::ClaudeErrorEvidence, model::ModelId};
 use gateway_core::state::AuthorityStore;
+use gateway_routing_journal::record::CredentialFence;
 use gateway_routing_runtime::types::{
-    ClaudeOutcome, ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest,
-    PublishedCredential, RefreshOutcome, ResponseHead, RoutingHost,
+    ClaudeOutcome, ClaudeSelection, CodexRecovery, CredentialRequest, PublishedCredential,
+    RefreshOutcome, ResponseHead, RoutingHost,
 };
 use gateway_routing_runtime_test_support::{host::Host, store::Store};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};

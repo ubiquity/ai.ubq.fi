@@ -1,8 +1,8 @@
+use gateway_observability_request_records::{
+    request::RequestLogRecord, request::merge_request_fields_source,
+};
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
-};
-use gateway_observability_request_records::request::{
-    RequestLogRecord, merge_request_fields_source,
 };
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 fn normalize(value: &SourceJson) -> Result<RequestLogRecord, Box<dyn std::error::Error>> {

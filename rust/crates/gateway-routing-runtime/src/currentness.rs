@@ -1,5 +1,5 @@
 //! Observed ordinary-request leases, never an imported or reusable I/O grant.
-use crate::{journal, journal::AttemptRecord, journal::Journal, journal::Phase};
+use crate::journal;
 use crate::{session::RoutingSession, types::RoutingHost, types::RoutingResult};
 use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
@@ -10,6 +10,8 @@ use gateway_contracts::lifecycle::SemanticTerminal;
 use gateway_core::{query::QueryStore, state::AtomicTransition, state::CommitOutcome};
 use gateway_core::{state::RevisionCheck, state::StoredRecord};
 use gateway_local_journal::local_work::LocalWorkPhase;
+use gateway_routing_journal::reader;
+use gateway_routing_journal::record::{AttemptRecord, Journal, Phase};
 use gateway_source::error::GatewayError;
 use std::cell::RefCell;
 
@@ -242,7 +244,7 @@ impl<
     }
     async fn observe(&self) -> RoutingResult<(ObservedRoutingLease, Journal, Vec<RevisionCheck>)> {
         let session = self.session;
-        let (record, row) = journal::load(&session.store, session.id()).await?;
+        let (record, row) = reader::load(&session.store, session.id()).await?;
         if row.context != session.input.context
             || !session.admission.matches(&row)
             || row.extras_family.is_some()
@@ -252,7 +254,7 @@ impl<
         let (state, terminal) = classification(&row)?;
         let live = state == RoutingLeaseState::Live;
         let mut checks = vec![RevisionCheck {
-            key: journal::key(session.id()),
+            key: reader::session_key(session.id()),
             expected_revision: Some(record.revision),
         }];
         let mut api_expiry = None;
@@ -423,9 +425,9 @@ impl<
                 .checked_add(gateway_authority_contracts::REQUEST_LEASE_MS)
                 .ok_or_else(invalid)?
         };
-        let checks: Vec<crate::types::RevisionCheckWire> = checks
+        let checks: Vec<gateway_routing_journal::record::RevisionCheckWire> = checks
             .iter()
-            .map(crate::types::RevisionCheckWire::from)
+            .map(gateway_routing_journal::record::RevisionCheckWire::from)
             .collect();
         journal::change(
             &session.store,

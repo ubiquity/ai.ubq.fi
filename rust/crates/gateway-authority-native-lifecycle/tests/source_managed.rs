@@ -298,3 +298,205 @@ fn logout_at_managed_publication_final_cas_writes_none_of_the_original_atomic_gr
         Ok(())
     })
 }
+
+#[cfg(unix)]
+struct NativeClock;
+#[cfg(unix)]
+impl gateway_authority_contracts::AuthorityClock for NativeClock {
+    fn now_ms(&self) -> Result<i64, GatewayError> {
+        gateway_auth_native_proof::native_context::now_ms()
+    }
+}
+#[cfg(unix)]
+struct NativeAuthHost(Host);
+#[cfg(unix)]
+impl gateway_auth_passport_contracts::session::PassportDate for NativeAuthHost {
+    fn parse_date_ms(&self, value: &gateway_source::js_string::JsString16) -> f64 {
+        gateway_auth_passport_contracts::session::PassportDate::parse_date_ms(&self.0, value)
+    }
+}
+#[cfg(unix)]
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for NativeAuthHost {
+    async fn validate_key(
+        &self,
+        key: &gateway_auth_contracts::webauthn::CosePublicKey,
+    ) -> Result<(), GatewayError> {
+        gateway_auth_contracts::webauthn::WebAuthnCrypto::validate_key(&self.0, key).await
+    }
+    async fn verify_signature(
+        &self,
+        input: gateway_auth_contracts::webauthn::SignatureInput,
+    ) -> Result<bool, GatewayError> {
+        gateway_auth_contracts::webauthn::WebAuthnCrypto::verify_signature(&self.0, input).await
+    }
+}
+#[cfg(unix)]
+impl gateway_auth_contracts::types::AuthHost for NativeAuthHost {
+    fn now_ms(&self) -> i64 {
+        gateway_auth_native_proof::native_context::now_ms().unwrap()
+    }
+    fn random_bytes(&self, n: usize) -> Result<Vec<u8>, GatewayError> {
+        gateway_auth_contracts::types::AuthHost::random_bytes(&self.0, n)
+    }
+    async fn kernel_principal(
+        &self,
+        a: &str,
+        b: &str,
+        c: &str,
+        d: &str,
+    ) -> Result<String, GatewayError> {
+        gateway_auth_contracts::types::AuthHost::kernel_principal(&self.0, a, b, c, d).await
+    }
+    async fn fetch_auth(
+        &self,
+        r: gateway_auth_contracts::upstream::AuthUpstreamRequest,
+    ) -> Result<gateway_auth_contracts::upstream::AuthUpstreamResponse, GatewayError> {
+        gateway_auth_contracts::types::AuthHost::fetch_auth(&self.0, r).await
+    }
+}
+#[cfg(unix)]
+#[test]
+fn real_admin_source_import4_and_checked_native_body_reject_cross_admission_then_revocation()
+-> TestResult {
+    use gateway_auth_contracts::types::AuthHost;
+    use gateway_auth_native_contracts::{
+        native_import::{NativeImportKind, NativeImportTarget},
+        transport::{NativeAuthHeaders, NativeImportAuthHeaders},
+    };
+    use gateway_auth_native_proof::{
+        native_auth::NativeAuthenticator, native_context::NativeRequestLifetime,
+    };
+    use gateway_auth_passport_contracts::passport::{PASSPORT_COOKIE, PassportConfig};
+    use gateway_auth_passport_sessions::sessions::PassportSessions;
+    use gateway_authority_actor_currentness::app::ActorService;
+    use gateway_contracts::identity::{PrincipalId, RequestContext, RequestId};
+    use gateway_source::{js_string::JsString16, source_json::SourceJson};
+    run(async {
+        let store = Store::default();
+        let host = NativeAuthHost(Host::default());
+        let clock = NativeClock;
+        let tokens = Tokens::default();
+        let config = AuthConfig {
+            passport: Some(PassportConfig::production()),
+            ..Default::default()
+        };
+        let id = NativeTransportIdentity::new(
+            "key".into(),
+            "owner".into(),
+            "epoch".into(),
+            [73; 32],
+            std::collections::BTreeSet::from([NativeCapability::CodexAuthImport]),
+        )?;
+        managed_fixture(&store, &id).await?;
+        let grant = SourceJson::parse(&format!(
+            r#"{{"subject":"\ud800\u0000","clientId":"ai","audience":"ai","origin":"https://ai.ubq.fi","redirectUri":"https://ai.ubq.fi/auth/callback","createdAt":"10/27/2026","token":"uos_app_session_{}"}}"#,
+            "A".repeat(43)
+        ))?;
+        let cookie = PassportSessions {
+            store: &store,
+            host: &host,
+        }
+        .create(&grant, &JsString16::from_units(vec![0xd800, 0]), None)
+        .await?;
+        let request = gateway_auth_contracts::types::AuthRequest {
+            method: "POST".into(),
+            url: "https://ai.ubq.fi/admin/import".into(),
+            headers: std::collections::BTreeMap::from([(
+                "cookie".into(),
+                format!("{PASSPORT_COOKIE}={cookie}"),
+            )]),
+            ..Default::default()
+        };
+        let context = RequestContext {
+            request_id: RequestId("source-import".into()),
+            principal: PrincipalId::from_source(JsString16::from_units(
+                "passport-user:".encode_utf16().chain([0xd800, 0]).collect(),
+            )),
+            key_id: None,
+            route: "admin.codex.auth".into(),
+            started_at_ms: host.now_ms(),
+        };
+        let actor = ActorService::new(&store, &host, &config)
+            .authenticate_source_admin_actor(&request, &context)
+            .await?;
+        let owner =
+            RegisteredRenewalOwner::configured("native".into(), "/tmp/native-source".into())?;
+        let cancel = Cancel(false);
+        let service = gateway_authority_native_import::SourceNativeLocalImportService::new(
+            &store,
+            &tokens,
+            Some(&clock),
+            &host,
+            &config,
+            gateway_authority_native_import::SourceNativeImportContext::configured(
+                &id, &owner, &cancel,
+            ),
+        );
+        let raw = store.read(&keys::pool()).await?.ok_or("pool")?;
+        let pool: SubscriptionPool = serde_json::from_value(raw.json_value()?.clone())?;
+        let prepared = service
+            .prepare_import(
+                &actor,
+                NativeImportTarget::ExistingAccount {
+                    account_id_hash: pool.accounts[0].account_id_hash.0.clone(),
+                },
+            )
+            .await?;
+        let metadata = prepared.metadata().clone();
+        let body = b"{}";
+        let digest = gateway_auth_primitives::crypto::sha256_hex(body);
+        let disconnected = || false;
+        let replay = Nonces::default();
+        let auth = NativeAuthenticator::new(&id, &replay);
+        let mut pairs = Vec::new();
+        for n in [90, 91] {
+            let nonce = base64url(&[n; 32]);
+            let now = gateway_auth_native_proof::native_context::now_ms()?;
+            let mac =
+                id.sign_import(NativeImportKind::CodexAuth, &metadata, &digest, now, &nonce)?;
+            let time = now.to_string();
+            let headers = NativeImportAuthHeaders {
+                auth: NativeAuthHeaders {
+                    version: "1",
+                    key_id: id.key_id(),
+                    time_ms: &time,
+                    nonce: &nonce,
+                    mac: &mac,
+                },
+                body_sha256: &digest,
+            };
+            let lifetime = NativeRequestLifetime::until(
+                std::time::Instant::now() + std::time::Duration::from_secs(45),
+                &disconnected,
+            );
+            pairs.push(
+                auth.admit_import_with_context(
+                    NativeImportKind::CodexAuth,
+                    Ok(headers),
+                    &metadata,
+                    lifetime,
+                )
+                .await?,
+            );
+        }
+        let (admission, original) = pairs.remove(0);
+        let (_, other) = pairs.remove(0);
+        let admitted = service.admit_import(admission).await?;
+        let proof = service.finish_import(admitted, body).await?;
+        proof.require_original_context(&original, body)?;
+        assert!(proof.require_original_context(&other, body).is_err());
+        assert!(proof.require_original_context(&original, b"{ }").is_err());
+        service.recheck_import(&proof).await?;
+        let row = store
+            .read(&rows::key("action", metadata.action_ref.as_str()))
+            .await?
+            .ok_or("action")?;
+        let row=gateway_authority_native_records::source_rows::SourceImportActionRowV4::from_source_json(&gateway_core::source_control::decode_source_control_record(&row)?)?;
+        assert_eq!(row.v, 4);
+        assert_eq!(row.context, context);
+        assert!(row.publication.is_none());
+        store.0.borrow_mut().remove(&session_key(&cookie).0);
+        assert!(service.recheck_import(&proof).await.is_err());
+        Ok(())
+    })
+}

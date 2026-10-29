@@ -58,7 +58,7 @@ pub async fn execute(
             Ok(response)
         }
         request => {
-            let mut response = observations.codex(request, context).await?;
+            let mut response = observations.control().codex(request, context).await?;
             response
                 .headers
                 .insert("Cache-Control".into(), "no-store".into());

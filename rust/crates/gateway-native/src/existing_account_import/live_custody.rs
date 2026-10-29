@@ -3,11 +3,10 @@ use super::NativeImportInputs;
 use super::{ExistingAccountImportStore, actor_channel::InheritedCustodyChannel};
 use crate::import_custody_protocol::{self as wire, unavailable};
 use gateway_authority::native_control::import::{
-    AuthenticatedNativeImport,
-    custody_session::ImportCustodyStartedRequest,
-    effects::{NativeImportBinding, NativeImportStart},
-    remote::AuthenticatedImportTerminal,
+    AuthenticatedNativeImport, custody_session::ImportCustodyStartedRequest,
+    effects::NativeImportStart, remote::AuthenticatedImportTerminal,
 };
+use gateway_authority_native_records::import_effects::NativeImportBinding;
 use gateway_native_custody_wire::wire::{self as data, Frame, Header, Release, Stopped};
 use gateway_source::error::GatewayError;
 use std::{

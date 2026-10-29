@@ -1,5 +1,5 @@
 //! One original admission across source image children, Voyage chunks and SystemOne.
-use crate::journal::{self, Phase};
+use crate::journal::{self};
 use crate::{session::RoutingSession, settlement, types::*};
 use futures_util::lock::Mutex;
 use gateway_authority::store::Authority;
@@ -13,33 +13,15 @@ use gateway_contracts::{
     lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
 };
 use gateway_core::query::QueryStore;
+use gateway_routing_journal::reader;
+use gateway_routing_journal::record::{
+    ChildRecord, CredentialFence, ExtraDispatch, KernelIntent, Phase, RevisionCheckWire,
+};
 use gateway_source::source_serialization as source;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
-use serde::{Deserialize, Serialize};
 use {gateway_model_selection::aliases as model_aliases, std::rc::Rc};
 
 use gateway_extras_contract::family::ExtrasFamily;
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ChildRecord {
-    pub nonce: String,
-    pub request_id: String,
-    pub phase: Phase,
-    pub transport_started: bool,
-    pub known_not_started: bool,
-    pub settled: bool,
-    pub model_sibling_retries: u8,
-}
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct ExtraDispatch {
-    pub nonce: String,
-    pub provider: UpstreamProvider,
-    pub transport_started: bool,
-}
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct KernelIntent {
-    pub terminal: KernelTerminal,
-    pub reason: String,
-}
 #[derive(Clone, Debug)]
 pub struct ChildScope {
     parent: String,
@@ -136,7 +118,7 @@ impl<
         child: &ChildScope,
         body: SourceJson,
     ) -> RoutingResult<ImageChildAttempt> {
-        let (_, row) = journal::load(&self.store, &self.parent).await?;
+        let (_, row) = reader::load(&self.store, &self.parent).await?;
         settlement::ensure_active(&row)?;
         let current = self.check(child, &row)?;
         if !matches!(
@@ -325,7 +307,7 @@ impl<
         attempt: &ImageChildAttempt,
         failure: AttemptFailure,
     ) -> RoutingResult<RefusalDecision> {
-        let (_, row) = journal::load(&self.store, &self.parent).await?;
+        let (_, row) = reader::load(&self.store, &self.parent).await?;
         settlement::ensure_active(&row)?;
         let current = self.check(&attempt.scope, &row)?;
         if current.settled
@@ -430,7 +412,7 @@ impl<
         })
     }
     async fn family(&self) -> Result<ExtrasFamily, GatewayError> {
-        let (_, row) = journal::load(&self.store, &self.parent).await?;
+        let (_, row) = reader::load(&self.store, &self.parent).await?;
         settlement::ensure_active(&row)?;
         row.extras_family.ok_or_else(|| {
             journal::unavailable("An extras scope requires the original typed route admission.")
@@ -456,7 +438,7 @@ impl<
         if matches!(family, ExtrasFamily::SystemOne | ExtrasFamily::Decisions) && count != 1 {
             return Err(journal::unavailable("SystemOne has one logical dispatch child.").into());
         }
-        let (_, prior) = journal::load(&self.store, &self.parent).await?;
+        let (_, prior) = reader::load(&self.store, &self.parent).await?;
         let children = if let Some(existing) = prior.extras_child_count {
             if existing != count {
                 return Err(journal::unavailable(
@@ -513,7 +495,7 @@ impl<
     fn check<'a>(
         &self,
         child: &ChildScope,
-        row: &'a journal::Journal,
+        row: &'a gateway_routing_journal::record::Journal,
     ) -> Result<&'a ChildRecord, GatewayError> {
         if child.parent != self.parent || row.extras_family != Some(child.family) {
             return Err(journal::unavailable(
@@ -532,7 +514,7 @@ impl<
         if self.host.cancelled() {
             return Err(self.host.cancellation_error().into());
         }
-        let (_, row) = journal::load(&self.store, &self.parent).await?;
+        let (_, row) = reader::load(&self.store, &self.parent).await?;
         settlement::ensure_active(&row)?;
         let current = self.check(child, &row)?;
         if current.settled {
@@ -609,7 +591,7 @@ impl<
         ticket: &DispatchTicket,
     ) -> RoutingResult<()> {
         let _guard = self.lock.lock().await;
-        let (_, row) = journal::load(&self.store, &self.parent).await?;
+        let (_, row) = reader::load(&self.store, &self.parent).await?;
         settlement::ensure_active(&row)?;
         let current = self.check(child, &row)?;
         if current.settled
@@ -660,7 +642,7 @@ impl<
         transport: TransportState,
     ) -> RoutingResult<()> {
         let _guard = self.lock.lock().await;
-        let (_, row) = journal::load(&self.store, &self.parent).await?;
+        let (_, row) = reader::load(&self.store, &self.parent).await?;
         let current = self.check(child, &row)?;
         if current.transport_started && transport == TransportState::NotStarted {
             return Err(journal::unavailable("A started sibling cannot become NotStarted.").into());
@@ -705,7 +687,7 @@ impl<
             )
             .into());
         }
-        let (_, row) = journal::load(&self.store, &self.parent).await?;
+        let (_, row) = reader::load(&self.store, &self.parent).await?;
         if !row.finished
             && (row.extras_child_count.is_none() || row.children.iter().any(|c| !c.settled))
         {

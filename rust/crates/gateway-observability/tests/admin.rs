@@ -1,13 +1,10 @@
-use gateway_capacity_projection::shapes::{history_point, unavailable_snapshot};
-use gateway_model_selection::aliases as model_aliases;
-mod support;
 use gateway_admin_runtime_contracts::{capabilities::Context, capabilities::ProviderRequest};
 use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_capacity_projection::{shapes::history_point, shapes::unavailable_snapshot};
 use gateway_core::state::StoredRecord;
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
-use gateway_observability::{
-    ObservabilityRuntime, api::*, host_types::*, types::ObservabilityHost,
-};
+use gateway_observability::{ObservabilityRuntime, api::*};
+use gateway_observability_contracts::{host_types::*, types::ObservabilityHost};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use support::{Host, Memory, run};
@@ -34,7 +31,9 @@ struct AdminHost {
     raw: Vec<u8>,
 }
 impl ObservabilityHost for AdminHost {
-    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {
@@ -82,7 +81,12 @@ fn legacy_reset_opt_out_seeds_until_complete_and_preserves_explicit_accounts() {
         json!(["uos_ai", "codex_banked_reset_usage", "v1"]),
         json!(false),
     );
-    assert!(!run(runtime.reset_usage_allowed("unknown-environment-account")).unwrap());
+    assert!(
+        !run(runtime
+            .control()
+            .reset_usage_allowed("unknown-environment-account"))
+        .unwrap()
+    );
     assert!(
         !memory.rows.borrow().contains_key(
             &key(json!([
@@ -105,10 +109,15 @@ fn legacy_reset_opt_out_seeds_until_complete_and_preserves_explicit_accounts() {
         json!(["ubq_ai", "codex_auth"]),
         json!({"updated_at_ms":1,"accounts":[{"account_id":"explicit","access_token":"fixture-access-a","refresh_token":"fixture-refresh-a","updated_at_ms":1},{"account_id":"seeded","access_token":"fixture-access-b","refresh_token":"fixture-refresh-b","updated_at_ms":1}]}),
     );
-    assert!(run(runtime.migrate_legacy_reset_opt_out()).unwrap());
-    assert!(run(runtime.reset_usage_allowed(&explicit)).unwrap());
-    assert!(!run(runtime.reset_usage_allowed(&seeded)).unwrap());
-    assert!(run(runtime.reset_usage_allowed("configured-after-marker")).unwrap());
+    assert!(run(runtime.control().migrate_legacy_reset_opt_out()).unwrap());
+    assert!(run(runtime.control().reset_usage_allowed(&explicit)).unwrap());
+    assert!(!run(runtime.control().reset_usage_allowed(&seeded)).unwrap());
+    assert!(
+        run(runtime
+            .control()
+            .reset_usage_allowed("configured-after-marker"))
+        .unwrap()
+    );
     assert_eq!(
         memory.rows.borrow()[&key(json!(["uos_ai", "codex_banked_reset_usage", "v1"])).0]
             .json_value()
@@ -125,7 +134,7 @@ fn reset_settings_reject_an_old_account_without_a_write_and_show_unknown_diagnos
     };
     let runtime = ObservabilityRuntime::new(memory.clone(), host);
     assert_eq!(
-        run(runtime.reset_settings_response(Some(
+        run(runtime.control().reset_settings_response(Some(
             &SourceJson::from_serializable(&json!({"account_id_hash":"retired","enabled":true}))
                 .unwrap()
         )))
@@ -135,12 +144,12 @@ fn reset_settings_reject_an_old_account_without_a_write_and_show_unknown_diagnos
     );
     assert_eq!(memory.commits.get(), 0);
     let hash = sha256_hex(b"fixture-account");
-    let response = run(runtime.reset_settings_response(Some(
+    let response = run(runtime.control().reset_settings_response(Some(
         &SourceJson::from_serializable(&json!({"account_id_hash":hash,"enabled":false})).unwrap(),
     )))
     .unwrap();
     assert_eq!(response.body.as_json().unwrap()["enabled"], false);
-    let response = run(runtime.reset_settings_response(None)).unwrap();
+    let response = run(runtime.control().reset_settings_response(None)).unwrap();
     assert_eq!(
         response.body.as_json().unwrap()["data"][0]["enabled"],
         false
@@ -178,9 +187,11 @@ fn malformed_late_capacity_observation_is_rejected_before_any_batch_write() {
         json!({"host":"neighbour","history":[history_point(&unavailable_snapshot(900000)),{}]});
     let raw = serde_json::to_vec(&body).unwrap();
     assert_eq!(
-        run(runtime.capacity_observation_response(&raw, context()))
-            .unwrap_err()
-            .status,
+        run(runtime
+            .events()
+            .capacity_observation_response(&raw, context()))
+        .unwrap_err()
+        .status,
         400
     );
     assert_eq!(memory.commits.get(), 0);

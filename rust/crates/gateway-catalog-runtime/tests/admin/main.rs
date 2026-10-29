@@ -14,11 +14,12 @@ use gateway_core::{
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_model_selection::aliases::SourceStringCollator;
+use gateway_model_snapshot::snapshot::{
+    ModelSnapshot, SnapshotOverrides, normalize_snapshot as normalize_snapshot_source,
+};
 use gateway_schema::{
-    catalog_store,
-    catalog_views::ordinary_models as ordinary_models_source,
+    catalog_store, catalog_views::ordinary_models as ordinary_models_source,
     runtime_config::build_runtime_config as build_runtime_config_source,
-    snapshot::{ModelSnapshot, SnapshotOverrides, normalize_snapshot as normalize_snapshot_source},
 };
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
@@ -49,7 +50,7 @@ fn normalize_snapshot(
     overrides: &SnapshotOverrides,
     now: i64,
 ) -> Option<ModelSnapshot> {
-    normalize_snapshot_source(&lift(value), overrides, now)
+    normalize_snapshot_source(&lift(value), overrides, now).unwrap()
 }
 fn build_runtime_config(
     snapshot: &ModelSnapshot,

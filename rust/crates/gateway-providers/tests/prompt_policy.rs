@@ -3,7 +3,9 @@ use gateway_contracts::model::ModelId;
 use gateway_prompt_policy::{admission, payload, summary};
 use gateway_provider_chat::source_chat::project;
 use gateway_provider_source::types::ChatProfile;
-use gateway_source::{source_json::SourceJson, source_serialization as source};
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::{Value, json};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 fn envelope(text: &str) -> Value {
@@ -107,13 +109,21 @@ fn malformed_and_multiple_summary_envelopes_fail_before_item_projection() -> Tes
         };
         assert_eq!(error.status, 400);
         assert!(!error.is_local_aggregate_context_overflow());
-        let body: Value = error.body().deserialize()?;
-        assert_eq!(body["error"]["code"], "context_length_exceeded");
+        let body = SourceJson::parse(error.body().as_str())?;
+        let fields = source::member(&body, "error").ok_or("error")?;
+        let code: JsString16 = source::member(&fields, "code")
+            .ok_or("code")?
+            .deserialize()?;
+        assert_eq!(code, JsString16::from_utf8("context_length_exceeded"));
+        let message: JsString16 = source::member(&fields, "message")
+            .ok_or("message")?
+            .deserialize()?;
+        let version = JsString16::from_utf8(summary::VERSION);
         assert!(
-            body["error"]["message"]
-                .as_str()
-                .ok_or("message")?
-                .contains(summary::VERSION)
+            message
+                .as_units()
+                .windows(version.as_units().len())
+                .any(|window| window == version.as_units())
         );
     }
     Ok(())
@@ -270,13 +280,13 @@ fn nonempty_reasoning_tiers_remain_verbatim_and_policy_advertises_v2() -> TestRe
     // Advertised DATA keeps the original tier; source wire projection is a later boundary.
     let record =
         SourceJson::parse(r#"{"supported_reasoning_levels":["ultra","provider-future-tier"]}"#)?;
-    let advertised = gateway_schema::reasoning::ModelReasoning::from_record(Some(&record));
+    let advertised = gateway_model_metadata::reasoning::ModelReasoning::from_record(Some(&record));
     assert_eq!(
         advertised.levels,
         vec!["ultra".into(), "provider-future-tier".into()]
     );
     assert_eq!(
-        gateway_schema::reasoning::effort_for_codex(&"none".into(), &advertised),
+        gateway_model_metadata::reasoning::effort_for_codex(&"none".into(), &advertised),
         "none".into()
     );
     for profile in profiles() {

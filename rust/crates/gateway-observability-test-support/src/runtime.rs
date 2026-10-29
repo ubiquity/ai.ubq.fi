@@ -1,18 +1,13 @@
 use gateway_core::{
-    query::{QueryPage, QueryRequest, QueryStore},
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
+    query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
+    state::AuthorityStore, state::CommitOutcome, state::RecordMutation, state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
-use gateway_model_selection::aliases as model_aliases;
-use gateway_observability::types::ObservabilityHost;
+use gateway_observability_contracts::types::ObservabilityHost;
 use gateway_source::error::GatewayError;
 use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    future::Future,
-    pin::pin,
-    rc::Rc,
-    task::{Context, Poll, Waker},
+    cell::Cell, cell::RefCell, collections::BTreeMap, future::Future, pin::pin, rc::Rc,
+    task::Context, task::Poll, task::Waker,
 };
 
 pub fn run<F: Future>(future: F) -> F::Output {
@@ -161,7 +156,7 @@ pub struct Host {
 }
 // Non-comparison fixture only: unexpected source ordering must fail, never guess.
 struct MissingSourceCollator;
-impl model_aliases::SourceStringCollator for MissingSourceCollator {
+impl gateway_model_selection::aliases::SourceStringCollator for MissingSourceCollator {
     fn compare(
         &self,
         _left: &gateway_source::js_string::JsString16,
@@ -174,7 +169,9 @@ impl model_aliases::SourceStringCollator for MissingSourceCollator {
     }
 }
 impl ObservabilityHost for Host {
-    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         std::sync::Arc::new(MissingSourceCollator)
     }
     fn now_ms(&self) -> i64 {

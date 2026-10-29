@@ -3,10 +3,7 @@ use super::{RequestHost, unavailable};
 use crate::transport::outbound::{PinnedDestination, send_constructed, send_http};
 use gateway_auth_credentials::provider_credentials::{self as codex, CodexSourceAccount};
 use gateway_claude_roster::claude;
-use gateway_observability::{
-    host_types::*,
-    types::{HealthEvent, HealthTarget},
-};
+use gateway_observability_contracts::{host_types::*, types::HealthEvent, types::HealthTarget};
 use gateway_schema_values::scalar as util;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
@@ -185,7 +182,7 @@ impl RequestHost {
             .map_err(|_| unavailable("Metered account API returned an unreadable body."))?;
         let value = serde_json::from_slice(&bytes)
             .map_err(|_| unavailable("Metered account API returned invalid JSON."))?;
-        gateway_observability::metered::token_usage_state(
+        gateway_observability_metered::metered::token_usage_state(
             &value,
             gateway_worker_storage::store::now_ms()?,
         )?;
@@ -259,6 +256,7 @@ impl RequestHost {
                 HealthEvent::Reachable
             };
             let _ = runtime
+                .health()
                 .observe_provider(
                     HealthTarget::codex(&account.account_id),
                     event,

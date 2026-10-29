@@ -26,6 +26,7 @@ serde_json.workspace = true
 workspace = true
 
 [dependencies]
+gateway-authority-native-custody = { path = "../gateway-authority-native-custody" }
 gateway-admin-contracts = { path = "../gateway-admin-contracts" }
 gateway-admin-keys = { path = "../gateway-admin-keys" }
 gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }

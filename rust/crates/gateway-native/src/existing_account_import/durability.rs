@@ -4,9 +4,8 @@ use gateway_auth_credentials::native_credentials::NativeCredentials;
 #[cfg(test)]
 use gateway_auth_credentials::native_credentials::parse_native_document;
 use gateway_auth_primitives::crypto::{Secret, sha256_hex};
-use gateway_authority::native_control::import::{
-    AuthenticatedNativeImport, effects::NativeImportBinding,
-};
+use gateway_authority::native_control::import::AuthenticatedNativeImport;
+use gateway_authority_native_records::import_effects::NativeImportBinding;
 use gateway_source::error::GatewayError;
 use gateway_source::source_json::SourceJson;
 use rustix::fs::{Mode, OFlags, fstat, openat};

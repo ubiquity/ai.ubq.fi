@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-model-metadata.workspace = true
 gateway-prompt-cache.workspace = true
 gateway-request-normalization.workspace = true
 gateway-schema-values.workspace = true

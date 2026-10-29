@@ -1,0 +1,162 @@
+//! Source analytics-only chart observations. These keys never enter routing/reset state.
+use crate::{CapacityEvents, store};
+use gateway_admin_runtime_contracts::capabilities::Context;
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_capacity_projection::{
+    math::bucketed, scalars::safe_i64, shapes::BUCKET_MS, shapes::RETENTION_MS,
+    shapes::read_history,
+};
+use gateway_core::query::QueryStore;
+use gateway_observability_contracts::{
+    data, query, query::ObservationRead, types::ObservabilityHost,
+};
+use gateway_source::error::GatewayError;
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+pub const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+fn host_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 32
+        && value
+            .bytes()
+            .enumerate()
+            .all(|(i, b)| b.is_ascii_lowercase() || b.is_ascii_digit() || (i > 0 && b == b'-'))
+}
+pub fn parse_observations(value: &Value) -> Option<Vec<Value>> {
+    let values = value
+        .as_array()
+        .filter(|a| !a.is_empty() && a.len() <= 512)?;
+    let mut points = Vec::with_capacity(values.len());
+    for value in values {
+        let point = read_history(value)?;
+        if !bucketed(&point)
+            || gateway_schema_values::scalar::json_stringify(&point).len() > 16 * 1024
+        {
+            return None;
+        }
+        points.push(point)
+    }
+    Some(points)
+}
+impl<S: QueryStore, H: ObservabilityHost> CapacityEvents<'_, S, H> {
+    /// Consume actual original request bytes; a caller-supplied count cannot prove the limit.
+    pub async fn capacity_observation_response(
+        &self,
+        raw_body: &[u8],
+        _context: Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        if raw_body.len() > MAX_BODY_BYTES {
+            return Err(GatewayError::new(
+                413,
+                "Capacity observation payload too large",
+                Some("invalid_request_error"),
+            ));
+        }
+        let document: Value = serde_json::from_slice(raw_body)
+            .map_err(|_| data::invalid("Invalid capacity observation envelope"))?;
+        if !document.is_object() {
+            return Err(data::invalid("Invalid capacity observation envelope"));
+        }
+        let host = document["host"]
+            .as_str()
+            .filter(|s| host_id(s))
+            .ok_or_else(|| data::invalid("Invalid capacity observation host"))?;
+        let points = parse_observations(&document["history"])
+            .ok_or_else(|| data::invalid("Invalid capacity observations"))?;
+        let at = data::now(self.host)?;
+        let mut indexes = BTreeMap::new();
+        let mut accepted: Vec<Value> = Vec::new();
+        for point in points {
+            let bucket = safe_i64(&point["bucket_start_at_ms"]).expect("source bucket");
+            if bucket < (at - RETENTION_MS).max(0) || bucket > at + BUCKET_MS {
+                continue;
+            }
+            let sample = safe_i64(&point["sampled_at_ms"]).expect("source sample");
+            if let Some(index) = indexes.get(&(bucket, sample)).copied() {
+                accepted[index] = point
+            } else {
+                indexes.insert((bucket, sample), accepted.len());
+                accepted.push(point)
+            }
+        }
+        let points = accepted;
+        for batch in points.chunks(64) {
+            let mut writes = Vec::new();
+            let expiry = data::now(self.host)? + RETENTION_MS;
+            for point in batch {
+                let key = data::key(json!([
+                    "uos_ai",
+                    "provider_capacity",
+                    "analytics",
+                    "remote",
+                    host,
+                    point["bucket_start_at_ms"],
+                    point["sampled_at_ms"]
+                ]));
+                writes.push(store::put(self.host, key, point.clone(), Some(expiry))?);
+            }
+            match store::commit(self.store, Vec::new(), writes).await {
+                Ok(true) => {}
+                _ => {
+                    return Err(GatewayError::unavailable(
+                        "Capacity observation storage unavailable",
+                        "server_error",
+                    ));
+                }
+            }
+        }
+        Ok(AuthResponse::json(
+            200,
+            json!({"accepted":points.len(),"host":host}),
+        ))
+    }
+    pub async fn remote_capacity_observations(
+        &self,
+        at: i64,
+    ) -> Result<Vec<(String, Value)>, GatewayError> {
+        let mut out = Vec::new();
+        for entry in query::scan(
+            self.store,
+            ObservationRead::RemoteCapacity,
+            false,
+            at,
+            usize::MAX,
+        )
+        .await?
+        {
+            let p = data::parts(&entry.key)?;
+            let Some(host) = p.get(4).and_then(Value::as_str).filter(|s| host_id(s)) else {
+                continue;
+            };
+            let Some(point) = read_history(entry.record.json_value()?).filter(bucketed) else {
+                continue;
+            };
+            let Some(bucket) = safe_i64(&point["bucket_start_at_ms"]) else {
+                continue;
+            };
+            if bucket < (at - RETENTION_MS).max(0) || bucket > at + BUCKET_MS {
+                continue;
+            }
+            out.push((host.to_owned(), point));
+        }
+        let mut error = None;
+        out.sort_by(|(ah, a), (bh, b)| {
+            safe_i64(&a["sampled_at_ms"])
+                .cmp(&safe_i64(&b["sampled_at_ms"]))
+                .then_with(|| {
+                    safe_i64(&a["bucket_start_at_ms"]).cmp(&safe_i64(&b["bucket_start_at_ms"]))
+                })
+                .then_with(|| match self.host.compare_labels(ah, bh) {
+                    Ok(order) => order,
+                    Err(e) => {
+                        error = Some(e);
+                        std::cmp::Ordering::Equal
+                    }
+                })
+        });
+        if let Some(error) = error {
+            return Err(error);
+        }
+        Ok(out)
+    }
+}

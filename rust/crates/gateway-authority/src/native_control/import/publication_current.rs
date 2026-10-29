@@ -1,7 +1,7 @@
 //! Recognize only the exact already-published group owned by this original import.
 //! This private issuer never accepts arbitrary revisions, flags or ignored keys.
 use super::{
-    super::{OWNER_RENEWAL_MAX_MS, actor, receiver::NativeRenewalAuthority},
+    super::{actor, receiver::NativeRenewalAuthority},
     effects, unavailable,
 };
 use crate::store::Transaction;
@@ -14,6 +14,7 @@ use gateway_auth_native_wire::publication_data::{
 use gateway_authority_actor_records::{legacy::StoredNativeActor, scope::NativeActorScope};
 use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_native_custody::OWNER_RENEWAL_MAX_MS;
 use gateway_authority_native_records::{
     import_action::ImportActionRow,
     rows::{self, GenerationEffect, OperationRow, Phase, TerminalPublication},
@@ -21,9 +22,9 @@ use gateway_authority_native_records::{
 use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::state::AuthorityStore;
-use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
 use gateway_source::error::GatewayError;
 use serde_json::Value;
+use {gateway_model_snapshot::snapshot::ModelSnapshot, gateway_schema::catalog_store};
 
 /// Response DATA only. No serializer, permission constructor or stored schema.
 #[derive(Debug, PartialEq)]

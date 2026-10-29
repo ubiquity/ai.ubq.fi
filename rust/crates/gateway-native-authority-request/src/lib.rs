@@ -159,3 +159,6 @@ pub fn invalid() -> GatewayError {
         Some("native_renewal_wire_invalid"),
     )
 }
+
+/// Original finite live selectors; no authentication or credentials.
+pub mod live;

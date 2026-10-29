@@ -6,14 +6,13 @@ use gateway_contracts::{
     identity::RequestContext, lifecycle::TransportObservation, model::ModelId,
     provider::UpstreamProvider,
 };
-use gateway_core::state::RevisionCheck;
-use gateway_kv_codec::key::RecordKey;
 use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::PreparedClaudeBody};
 use gateway_provider_protocol::{
     types::AuthMaterial, types::ClientSurface, types::DecodePlan, types::Headers,
     types::PrepareOptions, types::PreparedRequest,
 };
+use gateway_routing_journal::record::CredentialFence;
 use gateway_schema::catalog::CatalogInput;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_wait_observation::outcome::WaitOutcome;
@@ -78,50 +77,6 @@ impl RoutingInput {
 }
 use gateway_local_refusal::routing_error::RoutingError;
 pub type RoutingResult<T> = Result<T, RoutingError>;
-
-/// No credentials or request bodies are serialized in the recoverable journal.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub enum CredentialFence {
-    Direct {
-        provider: UpstreamProvider,
-    },
-    Paid {
-        provider: UpstreamProvider,
-        owner_id: String,
-        owner_epoch: String,
-        configuration_generation: String,
-        credential_binding: String,
-    },
-    Codex {
-        admission: AdmittedAccount,
-        #[serde(with = "record_key")]
-        source_key: RecordKey,
-        source_revision: String,
-        native_generation: String,
-    },
-    Claude {
-        account_id: String,
-        cohort_id: String,
-        credential_fingerprint: String,
-        evidence_generation: String,
-        workspace_id: Option<JsString16>,
-        checks: Vec<RevisionCheckWire>,
-    },
-}
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct RevisionCheckWire {
-    #[serde(with = "record_key")]
-    pub key: RecordKey,
-    pub expected_revision: Option<String>,
-}
-impl From<&RevisionCheck> for RevisionCheckWire {
-    fn from(check: &RevisionCheck) -> Self {
-        Self {
-            key: check.key.clone(),
-            expected_revision: check.expected_revision.clone(),
-        }
-    }
-}
 
 #[derive(Clone)]
 pub enum PublishedCredential {
@@ -410,24 +365,6 @@ pub struct RecoveredSession {
     pub request_id: String,
     pub observation: TransportObservation,
     pub settled: bool,
-}
-
-mod record_key {
-    use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
-    use serde::{Deserialize, Deserializer, Serializer, de::Error as _, ser::Error as _};
-    pub fn serialize<S: Serializer>(key: &RecordKey, serializer: S) -> Result<S::Ok, S::Error> {
-        TupleKey::from_record_key(key)
-            .and_then(|key| key.validate_stored_key())
-            .map_err(|_| S::Error::custom("Invalid source tuple key"))?;
-        serializer.serialize_str(&key.0)
-    }
-    pub fn deserialize<'de, D: Deserializer<'de>>(decoder: D) -> Result<RecordKey, D::Error> {
-        let key = RecordKey(String::deserialize(decoder)?);
-        TupleKey::from_record_key(&key)
-            .and_then(|key| key.validate_stored_key())
-            .map_err(|_| D::Error::custom("Invalid source tuple key"))?;
-        Ok(key)
-    }
 }
 
 #[cfg(test)]

@@ -12,10 +12,8 @@ use gateway_claude_policy::host::{ClaudePoolHost, HealthObservation, WorkspaceRe
 use gateway_claude_roster::claude::{self, AccountBinding, Bootstrap, CredentialKind};
 use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_core::state::RevisionCheck;
-use gateway_observability::{
-    ObservabilityRuntime,
-    types::{HealthEvent, HealthProvider, HealthTarget},
-};
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::types::{HealthEvent, HealthProvider, HealthTarget};
 use gateway_schema::catalog::ProviderCatalog;
 use gateway_schema_values::scalar as util;
 use gateway_source::error::GatewayError;
@@ -200,6 +198,7 @@ impl ClaudePoolHost for Host {
             observability_host::shared_state(),
         );
         let _written = runtime
+            .health()
             .observe_provider(
                 HealthTarget {
                     provider: HealthProvider::ClaudeCode,

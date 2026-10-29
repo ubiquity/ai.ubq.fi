@@ -357,7 +357,7 @@ async fn sealed_owner_facts<S: QueryStore>(
         source.json_value()?,
     )?
     .ok_or_else(owner_refused)?;
-    let routing: gateway_authority::routing_types::SubscriptionPool =
+    let routing: gateway_authority_routing_records::types::SubscriptionPool =
         decode(normalized.json_value()?)?;
     if routing.v != 1
         || routing.pool_versionstamp.0 != source.revision

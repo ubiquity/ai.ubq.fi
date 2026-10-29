@@ -18,7 +18,7 @@ pub(super) async fn subscriptions(
     pool.pool.accounts.iter().enumerate().map(|(index, account)| {
         let email = account_email(account.access_token.expose());
         let slot = (index + 1) as u8;
-        json!({"id":format!("codex:{}",gateway_auth_primitives::crypto::sha256_hex(account.account_id.as_bytes())),"label":gateway_observability::capacity_shapes::codex_label(slot,email.as_deref()),"slot":slot})
+        json!({"id":format!("codex:{}",gateway_auth_primitives::crypto::sha256_hex(account.account_id.as_bytes())),"label":gateway_capacity_projection::shapes::codex_label(slot,email.as_deref()),"slot":slot})
     }).collect()
 }
 

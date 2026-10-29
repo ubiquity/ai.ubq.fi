@@ -3,7 +3,6 @@ pub(crate) mod admin;
 pub(crate) mod catalog;
 pub(crate) mod platform;
 
-use crate::host::PlatformHost;
 use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
 use gateway_claude_policy::{host::PoolConfig, host::SelectionInput};
 use gateway_claude_roster::claude_generation::StateGeneration;
@@ -15,13 +14,14 @@ use gateway_model_selection::selection::ProviderSelection;
 use gateway_provider_protocol::replay::ReplayTransport;
 use gateway_provider_replay::{replay::ReplayContext, replay::ReplayStore};
 use gateway_routing_runtime::types::{
-    ClaudeOutcome, ClaudeSelection, CredentialFence, PreparedAttempt, PreparedWireRequest,
-    PublishedCredential, ResponseHead,
+    ClaudeOutcome, ClaudeSelection, PreparedAttempt, PreparedWireRequest, PublishedCredential,
+    ResponseHead,
 };
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
+use {crate::host::PlatformHost, gateway_routing_journal::record::CredentialFence};
 
 thread_local! {
     static GENERATION: StateGeneration = StateGeneration::default();

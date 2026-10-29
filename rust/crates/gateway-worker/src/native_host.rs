@@ -119,11 +119,11 @@ impl NativeBindings {
 
     pub(crate) async fn refresh_routing(
         &self,
-        fence: &gateway_routing_runtime::types::CredentialFence,
+        fence: &gateway_routing_journal::record::CredentialFence,
         platform: &PlatformHost,
         original: &gateway_contracts::identity::RequestContext,
     ) -> Result<gateway_routing_runtime::types::RefreshOutcome, GatewayError> {
-        let gateway_routing_runtime::types::CredentialFence::Codex {
+        let gateway_routing_journal::record::CredentialFence::Codex {
             admission,
             source_revision,
             native_generation,

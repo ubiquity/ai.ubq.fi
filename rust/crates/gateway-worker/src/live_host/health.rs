@@ -1,10 +1,8 @@
 //! Optional source health writes never decide live account eligibility or paid continuation.
 use gateway_auth_credentials::provider_credentials::codex_access_expiry_ms;
 use gateway_live_runtime::types::{LiveAccount, LiveDispatchFailure, LiveResponse};
-use gateway_observability::{
-    ObservabilityRuntime,
-    types::{HealthEvent, HealthTarget},
-};
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{types::HealthEvent, types::HealthTarget};
 use std::rc::Rc;
 use worker::Context;
 
@@ -46,6 +44,7 @@ pub(super) async fn response(
         .iter()
         .find_map(|name| response.headers.get(*name));
     let _ = runtime
+        .health()
         .observe_provider(
             HealthTarget::codex(account.account_id()),
             event,
@@ -81,6 +80,7 @@ pub(super) async fn failure(
     }
     let runtime = runtime(store);
     let _ = runtime
+        .health()
         .observe_provider(
             HealthTarget::codex(account.account_id()),
             HealthEvent::UpstreamError,
@@ -101,7 +101,7 @@ pub(super) async fn failure(
                     .record_capacity_downtime("unreachable", status, now)
                     .await;
             }
-            let _ = runtime.trigger_capacity_sample().await;
+            let _ = runtime.capacity().trigger_capacity_sample().await;
         });
     }
 }

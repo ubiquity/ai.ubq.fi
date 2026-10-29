@@ -1,3 +1,6 @@
+use gateway_authority_contracts::{DAY_MS, REQUEST_LEASE_MS};
+use gateway_authority_keys as keys;
+use gateway_authority_routing_records::slot::class_name;
 use gateway_contracts::{
     lifecycle::BodyOutcome, lifecycle::DeliveryOutcome, lifecycle::ReaderTermination,
     lifecycle::SemanticTerminal, lifecycle::TransportObservation, model::ModelId,
@@ -6,6 +9,7 @@ use gateway_contracts::{
 use gateway_local_refusal::routing_error::SourceRefusalBody;
 use gateway_model_selection::selection as model_selection;
 use gateway_provider_policy::policy::HopFailure;
+use gateway_routing_runtime::policy::class;
 use gateway_routing_runtime::{
     classify, policy, session::RoutingSession, settlement::recover_pending, types::AttemptFailure,
     types::AttemptUsage, types::PreparedAttempt, types::PreparedWireRequest,
@@ -58,7 +62,6 @@ fn fixture_collator_refuses_unproven_operands_even_when_equal() {
 }
 
 fn paid_input(store: &Store, id: &str, model: &str) -> TestResult<RoutingInput> {
-    use gateway_authority_keys as keys;
     use gateway_authority_paid_control_records::*;
     use gateway_contracts::provider::PaidProvider;
     use gateway_core::state::AuthorityStore;
@@ -130,7 +133,7 @@ fn paid_input(store: &Store, id: &str, model: &str) -> TestResult<RoutingInput> 
     store.seed(
         keys::paid_routing(),
         PaidRoutingProjection {
-            policy: gateway_authority_paid_records::PaidRoutingPolicy {
+            policy: PaidRoutingPolicy {
                 v: 2,
                 codex_enabled: true,
                 codex_models: vec!["gpt-test".into()],
@@ -158,7 +161,7 @@ fn paid_input(store: &Store, id: &str, model: &str) -> TestResult<RoutingInput> 
                 ))?,
                 observed_at_ms: NOW,
                 source_valid_until_ms: None,
-                source_checks: paid_projection_source_keys()
+                source_checks: gateway_authority_paid_evidence::paid_projection_source_keys()
                     .into_iter()
                     .map(|key| {
                         revision(key.clone()).map(|expected_revision| PaidSourceCheck {
@@ -191,7 +194,7 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() -> T
         assert!(attempt.paid.is_some());
         assert!(matches!(
             attempt.credential,
-            gateway_routing_runtime::types::CredentialFence::Paid { .. }
+            gateway_routing_journal::record::CredentialFence::Paid { .. }
         ));
         session.before_dispatch(&attempt).await?;
         session.transport_started(&attempt).await?;
@@ -231,7 +234,7 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() -> T
 fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
     use gateway_authority::store::Authority;
     use gateway_authority_api_protocol::ApiReservation;
-    use gateway_authority_keys as keys;
+    use gateway_authority_api_release::ApiReleaseOperations;
     use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 
     run(async {
@@ -261,7 +264,7 @@ fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
             .await?;
         assert!(session.next_attempt().await.is_err());
         assert_eq!(
-            store.value(keys::paid_window("key-a", NOW + gateway_authority::DAY_MS)),
+            store.value(keys::paid_window("key-a", NOW + DAY_MS)),
             Value::Null,
             "A stale original API owner must fail before any paid exposure is created"
         );
@@ -271,7 +274,6 @@ fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
 
 #[test]
 fn paid_dispatch_missing_active_history_cannot_recreate_exposure() -> TestResult {
-    use gateway_authority_keys as keys;
     use gateway_core::state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
     };
@@ -291,7 +293,7 @@ fn paid_dispatch_missing_active_history_cannot_recreate_exposure() -> TestResult
         let paid = attempt.paid.as_ref().ok_or("missing paid reservation")?;
         let key = keys::paid_attempt(&paid.key_id.0, &paid.attempt_id.0);
         let record = store.read(&key).await?.ok_or("missing fixture value")?;
-        let window_key = keys::paid_window("key-a", NOW + gateway_authority::DAY_MS);
+        let window_key = keys::paid_window("key-a", NOW + DAY_MS);
         let exposure = store.value(window_key.clone());
         assert_ne!(exposure, Value::Null);
         assert_eq!(
@@ -470,7 +472,7 @@ fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() -> T
         let handle = session.admission_handle();
         let children = handle.children(1).await?;
         handle.before_dispatch(&children[0]).await?;
-        store.advance(gateway_authority::REQUEST_LEASE_MS + 1);
+        store.advance(REQUEST_LEASE_MS + 1);
         let recovered = recover_pending(
             store.clone(),
             Host::new(&store),
@@ -737,9 +739,7 @@ fn frozen_source_classifier_quota_classes_and_fallback_matrix() {
     assert_eq!(golden["quota"].as_array().unwrap().len(), 16);
     for case in golden["classes"].as_array().unwrap() {
         assert_eq!(
-            gateway_authority::routing::class_name(policy::class(&ModelId::from(
-                case["model"].as_str().unwrap_or("")
-            ))),
+            class_name(class(&ModelId::from(case["model"].as_str().unwrap_or("")))),
             case["expected"].as_str().unwrap()
         );
     }
@@ -1087,7 +1087,7 @@ fn expired_journal_recovery_never_replays_or_refunds_started_work() {
         let attempt = session.next_attempt().await.unwrap().unwrap();
         session.before_dispatch(&attempt).await.unwrap();
         session.transport_started(&attempt).await.unwrap();
-        store.advance(gateway_authority::REQUEST_LEASE_MS + 1);
+        store.advance(REQUEST_LEASE_MS + 1);
         let recovered = recover_pending(
             store.clone(),
             host.clone(),

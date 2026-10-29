@@ -233,7 +233,11 @@ function context(session: Session): MatrixContext {
 }
 const adminHeaders = { authorization: "Bearer fixture-admin", connection: "close" };
 async function capacity(ctx: MatrixContext): Promise<Record<string, unknown>> {
-  const snapshot = await json(await fetch(ctx.url("/admin/providers/capacity"), { headers: adminHeaders }));
+  // Setup discovery finishes before this helper; every cold/restarted/switched read gets its own baseline.
+  const before = await attempts(ctx);
+  const response = await fetch(ctx.url("/admin/providers/capacity"), { headers: adminHeaders });
+  const snapshot = await json(response);
+  assert.deepEqual(await attempts(ctx), before, "Every capacity read must add zero audited outbound attempts, including the first read.");
   assert.equal(object(snapshot.claude).quota_source, "response_headers", "Current Claude capacity must identify its header-only projection.");
   return snapshot;
 }
@@ -242,6 +246,20 @@ async function attempts(ctx: MatrixContext): Promise<Record<string, unknown>[]> 
 }
 async function assertNoOauth(ctx: MatrixContext): Promise<void> {
   assert.equal((await attempts(ctx)).filter((event) => event.category === "oauth_usage").length, 0, "Even refused OAuth usage attempts are forbidden.");
+}
+// This no-click group uses synthetic programmatic auth; Passport transport is not part of its scenario.
+const EXPECTED_CLAUDE_OUTBOUND = new Map<string, string>([
+  ["GET api.anthropic.com/v1/models", "models"],
+  ["GET api.anthropic.com/v1/organizations/workspaces", "workspaces"],
+  ["POST api.anthropic.com/v1/messages", "inference"],
+]);
+async function assertExpectedOutboundAttempts(ctx: MatrixContext): Promise<void> {
+  for (const event of await attempts(ctx)) {
+    const expected = EXPECTED_CLAUDE_OUTBOUND.get(`${event.method} ${event.hostname}${event.pathname}`);
+    assert(expected, "Unexpected audited outbound destination/method, including a refused attempt.");
+    assert.equal(event.category, expected, "The audited endpoint must have its actual scenario category.");
+  }
+  await assertNoOauth(ctx);
 }
 function windowOf(snapshot: Record<string, unknown>, name: string): Record<string, unknown> | null {
   const value = object(object(snapshot.claude).windows)[name];
@@ -427,16 +445,38 @@ async function accountHistory(ctx: MatrixContext, clientId: string): Promise<Acc
   ctx.cases.push("claude_header_active_account_changes_without_deleting_retained_history");
   return owner;
 }
-function browserChecks(owner: Account): Record<string, unknown> {
+function browserChecks(owner: Account, initialOwner: Account): Record<string, unknown> {
   return {
     expectedActiveAccount: owner.account_id,
+    expectedActiveCohort: owner.account_cohort_id,
+    expectedAccountSwitch: { initial: initialOwner, current: owner },
+    expectedFiveHourUsedPercent: 10,
+    expectedFiveHourRemainingPercent: 90,
     browserAccepted: false,
-    signedOutExpression: `(() => { const visible = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'; const compatibility = document.querySelector('#admin-auth-compat'); return { passportButtons: [...document.querySelectorAll('[data-passport-signin]')].filter(visible).length, compatibilityHidden: compatibility?.hidden === true && compatibility.getAttribute('aria-hidden') === 'true', historyDropdownAbsent: !document.querySelector('#capacityClaudeFilter') }; })()`,
+    serverHoldOnly: true,
+    automatedBrowserAssertionsExecuted: false,
+    signedOutExpression: `(() => { const visible = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'; const compatibility = document.querySelector('#admin-auth-compat'); return { passportButtons: [...document.querySelectorAll('[data-passport-signin]')].filter(visible).length, compatibilityHidden: compatibility?.hidden === true && compatibility.getAttribute('aria-hidden') === 'true', historyDropdownAbsent: !document.querySelector('[data-capacity-claude-filter], select[aria-label="Claude history account (view only)"]') }; })()`,
+    requiredBrowserScenarios: [
+      "rust_served_passport_and_active_account",
+      "v2_indexeddb_unmarked_98_percent_fresh_capacity_failure",
+      "marked_cached_projection_positive_control",
+    ],
     required: [
-      "Use a task browser without real credentials; never click Passport.",
-      "Exactly one visible Passport action before and after expanding/collapsing the account panel.",
-      "Separate synthetic admin context must render the active account's 10% five-hour meter/history from actual Rust responses.",
-      "No history-account dropdown; do not reject the legitimate provider-account configuration selector.",
+      "A server hold or browser-ready file is not browser acceptance; retain separate executed DOM/network evidence.",
+      "Use an isolated task browser with no real credentials/cookies; never click Passport or perform sign-in.",
+      "On actual Rust-served assets after initialization, assert one visible Passport action and hidden compatibility nodes before/after panel expansion, on desktop/mobile.",
+      "Use only existing synthetic programmatic admin auth and real Rust account activation: render initial account A, switch to B, refresh through existing UI lifecycle, and verify the active account/cohort label, header times and actual history without mixing A/B.",
+      "Current B five-hour measurement is 10% used / 90% remaining; do not confuse consumed and remaining capacity.",
+      "Assert absent [data-capacity-claude-filter] and the history-account ARIA select; retain the legitimate provider-account configuration selector.",
+      "Take the existing controlled attempt baseline before browser passive actions and compare after: no OAuth, inference, discovery or refresh attempts, including refused attempts.",
+      "V2 negative: seed the actual scoped IndexedDB format/key using existing admin-cache helpers with an unmarked legacy Claude98% window/time/standard/current-row contribution, alongside Codex cache and proven header history; fail only the fresh capacity read, then execute actual hydration/render.",
+      "Assert legacy Claude measurement/time/standard/current-row series is absent or awaiting data after failed fetch, while Codex and proven header history remain; do not rewrite the old cached row as proven.",
+      "Marked positive control: cache an actual marked Rust response and verify its values/timestamps/history still render with the fresh read failed; restore interception afterward.",
+      "All assets and successful API payloads must remain actual Rust responses; no mocked successful capacity response or generic server row writer proves this gate.",
+    ],
+    remainingNativeOrBrowserProof: [
+      "Exact first accepted-history count/cohort and raw durable-history revision/write stability need the defining existing typed read/native evidence; current view equality alone is not that proof.",
+      "Out-of-order clocks and exact cohort/revision replacement remain the named native fixtures; no extra product clock/producer is introduced.",
     ],
   };
 }
@@ -480,6 +520,7 @@ async function execute(sha: string, pairPath: string, workspace: string, browser
     await restartCase(session, ctx, owner);
     const current = await accountHistory(ctx, client.id);
     await servedAssets(ctx);
+    await assertExpectedOutboundAttempts(ctx);
     const receipt = {
       status: "controlled_rust_component_only",
       sourceSha: sha,
@@ -492,7 +533,7 @@ async function execute(sha: string, pairPath: string, workspace: string, browser
       arch: process.arch,
       bun: Bun.version,
       workerd: "1.20261012.1",
-      browser: browserChecks(current),
+      browser: browserChecks(current, owner),
       limitations: [
         "Rendered browser assertions remain a separate gate.",
         "Legacy direct-error/data injection, out-of-order clocks and revision replacement require the named native fixtures; no generic row writer is added.",
@@ -503,11 +544,23 @@ async function execute(sha: string, pairPath: string, workspace: string, browser
     if (browser) {
       await writeFile(
         join(workspace, "browser-ready.json"),
-        JSON.stringify({ publicOrigin: session.current.publicOrigin, ...browserChecks(current) }, null, 2) + "\n"
+        JSON.stringify(
+          {
+            publicOrigin: session.current.publicOrigin,
+            controlEventsUrl: session.current.origin + "/control",
+            outboundAttemptsBeforeBrowser: await attempts(ctx),
+            ...browserChecks(current, owner),
+          },
+          null,
+          2
+        ) + "\n"
       );
       console.log(JSON.stringify({ browserReady: join(workspace, "browser-ready.json"), publicOrigin: session.current.publicOrigin }));
       await holdForBrowser();
     }
+    await assertExpectedOutboundAttempts(ctx);
+    receipt.outboundAttempts = await attempts(ctx);
+    await writeFile(join(workspace, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
     frozen(sha, proof.tree);
     assert.deepEqual(await hashes(Object.keys(proof.hashes)), proof.hashes);
     console.log(JSON.stringify({ evidence: workspace, ...receipt }));

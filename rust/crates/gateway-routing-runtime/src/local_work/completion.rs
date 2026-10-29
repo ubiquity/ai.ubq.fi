@@ -1,12 +1,12 @@
 //! Owned local semantic choice, separate from durable acknowledgement and transport.
 use super::*;
-use gateway_authority_local_completion::LocalCompletedIntentOutcome;
-use gateway_contracts::{
-    lifecycle::BodyOutcome, lifecycle::DeliveryOutcome, lifecycle::ReaderTermination,
-};
+use gateway_authority_local_completion::{LocalCompletedIntentOutcome, LocalCompletionOperations};
+use gateway_contracts::lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination};
 use gateway_core::{state::AtomicTransition, state::CommitOutcome, state::RevisionCheck};
 use gateway_local_journal::local_completion::LocalCompletedJournalPlan;
 use gateway_local_refusal::routing_error::RoutingError;
+use gateway_routing_journal::reader;
+use gateway_routing_journal::record::{Journal, RevisionCheckWire};
 
 pub struct PendingLocalCompletion<S, I, C, H> {
     original: Option<LocalWorkHandle<S, I, C, H>>,
@@ -41,7 +41,7 @@ impl<
                 }));
             }
         } else {
-            let (record, row) = journal::load(&original.store, original.id()).await?;
+            let (record, row) = reader::load(&original.store, original.id()).await?;
             original.owned(&row)?;
             self.plan = Some(LocalCompletedJournalPlan::prepare(
                 &record,
@@ -104,7 +104,7 @@ impl<
             return Err(invalid().into());
         }
         let original = &self.original;
-        let (_, row) = journal::load(&original.store, original.id()).await?;
+        let (_, row) = reader::load(&original.store, original.id()).await?;
         if !same_original(
             &row,
             original.original_context(),
@@ -279,7 +279,7 @@ pub(super) async fn refine_finished_record<
     expected: &Journal,
     observation: LocalTerminalObservation,
 ) -> Result<RecoveredSession, GatewayError> {
-    let (record, row) = journal::load(store, id).await?;
+    let (record, row) = reader::load(store, id).await?;
     let local = expected.local_work.as_ref().ok_or_else(invalid)?;
     if !same_original(
         &row,
@@ -299,7 +299,7 @@ pub(super) async fn refine_finished_record<
     )?;
     let mut checks = terminal_checks(store, &row, merged.semantic, true).await?;
     checks.push(RevisionCheckWire {
-        key: journal::key(id),
+        key: reader::session_key(id),
         expected_revision: Some(record.revision),
     });
     if row.local_work.as_ref().and_then(|local| local.terminal) == Some(merged) {
@@ -356,7 +356,7 @@ async fn confirmed_continuation<
     original: &LocalWorkHandle<S, I, C, H>,
     plan: &LocalCompletedJournalPlan,
 ) -> Result<bool, GatewayError> {
-    let (record, row) = journal::load(&original.store, original.id()).await?;
+    let (record, row) = reader::load(&original.store, original.id()).await?;
     if !same_original(
         &row,
         original.original_context(),
@@ -392,7 +392,7 @@ async fn confirmed_continuation<
     )
     .await?;
     checks.push(RevisionCheckWire {
-        key: journal::key(original.id()),
+        key: reader::session_key(original.id()),
         expected_revision: Some(record.revision),
     });
     Ok(original

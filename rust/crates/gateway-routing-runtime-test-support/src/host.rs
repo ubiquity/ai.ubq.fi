@@ -1,13 +1,14 @@
 use crate::{seed::source_key, source_catalog::Collator, store::Store};
 use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_auth_primitives::crypto::Secret;
-use gateway_authority_routing_selection::types::CohortProof;
 use gateway_authority_paid_records::{PaidReservation, PaidUsage};
+use gateway_authority_routing_selection::types::CohortProof;
 use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_protocol::{types::AuthMaterial, types::PrepareOptions};
+use gateway_routing_journal::record::CredentialFence;
 use gateway_routing_runtime::types::{
-    ClaudeOutcome, ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest,
-    PublishedCredential, RefreshOutcome, ResponseHead, RoutingHost, direct_credential,
+    ClaudeOutcome, ClaudeSelection, CodexRecovery, CredentialRequest, PublishedCredential,
+    RefreshOutcome, ResponseHead, RoutingHost, direct_credential,
 };
 use gateway_source::error::GatewayError;
 use gateway_wait_observation::outcome::WaitOutcome;

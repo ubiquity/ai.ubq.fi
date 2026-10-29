@@ -1,57 +1,28 @@
 //! Event-owned source observability over the existing atomic authority.
 //! No provider inference, credential mutation, scheduler, or second paid ledger.
 pub mod api;
-pub mod capacity;
-pub mod capacity_events;
-mod capacity_store;
+mod capacity_views;
+mod capture_dispatch;
 pub mod claude_capacity;
-mod completion;
-mod counters;
-pub mod health;
-pub mod host_types;
-pub mod incidents;
-pub mod ledger;
-pub mod ledger_stats;
-pub mod metered;
-pub mod prompt;
-pub mod prompt_gate;
-pub mod providers;
-pub mod records;
-pub mod remote_capacity;
-mod replay_bootstrap;
-mod replay_cleanup;
-pub mod replay_crypto;
-mod replay_metadata;
-pub mod replay_model;
-pub mod replay_producer;
-pub mod replay_read;
-pub mod replay_retention;
-pub mod replay_retention_schema;
-pub mod replay_trace;
-mod replay_values;
-pub mod settings;
-mod store;
+mod replay_maintenance;
 pub mod telemetry;
-pub mod types;
 
 use std::rc::Rc;
 
 /// Isolate-owned coordination data only. It never retains a store, host, or I/O future.
 #[derive(Clone, Default)]
 pub struct ObservabilityState {
-    health: health::HealthWriter,
-    active_health: providers::ActiveHealth,
-    sampled_bucket: Rc<std::cell::Cell<i64>>,
-    replay_bootstrap: Rc<std::cell::RefCell<replay_bootstrap::OwnerIndex>>,
+    health: gateway_observability_health::HealthState,
+    sampled_bucket: gateway_observability_capacity::CapacityState,
+    replay_bootstrap: gateway_observability_replay_state::ReplayBootstrapState,
 }
 
 pub struct ObservabilityRuntime<S, H> {
     pub(crate) store: Rc<S>,
     pub(crate) host: Rc<H>,
-    pub(crate) health: health::HealthWriter,
-    pub(crate) active_health: providers::ActiveHealth,
-    pub(crate) sampled_bucket: Rc<std::cell::Cell<i64>>,
-    pub(crate) replay_bootstrap: Rc<std::cell::RefCell<replay_bootstrap::OwnerIndex>>,
+    pub(crate) health: gateway_observability_health::HealthState,
+    pub(crate) sampled_bucket: gateway_observability_capacity::CapacityState,
+    pub(crate) replay_bootstrap: gateway_observability_replay_state::ReplayBootstrapState,
 }
 impl<S, H> Clone for ObservabilityRuntime<S, H> {
     fn clone(&self) -> Self {
@@ -59,7 +30,6 @@ impl<S, H> Clone for ObservabilityRuntime<S, H> {
             store: self.store.clone(),
             host: self.host.clone(),
             health: self.health.clone(),
-            active_health: self.active_health.clone(),
             sampled_bucket: self.sampled_bucket.clone(),
             replay_bootstrap: self.replay_bootstrap.clone(),
         }
@@ -74,7 +44,6 @@ impl<S, H> ObservabilityRuntime<S, H> {
             store: Rc::new(store),
             host: Rc::new(host),
             health: state.health,
-            active_health: state.active_health,
             sampled_bucket: state.sampled_bucket,
             replay_bootstrap: state.replay_bootstrap,
         }
@@ -82,7 +51,6 @@ impl<S, H> ObservabilityRuntime<S, H> {
     pub fn shared_state(&self) -> ObservabilityState {
         ObservabilityState {
             health: self.health.clone(),
-            active_health: self.active_health.clone(),
             sampled_bucket: self.sampled_bucket.clone(),
             replay_bootstrap: self.replay_bootstrap.clone(),
         }
@@ -92,5 +60,67 @@ impl<S, H> ObservabilityRuntime<S, H> {
     }
     pub fn host(&self) -> &H {
         &self.host
+    }
+    pub fn ledger(&self) -> gateway_observability_ledger::RequestLedger<'_, S, H> {
+        gateway_observability_ledger::RequestLedger::new(self.store.as_ref(), self.host.as_ref())
+    }
+    pub fn prompt(&self) -> gateway_observability_prompt::PromptAnalytics<'_, S, H> {
+        gateway_observability_prompt::PromptAnalytics::new(self.store.as_ref(), self.host.as_ref())
+    }
+    pub fn health(&self) -> gateway_observability_health::ProviderHealth<'_, S, H> {
+        gateway_observability_health::ProviderHealth::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+            self.health.clone(),
+        )
+    }
+    pub fn replay_state(&self) -> gateway_observability_replay_state::ReplayMetadata<'_, S, H> {
+        gateway_observability_replay_state::ReplayMetadata::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+            self.replay_bootstrap.clone(),
+        )
+    }
+    pub fn retention(&self) -> gateway_observability_replay_retention::ReplayRetention<'_, S, H> {
+        gateway_observability_replay_retention::ReplayRetention::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+            self.replay_bootstrap.clone(),
+        )
+    }
+    pub fn captures(&self) -> gateway_observability_replay_capture::ReplayCapture<'_, S, H> {
+        gateway_observability_replay_capture::ReplayCapture::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+            self.replay_bootstrap.clone(),
+        )
+    }
+    pub fn exports(&self) -> gateway_observability_replay_read::ReplayReader<'_, S, H> {
+        gateway_observability_replay_read::ReplayReader::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+        )
+    }
+    pub fn incidents(&self) -> gateway_observability_incidents::IncidentIndex<'_, S, H> {
+        gateway_observability_incidents::IncidentIndex::new(self.store.as_ref(), self.host.as_ref())
+    }
+    pub fn capacity(&self) -> gateway_observability_capacity::CapacitySampler<'_, S, H> {
+        gateway_observability_capacity::CapacitySampler::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+            self.sampled_bucket.clone(),
+        )
+    }
+    pub fn events(&self) -> gateway_observability_capacity_events::CapacityEvents<'_, S, H> {
+        gateway_observability_capacity_events::CapacityEvents::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+        )
+    }
+    pub fn control(&self) -> gateway_observability_control::ControlDiagnostics<'_, S, H> {
+        gateway_observability_control::ControlDiagnostics::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+        )
     }
 }

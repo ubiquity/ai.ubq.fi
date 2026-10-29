@@ -13,6 +13,7 @@ use gateway_provider_claude_body::{
 };
 use gateway_provider_protocol::{types::ClientSurface, types::OrdinaryPreparationContext};
 use gateway_providers::source_request::prepare_source_request;
+use gateway_routing_journal::record::CredentialFence;
 use gateway_routing_runtime::{currentness::*, custody, policy, session::*, types::*};
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use gateway_source::{

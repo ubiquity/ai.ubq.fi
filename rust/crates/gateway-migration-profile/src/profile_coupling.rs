@@ -4,9 +4,10 @@ use gateway_core::{
     state::AtomicTransition, state::CommitOutcome, state::RecordMutation, state::RevisionCheck,
     state::StoredRecord,
 };
-use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_migration_data::{Transform, invalid, parts, starts};
 use gateway_migration_ledger::{kernel, rows::ObservedRow};
+use gateway_profile_values::scalar::{integer, text};
 use gateway_source::error::GatewayError;
 use serde_json::Value;
 use serde_json::json;
@@ -119,7 +120,24 @@ async fn bind_api_rows<S: QueryStore>(
         && value["policy_version"] == p[5]
         && value["window_start_ms"] == p[6]
     {
-        let prefix = json!(["uos_ai", "api_key_usage", "v3", "request", p[4], p[5], p[6]]);
+        let prefix = TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("api_key_usage"),
+            ScalarKeyPart::String("v3"),
+            ScalarKeyPart::String("request"),
+            ScalarKeyPart::String(
+                text(value, "key_id").ok_or_else(|| invalid("Profile index prefix is invalid"))?,
+            ),
+            ScalarKeyPart::String(
+                text(value, "policy_version")
+                    .ok_or_else(|| invalid("Profile index prefix is invalid"))?,
+            ),
+            ScalarKeyPart::Number(
+                integer(value, "window_start_ms")
+                    .ok_or_else(|| invalid("Profile index prefix is invalid"))?,
+            ),
+        ])
+        .to_record_key();
         let mut rows = scan(store, prefix, input.now).await?;
         for row in &rows {
             check(transition, &row.key, Some(&row.record));
@@ -310,7 +328,13 @@ async fn bind_paid_rows<S: QueryStore>(
     };
     let mut rows = scan(
         store,
-        json!(["uos_ai", "paid_fallback", "v3", "pending"]),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("paid_fallback"),
+            ScalarKeyPart::String("v3"),
+            ScalarKeyPart::String("pending"),
+        ])
+        .to_record_key(),
         input.now,
     )
     .await?;

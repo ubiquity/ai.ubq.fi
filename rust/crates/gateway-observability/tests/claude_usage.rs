@@ -4,34 +4,27 @@ use gateway_auth_contracts::{
     webauthn::CosePublicKey, webauthn::SignatureInput, webauthn::WebAuthnCrypto,
 };
 use gateway_claude_roster::{claude, claude::AccountBinding};
-use gateway_claude_runtime_test_support::fixture::{NOW, account};
+use gateway_claude_runtime_test_support::{fixture::NOW, fixture::account};
 use gateway_claude_usage_history::{History, HistoryHost};
-use gateway_claude_usage_history_records::types::{ClaudeAcceptedObservation, CredentialKind};
-use gateway_claude_usage_runtime::{
-    collect,
-    fetch::{Response, UsageHost},
+use gateway_claude_usage_history_records::{
+    types::ClaudeAcceptedObservation, types::CredentialKind,
 };
-use gateway_core::state::{AuthorityStore, RevisionCheck, StoredRecord};
-use gateway_model_selection::aliases as model_aliases;
-use gateway_observability::{
-    ObservabilityRuntime,
-    host_types::{
-        BuildIdentity, CapacityAccountRef, ClaudeAccountReadback, ClaudeRosterReadback,
-        CodexAuthMetadata, CredentialMetadata, CredentialSource, ProviderInventory,
-    },
-    types::{HealthProvider, HealthTarget, ObservabilityHost},
+use gateway_claude_usage_runtime::{collect, fetch::Response, fetch::UsageHost};
+use gateway_core::{state::AuthorityStore, state::RevisionCheck, state::StoredRecord};
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{
+    host_types::BuildIdentity, host_types::CapacityAccountRef, host_types::ClaudeAccountReadback,
+    host_types::ClaudeRosterReadback, host_types::CodexAuthMetadata,
+    host_types::CredentialMetadata, host_types::CredentialSource, host_types::ProviderInventory,
+    types::HealthProvider, types::HealthTarget, types::ObservabilityHost,
 };
-use gateway_observability_test_support::runtime::{Host, Memory, run};
+use gateway_observability_test_support::{runtime::Host, runtime::Memory, runtime::run};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
 use serde_json::json;
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{cell::Cell, cell::RefCell, rc::Rc, sync::Arc};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 #[derive(Clone)]
 struct Fixture {
@@ -138,7 +131,9 @@ impl UsageHost for Fixture {
     }
 }
 impl ObservabilityHost for Fixture {
-    fn source_string_collator(&self) -> Arc<dyn model_aliases::SourceStringCollator> {
+    fn source_string_collator(
+        &self,
+    ) -> Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {
@@ -263,6 +258,8 @@ fn passive_capacity_uses_explicit_headers_and_never_collects_unused_or_guarded_a
     let a = account(1);
     let b = account(2);
     host.seed(vec![a.clone(), b.clone()])?;
+    let key = gateway_claude_policy::quota::quota_key(&b);
+    host.store.rows.borrow_mut().insert(key.0,StoredRecord::json("guard",json!({"updated_at_ms":NOW,"windows":{},"standard":{},"last_error":{"kind":"workspace","status":403,"message":"existing guard","at_ms":NOW},"cooldown_until_ms":NOW+600_000}),None));
     let runtime = ObservabilityRuntime::new(host.store.clone(), host.clone());
     for (account, used) in [(&a, "0.42"), (&b, "0.61")] {
         // Retain a genuine legacy direct snapshot, then seed only the new meter DATA.
@@ -317,9 +314,41 @@ fn passive_capacity_uses_explicit_headers_and_never_collects_unused_or_guarded_a
         assert!(source::member(&active, "usage_snapshot").is_none());
         assert_eq!(member(&active, "state")?.as_str(), "\"available\"");
     }
+    let cached = document(run(runtime.capacity_response(false, context()))?)?;
+    let rows = member(&cached, "claude_accounts")?.array_items()?;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(member(&rows[1], "state")?.as_str(), "\"unavailable\"");
+    assert_eq!(
+        member(&member(&cached, "claude_history")?, "points")?
+            .array_items()?
+            .len(),
+        2
+    );
+    let health = document(run(runtime
+        .health()
+        .passive_provider_response(true, context()))?)?;
+    let health = member(&health, "claude_code")?;
+    assert!(member(&member(&health, "quota")?, "usage_snapshot").is_ok());
+    let rollup = document(run(runtime.capacity_rollups_response(90))?)?;
+    assert_eq!(
+        member(&member(&rollup, "claude_usage_rollups")?, "points")?
+            .array_items()?
+            .len(),
+        4
+    );
+    assert!(member(&rollup, "claude_rollups")?.array_items()?.is_empty());
+    let commits = host.store.commits.get();
+    run(runtime.capacity_response(false, context()))?;
+    assert_eq!(host.calls.get(), 0);
+    assert_eq!(host.store.commits.get(), commits);
     host.base.at.set(NOW + 30_000);
     run(runtime.capacity_response(false, context()))?;
     assert_eq!(host.calls.get(), 0);
+    let text = cached.as_str();
+    assert!(!text.contains("fixture-secret"));
+    assert!(!text.contains("credential_fingerprint"));
+    assert!(!text.contains("pool_proofs"));
+    assert!(text.contains("\\ud800"));
     host.seed(vec![b.clone(), a])?;
     let switched = document(run(runtime.capacity_response(false, context()))?)?;
     assert_eq!(
@@ -399,7 +428,7 @@ fn stored_derived_meter_tampering_cannot_create_a_retained_usage_transition() ->
     let mut points = member(&view, "points")?.array_items()?;
     assert_eq!(points.len(), 2);
     let latest: Point = points[1].deserialize()?;
-    let key = latest.history_key()?;
+    let key = latest.history_key();
     let row = run(host.store.read(&key))?.ok_or("history row absent")?;
     let mut snapshot = SourceObject::parse(&member(&points[1], "usage_snapshot")?)?;
     snapshot.set("meters", &Vec::<SourceJson>::new())?;
@@ -594,7 +623,10 @@ impl gateway_admin_runtime_contracts::capabilities::RuntimeCapabilities for Admi
         )
         .await?;
         let runtime = ObservabilityRuntime::new(self.0.store.clone(), self.0.clone());
-        let block = runtime.passive_provider_response(true, context).await?;
+        let block = runtime
+            .health()
+            .passive_provider_response(true, context)
+            .await?;
         let data = member(
             &SourceJson::parse_bytes(&block.body.to_bytes()?)?,
             "claude_code",

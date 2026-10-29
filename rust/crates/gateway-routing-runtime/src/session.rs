@@ -1,23 +1,27 @@
 use crate::{
-    journal::{self, Journal},
+    journal::{self},
     policy::{self, RoutePlan},
     settlement,
     types::*,
 };
 use gateway_auth_contracts::types::AuthMethod;
 use gateway_authority::store::Authority;
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_claude_proof::ClaudeProofOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::KernelTerminal;
-use gateway_authority_paid_control_records::{
-    PaidRequestContext, PaidRoutingReceipt, PaidSyntheticHop,
-};
-use gateway_authority_paid_records::PaidAuthorization;
+use gateway_authority_paid_control_records::{PaidRequestContext, PaidSyntheticHop};
+use gateway_authority_paid_route::{PaidRoutingReceipt, authorization::PaidAuthorization};
+use gateway_authority_routing_selection::SelectionOperations;
 use gateway_authority_routing_selection::types::{AdmittedAccount, RouteSelection};
 use gateway_contracts::{identity::ApiKeyId, model::ModelId, provider::UpstreamProvider};
 use gateway_core::query::QueryStore;
 use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_claude_body::types::PreparedClaudeOrdinary;
 use gateway_provider_policy::{policy::LithosWindows, policy::WaitBudget};
+use gateway_routing_journal::record::{CredentialFence, Journal};
 use gateway_source::error::GatewayError;
 use std::{cell::RefCell, collections::BTreeSet};
 use {crate::journal::unavailable, gateway_schema_values::request::RequestSurface};
@@ -116,7 +120,7 @@ impl<
         };
         let streamed = input.streamed();
         // Fresh ordinary requests use source binding v3; generated extras keep v1 bytes.
-        let mut row = Journal::empty(
+        let mut row = journal::empty(
             if family.is_some() { 1 } else { 3 },
             input.context.clone(),
             if family.is_some() {

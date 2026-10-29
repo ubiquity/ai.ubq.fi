@@ -17,7 +17,7 @@ pub fn validate(key: &RecordKey, record: &StoredRecord) -> Result<(), GatewayErr
     {
         return Err(invalid("Source usage rollup metadata is invalid"));
     }
-    let document = gateway_observability::records::usage_rollup_record_source(record)?;
+    let document = gateway_observability_ledger::records::usage_rollup_record_source(record)?;
     let field = |name| {
         source::member(&document, name)
             .ok_or_else(|| invalid("Source usage rollup field is missing"))

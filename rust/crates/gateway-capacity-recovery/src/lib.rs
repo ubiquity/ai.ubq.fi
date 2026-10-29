@@ -15,9 +15,8 @@ use gateway_authority_routing_selection::{
 use gateway_capacity_projection::shapes;
 use gateway_contracts::model::ModelId;
 use gateway_core::state::AuthorityStore;
-use gateway_observability::{
-    host_types::{CapacityAccountRef, CapacityProbe},
-    types::ObservabilityHost,
+use gateway_observability_contracts::{
+    host_types::CapacityAccountRef, host_types::CapacityProbe, types::ObservabilityHost,
 };
 use gateway_source::error::GatewayError;
 use std::future::Future;

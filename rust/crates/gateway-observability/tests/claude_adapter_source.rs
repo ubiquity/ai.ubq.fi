@@ -1,17 +1,16 @@
 //! Only the exact request-bound SourceJson and finite settings-selector adapters.
-use gateway_capacity_projection::shapes::{history_point, unavailable_snapshot};
-use gateway_model_selection::aliases as model_aliases;
-mod support;
-use gateway_admin_runtime_contracts::capabilities::{CodexRequest, Context, ProviderRequest};
+use gateway_admin_runtime_contracts::{
+    capabilities::CodexRequest, capabilities::Context, capabilities::ProviderRequest,
+};
 use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_capacity_projection::{shapes::history_point, shapes::unavailable_snapshot};
 use gateway_core::{
-    query::{QueryPage, QueryRequest, QueryStore},
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, StoredRecord},
+    query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
+    state::AuthorityStore, state::CommitOutcome, state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
-use gateway_observability::{
-    ObservabilityRuntime, host_types::CapacityAccountRef, types::ObservabilityHost,
-};
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{host_types::CapacityAccountRef, types::ObservabilityHost};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::{cell::RefCell, rc::Rc};
@@ -28,7 +27,9 @@ struct AdapterHost {
     raw: Vec<u8>,
 }
 impl ObservabilityHost for AdapterHost {
-    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {
@@ -153,7 +154,7 @@ fn settings_source_selector_types_and_boolean_validation_precede_identity_mismat
         for (raw, status) in cases {
             let memory = Memory::default();
             let runtime = ObservabilityRuntime::new(memory.clone(), host(vec![]));
-            let error = run(runtime.codex(
+            let error = run(runtime.control().codex(
                 settings(overage, document(&raw.replace("FLAG", field))),
                 context(),
             ))
@@ -213,8 +214,10 @@ fn only_matched_existing_ascii_hash_enters_unchanged_boolean_keys_no_checks_and_
             let raw =
                 format!(r#"{{"account_id_hash":{escaped},"{field}":{flag},"ignored":"\ud800"}}"#);
             assert_ne!(escaped, quoted);
-            let response =
-                run(runtime.codex(settings(overage, document(&raw)), context())).unwrap();
+            let response = run(runtime
+                .control()
+                .codex(settings(overage, document(&raw)), context()))
+            .unwrap();
             assert_eq!(response.status, 200);
             assert_eq!(
                 response.body.as_json().unwrap(),
@@ -231,9 +234,9 @@ fn only_matched_existing_ascii_hash_enters_unchanged_boolean_keys_no_checks_and_
             assert_eq!(transition.mutations.len(), 1);
         }
         let body = if overage {
-            run(runtime.overage_settings_response(None))
+            run(runtime.control().overage_settings_response(None))
         } else {
-            run(runtime.reset_settings_response(None))
+            run(runtime.control().reset_settings_response(None))
         }
         .unwrap();
         assert_eq!(body.status, 200);

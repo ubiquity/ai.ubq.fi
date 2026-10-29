@@ -229,7 +229,7 @@ fn map_effort(
 ) -> Result<SourceJson, gateway_source::error::GatewayError> {
     s::quoted(&context.map_or_else(
         || effort.clone(),
-        |context| gateway_schema::reasoning::effort_for_codex(effort, context.reasoning()),
+        |context| gateway_model_metadata::reasoning::effort_for_codex(effort, context.reasoning()),
     ))
 }
 
