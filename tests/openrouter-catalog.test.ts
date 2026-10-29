@@ -78,8 +78,9 @@ const { handleCodexCatalogModels } = await import("../src/catalog/index.ts");
 const { buildDeepSeekWaterfallCodexRecord } = await import("../src/catalog/models.ts");
 const { handleModels } = await import("../src/models/catalog.ts");
 const { DEEPSEEK_WATERFALL_MODEL_ID } = await import("../src/deepseek/waterfall.ts");
-const { storeCodexCatalog } = await import("../src/catalog/store.ts");
-const { CODEX_CATALOG_AUTH_GENERATION_KEY, CODEX_CATALOG_FRESH_MS } = await import("../src/catalog/types.ts");
+const { loadCatalog, resetCodexCatalogMemoForTest, storeCodexCatalog } = await import("../src/catalog/store.ts");
+const { CODEX_CATALOG_AUTH_GENERATION_KEY, CODEX_CATALOG_CHUNK_PREFIX, CODEX_CATALOG_FRESH_MS, CODEX_CATALOG_PREFIX } = await import("../src/catalog/types.ts");
+import type { CodexCatalogMetadata } from "../src/catalog/types.ts";
 const { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } = await import("../src/codex/index.ts");
 const { setKvForTest } = await import("../src/kv.ts");
 const { CODEX_MODELS_WHITELIST_KV_KEY } = await import("../src/models/codex-models-whitelist.ts");
@@ -409,9 +410,14 @@ test("codex catalog: revalidation reapplies narrower OpenRouter windows to the s
         return Promise.resolve(new Response(null, { status: 304, headers: { ETag: '"catalog-etag"' } }));
       });
       const first = await handleCodexCatalogModels(codexCatalogRequest(), "0.100.0");
-      const firstModel = ((await first.json()) as { models: { context_window: number; max_context_window: number }[] }).models[0];
+      const firstModel = ((await first.json()) as { models: Record<string, unknown>[] }).models[0];
       assert.deepEqual([firstModel.context_window, firstModel.max_context_window], [1_050_000, 1_050_000]);
+      assert.equal(firstModel.auto_compact_token_limit, 892_500);
       assert.equal(upstreamIfNoneMatch, '"catalog-etag"');
+      const loaded = await loadCatalog(kvStub, "0.100.0", AUTH_GENERATION, now);
+      assert.ok(loaded);
+      assert.equal(loaded.source_body, sourceBody);
+      assert.equal(loaded.metadata.etag, '"catalog-etag"');
 
       await fetchOpenRouterModels({
         force: true,
@@ -419,10 +425,92 @@ test("codex catalog: revalidation reapplies narrower OpenRouter windows to the s
       });
       now += CODEX_CATALOG_FRESH_MS + 1;
       const second = await handleCodexCatalogModels(codexCatalogRequest(), "0.100.0");
-      const secondModel = ((await second.json()) as { models: { context_window: number; max_context_window: number }[] }).models[0];
+      const secondModel = ((await second.json()) as { models: Record<string, unknown>[] }).models[0];
       assert.deepEqual([secondModel.context_window, secondModel.max_context_window], [872_000, 872_000]);
+      assert.equal(secondModel.auto_compact_token_limit, 741_200);
     } finally {
       Date.now = originalNow;
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("codex catalog: stored widened GPT rows carry the earliest source or policy compaction limit", async () => {
+  await withFixture(["gpt-6-astra", "gpt-6.1-sol"], async () => {
+    await fetchOpenRouterModels({
+      force: true,
+      fetcher: () => Promise.resolve(Response.json({ data: ["gpt-6-astra", "gpt-6.1-sol"].map((id) => ({ id: `openai/${id}`, context_length: 1_050_000 })) })),
+    });
+    for (const sourceLimit of [undefined, 200_000, 990_000]) {
+      const sourceBody = JSON.stringify({
+        models: ["gpt-6-astra", "gpt-6.1-sol"].map((slug) => ({
+          slug,
+          context_window: 272_000,
+          max_context_window: 872_000,
+          auto_compact_token_limit: sourceLimit,
+        })),
+      });
+      assert.equal(await storeCodexCatalog(kvStub, { clientVersion: "0.100.0", authGeneration: AUTH_GENERATION, body: sourceBody, etag: '"original"' }), true);
+      const response = await handleCodexCatalogModels(codexCatalogRequest(), "0.100.0");
+      const payload = (await response.json()) as { models: Record<string, unknown>[] };
+      assert.equal(payload.models.length, 2);
+      for (const model of payload.models) {
+        assert.equal(model.context_window, 1_050_000);
+        assert.equal(model.auto_compact_token_limit, sourceLimit === 200_000 ? sourceLimit : 892_500);
+      }
+      const loaded = await loadCatalog(kvStub, "0.100.0", AUTH_GENERATION, Date.now());
+      assert.ok(loaded);
+      assert.equal(loaded.source_body, sourceBody);
+      assert.equal(loaded.metadata.etag, '"original"');
+    }
+  });
+});
+
+test("codex catalog: existing cached widened rows acquire policy limits before client validation", async () => {
+  await withFixture(["gpt-6-astra", "gpt-6.1-sol"], async () => {
+    const sourceBody = JSON.stringify({
+      models: ["gpt-6-astra", "gpt-6.1-sol"].map((slug) => ({ slug, context_window: 272_000, max_context_window: 872_000 })),
+    });
+    assert.equal(await storeCodexCatalog(kvStub, { clientVersion: "0.100.0", authGeneration: AUTH_GENERATION, body: sourceBody, etag: '"original"' }), true);
+    const metadataKey: KvKey = [...CODEX_CATALOG_PREFIX, "0.100.0"];
+    const metadata = (await kvStub.get<CodexCatalogMetadata>(metadataKey)).value;
+    assert.ok(metadata);
+    // Persist the exact old serving shape, retaining the publisher's original source chunks.
+    const legacyBody = JSON.stringify({
+      models: ["gpt-6-astra", "gpt-6.1-sol"].map((slug) => ({ slug, context_window: 1_050_000, max_context_window: 1_050_000 })),
+    });
+    const compressed = new Uint8Array(await new Response(new Blob([legacyBody]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer());
+    await kvStub.set([...CODEX_CATALOG_CHUNK_PREFIX, "0.100.0", metadata.body_generation, 0], compressed);
+    await kvStub.set(metadataKey, {
+      ...metadata,
+      chunk_count: 1,
+      compressed_bytes: compressed.byteLength,
+      body_bytes: new TextEncoder().encode(legacyBody).byteLength,
+      sha256: createHash("sha256").update(legacyBody).digest("hex"),
+    });
+    resetCodexCatalogMemoForTest();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = createFetchMock(() => Promise.reject(new Error("fresh cache must not reach upstream")));
+    try {
+      const oldTag = `"uos-catalog-${createHash("sha256").update(legacyBody).digest("hex").slice(0, 32)}"`;
+      const response = await handleCodexCatalogModels(new Request(codexCatalogRequest(), { headers: { "If-None-Match": oldTag } }), "0.100.0");
+      assert.equal(response.status, 200);
+      const body = await response.text();
+      const models = (JSON.parse(body) as { models: Record<string, unknown>[] }).models;
+      assert.deepEqual(
+        models.map((model) => model.auto_compact_token_limit),
+        [892_500, 892_500]
+      );
+      const newTag = `"uos-catalog-${createHash("sha256").update(body).digest("hex").slice(0, 32)}"`;
+      assert.equal(response.headers.get("ETag"), newTag);
+      assert.notEqual(newTag, oldTag);
+      const loaded = await loadCatalog(kvStub, "0.100.0", AUTH_GENERATION, Date.now());
+      assert.ok(loaded);
+      assert.equal(loaded.source_body, sourceBody);
+      assert.equal(loaded.metadata.etag, '"original"');
+      const unchanged = await handleCodexCatalogModels(new Request(codexCatalogRequest(), { headers: { "If-None-Match": newTag } }), "0.100.0");
+      assert.equal(unchanged.status, 304);
+    } finally {
       globalThis.fetch = originalFetch;
     }
   });

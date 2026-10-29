@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Native catalog windows carry their automatic compaction policy - 2026-10-29
+
+First-party Codex catalog records carry the existing shared automatic compaction policy alongside their context window. The limit is the earlier valid source limit or the shared 85-percent-or-50,000-token-reserve derivation. A 1,050,000-token GPT window therefore carries an 892,500-token limit; an earlier source limit remains authoritative. This repairs native records that previously widened their window while leaving clients to derive a later default trigger.
+
+Verified cached bodies receive the same projection before client conditional validation, including caches persisted before this correction. Stored source bytes, source integrity metadata and the upstream ETag remain unchanged; upstream 304 revalidation still starts from those original bytes. Client ETags continue to hash the final served representation, so an old validator cannot hide the repaired compaction limit.
+
+Reason: real Mac sessions exhausted context near 923,000 tokens before the client's 945,000-token default trigger. Their native catalog advertised the widened window without the gateway's earlier compaction policy. This change adds no interception, provider routing, model choice or user configuration. Exact upstream output reservation is not inferred from those failures.
+
 ## Claude capacity is observed only from ordinary response headers - 2026-10-28
 
 The Claude meter and current capacity projection use an explicitly marked response-header observation captured by the existing ordinary-inference quota acceptance path. Subscription windows and API-key limit families retain their own observation timestamps; missing families and headerless responses invent no measurements. Canonical routing quota, proofs, cooldowns and settlement keep their existing behavior. Old canonical values without header provenance and retained direct-usage snapshots are not relabeled as header evidence. New header history carries `source: "response_headers"`; legacy history without a direct snapshot remains readable as header history.

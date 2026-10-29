@@ -4,6 +4,7 @@ import type { Kv, KvEntry, KvKey } from "#kv";
 import { parseCodexClientVersion } from "../models/codex-models.ts";
 import { getString, isRecord, sha256Hex } from "../utils.ts";
 import { openRouterMetadataFor } from "../models/openrouter-models.ts";
+import { resolvedAutoCompactTokenLimit } from "../recent-model-context.ts";
 import {
   CODEX_CATALOG_AUTH_GENERATION_KEY,
   CODEX_CATALOG_CHUNK_BYTES,
@@ -205,6 +206,9 @@ const loadCatalog = async (kv: Kv, version: string, authGeneration: string, nowM
   if (!body) return null;
   const parsed = parseCatalogBody(body);
   if (!parsed) return null;
+  // Persisted bytes are verified above. Project old caches before client ETag
+  // validation without changing their upstream source or storage integrity.
+  const servedBody = applyCodexCatalogCompactionLimits(parsed) ? JSON.stringify(parsed) : body;
   const sourceBody =
     metadata.source_chunk_count === undefined
       ? null
@@ -216,7 +220,8 @@ const loadCatalog = async (kv: Kv, version: string, authGeneration: string, nowM
           metadata.source_body_bytes ?? 0,
           metadata.source_sha256 ?? ""
         );
-  const loaded = sourceBody && parseCatalogBody(sourceBody) ? { metadata, body, parsed, source_body: sourceBody } : { metadata, body, parsed };
+  const loaded =
+    sourceBody && parseCatalogBody(sourceBody) ? { metadata, body: servedBody, parsed, source_body: sourceBody } : { metadata, body: servedBody, parsed };
   memoizeCatalog(loaded);
   return loaded;
 };
@@ -280,7 +285,22 @@ const widenCodexCatalogWindows = (body: string): string | null => {
     if (!isRecord(model)) continue;
     if (widenCodexModelWindows(model)) changed = true;
   }
+  if (applyCodexCatalogCompactionLimits(parsed)) changed = true;
   return changed ? JSON.stringify(parsed) : null;
+};
+
+const applyCodexCatalogCompactionLimits = (parsed: Record<string, unknown>): boolean => {
+  let changed = false;
+  for (const model of parsed.models as Record<string, unknown>[]) {
+    const window = positiveWindowCount(model.context_window);
+    if (window === null) continue;
+    const sourceLimit = resolvedAutoCompactTokenLimit(window, positiveWindowCount(model.auto_compact_token_limit));
+    const limit = Math.min(sourceLimit, resolvedAutoCompactTokenLimit(window, null));
+    if (model.auto_compact_token_limit === limit) continue;
+    model.auto_compact_token_limit = limit;
+    changed = true;
+  }
+  return changed;
 };
 
 const positiveWindowCount = (value: unknown): number | null => (typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null);
