@@ -6,15 +6,12 @@ use gateway_source::error::GatewayError;
 use std::future::Future;
 
 pub mod actor;
-pub mod custody;
 mod facts;
 pub mod import;
 mod live_renewal;
 pub mod managed;
 pub mod owners;
 pub mod receiver;
-
-pub const OWNER_RENEWAL_MAX_MS: i64 = 45_000;
 
 /// This capability is minted only after server authentication and fixed strong-read/CAS checks.
 /// ```compile_fail

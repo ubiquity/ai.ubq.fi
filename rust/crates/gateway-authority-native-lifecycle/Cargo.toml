@@ -27,6 +27,7 @@ serde_json.workspace = true
 
 [dev-dependencies]
 gateway-routing-journal.workspace = true
+gateway-authority-native-import = { path = "../gateway-authority-native-import" }
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
 gateway-auth = { path = "../gateway-auth" }

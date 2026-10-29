@@ -16,13 +16,14 @@ use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation};
 use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::tuple_key::{ScalarKeyPart::String as Text, TupleKey};
+use gateway_native_authority_request::live::{self as live_request, NativeLiveAuthorityRequest};
 use gateway_native_authority_wire::live::{
     NativeLiveAuthorityResponse, NativeLiveFence, NativeLiveRetirement,
 };
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use wire::{NativeLiveAccess, NativeLiveAuthorityRequest};
+use wire::NativeLiveAccess;
 pub mod wire;
 
 /// Server-created selector, deliberately neither Serialize nor Deserialize.
@@ -65,7 +66,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> NativeLiveAuthority<'a, S, I> {
             let now = self.authority.fresh_time(0)?;
             let mut tx = self.authority.transaction(now)?;
             let reference = self.authority.tokens.next_token()?;
-            if !wire::reference(&reference) {
+            if !live_request::reference(&reference) {
                 return Err(fail());
             }
             let key = custody_key("action", &reference);
@@ -468,7 +469,7 @@ pub fn validate_live_custody(
     reference: &str,
     value: &Value,
 ) -> Result<(), GatewayError> {
-    if !wire::reference(reference) {
+    if !live_request::reference(reference) {
         return Err(fail());
     }
     match kind {
@@ -490,8 +491,8 @@ pub fn validate_live_custody(
             let row: ConnectionRow = serde_json::from_value(value.clone()).map_err(|_| fail())?;
             if row.v != 1
                 || row.connection_id != reference
-                || !wire::reference(&row.action_ref)
-                || !wire::reference(&row.authorization_ref)
+                || !live_request::reference(&row.action_ref)
+                || !live_request::reference(&row.authorization_ref)
                 || row.owner_id.is_empty()
                 || row.owner_epoch.is_empty()
                 || row.key_fingerprint.len() != 64

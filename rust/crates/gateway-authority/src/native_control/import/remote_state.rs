@@ -1,8 +1,9 @@
 //! Private local/actual-remote state. DATA and a matching client are both required;
 //! no fake local action or deserialized body/start capability exists.
-use super::effects::NativeImportBinding;
+
 use super::*;
 use gateway_auth_native_contracts::native_import::state::ImportAuthorityStateData;
+use gateway_authority_native_records::import_effects::NativeImportBinding;
 #[cfg(unix)]
 use std::sync::Arc;
 

@@ -1,6 +1,5 @@
 //! One actual admin/source-bound import preparation. No body/digest is persisted.
 use super::{
-    OWNER_RENEWAL_MAX_MS,
     actor::{self, NativeRenewalActor},
     receiver::NativeRenewalAuthority,
 };
@@ -10,13 +9,13 @@ use gateway_auth_native_contracts::native_import::{
 use gateway_auth_native_proof::native_import::{NativeImportAdmission, VerifiedNativeImportBody};
 use gateway_authority_actor_records::{legacy::StoredNativeActor, scope::NativeActorScope};
 use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
+use gateway_authority_native_custody::OWNER_RENEWAL_MAX_MS;
 use gateway_authority_native_records::{import_action::ImportActionRow, rows};
 use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
 use remote_state::ImportActionState;
 use serde::{Deserialize, Serialize};
 mod catalog_seed;
-pub(super) mod custody;
 pub mod custody_session;
 pub mod effects;
 #[cfg(all(unix, feature = "native-import-fixture"))]
@@ -289,10 +288,4 @@ fn unavailable() -> GatewayError {
         "Native import preparation is unavailable, changed, expired, or unsupported.",
         "native_import_authority_unavailable",
     )
-}
-
-fn required_nullable<'de, T: Deserialize<'de>, D: serde::Deserializer<'de>>(
-    d: D,
-) -> Result<Option<T>, D::Error> {
-    Option::<T>::deserialize(d)
 }

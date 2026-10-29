@@ -1,6 +1,13 @@
 //! Exact data schemas only. Legacy proof-only rows never become effect capabilities.
-use super::*;
+use crate::OWNER_RENEWAL_MAX_MS;
+use gateway_auth_native_contracts::native_import::{
+    NativeImportKind, NativeImportMetadata, NativeImportTarget,
+};
+use gateway_authority_actor_records::{legacy::StoredNativeActor, scope::NativeActorScope};
+use gateway_authority_native_records::import_action::ImportActionRow;
+use gateway_source::error::GatewayError;
 use gateway_source::source_json::SourceJson;
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -32,7 +39,7 @@ fn exact<T: Serialize>(value: &SourceJson, row: &T) -> Result<(), GatewayError> 
     if serde_json::to_value(row).map_err(|_| unavailable())? != scalar {
         return Err(unavailable());
     }
-    super::super::custody::actor_shape(&scalar["actor"])
+    crate::renewal::actor_shape(&scalar["actor"])
 }
 fn common(
     kind: (u8, NativeImportKind),
@@ -60,22 +67,19 @@ fn common(
             .map_err(|_| unavailable())?
             .as_str()
             != actor.principal()
-        || deadline != crate::add(created, OWNER_RENEWAL_MAX_MS)?
+        || deadline != gateway_authority_contracts::add(created, OWNER_RENEWAL_MAX_MS)?
     {
         return Err(unavailable());
     }
     for text in [&context.request_id.0, &context.route] {
-        crate::text(text)?;
+        gateway_authority_contracts::text(text)?;
     }
     for time in [created, deadline, context.started_at_ms] {
-        crate::validate_time(time)?;
+        gateway_authority_contracts::validate_time(time)?;
     }
     Ok(())
 }
-pub(in crate::native_control) fn validate_custody(
-    value: &SourceJson,
-    id: &str,
-) -> Result<(), GatewayError> {
+pub(crate) fn validate_custody(value: &SourceJson, id: &str) -> Result<(), GatewayError> {
     let version = gateway_source::source_serialization::member(value, "v")
         .and_then(|v| v.deserialize::<u8>().ok())
         .ok_or_else(unavailable)?;
@@ -103,14 +107,14 @@ pub(in crate::native_control) fn validate_custody(
             &row.facts.native_generation,
             &row.facts.checks_digest,
         ] {
-            super::super::custody::hash(hash)?;
+            crate::renewal::hash(hash)?;
         }
         for text in [
             &row.facts.owner_id,
             &row.facts.owner_epoch,
             &row.facts.native_owner_id,
         ] {
-            crate::text(text)?;
+            gateway_authority_contracts::text(text)?;
         }
         return exact(value, &row);
     }
@@ -144,7 +148,7 @@ pub(in crate::native_control) fn validate_custody(
     .into_iter()
     .chain(facts.account_digests.iter().map(String::as_str))
     {
-        super::super::custody::hash(hash)?;
+        crate::renewal::hash(hash)?;
     }
     for text in [
         &facts.owner_id,
@@ -157,7 +161,14 @@ pub(in crate::native_control) fn validate_custody(
     .into_iter()
     .chain(facts.runtime_revision.iter())
     {
-        crate::text(text)?;
+        gateway_authority_contracts::text(text)?;
     }
     exact(value, &row)
+}
+
+fn unavailable() -> GatewayError {
+    GatewayError::unavailable(
+        "Native import preparation is unavailable, changed, expired, or unsupported.",
+        "native_import_authority_unavailable",
+    )
 }

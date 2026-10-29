@@ -12,7 +12,7 @@ use gateway_native_authority_wire::{context::NativeRenewalContext, renewal::Nati
 use gateway_source::{error::GatewayError, source_serialization as source};
 use serde_json::Value;
 
-pub(super) fn hash(value: &str) -> Result<(), GatewayError> {
+pub fn hash(value: &str) -> Result<(), GatewayError> {
     if value.len() != 64
         || !value
             .bytes()
@@ -23,7 +23,7 @@ pub(super) fn hash(value: &str) -> Result<(), GatewayError> {
     Ok(())
 }
 fn time(value: i64) -> Result<(), GatewayError> {
-    crate::validate_time(value)
+    gateway_authority_contracts::validate_time(value)
 }
 fn terminal(row: &TerminalPublication) -> Result<(), GatewayError> {
     for text in [
@@ -31,7 +31,7 @@ fn terminal(row: &TerminalPublication) -> Result<(), GatewayError> {
         &row.source_revision,
         &row.normalized_revision,
     ] {
-        crate::text(text)?;
+        gateway_authority_contracts::text(text)?;
     }
     for value in [
         &row.native_source_generation,
@@ -59,7 +59,7 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
         &row.original_request_id,
         &row.principal,
     ] {
-        crate::text(value)?;
+        gateway_authority_contracts::text(value)?;
     }
     for value in [
         &row.account_id_hash,
@@ -74,7 +74,7 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
         time(at)?;
     }
     if let Some(value) = &row.native_refreshed_at {
-        crate::text(value)?;
+        gateway_authority_contracts::text(value)?;
     }
     match &row.context {
         NativeRenewalContext::Inference {
@@ -83,7 +83,7 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
             model,
             slot,
         } => {
-            crate::text(attempt_id)?;
+            gateway_authority_contracts::text(attempt_id)?;
             // Source models are already selected nonblank JSON strings, not
             // bounded scalar authority identifiers. Whole signed frames retain
             // their protocol bounds; custody must not invent a model-only cap.
@@ -115,8 +115,8 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
             call_id,
             mapping_revision,
         } => {
-            crate::text(call_id)?;
-            crate::text(mapping_revision)?;
+            gateway_authority_contracts::text(call_id)?;
+            gateway_authority_contracts::text(mapping_revision)?;
         }
         NativeRenewalContext::CacheExperiment { context } => {
             context.target.validate()?;
@@ -137,7 +137,7 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
                 &context.cycle_lease_revision,
                 &context.campaign_lease_revision,
             ] {
-                crate::text(value)?;
+                gateway_authority_contracts::text(value)?;
             }
             for (index, sample) in context.prefix.iter().enumerate() {
                 if !sample.valid(index) {
@@ -148,7 +148,7 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
     }
     Ok(())
 }
-pub(super) fn actor_shape(raw: &Value) -> Result<(), GatewayError> {
+pub(crate) fn actor_shape(raw: &Value) -> Result<(), GatewayError> {
     let Some(fields) = raw.as_object() else {
         return Err(fail());
     };
@@ -188,7 +188,7 @@ pub fn validate_native_control_custody(
     record: &StoredRecord,
 ) -> Result<(), GatewayError> {
     record.validate_version()?;
-    crate::text(&record.revision)?;
+    gateway_authority_contracts::text(&record.revision)?;
     if record.expires_at_ms.is_some() {
         return Err(fail());
     }
@@ -205,7 +205,7 @@ pub fn validate_native_control_custody(
     }
     let kind = &strings[4];
     let id = &strings[5];
-    crate::text(id)?;
+    gateway_authority_contracts::text(id)?;
     if rows::key(kind, id) != *key {
         return Err(fail());
     }
@@ -213,7 +213,7 @@ pub fn validate_native_control_custody(
         "action" => {
             let value = decode_source_control_record(record)?;
             if source::member(&value, "kind").is_some() {
-                return super::import::custody::validate_custody(&value, id);
+                return crate::import::validate_custody(&value, id);
             }
             let row: ActionRow = value.deserialize().map_err(|_| fail())?;
             if row.v != 2 || row.action_ref != *id || row.fence.principal != row.actor.principal() {
@@ -229,7 +229,11 @@ pub fn validate_native_control_custody(
             time(row.created_at_ms)?;
             time(row.deadline_ms)?;
             if row.deadline_ms <= row.created_at_ms
-                || row.deadline_ms > crate::add(row.created_at_ms, super::OWNER_RENEWAL_MAX_MS)?
+                || row.deadline_ms
+                    > gateway_authority_contracts::add(
+                        row.created_at_ms,
+                        crate::OWNER_RENEWAL_MAX_MS,
+                    )?
             {
                 return Err(fail());
             }
@@ -242,7 +246,7 @@ pub fn validate_native_control_custody(
                 return Err(fail());
             }
             if let Some(operation) = &row.operation_id {
-                crate::text(operation)?;
+                gateway_authority_contracts::text(operation)?;
             }
         }
         "operation" => {
@@ -252,11 +256,11 @@ pub fn validate_native_control_custody(
                 return Err(fail());
             }
             hash(&row.action_ref)?;
-            crate::text(&row.claim_ref)?;
+            gateway_authority_contracts::text(&row.claim_ref)?;
             hash(&row.request_digest)?;
             hash(&row.start_digest)?;
             if let Some(value) = &row.publication_revision {
-                crate::text(value)?;
+                gateway_authority_contracts::text(value)?;
             }
             for value in [&row.native_source_generation, &row.access_generation]
                 .into_iter()
@@ -281,10 +285,10 @@ pub fn validate_native_control_custody(
                 return Err(fail());
             }
             hash(id)?;
-            crate::text(&row.operation_id)?;
-            crate::text(&row.claim_ref)?;
+            gateway_authority_contracts::text(&row.operation_id)?;
+            gateway_authority_contracts::text(&row.claim_ref)?;
             if let Some(value) = &row.publication_revision {
-                crate::text(value)?;
+                gateway_authority_contracts::text(value)?;
             }
             if let Some(value) = &row.terminal {
                 terminal(value)?;

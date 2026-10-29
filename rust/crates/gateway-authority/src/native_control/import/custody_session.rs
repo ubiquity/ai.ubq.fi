@@ -45,7 +45,7 @@ impl ImportCustodyStartedRequest {
             &self.account_id_hash,
             &self.source_native_generation,
         ] {
-            super::super::custody::hash(hash)?;
+            gateway_authority_native_custody::renewal::hash(hash)?;
         }
         for text in [
             &self.native_owner_id,
