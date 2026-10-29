@@ -448,15 +448,15 @@ pub fn normalized_snapshot_plan(
         return Ok(None);
     };
     let next = next.merge_prompt_cache(current)?;
-    let current_runtime = crate::runtime_config::normalize_runtime_config(runtime)?;
+    let current_runtime = gateway_catalog_input::runtime_config::normalize_runtime_config(runtime)?;
     let previous_model = current_runtime
         .as_ref()
-        .and_then(crate::runtime_config::default_model);
+        .and_then(gateway_catalog_input::runtime_config::default_model);
     let previous_effort = current_runtime
         .as_ref()
-        .and_then(crate::runtime_config::default_reasoning_effort);
+        .and_then(gateway_catalog_input::runtime_config::default_reasoning_effort);
     let default = next.preserve_default(previous_model.as_ref());
-    let runtime = crate::runtime_config::build_optional_runtime_config(
+    let runtime = gateway_catalog_input::runtime_config::build_optional_runtime_config(
         &next,
         default.as_ref(),
         previous_effort.as_ref(),

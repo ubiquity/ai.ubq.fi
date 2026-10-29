@@ -208,7 +208,7 @@ pub async fn validate<S: QueryStore>(store: &S, now: i64) -> Result<AuthResponse
         .map(|row| gateway_core::source_control::decode_source_control_record(&row.record))
         .transpose()?
         .as_ref()
-        .map(gateway_schema::runtime_config::normalize_runtime_config)
+        .map(gateway_catalog_input::runtime_config::normalize_runtime_config)
         .transpose()?
         .flatten();
     settings.insert("runtime_config_v2", config.is_some());

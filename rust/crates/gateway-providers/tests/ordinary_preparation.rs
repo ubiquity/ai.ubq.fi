@@ -1,4 +1,5 @@
 //! The ordinary selected-metadata phase order, not a universal provider normalizer.
+use gateway_catalog_input::catalog::RequestModelMetadata;
 use gateway_contracts::provider::UpstreamProvider;
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_model_metadata::reasoning::ModelReasoning;
@@ -7,7 +8,6 @@ use gateway_provider_protocol::{
     types::PrepareOptions,
 };
 use gateway_providers::source_request::prepare_source_request;
-use gateway_schema::catalog::RequestModelMetadata;
 use gateway_source::{source_json::SourceJson, source_serialization as source};
 use serde_json::{Value, json};
 fn parse(raw: &str) -> SourceJson {

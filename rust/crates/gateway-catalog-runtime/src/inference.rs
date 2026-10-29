@@ -16,7 +16,7 @@ impl CatalogRuntime {
         &self,
         store: &S,
         host: &H,
-        input: &mut gateway_schema::catalog::CatalogInput,
+        input: &mut gateway_catalog_input::catalog::CatalogInput,
         document: &SourceRequestDocument,
     ) -> Result<(), GatewayError> {
         let Ok(SourceModelRequest::Named(name)) = document.model_request() else {

@@ -1,8 +1,8 @@
 //! Match the existing direct-provider priority before waiting for discovery.
+use gateway_catalog_input::catalog::CatalogInput;
 use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
 use gateway_model_selection::aliases;
 use gateway_provider_policy::request::canonical_source_model;
-use gateway_schema::catalog::CatalogInput;
 use gateway_schema_values::scalar::js_whitespace;
 
 pub fn uses_openrouter(input: &CatalogInput, model: &ModelId) -> bool {

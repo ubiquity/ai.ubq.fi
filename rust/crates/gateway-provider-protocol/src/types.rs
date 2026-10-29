@@ -62,7 +62,7 @@ pub struct OrdinaryPreparationContext {
 
 impl OrdinaryPreparationContext {
     pub fn from_metadata(
-        metadata: &gateway_schema::catalog::RequestModelMetadata,
+        metadata: &gateway_catalog_input::catalog::RequestModelMetadata,
         default_effort: &JsString16,
     ) -> Self {
         Self {

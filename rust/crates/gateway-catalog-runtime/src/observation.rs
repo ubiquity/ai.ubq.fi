@@ -1,11 +1,11 @@
 //! Current provider observation writes remain co-owned with the private runtime memo.
+use gateway_catalog_input::catalog::ProviderCatalog;
 use gateway_catalog_inputs::state::{encode_provider_observation, provider_observation_key};
 use gateway_catalog_provider::host::{CatalogProvider, ProviderBinding};
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
-use gateway_schema::catalog::ProviderCatalog;
 use gateway_source::error::GatewayError;
 use serde_json::Value;
 pub(crate) fn check(key: RecordKey, record: Option<&StoredRecord>) -> RevisionCheck {

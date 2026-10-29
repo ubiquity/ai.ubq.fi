@@ -387,7 +387,7 @@ pub fn catalog_response(
     catalog: &LoadedCatalog,
     conditional: Option<&str>,
     cache_state: CacheState,
-    input: &crate::catalog::CatalogInput,
+    input: &gateway_catalog_input::catalog::CatalogInput,
 ) -> CatalogResponse {
     let active_whitelist = input
         .whitelist
@@ -397,7 +397,7 @@ pub fn catalog_response(
         .available_rows("openlux")
         .iter()
         .chain(input.available_rows("surplus"))
-        .any(|r| crate::catalog::endpoint_supports(r, "openai-response"));
+        .any(|r| gateway_catalog_input::catalog::endpoint_supports(r, "openai-response"));
     let stored_only = !active_whitelist
         && !paid
         && input.available_rows("claude_code").is_empty()
@@ -433,7 +433,9 @@ pub fn catalog_response(
     }
 }
 
-pub fn fallback_response(input: &crate::catalog::CatalogInput) -> Option<CatalogResponse> {
+pub fn fallback_response(
+    input: &gateway_catalog_input::catalog::CatalogInput,
+) -> Option<CatalogResponse> {
     let body = crate::native_catalog::native_catalog_fallback(input)?;
     Some(CatalogResponse {
         status: 200,

@@ -32,7 +32,7 @@ mod coordination;
 pub struct LocalRequestMetadata {
     pub context: RequestContext,
     pub principal: AuthPrincipal,
-    pub catalog: gateway_schema::catalog::CatalogInput,
+    pub catalog: gateway_catalog_input::catalog::CatalogInput,
     pub runtime: Option<SourceJson>,
     pub client_version: String,
     pub native_session_id: Option<String>,

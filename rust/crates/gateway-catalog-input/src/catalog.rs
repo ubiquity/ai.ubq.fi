@@ -1,5 +1,4 @@
 //! Catalog assembly consumes observations; network, authentication and refresh are adapter-owned.
-use crate::model_control as c;
 use gateway_contracts::model::ModelId;
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_model_metadata::{
@@ -12,7 +11,8 @@ use gateway_model_selection::{
 };
 use gateway_model_snapshot::snapshot::ModelSnapshot;
 use gateway_source::{
-    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -98,69 +98,101 @@ pub fn endpoint_supports(model: &SourceJson, endpoint: &str) -> bool {
             })
         })
 }
-pub fn model_list_row(record: &SourceJson, fallback_created: i64) -> Option<SourceJson> {
-    let id = ["id", "slug", "model", "name"].iter().find_map(|key| {
-        gateway_source::source_serialization::member(record, key)
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ModelCreated {
+    Integer(i64),
+    Number(f64),
+}
+#[derive(Serialize)]
+struct ModelListRow {
+    id: JsString16,
+    object: &'static str,
+    created: ModelCreated,
+    owned_by: JsString16,
+}
+#[derive(Serialize)]
+struct ModelList {
+    object: &'static str,
+    data: Vec<SourceJson>,
+}
+#[derive(Serialize)]
+struct RequestRecord {
+    slug: SourceJson,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supported_reasoning_levels: Option<Vec<JsString16>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_reasoning_level: Option<JsString16>,
+}
+pub fn model_list_row(
+    record: &SourceJson,
+    fallback_created: i64,
+) -> Result<Option<SourceJson>, GatewayError> {
+    let Some(id) = ["id", "slug", "model", "name"].iter().find_map(|key| {
+        source::member(record, key)
             .as_ref()
-            .and_then(gateway_source::source_serialization::string)
-    })?;
+            .and_then(source::string)
+    }) else {
+        return Ok(None);
+    };
     if id.as_units().is_empty() {
-        return None;
+        return Ok(None);
     }
-    let created = gateway_source::source_serialization::member(record, "created")
+    let created = source::member(record, "created")
         .as_ref()
         .and_then(source::number)
         .map(f64::trunc)
         .filter(|n| n.is_finite() && *n >= 0.0)
         .map(|n| {
             if n <= gateway_schema_values::scalar::MAX_SAFE_INTEGER {
-                c::json(&(n as i64))
+                ModelCreated::Integer(n as i64)
             } else {
-                c::json(&n)
+                ModelCreated::Number(n)
             }
         })
-        .unwrap_or_else(|| c::json(&fallback_created));
-    let owner = gateway_source::source_serialization::member(record, "owned_by")
+        .unwrap_or(ModelCreated::Integer(fallback_created));
+    let owner = source::member(record, "owned_by")
         .as_ref()
-        .and_then(gateway_source::source_serialization::string)
+        .and_then(source::string)
         .unwrap_or_else(|| "openai".into());
-    Some(c::object(vec![
-        ("id", c::json(&id)),
-        ("object", c::json("model")),
-        ("created", created),
-        ("owned_by", c::json(&owner)),
-    ]))
+    Ok(Some(SourceJson::from_serializable(&ModelListRow {
+        id,
+        object: "model",
+        created,
+        owned_by: owner,
+    })?))
 }
-pub fn normalize_model_list(payload: &SourceJson) -> Option<SourceJson> {
-    if !c::is_record(payload) {
-        return None;
+pub fn normalize_model_list(payload: &SourceJson) -> Result<Option<SourceJson>, GatewayError> {
+    if !payload.as_str().starts_with('{') && !payload.as_str().starts_with('[') {
+        return Ok(None);
     }
-    let fallback = gateway_source::source_serialization::member(payload, "updated_at_ms")
+    let fallback = source::member(payload, "updated_at_ms")
         .as_ref()
         .and_then(source::number)
         .filter(|n| n.is_finite())
         .map(|n| (n / 1000.0).trunc().max(0.0) as i64)
         .unwrap_or(0);
-    let rows = gateway_source::source_serialization::member(payload, "data")
+    let Some(rows) = source::member(payload, "data")
         .as_ref()
-        .and_then(gateway_source::source_serialization::array)
+        .and_then(source::array)
         .or_else(|| {
-            gateway_source::source_serialization::member(payload, "models")
+            source::member(payload, "models")
                 .as_ref()
-                .and_then(gateway_source::source_serialization::array)
-        })?;
-    Some(c::object(vec![
-        ("object", c::json("list")),
-        (
-            "data",
-            c::json(
-                &rows
-                    .iter()
-                    .filter_map(|row| model_list_row(row, fallback))
-                    .collect::<Vec<_>>(),
-            ),
-        ),
-    ]))
+                .and_then(source::array)
+        })
+    else {
+        return Ok(None);
+    };
+    let mut normalized = Vec::new();
+    for row in rows {
+        if let Some(row) = model_list_row(&row, fallback)? {
+            normalized.push(row);
+        }
+    }
+    Ok(Some(SourceJson::from_serializable(&ModelList {
+        object: "list",
+        data: normalized,
+    })?))
 }
 fn field_equal(a: Option<SourceJson>, b: Option<SourceJson>) -> bool {
     match (a, b) {
@@ -243,58 +275,76 @@ impl RequestModelMetadata {
             .and_then(|record| gateway_source::source_serialization::member(record, "prompt_cache"))
     }
 }
+fn model_matches(row: &SourceJson, model: &ModelId) -> bool {
+    source::member(row, "id")
+        .as_ref()
+        .and_then(source::string)
+        .is_some_and(|id| &id == model.as_js_string())
+}
 pub fn request_model_metadata(
     input: &CatalogInput,
     model: &ModelId,
     responses: bool,
     now_ms: i64,
-) -> RequestModelMetadata {
+) -> Result<RequestModelMetadata, GatewayError> {
     if model.matches_scalar("glm-5.2") {
-        let record = c::object(vec![("slug", c::json("glm-5.2"))]);
-        return RequestModelMetadata {
+        let record = SourceJson::from_serializable(&RequestRecord {
+            slug: SourceJson::from_serializable("glm-5.2")?,
+            supported_reasoning_levels: None,
+            default_reasoning_level: None,
+        })?;
+        return Ok(RequestModelMetadata {
             snapshot: None,
             reasoning: ModelReasoning::from_record(Some(&record)),
             record: Some(record),
             supported_endpoints: Some(vec!["openai".into(), "openai-response".into()]),
-        };
+        });
     }
     let snapshot = input.snapshot.clone();
     if let Some(record) = snapshot.as_ref().and_then(|s| s.find(model)).cloned() {
-        return RequestModelMetadata {
+        return Ok(RequestModelMetadata {
             snapshot,
             reasoning: ModelReasoning::from_record(Some(&record)),
             record: Some(record),
             supported_endpoints: None,
-        };
+        });
     }
-    let matches_model = |row: &&SourceJson| {
-        gateway_source::source_serialization::member(row, "id")
-            .as_ref()
-            .and_then(gateway_source::source_serialization::string)
-            .is_some_and(|id| &id == model.as_js_string())
-    };
     if input.enabled("claude_code")
-        && let Some(row) = input.rows("claude_code").iter().find(matches_model)
+        && let Some(row) = input
+            .rows("claude_code")
+            .iter()
+            .find(|row| model_matches(row, model))
     {
-        let mut record = c::object(vec![
-            (
-                "slug",
-                gateway_source::source_serialization::member(row, "id").expect("matched model"),
-            ),
-            ("supported_reasoning_levels", c::json(&claude_levels(row))),
-        ]);
-        if gateway_source::source_serialization::member(row, "supports_disabled_thinking")
+        let slug = source::member(row, "id").ok_or_else(|| {
+            GatewayError::unavailable(
+                "Matched model id is unavailable",
+                "source_json_serialization_invalid",
+            )
+        })?;
+        let default = source::member(row, "supports_disabled_thinking")
             .is_some_and(|v| v.as_str() == "true")
-        {
-            c::set(&mut record, "default_reasoning_level", c::json("none"));
-        }
-        return RequestModelMetadata {
+            .then(|| "none".into());
+        let record = SourceJson::from_serializable(&RequestRecord {
+            slug,
+            supported_reasoning_levels: Some(claude_levels(row)),
+            default_reasoning_level: default,
+        })?;
+        return Ok(RequestModelMetadata {
             snapshot,
             reasoning: ModelReasoning::from_record(Some(&record)),
             record: Some(record),
             supported_endpoints: Some(vec!["openai".into(), "openai-response".into()]),
-        };
+        });
     }
+    paid_request_metadata(input, model, responses, now_ms, snapshot)
+}
+fn paid_request_metadata(
+    input: &CatalogInput,
+    model: &ModelId,
+    responses: bool,
+    now_ms: i64,
+    snapshot: Option<ModelSnapshot>,
+) -> Result<RequestModelMetadata, GatewayError> {
     let endpoint = if responses {
         "openai-response"
     } else {
@@ -306,7 +356,7 @@ pub fn request_model_metadata(
             input
                 .rows(provider)
                 .iter()
-                .find(matches_model)
+                .find(|row| model_matches(row, model))
                 .map(|r| (*provider, r))
         })
         .collect::<Vec<_>>();
@@ -315,11 +365,11 @@ pub fn request_model_metadata(
         .find(|(_, m)| endpoint_supports(m, endpoint))
         .or_else(|| candidates.first())
     {
-        let record = c::object(vec![
-            ("slug", c::json(model)),
-            ("supported_reasoning_levels", c::json(&["none"])),
-            ("default_reasoning_level", c::json("none")),
-        ]);
+        let record = SourceJson::from_serializable(&RequestRecord {
+            slug: model.to_source_json()?,
+            supported_reasoning_levels: Some(vec!["none".into()]),
+            default_reasoning_level: Some("none".into()),
+        })?;
         let snapshot = snapshot.or_else(|| {
             Some(ModelSnapshot {
                 models: Vec::new(),
@@ -351,19 +401,19 @@ pub fn request_model_metadata(
                         })
                         .collect()
                 });
-        return RequestModelMetadata {
+        return Ok(RequestModelMetadata {
             snapshot,
             reasoning: ModelReasoning::from_record(Some(&record)),
             record: Some(record),
             supported_endpoints: endpoints,
-        };
+        });
     }
-    RequestModelMetadata {
+    Ok(RequestModelMetadata {
         snapshot,
         record: None,
         reasoning: ModelReasoning::default(),
         supported_endpoints: None,
-    }
+    })
 }
 pub fn validate_model_available(
     model: &ModelId,

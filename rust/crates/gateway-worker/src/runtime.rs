@@ -1,12 +1,10 @@
 //! Public routing. Private authority protocol paths are never forwarded here.
 use crate::catalog::CatalogState;
-use crate::host::PlatformHost;
-use crate::host::auth_config;
+use crate::host::{PlatformHost, auth_config};
 use crate::inference;
 use gateway_admin::service::AdminService;
 use gateway_auth::resolve::AuthService;
-use gateway_auth_contracts::types::AuthResponse;
-use gateway_auth_contracts::{types::AuthConfig, types::AuthPrincipal, types::AuthRequest};
+use gateway_auth_contracts::types::{AuthConfig, AuthPrincipal, AuthRequest, AuthResponse};
 use gateway_contracts::identity::RequestId;
 use gateway_core::state::AuthorityStore;
 use gateway_live_runtime::{
@@ -16,13 +14,13 @@ use gateway_live_runtime::{
 use gateway_schema::{
     catalog_cache::{CacheState, CatalogResponse, LoadedCatalog},
     catalog_store,
+    catalog_views::ordinary_models,
 };
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body;
 use gateway_worker_platform::cancellation::Cancellation;
-use gateway_worker_platform::headers::HeaderLimits;
-use gateway_worker_platform::headers::bounded_headers;
+use gateway_worker_platform::headers::{HeaderLimits, bounded_headers};
 use gateway_worker_storage::store::now_ms;
 use std::rc::Rc;
 use worker::{Context, Env, Method, Request, Response};
@@ -497,7 +495,7 @@ async fn models_response(
         return catalog_response(response).map(Into::into);
     }
     let state = CatalogState::load(store, env, host, Rc::clone(context)).await?;
-    json_response(gateway_schema::catalog_views::ordinary_models(&state.input)).map(Into::into)
+    json_response(ordinary_models(&state.input)?).map(Into::into)
 }
 
 enum TerminalRoute {

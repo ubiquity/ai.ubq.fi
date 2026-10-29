@@ -1,23 +1,25 @@
-use crate::{catalog::*, model_control as c, provider_catalog::*};
+use crate::{model_control as c, provider_catalog::*};
+use gateway_catalog_input::catalog::*;
 use gateway_contracts::model::ModelId;
 use gateway_decision_protocol::catalog as decisions;
 use gateway_model_metadata::metadata::*;
 use gateway_model_selection::{aliases::*, selection::*};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
-fn snapshot_models(input: &CatalogInput, full: bool) -> Vec<SourceJson> {
+fn snapshot_models(input: &CatalogInput, full: bool) -> Result<Vec<SourceJson>, GatewayError> {
     let snapshot = if full {
         input.codex()
     } else {
         input.snapshot.as_ref()
     };
-    snapshot
-        .map(|s| {
-            s.models
-                .iter()
-                .filter_map(|r| model_list_row(r, (s.updated_at_ms / 1000).max(0)))
-                .collect()
-        })
-        .unwrap_or_default()
+    let mut rows = Vec::new();
+    if let Some(snapshot) = snapshot {
+        for record in &snapshot.models {
+            if let Some(row) = model_list_row(record, (snapshot.updated_at_ms / 1000).max(0))? {
+                rows.push(row);
+            }
+        }
+    }
+    Ok(rows)
 }
 fn row_id(row: &SourceJson) -> Option<ModelId> {
     gateway_source::source_serialization::member(row, "id")
@@ -25,9 +27,9 @@ fn row_id(row: &SourceJson) -> Option<ModelId> {
         .and_then(gateway_source::source_serialization::string)
         .map(ModelId::from_source)
 }
-pub fn ordinary_models(input: &CatalogInput) -> SourceJson {
+pub fn ordinary_models(input: &CatalogInput) -> Result<SourceJson, GatewayError> {
     let mut rows = if input.enabled("codex") {
-        snapshot_models(input, false)
+        snapshot_models(input, false)?
     } else {
         Vec::new()
     };
@@ -57,16 +59,24 @@ pub fn ordinary_models(input: &CatalogInput) -> SourceJson {
     });
     append_unique(&mut rows, claude, "id");
     for provider in ["openlux", "surplus"] {
-        let records = input
+        let mut records = Vec::new();
+        for record in input
             .available_rows(provider)
             .iter()
             .filter(|r| endpoint_supports(r, "openai") || endpoint_supports(r, "openai-response"))
-            .filter_map(|r| model_list_row(r, 0));
+        {
+            if let Some(row) = model_list_row(record, 0)? {
+                records.push(row);
+            }
+        }
         append_unique(&mut rows, records, "id");
     }
     let mut rows = filter_whitelist(rows, input.whitelist.as_ref(), false);
     append_unique(&mut rows, openrouter_models(input), "id");
-    c::object(vec![("object", c::json("list")), ("data", c::json(&rows))])
+    Ok(c::object(vec![
+        ("object", c::json("list")),
+        ("data", c::json(&rows)),
+    ]))
 }
 fn discovered_capability(input: &CatalogInput, model: &SourceJson, provider: &str) -> SourceJson {
     let id = row_id(model).unwrap_or_else(|| "".into());
@@ -476,7 +486,7 @@ pub fn build_catalog_snapshot(
     collator: &dyn SourceStringCollator,
 ) -> Result<SourceJson, GatewayError> {
     let mut rows = Vec::new();
-    let codex = snapshot_models(input, true);
+    let codex = snapshot_models(input, true)?;
     for model in &codex {
         if let Some(id) = row_id(model) {
             let record = input.codex().and_then(|s| s.find(&id));

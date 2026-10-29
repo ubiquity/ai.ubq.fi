@@ -1,5 +1,11 @@
 //! Finite, already-authorized administrator catalog operations; no HTTP or credential ownership.
 use crate::response::AdminCatalogResponse;
+use gateway_catalog_input::{
+    catalog::ProviderCatalog,
+    runtime_config::{
+        build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
+    },
+};
 use gateway_catalog_inputs::state;
 use gateway_catalog_provider::host::{CatalogHost, CatalogProvider};
 use gateway_catalog_runtime::CatalogRuntime;
@@ -11,13 +17,7 @@ use gateway_kv_codec::key::RecordKey;
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_model_selection::{selection::ModelWhitelist, selection::normalize_whitelist_ids};
 use gateway_model_snapshot::snapshot::{SnapshotOverrides, normalize_snapshot};
-use gateway_schema::{
-    catalog::ProviderCatalog,
-    catalog_store,
-    runtime_config::{
-        build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
-    },
-};
+use gateway_schema::catalog_store;
 use gateway_schema_values::scalar as util;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,

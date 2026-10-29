@@ -1,10 +1,10 @@
 mod support;
+use gateway_catalog_input::catalog::{CatalogInput, ProviderCatalog};
 use gateway_contracts::model::ModelId;
 use gateway_model_metadata::metadata::MetadataHint;
 use gateway_model_selection::{aliases::SourceStringCollator, selection::ModelWhitelist};
 use gateway_model_snapshot::snapshot::ModelSnapshot;
 use gateway_schema::{
-    catalog::{CatalogInput, ProviderCatalog},
     catalog_views::{build_catalog_snapshot, capabilities, ordinary_models, public_catalog},
     native_catalog::native_catalog,
 };
@@ -44,7 +44,7 @@ fn ordinary_native_and_capability_views_keep_opaque_model_effort_and_unknown_fie
         snapshot: Some(snapshot(vec![model])),
         ..Default::default()
     };
-    let ordinary = ordinary_models(&input);
+    let ordinary = ordinary_models(&input).unwrap();
     let ordinary = rows(&ordinary, "data");
     assert_eq!(ordinary.len(), 1);
     assert_eq!(units(&member(&ordinary[0], "id")), [0xd800]);
@@ -104,7 +104,7 @@ fn openrouter_whitelist_phase_owner_prefix_and_effort_remain_source_values() {
             ..Default::default()
         },
     );
-    let ordinary = rows(&ordinary_models(&input), "data");
+    let ordinary = rows(&ordinary_models(&input).unwrap(), "data");
     assert_eq!(ordinary.len(), 3);
     let row = ordinary
         .iter()

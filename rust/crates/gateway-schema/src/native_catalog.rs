@@ -1,5 +1,6 @@
 //! Rich exact-client-version Codex catalog. Never substitute the official model-list envelope.
-use crate::{catalog::*, model_control as c, provider_catalog::*};
+use crate::{model_control as c, provider_catalog::*};
+use gateway_catalog_input::catalog::*;
 use gateway_model_metadata::metadata::*;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use {gateway_contracts::model::ModelId, gateway_prompt_policy::declaration};

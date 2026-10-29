@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-catalog-input.workspace = true
 gateway-model-selection.workspace = true
 gateway-contracts = { path = "../gateway-contracts" }
 gateway-kv-codec = { path = "../gateway-kv-codec" }
@@ -14,7 +15,6 @@ gateway-schema-values = { path = "../gateway-schema-values" }
 serde.workspace = true
 serde_json.workspace = true
 gateway-source.workspace = true
-gateway-schema.workspace = true
 gateway-providers.workspace = true
 gateway-profile-values.workspace = true
 gateway-core.workspace = true

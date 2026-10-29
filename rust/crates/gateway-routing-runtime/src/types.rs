@@ -2,6 +2,7 @@ use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_auth_primitives::crypto::Secret;
 use gateway_authority_paid_records::{PaidReservation, PaidUsage};
 use gateway_authority_routing_selection::types::{AdmittedAccount, CohortProof};
+use gateway_catalog_input::catalog::CatalogInput;
 use gateway_contracts::{
     identity::RequestContext, lifecycle::TransportObservation, model::ModelId,
     provider::UpstreamProvider,
@@ -13,7 +14,6 @@ use gateway_provider_protocol::{
     types::PrepareOptions, types::PreparedRequest,
 };
 use gateway_routing_journal::record::CredentialFence;
-use gateway_schema::catalog::CatalogInput;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_wait_observation::outcome::WaitOutcome;
 use serde::{Deserialize, Serialize};

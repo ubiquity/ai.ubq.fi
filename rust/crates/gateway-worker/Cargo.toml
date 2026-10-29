@@ -17,6 +17,7 @@ fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 workspace = true
 
 [dependencies]
+gateway-catalog-input.workspace = true
 gateway-routing-journal.workspace = true
 gateway-observability-contracts = { workspace = true }
 gateway-observability-ledger = { workspace = true }

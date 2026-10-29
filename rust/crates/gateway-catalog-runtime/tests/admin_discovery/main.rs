@@ -41,10 +41,10 @@ fn scalar(value: &SourceJson) -> Value {
         Err(error) => panic!("frozen fixture is not scalar JSON: {error:?}"),
     }
 }
-fn ordinary_models(input: &gateway_schema::catalog::CatalogInput) -> Value {
+fn ordinary_models(input: &gateway_catalog_input::catalog::CatalogInput) -> Value {
     scalar(&ordinary_models_source(input))
 }
-fn public_catalog(input: &gateway_schema::catalog::CatalogInput) -> Value {
+fn public_catalog(input: &gateway_catalog_input::catalog::CatalogInput) -> Value {
     scalar(&public_catalog_source(input, Host::new().source_string_collator().as_ref()).unwrap())
 }
 struct ScalarResponse {
