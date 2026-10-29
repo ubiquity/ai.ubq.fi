@@ -569,3 +569,296 @@ fn normalized_source_publication_retains_model_effort_codecs_and_generation_fenc
         .unwrap()
     );
 }
+
+fn native_compaction_source(limit: Option<i64>) -> String {
+    let limit = limit
+        .map(|value| format!(",\"auto_compact_token_limit\":{value}"))
+        .unwrap_or_default();
+    let rows = ["gpt-6-astra", "gpt-6.1-sol"].map(|slug| format!(
+        r#"{{"slug":"{slug}","context_window":272000,"max_context_window":872000,"supported_reasoning_levels":["none","ultra","provider-future-tier"],"default_reasoning_level":"ultra","opaque":"\udc00"{limit}}}"#
+    ));
+    format!(r#"{{"future":"\ud800","models":[{}]}}"#, rows.join(","))
+}
+fn native_compaction_enrichment(
+    window: i64,
+) -> BTreeMap<gateway_contracts::model::ModelId, MetadataHint> {
+    ["gpt-6-astra", "gpt-6.1-sol"]
+        .map(|id| {
+            (
+                id.into(),
+                MetadataHint {
+                    context_window_tokens: Some(window),
+                    ..MetadataHint::default()
+                },
+            )
+        })
+        .into_iter()
+        .collect()
+}
+#[test]
+fn native_publication_keeps_earliest_limit_and_complete_rich_source() -> TestResult {
+    for widened in [false, true] {
+        for limit in [None, Some(200_000), Some(990_000)] {
+            let source_body = native_compaction_source(limit);
+            let store = Store::default();
+            store.seed_generation("auth");
+            let enrichment = if widened {
+                native_compaction_enrichment(1_050_000)
+            } else {
+                BTreeMap::new()
+            };
+            let published = prepare_catalog(
+                CatalogIdentity {
+                    client_version: "0.163.0",
+                    auth_generation: "auth",
+                    body_generation: "native",
+                },
+                &source_body,
+                Some("\"upstream\""),
+                None,
+                1000,
+                &enrichment,
+            )?;
+            assert!(run(publish_catalog(&store, &published))?);
+            let durable = store.records.borrow().clone();
+            let loaded = run(load_catalog(&store, "0.163.0", "auth", 1001))?.ok_or("catalog")?;
+            assert_eq!(loaded.source_body.as_deref(), Some(source_body.as_str()));
+            assert_eq!(loaded.metadata.etag.as_deref(), Some("\"upstream\""));
+            assert_eq!(
+                source::member(&loaded.parsed, "future"),
+                Some(SourceJson::parse(r#""\ud800""#)?)
+            );
+            let rows = source::member(&loaded.parsed, "models")
+                .as_ref()
+                .and_then(source::array)
+                .ok_or("rows")?;
+            let original = SourceJson::parse(&source_body)?;
+            let originals = source::member(&original, "models")
+                .as_ref()
+                .and_then(source::array)
+                .ok_or("source rows")?;
+            assert_eq!(rows.len(), 2);
+            for (row, original) in rows.iter().zip(&originals) {
+                let expected = if limit == Some(200_000) {
+                    200_000.0
+                } else if widened {
+                    892_500.0
+                } else {
+                    222_000.0
+                };
+                assert_eq!(
+                    source::member(row, "context_window")
+                        .as_ref()
+                        .and_then(source::number),
+                    Some(if widened { 1_050_000.0 } else { 272_000.0 })
+                );
+                assert_eq!(
+                    source::member(row, "auto_compact_token_limit")
+                        .as_ref()
+                        .and_then(source::number),
+                    Some(expected)
+                );
+                for field in [
+                    "supported_reasoning_levels",
+                    "default_reasoning_level",
+                    "opaque",
+                ] {
+                    assert_eq!(source::member(row, field), source::member(original, field));
+                }
+            }
+            assert_eq!(*store.records.borrow(), durable);
+        }
+    }
+    Ok(())
+}
+#[test]
+fn verified_legacy_native_cache_repairs_before_client_validator_without_writes() -> TestResult {
+    let store = Store::default();
+    store.seed_generation("auth");
+    let source_body = native_compaction_source(None);
+    let published = prepare_catalog(
+        CatalogIdentity {
+            client_version: "0.163.0",
+            auth_generation: "auth",
+            body_generation: "legacy",
+        },
+        &source_body,
+        Some("\"upstream\""),
+        None,
+        1000,
+        &native_compaction_enrichment(1_050_000),
+    )?;
+    assert_eq!(published.chunks.len(), 1);
+    assert!(run(publish_catalog(&store, &published))?);
+    let legacy_body = source_body
+        .replace("272000", "1050000")
+        .replace("872000", "1050000");
+    let compressed = gzip(&legacy_body)?;
+    let mut metadata = published.metadata.clone();
+    metadata.chunk_count = 1;
+    metadata.compressed_bytes = compressed.len();
+    metadata.body_bytes = legacy_body.len();
+    metadata.sha256 = gateway_schema_values::scalar::sha256(legacy_body.as_bytes());
+    store
+        .records
+        .borrow_mut()
+        .get_mut(&chunk_key("0.163.0", "legacy", 0, false).0)
+        .ok_or("chunk")?
+        .value = json!(compressed);
+    store
+        .records
+        .borrow_mut()
+        .get_mut(&metadata_key("0.163.0").0)
+        .ok_or("metadata")?
+        .value = serde_json::to_value(&metadata)?;
+    let durable = store.records.borrow().clone();
+    let loaded = run(load_catalog(&store, "0.163.0", "auth", 1001))?.ok_or("legacy catalog")?;
+    assert_eq!(loaded.metadata, metadata);
+    assert_eq!(loaded.source_body.as_deref(), Some(source_body.as_str()));
+    let rows = source::member(&loaded.parsed, "models")
+        .as_ref()
+        .and_then(source::array)
+        .ok_or("rows")?;
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        assert_eq!(
+            source::member(&row, "auto_compact_token_limit")
+                .as_ref()
+                .and_then(source::number),
+            Some(892_500.0)
+        );
+        assert_eq!(
+            source::member(&row, "opaque"),
+            Some(SourceJson::parse(r#""\udc00""#)?)
+        );
+    }
+    let input = CatalogInput {
+        selection: Some(ProviderSelection {
+            provider_ids: vec!["codex".into()],
+            updated_at_ms: 1,
+        }),
+        ..CatalogInput::default()
+    };
+    let old_tag = client_etag(&legacy_body);
+    let response = catalog_response(&loaded, Some(&old_tag), CacheState::Hit, &input);
+    assert_eq!(response.status, 200);
+    let body = response.body.as_ref().ok_or("served body")?;
+    let tag = response.headers.get("ETag").ok_or("served tag")?;
+    assert_eq!(tag, &client_etag(body));
+    assert_ne!(tag, &old_tag);
+    let current = catalog_response(&loaded, Some(tag), CacheState::Hit, &input);
+    assert_eq!(current.status, 304);
+    assert!(current.body.is_none());
+    assert_eq!(*store.records.borrow(), durable);
+    let mut corrupt = metadata;
+    corrupt.sha256 = "bad".into();
+    store
+        .records
+        .borrow_mut()
+        .get_mut(&metadata_key("0.163.0").0)
+        .ok_or("metadata")?
+        .value = serde_json::to_value(corrupt)?;
+    assert!(run(load_catalog(&store, "0.163.0", "auth", 1001))?.is_none());
+    Ok(())
+}
+#[test]
+fn native_304_revalidation_projects_original_source_after_window_narrows() -> TestResult {
+    let store = Store::default();
+    store.seed_generation("auth");
+    let source_body = native_compaction_source(None);
+    let first = prepare_catalog(
+        CatalogIdentity {
+            client_version: "0.163.0",
+            auth_generation: "auth",
+            body_generation: "wide",
+        },
+        &source_body,
+        Some("\"upstream\""),
+        None,
+        1000,
+        &native_compaction_enrichment(1_050_000),
+    )?;
+    assert!(run(publish_catalog(&store, &first))?);
+    let loaded = run(load_catalog(&store, "0.163.0", "auth", 1001))?.ok_or("wide catalog")?;
+    assert_eq!(
+        upstream_action(304, true, Some(&loaded), true, true),
+        CatalogAction::RevalidateSource
+    );
+    assert_eq!(
+        lease_action(Some(&loaded), true, 1001),
+        CatalogAction::Fetch {
+            if_none_match: Some("\"upstream\"".into())
+        }
+    );
+    let original = loaded.source_body.as_deref().ok_or("original source")?;
+    assert_eq!(original, source_body);
+    let second = prepare_catalog(
+        CatalogIdentity {
+            client_version: "0.163.0",
+            auth_generation: "auth",
+            body_generation: "narrow",
+        },
+        original,
+        loaded.metadata.etag.as_deref(),
+        None,
+        2000,
+        &native_compaction_enrichment(128_000),
+    )?;
+    assert!(run(publish_catalog(&store, &second))?);
+    let narrowed = run(load_catalog(&store, "0.163.0", "auth", 2001))?.ok_or("narrow catalog")?;
+    assert_eq!(narrowed.source_body.as_deref(), Some(source_body.as_str()));
+    assert_eq!(narrowed.metadata.etag, loaded.metadata.etag);
+    let rows = source::member(&narrowed.parsed, "models")
+        .as_ref()
+        .and_then(source::array)
+        .ok_or("rows")?;
+    for row in rows {
+        assert_eq!(
+            source::member(&row, "context_window")
+                .as_ref()
+                .and_then(source::number),
+            Some(872_000.0)
+        );
+        assert_eq!(
+            source::member(&row, "auto_compact_token_limit")
+                .as_ref()
+                .and_then(source::number),
+            Some(741_200.0)
+        );
+    }
+    Ok(())
+}
+#[test]
+fn native_projection_keeps_noop_bytes_and_invalid_window_values() -> TestResult {
+    for (window, limit) in [
+        ("42.5", "null"),
+        ("0", "null"),
+        ("9007199254740992", "null"),
+        ("1050000.0", "892500.0"),
+    ] {
+        let body = format!(
+            r#" {{ "models": [ {{"slug":"native","context_window":{window},"auto_compact_token_limit":{limit}}} ] }} "#
+        );
+        let prepared = prepare_catalog(
+            CatalogIdentity {
+                client_version: "0.163.0",
+                auth_generation: "auth",
+                body_generation: "same",
+            },
+            &body,
+            None,
+            None,
+            1000,
+            &BTreeMap::new(),
+        )?;
+        let served = decode_chunks(
+            &prepared.chunks,
+            prepared.metadata.compressed_bytes,
+            prepared.metadata.body_bytes,
+            &prepared.metadata.sha256,
+        )
+        .ok_or("body")?;
+        assert_eq!(served, body);
+    }
+    Ok(())
+}
