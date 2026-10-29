@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { parse } from "@std/yaml";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -83,6 +83,63 @@ const scopeCommand = (args: readonly string[], context: NodeJS.ProcessEnv, paths
       ...context,
     },
   });
+
+test("hosted native profiles retain bootstrap, exact binding and failure aggregation without portable gates", () => {
+  const workflow = parse(readFileSync(join(ROOT, ".github/workflows/deno-deploy.yml"), "utf8")) as {
+    jobs: { native: { steps: { name?: string; run?: string }[] } };
+  };
+  const command = workflow.jobs.native.steps.find((step) => step.name === "Complete native-mode Bun test profiles")?.run;
+  expect(command).toBeDefined();
+  const directory = mkdtempSync(join(fixture, "native-profiles-"));
+  const bin = join(directory, "bin");
+  for (const path of [
+    "bin",
+    "scripts",
+    "tools/lint/node_modules/.bin",
+    "node_modules/@types/bun",
+    "node_modules/@types/node",
+    "node_modules/typescript/bin",
+    "uos-native-kv",
+  ])
+    mkdirSync(join(directory, path), { recursive: true });
+  for (const path of [
+    "bun.lock",
+    "tools/lint/bun.lock",
+    "node_modules/@types/bun/index.d.ts",
+    "node_modules/@types/node/index.d.ts",
+    "node_modules/typescript/bin/tsc",
+  ])
+    writeFileSync(join(directory, path), "fixture\n");
+  for (const name of ["eslint", "prettier", "knip"]) writeFileSync(join(directory, "tools/lint/node_modules/.bin", name), "#!/bin/sh\n", { mode: 0o700 });
+  copyFileSync(join(ROOT, "scripts/_bootstrap.sh"), join(directory, "scripts/_bootstrap.sh"));
+  const binding = JSON.stringify({ artifactDirectory: "/fixture/path with spaces", expectedProvenanceSha256: "a".repeat(64) });
+  writeFileSync(join(directory, "uos-native-kv/receipt.json"), binding + "\n");
+  const executable = join(bin, "bun");
+  writeFileSync(
+    executable,
+    '#!/bin/sh\nif [ "$1" = --version ]; then echo 1.4.0; exit 0; fi\nprintf \'%s\\037\' "$@" >> "$UOS_CI_COMMANDS"\nprintf \'\\n\' >> "$UOS_CI_COMMANDS"\nif [ "$3" = scripts/test-runner.ts ] && [ "$4" = "$UOS_FAIL_PROFILE" ]; then exit 7; fi\n'
+  );
+  chmodSync(executable, 0o700);
+  const profiles = ["deploy-guards", "vps", "main", "sentinel", "quality", "benchmark"];
+  for (const failedProfile of ["", "deploy-guards"]) {
+    const receipt = join(directory, `commands-${failedProfile || "success"}.txt`);
+    const result = spawnSync("/bin/bash", ["-c", command ?? "exit 99"], {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 30_000,
+      env: { PATH: `${bin}:/usr/bin:/bin`, RUNNER_TEMP: directory, UOS_CI_COMMANDS: receipt, UOS_FAIL_PROFILE: failedProfile },
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(failedProfile ? 1 : 0);
+    const calls = readFileSync(receipt, "utf8")
+      .trimEnd()
+      .split("\n")
+      .map((line) => line.split("\u001f").slice(0, -1));
+    expect(calls).toEqual([
+      ["--no-env-file", "--no-install", "scripts/patch-bun-types.ts"],
+      ...profiles.map((profile) => ["--no-env-file", "--no-install", "scripts/test-runner.ts", profile, `--native-kv-binding=${binding}`]),
+    ]);
+  }
+});
 
 describe("Sentinel complete CI check set", () => {
   test("admits all real jobs without widening documentation or source test selection", () => {

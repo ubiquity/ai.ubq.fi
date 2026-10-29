@@ -853,6 +853,12 @@ test("native CI preparation selects only pinned matching Darwin components and r
     assert.ok(bootstrap.includes(checksum));
   assert.ok(bootstrap.includes("Darwin-arm64") && bootstrap.includes("--disable-ldconfig") && bootstrap.includes("uos_check"));
   assert.ok(bootstrap.includes('mkdir "$uos_toolchain"'), "Prepared tool destinations must still be fresh");
+  const verifier = readFileSync(new URL("./rust-verify.ts", import.meta.url), "utf8");
+  assert.ok(verifier.includes("wasm-bindgen-0.2.129-aarch64-unknown-linux-gnu.tar.gz"));
+  assert.ok(verifier.includes("1797c349a0f45d30946e8986b184135e12839ab576c9a04203e85febfc5dcb35"));
+  assert.ok(verifier.includes('environment.WASM_BINDGEN_BIN = join(tools, "wasm-bindgen/wasm-bindgen")'));
+  assert.ok(!verifier.includes('["cargo", "install", "wasm-bindgen-cli"'));
+  assert.ok(!verifier.includes('[["wasm-bindgen", "--version"]'));
 });
 
 test("every native and WASM plan runs native parser fixtures and all-source policy before selected Clippy", () => {
