@@ -3865,6 +3865,8 @@ dependencies = [
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-auth-primitives",
+ "gateway-authority-actor-records",
+ "gateway-native-authority-wire",
  "gateway-source",
  "serde",
  "serde_json",

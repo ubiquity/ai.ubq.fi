@@ -2,16 +2,13 @@
 use super::*;
 use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeCapability};
 use gateway_native_authority_request::OriginalControlHeaders;
+use gateway_native_authority_request::response::{
+    RenewalResponseVersion as Version, response_version,
+};
 use gateway_native_authority_wire::{
     renewal::NativeRenewalFence, source_fence::SourceNativeRenewalFenceV3,
 };
-use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use std::{cell::RefCell, sync::Arc};
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum Version {
-    Legacy,
-    Source,
-}
 pub(crate) struct RemoteClaim<F> {
     pub(crate) action_ref: String,
     pub(crate) operation_id: String,
@@ -54,23 +51,6 @@ impl VerifiedOwnedRenewalClaim {
         authority.record_unknown_once(self.report)
     }
 }
-fn response_version(body: &[u8]) -> Result<Version, GatewayError> {
-    let raw = SourceJson::parse_bytes(body).map_err(|_| unverified())?;
-    let mut members = raw
-        .object_entries()
-        .map_err(|_| unverified())?
-        .into_iter()
-        .filter(|(key, _)| key == &JsString16::from_utf8("v"));
-    let value = members.next().ok_or_else(unverified)?.1;
-    if members.next().is_some() {
-        return Err(unverified());
-    }
-    match value.deserialize::<u8>().map_err(|_| unverified())? {
-        1 => Ok(Version::Legacy),
-        2 => Ok(Version::Source),
-        _ => Err(unverified()),
-    }
-}
 impl NativeAuthorityHttp {
     pub(crate) fn claim_for_control(
         &self,
@@ -108,7 +88,7 @@ impl NativeAuthorityHttp {
         let payload = match version {
             Version::Legacy => {
                 let decoded: Response = serde_json::from_slice(&body).map_err(|_| unverified())?;
-                self.validate(&request, &decoded, now)?;
+                validate(&request, &decoded, now, self.response_peer())?;
                 let Response::Claim {
                     action_ref,
                     operation_id,
@@ -137,7 +117,7 @@ impl NativeAuthorityHttp {
             Version::Source => {
                 let decoded: SourceResponse =
                     serde_json::from_slice(&body).map_err(|_| unverified())?;
-                self.validate_source(&request, &decoded, now)?;
+                validate_source(&request, &decoded, now, self.response_peer())?;
                 let SourceResponse::Claim {
                     action_ref,
                     operation_id,
@@ -249,7 +229,7 @@ impl NativeAuthorityHttp {
             Version::Legacy => {
                 let decoded: Response =
                     serde_json::from_slice(&response.body).map_err(|_| unverified())?;
-                self.validate(&request, &decoded, now)?;
+                validate(&request, &decoded, now, self.response_peer())?;
                 if !matches!(decoded, Response::Unknown { v: 1 }) {
                     return Err(unverified());
                 }
@@ -257,7 +237,7 @@ impl NativeAuthorityHttp {
             Version::Source => {
                 let decoded: SourceResponse =
                     serde_json::from_slice(&response.body).map_err(|_| unverified())?;
-                self.validate_source(&request, &decoded, now)?;
+                validate_source(&request, &decoded, now, self.response_peer())?;
                 if !matches!(decoded, SourceResponse::Unknown { v: 2 }) {
                     return Err(unverified());
                 }

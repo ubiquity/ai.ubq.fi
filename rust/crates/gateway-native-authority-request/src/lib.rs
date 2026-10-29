@@ -162,3 +162,4 @@ pub fn invalid() -> GatewayError {
 
 /// Original finite live selectors; no authentication or credentials.
 pub mod live;
+pub mod response;
