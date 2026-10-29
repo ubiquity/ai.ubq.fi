@@ -3,8 +3,15 @@ use gateway_core::{
     source_control::encode_source_control_record,
     state::{AtomicTransition, AuthorityStore, CommitOutcome, StoredRecord},
 };
-use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey, value::ValueEncoding};
-use gateway_routing_journal::reader::{load, session_key};
+use gateway_kv_codec::{
+    key::RecordKey,
+    tuple_key::TupleKey,
+    value::{PortableValue, ValueEncoding},
+};
+use gateway_routing_journal::{
+    reader::{load, session_key},
+    record::Journal,
+};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use std::{
     cell::RefCell,
@@ -114,16 +121,35 @@ fn missing_and_expired_rows_fail_before_any_journal_decode() -> TestResult {
 
 #[test]
 fn reader_keeps_source_encoding_version_and_context_failure_precedence() -> TestResult {
-    for encoding in [ValueEncoding::ProfileV1, ValueEncoding::SourceGraphV1] {
-        let mut store = ReadStore::document(DOCUMENT, None)?;
-        store.row.as_mut().ok_or("fixture missing")?.value_encoding = encoding;
+    let graph = serde_json::from_value(serde_json::json!({"root":{"type":"null"},"nodes":[]}))?;
+    for record in [
+        StoredRecord::profile("original-revision", PortableValue::Null, None)?,
+        StoredRecord::source_graph("original-revision", graph, None)?,
+    ] {
+        let store = ReadStore {
+            row: Some(record),
+            reads: RefCell::new(Vec::new()),
+        };
         let error = ready(load(&store, ID))
             .err()
-            .ok_or("unsupported encoding accepted")?;
+            .ok_or("unsupported codec accepted")?;
         assert_eq!(
             error.envelope.error.code.as_deref(),
             Some("source_control_record_invalid")
         );
+        assert_eq!(store.reads.borrow().as_slice(), &[session_key(ID)]);
+    }
+    for (encoding, expected) in [
+        (ValueEncoding::ProfileV1, "incompatible_value_encoding"),
+        (ValueEncoding::SourceGraphV1, "source_graph_invalid"),
+    ] {
+        let mut store = ReadStore::document(DOCUMENT, None)?;
+        store.row.as_mut().ok_or("fixture missing")?.value_encoding = encoding;
+        let error = ready(load(&store, ID))
+            .err()
+            .ok_or("malformed retagged storage accepted")?;
+        assert_eq!(error.envelope.error.code.as_deref(), Some(expected));
+        assert_eq!(store.reads.borrow().as_slice(), &[session_key(ID)]);
     }
     let invalid = DOCUMENT
         .replace("\"v\":3", "\"v\":99")
@@ -160,16 +186,33 @@ fn reader_keeps_source_encoding_version_and_context_failure_precedence() -> Test
 
 #[test]
 fn full_round_trip_rejects_unknown_missing_and_numeric_shape_before_identity() -> TestResult {
-    for invalid in [
-        DOCUMENT.replace(
-            "\"kernel_override\":null",
-            "\"kernel_override\":null,\"unknown\":true",
+    for (label, invalid) in [
+        (
+            "unknown-field",
+            DOCUMENT.replace(
+                "\"kernel_override\":null",
+                "\"kernel_override\":null,\"unknown\":true",
+            ),
         ),
-        DOCUMENT.replace("\"active\":null,", ""),
-        DOCUMENT.replace("\"cursor\":0", "\"cursor\":0.0"),
+        ("missing-active", DOCUMENT.replace("\"active\":null,", "")),
+        (
+            "fractional-cursor",
+            DOCUMENT.replace("\"cursor\":0", "\"cursor\":0.5"),
+        ),
     ] {
-        assert!(ready(load(&ReadStore::document(&invalid, None)?, ID)).is_err());
+        assert!(
+            ready(load(&ReadStore::document(&invalid, None)?, ID)).is_err(),
+            "{label}"
+        );
     }
+    let decimal_zero = DOCUMENT.replace("\"cursor\":0", "\"cursor\":0.0");
+    assert!(Journal::decode(&SourceJson::parse(&decimal_zero)?).is_err());
+    let store = ReadStore::document(&decimal_zero, Some(150))?;
+    let (record, journal) = ready(load(&store, ID))?;
+    assert_eq!(journal.cursor, 0);
+    assert_eq!(record.revision, "original-revision");
+    assert_eq!(record.expires_at_ms, Some(150));
+    assert_eq!(store.reads.borrow().as_slice(), &[session_key(ID)]);
     let wrong = DOCUMENT.replace(
         "\"request_id\":\"journal-reader\"",
         "\"request_id\":\"another-request\"",

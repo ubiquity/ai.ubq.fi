@@ -138,7 +138,8 @@ fn unavailable_catalog_branch_keeps_exact_model_and_source_error_units() {
         let metadata = request_model_metadata(&input, &model, true, 1);
         let error = validate_model_available(&model, true, &metadata).unwrap_err();
         assert_eq!(error.status, 404);
-        let body = source::member(error.body(), "error").unwrap();
+        let wire = SourceJson::parse(error.body().as_str()).unwrap();
+        let body = source::member(&wire, "error").unwrap();
         assert_eq!(string(&body, "code"), "model_not_found".into());
         assert_eq!(string(&body, "param"), "model".into());
         let mut message = "The model '".encode_utf16().collect::<Vec<_>>();

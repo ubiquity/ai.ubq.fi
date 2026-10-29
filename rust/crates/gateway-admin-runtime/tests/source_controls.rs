@@ -15,7 +15,6 @@ use gateway_core::{
     query::*, source_control::decode_source_control_record,
     source_control::encode_source_control_record, state::*,
 };
-use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::{key::RecordKey, value::ValueEncoding};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};

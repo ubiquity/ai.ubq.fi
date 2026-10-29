@@ -58,8 +58,10 @@ fn assert_error(error: SourceRequestError, message: &str, param: Option<&str>) {
     }
     assert_eq!(error.status, 400);
     assert_eq!(
-        error.body(),
-        &SourceJson::from_serializable(&json!({"error":fields})).unwrap()
+        error.body().as_bytes(),
+        SourceJson::from_serializable(&json!({"error":fields}))
+            .unwrap()
+            .as_bytes()
     );
 }
 

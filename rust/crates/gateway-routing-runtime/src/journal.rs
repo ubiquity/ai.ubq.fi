@@ -7,7 +7,7 @@ use gateway_authority_contracts::TokenSource;
 use gateway_core::source_control::encode_source_control_record;
 use gateway_core::state::AtomicTransition;
 use gateway_core::{state::AuthorityStore, state::CommitOutcome};
-use gateway_core::{state::RecordMutation, state::RevisionCheck};
+use gateway_core::{state::RecordMutation, state::RevisionCheck, state::StoredRecord};
 use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_source::error::GatewayError;
