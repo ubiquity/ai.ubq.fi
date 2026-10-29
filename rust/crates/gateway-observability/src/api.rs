@@ -6,6 +6,7 @@ use gateway_admin_runtime_contracts::{
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_capacity_projection::{scalars::DAY, scalars::safe_i64};
 use gateway_core::query::QueryStore;
+use gateway_observability_capacity_events::remote_capacity::MAX_BODY_BYTES;
 use gateway_observability_contracts::{
     data, query, query::ObservationRead, types::ObservabilityHost,
 };
@@ -98,7 +99,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             ProviderRequest::Capacity { live } => self.capacity_response(live, context).await,
             ProviderRequest::Observations { document } => {
                 let raw = self.host.capacity_observation_body(&context).await?;
-                if raw.len() > crate::remote_capacity::MAX_BODY_BYTES {
+                if raw.len() > MAX_BODY_BYTES {
                     return Err(GatewayError::new(
                         413,
                         "Capacity observation payload too large",
