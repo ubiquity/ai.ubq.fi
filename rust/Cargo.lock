@@ -5155,6 +5155,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-routing-classification"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gateway-authority-routing-records",
+ "gateway-contracts",
+ "gateway-local-refusal",
+ "gateway-provider-protocol",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-routing-contract-test-support"
 version = "0.1.0"
 dependencies = [
@@ -5237,6 +5251,7 @@ dependencies = [
  "gateway-provider-stream",
  "gateway-providers",
  "gateway-request-normalization",
+ "gateway-routing-classification",
  "gateway-routing-contract-test-support",
  "gateway-routing-journal",
  "gateway-routing-runtime-test-support",
@@ -5468,6 +5483,7 @@ dependencies = [
  "gateway-publication-policy",
  "gateway-publication-transport",
  "gateway-request-normalization",
+ "gateway-routing-classification",
  "gateway-routing-journal",
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",

@@ -13,6 +13,7 @@ use gateway_contracts::{
     lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
 };
 use gateway_core::query::QueryStore;
+use gateway_routing_classification::classify;
 use gateway_routing_journal::reader;
 use gateway_routing_journal::record::{
     ChildRecord, CredentialFence, ExtraDispatch, KernelIntent, Phase, RevisionCheckWire,
@@ -338,7 +339,7 @@ impl<
         };
         let model = &attempt.request.decode.model;
         let mut retry = false;
-        if let Some(block) = crate::classify::codex_quota(
+        if let Some(block) = classify::codex_quota(
             failure.status,
             &failure.headers,
             &failure.body,
@@ -374,18 +375,15 @@ impl<
                     .authority()
                     .mark_credential_invalid(admission, self.clock.now_ms()?)
                     .await?;
-        } else if let Some(detail) = crate::classify::unsupported_model(
-            failure.status,
-            &failure.body,
-            failure.body_complete,
-            model,
-        ) && self
-            .authority()
-            .learn_model_unavailable(admission, &detail, self.clock.now_ms()?)
-            .await?
+        } else if let Some(detail) =
+            classify::unsupported_model(failure.status, &failure.body, failure.body_complete, model)
+            && self
+                .authority()
+                .learn_model_unavailable(admission, &detail, self.clock.now_ms()?)
+                .await?
         {
             if current.model_sibling_retries >= 1 {
-                return Err(crate::classify::model_unavailable_error(model).into());
+                return Err(classify::model_unavailable_error(model).into());
             }
             journal::change(
                 &self.store,

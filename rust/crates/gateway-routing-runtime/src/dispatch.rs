@@ -1,5 +1,4 @@
 use crate::{
-    classify,
     journal::{self, unavailable},
     session::RoutingSession,
     settlement,
@@ -21,6 +20,7 @@ use gateway_contracts::lifecycle::{PaidTerminalState, SemanticTerminal, Transpor
 use gateway_contracts::provider::UpstreamProvider;
 use gateway_core::query::QueryStore;
 use gateway_provider_policy::{policy::HopDecision, policy::HopFailure};
+use gateway_routing_classification::classify;
 use gateway_routing_journal::reader;
 use gateway_routing_journal::record::{
     AttemptRecord, BillingUsage, CredentialFence, Journal, Phase, RevisionCheckWire,
