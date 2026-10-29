@@ -9,12 +9,12 @@ publish.workspace = true
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-authority-initial-owner = { path = "../gateway-authority-initial-owner" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-routing-records.workspace = true
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
 gateway-contracts = { path = "../gateway-contracts" }
 gateway-kv-codec = { path = "../gateway-kv-codec" }
 gateway-source = { path = "../gateway-source" }
 gateway-auth.workspace = true
-gateway-authority.workspace = true
 gateway-core.workspace = true
 gateway-migration-data.workspace = true
 gateway-migration-inverse.workspace = true

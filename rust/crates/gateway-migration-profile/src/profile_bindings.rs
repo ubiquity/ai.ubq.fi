@@ -167,8 +167,10 @@ pub(crate) async fn bind<S: QueryStore>(
             .json_value()
             .ok()
             .and_then(|v| {
-                serde_json::from_value::<gateway_auth_passkeys::passkeys::PasskeySession>(v.clone())
-                    .ok()
+                serde_json::from_value::<gateway_auth_contracts::passkeys::PasskeySession>(
+                    v.clone(),
+                )
+                .ok()
             })
             .filter(|s| s.token == token)
             .and_then(|session| {

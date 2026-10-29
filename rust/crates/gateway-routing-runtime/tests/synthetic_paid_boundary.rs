@@ -2,9 +2,9 @@
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
-    PaidProviderObservation, PaidRoutingProjection, PaidSourceCheck, paid_projection_source_keys,
+    PaidProviderObservation, PaidRoutingPolicy, PaidRoutingProjection, PaidSourceCheck,
 };
-use gateway_authority_paid_records::PaidRoutingPolicy;
+use gateway_authority_paid_evidence::paid_projection_source_keys;
 use gateway_contracts::{
     lifecycle::TransportObservation, provider::PaidProvider, provider::UpstreamProvider,
 };
