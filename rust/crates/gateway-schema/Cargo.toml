@@ -10,10 +10,10 @@ workspace = true
 
 [dependencies]
 gateway-catalog-input.workspace = true
+gateway-catalog-records.workspace = true
 gateway-model-snapshot.workspace = true
 gateway-model-metadata.workspace = true
 gateway-prompt-cache.workspace = true
-gateway-prompt-policy.workspace = true
 gateway-request-normalization.workspace = true
 gateway-model-selection.workspace = true
 gateway-chat-normalization.workspace = true

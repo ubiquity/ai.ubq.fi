@@ -1,0 +1,21 @@
+[package]
+name = "gateway-catalog-records"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gateway-catalog-input.workspace = true
+gateway-contracts.workspace = true
+gateway-decision-protocol.workspace = true
+gateway-model-metadata.workspace = true
+gateway-model-selection.workspace = true
+gateway-prompt-cache.workspace = true
+gateway-prompt-policy.workspace = true
+gateway-schema-values.workspace = true
+gateway-source.workspace = true
+serde.workspace = true

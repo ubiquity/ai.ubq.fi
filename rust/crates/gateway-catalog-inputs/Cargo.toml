@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 gateway-catalog-input.workspace = true
+gateway-catalog-records.workspace = true
 gateway-model-snapshot.workspace = true
 gateway-model-metadata.workspace = true
 gateway-contracts = { path = "../gateway-contracts" }

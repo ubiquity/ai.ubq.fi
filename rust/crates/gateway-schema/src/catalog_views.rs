@@ -1,5 +1,6 @@
-use crate::{model_control as c, provider_catalog::*};
+use crate::model_control as c;
 use gateway_catalog_input::catalog::*;
+use gateway_catalog_records::provider::*;
 use gateway_contracts::model::ModelId;
 use gateway_decision_protocol::catalog as decisions;
 use gateway_model_metadata::metadata::*;
@@ -33,9 +34,9 @@ pub fn ordinary_models(input: &CatalogInput) -> Result<SourceJson, GatewayError>
     } else {
         Vec::new()
     };
-    append_unique(&mut rows, configured_model_rows(input, "cerebras"), "id");
+    append_unique(&mut rows, configured_model_rows(input, "cerebras")?, "id");
     for provider in ["deepseek", "lithos", "ubiquity"] {
-        let configured = configured_model_rows(input, provider);
+        let configured = configured_model_rows(input, provider)?;
         if !configured.is_empty() {
             rows.retain(|r| !configured.iter().any(|c| row_id(c) == row_id(r)));
             rows.extend(configured);
@@ -72,13 +73,17 @@ pub fn ordinary_models(input: &CatalogInput) -> Result<SourceJson, GatewayError>
         append_unique(&mut rows, records, "id");
     }
     let mut rows = filter_whitelist(rows, input.whitelist.as_ref(), false);
-    append_unique(&mut rows, openrouter_models(input), "id");
+    append_unique(&mut rows, openrouter_models(input)?, "id");
     Ok(c::object(vec![
         ("object", c::json("list")),
         ("data", c::json(&rows)),
     ]))
 }
-fn discovered_capability(input: &CatalogInput, model: &SourceJson, provider: &str) -> SourceJson {
+fn discovered_capability(
+    input: &CatalogInput,
+    model: &SourceJson,
+    provider: &str,
+) -> Result<SourceJson, GatewayError> {
     let id = row_id(model).unwrap_or_else(|| "".into());
     let resolved = input.metadata(&id, None, None, false);
     let levels = resolved
@@ -104,7 +109,7 @@ fn discovered_capability(input: &CatalogInput, model: &SourceJson, provider: &st
         c::set(&mut row, "default_reasoning_effort", c::json("none"));
     }
     c::set(&mut row, "reasoning_effort_wire_map", c::object(vec![]));
-    apply_resolved_fields(&mut row, &resolved, false, true);
+    apply_resolved_fields(&mut row, &resolved, false, true)?;
     c::set(
         &mut row,
         "context_source",
@@ -115,7 +120,7 @@ fn discovered_capability(input: &CatalogInput, model: &SourceJson, provider: &st
         "reasoning_source",
         c::json(&resolved.reasoning_source),
     );
-    row
+    Ok(row)
 }
 fn claude_capability(model: &SourceJson) -> SourceJson {
     let levels = claude_levels(model);
@@ -198,7 +203,7 @@ pub fn capabilities(input: &CatalogInput) -> Result<SourceJson, GatewayError> {
             }
         }
     }
-    append_unique(&mut rows, configured_capabilities(input, "cerebras"), "id");
+    append_unique(&mut rows, configured_capabilities(input, "cerebras")?, "id");
     append_unique(
         &mut rows,
         input
@@ -213,19 +218,20 @@ pub fn capabilities(input: &CatalogInput) -> Result<SourceJson, GatewayError> {
             input
                 .available_rows(provider)
                 .iter()
-                .map(|r| discovered_capability(input, r, label)),
+                .map(|r| discovered_capability(input, r, label))
+                .collect::<Result<Vec<_>, _>>()?,
             "id",
         );
     }
     for provider in ["deepseek", "lithos", "ubiquity"] {
-        let configured = configured_capabilities(input, provider);
+        let configured = configured_capabilities(input, provider)?;
         if !configured.is_empty() {
             rows.retain(|r| !configured.iter().any(|c| row_id(c) == row_id(r)));
             rows.extend(configured);
         }
     }
     let mut rows = filter_whitelist(rows, input.whitelist.as_ref(), false);
-    append_unique(&mut rows, openrouter_capabilities(input), "id");
+    append_unique(&mut rows, openrouter_capabilities(input)?, "id");
     let snapshot = input.codex();
     Ok(c::object(vec![
         ("object", c::json("list")),
@@ -249,7 +255,7 @@ fn public_entry(
     provider: SourceJson,
     created: Option<i64>,
     resolved: &ResolvedMetadata,
-) -> SourceJson {
+) -> Result<SourceJson, GatewayError> {
     let mut row = c::object(vec![
         ("id", c::json(id)),
         ("providers", c::json(&[provider])),
@@ -257,7 +263,7 @@ fn public_entry(
     if let Some(created) = created.filter(|n| *n > 0) {
         c::set(&mut row, "created", c::json(&created));
     }
-    apply_resolved_fields(&mut row, resolved, false, false);
+    apply_resolved_fields(&mut row, resolved, false, false)?;
     if let Some(levels) = &resolved.supported_reasoning_levels {
         c::set(&mut row, "supported_reasoning_levels", c::json(levels));
     }
@@ -274,7 +280,7 @@ fn public_entry(
         "reasoning_source",
         c::json(&resolved.reasoning_source),
     );
-    row
+    Ok(row)
 }
 fn add_public(
     rows: &mut Vec<SourceJson>,
@@ -282,7 +288,7 @@ fn add_public(
     provider: SourceJson,
     created: Option<i64>,
     resolved: &ResolvedMetadata,
-) {
+) -> Result<(), GatewayError> {
     if let Some(existing) = rows.iter_mut().find(|r| row_id(r).as_ref() == Some(id)) {
         let mut providers = gateway_source::source_serialization::member(existing, "providers")
             .as_ref()
@@ -296,18 +302,23 @@ fn add_public(
             c::set(existing, "created", c::json(&n));
         }
     } else {
-        rows.push(public_entry(id, provider, created, resolved));
+        rows.push(public_entry(id, provider, created, resolved)?);
     }
+    Ok(())
 }
-fn merge_provider_metadata(rows: &mut [SourceJson], id: &ModelId, hint: MetadataHint) {
+fn merge_provider_metadata(
+    rows: &mut [SourceJson],
+    id: &ModelId,
+    hint: MetadataHint,
+) -> Result<(), GatewayError> {
     let Some(entry) = rows.iter_mut().find(|row| row_id(row).as_ref() == Some(id)) else {
-        return;
+        return Ok(());
     };
     let resolved = resolve_metadata(&MetadataSources {
         provider: Some(hint),
         ..MetadataSources::default()
     });
-    apply_resolved_fields(entry, &resolved, false, false);
+    apply_resolved_fields(entry, &resolved, false, false)?;
     if resolved.context_window_tokens.is_some() || resolved.max_context_window_tokens.is_some() {
         c::set(entry, "context_source", c::json(&resolved.context_source));
     }
@@ -325,6 +336,7 @@ fn merge_provider_metadata(rows: &mut [SourceJson], id: &ModelId, hint: Metadata
             c::json(&resolved.reasoning_source),
         );
     }
+    Ok(())
 }
 fn sorted_models(
     rows: Vec<SourceJson>,
@@ -343,7 +355,7 @@ fn public_provider(provider: &str, owner: SourceJson, endpoints: SourceJson) -> 
         ("supported_endpoints", endpoints),
     ])
 }
-fn append_specialty(rows: &mut Vec<SourceJson>, input: &CatalogInput) {
+fn append_specialty(rows: &mut Vec<SourceJson>, input: &CatalogInput) -> Result<(), GatewayError> {
     if input.synthetic_configured() {
         let id = ModelId::from_scalar(SYNTHETIC_MODEL);
         let existing = rows.iter().any(|row| row_id(row).as_ref() == Some(&id));
@@ -354,9 +366,9 @@ fn append_specialty(rows: &mut Vec<SourceJson>, input: &CatalogInput) {
             public_provider("ubiquity", c::json("ubiquity"), c::json(&["/v1/responses"])),
             Some(1_791_244_800),
             &resolved,
-        );
+        )?;
         if existing {
-            merge_provider_metadata(rows, &id, provider_hint("ubiquity", &id));
+            merge_provider_metadata(rows, &id, provider_hint("ubiquity", &id))?;
         }
         for provider in FLASH_ORDER {
             if input.configured(provider) {
@@ -366,7 +378,7 @@ fn append_specialty(rows: &mut Vec<SourceJson>, input: &CatalogInput) {
                     public_provider(provider, c::json("ubiquity"), c::json(&["/v1/responses"])),
                     None,
                     &resolved,
-                );
+                )?;
             }
         }
     }
@@ -383,7 +395,7 @@ fn append_specialty(rows: &mut Vec<SourceJson>, input: &CatalogInput) {
                     ]),
                     None,
                     &input.metadata(&id, None, None, false),
-                );
+                )?;
             }
         }
         let id = ModelId::from_scalar("typesafe/jev-latest");
@@ -400,8 +412,9 @@ fn append_specialty(rows: &mut Vec<SourceJson>, input: &CatalogInput) {
             ]),
             None,
             &input.metadata(&id, None, None, false),
-        );
+        )?;
     }
+    Ok(())
 }
 fn catalog_sources(input: &CatalogInput, codex_count: usize) -> SourceJson {
     let mut sources = vec![(
@@ -503,7 +516,7 @@ pub fn build_catalog_snapshot(
                     gateway_source::source_serialization::member(model, "created").as_ref(),
                 ),
                 &input.metadata(&id, record, None, true),
-            );
+            )?;
         }
     }
     for provider in ["openlux", "surplus", "claude_code"] {
@@ -551,9 +564,9 @@ pub fn build_catalog_snapshot(
                         gateway_source::source_serialization::member(model, "created").as_ref(),
                     ),
                     &input.metadata(&id, None, hint.clone(), false),
-                );
+                )?;
                 if existing && let Some(hint) = hint {
-                    merge_provider_metadata(&mut rows, &id, hint);
+                    merge_provider_metadata(&mut rows, &id, hint)?;
                 }
             }
         }
@@ -576,13 +589,13 @@ pub fn build_catalog_snapshot(
                 public_provider(provider, c::json(provider), c::json(&endpoints)),
                 None,
                 &input.metadata(&id, None, Some(provider_hint(provider, &id)), false),
-            );
+            )?;
             if existing {
-                merge_provider_metadata(&mut rows, &id, provider_hint(provider, &id));
+                merge_provider_metadata(&mut rows, &id, provider_hint(provider, &id))?;
             }
         }
     }
-    append_specialty(&mut rows, input);
+    append_specialty(&mut rows, input)?;
     // Both source public renderers use the same stable locale comparator, never
     // lexical ModelId ordering or a comparator-error substitute (catalog.ts482).
     let rows = sorted_models(rows, collator)?;

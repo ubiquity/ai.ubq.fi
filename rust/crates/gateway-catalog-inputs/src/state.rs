@@ -210,7 +210,7 @@ pub async fn load_state<S: QueryStore>(
         .collect::<Vec<_>>();
     for provider in ["deepseek", "lithos", "cerebras", "ubiquity"] {
         ids.extend(
-            gateway_schema::provider_catalog::provider_ids(provider)
+            gateway_catalog_records::provider::provider_ids(provider)
                 .iter()
                 .map(|id| ModelId::from_scalar(id)),
         );

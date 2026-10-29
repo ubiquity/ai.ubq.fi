@@ -487,7 +487,7 @@ async fn models_response(
                 conditional.as_deref(),
                 cache_state,
                 &state.input,
-            );
+            )?;
             return catalog_response(response).map(Into::into);
         }
         let state = CatalogState::load(store, env, host, Rc::clone(context)).await?;

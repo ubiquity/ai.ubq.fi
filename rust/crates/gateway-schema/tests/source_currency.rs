@@ -1,6 +1,7 @@
 use gateway_catalog_input::catalog::{CatalogInput, ProviderCatalog};
+use gateway_catalog_records::native::native_catalog;
 use gateway_model_metadata::metadata::MetadataHint;
-use gateway_schema::{catalog_views::build_catalog_snapshot, native_catalog::native_catalog};
+use gateway_schema::catalog_views::build_catalog_snapshot;
 use serde_json::{Value, json};
 mod support;
 
@@ -17,6 +18,7 @@ fn configured_deepseek_replaces_same_id_at_original_slot_and_preserves_envelope(
     );
     let stored = json!({"future":"kept","models":[{"slug":"other","future":1},{"slug":" deepseek-v4-flash ","future":2},{"slug":"\u{00a0}","id":"\u{feff} deepseek-flash ","future":3}]});
     let output = native_catalog(Some(&support::json(&stored)), &input)
+        .unwrap()
         .deserialize::<Value>()
         .unwrap();
     assert_eq!(output["future"], "kept");

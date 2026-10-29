@@ -2,15 +2,13 @@ use gateway_catalog_input::{
     catalog::{CatalogInput, ProviderCatalog},
     runtime_config::*,
 };
+use gateway_catalog_records::native::native_catalog;
 use gateway_contracts::model::ModelId;
 use gateway_model_metadata::metadata::*;
 use gateway_model_selection::{aliases::*, selection::*};
 use gateway_model_snapshot::snapshot::*;
 use gateway_prompt_cache::{compat::concrete_scope, profile::SCOPE_PROFILE};
-use gateway_schema::{
-    catalog_views::{capabilities, ordinary_models, public_catalog},
-    native_catalog::native_catalog,
-};
+use gateway_schema::catalog_views::{capabilities, ordinary_models, public_catalog};
 
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 
@@ -148,12 +146,15 @@ fn catalog_views_preserve_intentional_whitelist_differences() {
     for row in ordinary["data"].as_array().unwrap() {
         assert_eq!(row.as_object().unwrap().len(), 4);
     }
-    let native = scalar(&native_catalog(
-        Some(&source_value(
-            json!({"models":[{"slug":"a","future":"kept"}]}),
-        )),
-        &input,
-    ));
+    let native = scalar(
+        &native_catalog(
+            Some(&source_value(
+                json!({"models":[{"slug":"a","future":"kept"}]}),
+            )),
+            &input,
+        )
+        .unwrap(),
+    );
     assert_eq!(native["models"].as_array().unwrap().len(), 1);
     assert_eq!(native["models"][0]["future"], "kept");
     let public = scalar(&public_catalog(&input, &FixtureCollator).unwrap());
@@ -435,8 +436,9 @@ fn configured_native_catalogs_serve_only_the_three_source_v2_policy_fields()
         );
     }
     let catalogs = [
-        native_catalog(None, &input),
-        gateway_schema::native_catalog::native_catalog_fallback(&input)
+        native_catalog(None, &input).unwrap(),
+        gateway_catalog_records::native::native_catalog_fallback(&input)
+            .unwrap()
             .ok_or("missing configured fallback catalog")?,
     ];
     for catalog in catalogs {
@@ -522,7 +524,7 @@ fn native_declaration_never_invents_uploaded_reasoning_tiers_or_defaults()
         r#"{"models":[{"slug":"uploaded-custom","supported_reasoning_levels":[{"effort":"Custom"},{"effort":"\ud800"}]},{"slug":"uploaded-omitted"}]}"#,
     )?;
     let original = stored.as_str().to_owned();
-    let catalog = native_catalog(Some(&stored), &CatalogInput::default());
+    let catalog = native_catalog(Some(&stored), &CatalogInput::default()).unwrap();
     let rows = source::member(&catalog, "models")
         .and_then(|value| source::array(&value))
         .ok_or("missing uploaded models")?;

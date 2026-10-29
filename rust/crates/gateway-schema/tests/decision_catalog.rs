@@ -1,6 +1,7 @@
 use gateway_catalog_input::catalog::{CatalogInput, ProviderCatalog};
+use gateway_catalog_records::native;
 use gateway_model_selection::{aliases::SourceStringCollator, selection::ProviderSelection};
-use gateway_schema::{catalog_views, native_catalog};
+use gateway_schema::catalog_views;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{cmp::Ordering, collections::BTreeMap};
@@ -117,7 +118,8 @@ fn every_listing_surface_preserves_decision_modality_and_native_excludes_it()
             assert_eq!(catalog["sources"]["openrouter"]["count"], 4);
         }
     }
-    let native = native_catalog::native_catalog_fallback(&input)
+    let native = native::native_catalog_fallback(&input)
+        .unwrap()
         .ok_or("missing native catalog")?
         .deserialize::<Value>()?;
     let models = native["models"].as_array().ok_or("missing native models")?;

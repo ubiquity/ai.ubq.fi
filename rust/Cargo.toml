@@ -130,6 +130,7 @@ members = [
   "crates/gateway-authority",
   "crates/gateway-authority-routing-records",
   "crates/gateway-admission",
+  "crates/gateway-catalog-records",
   "crates/gateway-catalog-provider",
   "crates/gateway-catalog-runtime",
   "crates/gateway-catalog-inputs",
@@ -375,6 +376,7 @@ gateway-admission = { path = "crates/gateway-admission" }
 gateway-catalog-provider = { path = "crates/gateway-catalog-provider" }
 gateway-catalog-runtime = { path = "crates/gateway-catalog-runtime" }
 gateway-catalog-input = { path = "crates/gateway-catalog-input" }
+gateway-catalog-records = { path = "crates/gateway-catalog-records" }
 gateway-catalog-inputs = { path = "crates/gateway-catalog-inputs" }
 gateway-catalog-admin = { path = "crates/gateway-catalog-admin" }
 gateway-catalog-control = { path = "crates/gateway-catalog-control" }

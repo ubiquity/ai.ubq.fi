@@ -2655,6 +2655,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-catalog-input",
  "gateway-catalog-provider",
+ "gateway-catalog-records",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
@@ -2682,6 +2683,22 @@ dependencies = [
  "gateway-model-selection",
  "gateway-provider-policy",
  "gateway-schema",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde",
+]
+
+[[package]]
+name = "gateway-catalog-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-catalog-input",
+ "gateway-contracts",
+ "gateway-decision-protocol",
+ "gateway-model-metadata",
+ "gateway-model-selection",
+ "gateway-prompt-cache",
+ "gateway-prompt-policy",
  "gateway-schema-values",
  "gateway-source",
  "serde",
@@ -5299,6 +5316,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "gateway-catalog-input",
+ "gateway-catalog-records",
  "gateway-chat-normalization",
  "gateway-contracts",
  "gateway-core",
@@ -5309,7 +5327,6 @@ dependencies = [
  "gateway-model-selection",
  "gateway-model-snapshot",
  "gateway-prompt-cache",
- "gateway-prompt-policy",
  "gateway-request-normalization",
  "gateway-responses-normalization",
  "gateway-schema-values",

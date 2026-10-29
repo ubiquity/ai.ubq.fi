@@ -1,12 +1,12 @@
+use gateway_catalog_records::native::native_catalog;
 mod support;
 use gateway_catalog_input::catalog::{CatalogInput, ProviderCatalog};
 use gateway_contracts::model::ModelId;
 use gateway_model_metadata::metadata::MetadataHint;
 use gateway_model_selection::{aliases::SourceStringCollator, selection::ModelWhitelist};
 use gateway_model_snapshot::snapshot::ModelSnapshot;
-use gateway_schema::{
-    catalog_views::{build_catalog_snapshot, capabilities, ordinary_models, public_catalog},
-    native_catalog::native_catalog,
+use gateway_schema::catalog_views::{
+    build_catalog_snapshot, capabilities, ordinary_models, public_catalog,
 };
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
@@ -65,7 +65,7 @@ fn ordinary_native_and_capability_views_keep_opaque_model_effort_and_unknown_fie
     let stored = document(
         r#"{"future":{"\ud800":"\udc00"},"models":[{"slug":"\ud800","future":{"\udc00":"\ud800"}}]}"#,
     );
-    let native = native_catalog(Some(&stored), &input);
+    let native = native_catalog(Some(&stored), &input).unwrap();
     assert_eq!(member(&native, "future"), member(&stored, "future"));
     assert_eq!(rows(&native, "models"), rows(&stored, "models"));
     assert!(
@@ -128,7 +128,7 @@ fn openrouter_whitelist_phase_owner_prefix_and_effort_remain_source_values() {
     assert_eq!(units(&member(&rows(&public, "data")[0], "id")), [97]);
     let stored = document(r#"{"models":[{"slug":"a","unknown":"kept"}]}"#);
     assert_eq!(
-        rows(&native_catalog(Some(&stored), &input), "models").len(),
+        rows(&native_catalog(Some(&stored), &input).unwrap(), "models").len(),
         1
     );
 }
