@@ -11,10 +11,10 @@ use gateway_core::{
 use gateway_kv_codec::key::RecordKey;
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_contracts::{host_types::CapacityAccountRef, types::ObservabilityHost};
+use gateway_observability_test_support::runtime::{Host, Memory, run};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::{cell::RefCell, rc::Rc};
-use support::{Host, Memory, run};
 const AT: i64 = 7_200_000;
 fn context() -> Context {
     Context {

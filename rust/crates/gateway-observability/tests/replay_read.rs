@@ -6,8 +6,8 @@ use gateway_observability_replay_model::replay_model as model;
 use gateway_observability_replay_records::{
     incident::IncidentObservation, incident::valid_incident_id,
 };
+use gateway_observability_test_support::runtime::{Host, Memory, run};
 use serde_json::{Value, json};
-use support::{Host, Memory, run};
 fn key(value: Value) -> RecordKey {
     TupleKey::from_json_parts(value.as_array().unwrap())
         .unwrap()

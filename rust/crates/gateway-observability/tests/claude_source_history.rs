@@ -16,13 +16,13 @@ use gateway_observability::ObservabilityRuntime;
 use gateway_observability_contracts::{
     host_types::*, types::HealthProvider, types::HealthTarget, types::ObservabilityHost,
 };
+use gateway_observability_test_support::runtime::{Host, Memory, run};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use support::{Host, Memory, run};
 const AT: i64 = 7_200_000;
 #[derive(Deserialize)]
 struct Oracle {

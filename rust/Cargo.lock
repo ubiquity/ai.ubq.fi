@@ -3425,6 +3425,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-contracts",
  "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-credentials",
