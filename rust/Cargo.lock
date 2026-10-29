@@ -5064,6 +5064,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-routing-contract-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-evidence",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-provider-policy",
+ "gateway-routing-runtime",
+ "gateway-routing-runtime-test-support",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-routing-journal"
 version = "0.1.0"
 dependencies = [
@@ -5129,6 +5145,7 @@ dependencies = [
  "gateway-provider-stream",
  "gateway-providers",
  "gateway-request-normalization",
+ "gateway-routing-contract-test-support",
  "gateway-routing-journal",
  "gateway-routing-runtime-test-support",
  "gateway-schema",

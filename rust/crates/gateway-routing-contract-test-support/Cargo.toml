@@ -1,0 +1,21 @@
+[package]
+name = "gateway-routing-contract-test-support"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-authority-keys.workspace = true
+gateway-authority-paid-control-records.workspace = true
+gateway-authority-paid-evidence.workspace = true
+gateway-contracts.workspace = true
+gateway-core.workspace = true
+gateway-provider-policy.workspace = true
+gateway-routing-runtime.workspace = true
+gateway-routing-runtime-test-support.workspace = true
+gateway-source.workspace = true
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+
+[lints]
+workspace = true
