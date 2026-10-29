@@ -1,8 +1,7 @@
 //! One original admission before local work; no provider plan or attempt is invented.
-use crate::{journal, policy::RoutePlan, session::RoutingSession};
+use crate::types::RoutingHost;
+use crate::{journal, session::RoutingSession};
 use crate::{session::reserve_original, types::RecoveredSession};
-use crate::{types::RoutingHost, types::RoutingResult};
-use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
@@ -22,22 +21,14 @@ use gateway_local_journal::local_work::{
 use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_routing_journal::reader;
 use gateway_routing_journal::record::{Journal, RevisionCheckWire};
+use gateway_routing_plan::input::LocalRequestMetadata;
+use gateway_routing_plan::input::RoutingResult;
+use gateway_routing_plan::policy::RoutePlan;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 
 pub mod completion;
 mod coordination;
 
-/// Existing request metadata only. No caller supplies a replacement normalized body.
-#[derive(Clone)]
-pub struct LocalRequestMetadata {
-    pub context: RequestContext,
-    pub principal: AuthPrincipal,
-    pub catalog: gateway_catalog_input::catalog::CatalogInput,
-    pub runtime: Option<SourceJson>,
-    pub client_version: String,
-    pub native_session_id: Option<String>,
-    pub retry_prohibited: bool,
-}
 pub struct LocalAdmissionInput {
     pub metadata: LocalRequestMetadata,
     pub original: SourceRequestDocument,

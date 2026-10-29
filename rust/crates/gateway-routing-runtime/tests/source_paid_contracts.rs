@@ -5,8 +5,9 @@ use gateway_routing_contract_test_support::{
     fixtures::TestResult, fixtures::next_attempt, fixtures::paid_input, fixtures::refusal,
     fixtures::set_source,
 };
+use gateway_routing_plan::policy;
 use gateway_routing_runtime::{
-    policy, session::RoutingSession, types::RefusalDecision, types::TransportState,
+    session::RoutingSession, types::RefusalDecision, types::TransportState,
 };
 use gateway_routing_runtime_test_support::{
     exec::run, host::Host, input::NOW, seed::seed_key, seed::window, store::Store,

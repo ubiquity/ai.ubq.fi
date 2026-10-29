@@ -18,6 +18,8 @@ use gateway_routing_journal::reader;
 use gateway_routing_journal::record::{
     ChildRecord, CredentialFence, ExtraDispatch, KernelIntent, Phase, RevisionCheckWire,
 };
+use gateway_routing_plan::input::RoutingInput;
+use gateway_routing_plan::input::RoutingResult;
 use gateway_source::source_serialization as source;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use {gateway_model_selection::aliases as model_aliases, std::rc::Rc};
@@ -135,14 +137,18 @@ impl<
             source::member(&body, "model").as_ref(),
             None,
         )?);
-        crate::policy::validate_model(&self.input, &model, self.clock.now_ms()?)?;
+        gateway_routing_plan::policy::validate_model(&self.input, &model, self.clock.now_ms()?)?;
         for _ in 0..3 {
             if self.host.cancelled() {
                 return Err(self.host.cancellation_error().into());
             }
             let selection = self
                 .authority()
-                .select_account(&model, crate::policy::class(&model), self.clock.now_ms()?)
+                .select_account(
+                    &model,
+                    gateway_routing_plan::policy::class(&model),
+                    self.clock.now_ms()?,
+                )
                 .await?;
             let Some(mut account) = self.image_account(selection, &model).await? else {
                 continue;
@@ -214,7 +220,7 @@ impl<
                 match recovery {
                     CodexRecovery::Recovered(account) => {
                         if &account.requested_model != model
-                            || account.quota_class != crate::policy::class(model)
+                            || account.quota_class != gateway_routing_plan::policy::class(model)
                             || account.probe_required
                             || account.probe.is_none()
                         {

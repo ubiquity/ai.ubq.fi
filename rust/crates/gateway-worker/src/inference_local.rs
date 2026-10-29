@@ -12,9 +12,8 @@ use gateway_contracts::{
 };
 use gateway_local_refusal::routing_error::RoutingError;
 use gateway_request_normalization::document::SourceRequestDocument;
-use gateway_routing_runtime::{
-    local_work::LocalAdmissionInput, local_work::LocalRequestMetadata, local_work::LocalWorkHandle,
-    local_work::completion::response::LocalWireKind, session::RoutingSession,
+use gateway_routing_runtime::local_work::{
+    LocalAdmissionInput, LocalWorkHandle, completion::response::LocalWireKind,
 };
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_capture::capture::Capture;
@@ -27,6 +26,7 @@ use std::{
     task::{Context as PollContext, Poll},
 };
 use worker::{Context, Response};
+use {gateway_routing_plan::input, gateway_routing_runtime::session::RoutingSession};
 pub(crate) type Local =
     LocalWorkHandle<RemoteAuthorityStore, PlatformTokens, PlatformClock, routing_host::Host>;
 pub(crate) enum Start {
@@ -50,7 +50,7 @@ impl Drop for Receiver {
 }
 
 pub(crate) async fn start(
-    metadata: LocalRequestMetadata,
+    metadata: input::LocalRequestMetadata,
     document: SourceRequestDocument,
     store: RemoteAuthorityStore,
     routing: routing_host::Host,
@@ -98,7 +98,7 @@ pub(crate) async fn start(
 }
 
 async fn start_inner(
-    metadata: LocalRequestMetadata,
+    metadata: input::LocalRequestMetadata,
     document: SourceRequestDocument,
     store: RemoteAuthorityStore,
     routing: routing_host::Host,

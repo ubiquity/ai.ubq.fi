@@ -4,7 +4,7 @@ use crate::{
     settlement,
     types::{
         AttemptFailure, AttemptUsage, FailureOrigin, PreparedAttempt, RecoveredSession,
-        RefreshOutcome, RefusalDecision, RoutingHost, RoutingResult, TransportState,
+        RefreshOutcome, RefusalDecision, RoutingHost, TransportState,
     },
 };
 use gateway_authority_api_quota::ApiQuotaOperations;
@@ -25,6 +25,7 @@ use gateway_routing_journal::reader;
 use gateway_routing_journal::record::{
     AttemptRecord, BillingUsage, CredentialFence, Journal, Phase, RevisionCheckWire,
 };
+use gateway_routing_plan::input::RoutingResult;
 use gateway_source::error::GatewayError;
 
 impl<
@@ -138,7 +139,7 @@ impl<
     ) -> RoutingResult<()> {
         if let Some(reservation) = &record.paid {
             let synthetic = match self.plan.hops.get(record.cursor) {
-                Some(crate::policy::RouteHop::Paid {
+                Some(gateway_routing_plan::policy::RouteHop::Paid {
                     provider,
                     model,
                     synthetic,

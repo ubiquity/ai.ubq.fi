@@ -16,7 +16,6 @@ use gateway_extras_contract::{
 };
 use gateway_extras_runtime::ExtrasRuntime;
 use gateway_provider_protocol::types::ClientSurface;
-use gateway_routing_runtime::{session::RoutingSession, types::RoutingInput};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body;
@@ -24,6 +23,7 @@ use gateway_worker_storage::store::now_ms;
 use gateway_worker_stream::observed::{FinishHook, ObservationHandle, ObservedStream};
 use std::rc::Rc;
 use worker::{Request, Response};
+use {gateway_routing_plan::input::RoutingInput, gateway_routing_runtime::session::RoutingSession};
 
 pub struct Target {
     pub route: ExtrasRoute,

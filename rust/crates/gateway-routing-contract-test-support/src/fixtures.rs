@@ -4,9 +4,12 @@ use gateway_contracts::{
     lifecycle::SemanticTerminal, lifecycle::TransportObservation,
 };
 use gateway_provider_policy::policy::HopFailure;
+use gateway_routing_plan::input::RoutingInput;
+use gateway_routing_plan::input::RoutingResult;
+use gateway_routing_plan::policy;
 use gateway_routing_runtime::{
-    policy, session::RoutingSession, types::AttemptFailure, types::PreparedAttempt,
-    types::RoutingHost, types::RoutingInput, types::RoutingResult, types::TransportState,
+    session::RoutingSession, types::AttemptFailure, types::PreparedAttempt, types::RoutingHost,
+    types::TransportState,
 };
 use gateway_routing_runtime_test_support::{
     exec::run, host::Host, input::NOW, input::input, store::Store,

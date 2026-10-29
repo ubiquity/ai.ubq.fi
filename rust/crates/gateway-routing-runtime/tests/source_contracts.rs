@@ -12,10 +12,11 @@ use gateway_routing_contract_test_support::{
     fixtures::TestResult, fixtures::complete, fixtures::fixture, fixtures::next_attempt,
     fixtures::refusal, fixtures::set_source, fixtures::source_plan,
 };
+use gateway_routing_plan::policy;
+use gateway_routing_plan::policy::class;
 use gateway_routing_runtime::{
-    policy, policy::class, session::RoutingSession, settlement::recover_pending,
-    types::AttemptUsage, types::PreparedWireRequest, types::RefusalDecision, types::RoutingHost,
-    types::TransportState,
+    session::RoutingSession, settlement::recover_pending, types::AttemptUsage,
+    types::PreparedWireRequest, types::RefusalDecision, types::RoutingHost, types::TransportState,
 };
 use gateway_routing_runtime_test_support::{
     exec::run, host::Host, input::NOW, input::input, seed::seed_key, seed::seed_pool,

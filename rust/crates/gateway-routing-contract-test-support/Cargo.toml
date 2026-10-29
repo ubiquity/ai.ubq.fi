@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-routing-plan.workspace = true
 gateway-authority-keys.workspace = true
 gateway-authority-paid-control-records.workspace = true
 gateway-authority-paid-evidence.workspace = true

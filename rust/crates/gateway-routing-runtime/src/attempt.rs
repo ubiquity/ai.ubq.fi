@@ -1,7 +1,6 @@
 use crate::{
-    journal, journal::unavailable, policy::RouteHop, session::RoutingSession, settlement,
-    types::ClaudeSelection, types::CodexRecovery, types::PreparedAttempt,
-    types::PublishedCredential, types::RoutingHost, types::RoutingResult,
+    journal, journal::unavailable, session::RoutingSession, settlement, types::ClaudeSelection,
+    types::CodexRecovery, types::PreparedAttempt, types::PublishedCredential, types::RoutingHost,
 };
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_paid_admission::PaidAdmissionOperations;
@@ -19,6 +18,8 @@ use gateway_local_refusal::{routing_error::RoutingError, routing_error::SourceRe
 use gateway_provider_protocol::types::ClientSurface;
 use gateway_routing_journal::reader;
 use gateway_routing_journal::record::{AttemptRecord, CredentialFence, Journal, Phase};
+use gateway_routing_plan::input::RoutingResult;
+use gateway_routing_plan::policy::RouteHop;
 use gateway_source::error::GatewayError;
 
 type SelectedHop = (

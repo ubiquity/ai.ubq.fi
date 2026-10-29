@@ -228,7 +228,7 @@ pub(super) async fn inference_input(
     host: &Host,
     id: &str,
 ) -> TestResult<(
-    gateway_routing_runtime::types::RoutingInput,
+    gateway_routing_plan::input::RoutingInput,
     AuthRequest,
     gateway_auth_native_proof::native_auth::NativeTransportIdentity,
     AuthConfig,
