@@ -2,7 +2,7 @@
 use crate::live_tls;
 use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::native_read::{NATIVE_NONCE_HEADER, NATIVE_RESPONSE_MAC_HEADER};
-use gateway_authority::native_control::wire::NativeRenewalAuthorityRequest as Request;
+use gateway_native_authority_request::NativeRenewalAuthorityRequest as Request;
 use rustls::{ServerConnection, StreamOwned};
 use serde::Serialize;
 use std::{

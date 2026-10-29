@@ -1,7 +1,7 @@
 //! Safe fixed-role Child/bootstrap channel. Neither an accepted socket nor JSON is custody.
 use super::{exclusive_owner::PinnedExecutable, import_endpoints::ResolvedImportEndpoints};
-use crate::import_custody_protocol::{self as wire, unavailable};
 use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_native_custody_io::protocol::{self as wire, unavailable};
 use gateway_native_custody_wire::bootstrap::{Bootstrap, ImportEndpointData};
 use gateway_native_custody_wire::wire::{Frame, Header, HeaderView, Stopped};
 use gateway_source::error::GatewayError;
@@ -107,7 +107,9 @@ impl OwnedImportChildChannel {
         if !cfg!(target_os = "macos") || daemon_config.is_empty() || daemon_config.len() > 65_536 {
             return Err(unavailable());
         }
-        let config = crate::daemon_config::NativeDaemonConfig::read_import_stdin(daemon_config)?;
+        let config = gateway_native_daemon_config::config::NativeDaemonConfig::read_import_stdin(
+            daemon_config,
+        )?;
         let registry = config.owner_renewal.as_ref().ok_or_else(unavailable)?;
         if config.nonce_database.parent() != Some(replay_directory) {
             return Err(unavailable());

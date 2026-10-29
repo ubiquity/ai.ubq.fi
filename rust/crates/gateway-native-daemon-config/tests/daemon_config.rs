@@ -4,7 +4,7 @@ use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapabili
 use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeAuthenticator};
 use gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
 use gateway_auth_primitives::crypto::base64url;
-use gateway_native::daemon_config::{NativeDaemonConfig, PreparedNativeDaemonConfig};
+use gateway_native_daemon_config::config::{NativeDaemonConfig, PreparedNativeDaemonConfig};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 

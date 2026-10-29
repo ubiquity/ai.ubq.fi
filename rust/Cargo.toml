@@ -200,7 +200,10 @@ members = [
   "crates/gateway-native-confinement",
   "crates/gateway-native-connector",
   "crates/gateway-native-connected-io",
+  "crates/gateway-native-custody-io",
   "crates/gateway-native-custody-wire",
+  "crates/gateway-native-daemon-config",
+  "crates/gateway-native-http-admission",
   "crates/gateway-native-http-framing",
   "crates/gateway-native-https-test-support",
   "crates/gateway-native-import-client",
@@ -247,6 +250,8 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-native-daemon-config = { path = "crates/gateway-native-daemon-config" }
+gateway-native-http-admission = { path = "crates/gateway-native-http-admission" }
 gateway-authority-actor-records = { path = "crates/gateway-authority-actor-records" }
 gateway-authority-routing-signal = { path = "crates/gateway-authority-routing-signal" }
 gateway-authority-reset-authorization = { path = "crates/gateway-authority-reset-authorization" }
@@ -433,6 +438,7 @@ gateway-native-authority-wire = { path = "crates/gateway-native-authority-wire" 
 gateway-native-confinement = { path = "crates/gateway-native-confinement" }
 gateway-native-connector = { path = "crates/gateway-native-connector" }
 gateway-native-connected-io = { path = "crates/gateway-native-connected-io" }
+gateway-native-custody-io = { path = "crates/gateway-native-custody-io" }
 gateway-native-custody-wire = { path = "crates/gateway-native-custody-wire" }
 gateway-native-http-framing = { path = "crates/gateway-native-http-framing" }
 gateway-native-https-test-support = { path = "crates/gateway-native-https-test-support" }

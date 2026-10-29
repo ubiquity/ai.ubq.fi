@@ -1,5 +1,5 @@
 use super::*;
-use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
+use gateway_auth_native_contracts::transport::NativeCapability;
 use gateway_native_confinement::confinement::{NativeConfinement, enforce};
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
 use std::{
@@ -271,17 +271,11 @@ fn isolated_reverse_tls_scenario_child() {
         assert!(TcpStream::connect(address).is_err());
         assert!(std::process::Command::new("/bin/true").status().is_err());
         let disconnected = || false;
-        let context = NativeControlContext::admitted(
+        let context = crate::checked_wire_context::wire_context(
             Instant::now() + Duration::from_secs(5),
             &disconnected,
-            NativeAuthHeaders {
-                version: "1",
-                key_id: "fixture-key",
-                time_ms: "1",
-                nonce: "fixture-only",
-                mac: "fixture-only",
-            },
-        );
+        )
+        .unwrap();
         carrier
             .exchange(
                 &Request::Unknown {

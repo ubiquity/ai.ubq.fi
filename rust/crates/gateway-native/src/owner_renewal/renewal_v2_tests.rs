@@ -1,6 +1,6 @@
 use super::*;
 use crate::managed_publication_http::NativeAccessPublicationHttp;
-use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
+use gateway_auth_native_contracts::transport::NativeCapability;
 use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::native_read::{
     NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH,
@@ -16,6 +16,7 @@ use gateway_contracts::{
 };
 use gateway_native_authority_wire::context::NativeRenewalContext;
 use serde_json::json;
+use std::cell::RefCell;
 use std::{
     collections::BTreeSet,
     net::{TcpListener, TcpStream},
@@ -40,18 +41,10 @@ fn connected() -> bool {
     false
 }
 fn context() -> NativeControlContext<'static> {
-    NativeControlContext::admitted(
-        Instant::now() + Duration::from_secs(3),
-        &connected,
-        NativeAuthHeaders {
-            version: "1",
-            key_id: "fixture-key",
-            time_ms: "1",
-            nonce: "fixture-only",
-            mac: "fixture-only",
-        },
-    )
+    crate::checked_wire_context::wire_context(Instant::now() + Duration::from_secs(3), &connected)
+        .unwrap()
 }
+
 fn binding() -> AccountBinding {
     AccountBinding {
         account_id_hash: RoutingAccountHash("a".repeat(64)),

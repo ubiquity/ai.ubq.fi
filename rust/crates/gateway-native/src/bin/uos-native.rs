@@ -24,8 +24,9 @@ fn main() {
 #[cfg(unix)]
 fn run() -> Result<(), GatewayError> {
     gateway_native_connector::artifact::require_production_artifact()?;
-    use gateway_native::{daemon_config::NativeDaemonConfig, http_server::NativeHttpService};
     use gateway_native_confinement::confinement::{NativeConfinement, enforce};
+    use gateway_native_daemon_config::config::NativeDaemonConfig;
+    use gateway_native_http_admission::http_server::NativeHttpService;
     use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
     use gateway_native_supervisor::supervisor::SourceId;
     use gateway_native_supervisor_data::data::{SupervisorData, SupervisorSourceConfig};
@@ -180,7 +181,7 @@ fn source_unavailable(message: &str) -> GatewayError {
 
 #[cfg(unix)]
 fn prepare_owner_renewal(
-    config: gateway_native::daemon_config::OwnerRenewalConfig,
+    config: gateway_native_daemon_config::config::OwnerRenewalConfig,
     identity: &gateway_auth_native_proof::native_auth::NativeTransportIdentity,
     readonly_paths: &mut Vec<std::path::PathBuf>,
     unix_sockets: &mut Vec<std::path::PathBuf>,

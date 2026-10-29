@@ -1,10 +1,6 @@
 //! Original-context guarded actual custody TCP framing; decoded wire DATA is no live grant.
-use crate::native_import::NativeImportContext;
-#[cfg(test)]
-use gateway_authority::native_control::import::custody_session::ImportCustodyStartedRequest;
 use gateway_native_custody_wire::wire::{CUSTODY_FRAME_MAX, Frame};
-#[cfg(test)]
-use gateway_native_custody_wire::wire::{Header, Release, STARTED_BINDING_MAX, Stopped};
+use gateway_native_http_admission::native_import::NativeImportContext;
 use gateway_source::error::GatewayError;
 use std::{
     io::{Read, Write},
@@ -12,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(crate) fn random_ref() -> Result<String, GatewayError> {
+pub fn random_ref() -> Result<String, GatewayError> {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).map_err(|_| unavailable())?;
     Ok(gateway_auth_primitives::crypto::sha256_hex(&bytes))
@@ -58,7 +54,7 @@ fn read_exact(
     }
     check(context)
 }
-pub(crate) fn receive(
+pub fn receive(
     stream: &mut TcpStream,
     deadline: Instant,
     context: Option<&NativeImportContext<'_>>,
@@ -73,7 +69,7 @@ pub(crate) fn receive(
     read_exact(stream, &mut bytes, deadline, context)?;
     Frame::decode(&bytes)
 }
-pub(crate) fn send(
+pub fn send(
     stream: &mut TcpStream,
     frame: &Frame,
     deadline: Instant,
@@ -108,11 +104,9 @@ pub(crate) fn send(
     }
     check(context)
 }
-pub(crate) fn unavailable() -> GatewayError {
+pub fn unavailable() -> GatewayError {
     GatewayError::unavailable(
         "Native import custody is unavailable; reconcile the original action",
         "native_import_custody_unknown",
     )
 }
-#[cfg(test)]
-mod tests;

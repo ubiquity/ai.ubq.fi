@@ -1,9 +1,7 @@
 //! One fixed native owner action. Current actor/fences and start intent come
 //! from the authenticated shared-store reverse receiver, never a local ledger.
-use crate::{
-    authority_http::{NativeAuthorityHttp, authority_deadline},
-    owner_control::{NativeControlContext, NativeOwnerRenewalHandler},
-};
+use crate::authority_http::owned_claim::RemoteClaim;
+use crate::authority_http::{NativeAuthorityHttp, authority_deadline};
 use gateway_auth_credentials::{
     managed_access::ManagedAccessProjection,
     native_credentials::{
@@ -11,25 +9,23 @@ use gateway_auth_credentials::{
     },
 };
 use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
+use gateway_auth_native_proof::native_context::NativeControlContext;
 use gateway_auth_native_wire::control::{
     NativeControlDisposition as Disposition, NativeControlEnvelope, NativeControlRequest,
     NativeControlResponse, unverified,
 };
-use gateway_auth_primitives::crypto::base64url;
-use gateway_native_authority_request::{
-    NativeRenewalAuthorityRequest as Request, OriginalControlHeaders,
-};
+use gateway_native_authority_request::NativeRenewalAuthorityRequest as Request;
 use gateway_native_authority_wire::{
     renewal::{NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalFence, NativeRenewalMode},
     renewal_response::NativeRenewalAuthorityResponse as Response,
 };
+use gateway_native_http_admission::owner_control::NativeOwnerRenewalHandler;
 use gateway_native_local_transport::{
     guard::NativeRenewalGuard,
     transport::{NativeOwnerTransport, renew_owned_guarded},
     unix::{NativeOwnerLocation, UnixOwnerTransport},
 };
 use gateway_source::error::GatewayError;
-use std::cell::RefCell;
 
 pub(crate) fn require_current_fence(fence: &NativeRenewalFence) -> Result<(), GatewayError> {
     if fence.v != NATIVE_RENEWAL_FENCE_VERSION {
@@ -80,7 +76,7 @@ impl<P: NativeAccessPublisher> NativeOwnerRenewalService<P> {
     }
     fn execute(
         &self,
-        claim: &RemoteClaim,
+        claim: &RemoteClaim<NativeRenewalFence>,
         context: &NativeControlContext<'_>,
     ) -> Result<NativeControlResponse, GatewayError> {
         require_current_fence(&claim.fence)?;
@@ -202,84 +198,24 @@ impl<P: NativeAccessPublisher> NativeOwnerRenewalHandler for NativeOwnerRenewalS
         raw: &[u8],
         context: &NativeControlContext<'_>,
     ) -> Result<NativeControlResponse, GatewayError> {
-        proof.require_request(
-            gateway_auth_native_contracts::transport::NativeCapability::OwnerRenewal,
-            gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH,
-            raw,
-            context.now_ms()?,
-        )?;
-        let original = context.original_auth_headers();
-        let claim = self.authority.exchange(
-            &Request::Claim {
-                v: 1,
-                original_control_body_base64url: base64url(raw),
-                original_auth_headers: OriginalControlHeaders {
-                    version: original.version.into(),
-                    key_id: original.key_id.into(),
-                    time_ms: original.time_ms.into(),
-                    nonce: original.nonce.into(),
-                    mac: original.mac.into(),
-                },
-            },
-            context,
-        )?;
-        let Response::Claim {
-            action_ref,
-            operation_id,
-            claim_ref,
-            start_permit,
-            mode,
-            deadline_ms,
-            fence,
-            publication_revision,
-            ..
-        } = claim
-        else {
-            return Err(unverified());
+        let owned = self.authority.claim_for_control(proof, raw, context)?;
+        let result = match owned.legacy() {
+            Ok(claim) if claim.operation_id == request.operation_id => self.execute(claim, context),
+            _ => Err(unverified()),
         };
-        if operation_id != request.operation_id {
-            return Err(unverified());
-        }
-        let claim = RemoteClaim {
-            action_ref,
-            operation_id,
-            claim_ref,
-            start_permit: RefCell::new(start_permit),
-            mode,
-            deadline_ms,
-            fence,
-            publication_revision,
-        };
-        let result = self.execute(&claim, context);
         if result.is_err() {
-            // Started/unknown remains durable even if cancellation prevents this
-            // best-effort classification. Never clear or repeat the operation.
-            let _ = self.authority.exchange(
-                &Request::Unknown {
-                    v: 1,
-                    operation_id: claim.operation_id.clone(),
-                    claim_ref: claim.claim_ref.clone(),
-                },
-                context,
-            );
+            // This consumes only retained report ownership. The original active
+            // context remains cancelled/expired, and the original error wins.
+            let _ = owned.report_execution_error(&self.authority);
         }
+
         result
     }
 }
 
-struct RemoteClaim {
-    action_ref: String,
-    operation_id: String,
-    claim_ref: String,
-    start_permit: RefCell<Option<String>>,
-    mode: NativeRenewalMode,
-    deadline_ms: i64,
-    fence: NativeRenewalFence,
-    publication_revision: Option<String>,
-}
 struct CurrentGuard<'a> {
     authority: &'a NativeAuthorityHttp,
-    claim: &'a RemoteClaim,
+    claim: &'a RemoteClaim<NativeRenewalFence>,
     context: &'a NativeControlContext<'a>,
 }
 impl NativeRenewalGuard for CurrentGuard<'_> {

@@ -1,7 +1,6 @@
 //! Fixed preconnected publication, with distinct managed-v2 and external-v1
 //! constructors and authenticated receipts. Refresh material stays native.
 use crate::{
-    owner_control::NativeControlContext,
     owner_renewal::{NativeAccessPublisher, PublishedAccess, require_current_fence},
     private_https::PrivateHttps,
 };
@@ -9,6 +8,7 @@ use gateway_auth_credentials::{
     managed_access::ManagedAccessProjection, native_credentials::NativeGeneration,
 };
 use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_native_proof::native_context::NativeControlContext;
 use gateway_auth_native_wire::{
     control::{NativeControlEnvelope, NativeControlRequest, unverified},
     native_read::{NATIVE_MAX_BODY_BYTES, NATIVE_PUBLICATION_PATH},

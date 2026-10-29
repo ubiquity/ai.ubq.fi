@@ -6,7 +6,6 @@ use super::{
     live_custody::LiveImportCustody,
     validation::ValidatedNativeImport,
 };
-use crate::import_custody_protocol::unavailable;
 use gateway_auth_credentials::provider_credentials::codex_credential_identity;
 use gateway_auth_native_protocol::native_import::publication::NativeImportPublication;
 use gateway_auth_native_wire::publication_command::{
@@ -16,6 +15,7 @@ use gateway_auth_primitives::crypto::{Secret, sha256_hex};
 use gateway_authority::native_control::import::{
     AuthenticatedNativeImport, remote::AuthenticatedImportTerminal,
 };
+use gateway_native_custody_io::protocol::unavailable;
 use gateway_native_import_source::catalog::CatalogValidation;
 use gateway_source::error::GatewayError;
 

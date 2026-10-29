@@ -6,6 +6,9 @@ pub mod socket;
 use authority::NativeLiveAuthority;
 use gateway_auth_native_proof::native_live::AuthenticatedNativeLive;
 use gateway_auth_primitives::crypto::base64url;
+use gateway_native_live_buffer::upgrade::{
+    NativeLiveHandler, NativeLiveOutcome, NativeLiveUpgradeRequest,
+};
 use gateway_native_live_buffer::{
     error::failure,
     limits::MAX_PAYLOAD_BYTES,
@@ -27,26 +30,6 @@ use tungstenite::{
 
 pub const HANDSHAKE_TIMEOUT_MS: u64 = 10_000;
 
-pub struct NativeLiveUpgradeRequest {
-    pub action_ref: String,
-    pub headers: Vec<(String, String)>,
-    /// Bytes already read after the HTTP header, including immediate frames.
-    pub buffered: Vec<u8>,
-}
-/// Neither variant is an upstream or delivery-success receipt.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NativeLiveOutcome {
-    CloseRequested { code: u16 },
-    TransportUnknown,
-}
-pub trait NativeLiveHandler: Send + Sync {
-    fn handle(
-        &self,
-        stream: &mut TcpStream,
-        request: NativeLiveUpgradeRequest,
-        proof: AuthenticatedNativeLive,
-    ) -> Result<NativeLiveOutcome, GatewayError>;
-}
 pub struct NativeLiveService {
     authority: Arc<dyn NativeLiveAuthority>,
     connector: Arc<dyn NativeLiveConnector>,

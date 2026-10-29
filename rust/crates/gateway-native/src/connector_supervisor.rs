@@ -1,7 +1,7 @@
 //! Trusted prelaunch authority. Owns child handles, never ancillary/provider I/O.
-use crate::daemon_config::NativeDaemonConfig;
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_native_connector::{connector_policy, connector_protocol::ControlError};
+use gateway_native_daemon_config::config::NativeDaemonConfig;
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use gateway_source::error::GatewayError;
 use std::{
@@ -237,7 +237,7 @@ fn launch(
     Ok(children)
 }
 fn preconnect_live_authority(
-    config: &crate::daemon_config::LiveSidebandConfig,
+    config: &gateway_native_daemon_config::config::LiveSidebandConfig,
 ) -> Result<TcpStream, ControlError> {
     use std::net::ToSocketAddrs;
     let origin =

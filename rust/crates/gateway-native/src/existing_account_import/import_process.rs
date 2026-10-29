@@ -4,11 +4,20 @@ use super::{
     ExistingAccountImportStore,
     actor_channel::{ActorBootstrap, InheritedCustodyChannel},
 };
-use crate::{daemon_config::NativeDaemonConfig, import_custody_protocol::unavailable};
-use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_native_contracts::native_import::{NativeImportKind, NativeImportMetadata};
+use gateway_auth_native_proof::{
+    native_auth::NativeTransportIdentity,
+    native_context::{NativeControlContext, NativeRequestLifetime},
+};
 use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_native_records::owner::RegisteredRenewalOwner;
+use gateway_native_custody_io::protocol::unavailable;
 use gateway_native_custody_wire::bootstrap::ImportEndpointData;
+use gateway_native_daemon_config::config::NativeDaemonConfig;
+use gateway_native_http_framing::{
+    import_body::{RawImportDocument, read_import_body},
+    import_head::ImportHead,
+};
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use gateway_source::error::GatewayError;
 use std::{
@@ -156,11 +165,10 @@ fn run_actor() -> Result<(), GatewayError> {
     } = actor;
     let result = (|| {
         let head = gateway_native_http_framing::request::read_import_head(&mut client)?;
-        let auth = crate::import_ingress::auth_headers(&head)?;
+        gateway_native_http_admission::import_ingress::check_import_auth_headers(&head)?;
         let cancelled = || cancellation.cancelled();
-        let original =
-            crate::owner_control::NativeControlContext::admitted(deadline, &cancelled, auth);
-        original.check()?;
+        let lifetime = NativeRequestLifetime::until(deadline, &cancelled);
+        lifetime.check()?;
         let connected =
             super::import_endpoints::connect_endpoints(endpoints, &cancellation, deadline)?;
         let authority = super::import_endpoints::fixed_authority_client(
@@ -170,16 +178,16 @@ fn run_actor() -> Result<(), GatewayError> {
             &cancellation,
             deadline,
         )?;
-        let document = crate::import_ingress::read_remote_import(
+        let (document, original) = read_remote_import(
             &mut client,
             &head,
             &identity,
             &nonces,
             &authority,
-            &original,
+            lifetime,
             (&native_owner_id, &account_id_hash),
         )?;
-        let context = crate::native_import::decode_context(
+        let context = gateway_native_http_admission::native_import::decode_context(
             &document.proof,
             &document.metadata,
             document.body(),
@@ -231,4 +239,62 @@ fn run_actor() -> Result<(), GatewayError> {
         Ok(()) => Ok(()),
         Err(error) => gateway_native_http_framing::response::write_error(&mut client, error),
     }
+}
+
+struct OriginalCancellation<'a, 'b>(&'a NativeControlContext<'b>);
+impl NativeRenewalCancellation for OriginalCancellation<'_, '_> {
+    fn cancelled(&self) -> bool {
+        self.0.cancelled()
+    }
+}
+/// Original accepted request DATA and genuine actual-remote proof. No decoder or
+/// second nonce store is introduced for the dedicated actor.
+struct RemoteImportDocument {
+    proof: gateway_authority::native_control::import::AuthenticatedNativeImport,
+    metadata: NativeImportMetadata,
+    raw: RawImportDocument,
+}
+impl RemoteImportDocument {
+    fn body(&self) -> &[u8] {
+        self.raw.as_bytes()
+    }
+}
+fn read_remote_import<'c, C: NativeRenewalCancellation>(
+    stream: &mut TcpStream,
+    head: &ImportHead,
+    identity: &NativeTransportIdentity,
+    nonces: &SqliteNonceStore,
+    authority: &gateway_authority::native_control::import::remote::RemoteImportAuthority<'_, C>,
+    lifetime: NativeRequestLifetime<'c>,
+    registered_target: (&str, &str),
+) -> Result<(RemoteImportDocument, NativeControlContext<'c>), GatewayError> {
+    let (native_owner_id, account_id_hash) = registered_target;
+    let (metadata, header, original) =
+        gateway_native_http_admission::import_ingress::admit_import_head(
+            head, identity, nonces, lifetime,
+        )?;
+    let admitted = authority.admit_import(header)?;
+    original.check()?;
+    if admitted.native_owner_id() != native_owner_id
+        || admitted.account_id_hash() != account_id_hash
+        || !matches!(admitted.target(), gateway_auth_native_contracts::native_import::NativeImportTarget::ExistingAccount { account_id_hash: actual } if actual == account_id_hash)
+    {
+        return Err(unavailable());
+    }
+    if head.kind != NativeImportKind::CodexAuth || head.path != head.kind.path() {
+        return Err(unavailable());
+    }
+    let raw = read_import_body(stream, head, &OriginalCancellation(&original))?;
+    original.check()?;
+    let proof = authority.finish_import(admitted, raw.as_bytes())?;
+    authority.recheck_import(&proof)?;
+    original.check()?;
+    Ok((
+        RemoteImportDocument {
+            proof,
+            metadata,
+            raw,
+        },
+        original,
+    ))
 }

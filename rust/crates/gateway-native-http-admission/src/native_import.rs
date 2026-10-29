@@ -1,7 +1,7 @@
 //! Fixed native-only receiver and authenticated source-data boundary.
 //! No socket, refresh, provider effect or publication implementation.
-use crate::owner_control::NativeControlContext;
 use gateway_auth_native_contracts::native_import::{NativeImportKind, NativeImportMetadata};
+use gateway_auth_native_proof::native_context::NativeControlContext;
 use gateway_authority::native_control::import::AuthenticatedNativeImport;
 use gateway_authority::native_control::receiver::NativeRenewalAuthority;
 use gateway_authority_contracts::NativeRenewalCancellation;
@@ -47,12 +47,13 @@ fn check_original_document(
     if proof.metadata() != metadata {
         return Err(binding_error());
     }
-    proof.require_body(body, original.now_ms()?)
+    proof.require_original_context(original, body)
 }
 
 /// The supported type path does not expose its proof/body/original binding.
 /// ```compile_fail,E0451
-/// use gateway_native::{native_import::{NativeImportContext,NativeAuthImportData},owner_control::NativeControlContext};
+/// use gateway_native_http_admission::native_import::{NativeImportContext,NativeAuthImportData};
+/// use gateway_auth_native_proof::native_context::NativeControlContext;
 /// use gateway_authority::native_control::import::AuthenticatedNativeImport;
 /// fn forge<'a>(original: &'a NativeControlContext<'a>,proof: &'a AuthenticatedNativeImport,auth: NativeAuthImportData<'a>)->NativeImportContext<'a> {
 ///     NativeImportContext { original,proof,auth }
@@ -105,7 +106,8 @@ impl<'a> NativeImportContext<'a> {
 }
 /// Admitted borrows cannot escape the finite callback.
 /// ```compile_fail,E0521
-/// use gateway_native::{native_import::{NativeImportHandler,NativeImportContext},owner_control::NativeControlContext};
+/// use gateway_native_http_admission::native_import::{NativeImportHandler,NativeImportContext};
+/// use gateway_auth_native_proof::native_context::NativeControlContext;
 /// use gateway_native_import_source::result::NativeImportResult;
 /// use gateway_auth_native_contracts::native_import::NativeImportMetadata;
 /// use gateway_authority::native_control::import::AuthenticatedNativeImport;
@@ -151,7 +153,7 @@ pub async fn dispatch_import<
 }
 /// Both fixed local/remote receivers reach this one original-body decoder only
 /// after their actual authority admission and finish-current exchange.
-pub(crate) fn decode_context<'a>(
+pub fn decode_context<'a>(
     proof: &'a AuthenticatedNativeImport,
     metadata: &NativeImportMetadata,
     body: &'a [u8],
@@ -175,6 +177,3 @@ pub(crate) fn decode_context<'a>(
     context.check_document(proof, metadata, body)?;
     Ok(context)
 }
-
-#[cfg(all(test, unix))]
-mod tests;

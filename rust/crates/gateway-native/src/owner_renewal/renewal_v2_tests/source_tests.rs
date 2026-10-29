@@ -2,7 +2,7 @@
 use super::{context, identity, pair};
 use crate::authority_http::NativeAuthorityHttp;
 use gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH;
-use gateway_authority::native_control::wire::NativeRenewalAuthorityRequest as Request;
+use gateway_native_authority_request::NativeRenewalAuthorityRequest as Request;
 use gateway_native_authority_wire::{
     context::NativeRenewalContext, source_fence::SourceNativeRenewalFenceV3,
     source_response::SourceNativeRenewalAuthorityResponseV2 as Response,

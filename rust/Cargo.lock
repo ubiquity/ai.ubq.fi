@@ -3824,7 +3824,10 @@ dependencies = [
  "gateway-native-confinement",
  "gateway-native-connected-io",
  "gateway-native-connector",
+ "gateway-native-custody-io",
  "gateway-native-custody-wire",
+ "gateway-native-daemon-config",
+ "gateway-native-http-admission",
  "gateway-native-http-framing",
  "gateway-native-https-test-support",
  "gateway-native-import-client",
@@ -3917,12 +3920,77 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-native-custody-io"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-contracts",
+ "gateway-native-custody-wire",
+ "gateway-native-http-admission",
+ "gateway-source",
+ "getrandom 0.4.3",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-native-custody-wire"
 version = "0.1.0"
 dependencies = [
  "gateway-authority",
  "gateway-source",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-native-daemon-config"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-wire",
+ "gateway-auth-primitives",
+ "gateway-native-supervisor",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "gateway-native-http-admission"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
+ "gateway-auth-passkeys",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-native-records",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-native-confinement",
+ "gateway-native-connector",
+ "gateway-native-http-framing",
+ "gateway-native-import-source",
+ "gateway-native-import-test-support",
+ "gateway-native-live-buffer",
+ "gateway-native-replay",
+ "gateway-native-supervisor-data",
+ "gateway-native-supervisor-http",
+ "gateway-source",
  "serde_json",
 ]
 
@@ -3949,7 +4017,7 @@ dependencies = [
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-auth-primitives",
- "gateway-authority",
+ "gateway-native-authority-request",
  "rustls",
  "serde",
  "serde_json",
@@ -4027,6 +4095,7 @@ dependencies = [
 name = "gateway-native-live-buffer"
 version = "0.1.0"
 dependencies = [
+ "gateway-auth-native-proof",
  "gateway-native-https-test-support",
  "gateway-source",
  "rustls",

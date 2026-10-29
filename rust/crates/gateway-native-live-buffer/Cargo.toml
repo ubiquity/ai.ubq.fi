@@ -9,6 +9,9 @@ publish.workspace = true
 gateway-source.workspace = true
 tungstenite = { version = "=0.28.0", default-features = false, features = ["handshake"] }
 
+[target.'cfg(unix)'.dependencies]
+gateway-auth-native-proof.workspace = true
+
 [target.'cfg(unix)'.dev-dependencies]
 gateway-native-https-test-support.workspace = true
 socket2 = "=0.6.5"

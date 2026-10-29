@@ -1,9 +1,9 @@
 //! Authenticated fixed reverse authority over one preconnected TLS capability.
 //! Parsed references are observations until the same-store receiver verifies
 //! the original actor/action. This client cannot mint a local action or claim.
-use crate::owner_control::NativeControlContext;
 use crate::private_https::PrivateHttps;
 use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_native_proof::native_context::NativeControlContext;
 use gateway_auth_native_wire::{
     control::{
         NATIVE_AUTHORITY_MAX_BYTES, NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS,
@@ -15,8 +15,8 @@ use gateway_auth_native_wire::{
     },
 };
 use gateway_auth_primitives::crypto::base64url;
-use gateway_native_authority_request::NativeRenewalAuthorityRequest as Request;
 use gateway_authority_actor_records::versions::{AUTHORITY_RESPONSE_V2, RENEWAL_FENCE_V3};
+use gateway_native_authority_request::NativeRenewalAuthorityRequest as Request;
 use gateway_native_authority_wire::{
     renewal::{NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalMode},
     renewal_response::NativeRenewalAuthorityResponse as Response,
@@ -26,6 +26,7 @@ use gateway_source::error::GatewayError;
 use std::{net::TcpStream, time::Instant};
 
 pub struct NativeAuthorityHttp {
+    client: std::sync::Arc<()>,
     identity: NativeTransportIdentity,
     transport: PrivateHttps,
 }
@@ -46,6 +47,7 @@ impl NativeAuthorityHttp {
         roots: ureq::tls::RootCerts,
     ) -> Result<Self, GatewayError> {
         Ok(Self {
+            client: std::sync::Arc::new(()),
             identity,
             transport: PrivateHttps::from_connected(
                 target,
@@ -293,3 +295,5 @@ pub fn authority_deadline(
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests;
+
+pub(crate) mod owned_claim;

@@ -1,8 +1,8 @@
 //! Fixed actual Child service. No credentials, import document or raw fd enters it.
 use super::{actor_channel::OwnedImportChildChannel, custodian_runtime::CustodianRuntime};
-use crate::import_custody_protocol::unavailable;
 use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_native_custody_io::protocol::unavailable;
 use gateway_source::error::GatewayError;
 use std::{
     net::TcpStream,
