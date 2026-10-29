@@ -1,5 +1,6 @@
 //! Provider-declared catalog projections; credentials/configuration are injected observations.
-use crate::{catalog::*, model_control as c};
+use crate::model_control as c;
+use gateway_catalog_input::catalog::*;
 use gateway_contracts::model::ModelId;
 use gateway_decision_protocol::catalog as decisions;
 use gateway_model_metadata::metadata::*;

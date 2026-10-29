@@ -9,9 +9,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-catalog-input.workspace = true
 gateway-contracts = { workspace = true }
 gateway-source = { workspace = true }
-gateway-schema = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 gateway-provider-services = { workspace = true }

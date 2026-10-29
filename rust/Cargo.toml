@@ -370,6 +370,7 @@ gateway-authority-routing-records = { path = "crates/gateway-authority-routing-r
 gateway-admission = { path = "crates/gateway-admission" }
 gateway-catalog-provider = { path = "crates/gateway-catalog-provider" }
 gateway-catalog-runtime = { path = "crates/gateway-catalog-runtime" }
+gateway-catalog-input = { path = "crates/gateway-catalog-input" }
 gateway-catalog-inputs = { path = "crates/gateway-catalog-inputs" }
 gateway-catalog-admin = { path = "crates/gateway-catalog-admin" }
 gateway-catalog-control = { path = "crates/gateway-catalog-control" }

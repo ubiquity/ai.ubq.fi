@@ -96,7 +96,7 @@ fn picker_is_unfiltered_uses_actual_host_order_and_keeps_runtime_when_optional_s
         .unwrap()
         .input;
     assert!(
-        ordinary_models(&input)["data"]
+        ordinary_models(&input).unwrap()["data"]
             .as_array()
             .unwrap()
             .is_empty()
@@ -314,7 +314,7 @@ fn anonymous_surplus_is_publicly_visible_without_enabling_ordinary_or_paid_routi
     let ordinary = run(runtime.load_state(&store, &publication, host.now.get())).unwrap();
     assert!(ordinary.input.rows("surplus").is_empty());
     assert!(
-        ordinary_models(&ordinary.input)["data"]
+        ordinary_models(&ordinary.input).unwrap()["data"]
             .as_array()
             .unwrap()
             .is_empty()

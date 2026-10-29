@@ -1,6 +1,6 @@
+use gateway_catalog_input::catalog::CatalogInput;
 use gateway_contracts::model::ModelId;
 use gateway_source::{source_json::SourceJson, source_serialization as source};
-use gateway_schema::catalog::CatalogInput;
 pub fn runtime_default_model(runtime: &SourceJson) -> Option<ModelId> {
     source::member(runtime, "default_model")
         .as_ref()

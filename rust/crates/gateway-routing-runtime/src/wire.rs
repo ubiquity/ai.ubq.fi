@@ -83,12 +83,12 @@ fn ordinary_context(
 ) -> RoutingResult<OrdinaryPreparationContext> {
     let mut catalog = input.catalog.clone();
     catalog.snapshot = input.catalog.codex().cloned();
-    let metadata = gateway_schema::catalog::request_model_metadata(
+    let metadata = gateway_catalog_input::catalog::request_model_metadata(
         &catalog,
         model,
         input.surface != ClientSurface::Chat,
         now,
-    );
+    )?;
     // src/openai.ts getDefaultReasoningEffort: runtime default, otherwise the
     // existing source default `medium`, never a selected model's default tier.
     let default_effort = match input.runtime.as_ref() {

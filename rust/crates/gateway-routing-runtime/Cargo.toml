@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-catalog-input.workspace = true
 gateway-routing-journal.workspace = true
 gateway-auth-primitives = { workspace = true }
 gateway-request-normalization.workspace = true

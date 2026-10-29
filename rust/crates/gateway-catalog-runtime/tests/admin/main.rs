@@ -4,6 +4,7 @@ use gateway_catalog_admin::{
     admin::{AdminCatalogHost, AdminCatalogOperation, CatalogAdmin},
     response::AdminCatalogResponse,
 };
+use gateway_catalog_input::runtime_config::build_runtime_config as build_runtime_config_source;
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
 };
@@ -17,10 +18,7 @@ use gateway_model_selection::aliases::SourceStringCollator;
 use gateway_model_snapshot::snapshot::{
     ModelSnapshot, SnapshotOverrides, normalize_snapshot as normalize_snapshot_source,
 };
-use gateway_schema::{
-    catalog_store, catalog_views::ordinary_models as ordinary_models_source,
-    runtime_config::build_runtime_config as build_runtime_config_source,
-};
+use gateway_schema::{catalog_store, catalog_views::ordinary_models as ordinary_models_source};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
@@ -66,7 +64,7 @@ fn build_runtime_config(
     )
     .map(|value| scalar(&value))
 }
-fn ordinary_models(input: &gateway_schema::catalog::CatalogInput) -> Value {
+fn ordinary_models(input: &gateway_catalog_input::catalog::CatalogInput) -> Value {
     scalar(&ordinary_models_source(input))
 }
 struct ScalarResponse {

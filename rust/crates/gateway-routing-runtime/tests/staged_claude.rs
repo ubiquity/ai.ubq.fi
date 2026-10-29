@@ -84,12 +84,13 @@ fn set_member(document: &SourceJson, key: &str, value: SourceJson) -> SourceJson
 fn preparation(input: &RoutingInput, model: &ModelId) -> OrdinaryPreparationContext {
     let mut catalog = input.catalog.clone();
     catalog.snapshot = input.catalog.codex().cloned();
-    let metadata = gateway_schema::catalog::request_model_metadata(
+    let metadata = gateway_catalog_input::catalog::request_model_metadata(
         &catalog,
         model,
         input.surface != ClientSurface::Chat,
         NOW,
-    );
+    )
+    .unwrap();
     OrdinaryPreparationContext::from_metadata(&metadata, &"medium".into())
 }
 #[test]

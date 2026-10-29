@@ -7,10 +7,10 @@ use gateway_cache_experiment_records::{
     model::{PROFILE, PROVIDER, Reason, TELEMETRY_PROVIDER, TargetBinding, failed, unavailable},
     source::{catalog_key, json, runtime_key},
 };
+use gateway_catalog_input::runtime_config::normalize_runtime_config;
 use gateway_contracts::model::ModelId;
 use gateway_core::state::AuthorityStore;
 use gateway_model_snapshot::snapshot::ModelSnapshot;
-use gateway_schema::runtime_config::normalize_runtime_config;
 use gateway_schema_values::{scalar as schema_scalar, source_view::js_trim_source};
 use gateway_source::source_serialization as source;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};

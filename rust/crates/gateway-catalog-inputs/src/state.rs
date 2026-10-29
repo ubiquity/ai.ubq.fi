@@ -1,4 +1,8 @@
 //! Named catalog input reads and codecs; returned rows are DATA, never effect authority.
+use gateway_catalog_input::{
+    catalog::{CatalogInput, ProviderCatalog},
+    runtime_config::normalize_runtime_config,
+};
 use gateway_catalog_provider::{
     host::{CatalogProvider, CredentialPublication, ProviderBinding, unavailable},
     providers,
@@ -11,11 +15,7 @@ use gateway_core::{
 use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_model_selection::{selection::ModelWhitelist, selection::ProviderSelection};
 use gateway_model_snapshot::snapshot::ModelSnapshot;
-use gateway_schema::{
-    catalog::{CatalogInput, ProviderCatalog},
-    catalog_store,
-    runtime_config::normalize_runtime_config,
-};
+use gateway_schema::catalog_store;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };

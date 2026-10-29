@@ -397,7 +397,7 @@ fn defaults_model_effort_source_record_and_reflected_errors_never_scalarize() {
             updated_at_ms: NOW,
             client_version: None,
         };
-        let runtime_doc = gateway_schema::runtime_config::build_runtime_config(
+        let runtime_doc = gateway_catalog_input::runtime_config::build_runtime_config(
             &snapshot,
             Some(&model),
             Some(&JsString16::from_utf8("none")),
@@ -433,11 +433,11 @@ fn defaults_model_effort_source_record_and_reflected_errors_never_scalarize() {
         assert_eq!(row.value_encoding, ValueEncoding::ProfileV2);
         let stored = decode_source_control_record(&row).unwrap();
         assert_eq!(
-            gateway_schema::runtime_config::default_model(&stored),
+            gateway_catalog_input::runtime_config::default_model(&stored),
             Some(model)
         );
         assert_eq!(
-            gateway_schema::runtime_config::default_reasoning_effort(&stored),
+            gateway_catalog_input::runtime_config::default_reasoning_effort(&stored),
             Some(effort)
         );
         let before = store.rows.borrow().clone();

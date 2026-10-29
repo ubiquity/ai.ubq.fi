@@ -1039,6 +1039,7 @@ dependencies = [
  "gateway-authority-kernel-protocol",
  "gateway-authority-keys",
  "gateway-authority-paid-records",
+ "gateway-catalog-input",
  "gateway-claude-roster",
  "gateway-claude-usage-protocol",
  "gateway-contracts",
@@ -1106,6 +1107,7 @@ dependencies = [
  "gateway-authority",
  "gateway-authority-kernel-protocol",
  "gateway-authority-keys",
+ "gateway-catalog-input",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
@@ -1133,6 +1135,7 @@ dependencies = [
  "gateway-authority",
  "gateway-authority-contracts",
  "gateway-authority-keys",
+ "gateway-catalog-input",
  "gateway-claude-roster",
  "gateway-contracts",
  "gateway-core",
@@ -2449,11 +2452,11 @@ dependencies = [
  "gateway-authority-contracts",
  "gateway-cache-experiment-evidence",
  "gateway-cache-experiment-records",
+ "gateway-catalog-input",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
  "gateway-model-snapshot",
- "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
  "serde",
@@ -2494,12 +2497,12 @@ dependencies = [
  "gateway-auth-primitives",
  "gateway-authority-contracts",
  "gateway-cache-experiment-records",
+ "gateway-catalog-input",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
  "gateway-model-snapshot",
  "gateway-prompt-cache",
- "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
  "serde",
@@ -2581,6 +2584,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-auth-contracts",
+ "gateway-catalog-input",
  "gateway-catalog-inputs",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
@@ -2603,6 +2607,7 @@ dependencies = [
  "gateway-authority",
  "gateway-authority-paid-control-records",
  "gateway-authority-paid-records",
+ "gateway-catalog-input",
  "gateway-catalog-inputs",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
@@ -2621,9 +2626,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-catalog-input"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-local-refusal",
+ "gateway-model-metadata",
+ "gateway-model-selection",
+ "gateway-model-snapshot",
+ "gateway-prompt-cache",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde",
+]
+
+[[package]]
 name = "gateway-catalog-inputs"
 version = "0.1.0"
 dependencies = [
+ "gateway-catalog-input",
  "gateway-catalog-provider",
  "gateway-contracts",
  "gateway-core",
@@ -2679,6 +2700,7 @@ dependencies = [
  "gateway-authority-paid-route",
  "gateway-catalog-admin",
  "gateway-catalog-control",
+ "gateway-catalog-input",
  "gateway-catalog-inputs",
  "gateway-catalog-provider",
  "gateway-catalog-versioned",
@@ -2736,6 +2758,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth-contracts",
  "gateway-auth-primitives",
+ "gateway-catalog-input",
  "gateway-catalog-provider",
  "gateway-claude-roster",
  "gateway-claude-usage-protocol",
@@ -2747,7 +2770,6 @@ dependencies = [
  "gateway-profile-values",
  "gateway-provider-protocol",
  "gateway-providers",
- "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
  "serde",
@@ -2812,6 +2834,7 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-primitives",
+ "gateway-catalog-input",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
  "gateway-claude-policy",
@@ -2823,7 +2846,6 @@ dependencies = [
  "gateway-kv-codec",
  "gateway-provider-protocol",
  "gateway-providers",
- "gateway-schema",
  "gateway-source",
  "rusqlite",
  "serde_json",
@@ -3042,12 +3064,12 @@ name = "gateway-extras-contract"
 version = "0.1.0"
 dependencies = [
  "gateway-auth-contracts",
+ "gateway-catalog-input",
  "gateway-contracts",
  "gateway-local-refusal",
  "gateway-provider-images",
  "gateway-provider-protocol",
  "gateway-provider-services",
- "gateway-schema",
  "gateway-source",
  "serde",
  "serde_json",
@@ -3771,6 +3793,7 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-authority-reset-records",
+ "gateway-catalog-input",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
@@ -3778,7 +3801,6 @@ dependencies = [
  "gateway-migration-ledger",
  "gateway-migration-projection",
  "gateway-migration-values",
- "gateway-schema",
  "gateway-source",
  "gateway-source-audit",
  "serde",
@@ -4813,6 +4835,7 @@ dependencies = [
 name = "gateway-provider-protocol"
 version = "0.1.0"
 dependencies = [
+ "gateway-catalog-input",
  "gateway-contracts",
  "gateway-core",
  "gateway-model-metadata",
@@ -4820,7 +4843,6 @@ dependencies = [
  "gateway-provider-events",
  "gateway-provider-source",
  "gateway-provider-tool-grammar",
- "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
  "serde",
@@ -4937,6 +4959,7 @@ dependencies = [
 name = "gateway-providers"
 version = "0.1.0"
 dependencies = [
+ "gateway-catalog-input",
  "gateway-contracts",
  "gateway-core",
  "gateway-local-refusal",
@@ -4960,7 +4983,6 @@ dependencies = [
  "gateway-provider-tool-grammar",
  "gateway-provider-writer",
  "gateway-request-normalization",
- "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
  "serde_json",
@@ -5180,6 +5202,7 @@ dependencies = [
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
  "gateway-authority-routing-signal",
+ "gateway-catalog-input",
  "gateway-contracts",
  "gateway-core",
  "gateway-decision-protocol",
@@ -5222,6 +5245,7 @@ dependencies = [
  "gateway-authority-paid-records",
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
+ "gateway-catalog-input",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
@@ -5230,7 +5254,6 @@ dependencies = [
  "gateway-provider-protocol",
  "gateway-routing-journal",
  "gateway-routing-runtime",
- "gateway-schema",
  "gateway-source",
  "gateway-wait-observation",
  "serde",
@@ -5242,6 +5265,7 @@ name = "gateway-schema"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "gateway-catalog-input",
  "gateway-chat-normalization",
  "gateway-contracts",
  "gateway-core",
@@ -5368,6 +5392,7 @@ dependencies = [
  "gateway-capacity-recovery",
  "gateway-catalog-admin",
  "gateway-catalog-control",
+ "gateway-catalog-input",
  "gateway-catalog-inputs",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",

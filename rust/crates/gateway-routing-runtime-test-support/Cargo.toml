@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-catalog-input.workspace = true
 gateway-routing-journal.workspace = true
 gateway-model-snapshot.workspace = true
 gateway-model-selection.workspace = true
@@ -29,7 +30,6 @@ gateway-auth = { workspace = true }
 gateway-authority = { workspace = true }
 gateway-core = { workspace = true }
 gateway-routing-runtime = { path = "../gateway-routing-runtime" }
-gateway-schema = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 gateway-provider-protocol = { workspace = true }

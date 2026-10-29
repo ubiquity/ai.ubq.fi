@@ -1,13 +1,15 @@
+use gateway_catalog_input::{
+    catalog::{CatalogInput, ProviderCatalog},
+    runtime_config::*,
+};
 use gateway_contracts::model::ModelId;
 use gateway_model_metadata::metadata::*;
 use gateway_model_selection::{aliases::*, selection::*};
 use gateway_model_snapshot::snapshot::*;
 use gateway_prompt_cache::{compat::concrete_scope, profile::SCOPE_PROFILE};
 use gateway_schema::{
-    catalog::{CatalogInput, ProviderCatalog},
     catalog_views::{capabilities, ordinary_models, public_catalog},
     native_catalog::native_catalog,
-    runtime_config::*,
 };
 
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
@@ -135,7 +137,7 @@ fn catalog_views_preserve_intentional_whitelist_differences() {
         },
     );
     input.providers.insert("openlux".into(),ProviderCatalog{models:vec![source_value(json!({"id":"paid","created":1,"owned_by":"vendor","supported_endpoint_types":["openai-response"]}))],configured:true,available:true,..ProviderCatalog::default()});
-    let ordinary = scalar(&ordinary_models(&input));
+    let ordinary = scalar(&ordinary_models(&input).unwrap());
     let ids: Vec<_> = ordinary["data"]
         .as_array()
         .unwrap()
@@ -491,7 +493,7 @@ fn configured_native_catalogs_serve_only_the_three_source_v2_policy_fields()
             assert!(source::member(row, "forwarding_policy").is_none());
         }
     }
-    let ordinary = scalar(&ordinary_models(&input));
+    let ordinary = scalar(&ordinary_models(&input).unwrap());
     assert_eq!(ordinary["object"], "list");
     assert_eq!(
         ordinary

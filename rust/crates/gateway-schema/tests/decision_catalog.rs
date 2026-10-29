@@ -1,8 +1,6 @@
+use gateway_catalog_input::catalog::{CatalogInput, ProviderCatalog};
 use gateway_model_selection::{aliases::SourceStringCollator, selection::ProviderSelection};
-use gateway_schema::{
-    catalog::{CatalogInput, ProviderCatalog},
-    catalog_views, native_catalog,
-};
+use gateway_schema::{catalog_views, native_catalog};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{cmp::Ordering, collections::BTreeMap};
@@ -40,7 +38,9 @@ fn every_listing_surface_preserves_decision_modality_and_native_excludes_it()
         ),
         ..Default::default()
     };
-    let ordinary = catalog_views::ordinary_models(&input).deserialize::<Value>()?;
+    let ordinary = catalog_views::ordinary_models(&input)
+        .unwrap()
+        .deserialize::<Value>()?;
     assert!(
         ordinary["data"]
             .as_array()

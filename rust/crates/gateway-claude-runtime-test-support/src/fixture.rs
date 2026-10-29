@@ -5,6 +5,7 @@ use gateway_auth_contracts::{
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
+use gateway_catalog_input::catalog::ProviderCatalog;
 use gateway_catalog_provider::host::ProviderBinding;
 use gateway_claude_policy::{
     host::{
@@ -28,7 +29,6 @@ use gateway_core::state::{
 use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_provider_protocol::types::Headers;
-use gateway_schema::catalog::ProviderCatalog;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};

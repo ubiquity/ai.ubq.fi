@@ -1,3 +1,4 @@
+use gateway_catalog_input::catalog::CatalogInput;
 use gateway_catalog_inputs::state;
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
@@ -5,11 +6,10 @@ use gateway_catalog_provider::host::{
 };
 use gateway_catalog_runtime::CatalogRuntime;
 use gateway_contracts::model::ModelId;
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_routing_runtime_test_support::{
     exec::run, input::NOW, source_catalog::Collator, store::Store,
 };
-use gateway_schema::catalog::CatalogInput;
-use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::{

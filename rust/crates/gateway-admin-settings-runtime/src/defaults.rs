@@ -15,6 +15,9 @@ use gateway_auth_primitives::{
 };
 use gateway_authority_kernel_protocol::KernelDefaults;
 use gateway_authority_keys as keys;
+use gateway_catalog_input::runtime_config::{
+    build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
+};
 use gateway_contracts::model::ModelId;
 use gateway_core::{
     query::QueryStore, source_control::decode_source_control_record,
@@ -23,12 +26,7 @@ use gateway_core::{
 use gateway_kv_codec::key::RecordKey;
 use gateway_model_metadata::reasoning::ModelReasoning;
 use gateway_model_snapshot::snapshot::ModelSnapshot;
-use gateway_schema::{
-    catalog_store::runtime_config_key,
-    runtime_config::{
-        build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
-    },
-};
+use gateway_schema::catalog_store::runtime_config_key;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::json;
 

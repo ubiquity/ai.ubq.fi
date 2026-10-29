@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-catalog-input.workspace = true
 gateway-authority-reset-records.workspace = true
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-contracts.workspace = true
@@ -18,7 +19,6 @@ gateway-migration-data.workspace = true
 gateway-migration-ledger.workspace = true
 gateway-migration-projection.workspace = true
 gateway-migration-values.workspace = true
-gateway-schema.workspace = true
 gateway-source-audit.workspace = true
 serde.workspace = true
 serde_json.workspace = true

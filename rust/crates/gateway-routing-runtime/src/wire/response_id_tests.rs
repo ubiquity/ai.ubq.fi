@@ -2,6 +2,7 @@ use super::*;
 use crate::types::direct_credential;
 use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
 use gateway_auth_primitives::crypto::Secret;
+use gateway_catalog_input::catalog::CatalogInput;
 use gateway_contracts::{identity::PrincipalId, identity::RequestContext, identity::RequestId};
 use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::ClaudeCredentialKind};
 use gateway_provider_protocol::{
@@ -11,7 +12,6 @@ use gateway_provider_protocol::{
 use gateway_provider_response::response::decode_response;
 use gateway_provider_stream::sse::StreamDecoder;
 use gateway_routing_journal::record::CredentialFence;
-use gateway_schema::catalog::CatalogInput;
 use serde_json::{Value, json};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;

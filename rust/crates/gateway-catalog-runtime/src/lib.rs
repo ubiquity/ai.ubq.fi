@@ -4,11 +4,11 @@ mod inference;
 mod observation;
 use gateway_catalog_inputs::state;
 
+use gateway_catalog_input::catalog::ProviderCatalog;
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogHost, CatalogProvider, CredentialPublication, ProviderBinding, unavailable,
 };
 use gateway_core::query::QueryStore;
-use gateway_schema::catalog::ProviderCatalog;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
@@ -94,7 +94,7 @@ impl CatalogRuntime {
     /// Project public catalog DATA with the constructor-selected source collator.
     pub fn public_catalog_document<H: CatalogHost>(
         &self,
-        input: &gateway_schema::catalog::CatalogInput,
+        input: &gateway_catalog_input::catalog::CatalogInput,
         host: &H,
     ) -> Result<SourceJson, GatewayError> {
         gateway_schema::catalog_views::public_catalog(
@@ -105,7 +105,7 @@ impl CatalogRuntime {
     /// Project the full catalog snapshot with that same private source collator.
     pub fn catalog_document<H: CatalogHost>(
         &self,
-        input: &gateway_schema::catalog::CatalogInput,
+        input: &gateway_catalog_input::catalog::CatalogInput,
         host: &H,
     ) -> Result<SourceJson, GatewayError> {
         gateway_schema::catalog_views::build_catalog_snapshot(

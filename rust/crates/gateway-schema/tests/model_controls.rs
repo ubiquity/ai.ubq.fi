@@ -1,4 +1,7 @@
 //! Model/effort controls and pinned Bun ordering evidence; not a host Intl or runtime substitute.
+use gateway_catalog_input::catalog::{
+    CatalogInput, request_model_metadata, validate_model_available,
+};
 use gateway_contracts::model::ModelId;
 use gateway_core::source_control;
 use gateway_model_metadata::reasoning::{ModelReasoning, effort_for_codex, resolve_reasoning};
@@ -7,7 +10,6 @@ use gateway_model_selection::{
     selection::{AccountModelCatalog, AccountModelsStore, ModelWhitelist},
 };
 use gateway_model_snapshot::snapshot::{ModelSnapshot, SnapshotOverrides, normalize_snapshot};
-use gateway_schema::catalog::{CatalogInput, request_model_metadata, validate_model_available};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -123,7 +125,7 @@ fn unavailable_catalog_branch_keeps_exact_model_and_source_error_units() {
                 }),
                 ..Default::default()
             };
-            let metadata = request_model_metadata(&input, &model, true, 1);
+            let metadata = request_model_metadata(&input, &model, true, 1).unwrap();
             validate_model_available(&model, true, &metadata).unwrap();
         }
         let input = CatalogInput {
@@ -135,7 +137,7 @@ fn unavailable_catalog_branch_keeps_exact_model_and_source_error_units() {
             }),
             ..Default::default()
         };
-        let metadata = request_model_metadata(&input, &model, true, 1);
+        let metadata = request_model_metadata(&input, &model, true, 1).unwrap();
         let error = validate_model_available(&model, true, &metadata).unwrap_err();
         assert_eq!(error.status, 404);
         let wire = SourceJson::parse(error.body().as_str()).unwrap();
@@ -424,10 +426,15 @@ fn reasoning_hints_keep_raw_elements_and_total_provider_data() {
         updated_at_ms: 1,
         client_version: None,
     };
-    assert!(gateway_schema::runtime_config::build_runtime_config(&invalid, None, None, 1).is_err());
+    assert!(
+        gateway_catalog_input::runtime_config::build_runtime_config(&invalid, None, None, 1)
+            .is_err()
+    );
     assert_eq!(
-        gateway_schema::runtime_config::build_optional_runtime_config(&invalid, None, None, 1)
-            .unwrap(),
+        gateway_catalog_input::runtime_config::build_optional_runtime_config(
+            &invalid, None, None, 1
+        )
+        .unwrap(),
         None
     );
 }

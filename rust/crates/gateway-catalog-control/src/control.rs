@@ -6,6 +6,10 @@ use gateway_authority_paid_control_records::{
     PaidProviderObservation, PaidRoutingProjection, PaidSourceCheck,
 };
 use gateway_authority_paid_records::PaidRoutingPolicy;
+use gateway_catalog_input::{
+    catalog::{CatalogInput, ProviderCatalog},
+    runtime_config::normalize_runtime_config,
+};
 use gateway_catalog_inputs::state;
 use gateway_catalog_provider::host::{CatalogHost, CatalogProvider, CredentialPublication};
 use gateway_catalog_runtime::CatalogRuntime;
@@ -21,11 +25,7 @@ use gateway_model_snapshot::snapshot::ModelSnapshot;
 use gateway_provider_policy::{
     policy::DeepseekHop, policy::PaidRoutingInput, policy::paid_order, policy::resolve_paid_route,
 };
-use gateway_schema::{
-    catalog::{CatalogInput, ProviderCatalog},
-    catalog_store,
-    runtime_config::normalize_runtime_config,
-};
+use gateway_schema::catalog_store;
 use gateway_schema_values::source_view::js_trim_source;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,

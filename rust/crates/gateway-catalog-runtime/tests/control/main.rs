@@ -9,6 +9,7 @@ use gateway_routing_runtime_test_support::source_catalog;
 
 use gateway_source::error::GatewayError;
 
+use gateway_catalog_input::runtime_config::build_runtime_config;
 use gateway_core::{
     query::{QueryPage, QueryRequest, QueryStore},
     source_control::decode_source_control_record,
@@ -16,7 +17,7 @@ use gateway_core::{
 };
 use gateway_kv_codec::key::RecordKey;
 use gateway_model_snapshot::snapshot::ModelSnapshot;
-use gateway_schema::{catalog_store, runtime_config::build_runtime_config};
+use gateway_schema::catalog_store;
 use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
 use std::{

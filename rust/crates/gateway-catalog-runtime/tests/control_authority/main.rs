@@ -7,6 +7,7 @@ type MemoryStore = Store;
 type TestAuthority = gateway_authority::store::Authority<Store, Tokens>;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::*;
+use gateway_catalog_input::runtime_config::build_runtime_config;
 use gateway_catalog_inputs::state;
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
@@ -21,7 +22,7 @@ use gateway_core::{
 };
 use gateway_kv_codec::key::RecordKey;
 use gateway_model_snapshot::snapshot::ModelSnapshot;
-use gateway_schema::{catalog_store, runtime_config::build_runtime_config};
+use gateway_schema::catalog_store;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{

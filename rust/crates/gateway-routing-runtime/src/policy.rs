@@ -1,5 +1,6 @@
 use crate::types::{RoutingInput, RoutingResult};
 use chrono::{DateTime, Datelike, Utc};
+use gateway_catalog_input::catalog;
 use gateway_contracts::model::ModelId;
 use gateway_contracts::provider::{CodexQuotaClass, PaidProvider, UpstreamProvider};
 use gateway_local_refusal::source_error::SourceRequestError;
@@ -107,9 +108,8 @@ pub(crate) fn validate_model(input: &RoutingInput, model: &ModelId, now: i64) ->
     let mut catalog = input.catalog.clone();
     catalog.snapshot = input.catalog.codex().cloned();
     let responses = input.surface != ClientSurface::Chat;
-    let metadata = gateway_schema::catalog::request_model_metadata(&catalog, model, responses, now);
-    gateway_schema::catalog::validate_model_available(model, responses, &metadata)
-        .map_err(Into::into)
+    let metadata = catalog::request_model_metadata(&catalog, model, responses, now)?;
+    catalog::validate_model_available(model, responses, &metadata).map_err(Into::into)
 }
 pub fn plan(
     input: &RoutingInput,

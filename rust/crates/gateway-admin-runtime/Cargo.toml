@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-catalog-input.workspace = true
 gateway-schema-values.workspace = true
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
 gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }

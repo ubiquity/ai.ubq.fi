@@ -7,6 +7,7 @@ use gateway_auth_contracts::{
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
+use gateway_catalog_input::catalog::ProviderCatalog;
 use gateway_catalog_provider::host::ProviderBinding;
 use gateway_claude_policy::host::{ClaudePoolHost, HealthObservation, WorkspaceResponse};
 use gateway_claude_roster::claude::{self, AccountBinding, Bootstrap, CredentialKind};
@@ -14,7 +15,6 @@ use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_core::state::RevisionCheck;
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_contracts::types::{HealthEvent, HealthProvider, HealthTarget};
-use gateway_schema::catalog::ProviderCatalog;
 use gateway_schema_values::scalar as util;
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;

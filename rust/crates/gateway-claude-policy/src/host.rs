@@ -1,5 +1,6 @@
 //! Fixed owner capabilities; none accepts a URL, caller proof, environment name or refresh token.
 use gateway_auth_contracts::types::AuthHost;
+use gateway_catalog_input::catalog::ProviderCatalog;
 use gateway_catalog_provider::host::ProviderBinding;
 use gateway_claude_roster::{
     claude::{AccountBinding, Bootstrap},
@@ -10,7 +11,6 @@ use gateway_contracts::model::ModelId;
 use gateway_core::state::RevisionCheck;
 use gateway_model_selection::selection::ProviderSelection;
 use gateway_provider_protocol::types::Headers;
-use gateway_schema::catalog::ProviderCatalog;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use std::{cmp::Ordering, future::Future};
 

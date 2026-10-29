@@ -17,6 +17,7 @@ fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 workspace = true
 
 [dependencies]
+gateway-catalog-input.workspace = true
 gateway-observability-replay-read = { workspace = true }
 gateway-authority-native-callback-owner = { path = "../gateway-authority-native-callback-owner" }
 gateway-authority-native-callback = { path = "../gateway-authority-native-callback" }

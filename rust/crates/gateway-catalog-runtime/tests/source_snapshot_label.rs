@@ -1,7 +1,7 @@
 //! The full stored-reader and runtime-compaction source-label phases are intentionally distinct.
+use gateway_catalog_input::runtime_config::compact_snapshot;
 use gateway_catalog_inputs::state::parse_full_snapshot;
 use gateway_model_snapshot::snapshot::{SnapshotOverrides, normalize_snapshot};
-use gateway_schema::runtime_config::compact_snapshot;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };

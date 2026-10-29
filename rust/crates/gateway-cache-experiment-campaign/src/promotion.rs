@@ -6,11 +6,11 @@ use gateway_cache_experiment_records::{
     model::{LEASE_MS, Outcome, PROVIDER, Reason, Scope, TargetBinding, failed},
     source::{catalog_key, json as source_json, owns, record_key, runtime_key, set_member},
 };
-use gateway_contracts::model::ModelId;
-use gateway_model_snapshot::snapshot::ModelSnapshot;
-use gateway_schema::runtime_config::{
+use gateway_catalog_input::runtime_config::{
     build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
 };
+use gateway_contracts::model::ModelId;
+use gateway_model_snapshot::snapshot::ModelSnapshot;
 use gateway_schema_values::source_view::js_trim_source;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
@@ -168,12 +168,14 @@ fn publication_plan(
         &source_json(&published),
     )?;
     let next_runtime = match default.as_ref().zip(next_snapshot.as_ref()) {
-        Some((default, snapshot)) => gateway_schema::runtime_config::build_optional_runtime_config(
-            snapshot,
-            Some(default),
-            default_reasoning_effort(normalized).as_ref(),
-            current,
-        )?,
+        Some((default, snapshot)) => {
+            gateway_catalog_input::runtime_config::build_optional_runtime_config(
+                snapshot,
+                Some(default),
+                default_reasoning_effort(normalized).as_ref(),
+                current,
+            )?
+        }
         None => None,
     };
     Ok((next_snapshot, next_runtime))

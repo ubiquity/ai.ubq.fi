@@ -255,7 +255,10 @@ fn save_while_versioned_discovery_waits_cannot_be_replaced_by_older_version() {
     let input = run(runtime.load_state(&store, &host.publication.borrow(), host.now.get()))
         .unwrap()
         .input;
-    assert_eq!(ordinary_models(&input)["data"][0]["id"], "new-upload");
+    assert_eq!(
+        ordinary_models(&input).unwrap()["data"][0]["id"],
+        "new-upload"
+    );
     assert_eq!(
         store.value(&catalog_store::auth_generation_key()),
         "generation"
