@@ -207,7 +207,7 @@ impl<S: QueryStore, H: ObservabilityHost> ReplayMetadata<'_, S, H> {
     }
     pub async fn replay_skip(
         &self,
-        limits: RetentionLimits,
+        limits: schema::RetentionLimits,
         reason: &str,
         at: i64,
     ) -> Result<(), GatewayError> {

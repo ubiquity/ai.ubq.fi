@@ -284,12 +284,12 @@ impl Status {
     }
 }
 #[derive(Clone)]
-pub(crate) struct StatusDocument {
-    pub(crate) data: Status,
+pub struct StatusDocument {
+    pub data: Status,
     original: SourceObject,
 }
 impl StatusDocument {
-    pub(crate) fn parse(value: &SourceJson) -> Result<Self, GatewayError> {
+    pub fn parse(value: &SourceJson) -> Result<Self, GatewayError> {
         let original = SourceObject::parse(value)?;
         let data: Status = original.select(STATUS_FIELDS)?.deserialize()?;
         if !data.valid_stored() {
@@ -297,11 +297,11 @@ impl StatusDocument {
         }
         Ok(Self { data, original })
     }
-    pub(crate) fn new(data: Status) -> Result<Self, GatewayError> {
+    pub fn new(data: Status) -> Result<Self, GatewayError> {
         let original = SourceObject::parse(&SourceJson::from_serializable(&data)?)?;
         Ok(Self { data, original })
     }
-    pub(crate) fn source_json(&self) -> Result<SourceJson, GatewayError> {
+    pub fn source_json(&self) -> Result<SourceJson, GatewayError> {
         let mut out = self.original.clone();
         for (key, value) in SourceObject::parse(&SourceJson::from_serializable(&self.data)?)?
             .source_json()?
