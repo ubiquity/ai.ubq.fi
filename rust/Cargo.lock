@@ -3559,6 +3559,7 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-native-contracts",
  "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
  "gateway-auth-passkeys",
  "gateway-auth-primitives",
  "gateway-authority",
@@ -4487,6 +4488,7 @@ dependencies = [
 name = "gateway-observability-metered"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "gateway-capacity-projection",
  "gateway-contracts",
  "gateway-core",
