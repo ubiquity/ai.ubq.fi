@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-keys.workspace = true
 gateway-catalog-input.workspace = true
 gateway-model-snapshot.workspace = true
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }

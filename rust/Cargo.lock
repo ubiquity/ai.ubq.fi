@@ -2612,6 +2612,7 @@ name = "gateway-catalog-control"
 version = "0.1.0"
 dependencies = [
  "gateway-authority",
+ "gateway-authority-keys",
  "gateway-authority-paid-control-records",
  "gateway-authority-paid-records",
  "gateway-catalog-input",
@@ -4112,7 +4113,10 @@ dependencies = [
  "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-contracts",
+ "gateway-authority-keys",
  "gateway-authority-native-records",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-records",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
@@ -4199,6 +4203,7 @@ dependencies = [
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-authority",
+ "gateway-authority-paid-control-records",
  "gateway-authority-routing-records",
  "gateway-core",
  "gateway-native-http-framing",
@@ -5585,6 +5590,7 @@ dependencies = [
  "gateway-auth-native-contracts",
  "gateway-auth-native-proof",
  "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
  "gateway-auth-passkeys",
  "gateway-auth-passport-contracts",
  "gateway-auth-passport-sessions",
@@ -5662,6 +5668,7 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "gateway-contracts",
+ "gateway-provider-images",
  "gateway-provider-protocol",
  "gateway-provider-source",
  "gateway-source",

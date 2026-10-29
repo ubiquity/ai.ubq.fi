@@ -21,6 +21,9 @@ gateway-auth-primitives.workspace = true
 gateway-source.workspace = true
 
 [dev-dependencies]
+gateway-authority-keys.workspace = true
+gateway-authority-paid-control-records.workspace = true
+gateway-authority-routing-records.workspace = true
 gateway-contracts.workspace = true
 gateway-kv-codec.workspace = true
 serde.workspace = true
