@@ -2430,6 +2430,7 @@ dependencies = [
  "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
  "gateway-authority",
+ "gateway-authority-api-protocol",
  "gateway-authority-api-quota",
  "gateway-authority-contracts",
  "gateway-authority-keys",

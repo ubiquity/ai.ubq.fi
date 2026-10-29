@@ -18,6 +18,7 @@ gateway-authority-paid-admission = { path = "../gateway-authority-paid-admission
 gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-api-protocol.workspace = true
 gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
