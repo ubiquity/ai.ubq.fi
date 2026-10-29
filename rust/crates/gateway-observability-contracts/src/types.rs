@@ -1,4 +1,4 @@
-use gateway_admin_runtime::capabilities::Context;
+use gateway_admin_runtime_contracts::capabilities::Context;
 use gateway_core::state::RevisionCheck;
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
@@ -114,7 +114,7 @@ pub trait ObservabilityHost {
     /// It is never supplied by a request/body and has no scalar fallback.
     fn source_string_collator(
         &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>;
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator>;
     fn now_ms(&self) -> i64;
     fn compare_labels(
         &self,
@@ -208,7 +208,7 @@ pub trait ObservabilityHost {
     fn probe_codex_capacity(
         &self,
         _account: &crate::host_types::CapacityAccountRef,
-        _fence: &gateway_authority::capacity::CodexCapacityObservationFence,
+        _fence: &gateway_authority_capacity::CodexCapacityObservationFence,
         _deadline_ms: i64,
     ) -> impl Future<Output = Result<crate::host_types::CapacityProbe, GatewayError>> {
         async { Err(crate::data::missing("codex_capacity_probe")) }
@@ -218,7 +218,7 @@ pub trait ObservabilityHost {
         &self,
         _accounts: &[crate::host_types::CapacityAccountRef],
     ) -> impl Future<
-        Output = Result<gateway_authority::capacity::CodexCapacityObservationFence, GatewayError>,
+        Output = Result<gateway_authority_capacity::CodexCapacityObservationFence, GatewayError>,
     > {
         async { Err(crate::data::missing("capacity_authority_source_fence")) }
     }
@@ -239,11 +239,11 @@ pub trait ObservabilityHost {
     /// Calls the existing authority's current-binding observation writer; never another ledger.
     fn accept_capacity_observations(
         &self,
-        _fence: &gateway_authority::capacity::CodexCapacityObservationFence,
-        _observations: &[gateway_authority::capacity::CodexCapacitySample],
+        _fence: &gateway_authority_capacity::CodexCapacityObservationFence,
+        _observations: &[gateway_authority_capacity::CodexCapacitySample],
     ) -> impl Future<
         Output = Result<
-            gateway_authority::capacity::AcceptedCodexCapacityObservations,
+            gateway_authority_capacity::AcceptedCodexCapacityObservations,
             GatewayError,
         >,
     > {

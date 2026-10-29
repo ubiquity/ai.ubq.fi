@@ -1,35 +1,45 @@
 #![cfg(all(not(target_arch = "wasm32"), unix))]
-use gateway_auth::{
-    crypto::{Secret, base64url},
-    managed_access::ManagedAccessProjection,
-    native_credentials::{NativeGeneration, NativeOwnerId, OwnerFence, parse_native_document},
-    provider_credentials::*,
-};
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_graph::{GraphAtom, GraphNode, SourceGraph},
-    state::*,
-    tuple_key::TupleKey,
-};
-use gateway_migration::{
-    engine::adopt_empty,
-    graph_transport,
-    inverse::ArtifactContext,
-    native_capture::{NativeCapture, NativeEntry, NativeRevision, NativeValue, prepare_native},
-    native_custody::{
-        NativeCustody, OwnedNativeSnapshot, export_native_rollback_with_custody,
-        export_native_with_custody, sanitize_native_capture,
-    },
-};
-use gateway_migration_test_support::fixture::{Directory, run};
+use gateway_auth_credentials::managed_access::ManagedAccessProjection;
+use gateway_auth_credentials::native_credentials::NativeGeneration;
+use gateway_auth_credentials::native_credentials::NativeOwnerId;
+use gateway_auth_credentials::native_credentials::OwnerFence;
+use gateway_auth_credentials::native_credentials::parse_native_document;
+use gateway_auth_credentials::provider_credentials::*;
+use gateway_auth_primitives::crypto::Secret;
+use gateway_auth_primitives::crypto::base64url;
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_core::state::*;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::TupleKey;
+use gateway_migration_data::custody::ArtifactContext;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeRevision;
+use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_graph::transport as graph_transport;
+use gateway_migration_native_custody::native_custody::NativeCustody;
+use gateway_migration_native_custody::native_custody::OwnedNativeSnapshot;
+use gateway_migration_native_custody::native_custody::export_native_rollback_with_custody;
+use gateway_migration_native_custody::native_custody::export_native_with_custody;
+use gateway_migration_native_custody::native_custody::sanitize_native_capture;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare_native;
+use gateway_migration_test_support::fixture::Directory;
+use gateway_migration_test_support::fixture::run;
 use gateway_migration_test_support::sqlite_store::SqliteStore;
-use gateway_native::{
-    transport::NativeOwnerTransport,
-    unix::{NativeOwnerLocation, UnixOwnerTransport},
-};
-use serde_json::{Value, json};
-use std::{cell::RefCell, collections::BTreeMap, path::PathBuf};
+use gateway_native_local_transport::transport::NativeOwnerTransport;
+use gateway_native_local_transport::unix::NativeOwnerLocation;
+use gateway_native_local_transport::unix::UnixOwnerTransport;
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
+use gateway_source_graph::graph::GraphAtom;
+use gateway_source_graph::graph::GraphNode;
+use gateway_source_graph::graph::SourceGraph;
+use serde_json::Value;
+use serde_json::json;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 fn graph(value: &Value) -> SourceGraph {
     fn atom(value: &Value, nodes: &mut Vec<GraphNode>) -> GraphAtom {
@@ -201,9 +211,11 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
     );
     let token = format!("u_{}", "1".repeat(64));
     assert_eq!(
-        run(gateway_auth::api_keys::authenticate(&store, &token, 2300))
-            .unwrap()
-            .key_id,
+        run(gateway_auth_primitives::api_keys::authenticate(
+            &store, &token, 2300
+        ))
+        .unwrap()
+        .key_id,
         "offline-key"
     );
     let local_a = host.bindings.borrow().get("managed-a").unwrap().0.clone();
@@ -290,7 +302,7 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
             .code(),
         Some("migration_control_custody_required")
     );
-    let normalized_key = gateway_authority::keys::pool();
+    let normalized_key = gateway_authority_keys::pool();
     let normalized = run(store.read(&normalized_key)).unwrap().unwrap();
     let (inverse, controls, artifacts) = run(export_native_rollback_with_custody(
         &store,
@@ -312,7 +324,7 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
     assert!(
         controls
             .iter()
-            .any(|control| control.key == gateway_authority::keys::pool().0)
+            .any(|control| control.key == gateway_authority_keys::pool().0)
     );
     for control in &controls {
         assert_eq!(
@@ -417,10 +429,11 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
 #[test]
 fn configured_operator_composes_access_only_request_and_empty_store_adoption()
 -> Result<(), Box<dyn std::error::Error>> {
-    use gateway_migration::{
-        native_operator::{NativeCustodyRegistration, prepare_local_bootstrap},
-        operational::{NativeMigrationRequest, NativeOperation, execute_native},
-    };
+    use gateway_migration_native_custody::registry::NativeCustodyRegistration;
+    use gateway_migration_native_custody::registry::prepare_local_bootstrap;
+    use gateway_migration_protocol::operational::NativeMigrationRequest;
+    use gateway_migration_protocol::operational::NativeOperation;
+    use gateway_migration_protocol::operational::execute_native;
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = Directory::new();
     let home = directory.file("actual-configured-operator");
@@ -478,8 +491,8 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
     assert!(snapshot.pool.accounts[0].refresh_token.expose().is_empty());
     assert_eq!(std::fs::read(home.join("auth.json"))?, original);
     let expected = snapshot.pool.accounts[0].identity();
-    let normalized = run(store.read(&gateway_authority::keys::pool()))?
-        .ok_or("Expected retained fixture row")?;
+    let normalized =
+        run(store.read(&gateway_authority_keys::pool()))?.ok_or("Expected retained fixture row")?;
     let normalized: gateway_authority::routing_types::SubscriptionPool =
         serde_json::from_value(normalized.value)?;
     assert_eq!(normalized.pool_versionstamp.0, snapshot.revision);
@@ -493,7 +506,7 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
         expected.credential_version
     );
     struct Tokens(std::sync::atomic::AtomicU64);
-    impl gateway_authority::store::TokenSource for Tokens {
+    impl gateway_authority_contracts::TokenSource for Tokens {
         fn next_token(&self) -> Result<String, GatewayError> {
             Ok(format!(
                 "operator-route-{}",
@@ -502,7 +515,7 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
         }
     }
     struct Clock;
-    impl gateway_authority::store::AuthorityClock for Clock {
+    impl gateway_authority_contracts::AuthorityClock for Clock {
         fn now_ms(&self) -> Result<i64, GatewayError> {
             Ok(2300)
         }
@@ -512,7 +525,7 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
         Tokens(std::sync::atomic::AtomicU64::new(1)),
         Clock,
     );
-    let model = gateway_core::model::ModelId::from_scalar("gpt-6.1-sol");
+    let model = gateway_contracts::model::ModelId::from_scalar("gpt-6.1-sol");
     let selected = run(authority.select_account(
         &model,
         gateway_authority::routing::model_quota_class(&model),
@@ -534,22 +547,20 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
 }
 
 #[test]
-fn configured_operator_observes_existing_external_access_and_refuses_stale_input() {
-    use gateway_migration::native_operator::{NativeCustodyRegistration, prepare_local_bootstrap};
+fn configured_operator_observes_existing_external_access_and_refuses_stale_input()
+-> Result<(), Box<dyn std::error::Error>> {
+    use gateway_migration_native_custody::registry::NativeCustodyRegistration;
+    use gateway_migration_native_custody::registry::prepare_local_bootstrap;
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = Directory::new();
     let home = directory.file("external-operator");
-    std::fs::create_dir(&home).unwrap();
-    let expiry = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-        + 3600;
+    std::fs::create_dir(&home)?;
+    let expiry = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 3600;
     let token = format!("e30.{}.synthetic",base64url(json!({"exp":expiry,"https://api.openai.com/auth":{"chatgpt_user_id":"external-user","chatgpt_account_id":"external-account"}}).to_string().as_bytes()));
     let doc = json!({"auth_mode":"chatgptAuthTokens","OPENAI_API_KEY":null,"tokens":{"account_id":"external-account","access_token":token,"id_token":token,"refresh_token":""}});
-    let bytes = serde_json::to_vec(&doc).unwrap();
-    std::fs::write(home.join("auth.json"), &bytes).unwrap();
-    let native = parse_native_document(&doc).unwrap();
+    let bytes = serde_json::to_vec(&doc)?;
+    std::fs::write(home.join("auth.json"), &bytes)?;
+    let native = parse_native_document(&doc)?;
     let fence = OwnerFence {
         owner: NativeOwnerId("existing-external-reader".into()),
         account_id: native.account_id.clone(),
@@ -557,35 +568,34 @@ fn configured_operator_observes_existing_external_access_and_refuses_stale_input
         authority_revision: "native-v1:14:0".into(),
     };
     let mut capture: NativeCapture =
-        serde_json::from_str(include_str!("fixtures/native-source.json")).unwrap();
-    capture.entries.push(NativeEntry {raw_key:TupleKey::from_record_key(&codex_source_pool_key()).unwrap().sort_bytes().to_vec(),value:wire(&json!({"accounts":[{"account_id":native.account_id,"access_token":native.access_token.expose(),"refresh_token":"","updated_at_ms":2200,"native_owner":{"codex_home":home.to_str().unwrap(),"generation_hash":native.generation_hash(),"auth_mode":"chatgptAuthTokens","chatgpt_user_id":"external-user"}}],"updated_at_ms":2200})),revision:NativeRevision{version:"14".into(),sequence:"0".into()},expiration_ms:-1});
-    let registration =
-        |f: OwnerFence| vec![NativeCustodyRegistration::existing(home.clone(), f).unwrap()];
+        serde_json::from_str(include_str!("fixtures/native-source.json"))?;
+    capture.entries.push(NativeEntry {raw_key:TupleKey::from_record_key(&codex_source_pool_key())?.sort_bytes().to_vec(),value:wire(&json!({"accounts":[{"account_id":native.account_id,"access_token":native.access_token.expose(),"refresh_token":"","updated_at_ms":2200,"native_owner":{"codex_home":home.to_str().ok_or("Synthetic native home must be UTF8")?,"generation_hash":native.generation_hash(),"auth_mode":"chatgptAuthTokens","chatgpt_user_id":"external-user"}}],"updated_at_ms":2200})),revision:NativeRevision{version:"14".into(),sequence:"0".into()},expiration_ms:-1});
+    let registration = |f: OwnerFence| -> Result<
+        Vec<NativeCustodyRegistration>,
+        gateway_source::error::GatewayError,
+    > { Ok(vec![NativeCustodyRegistration::existing(home.clone(), f)?]) };
     assert!(
         run(prepare_local_bootstrap(
             &capture,
-            registration(fence.clone())
+            registration(fence.clone())?
         ))
         .is_ok()
     );
     let mut stale = fence.clone();
     stale.authority_revision = "native-v1:13:0".into();
-    assert!(run(prepare_local_bootstrap(&capture, registration(stale))).is_err());
+    assert!(run(prepare_local_bootstrap(&capture, registration(stale)?)).is_err());
     let mut stale = fence.clone();
     stale.generation_hash = "0".repeat(64);
-    assert!(run(prepare_local_bootstrap(&capture, registration(stale))).is_err());
+    assert!(run(prepare_local_bootstrap(&capture, registration(stale)?)).is_err());
     let mut stale = fence.clone();
     stale.account_id = "different-account".into();
-    assert!(run(prepare_local_bootstrap(&capture, registration(stale))).is_err());
+    assert!(run(prepare_local_bootstrap(&capture, registration(stale)?)).is_err());
     let mut changed = doc.clone();
     changed["tokens"]["access_token"] = json!("different-access");
     changed["tokens"]["id_token"] = json!("different-access");
-    std::fs::write(
-        home.join("auth.json"),
-        serde_json::to_vec(&changed).unwrap(),
-    )
-    .unwrap();
-    assert!(run(prepare_local_bootstrap(&capture, registration(fence))).is_err());
-    std::fs::write(home.join("auth.json"), &bytes).unwrap();
-    assert_eq!(std::fs::read(home.join("auth.json")).unwrap(), bytes);
+    std::fs::write(home.join("auth.json"), serde_json::to_vec(&changed)?)?;
+    assert!(run(prepare_local_bootstrap(&capture, registration(fence)?)).is_err());
+    std::fs::write(home.join("auth.json"), &bytes)?;
+    assert_eq!(std::fs::read(home.join("auth.json"))?, bytes);
+    Ok(())
 }

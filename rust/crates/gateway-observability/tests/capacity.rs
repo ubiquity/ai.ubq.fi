@@ -4,12 +4,18 @@ use gateway_auth_credentials::{
     provider_credentials::codex_source_pool_key,
 };
 use gateway_auth_primitives::crypto::Secret;
-use gateway_authority::{
-    capacity::*, capacity_rules::parse_capacity_store, keys, paid_control::PaidControlOwner,
-    routing_types::PoolAccount, routing_types::SubscriptionPool, store::Authority,
-    store::AuthorityClock, store::TokenSource,
+use gateway_authority::store::Authority;
+use gateway_authority_capacity::{
+    AcceptedCodexCapacityObservations, CapacityOperations, CodexCapacityAccountRef,
+    CodexCapacityObservationFence, CodexCapacitySample,
 };
-use gateway_core::{identity::PoolVersionstamp, state::StoredRecord};
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::PaidControlOwner;
+use gateway_authority_routing_evidence::capacity::parse_capacity_store;
+use gateway_authority_routing_records::{types::PoolAccount, types::SubscriptionPool};
+use gateway_contracts::identity::PoolVersionstamp;
+use gateway_core::state::StoredRecord;
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_contracts::{host_types::*, types::ObservabilityHost};
 use gateway_source::error::GatewayError;
@@ -49,7 +55,7 @@ impl CapacityHost {
 impl ObservabilityHost for CapacityHost {
     fn source_string_collator(
         &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {

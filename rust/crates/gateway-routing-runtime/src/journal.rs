@@ -1,23 +1,24 @@
 //! Recoverable request intent only. Counters, pool state and billing remain m03-owned.
-use crate::types::{CredentialFence, RevisionCheckWire};
-use gateway_authority::kernel::KernelReservation;
-use gateway_authority::paid_types::{PaidCorrelation, PaidReservation, PaidUsage};
-use gateway_authority::quota::ApiReservation;
-use gateway_authority::store::TokenSource;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{PaidAttemptId, RequestContext};
-use gateway_core::lifecycle::TransportObservation;
-use gateway_core::local_work::{LocalWorkRecord, journal_local_work};
-use gateway_core::model::ModelId;
-use gateway_core::provider::UpstreamProvider;
-use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
-use gateway_core::source_json::SourceJson;
-use gateway_core::source_serialization as source;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-    StoredRecord,
-};
-use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+use crate::{types::CredentialFence, types::RevisionCheckWire};
+use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_kernel_protocol::KernelReservation;
+use gateway_authority_paid_records::{PaidCorrelation, PaidReservation, PaidUsage};
+use gateway_contracts::lifecycle::TransportObservation;
+use gateway_contracts::{identity::PaidAttemptId, identity::RequestContext};
+use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
+use gateway_core::source_control::decode_source_control_record;
+use gateway_core::source_control::encode_source_control_record;
+use gateway_core::state::AtomicTransition;
+use gateway_core::{state::AuthorityStore, state::CommitOutcome};
+use gateway_core::{state::RecordMutation, state::RevisionCheck, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_local_journal::context::{decode_journal_context, same_source_value};
+use gateway_local_journal::local_work::LocalWorkRecord;
+use gateway_local_journal::local_work::journal_local_work;
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -99,6 +100,7 @@ pub struct AttemptRecord {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Journal {
     pub v: u32,
+    #[serde(with = "gateway_local_journal::context::source_field")]
     pub context: RequestContext,
     pub input_digest: String,
     pub api: Option<ApiReservation>,
@@ -162,50 +164,20 @@ impl Journal {
     }
     pub(crate) fn decode(value: &SourceJson) -> Result<Self, GatewayError> {
         let local = journal_local_work(value)?;
+        let context = decode_journal_context(value)
+            .map_err(|_| unavailable("Routing session is corrupt."))?;
         let row: Self = value
             .deserialize()
             .map_err(|_| unavailable("Routing session is corrupt."))?;
         let encoded = SourceJson::from_serializable(&row)
             .map_err(|_| unavailable("Routing session encoding failed."))?;
-        if row.local_work != local || !same_source_value(&encoded, value) {
+        if row.context != context || row.local_work != local || !same_source_value(&encoded, value)
+        {
             return Err(unavailable(
                 "Routing session has an incomplete or unknown shape.",
             ));
         }
         Ok(row)
-    }
-}
-/// Match the old JSON object equality without scalarizing opaque fields. Array
-/// order and scalar number spellings remain significant; object key order does not.
-pub(crate) fn same_source_value(left: &SourceJson, right: &SourceJson) -> bool {
-    match (
-        left.as_str().as_bytes().first(),
-        right.as_str().as_bytes().first(),
-    ) {
-        (Some(b'{'), Some(b'{')) => {
-            let (Some(left), Some(right)) = (source::entries(left), source::entries(right)) else {
-                return false;
-            };
-            left.len() == right.len()
-                && left.iter().all(|(key, value)| {
-                    right
-                        .iter()
-                        .find(|(name, _)| name == key)
-                        .is_some_and(|(_, other)| same_source_value(value, other))
-                })
-        }
-        (Some(b'['), Some(b'[')) => {
-            let (Some(left), Some(right)) = (source::array(left), source::array(right)) else {
-                return false;
-            };
-            left.len() == right.len()
-                && left
-                    .iter()
-                    .zip(right.iter())
-                    .all(|(left, right)| same_source_value(left, right))
-        }
-        (Some(b'"'), Some(b'"')) => source::string(left) == source::string(right),
-        _ => left.as_str() == right.as_str(),
     }
 }
 
@@ -265,12 +237,19 @@ fn mutations<I: TokenSource>(
             journal
                 .context
                 .started_at_ms
-                .checked_add(gateway_authority::PAID_RETENTION_MS)
+                .checked_add(gateway_authority_contracts::PAID_RETENTION_MS)
                 .ok_or_else(|| unavailable("Routing retention overflow."))?,
         )
     } else {
         None
     };
+    if journal.v != 3 {
+        journal
+            .context
+            .principal
+            .try_scalar()
+            .map_err(|_| unavailable("Routing journal encoding failed."))?;
+    }
     let value = SourceJson::from_serializable(journal)
         .map_err(|_| unavailable("Routing journal encoding failed."))?;
     Journal::decode(&value)?;

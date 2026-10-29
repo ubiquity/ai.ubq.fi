@@ -1,52 +1,17 @@
 //! Kernel facts are observations, never permission reconstructed from JSON or caller booleans.
 use super::{ExistingAccountImportStore, acl_inspector, owner_runtime};
-use gateway_auth::crypto::sha256_hex;
-use gateway_authority::native_control::receiver::RegisteredRenewalOwner;
-use gateway_core::error::GatewayError;
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
+use gateway_native_confinement::file_observation::Facts;
+use gateway_source::error::GatewayError;
 use rustix::fs::{AtFlags, Mode, OFlags, fstat, openat, statat};
 use std::{
     fs::File,
     io::Read,
-    os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
     time::Instant,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct Facts {
-    pub device: u64,
-    pub inode: u64,
-    pub uid: u32,
-    pub gid: u32,
-    pub mode: u32,
-    pub links: u64,
-    pub size: u64,
-    pub ctime: i64,
-    pub ctime_nsec: i64,
-}
-impl Facts {
-    pub(super) fn same_object(&self, other: &Self) -> bool {
-        self.device == other.device
-            && self.inode == other.inode
-            && self.uid == other.uid
-            && self.gid == other.gid
-            && self.mode == other.mode
-    }
-    pub(super) fn read(file: &File) -> Result<Self, GatewayError> {
-        let m = file.metadata().map_err(|_| fail())?;
-        Ok(Self {
-            device: m.dev(),
-            inode: m.ino(),
-            uid: m.uid(),
-            gid: m.gid(),
-            mode: m.mode(),
-            links: m.nlink(),
-            size: m.size(),
-            ctime: m.ctime(),
-            ctime_nsec: m.ctime_nsec(),
-        })
-    }
-}
 /// Hash plus descriptor metadata; no caller can turn a digest into a live kernel lease.
 pub(super) struct PinnedExecutable {
     file: File,
@@ -57,7 +22,7 @@ pub(super) struct PinnedExecutable {
 impl PinnedExecutable {
     pub(super) fn verify(path: &Path, digest: &str) -> Result<Self, GatewayError> {
         if !path.is_absolute()
-            || !gateway_auth::provider_credentials::valid_native_generation(digest)
+            || !gateway_auth_credentials::provider_credentials::valid_native_generation(digest)
         {
             return Err(fail());
         }

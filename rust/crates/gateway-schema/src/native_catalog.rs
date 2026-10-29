@@ -1,11 +1,13 @@
 //! Rich exact-client-version Codex catalog. Never substitute the official model-list envelope.
-use crate::{catalog::*, metadata::*, model_control as c, provider_catalog::*};
-use gateway_core::{js_string::JsString16, model::ModelId, source_json::SourceJson};
+use crate::{catalog::*, model_control as c, provider_catalog::*};
+use gateway_model_metadata::metadata::*;
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
+use {gateway_contracts::model::ModelId, gateway_prompt_policy::declaration};
 fn description(effort: &JsString16) -> JsString16 {
-    if c::matches(effort, "none") {
+    if gateway_schema_values::source_view::matches(effort, "none") {
         "No reasoning".into()
     } else {
-        c::concat(&[&"Reasoning effort: ".into(), effort])
+        gateway_schema_values::source_view::concat(&[&"Reasoning effort: ".into(), effort])
     }
 }
 fn common_fields(row: &mut SourceJson, priority: i64, forwarding: bool) {
@@ -31,14 +33,14 @@ fn common_fields(row: &mut SourceJson, priority: i64, forwarding: bool) {
     ] {
         c::set(row, key, value);
     }
-    if forwarding {
+    if let (true, policy) = (forwarding, declaration::FORWARDED_PAYLOAD_DECLARATION) {
         c::set(
             row,
             "forwarding_policy",
             c::object(vec![
-                ("version", c::json("deepseek-forwarded-payload/v1")),
-                ("mode", c::json("bytes")),
-                ("per_message_limit", c::json(&65_536)),
+                ("version", c::json(policy.version)),
+                ("mode", c::json(policy.mode)),
+                ("per_message_limit", c::json(&policy.per_message_limit)),
             ]),
         );
     }
@@ -83,22 +85,23 @@ fn reasoning_fields(row: &mut SourceJson, resolved: &ResolvedMetadata, external:
 }
 pub fn paid_native_record(model: &SourceJson, input: &CatalogInput) -> SourceJson {
     let id = ModelId::from_source(
-        c::get(model, "id")
+        gateway_source::source_serialization::member(model, "id")
             .as_ref()
-            .and_then(c::string)
+            .and_then(gateway_source::source_serialization::string)
             .unwrap_or_default(),
     );
     let codex = input.codex().and_then(|s| s.find(&id));
     let resolved = input.metadata(&id, codex, None, codex.is_some());
     let mut row = c::object(vec![("slug", c::json(&id)), ("display_name", c::json(&id))]);
-    if let Some(description) = c::get(model, "description") {
+    if let Some(description) = gateway_source::source_serialization::member(model, "description") {
         c::set(&mut row, "description", description);
     }
     for key in ["owned_by", "supported_endpoint_types"] {
         c::set(
             &mut row,
             key,
-            c::get(model, key).unwrap_or_else(|| c::json(&())),
+            gateway_source::source_serialization::member(model, key)
+                .unwrap_or_else(|| c::json(&())),
         );
     }
     reasoning_fields(&mut row, &resolved, codex.is_none());
@@ -107,11 +110,15 @@ pub fn paid_native_record(model: &SourceJson, input: &CatalogInput) -> SourceJso
     row
 }
 pub fn claude_native_record(model: &SourceJson) -> SourceJson {
-    let id = c::get(model, "id").unwrap_or_else(|| c::json(&()));
+    let id =
+        gateway_source::source_serialization::member(model, "id").unwrap_or_else(|| c::json(&()));
     let levels = claude_levels(model);
     let mut row = c::object(vec![
         ("slug", id.clone()),
-        ("display_name", c::get(model, "display_name").unwrap_or(id)),
+        (
+            "display_name",
+            gateway_source::source_serialization::member(model, "display_name").unwrap_or(id),
+        ),
         ("owned_by", c::json("anthropic")),
         (
             "supported_endpoint_types",
@@ -127,11 +134,13 @@ pub fn claude_native_record(model: &SourceJson) -> SourceJson {
                             ("effort", c::json(e)),
                             (
                                 "description",
-                                c::json(&if c::matches(e, "none") {
-                                    JsString16::from_utf8("No reasoning")
-                                } else {
-                                    e.clone()
-                                }),
+                                c::json(
+                                    &if gateway_schema_values::source_view::matches(e, "none") {
+                                        JsString16::from_utf8("No reasoning")
+                                    } else {
+                                        e.clone()
+                                    },
+                                ),
                             ),
                         ])
                     })
@@ -139,14 +148,20 @@ pub fn claude_native_record(model: &SourceJson) -> SourceJson {
             ),
         ),
     ]);
-    if c::get(model, "supports_disabled_thinking").is_some_and(|v| v.as_str() == "true") {
+    if gateway_source::source_serialization::member(model, "supports_disabled_thinking")
+        .is_some_and(|v| v.as_str() == "true")
+    {
         c::set(&mut row, "default_reasoning_level", c::json("none"));
     }
-    if let Some(window) = c::positive(c::get(model, "context_window_tokens").as_ref()) {
+    if let Some(window) = gateway_schema_values::source_view::positive(
+        gateway_source::source_serialization::member(model, "context_window_tokens").as_ref(),
+    ) {
         c::set(&mut row, "context_window", c::json(&window));
         c::set(&mut row, "max_context_window", c::json(&window));
     }
-    if let Some(max) = c::positive(c::get(model, "max_output_tokens").as_ref()) {
+    if let Some(max) = gateway_schema_values::source_view::positive(
+        gateway_source::source_serialization::member(model, "max_output_tokens").as_ref(),
+    ) {
         c::set(&mut row, "max_output_tokens", c::json(&max));
     }
     common_fields(&mut row, 1000, false);
@@ -164,8 +179,8 @@ pub fn configured_native_records(input: &CatalogInput, provider: &str) -> Vec<So
         c::set(&mut row,"description",c::json(match provider{"deepseek"=>"DeepSeek official API (deepseek-flash) served by this gateway.","lithos"=>"LithosAI API (Chat Completions) served by this gateway.","cerebras"=>"Cerebras API (Chat Completions) served by this gateway.",_=>"Latest DeepSeek Flash waterfall: official DeepSeek, OpenRouter, LithosAI, Surplus, and OpenLux. Each hop uses the provider's latest alias and falls back only on infrastructure or serving failures."}));
         c::set(&mut row,"owned_by",c::json(provider));c::set(&mut row,"supported_endpoint_types",c::json(&if provider=="ubiquity"{vec!["openai-response"]}else{vec!["openai-response","openai-chat"]}));
         let hint=provider_hint(provider,&id);let resolved=if provider=="cerebras"||provider=="ubiquity"{resolve_metadata(&MetadataSources{provider:Some(hint.clone()),..MetadataSources::default()})}else{input.metadata(&id,None,Some(hint.clone()),false)};
-        let levels=hint.supported_reasoning_levels.as_deref().unwrap_or(&[]);let levels=levels.iter().filter_map(c::string).map(|e|{
-            let label=if provider=="deepseek"{JsString16::from_utf8(if c::matches(&e,"none"){"Disable thinking mode"}else if c::matches(&e,"low"){"Thinking effort: low"}else if c::matches(&e,"high"){"Thinking effort: high"}else{"Thinking effort: maximum"})}else{description(&e)};
+        let levels=hint.supported_reasoning_levels.as_deref().unwrap_or(&[]);let levels=levels.iter().filter_map(gateway_model_metadata::advertised_level::AdvertisedLevel::string).map(|e|{
+            let label=if provider=="deepseek"{JsString16::from_utf8(if gateway_schema_values::source_view::matches(&e,"none"){"Disable thinking mode"}else if gateway_schema_values::source_view::matches(&e,"low"){"Thinking effort: low"}else if gateway_schema_values::source_view::matches(&e,"high"){"Thinking effort: high"}else{"Thinking effort: maximum"})}else{description(&e)};
             c::object(vec![("effort",c::json(&e)),("description",c::json(&label))])
         }).collect::<Vec<_>>();
         c::set(&mut row,"supported_reasoning_levels",c::json(&levels));c::set(&mut row,"default_reasoning_level",c::json(&hint.default_reasoning_effort));apply_resolved_fields(&mut row,&resolved,true,false);common_fields(&mut row,if provider=="ubiquity"{0}else{1},provider!="ubiquity");row
@@ -176,31 +191,35 @@ fn openrouter_native(input: &CatalogInput) -> Vec<SourceJson> {
         return Vec::new();
     }
     input.rows("openrouter").iter().filter(|row| gateway_decision_protocol::catalog::text_model(row)).filter_map(|model|{
-        let id=ModelId::from_source(c::get(model,"id").as_ref().and_then(c::string)?);let resolved=input.metadata(&id,None,None,false);
+        let id=ModelId::from_source(gateway_source::source_serialization::member(model,"id").as_ref().and_then(gateway_source::source_serialization::string)?);let resolved=input.metadata(&id,None,None,false);
         let mut row=c::object(vec![("slug",c::json(&id)),("display_name",c::json(&id)),("description",c::json("OpenRouter upstream (Chat Completions and Responses) served by this gateway.")),("owned_by",c::json(&gateway_decision_protocol::catalog::owner(&id))),("supported_endpoint_types",c::json(&["openai-response","openai-chat"]))]);
         reasoning_fields(&mut row,&resolved,true);apply_resolved_fields(&mut row,&resolved,true,false);common_fields(&mut row,1000,false);Some(row)
     }).collect()
 }
 fn append_native(rows: &mut Vec<SourceJson>, entries: impl IntoIterator<Item = SourceJson>) {
     for record in entries {
-        let id = c::identifier(&record).unwrap_or_default();
-        if !rows
-            .iter()
-            .any(|r| c::identifier(r).is_some_and(|s| c::trim(&s) == c::trim(&id)))
-        {
+        let id = gateway_schema_values::source_view::identifier(&record).unwrap_or_default();
+        if !rows.iter().any(|r| {
+            gateway_schema_values::source_view::identifier(r).is_some_and(|s| {
+                gateway_schema_values::source_view::js_trim_source(&s)
+                    == gateway_schema_values::source_view::js_trim_source(&id)
+            })
+        }) {
             rows.push(record);
         }
     }
 }
 fn native_id(row: &SourceJson) -> JsString16 {
-    c::normalized(c::get(row, "slug").as_ref())
-        .or_else(|| {
-            c::get(row, "id")
-                .as_ref()
-                .and_then(c::string)
-                .map(|id| c::trim(&id))
-        })
-        .unwrap_or_default()
+    gateway_schema_values::source_view::normalized(
+        gateway_source::source_serialization::member(row, "slug").as_ref(),
+    )
+    .or_else(|| {
+        gateway_source::source_serialization::member(row, "id")
+            .as_ref()
+            .and_then(gateway_source::source_serialization::string)
+            .map(|id| gateway_schema_values::source_view::js_trim_source(&id))
+    })
+    .unwrap_or_default()
 }
 fn merge_configured_native(rows: &mut Vec<SourceJson>, input: &CatalogInput, provider: &str) {
     let configured = configured_native_records(input, provider);
@@ -222,8 +241,12 @@ fn unique_paid(input: &CatalogInput) -> Vec<SourceJson> {
         for record in input.available_rows(provider) {
             if endpoint_supports(record, "openai-response")
                 && !rows.iter().any(|r| {
-                    c::get(r, "id").as_ref().and_then(c::string)
-                        == c::get(record, "id").as_ref().and_then(c::string)
+                    gateway_source::source_serialization::member(r, "id")
+                        .as_ref()
+                        .and_then(gateway_source::source_serialization::string)
+                        == gateway_source::source_serialization::member(record, "id")
+                            .as_ref()
+                            .and_then(gateway_source::source_serialization::string)
                 })
             {
                 rows.push(record.clone());
@@ -239,9 +262,9 @@ pub fn native_catalog(stored: Option<&SourceJson>, input: &CatalogInput) -> Sour
         .unwrap_or_else(|| c::object(vec![("models", c::json(&Vec::<SourceJson>::new()))]));
     let mut rows = if input.enabled("codex") {
         stored
-            .and_then(|v| c::get(v, "models"))
+            .and_then(|v| gateway_source::source_serialization::member(v, "models"))
             .as_ref()
-            .and_then(c::array)
+            .and_then(gateway_source::source_serialization::array)
             .unwrap_or_default()
     } else {
         Vec::new()

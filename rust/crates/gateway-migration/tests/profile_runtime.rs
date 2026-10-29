@@ -1,24 +1,24 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_admin_runtime::capabilities::{
-    Context, MigrationImport, MigrationProfile, MigrationRequest,
+use gateway_admin_runtime_contracts::{
+    capabilities::Context, capabilities::MigrationImport, capabilities::MigrationProfile,
+    capabilities::MigrationRequest,
 };
-use gateway_auth::types::{AuthResponse, AuthResponseBody};
-use gateway_core::{
-    error::GatewayError,
-    state::*,
-    value::{PortableValue, ValueEncoding},
-};
-use gateway_migration::{
-    capture::PrivateCapture,
-    engine::{adopt_empty, prepare},
-    profile_runtime::{ProfileHost, execute_profile},
-};
+use gateway_auth_contracts::types::{AuthResponse, AuthResponseBody};
+use gateway_core::query::{QueryPage, QueryRequest, QueryStore};
+use gateway_core::state::*;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_kv_codec::{value::PortableValue, value::ValueEncoding};
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_prepare::{engine::adopt_empty, engine::prepare};
+use gateway_migration_profile::{profile_runtime::ProfileHost, profile_runtime::execute_profile};
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::to_source_profile;
 use gateway_profile_values::date::{CanonicalDates, SourceDateHost};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 struct Host(Cell<u64>);
 impl SourceDateHost for Host {
@@ -48,26 +48,34 @@ fn request(ndjson: String, dry_run: bool, overwrite: bool) -> MigrationRequest {
         dry_run,
     })
 }
-fn body(response: AuthResponse) -> Value {
-    // These pre-existing fixtures contain only scalar JSON. New UTF16 response
-    // tests inspect SourceJson directly, never through this compatibility view.
+fn body(response: AuthResponse) -> Result<Value, Box<dyn std::error::Error>> {
+    // Scalar fixture observation stays checked; source-unit cases read wire separately.
     match response.body {
-        AuthResponseBody::Json(value) => value,
-        AuthResponseBody::SourceJson(value) => value.deserialize().expect("Scalar profile fixture"),
-        AuthResponseBody::Empty => panic!("Profile response unexpectedly had no body"),
+        AuthResponseBody::Json(value) => Ok(value),
+        AuthResponseBody::SourceJson(value) => Ok(value.deserialize()?),
+        AuthResponseBody::ClosedError(value) => Ok(serde_json::from_slice(value.as_bytes())?),
+        AuthResponseBody::Empty => Err("Profile response unexpectedly had no body".into()),
     }
 }
 
 #[test]
 fn validate_renders_lone_default_model_errors_without_null_or_escape_text_substitution() {
-    use gateway_core::{
-        js_string::JsString16, source_control::encode_source_control_record,
-        source_json::SourceJson, source_serialization as source,
+    use gateway_core::source_control::encode_source_control_record;
+    use gateway_source::{
+        js_string::JsString16, source_json::SourceJson, source_serialization as source,
     };
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("source-validation.sqlite3"));
-    let model_key = gateway_auth::store::key(json!(["default", "model"]));
-    let snapshot_key = gateway_auth::store::key(json!(["ubq_ai", "codex_models"]));
+    let model_key = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("default"),
+        ScalarKeyPart::String("model"),
+    ])
+    .to_record_key();
+    let snapshot_key = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("ubq_ai"),
+        ScalarKeyPart::String("codex_models"),
+    ])
+    .to_record_key();
     let model = encode_source_control_record(
         "model-revision",
         &SourceJson::parse(r#""\ud800""#).unwrap(),
@@ -120,7 +128,8 @@ fn line(parts: Value, value: Value) -> String {
 }
 
 #[test]
-fn source_partial_errors_keep_valid_writes_and_return_422() {
+fn source_partial_errors_keep_valid_writes_and_return_422() -> Result<(), Box<dyn std::error::Error>>
+{
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("profile.sqlite3"));
     let host = Host(Cell::new(0));
@@ -136,25 +145,37 @@ fn source_partial_errors_keep_valid_writes_and_return_422() {
     ))
     .unwrap();
     assert_eq!(response.status, 422);
-    let result = body(response);
+    let result = body(response)?;
     assert_eq!(result["imported"], 1);
     assert_eq!(result["errors"], 1);
     assert_eq!(
-        run(store.read(&gateway_auth::store::key(json!(["default", "model"]))))
-            .unwrap()
-            .unwrap()
-            .json_value()
-            .unwrap(),
+        run(store.read(
+            &TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("default"),
+                ScalarKeyPart::String("model")
+            ])
+            .to_record_key()
+        ))
+        .unwrap()
+        .unwrap()
+        .json_value()
+        .unwrap(),
         "new-model"
     );
+    Ok(())
 }
 
 #[test]
-fn dry_run_has_no_revision_or_store_effect_and_null_cas_does_not_overwrite_a_racer() {
+fn dry_run_has_no_revision_or_store_effect_and_null_cas_does_not_overwrite_a_racer()
+-> Result<(), Box<dyn std::error::Error>> {
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("dry-run.sqlite3"));
     let host = Host(Cell::new(0));
-    let key = gateway_auth::store::key(json!(["default", "model"]));
+    let key = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("default"),
+        ScalarKeyPart::String("model"),
+    ])
+    .to_record_key();
     let ndjson = line(json!(["default", "model"]), json!("candidate"));
     let result = body(
         run(execute_profile(
@@ -164,7 +185,7 @@ fn dry_run_has_no_revision_or_store_effect_and_null_cas_does_not_overwrite_a_rac
             context(),
         ))
         .unwrap(),
-    );
+    )?;
     assert_eq!(result["imported"], 1);
     assert_eq!(host.0.get(), 0);
     assert!(run(store.read(&key)).unwrap().is_none());
@@ -184,13 +205,15 @@ fn dry_run_has_no_revision_or_store_effect_and_null_cas_does_not_overwrite_a_rac
             context(),
         ))
         .unwrap(),
-    );
+    )?;
     assert_eq!(result["skipped"], 1);
     assert_eq!(run(store.read(&key)).unwrap().unwrap().revision, "racer");
+    Ok(())
 }
 
 #[test]
-fn malformed_import_invalidates_the_derived_policy_in_the_same_commit() {
+fn malformed_import_invalidates_the_derived_policy_in_the_same_commit()
+-> Result<(), Box<dyn std::error::Error>> {
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("malformed-policy.sqlite3"));
     let host = Host(Cell::new(0));
@@ -201,9 +224,9 @@ fn malformed_import_invalidates_the_derived_policy_in_the_same_commit() {
         &prepare(&source, &CanonicalDates).unwrap(),
     ))
     .unwrap();
-    let policy = gateway_authority::keys::api_policy("offline-key");
+    let policy = gateway_authority_keys::api_policy("offline-key");
     assert!(run(store.read(&policy)).unwrap().is_some());
-    let key = gateway_auth::api_keys::id_key("offline-key");
+    let key = gateway_auth_primitives::api_keys::id_key("offline-key");
     let mut malformed = run(store.read(&key))
         .unwrap()
         .unwrap()
@@ -223,7 +246,7 @@ fn malformed_import_invalidates_the_derived_policy_in_the_same_commit() {
     ))
     .unwrap();
     assert_eq!(response.status, 200);
-    assert_eq!(body(response)["imported"], 1);
+    assert_eq!(body(response)?["imported"], 1);
     assert_eq!(
         run(store.read(&key))
             .unwrap()
@@ -244,7 +267,7 @@ fn malformed_import_invalidates_the_derived_policy_in_the_same_commit() {
             context(),
         ))
         .unwrap(),
-    );
+    )?;
     assert!(
         validated["errors"]
             .as_array()
@@ -252,6 +275,7 @@ fn malformed_import_invalidates_the_derived_policy_in_the_same_commit() {
             .iter()
             .any(|v| v.as_str() == Some("api key has invalid v2 policy: offline-key"))
     );
+    Ok(())
 }
 
 #[test]
@@ -268,10 +292,13 @@ fn raw_profile_utf16_remains_explicit_and_refresh_bearing_pool_never_enters_comm
     ))
     .unwrap();
     assert_eq!(response.status, 200);
-    let value = run(store.read(&gateway_auth::store::key(json!([
-        "default",
-        "system_prompt"
-    ]))))
+    let value = run(store.read(
+        &TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("default"),
+            ScalarKeyPart::String("system_prompt"),
+        ])
+        .to_record_key(),
+    ))
     .unwrap()
     .unwrap();
     assert_eq!(value.value_encoding, ValueEncoding::ProfileV2);
@@ -292,8 +319,127 @@ fn raw_profile_utf16_remains_explicit_and_refresh_bearing_pool_never_enters_comm
     .unwrap();
     assert_eq!(response.status, 422);
     assert!(
-        run(store.read(&gateway_auth::provider_credentials::codex_source_pool_key()))
+        run(store.read(&gateway_auth_credentials::provider_credentials::codex_source_pool_key()))
             .unwrap()
             .is_none()
     );
+}
+
+#[test]
+fn finite_error_test_view_keeps_null_param_and_rejects_empty_body()
+-> Result<(), Box<dyn std::error::Error>> {
+    let error = gateway_local_refusal::source_error::SourceRequestError::new(
+        409,
+        "original\0\"",
+        " t ",
+        None,
+        Some(None),
+    );
+    let view = body(AuthResponse::closed_error(
+        error.status,
+        error.body().clone(),
+    ))?;
+    assert_eq!(view["error"]["message"], "original\0\"");
+    assert_eq!(view["error"]["type"], " t ");
+    assert!(
+        !view["error"]
+            .as_object()
+            .ok_or("missing error fields")?
+            .contains_key("code")
+    );
+    assert!(view["error"]["param"].is_null());
+    assert!(
+        body(AuthResponse {
+            body: AuthResponseBody::Empty,
+            ..AuthResponse::json(200, Value::Null)
+        })
+        .is_err()
+    );
+    Ok(())
+}
+
+struct KeyTraceStore {
+    inner: SqliteStore,
+    events: RefCell<Vec<(&'static str, Option<RecordKey>)>>,
+}
+impl AuthorityStore for KeyTraceStore {
+    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
+        self.events.borrow_mut().push(("read", Some(key.clone())));
+        self.inner.read(key).await
+    }
+    async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
+        self.events.borrow_mut().push(("commit", None));
+        self.inner.commit(transition).await
+    }
+}
+impl QueryStore for KeyTraceStore {
+    async fn query(&self, request: QueryRequest) -> Result<QueryPage, GatewayError> {
+        self.events.borrow_mut().push(("query", None));
+        self.inner.query(request).await
+    }
+}
+
+#[test]
+fn derived_window_key_refusal_keeps_original_revision_read_and_commit_phases()
+-> Result<(), Box<dyn std::error::Error>> {
+    for malformed in [false, true] {
+        let directory = Directory::new();
+        let store = KeyTraceStore {
+            inner: SqliteStore::open(&directory.file("checked-key-phase.sqlite3")),
+            events: RefCell::new(Vec::new()),
+        };
+        let host = Host(Cell::new(0));
+        let mut input: Value = serde_json::from_str(&line(
+            json!([
+                "uos_ai",
+                "api_key_usage",
+                "v3",
+                "window",
+                "key",
+                "v3:1000",
+                0
+            ]),
+            json!({"window_reset_at_ms":5000}),
+        ))?;
+        if malformed {
+            input["key"][4] = json!({"type":"bigint","value":"1"});
+        }
+        let input = serde_json::to_string(&input)?;
+        let normalized = gateway_profile_source::codec::normalize_source_import_line_with_host(
+            &input,
+            &CanonicalDates,
+        )?
+        .ok_or("expected source profile row")?;
+        let key = normalized.key;
+        let response = run(execute_profile(
+            &store,
+            &host,
+            request(input, false, false),
+            context(),
+        ))?;
+        assert_eq!(
+            host.0.get(),
+            1,
+            "key check must stay after the original revision observation"
+        );
+        if malformed {
+            assert_eq!(response.status, 422);
+            assert_eq!(body(response)?["errors"], 1);
+            assert_eq!(*store.events.borrow(), vec![("read", Some(key.clone()))]);
+            assert!(run(store.inner.read(&key))?.is_none());
+        } else {
+            assert_eq!(response.status, 200);
+            assert_eq!(body(response)?["imported"], 1);
+            assert_eq!(
+                *store.events.borrow(),
+                vec![
+                    ("read", Some(key.clone())),
+                    ("read", Some(key.clone())),
+                    ("commit", None)
+                ]
+            );
+            assert!(run(store.inner.read(&key))?.is_some());
+        }
+    }
+    Ok(())
 }

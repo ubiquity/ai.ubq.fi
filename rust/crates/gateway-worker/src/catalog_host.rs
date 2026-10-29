@@ -1,23 +1,35 @@
 //! Fixed catalog reads bound to credential-owner publications and source revisions.
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformHost;
 use crate::host::provider_secret;
 use crate::host::response_bytes;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
-use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
-use gateway_catalog_provider::host::{
-    CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CodexAccount,
-    CredentialPublication, ProviderBinding,
-};
-use gateway_core::{
-    error::GatewayError,
-    state::{AuthorityStore, RevisionCheck},
-};
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::read_codex_source_pool;
+use gateway_catalog_provider::host::CatalogFetch;
+use gateway_catalog_provider::host::CatalogFetchResponse;
+use gateway_catalog_provider::host::CatalogHost;
+use gateway_catalog_provider::host::CatalogProvider;
+use gateway_catalog_provider::host::CodexAccount;
+use gateway_catalog_provider::host::CredentialPublication;
+use gateway_catalog_provider::host::ProviderBinding;
+use gateway_core::state::AuthorityStore;
+use gateway_core::state::RevisionCheck;
+use gateway_model_selection::aliases as model_aliases;
+use gateway_source::error::GatewayError;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::random;
 use gateway_worker_storage::store::now_ms;
-use std::{collections::BTreeMap, rc::Rc};
-use worker::{Env, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Url};
+use std::collections::BTreeMap;
+use std::rc::Rc;
+use worker::Env;
+use worker::Fetch;
+use worker::Headers;
+use worker::Method;
+use worker::Request;
+use worker::RequestInit;
+use worker::RequestRedirect;
+use worker::Url;
 
 #[derive(Clone)]
 pub struct Host {
@@ -56,25 +68,27 @@ pub fn secrets(env: &Env) -> BTreeMap<String, String> {
 
 fn binding(provider: &str, secret: &str) -> ProviderBinding {
     if let Some(provider) = match provider {
-        "surplus" => Some(gateway_core::provider::PaidProvider::Surplus),
-        "openlux" => Some(gateway_core::provider::PaidProvider::Metered),
+        "surplus" => Some(gateway_contracts::provider::PaidProvider::Surplus),
+        "openlux" => Some(gateway_contracts::provider::PaidProvider::Metered),
         _ => None,
     } {
         return ProviderBinding {
             identity: gateway_publication_policy::control_publication::configured_paid_binding(
                 provider,
-                &gateway_auth::crypto::Secret::new(secret.to_owned()),
+                &gateway_auth_primitives::crypto::Secret::new(secret.to_owned()),
             ),
         };
     }
     // This private memo identity preserves source cache invalidation when a
     // configured key changes. It is never a Codex routing/credential fingerprint.
     ProviderBinding {
-        identity: gateway_auth::crypto::sha256_hex(format!("{provider}\0{secret}").as_bytes()),
+        identity: gateway_auth_primitives::crypto::sha256_hex(
+            format!("{provider}\0{secret}").as_bytes(),
+        ),
     }
 }
 
-impl gateway_catalog_runtime::admin::AdminCatalogHost for Host {
+impl gateway_catalog_admin::admin::AdminCatalogHost for Host {
     fn warm_openrouter(&self) {
         let service = crate::catalog::service();
         let mut host = self.clone();
@@ -107,9 +121,7 @@ impl gateway_catalog_runtime::admin::AdminCatalogHost for Host {
 }
 
 impl CatalogHost for Host {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         gateway_worker_platform::source_collator::shared()
     }
     fn now_ms(&self) -> i64 {
@@ -130,7 +142,7 @@ impl CatalogHost for Host {
     }
     async fn publication(&self) -> Result<CredentialPublication, GatewayError> {
         let snapshot = read_codex_source_pool(&self.store, now_ms()?).await?;
-        let normalized = self.store.read(&gateway_authority::keys::pool()).await?;
+        let normalized = self.store.read(&gateway_authority_keys::pool()).await?;
         let mut publication = CredentialPublication {
             source_checks: vec![
                 RevisionCheck {
@@ -138,14 +150,14 @@ impl CatalogHost for Host {
                     expected_revision: snapshot.as_ref().map(|row| row.revision.clone()),
                 },
                 RevisionCheck {
-                    key: gateway_authority::keys::pool(),
+                    key: gateway_authority_keys::pool(),
                     expected_revision: normalized.as_ref().map(|row| row.revision.clone()),
                 },
             ],
             ..Default::default()
         };
         if let Some(normalized) = normalized.as_ref() {
-            let pool: gateway_authority::routing_types::SubscriptionPool =
+            let pool: gateway_authority_routing_records::types::SubscriptionPool =
                 serde_json::from_value(normalized.json_value()?.clone())
                     .map_err(|_| unavailable("Codex routing pool is invalid."))?;
             let source = snapshot

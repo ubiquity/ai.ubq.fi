@@ -24,14 +24,13 @@ impl Cors {
                 .query_pairs()
                 .find_map(|(key, value)| (key == "cors_origin").then(|| value.into_owned())),
         };
-        let origin = raw_origin.and_then(|value| trusted_relay_origin(&value, &config));
-        let credentials = origin.is_some();
+        let (origin, credentials) =
+            match raw_origin.and_then(|value| trusted_relay_origin(&value, &config)) {
+                Some(origin) => (origin, true),
+                None => ("*".into(), false),
+            };
         Ok(Self {
-            origin: if credentials {
-                origin.expect("A credential origin was validated")
-            } else {
-                "*".into()
-            },
+            origin,
             credentials,
             admin: url.path() == "/admin" || url.path().starts_with("/admin/"),
         })

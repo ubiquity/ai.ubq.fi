@@ -1,5 +1,10 @@
-use gateway_core::{lifecycle::SemanticTerminal, provider::UpstreamProvider};
-use gateway_providers::{response, response::decode_response, source_tools::ToolMap, types::*};
+use gateway_contracts::{lifecycle::SemanticTerminal, provider::UpstreamProvider};
+use gateway_provider_protocol::types::ClientSurface;
+use gateway_provider_protocol::types::DecodePlan;
+use gateway_provider_protocol::types::Headers;
+use gateway_provider_protocol::types::ResponseDecode;
+use gateway_provider_response::response::decode_response;
+use gateway_provider_tool_grammar::source_tools::ToolMap;
 use serde_json::{Value, json};
 
 fn plan(stream: bool) -> DecodePlan {
@@ -12,7 +17,7 @@ fn plan(stream: bool) -> DecodePlan {
         response_id: "resp_fixture".into(),
         created_at: 1,
         stream,
-        request: gateway_core::source_json::SourceJson::from_serializable(&json!({})).unwrap(),
+        request: gateway_source::source_json::SourceJson::from_serializable(&json!({})).unwrap(),
         tool_names: ToolMap::new(),
         reasoning_summary: None,
     }
@@ -142,18 +147,19 @@ fn first_completed_terminal_survives_a_later_error_in_both_client_modes() {
     }
 }
 
-fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+fn scalar(value: &gateway_source::source_json::SourceJson) -> serde_json::Value {
     value
         .deserialize()
         .expect("This frozen regression fixture has scalar text")
 }
 
 #[test]
-fn successful_codex_without_media_type_uses_strict_sse_in_both_client_modes() {
+fn successful_codex_without_media_type_uses_strict_sse_in_both_client_modes() -> Result<(), String>
+{
     let terminal = completed();
     for stream in [false, true] {
         let plan = plan(stream);
-        assert!(response::is_event_stream(
+        assert!(gateway_provider_stream::response::is_event_stream(
             plan.provider,
             200,
             &Headers::new()
@@ -164,7 +170,7 @@ fn successful_codex_without_media_type_uses_strict_sse_in_both_client_modes() {
             &Headers::new(),
             &frames(std::slice::from_ref(&terminal)),
         )
-        .unwrap();
+        .map_err(|error| format!("{error:?}"))?;
         assert_eq!(decoded.status, 200);
         assert_eq!(decoded.terminal, Some(SemanticTerminal::Completed));
         assert_eq!(scalar(&decoded.body), terminal["response"]);
@@ -179,6 +185,7 @@ fn successful_codex_without_media_type_uses_strict_sse_in_both_client_modes() {
             }
         );
     }
+    Ok(())
 }
 
 #[test]
@@ -205,9 +212,9 @@ fn absent_codex_media_type_never_accepts_non_sse_or_missing_terminal_as_completi
 }
 
 #[test]
-fn missing_media_type_is_inferred_only_for_successful_fixed_codex_protocol() {
+fn missing_media_type_is_inferred_only_for_successful_fixed_codex_protocol() -> Result<(), String> {
     for status in [199, 300, 400, 403, 429, 500] {
-        assert!(!response::is_event_stream(
+        assert!(!gateway_provider_stream::response::is_event_stream(
             UpstreamProvider::ChatgptCodex,
             status,
             &Headers::new()
@@ -218,17 +225,23 @@ fn missing_media_type_is_inferred_only_for_successful_fixed_codex_protocol() {
         UpstreamProvider::Surplus,
         UpstreamProvider::Cerebras,
     ] {
-        assert!(!response::is_event_stream(provider, 200, &Headers::new()));
+        assert!(!gateway_provider_stream::response::is_event_stream(
+            provider,
+            200,
+            &Headers::new()
+        ));
     }
     let json_headers = Headers::from([("Content-Type".into(), "application/json".into())]);
-    assert!(!response::is_event_stream(
+    assert!(!gateway_provider_stream::response::is_event_stream(
         UpstreamProvider::ChatgptCodex,
         200,
         &json_headers
     ));
     let body = br#"{"error":{"code":"quota_exhausted","message":"unchanged"}}"#;
-    let decoded = decode_response(&plan(true), 429, &Headers::new(), body).unwrap();
+    let decoded = decode_response(&plan(true), 429, &Headers::new(), body)
+        .map_err(|error| format!("{error:?}"))?;
     assert_eq!(decoded.status, 429);
     assert_eq!(decoded.raw_body, Some(body.to_vec()));
     assert_eq!(decoded.terminal, Some(SemanticTerminal::Error));
+    Ok(())
 }

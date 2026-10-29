@@ -1,30 +1,16 @@
 use crate::{invalid, text, validate_time};
-use gateway_core::{
-    error::GatewayError,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
-};
-use gateway_schema::aliases::SourceStringCollator;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_core::source_control::decode_source_control_record;
+use gateway_core::source_control::encode_source_control_record;
+use gateway_core::state::StoredRecord;
+use gateway_core::{state::AtomicTransition, state::RecordMutation};
+use gateway_core::{state::AuthorityStore, state::CommitOutcome, state::RevisionCheck};
+use gateway_kv_codec::key::RecordKey;
+use gateway_model_selection::aliases::SourceStringCollator;
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
 use serde::{Serialize, de::DeserializeOwned};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
-
-/// Platform-supplied cryptographically unique opaque tokens. Revisions are never parsed.
-/// A reset owner or probe token must remain unpredictable to other callers.
-pub trait TokenSource {
-    fn next_token(&self) -> Result<String, GatewayError>;
-}
-
-/// Time-sensitive authority actions recheck time after awaited reads and before spending.
-pub trait AuthorityClock: Send + Sync {
-    fn now_ms(&self) -> Result<i64, GatewayError>;
-}
+use std::{collections::BTreeMap, collections::BTreeSet, sync::Arc};
 
 pub struct Authority<S, I> {
     pub(crate) store: S,
@@ -38,8 +24,8 @@ static MISSING_SOURCE_STRING_COLLATOR: MissingSourceStringCollator = MissingSour
 impl SourceStringCollator for MissingSourceStringCollator {
     fn compare(
         &self,
-        _left: &gateway_core::js_string::JsString16,
-        _right: &gateway_core::js_string::JsString16,
+        _left: &gateway_source::js_string::JsString16,
+        _right: &gateway_source::js_string::JsString16,
     ) -> Result<std::cmp::Ordering, GatewayError> {
         Err(GatewayError::unavailable(
             "Source string comparison requires the trusted runtime capability.",
@@ -116,18 +102,6 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
 }
 
-/// Only the named local release adapter observes this private read origin.
-pub(crate) enum ApiReleaseReadError {
-    Backend(GatewayError),
-    Record(GatewayError),
-}
-impl ApiReleaseReadError {
-    fn into_error(self) -> GatewayError {
-        match self {
-            Self::Backend(error) | Self::Record(error) => error,
-        }
-    }
-}
 fn decode_json_record<T: DeserializeOwned>(row: &StoredRecord) -> Result<T, GatewayError> {
     serde_json::from_value(row.json_value()?.clone())
         .map_err(|_| invalid("Malformed authority record."))
@@ -146,27 +120,13 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         &mut self,
         key: &RecordKey,
     ) -> Result<Option<&StoredRecord>, GatewayError> {
-        self.cached_record_classified(key)
-            .await
-            .map_err(ApiReleaseReadError::into_error)
-    }
-    async fn cached_record_classified(
-        &mut self,
-        key: &RecordKey,
-    ) -> Result<Option<&StoredRecord>, ApiReleaseReadError> {
         if !self.reads.contains_key(&key.0) {
-            let record = self
-                .store
-                .read(key)
-                .await
-                .map_err(ApiReleaseReadError::Backend)?;
+            let record = self.store.read(key).await?;
             if let Some(value) = &record {
-                value
-                    .validate_version()
-                    .map_err(ApiReleaseReadError::Record)?;
-                text(&value.revision).map_err(ApiReleaseReadError::Record)?;
+                value.validate_version()?;
+                text(&value.revision)?;
                 if let Some(expiry) = value.expires_at_ms {
-                    validate_time(expiry).map_err(ApiReleaseReadError::Record)?;
+                    validate_time(expiry)?;
                 }
             }
             self.reads.insert(key.0.clone(), record);
@@ -176,17 +136,6 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             return Ok(None);
         }
         Ok(raw)
-    }
-    /// Same read/cache/revision operation as read; only origin is retained for
-    /// the finite local-release error adapter. It exposes no mutation or I/O grant.
-    pub(crate) async fn read_api_release<T: DeserializeOwned>(
-        &mut self,
-        key: &RecordKey,
-    ) -> Result<Option<T>, ApiReleaseReadError> {
-        self.cached_record_classified(key)
-            .await?
-            .map(|row| decode_json_record(row).map_err(ApiReleaseReadError::Record))
-            .transpose()
     }
 
     /// Establish only the existing cached metadata/revision precondition. This
@@ -206,6 +155,13 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             .transpose()
     }
 
+    pub(crate) fn routing_read_store(&mut self) -> RoutingReadStore<'_, S> {
+        RoutingReadStore {
+            store: self.store,
+            reads: std::cell::RefCell::new(&mut self.reads),
+        }
+    }
+
     /// Explicit lossless opt-in for named control families. The caller still owns
     /// the exact key, DTO/version and currentness checks; data grants no authority.
     pub(crate) async fn read_source_control<T: DeserializeOwned>(
@@ -222,29 +178,12 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             .transpose()
     }
 
-    pub async fn read_claude_quota(
-        &mut self,
-        account_id: &str,
-        cohort_id: &str,
-    ) -> Result<Option<SourceJson>, GatewayError> {
-        let key = crate::keys::claude_quota(account_id, cohort_id);
-        self.cached_record(&key)
-            .await?
-            .map(|row| match row.value_encoding {
-                gateway_core::value::ValueEncoding::ProfileV2 => Ok(
-                    crate::claude::quota_proof_metadata(&row.profile_v2_value()?),
-                ),
-                _ => SourceJson::from_serializable(row.json_value()?),
-            })
-            .transpose()
-    }
-
     /// Preserve the full source value and custody for this one audit family.
     pub(crate) async fn read_full_pool_reset_audit(
         &mut self,
         episode_hash: &str,
     ) -> Result<Option<StoredRecord>, GatewayError> {
-        let key = crate::keys::reset_shadow(episode_hash);
+        let key = gateway_authority_keys::reset_shadow(episode_hash);
         Ok(self.cached_record(&key).await?.cloned())
     }
 
@@ -368,73 +307,6 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         Ok(())
     }
 
-    /// The one finite routing-local completion writer. Its data plan fixes both
-    /// keys, the only allowed patch, None retention and the :pending revision.
-    pub(crate) fn put_local_completed_journal(
-        &mut self,
-        plan: &gateway_core::local_completion::LocalCompletedJournalPlan,
-        now: i64,
-    ) -> Result<(), GatewayError> {
-        use gateway_core::local_completion::LocalCompletedJournalState;
-        let journal_key = plan.journal_key();
-        let pending_key = plan.pending_key();
-        let journal = self
-            .reads
-            .get(&journal_key.0)
-            .and_then(Option::as_ref)
-            .ok_or_else(|| invalid("Local journal has no strong-read precondition."))?;
-        let pending = self
-            .reads
-            .get(&pending_key.0)
-            .and_then(Option::as_ref)
-            .ok_or_else(|| invalid("Local pending marker has no strong-read precondition."))?;
-        if now != self.now
-            || journal.revision != plan.expected_revision()
-            || journal.expires_at_ms.is_some()
-            || pending.expires_at_ms.is_some()
-            || pending.revision != format!("{}:pending", journal.revision)
-            || *pending.json_value()?
-                != serde_json::json!({"request_id":plan.context().request_id.0})
-            || plan.classify(&decode_source_control_record(journal)?)?
-                != LocalCompletedJournalState::Prepared
-            || self.writes.contains_key(&journal_key.0)
-            || self.writes.contains_key(&pending_key.0)
-        {
-            return Err(invalid("Local completion journal custody conflicts."));
-        }
-        let document = plan.completed_document(now)?;
-        self.put_source_control(&journal_key, &document, None)?;
-        let Some(RecordMutation::Put { record, .. }) = self.writes.get(&journal_key.0) else {
-            return Err(invalid("Local completion journal write is missing."));
-        };
-        let pending_revision = format!("{}:pending", record.revision);
-        text(&pending_revision)?;
-        if self
-            .reads
-            .values()
-            .flatten()
-            .any(|row| row.revision == pending_revision)
-            || self.writes.values().any(|mutation| {
-                matches!(mutation,
-                RecordMutation::Put { record, .. } if record.revision == pending_revision)
-            })
-        {
-            return Err(invalid("Local completion reused an existing revision."));
-        }
-        self.writes.insert(
-            pending_key.0.clone(),
-            RecordMutation::Put {
-                key: pending_key,
-                record: StoredRecord::json(
-                    pending_revision,
-                    serde_json::json!({"request_id":plan.context().request_id.0}),
-                    None,
-                ),
-            },
-        );
-        Ok(())
-    }
-
     pub fn delete(&mut self, key: &RecordKey) -> Result<(), GatewayError> {
         if !self.reads.contains_key(&key.0) {
             return Err(invalid(
@@ -469,3 +341,383 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
 
 #[cfg(test)]
 mod source_control_tests;
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_api_quota::ApiQuotaFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn api_quota(&self) -> gateway_authority_api_quota::ApiQuotaService<'_, S, I> {
+        gateway_authority_api_quota::ApiQuotaService::new(&self.store, &self.tokens)
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_api_release::ApiReleaseFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn api_release(&self) -> gateway_authority_api_release::ApiReleaseService<'_, S, I> {
+        gateway_authority_api_release::ApiReleaseService::new(&self.store, &self.tokens)
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_kernel::KernelFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn kernel(&self) -> gateway_authority_kernel::KernelService<'_, S, I> {
+        gateway_authority_kernel::KernelService::new(&self.store, &self.tokens)
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_local_completion::LocalCompletionFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn local_completion(
+        &self,
+    ) -> gateway_authority_local_completion::LocalCompletionService<'_, S, I> {
+        gateway_authority_local_completion::LocalCompletionService::new(&self.store, &self.tokens)
+    }
+}
+
+/// Private fixed-reader bridge. No mutation or raw store reference crosses this boundary.
+pub(crate) struct RoutingReadStore<'a, S> {
+    store: &'a S,
+    reads: std::cell::RefCell<&'a mut BTreeMap<String, Option<StoredRecord>>>,
+}
+impl<S: AuthorityStore> AuthorityStore for RoutingReadStore<'_, S> {
+    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
+        let missing = !self.reads.borrow().contains_key(&key.0);
+        if missing {
+            let record = self.store.read(key).await?;
+            if let Some(row) = &record {
+                row.validate_version()?;
+                text(&row.revision)?;
+                if let Some(expiry) = row.expires_at_ms {
+                    validate_time(expiry)?;
+                }
+            }
+            self.reads.borrow_mut().insert(key.0.clone(), record);
+        }
+        Ok(self.reads.borrow().get(&key.0).cloned().flatten())
+    }
+    async fn commit(&self, _transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
+        Err(invalid(
+            "Routing evidence reader has no mutation authority.",
+        ))
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_capacity::CapacityFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn capacity(&self) -> gateway_authority_capacity::CapacityService<'_, S, I> {
+        gateway_authority_capacity::CapacityService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_claude_proof::ClaudeProofFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    fn claude_proof(&self) -> gateway_authority_claude_proof::ClaudeProofService<'_, S> {
+        gateway_authority_claude_proof::ClaudeProofService::new(&self.store, self.clock.as_deref())
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_routing_selection::SelectionFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn selection(&self) -> gateway_authority_routing_selection::SelectionService<'_, S, I> {
+        gateway_authority_routing_selection::SelectionService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_paid_route::PaidRouteFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    fn paid_route(&self) -> gateway_authority_paid_route::PaidRouteService<'_, S> {
+        gateway_authority_paid_route::PaidRouteService::new(
+            &self.store,
+            self.clock.as_deref(),
+            self.source_string_collator(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_paid_admission::PaidAdmissionFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn paid_admission(&self) -> gateway_authority_paid_admission::PaidAdmissionService<'_, S, I> {
+        gateway_authority_paid_admission::PaidAdmissionService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+            self.source_string_collator(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_paid_ledger::PaidLedgerFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn paid_ledger(&self) -> gateway_authority_paid_ledger::PaidLedgerService<'_, S, I> {
+        gateway_authority_paid_ledger::PaidLedgerService::new(&self.store, &self.tokens)
+    }
+}
+
+impl<S: gateway_core::query::QueryStore, I: TokenSource>
+    gateway_authority_paid_backfill::PaidBackfillFactory for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn paid_backfill(&self) -> gateway_authority_paid_backfill::PaidBackfillService<'_, S, I> {
+        gateway_authority_paid_backfill::PaidBackfillService::new(&self.store, &self.tokens)
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_reset_permit::ResetPermitFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn reset_permit(&self) -> gateway_authority_reset_permit::ResetPermitService<'_, S, I> {
+        gateway_authority_reset_permit::ResetPermitService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_reset_claim::ResetClaimFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn reset_claim(&self) -> gateway_authority_reset_claim::ResetClaimService<'_, S, I> {
+        gateway_authority_reset_claim::ResetClaimService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_reset_spend::ResetSpendFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn reset_spend(&self) -> gateway_authority_reset_spend::ResetSpendService<'_, S, I> {
+        gateway_authority_reset_spend::ResetSpendService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_reset_recovery::ResetRecoveryFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn reset_recovery(&self) -> gateway_authority_reset_recovery::ResetRecoveryService<'_, S, I> {
+        gateway_authority_reset_recovery::ResetRecoveryService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_routing_signal::SignalFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn routing_signal(&self) -> gateway_authority_routing_signal::SignalService<'_, S, I> {
+        gateway_authority_routing_signal::SignalService::new(
+            &self.store,
+            &self.tokens,
+            self.source_string_collator(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_cache_experiment_campaign::CacheCampaignFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn cache_campaign(&self) -> gateway_cache_experiment_campaign::CacheCampaignService<'_, S, I> {
+        gateway_cache_experiment_campaign::CacheCampaignService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_cache_experiment_dispatch::CacheDispatchFactory
+    for Authority<S, I>
+{
+    fn cache_transport(&self) -> gateway_cache_experiment_dispatch::CacheDispatchService<'_, S, I> {
+        gateway_cache_experiment_dispatch::CacheDispatchService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_cache_experiment_runner::CacheRunFactory
+    for Authority<S, I>
+{
+    fn cache_runner(&self) -> gateway_cache_experiment_runner::CacheRunService<'_, S> {
+        gateway_cache_experiment_runner::CacheRunService::new(&self.store, self.clock.as_deref())
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    pub fn actors<
+        'a,
+        H: gateway_auth_contracts::types::AuthHost
+            + gateway_auth_passport_contracts::session::PassportDate,
+    >(
+        &'a self,
+        host: &'a H,
+        config: &'a gateway_auth_contracts::types::AuthConfig,
+    ) -> gateway_authority_actor_currentness::app::ActorService<'a, S, H> {
+        gateway_authority_actor_currentness::app::ActorService::new(&self.store, host, config)
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    pub fn source_manual_resets<
+        'a,
+        H: gateway_auth_contracts::types::AuthHost
+            + gateway_auth_passport_contracts::session::PassportDate,
+    >(
+        &'a self,
+        host: &'a H,
+        config: &'a gateway_auth_contracts::types::AuthConfig,
+    ) -> gateway_authority_manual_reset::SourceManualResetService<'a, S, I, H> {
+        gateway_authority_manual_reset::SourceManualResetService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+            host,
+            config,
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    pub fn source_native_renewals<
+        'a,
+        H: gateway_auth_contracts::types::AuthHost
+            + gateway_auth_passport_contracts::session::PassportDate,
+        C: gateway_authority_contracts::NativeRenewalCancellation,
+    >(
+        &'a self,
+        host: &'a H,
+        config: &'a gateway_auth_contracts::types::AuthConfig,
+        identity: &'a gateway_auth_native_proof::native_auth::NativeTransportIdentity,
+        registered: &'a gateway_authority_native_records::owner::RegisteredRenewalOwner,
+        cancellation: &'a C,
+    ) -> gateway_authority_native_preparation::SourceNativeRenewalService<'a, S, I, H, C> {
+        gateway_authority_native_preparation::SourceNativeRenewalService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+            host,
+            config,
+            gateway_authority_native_preparation::SourceNativePreparationContext::configured(
+                identity,
+                registered,
+                cancellation,
+            ),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    pub fn source_native_lifecycle<
+        'a,
+        H: gateway_auth_contracts::types::AuthHost
+            + gateway_auth_passport_contracts::session::PassportDate,
+        C: gateway_authority_contracts::NativeRenewalCancellation,
+    >(
+        &'a self,
+        host: &'a H,
+        config: &'a gateway_auth_contracts::types::AuthConfig,
+        identity: &'a gateway_auth_native_proof::native_auth::NativeTransportIdentity,
+        registered: &'a gateway_authority_native_records::owner::RegisteredRenewalOwner,
+        cancellation: &'a C,
+    ) -> gateway_authority_native_lifecycle::SourceNativeLifecycleService<'a, S, I, H, C> {
+        gateway_authority_native_lifecycle::SourceNativeLifecycleService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+            host,
+            config,
+            gateway_authority_native_lifecycle::SourceNativeLifecycleContext::configured(
+                identity,
+                registered,
+                cancellation,
+            ),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    pub fn source_native_managed<
+        'a,
+        H: gateway_auth_contracts::types::AuthHost
+            + gateway_auth_passport_contracts::session::PassportDate,
+        C: gateway_authority_contracts::NativeRenewalCancellation,
+    >(
+        &'a self,
+        host: &'a H,
+        config: &'a gateway_auth_contracts::types::AuthConfig,
+        identity: &'a gateway_auth_native_proof::native_auth::NativeTransportIdentity,
+        registered: &'a gateway_authority_native_records::owner::RegisteredRenewalOwner,
+        cancellation: &'a C,
+    ) -> gateway_authority_native_managed::SourceNativeManagedService<'a, S, I, H, C> {
+        gateway_authority_native_managed::SourceNativeManagedService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+            host,
+            config,
+            gateway_authority_native_managed::SourceNativeManagedContext::configured(
+                identity,
+                registered,
+                cancellation,
+            ),
+        )
+    }
+}

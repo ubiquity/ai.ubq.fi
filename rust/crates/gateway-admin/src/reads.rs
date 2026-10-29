@@ -3,18 +3,17 @@ use gateway_admin_contracts::{
     source_input as input,
 };
 use gateway_admin_keys::keys::{ApiKeyRecord, public_record};
-use gateway_auth::{
-    api_keys,
-    passkeys::{PasskeyUser, user_wire},
-    store,
-    types::{AuthResponse, invalid},
-};
+use gateway_auth_contracts::{passkeys::PasskeyUser, types::AuthResponse};
+use gateway_auth_passkeys::passkeys::user_wire;
+use gateway_auth_primitives::api_keys;
+use gateway_auth_primitives::error::invalid;
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryRequest, QuerySelector, QueryStore},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::{RecordKey, StoredRecord},
+    query::QueryRequest, query::QuerySelector, query::QueryStore, state::StoredRecord,
+};
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
 use serde_json::json;
 
@@ -64,7 +63,17 @@ pub async fn passkey_users<S: QueryStore>(
     store: &S,
     now: i64,
 ) -> Result<AuthResponse, GatewayError> {
-    let rows = prefix_rows(store, store::key(json!(["uos_ai", "auth", "users"])), now).await?;
+    let rows = prefix_rows(
+        store,
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("auth"),
+            ScalarKeyPart::String("users"),
+        ])
+        .to_record_key(),
+        now,
+    )
+    .await?;
     let mut users = Vec::new();
     for (_, row) in rows {
         let user: PasskeyUser =
@@ -140,7 +149,7 @@ pub async fn effective_key_record_with_usage<S: QueryStore>(
         now,
     )?;
     let window = store
-        .read(&gateway_authority::keys::api_window(
+        .read(&gateway_authority_keys::api_window(
             &record.policy.id,
             &format!("v3:{}", record.policy.window_ms),
             start,
@@ -150,7 +159,7 @@ pub async fn effective_key_record_with_usage<S: QueryStore>(
         None => 0,
         Some(row) => {
             row.validate_version()?;
-            let usage: gateway_authority::quota::ApiUsageWindow =
+            let usage: gateway_authority_api_protocol::ApiUsageWindow =
                 serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
                     GatewayError::unavailable(
                         "API key quota ledger is corrupt",
@@ -188,14 +197,14 @@ pub async fn effective_key_record_with_usage<S: QueryStore>(
         value = omit_field(value, "usage_requests");
     }
     let paid = store
-        .read(&gateway_authority::keys::paid_window(
+        .read(&gateway_authority_keys::paid_window(
             &record.policy.id,
             reset,
         ))
         .await?;
     if let Some(row) = paid {
         row.validate_version()?;
-        let paid: gateway_authority::paid_types::PaidWindow =
+        let paid: gateway_authority_paid_records::PaidWindow =
             serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
                 GatewayError::unavailable(
                     "Paid billing window is corrupt",
@@ -264,7 +273,17 @@ pub async fn api_keys_with_usage<S: QueryStore>(
     now: i64,
     include_usage: bool,
 ) -> Result<AuthResponse, GatewayError> {
-    let rows = prefix_rows(store, store::key(json!(["ubq_ai", "api_keys", "id"])), now).await?;
+    let rows = prefix_rows(
+        store,
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("ubq_ai"),
+            ScalarKeyPart::String("api_keys"),
+            ScalarKeyPart::String("id"),
+        ])
+        .to_record_key(),
+        now,
+    )
+    .await?;
     let mut records = Vec::new();
     for (key, row) in rows {
         let record = gateway_admin_keys::keys::decode_id_record(&key, &row)?;
@@ -303,7 +322,7 @@ pub async fn key_changes<S: QueryStore>(
                 .trim()
                 .parse::<u64>()
                 .ok()
-                .filter(|n| *n > 0 && *n <= gateway_core::identity::MAX_SAFE_INTEGER as u64)
+                .filter(|n| *n > 0 && *n <= gateway_contracts::identity::MAX_SAFE_INTEGER as u64)
                 .ok_or_else(|| invalid("limit must be a positive integer"))?
                 .min(50) as u32
         }
@@ -321,7 +340,12 @@ pub async fn key_changes<S: QueryStore>(
     let page = store
         .query(QueryRequest {
             selector: QuerySelector::Prefix {
-                prefix: store::key(json!(["uos_ai", "api_keys", "change"])),
+                prefix: TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("api_keys"),
+                    ScalarKeyPart::String("change"),
+                ])
+                .to_record_key(),
                 start: None,
                 end: None,
             },

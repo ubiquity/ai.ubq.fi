@@ -1,8 +1,7 @@
 //! Source capture-status metadata admission/recount/pruning against the same ledger fence.
 use crate::{ReplayMetadata, store};
-use gateway_core::{
-    query::QueryStore, state::RecordKey, state::RecordMutation, state::StoredRecord,
-};
+use gateway_core::{query::QueryStore, state::RecordMutation, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{
     data, query, query::ObservationRead, query::ReplayRows, source_object::SourceObject,
     types::ObservabilityHost,

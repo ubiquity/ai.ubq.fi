@@ -1,7 +1,9 @@
 use gateway_auth::resolve::AuthService;
 use gateway_auth_contracts::types::{AuthConfig, AuthHost};
 use gateway_auth_passkeys::{passkeys::PasskeyService, session_index};
-use gateway_core::state::*;
+use gateway_core::state::{
+    AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
+};
 mod revision_fixture;
 use revision_fixture::*;
 

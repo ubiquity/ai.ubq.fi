@@ -1,5 +1,6 @@
 //! Logical JSON leaves for declared replay record schemas, with explicit ProfileV2 text.
-use gateway_core::{state::RecordKey, state::RecordMutation, state::StoredRecord};
+use gateway_core::{state::RecordMutation, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{data, source_object::portable_json};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 

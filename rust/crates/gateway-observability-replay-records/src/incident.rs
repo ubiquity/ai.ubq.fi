@@ -1,6 +1,6 @@
 //! Exact named incident source DATA and predicates; never live capture or authority proof.
 use gateway_auth_primitives::crypto::sha256_hex;
-use gateway_core::state::RecordKey;
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{data, source_object::SourceObject};
 use gateway_observability_replay_model::replay_model as model;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};

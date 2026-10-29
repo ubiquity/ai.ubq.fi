@@ -1,21 +1,23 @@
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformHost, provider_secret},
     observability_host,
 };
-use gateway_admin_runtime::claude::{self, AccountBinding, Bootstrap, CredentialKind};
 use gateway_auth_contracts::{
-    types::AuthHost, upstream::AuthUpstreamRequest, upstream::AuthUpstreamResponse,
-    webauthn::CosePublicKey, webauthn::SignatureInput, webauthn::WebAuthnCrypto,
+    types::AuthHost,
+    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
+    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
 use gateway_catalog_provider::host::ProviderBinding;
-use gateway_claude_runtime::host::{ClaudePoolHost, HealthObservation, WorkspaceResponse};
+use gateway_claude_policy::host::{ClaudePoolHost, HealthObservation, WorkspaceResponse};
+use gateway_claude_roster::claude::{self, AccountBinding, Bootstrap, CredentialKind};
 use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_core::state::RevisionCheck;
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_contracts::types::{HealthEvent, HealthProvider, HealthTarget};
 use gateway_schema::catalog::ProviderCatalog;
+use gateway_schema_values::scalar as util;
 use gateway_source::error::GatewayError;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use serde_json::json;
 use std::{cmp::Ordering, rc::Rc};
 
@@ -35,7 +37,7 @@ impl Host {
 }
 pub(super) fn bootstrap(platform: &PlatformHost) -> Result<Bootstrap, GatewayError> {
     let now = platform.now_ms();
-    if now <= 0 || now > gateway_core::identity::MAX_SAFE_INTEGER {
+    if now <= 0 || now > gateway_contracts::identity::MAX_SAFE_INTEGER {
         return Err(super::invalid("Claude source clock is invalid."));
     }
     let credential = if let Some(secret) = provider_secret(&platform.env, "CLAUDE_API_KEY") {
@@ -218,10 +220,10 @@ pub(super) struct ConstructionFailure;
 
 pub(super) fn credential_kind(
     credential: &claude::Credential,
-) -> gateway_providers::types::ClaudeCredentialKind {
+) -> gateway_provider_claude_body::types::ClaudeCredentialKind {
     match credential.kind {
-        CredentialKind::Oauth => gateway_providers::types::ClaudeCredentialKind::Oauth,
-        CredentialKind::ApiKey => gateway_providers::types::ClaudeCredentialKind::ApiKey,
+        CredentialKind::Oauth => gateway_provider_claude_body::types::ClaudeCredentialKind::Oauth,
+        CredentialKind::ApiKey => gateway_provider_claude_body::types::ClaudeCredentialKind::ApiKey,
     }
 }
 
@@ -295,9 +297,7 @@ fn trim_workspace(
     value: &gateway_source::js_string::JsString16,
 ) -> Option<gateway_source::js_string::JsString16> {
     let units = value.as_units();
-    let whitespace = |unit: &u16| {
-        char::from_u32(u32::from(*unit)).is_some_and(gateway_schema::util::js_whitespace)
-    };
+    let whitespace = |unit: &u16| char::from_u32(u32::from(*unit)).is_some_and(util::js_whitespace);
     let start = units
         .iter()
         .position(|unit| !whitespace(unit))
@@ -312,7 +312,7 @@ fn trim_workspace(
 
 pub(super) fn physical_request(
     binding: &AccountBinding,
-    body: &gateway_providers::types::PreparedClaudeBody,
+    body: &gateway_provider_claude_body::types::PreparedClaudeBody,
 ) -> Result<crate::transport::outbound::ConstructedRequest, ConstructionFailure> {
     if body.kind() != credential_kind(&binding.credential) {
         return Err(ConstructionFailure);
@@ -362,12 +362,13 @@ mod physical_tests {
     #[test]
     fn actual_prepared_body_kind_rejects_wrong_binding_before_any_host_header()
     -> Result<(), Box<dyn std::error::Error>> {
-        use gateway_admin_runtime::claude::{
+        use gateway_claude_roster::claude::{
             AccountBinding, Credential, CredentialKind, source_secret::ClaudeSourceSecret,
         };
-        use gateway_providers::types::{
-            ClaudeBodyOptions, ClaudeCredentialKind, ClientSurface, PreparedClaudeBody,
+        use gateway_provider_claude_body::types::{
+            ClaudeBodyOptions, ClaudeCredentialKind, PreparedClaudeBody,
         };
+        use gateway_provider_protocol::types::ClientSurface;
         use gateway_source::source_json::SourceJson;
         let binding = AccountBinding {
             account_id: "fixture-account".into(),

@@ -1,11 +1,9 @@
-use gateway_core::{
+use gateway_contracts::{
     claude::ClaudeErrorEvidence, lifecycle::TransportObservation, provider::UpstreamProvider,
 };
 use gateway_extras_contract::family::ExtrasFamily;
-use gateway_providers::{
-    policy::HopFailure,
-    types::{ClaudeBodyOptions, ClaudeCredentialKind},
-};
+use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::ClaudeCredentialKind};
+use gateway_provider_policy::policy::HopFailure;
 use gateway_routing_runtime::{session::*, types::*};
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use serde_json::json;
@@ -38,13 +36,13 @@ fn request(id: &str, disabled: bool) -> RoutingInput {
         .get_mut("claude_code")
         .unwrap()
         .models = vec![
-        gateway_core::source_json::SourceJson::from_serializable(
+        gateway_source::source_json::SourceJson::from_serializable(
             &json!({"id":"claude-sonnet-4-6","supported_endpoint_types":["openai-response","anthropic"],"supports_tools":true}),
         ).unwrap(),
     ];
     if !disabled {
-        let fields = gateway_core::source_serialization::entries(&request.raw).unwrap();
-        request.raw = gateway_core::source_serialization::object_keys(
+        let fields = gateway_source::source_serialization::entries(&request.raw).unwrap();
+        request.raw = gateway_source::source_serialization::object_keys(
             fields
                 .into_iter()
                 .filter(|(key, _)| key != &"reasoning".into())
@@ -219,7 +217,7 @@ fn workspace_continuation_keeps_encoded_body_attempt_and_single_claim() {
                 CredentialFence::Claude { workspace_id, .. } => workspace_id.as_ref(),
                 _ => None,
             },
-            Some(&gateway_core::js_string::JsString16::from_utf8(
+            Some(&gateway_source::js_string::JsString16::from_utf8(
                 "actual-workspace"
             ))
         );
@@ -272,9 +270,9 @@ fn disabled_thinking_keeps_first_refusal_and_does_not_adopt_workspace() {
         .unwrap();
         let first = session.next_attempt().await.unwrap().unwrap();
         let thinking =
-            gateway_core::source_serialization::member(first.request.body(), "thinking").unwrap();
+            gateway_source::source_serialization::member(first.request.body(), "thinking").unwrap();
         assert_eq!(
-            gateway_core::source_serialization::member(&thinking, "type")
+            gateway_source::source_serialization::member(&thinking, "type")
                 .unwrap()
                 .as_str(),
             "\"disabled\""
@@ -334,15 +332,15 @@ fn systemone_and_retrying_job_poll_use_actual_provider_and_original_quota() -> T
             handle
                 .finish(
                     TransportObservation::default(),
-                    gateway_authority::kernel::KernelTerminal::Released,
+                    gateway_authority_kernel_protocol::KernelTerminal::Released,
                     "source-read-or-failure",
                 )
                 .await?;
             assert_eq!(window(&store)["committed_requests"], 1);
             assert_eq!(
-                store.value(gateway_authority::keys::api_request(
+                store.value(gateway_authority_keys::api_request(
                     "key-a",
-                    &format!("v3:{}", gateway_authority::DAY_MS),
+                    &format!("v3:{}", gateway_authority_contracts::DAY_MS),
                     NOW,
                     id
                 ))["provider"],
@@ -363,7 +361,7 @@ fn source_cooldown_refusal_retains_lone_surrogate_json_and_never_dispatches() {
         host.claude_refused = Some((
             429,
             BTreeMap::from([("Retry-After".into(), "9".into())]),
-            gateway_core::source_json::SourceJson::parse(wire).unwrap(),
+            gateway_source::source_json::SourceJson::parse(wire).unwrap(),
         ));
         let session = RoutingSession::begin(
             request("raw-cooldown", false),
@@ -439,7 +437,7 @@ fn invalid_image_request_releases_an_empty_source_plan_without_provider_dispatch
             handle
                 .finish(
                     TransportObservation::default(),
-                    gateway_authority::kernel::KernelTerminal::Committed,
+                    gateway_authority_kernel_protocol::KernelTerminal::Committed,
                     "invalid-image"
                 )
                 .await
@@ -448,7 +446,7 @@ fn invalid_image_request_releases_an_empty_source_plan_without_provider_dispatch
         let finished = handle
             .finish(
                 TransportObservation::default(),
-                gateway_authority::kernel::KernelTerminal::Released,
+                gateway_authority_kernel_protocol::KernelTerminal::Released,
                 "invalid-image",
             )
             .await?;

@@ -1,18 +1,18 @@
 use gateway_admin_contracts::{operations::AdminHost, routes::AdminOperation};
-use gateway_admin_runtime::RuntimeConfig;
-use gateway_admin_runtime::{
-    AdminRuntime,
+use gateway_admin_runtime::AdminRuntime;
+use gateway_admin_runtime_contracts::{
+    RuntimeConfig,
     capabilities::{CaptureRequest, CodexRequest, Context, RuntimeCapabilities},
 };
-use gateway_admin_test_support::runtime_fixtures::seed_catalog;
 use gateway_admin_test_support::{
-    runtime_fixtures::{WireBody, input, runtime},
+    runtime_fixtures::{WireBody, input, runtime, seed_catalog},
     runtime_host::{Host, run},
     runtime_store::Store,
 };
-use gateway_auth::types::AuthResponse;
-use gateway_core::error::GatewayError;
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_schema::catalog_store::codex_snapshot_key;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::cell::RefCell;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -102,7 +102,14 @@ fn provider_selection_is_ordered_and_codex_absorbs_subscriptions() {
     );
     assert_eq!(
         store
-            .get(json!(["uos_ai", "provider_selection", "v1"]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("provider_selection"),
+                    ScalarKeyPart::String("v1")
+                ])
+                .to_record_key()
+            )
             .unwrap()["provider_ids"],
         json!(["codex", "surplus", "openlux"])
     );
@@ -121,7 +128,15 @@ fn defaults_keep_advertised_custom_reasoning_and_atomic_late_validation() {
     );
     assert_eq!(
         store
-            .get(json!(["uos_ai", "authority", "v1", "kernel_defaults"]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("authority"),
+                    ScalarKeyPart::String("v1"),
+                    ScalarKeyPart::String("kernel_defaults")
+                ])
+                .to_record_key()
+            )
             .unwrap()["usage_limit_requests"],
         25
     );
@@ -148,8 +163,8 @@ fn defaults_keep_advertised_custom_reasoning_and_atomic_late_validation() {
     );
 }
 fn kernel_window(store: &Store, expiry: i64, intent: Value) {
-    store.put(json!(["uos_ai","kernel_quota","v2","org_window","owner"]),json!({"v":2,"owner":"owner","repo":null,"usage_requests":0,"reserved_requests":1,"created_at_ms":800000,"usage_reset_at_ms":2000000,"applied_window_ms":604800000,"updated_at_ms":900000,"reservations":{"request":expiry}}));
-    store.put(json!(["uos_ai","kernel_quota","v2","org_reservation","owner",800000,"request"]),json!({"v":2,"owner":"owner","repo":null,"request_id":"request","route":"/v1/responses","window_created_at_ms":800000,"window_reset_at_ms":2000000,"reserved_at_ms":850000,"lease_expires_at_ms":expiry,"terminal_intent":intent,"state":null,"terminal_at_ms":null,"release_reason":null}));
+    store.put(TupleKey::from_scalar_parts(&[ScalarKeyPart::String("uos_ai"),ScalarKeyPart::String("kernel_quota"),ScalarKeyPart::String("v2"),ScalarKeyPart::String("org_window"),ScalarKeyPart::String("owner")]).to_record_key(),json!({"v":2,"owner":"owner","repo":null,"usage_requests":0,"reserved_requests":1,"created_at_ms":800000,"usage_reset_at_ms":2000000,"applied_window_ms":604800000,"updated_at_ms":900000,"reservations":{"request":expiry}}));
+    store.put(TupleKey::from_scalar_parts(&[ScalarKeyPart::String("uos_ai"),ScalarKeyPart::String("kernel_quota"),ScalarKeyPart::String("v2"),ScalarKeyPart::String("org_reservation"),ScalarKeyPart::String("owner"),ScalarKeyPart::Number(800000),ScalarKeyPart::String("request")]).to_record_key(),json!({"v":2,"owner":"owner","repo":null,"request_id":"request","route":"/v1/responses","window_created_at_ms":800000,"window_reset_at_ms":2000000,"reserved_at_ms":850000,"lease_expires_at_ms":expiry,"terminal_intent":intent,"state":null,"terminal_at_ms":null,"release_reason":null}));
 }
 #[test]
 fn default_window_cutover_blocks_active_reservations_and_releases_its_claim() {
@@ -169,17 +184,26 @@ fn default_window_cutover_blocks_active_reservations_and_releases_its_claim() {
     );
     assert!(
         store
-            .get(json!([
-                "uos_ai",
-                "kernel_quota",
-                "v2",
-                "default_window_cutover"
-            ]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("kernel_quota"),
+                    ScalarKeyPart::String("v2"),
+                    ScalarKeyPart::String("default_window_cutover")
+                ])
+                .to_record_key()
+            )
             .is_none()
     );
     assert!(
         store
-            .get(json!(["default", "kernel_policy_window_ms"]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("default"),
+                    ScalarKeyPart::String("kernel_policy_window_ms")
+                ])
+                .to_record_key()
+            )
             .is_none()
     );
 }
@@ -196,13 +220,16 @@ fn expired_kernel_terminal_intent_is_committed_before_default_cutover() {
     ))
     .unwrap();
     let window = store
-        .get(json!([
-            "uos_ai",
-            "kernel_quota",
-            "v2",
-            "org_window",
-            "owner"
-        ]))
+        .get(
+            TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("kernel_quota"),
+                ScalarKeyPart::String("v2"),
+                ScalarKeyPart::String("org_window"),
+                ScalarKeyPart::String("owner"),
+            ])
+            .to_record_key(),
+        )
         .unwrap();
     assert_eq!(window["usage_requests"], 1);
     assert_eq!(window["reserved_requests"], 0);
@@ -264,7 +291,7 @@ fn admin_inputs_use_source_number_coercion_and_ecmascript_whitespace() {
         .insert("before_ms".into(), vec!["0x20".into()]);
     request.query.insert("limit".into(), vec!["0b1".into()]);
     assert_eq!(
-        gateway_admin_runtime::parse::capture(&request, false).unwrap(),
+        gateway_admin_runtime_contracts::parse::capture(&request, false).unwrap(),
         CaptureRequest::Interval {
             after_ms: 16,
             before_ms: 32,
@@ -275,7 +302,7 @@ fn admin_inputs_use_source_number_coercion_and_ecmascript_whitespace() {
         .query
         .insert("after_ms".into(), vec!["\u{0085}16\u{0085}".into()]);
     assert_eq!(
-        gateway_admin_runtime::parse::capture(&request, false)
+        gateway_admin_runtime_contracts::parse::capture(&request, false)
             .unwrap_err()
             .status,
         400

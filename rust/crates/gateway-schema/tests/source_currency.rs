@@ -1,7 +1,7 @@
+use gateway_model_metadata::metadata::MetadataHint;
 use gateway_schema::{
     catalog::{CatalogInput, ProviderCatalog},
     catalog_views::build_catalog_snapshot,
-    metadata::MetadataHint,
     native_catalog::native_catalog,
 };
 use serde_json::{Value, json};

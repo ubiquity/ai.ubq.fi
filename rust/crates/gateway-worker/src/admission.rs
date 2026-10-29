@@ -2,8 +2,8 @@
 use gateway_admission::{
     AdmissionClock, AdmissionController, AdmissionRequest, AdmissionResult, Permit,
 };
-use gateway_auth::types::AuthPrincipal;
-use gateway_core::error::GatewayError;
+use gateway_auth_contracts::types::AuthPrincipal;
+use gateway_source::error::GatewayError;
 use gateway_worker_platform::{cancellation::Cancellation, clock::monotonic};
 use std::{rc::Rc, time::Duration};
 

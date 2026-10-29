@@ -5,16 +5,30 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-[dependencies]
-gateway-wait-observation.workspace = true
-gateway-auth.workspace = true
-gateway-authority.workspace = true
-gateway-core.workspace = true
-gateway-providers.workspace = true
-gateway-routing-runtime = { path = "../gateway-routing-runtime" }
-gateway-schema.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-
 [lints]
 workspace = true
+
+[dependencies]
+gateway-model-snapshot.workspace = true
+gateway-model-selection.workspace = true
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-contracts = { workspace = true }
+gateway-kv-codec = { workspace = true }
+gateway-source = { workspace = true }
+gateway-wait-observation = { workspace = true }
+gateway-auth = { workspace = true }
+gateway-authority = { workspace = true }
+gateway-core = { workspace = true }
+gateway-routing-runtime = { path = "../gateway-routing-runtime" }
+gateway-schema = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+gateway-provider-protocol = { workspace = true }

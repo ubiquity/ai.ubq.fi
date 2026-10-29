@@ -1,13 +1,12 @@
 //! Streaming call answers and bounded replacement errors. No extra SDP-answer limit is invented.
 use crate::host::PlatformHost;
 use crate::transport::outbound::PinnedDestination;
-use futures_util::StreamExt;
-use gateway_auth::provider_credentials::CodexSourceAccount;
-use gateway_core::error::GatewayError;
+use gateway_auth_credentials::provider_credentials::CodexSourceAccount;
 use gateway_live_runtime::types::{
     LIVE_CALL_CAPTURE_TIMEOUT_MS, LIVE_CALL_CAPTURED_ERROR_MAX_BYTES, LIVE_CALL_HEADERS_TIMEOUT_MS,
     LIVE_CALLS_PATH, LiveCreateRequest, LiveDispatchAttempt, LiveDispatchFailure, LiveResponse,
 };
+use gateway_source::error::GatewayError;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
 use std::{collections::BTreeMap, rc::Rc, task::Poll};
@@ -15,6 +14,7 @@ use worker::{
     Context, Headers, Response, ResponseBody, js_sys::Uint8Array, wasm_bindgen::JsCast,
     wasm_bindgen_futures::JsFuture,
 };
+use {futures_util::StreamExt, gateway_schema_values::scalar as util};
 
 pub enum Body {
     Bytes(Vec<u8>),
@@ -57,7 +57,7 @@ where
         let base = "https://chatgpt.com/backend-api/codex";
         let url = format!(
             "{}{LIVE_CALLS_PATH}",
-            gateway_schema::util::js_trim(base).trim_end_matches('/')
+            util::js_trim(base).trim_end_matches('/')
         );
         PinnedDestination::new(&url)?;
         let headers = Headers::new();

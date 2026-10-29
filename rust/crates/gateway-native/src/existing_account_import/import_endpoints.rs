@@ -1,21 +1,13 @@
 //! Trusted prelaunch resolution, then fixed once-connected actor transports.
 use crate::import_custody_protocol::unavailable;
-use gateway_authority::native_control::NativeRenewalCancellation;
-use gateway_core::error::GatewayError;
-use serde::{Deserialize, Serialize};
+use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_native_custody_wire::bootstrap::ImportEndpointData;
+use gateway_source::error::GatewayError;
 use std::{
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     time::{Duration, Instant},
 };
 
-/// DATA from the actual parent's sole bootstrap pipe, never an HTTP option.
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ImportEndpointData {
-    pub(super) authority: SocketAddr,
-    pub(super) models: SocketAddr,
-    pub(super) oauth: SocketAddr,
-}
 /// Only trusted bootstrap resolves these. The actor cannot select another URL.
 pub(super) struct ResolvedImportEndpoints {
     origin: String,
@@ -85,52 +77,38 @@ impl ResolvedImportEndpoints {
         })
     }
 }
-impl ImportEndpointData {
-    pub(super) fn validate(&self) -> Result<(), GatewayError> {
-        for address in self.addresses() {
-            if address.port() == 0 || address.ip().is_unspecified() || address.ip().is_multicast() {
-                return Err(unavailable());
-            }
+pub(super) fn connect_endpoints<C: NativeRenewalCancellation>(
+    data: ImportEndpointData,
+    cancellation: &C,
+    deadline: Instant,
+) -> Result<ConnectedImportEndpoints, GatewayError> {
+    data.validate()?;
+    let connect = |address: SocketAddr| {
+        if cancellation.cancelled() {
+            return Err(unavailable());
         }
-        Ok(())
-    }
-    pub(super) fn addresses(&self) -> [SocketAddr; 3] {
-        [self.authority, self.models, self.oauth]
-    }
-    pub(super) fn connect<C: NativeRenewalCancellation>(
-        self,
-        cancellation: &C,
-        deadline: Instant,
-    ) -> Result<ConnectedImportEndpoints, GatewayError> {
-        self.validate()?;
-        let connect = |address: SocketAddr| {
-            if cancellation.cancelled() {
-                return Err(unavailable());
-            }
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .filter(|d| !d.is_zero())
-                .ok_or_else(unavailable)?;
-            let socket =
-                TcpStream::connect_timeout(&address, remaining.min(Duration::from_secs(5)))
-                    .map_err(|_| unavailable())?;
-            socket.set_nonblocking(false).map_err(|_| unavailable())?;
-            if cancellation.cancelled()
-                || Instant::now() >= deadline
-                || socket.peer_addr().map_err(|_| unavailable())? != address
-            {
-                return Err(unavailable());
-            }
-            Ok(socket)
-        };
-        // Distinct streams; no application byte proxy or shared ureq agent.
-        Ok(ConnectedImportEndpoints {
-            authority: connect(self.authority)?,
-            publication: connect(self.authority)?,
-            models: connect(self.models)?,
-            oauth: connect(self.oauth)?,
-        })
-    }
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(unavailable)?;
+        let socket = TcpStream::connect_timeout(&address, remaining.min(Duration::from_secs(5)))
+            .map_err(|_| unavailable())?;
+        socket.set_nonblocking(false).map_err(|_| unavailable())?;
+        if cancellation.cancelled()
+            || Instant::now() >= deadline
+            || socket.peer_addr().map_err(|_| unavailable())? != address
+        {
+            return Err(unavailable());
+        }
+        Ok(socket)
+    };
+    // Distinct streams; no application byte proxy or shared ureq agent.
+    Ok(ConnectedImportEndpoints {
+        authority: connect(data.authority)?,
+        publication: connect(data.authority)?,
+        models: connect(data.models)?,
+        oauth: connect(data.oauth)?,
+    })
 }
 fn checked_origin(value: &str) -> Result<url::Url, GatewayError> {
     let origin = url::Url::parse(value).map_err(|_| unavailable())?;
@@ -159,7 +137,7 @@ fn resolve(host: &str, port: u16) -> Result<SocketAddr, GatewayError> {
 pub(super) fn fixed_authority_client<'a, C: NativeRenewalCancellation>(
     origin: &str,
     socket: TcpStream,
-    identity: gateway_auth::native_auth::NativeTransportIdentity,
+    identity: gateway_auth_native_proof::native_auth::NativeTransportIdentity,
     cancellation: &'a C,
     deadline: Instant,
 ) -> Result<
@@ -221,22 +199,27 @@ mod tests {
         }
     }
     #[test]
-    fn actual_fixed_role_sockets_are_distinct_and_cancellation_opens_none() {
-        let authority = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let models = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let oauth = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let data = || ImportEndpointData {
-            authority: authority.local_addr().unwrap(),
-            models: models.local_addr().unwrap(),
-            oauth: oauth.local_addr().unwrap(),
+    fn actual_fixed_role_sockets_are_distinct_and_cancellation_opens_none()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let authority = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        let models = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        let oauth = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        let data = || -> std::io::Result<ImportEndpointData> {
+            Ok(ImportEndpointData {
+                authority: authority.local_addr()?,
+                models: models.local_addr()?,
+                oauth: oauth.local_addr()?,
+            })
         };
         let cancellation = Cancellation(AtomicBool::new(false));
-        let connected = data()
-            .connect(&cancellation, Instant::now() + Duration::from_secs(2))
-            .unwrap();
+        let connected = connect_endpoints(
+            data()?,
+            &cancellation,
+            Instant::now() + Duration::from_secs(2),
+        )?;
         assert_ne!(
-            connected.authority.local_addr().unwrap(),
-            connected.publication.local_addr().unwrap()
+            connected.authority.local_addr()?,
+            connected.publication.local_addr()?
         );
         for (listener, socket) in [
             (&authority, &connected.authority),
@@ -244,23 +227,27 @@ mod tests {
             (&models, &connected.models),
             (&oauth, &connected.oauth),
         ] {
-            let (accepted, peer) = listener.accept().unwrap();
-            assert_eq!(peer, socket.local_addr().unwrap());
-            assert_eq!(accepted.local_addr().unwrap(), socket.peer_addr().unwrap());
+            let (accepted, peer) = listener.accept()?;
+            assert_eq!(peer, socket.local_addr()?);
+            assert_eq!(accepted.local_addr()?, socket.peer_addr()?);
         }
         drop(connected);
         cancellation.0.store(true, Ordering::SeqCst);
         assert!(
-            data()
-                .connect(&cancellation, Instant::now() + Duration::from_secs(2))
-                .is_err()
+            connect_endpoints(
+                data()?,
+                &cancellation,
+                Instant::now() + Duration::from_secs(2)
+            )
+            .is_err()
         );
         for listener in [&authority, &models, &oauth] {
-            listener.set_nonblocking(true).unwrap();
+            listener.set_nonblocking(true)?;
             assert!(
                 matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
             );
         }
+        Ok(())
     }
     #[test]
     fn closed_endpoint_data_rejects_mixed_fields_zero_ports_and_unfixed_origins() {

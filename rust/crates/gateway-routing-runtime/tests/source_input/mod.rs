@@ -1,12 +1,12 @@
 //! Pure request data shared by planner-only and stateful integration fixtures.
 use super::{RoutingInput, fixture_json};
-use gateway_auth::types::{AuthMethod, AuthPrincipal};
-use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
-use gateway_providers::types::ClientSurface;
-use gateway_schema::{
-    catalog::{CatalogInput, ProviderCatalog},
-    snapshot::ModelSnapshot,
+use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
+use gateway_contracts::{
+    identity::ApiKeyId, identity::PrincipalId, identity::RequestContext, identity::RequestId,
 };
+use gateway_model_snapshot::snapshot::ModelSnapshot;
+use gateway_provider_protocol::types::ClientSurface;
+use gateway_schema::catalog::{CatalogInput, ProviderCatalog};
 use serde_json::json;
 
 pub const NOW: i64 = 1_800_000_000_000;
@@ -15,15 +15,15 @@ pub fn input(id: &str, model: &str, providers: &[&str]) -> RoutingInput {
         token: None,
         method: AuthMethod::KvApiKey {
             key_id: "key-a".into(),
-            policy: gateway_auth::api_keys::ApiKeyPolicy {
+            policy: gateway_auth_primitives::api_keys::ApiKeyPolicy {
                 token_hash: "fixture".into(),
                 key_id: "key-a".into(),
                 expires_at_ms: -1,
                 usage_limit_requests: 10,
-                window_ms: gateway_authority::DAY_MS,
+                window_ms: gateway_authority_contracts::DAY_MS,
                 window_start_ms: NOW,
-                usage_reset_at_ms: NOW + gateway_authority::DAY_MS,
-                policy_version: format!("v3:{}", gateway_authority::DAY_MS),
+                usage_reset_at_ms: NOW + gateway_authority_contracts::DAY_MS,
+                policy_version: format!("v3:{}", gateway_authority_contracts::DAY_MS),
                 paid_fallback_enabled: true,
                 paid_fallback_limit_microcredits: 10000,
                 paid_fallback_spent_microcredits: 0,
@@ -56,13 +56,13 @@ pub fn input(id: &str, model: &str, providers: &[&str]) -> RoutingInput {
     RoutingInput {
         context: RequestContext {
             request_id: RequestId(id.into()),
-            principal: PrincipalId("fixture-principal".into()),
+            principal: PrincipalId::from_scalar("fixture-principal".into()),
             key_id: Some(ApiKeyId("key-a".into())),
             route: "responses".into(),
             started_at_ms: NOW,
         },
         principal,
-        raw: gateway_core::source_json::SourceJson::from_serializable(
+        raw: gateway_source::source_json::SourceJson::from_serializable(
             &json!({"model":model,"input":"source fixture","reasoning":{"effort":"none"}}),
         )
         .unwrap(),

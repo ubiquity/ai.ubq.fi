@@ -1,5 +1,5 @@
 //! Source Jev SDK and hybrid-residue wire, without ordinary route/admission planners.
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 use std::collections::BTreeMap;
 

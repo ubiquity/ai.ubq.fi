@@ -9,9 +9,14 @@ publish.workspace = true
 gateway-decision-protocol.workspace = true
 gateway-core.workspace = true
 gateway-schema.workspace = true
-gateway-providers.workspace = true
-gateway-auth.workspace = true
 serde.workspace = true
 
+gateway-model-selection.workspace = true
+gateway-schema-values.workspace = true
+gateway-contracts = { workspace = true }
+gateway-source = { workspace = true }
+gateway-provider-policy = { workspace = true }
+gateway-local-refusal = { workspace = true }
+gateway-auth-contracts = { workspace = true }
 [lints]
 workspace = true

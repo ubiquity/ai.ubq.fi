@@ -1,28 +1,23 @@
 //! Actual import-private fixed TLS exchange; never a proof/permission constructor.
-use gateway_auth::crypto::{base64url, decode_base64url};
-use gateway_auth_native_wire::{
-    control::{NATIVE_CONTROL_ERROR_MAX_BYTES, NATIVE_RENEWAL_MAX_MS},
-    native_read::{
-        NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
-        NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
-    },
+use gateway_auth_native_wire::control::{NATIVE_CONTROL_ERROR_MAX_BYTES, NATIVE_RENEWAL_MAX_MS};
+use gateway_auth_native_wire::native_read::{
+    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
+    NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
-use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER};
-use std::{
-    io::{self, Read, Write},
-    net::{SocketAddr, TcpStream},
-    sync::Mutex,
-    time::{Duration, Instant},
-};
-use ureq::{
-    config::Config,
-    http::Uri,
-    unversioned::{
-        resolver::{ResolvedSocketAddrs, Resolver},
-        transport::{
-            Buffers, ConnectionDetails, Connector, LazyBuffers, NextTimeout, RustlsConnector,
-            Transport,
-        },
+use gateway_auth_primitives::crypto::{base64url, decode_base64url};
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
+use gateway_source::error::GatewayError;
+use std::io;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+use ureq::config::Config;
+use ureq::http::Uri;
+use ureq::unversioned::{
+    resolver::{ResolvedSocketAddrs, Resolver},
+    transport::{
+        Buffers, ConnectionDetails, Connector, LazyBuffers, NextTimeout, RustlsConnector, Transport,
     },
 };
 

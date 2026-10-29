@@ -1,5 +1,7 @@
 //! Provisional built response, earlier API selection and independent accounting.
 use super::*;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_kernel::KernelOperations;
 use std::{cell::RefCell, rc::Rc};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

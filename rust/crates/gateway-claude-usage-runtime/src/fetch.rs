@@ -1,8 +1,8 @@
-use gateway_admin_runtime::claude::{AccountBinding, CredentialKind};
-use gateway_auth::types::AuthHost;
+use gateway_auth_contracts::types::AuthHost;
+use gateway_claude_roster::{claude::AccountBinding, claude::CredentialKind};
 use gateway_claude_usage_protocol::{snapshot, state::UsageState};
 use gateway_claude_usage_quota::{QuotaObservation, QuotaWindow};
-use gateway_core::{
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
@@ -113,7 +113,7 @@ pub fn observation(
                 .and_then(source::string)
                 .as_ref()
                 .and_then(dates)
-                .filter(|at| *at > 0 && *at <= gateway_core::identity::MAX_SAFE_INTEGER);
+                .filter(|at| *at > 0 && *at <= gateway_contracts::identity::MAX_SAFE_INTEGER);
             let meter = snapshot
                 .meters
                 .iter()

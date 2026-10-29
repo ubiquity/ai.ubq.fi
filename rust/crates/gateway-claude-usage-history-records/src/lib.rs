@@ -1,19 +1,16 @@
 //! Retained Claude history record shapes, identities and source downsampling math.
 pub mod object;
 pub mod types;
-use gateway_auth::crypto::sha256_hex;
-use gateway_auth::store;
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_control::decode_source_control_record,
-    source_json::SourceJson,
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_core::{source_control::decode_source_control_record, state::StoredRecord};
+use gateway_kv_codec::{key::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::{RecordKey, StoredRecord},
 };
 use object::SourceObject;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use types::{ClaudeAcceptedObservation, ClaudeObservationState, CredentialKind};
 pub const BUCKET_MS: i64 = 900_000;
@@ -179,7 +176,7 @@ impl Point {
                 .response_status
                 .is_none_or(|n| safe(n) && (100.0..=599.0).contains(&n))
     }
-    pub fn history_key(&self) -> RecordKey {
+    pub fn history_key(&self) -> Result<RecordKey, GatewayError> {
         history_key(
             self.bucket_start_at_ms,
             &self.account_id,
@@ -200,13 +197,13 @@ impl Point {
             .windows
             .get(name)
             .ok_or_else(|| error("Claude rollup window is absent"))?;
-        Ok(rollup_key_parts(
+        rollup_key_parts(
             self.rollup_bucket(w),
             &self.account_id,
             &self.account_cohort_id,
             name,
             w.reset_at_ms,
-        ))
+        )
     }
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -241,7 +238,7 @@ pub struct Bucket {
     flags: Flags,
 }
 impl Bucket {
-    pub fn key(&self) -> RecordKey {
+    pub fn key(&self) -> Result<RecordKey, GatewayError> {
         history_key(
             self.bucket_start_at_ms,
             &self.account_id,
@@ -294,7 +291,7 @@ pub struct Rollup {
     pub last_status: Option<JsString16>,
 }
 impl Rollup {
-    pub fn key(&self) -> RecordKey {
+    pub fn key(&self) -> Result<RecordKey, GatewayError> {
         rollup_key_parts(
             self.bucket_start_at_ms,
             &self.account_id,
@@ -358,17 +355,21 @@ impl Rollup {
                 .is_none_or(|v| min.zip(max).is_some_and(|(a, b)| v >= a && v <= b))
     }
 }
-pub fn history_key(bucket: f64, account: &str, cohort: &str) -> RecordKey {
-    store::key(json!([
-        "uos_ai",
-        "provider_capacity",
-        "claude",
-        "v1",
-        "history",
-        bucket,
-        account,
-        cohort
-    ]))
+pub fn history_key(bucket: f64, account: &str, cohort: &str) -> Result<RecordKey, GatewayError> {
+    if !bucket.is_finite() {
+        return Err(error("Claude history evidence is corrupt"));
+    }
+    Ok(TupleKey::from_parts(&[
+        KeyPart::String("uos_ai".into()),
+        KeyPart::String("provider_capacity".into()),
+        KeyPart::String("claude".into()),
+        KeyPart::String("v1".into()),
+        KeyPart::String("history".into()),
+        KeyPart::Number(bucket),
+        KeyPart::String(account.into()),
+        KeyPart::String(cohort.into()),
+    ])?
+    .to_record_key())
 }
 pub fn rollup_key_parts(
     bucket: f64,
@@ -376,19 +377,27 @@ pub fn rollup_key_parts(
     cohort: &str,
     window: &str,
     reset: Option<f64>,
-) -> RecordKey {
-    store::key(json!([
-        "uos_ai",
-        "provider_capacity",
-        "claude",
-        "v1",
-        "rollup",
-        bucket,
-        account,
-        cohort,
-        window,
-        reset.map_or_else(|| json!("unknown"), |n| json!(n))
-    ]))
+) -> Result<RecordKey, GatewayError> {
+    if !bucket.is_finite() || reset.is_some_and(|value| !value.is_finite()) {
+        return Err(error("Claude rollup evidence is corrupt"));
+    }
+    let reset = match reset {
+        Some(value) => KeyPart::Number(value),
+        None => KeyPart::String("unknown".into()),
+    };
+    Ok(TupleKey::from_parts(&[
+        KeyPart::String("uos_ai".into()),
+        KeyPart::String("provider_capacity".into()),
+        KeyPart::String("claude".into()),
+        KeyPart::String("v1".into()),
+        KeyPart::String("rollup".into()),
+        KeyPart::Number(bucket),
+        KeyPart::String(account.into()),
+        KeyPart::String(cohort.into()),
+        KeyPart::String(window.into()),
+        reset,
+    ])?
+    .to_record_key())
 }
 pub fn valid_history_point_source(v: &SourceJson) -> bool {
     v.deserialize::<Point>().is_ok_and(|p| p.valid())
@@ -415,7 +424,7 @@ pub fn claude_history_bucket_record_source(
 ) -> Result<SourceJson, GatewayError> {
     let value = decode_source_control_record(row)?;
     let bucket: Bucket = value.deserialize()?;
-    if !bucket.valid() || bucket.key() != *key {
+    if !bucket.valid() || bucket.key()? != *key {
         return Err(error("Claude history evidence is corrupt"));
     }
     Ok(value)
@@ -426,7 +435,7 @@ pub fn claude_rollup_record_source(
 ) -> Result<SourceJson, GatewayError> {
     let value = decode_source_control_record(row)?;
     let rollup: Rollup = value.deserialize()?;
-    if !rollup.valid() || rollup.key() != *key {
+    if !rollup.valid() || rollup.key()? != *key {
         return Err(error("Claude rollup evidence is corrupt"));
     }
     Ok(value)

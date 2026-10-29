@@ -1,10 +1,10 @@
 //! Source-compatible scalar and query field parsers; decoded values carry no authority.
 use crate::source_input as source_body;
-use gateway_auth::types::invalid;
-use gateway_core::{
-    error::GatewayError, identity::MAX_SAFE_INTEGER, js_string::JsString16, source_json::SourceJson,
-};
+use gateway_auth_primitives::error::invalid;
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_profile_values::coercion::js_number;
+use gateway_schema_values::scalar as schema_scalar;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -17,7 +17,7 @@ pub fn first<'a>(query: &'a BTreeMap<String, Vec<String>>, name: &str) -> Option
 pub fn text(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
-        .map(gateway_schema::util::js_trim)
+        .map(schema_scalar::js_trim)
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
 }
@@ -42,7 +42,7 @@ pub fn source_integer(value: &SourceJson) -> Option<i64> {
 }
 pub fn source_limit(value: &SourceJson) -> Option<i64> {
     if source_text(Some(value)).is_some_and(|text| {
-        gateway_core::js_string_case::lowercase_source(&text)
+        gateway_source::js_string_case::lowercase_source(&text)
             .as_units()
             .iter()
             .copied()
@@ -70,7 +70,7 @@ pub fn source_coerced_number(value: &SourceJson) -> f64 {
 }
 /// Source Object.keys semantics for the already validated admin record/array.
 pub fn source_entries(value: &SourceJson) -> Option<Vec<(JsString16, SourceJson)>> {
-    gateway_core::source_serialization::entries(value).or_else(|| {
+    gateway_source::source_serialization::entries(value).or_else(|| {
         value.array_items().ok().map(|items| {
             items
                 .into_iter()
@@ -90,7 +90,7 @@ pub fn integer(value: &Value) -> Option<i64> {
 
 pub fn limit(value: &Value) -> Option<i64> {
     if value.as_str().is_some_and(|s| {
-        s.trim_matches(gateway_schema::util::js_whitespace)
+        s.trim_matches(schema_scalar::js_whitespace)
             .eq_ignore_ascii_case("unlimited")
     }) {
         return Some(-1);
@@ -103,7 +103,7 @@ pub fn positive(value: &Value) -> Option<i64> {
 pub fn truth(value: Option<&str>) -> bool {
     value.is_some_and(|s| {
         ["1", "true", "yes", "on"].contains(
-            &s.trim_matches(gateway_schema::util::js_whitespace)
+            &s.trim_matches(schema_scalar::js_whitespace)
                 .to_lowercase()
                 .as_str(),
         )
@@ -116,11 +116,11 @@ pub fn bounded_positive(value: Option<&str>, default: u32, max: u32) -> Result<u
     let Some(value) = value else {
         return Ok(default);
     };
-    if !digits(value.trim_matches(gateway_schema::util::js_whitespace)) {
+    if !digits(value.trim_matches(schema_scalar::js_whitespace)) {
         return Err(invalid("limit must be a positive integer"));
     }
     let value = value
-        .trim_matches(gateway_schema::util::js_whitespace)
+        .trim_matches(schema_scalar::js_whitespace)
         .parse::<u64>()
         .ok()
         .filter(|v| *v > 0 && *v <= MAX_SAFE_INTEGER as u64)
@@ -140,7 +140,7 @@ pub fn uuid(value: &str) -> bool {
 
 pub fn boolean(value: Option<&str>) -> Option<bool> {
     let s = value?
-        .trim_matches(gateway_schema::util::js_whitespace)
+        .trim_matches(schema_scalar::js_whitespace)
         .to_lowercase();
     if ["1", "true", "yes", "on"].contains(&s.as_str()) {
         Some(true)

@@ -1,16 +1,20 @@
-use gateway_auth::types::AuthMethod;
-use gateway_authority::{
-    REQUEST_LEASE_MS, kernel::KernelPolicy, keys, quota::ApiReservation, store::Authority,
+use gateway_auth_contracts::types::AuthMethod;
+use gateway_authority::store::Authority;
+use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_contracts::REQUEST_LEASE_MS;
+use gateway_authority_kernel_protocol::KernelPolicy;
+use gateway_authority_keys as keys;
+use gateway_contracts::{
+    lifecycle::BodyOutcome, lifecycle::DeliveryOutcome, lifecycle::ReaderTermination,
 };
 use gateway_core::{
-    error::GatewayError,
-    lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination},
-    query::{QueryPage, QueryRequest, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
-    tuple_key::{ScalarKeyPart, TupleKey},
+    query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
+    state::AuthorityStore, state::CommitOutcome, state::RecordMutation, state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_routing_runtime::{
     local_work::{
         completion::response::{LocalAccountingProgress, LocalSelectedResponse, LocalWireKind},
@@ -20,7 +24,7 @@ use gateway_routing_runtime::{
     settlement::recover_pending,
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
-use gateway_schema::source_request::SourceRequestDocument;
+use gateway_source::error::GatewayError;
 use serde_json::json;
 use std::{
     future::Future,
@@ -49,7 +53,7 @@ fn admission(store: &Store, id: &str, kernel: bool) -> LocalAdmissionInput {
                 owner: "owner".into(),
                 repo: Some("repo".into()),
                 usage_limit_requests: 10,
-                window_ms: gateway_authority::DAY_MS,
+                window_ms: gateway_authority_contracts::DAY_MS,
                 expires_at_ms: -1,
             },
         );
@@ -472,7 +476,7 @@ fn source_release_noops_do_not_refund_dispatched_or_require_a_missing_request_ro
             _ => {
                 run(authority.dispatch_api_key(
                     &reservation,
-                    gateway_core::provider::UpstreamProvider::ChatgptCodex,
+                    gateway_contracts::provider::UpstreamProvider::ChatgptCodex,
                     NOW,
                 ))
                 .unwrap();

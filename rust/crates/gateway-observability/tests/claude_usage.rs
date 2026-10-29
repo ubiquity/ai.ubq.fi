@@ -1,8 +1,9 @@
-use gateway_admin_runtime::{capabilities::Context, claude, claude::AccountBinding};
+use gateway_admin_runtime_contracts::capabilities::Context;
 use gateway_auth_contracts::{
     types::AuthHost, upstream::AuthUpstreamRequest, upstream::AuthUpstreamResponse,
     webauthn::CosePublicKey, webauthn::SignatureInput, webauthn::WebAuthnCrypto,
 };
+use gateway_claude_roster::{claude, claude::AccountBinding};
 use gateway_claude_runtime_test_support::{fixture::NOW, fixture::account};
 use gateway_claude_usage_history::{History, HistoryHost};
 use gateway_claude_usage_history_records::{
@@ -130,7 +131,9 @@ impl UsageHost for Fixture {
     }
 }
 impl ObservabilityHost for Fixture {
-    fn source_string_collator(&self) -> Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(
+        &self,
+    ) -> Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {
@@ -417,7 +420,7 @@ fn corrupt_usage_rollup_refuses_entire_bucket_transaction_and_read_scan_reports_
     let a = account(1);
     host.seed(vec![a.clone()])?;
     run(collect::refresh(&host.store, &host, &a))?;
-    let key=host.store.rows.borrow().keys().find(|k|gateway_core::tuple_key::TupleKey::from_record_key(&gateway_core::state::RecordKey((*k).clone())).ok().and_then(|k|k.decoded_parts().ok()).is_some_and(|p|p.iter().any(|v|matches!(v,gateway_core::tuple_key::DecodedKeyPart::String(bytes) if bytes==b"usage_rollup")))).cloned().ok_or("usage key absent")?;
+    let key=host.store.rows.borrow().keys().find(|k|gateway_kv_codec::tuple_key::TupleKey::from_record_key(&gateway_kv_codec::key::RecordKey((*k).clone())).ok().and_then(|k|k.decoded_parts().ok()).is_some_and(|p|p.iter().any(|v|matches!(v,gateway_kv_codec::tuple_key::DecodedKeyPart::String(bytes) if bytes==b"usage_rollup")))).cloned().ok_or("usage key absent")?;
     host.store
         .rows
         .borrow_mut()
@@ -503,7 +506,7 @@ fn frozen_b592_usage_history_atomic_rows_retention_keys_and_rollup_readbacks_mat
         run(history.record_claude_capacity_observation(&event))?;
         assert_eq!(host.store.rows.borrow().len(), case.rows.len());
         for row in case.rows {
-            let key = gateway_core::tuple_key::TupleKey::from_json_parts(
+            let key = gateway_kv_codec::tuple_key::TupleKey::from_json_parts(
                 row.key.as_array().ok_or("tuple absent")?,
             )?
             .to_record_key();
@@ -548,13 +551,14 @@ fn frozen_b592_usage_history_atomic_rows_retention_keys_and_rollup_readbacks_mat
 }
 
 struct AdminComposition<'a>(&'a Fixture);
-impl gateway_admin_runtime::capabilities::RuntimeCapabilities for AdminComposition<'_> {
+impl gateway_admin_runtime_contracts::capabilities::RuntimeCapabilities for AdminComposition<'_> {
     async fn claude(
         &self,
-        request: gateway_admin_runtime::capabilities::ClaudeRequest,
+        request: gateway_admin_runtime_contracts::capabilities::ClaudeRequest,
         context: Context,
     ) -> Result<gateway_auth_contracts::types::AuthResponse, GatewayError> {
-        let gateway_admin_runtime::capabilities::ClaudeRequest::RefreshUsage { document } = request
+        let gateway_admin_runtime_contracts::capabilities::ClaudeRequest::RefreshUsage { document } =
+            request
         else {
             return Err(missing());
         };
@@ -590,7 +594,7 @@ fn authenticated_admin_service_dispatch_executes_real_account_fenced_collector_a
         store: &host.store,
         host: &host,
         capabilities: &capabilities,
-        config: &gateway_admin_runtime::RuntimeConfig::default(),
+        config: &gateway_admin_runtime_contracts::RuntimeConfig::default(),
     };
     let config = AuthConfig {
         admin_tokens: vec![Secret::new("public-fixture-admin".into())],

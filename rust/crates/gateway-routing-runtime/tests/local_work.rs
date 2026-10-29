@@ -1,22 +1,24 @@
-use gateway_auth::types::AuthMethod;
-use gateway_authority::{
-    REQUEST_LEASE_MS,
-    kernel::KernelPolicy,
-    keys,
-    quota::ApiReservation,
-    store::{Authority, AuthorityClock, TokenSource},
+use gateway_auth_contracts::types::AuthMethod;
+use gateway_authority::store::Authority;
+use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_contracts::{AuthorityClock, REQUEST_LEASE_MS, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::KernelPolicy;
+use gateway_authority_keys as keys;
+use gateway_contracts::{
+    lifecycle::BodyOutcome, lifecycle::DeliveryOutcome, lifecycle::ReaderTermination,
 };
 use gateway_core::{
-    error::GatewayError,
-    lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination},
-    local_work::{LocalSemanticOutcome, LocalTerminalObservation},
-    query::{QueryPage, QueryRequest, QuerySelector, QueryStore},
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
-    tuple_key::{ScalarKeyPart, TupleKey},
+    query::QueryPage, query::QueryRequest, query::QuerySelector, query::QueryStore,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_local_journal::{
+    local_work::LocalSemanticOutcome, local_work::LocalTerminalObservation,
+};
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_routing_runtime::{
     custody,
     local_work::{
@@ -29,7 +31,7 @@ use gateway_routing_runtime::{
     types::RoutingHost,
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
-use gateway_schema::source_request::SourceRequestDocument;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::sync::{
     Arc,
@@ -288,7 +290,7 @@ fn kernel_input(store: &Store, id: &str) -> LocalAdmissionInput {
             owner: "owner".into(),
             repo: Some("repo".into()),
             usage_limit_requests: 10,
-            window_ms: gateway_authority::DAY_MS,
+            window_ms: gateway_authority_contracts::DAY_MS,
             expires_at_ms: -1,
         },
     );

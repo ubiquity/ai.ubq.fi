@@ -1,7 +1,23 @@
-use super::*;
-use crate::{TestResult, fixture_row};
-use gateway_auth::provider_credentials::codex_source_pool_key;
-use gateway_schema::selection::AccountModelsStore;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_authority_keys as keys;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
+use gateway_authority_paid_route::authorization::PaidAuthorization;
+use gateway_authority_routing_evidence::models::model_quota_class;
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_authority_routing_selection::types::RouteSelection;
+use gateway_authority_routing_signal::SignalOperations;
+use gateway_authority_test_support::{TestResult, fixture_row, paid_request, paid_setup};
+use gateway_contracts::model::ModelId;
+use gateway_contracts::provider::{CodexQuotaClass, PaidProvider};
+use gateway_core::source_control;
+use gateway_kv_codec::value::ValueEncoding;
+use gateway_model_selection::selection::AccountModelsStore;
+use gateway_routing_runtime_test_support::authority::{
+    MemoryStore, NOW, admin_hash, admitted, authority, block, pool, routing_hash, run, seed_pool,
+};
+use gateway_source::js_string::JsString16;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
 use serde_json::json;
 
 #[test]
@@ -25,10 +41,10 @@ fn source_model_learning_preserves_raw_catalogs_and_unknown_metadata() {
     assert!(result["unsupported"].get(&routing_hash("a").0).is_none());
     assert_eq!(
         AccountModelsStore::parse(
-            &gateway_core::source_json::SourceJson::from_serializable(&result).unwrap()
+            &gateway_source::source_json::SourceJson::from_serializable(&result).unwrap()
         )
         .unwrap()
-        .unsupported["a"][&gateway_core::model::ModelId::from_scalar("gpt-test")],
+        .unsupported["a"][&gateway_contracts::model::ModelId::from_scalar("gpt-test")],
         NOW
     );
 }
@@ -113,13 +129,13 @@ fn expanded_source_selection_cannot_use_a_partial_cohort_after_new_projection() 
         keys::provider_selection(),
         &json!({"provider_ids":["codex","surplus","openlux"],"updated_at_ms":NOW}),
     );
-    super::paid_control_cases::republish(&store);
+    gateway_authority_test_support::control::republish(&store);
     let mut input = paid_request("selection-expanded", PaidProvider::Surplus);
     input.model = "gpt-test".into();
-    let receipt = run(super::paid_original::authorize(
+    let receipt = run(gateway_authority_test_support::original::authorize(
         &authority,
         &input,
-        &super::paid_control_cases::context(&input),
+        &gateway_authority_test_support::control::context(&input),
         NOW,
     ))
     .unwrap();
@@ -176,10 +192,6 @@ fn source_selection_shrink_and_empty_defaults_keep_sticky_active_identity() {
 
 #[test]
 fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() -> TestResult {
-    use gateway_core::{
-        js_string::JsString16, model::ModelId, source_control, source_json::SourceJson,
-        source_serialization as source, value::ValueEncoding,
-    };
     let store = MemoryStore::default();
     seed_pool(&store, &pool());
     let raw = SourceJson::parse(&r#"{"accounts":{},"unsupported":{"other":{"\udc00":NOW}},"source_metadata":{"retain":"\ud800"}}"#.replace("NOW", &NOW.to_string()))?;
@@ -197,7 +209,7 @@ fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() -
     assert_eq!(admission.requested_model, high);
     run(authority.ensure_admission_current(&admission, NOW))?;
     let encoded_admission = SourceJson::from_serializable(&admission)?;
-    let restored: gateway_authority::routing_types::AdmittedAccount =
+    let restored: gateway_authority_routing_selection::types::AdmittedAccount =
         encoded_admission.deserialize()?;
     assert_eq!(restored, admission);
     let detail = |unit| {
@@ -245,7 +257,6 @@ fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() -
 
 #[test]
 fn opaque_model_full_pool_proof_retains_exact_model_and_current_credential_fence() {
-    use gateway_core::{js_string::JsString16, model::ModelId};
     let store = MemoryStore::default();
     seed_pool(&store, &pool());
     let authority = authority(&store);
@@ -279,8 +290,6 @@ fn opaque_model_full_pool_proof_retains_exact_model_and_current_credential_fence
 
 #[test]
 fn model_quota_class_uses_source_comparison_projection_without_changing_identity() {
-    use gateway_authority::routing::model_quota_class;
-    use gateway_core::{js_string::JsString16, model::ModelId};
     // Pinned Bun1.4.0 oracle af9107c1: Kelvin-sign lower-case is significant to the spark class.
     for (model, expected) in [
         (

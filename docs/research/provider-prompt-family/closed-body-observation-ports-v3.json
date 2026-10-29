@@ -1,0 +1,2906 @@
+{
+  "classification": "PROVISIONAL_SOURCE_ONLY_ELEVEN_OBSERVATION_PORTS_NOT_COMPILER_OR_RUNTIME_ACCEPTANCE",
+  "baseHead": "adc9c599ba8c2ff6d77aa1f5539096d06f9b79cc",
+  "baseTree": "6f794e717b1730c7ff7cbe98d3ef84cd3b539d1b",
+  "rootApproval": "2026-10-27T22:37; exact11 followups in frozen carrier map",
+  "requestedModel": "gpt-6.1-sol",
+  "requestedEffort": "max",
+  "actualModelFromTrustedMetadata": "unknown",
+  "actualEffortFromTrustedMetadata": "unknown",
+  "producerCarrierAPIs": "Unchanged. All original Self constructors, direct bytes/MIME/defaults/private snapshot/tag behavior remain frozen. Generic serialization/parsing remain fallible. No public generic deserialize/raw constructor or new production Result signature.",
+  "observations": [
+    {
+      "path": "rust/crates/gateway-claude-usage-admin/src/readback.rs",
+      "source": {
+        "path": "rust/crates/gateway-claude-usage-admin/src/readback.rs",
+        "bytes": 3951,
+        "sha256": "2fa6d3b0eb33b101f5ac1f44b678bb24ef0a38f5ba3bfaeb85e03cfb8168d312"
+      },
+      "anchors": {
+        "pub fn subscription_block": [
+          5
+        ],
+        "fn source_subscription_block": [
+          18
+        ],
+        "AuthResponseBody::ClosedError": [
+          12,
+          89,
+          93
+        ]
+      },
+      "before": "subscription_block(AuthResponseBody)->Result<SourceJson,GatewayError>; exhaustive Empty/Json/SourceJson",
+      "after": "Same signature; ClosedError checked into SourceJson then same private source-object projection, preserving duplicate-last and its existing missing claude_code null behavior",
+      "phase": "Admin readback DATA projection at original Result boundary; no dispatch/collector/auth/quota effect",
+      "effects": "unchanged; no new production failure policy"
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/extras.rs",
+      "source": {
+        "path": "rust/crates/gateway-worker/src/extras.rs",
+        "bytes": 10153,
+        "sha256": "311af79587b66ce0cbfc0b1a08dee7e801eca6607b6277522dd835d5436f6e94"
+      },
+      "anchors": {
+        "enum ExtrasBody": [
+          188
+        ],
+        "async fn request_body": [
+          196
+        ],
+        "AuthResponse::closed_error": [
+          252
+        ],
+        "fn render_response": [
+          267
+        ],
+        "ExtrasResponseBody": [
+          269
+        ]
+      },
+      "before": "Rejected(AuthResponse,Vec<u8>); source_json(error.status,error.body().clone()); render tuple(SourceJson,u16,Headers)",
+      "after": "Actual defining AuthResponse path; total closed_error at same rejection; tuple(ExtrasResponseBody,u16,Headers); original direct body.as_bytes renderer",
+      "phase": "Parse rejection before original admission; render after same runtime/child completion, before physical delivery; finish/dispatch/settle_child/refund/observation body byte-identical",
+      "effects": "unchanged; no new production failure policy"
+    },
+    {
+      "path": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+      "source": {
+        "path": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "bytes": 10988,
+        "sha256": "6e5371c8f0a50b1f3e04ae7da602b5e608c0fb7fe9de7cf25c103bb9573a1980"
+      },
+      "anchors": {
+        "fn body(": [
+          51
+        ],
+        "fn source_partial_errors": [
+          123
+        ],
+        "fn dry_run_has": [
+          157
+        ],
+        "fn malformed_import": [
+          199
+        ],
+        "fn finite_error_test_view": [
+          310
+        ]
+      },
+      "before": "body(AuthResponse)->Value; SourceJson expect; Empty panic",
+      "after": "body->Result<Value,Box<dyn Error>>; finite ClosedError checked bytes; prior scalar parse failure/unexpected Empty remain explicit test failure; ? through three original test callers only",
+      "phase": "TEST observation after actual fixture operation; no production import/adopt/revision/CAS/lifetime policy changed",
+      "effects": "unchanged; no new production failure policy"
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+      "source": {
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "bytes": 18543,
+        "sha256": "9053e2c8866ce2b6c9abf9de32bf68ed1382731c6cf28f1a8d953cc46580154a"
+      },
+      "anchors": {
+        "fn queued_job": [
+          262
+        ],
+        "mod runtime_support": [
+          1
+        ]
+      },
+      "before": "scalar_source(&SourceJson)->Value; queued_job->tuple",
+      "after": "Shared private-test-module scalar_source(&ExtrasResponseBody)->Result<Value,Box<dyn Error>>; queued_job->Result<tuple,Box<dyn Error>>; ? only through traced tests/helpers",
+      "phase": "TEST observation after same runtime result; all original dispatch/cache/job/crypto/refund/settlement assertions retained",
+      "effects": "unchanged; no new production failure policy"
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+      "source": {
+        "path": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "bytes": 11300,
+        "sha256": "618abde7516e93f5036c50fc32513357b264462bea9ab9a43c4ba98194f88435"
+      },
+      "anchors": {
+        "serde_json::from_slice::<Value>": [
+          199
+        ],
+        "fn actual_extras_dispatch": [
+          189
+        ]
+      },
+      "before": "result.body.deserialize::<Value>()?",
+      "after": "Explicit checked serde_json::from_slice::<Value>(result.body.as_bytes())?; upstream prepared-call SourceJson reads unchanged",
+      "phase": "Existing Result-capable TEST observation after same handle call; fixed Decisions dispatch and upstream request assertions unchanged",
+      "effects": "unchanged; no new production failure policy"
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/inference_local_lifecycle.rs",
+      "source": {
+        "path": "rust/crates/gateway-worker/src/inference_local_lifecycle.rs",
+        "bytes": 7062,
+        "sha256": "9ed89b102668733461fa8b30ce6be24a4dc8a40a0b5a0c4e291c4bb1c94f1005"
+      },
+      "anchors": {
+        "pub(super) fn wrapper_error": [
+          176
+        ],
+        "RoutingError::new": [
+          182
+        ],
+        "is_local_aggregate_context_overflow": [
+          192
+        ]
+      },
+      "before": "wrapper_error()->RoutingError using now-private-kind-inaccessible literal",
+      "after": "Same Self return; evaluate boxed original500/server_error/no-code, fixed plain body, default headers in original order; RoutingError::new(error,headers,source_body) selects only false ordinary kind",
+      "phase": "Existing wrapper-construction failure; no local selection/currentness/cancellation/cleanup/accounting operation change",
+      "effects": "unchanged; no new production failure policy"
+    },
+    {
+      "path": "rust/crates/gateway-schema/tests/source_request.rs",
+      "source": {
+        "path": "rust/crates/gateway-schema/tests/source_request.rs",
+        "bytes": 3785,
+        "sha256": "8ce4331923d2528474e06ee64f2ead6207c475925d6a34276310c00ce54a1e47"
+      },
+      "anchors": {
+        "fn source_model_defaults": [
+          26
+        ],
+        "fn stream_rejects": [
+          69
+        ],
+        "error.body().message()": [
+          42,
+          81
+        ],
+        "error.body().param()": [
+          45,
+          85
+        ]
+      },
+      "before": "Deserialize fixed error envelope to Value for message/param assertions",
+      "after": "Typed immutable message/param observations, preserving original400/message/omission/text assertions",
+      "phase": "TEST-only source validation observations; syntax order and source-domain behavior unchanged",
+      "effects": "unchanged; no new production failure policy"
+    },
+    {
+      "path": "rust/crates/gateway-routing-runtime/tests/source_plan.rs",
+      "source": {
+        "path": "rust/crates/gateway-routing-runtime/tests/source_plan.rs",
+        "bytes": 4718,
+        "sha256": "24121dd96989e74117bb0554e275f7d53aa5c04b359698b535ee0496c42d7254"
+      },
+      "anchors": {
+        "fn error_field": [
+          28
+        ],
+        "fn unknown_opaque": [
+          43
+        ],
+        "fn ordinary_responses": [
+          54
+        ],
+        "fn opaque_model": [
+          101
+        ]
+      },
+      "before": "error_field(RoutingError,&str)->JsString16 via Json/member unwrap",
+      "after": "Same private helper->Result<JsString16,Box<dyn Error>> using explicit finite ClosedError message/param; ? in its three traced tests",
+      "phase": "TEST-only pretransport source-plan message/param observations; original provider/model/source ordering assertions unchanged",
+      "effects": "unchanged; no new production failure policy"
+    },
+    {
+      "path": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+      "source": {
+        "path": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "bytes": 11153,
+        "sha256": "ce440fd7c8d19b61db3ee82dd81571396a02597a93bd3422890f3bb444cb76e8"
+      },
+      "anchors": {
+        "fn local_factory_source_failure": [
+          117
+        ],
+        "SourceRefusalBody::ClosedError": [
+          130
+        ],
+        "let message = body.message()": [
+          133
+        ]
+      },
+      "before": "Json/error/message parsing inside original factory-failure case",
+      "after": "Typed finite ClosedError message; all original pool/reserved/committed assertions retained",
+      "phase": "TEST-only pretransport original-admission cleanup observation; one original lifetime/zero provider exposure unchanged",
+      "effects": "unchanged; no new production failure policy"
+    },
+    {
+      "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+      "source": {
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "bytes": 52910,
+        "sha256": "1e244512e753ac190b80fd0df317ff18def43f1997faa7b1abce4d451c63be9c"
+      },
+      "anchors": {
+        "fn source_deepseek_extension": [
+          1164
+        ],
+        "SourceRefusalBody::ClosedError": [
+          1180
+        ],
+        "body.param()": [
+          1186
+        ]
+      },
+      "before": "Json/error/param member observation",
+      "after": "Finite ClosedError param observation at same point; original captured route selection/attempt/completion assertions retained",
+      "phase": "TEST-only source-plan error before captured-selection work; actual target1460->1459 and no structural extension claimed",
+      "effects": "unchanged; no new production failure policy"
+    },
+    {
+      "path": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+      "source": {
+        "path": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "bytes": 24848,
+        "sha256": "753c691aadb40b193ece232fc4a521b513f9cf45369101fbac480ce82c92b4e6"
+      },
+      "anchors": {
+        "fn invalid_claude_body_wins": [
+          249
+        ],
+        "Some(SourceRefusalBody::ClosedError(_))": [
+          273
+        ]
+      },
+      "before": "matches!(source_body,Some(Json(_))) for locally constructed source error",
+      "after": "Explicit ClosedError match; all original status/reservation/attempt/body/usage and publication assertions retained",
+      "phase": "TEST-only staged Claude preparation rejection; sealed phase/capability/fallback semantics unchanged",
+      "effects": "unchanged; no new production failure policy"
+    }
+  ],
+  "testSplit": {
+    "originalTarget": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+    "originalPhysicalClosure": 994,
+    "retainedTarget": "runtime.rs",
+    "retainedPhysicalClosure": 844,
+    "siblingTarget": "runtime_ancillary.rs",
+    "siblingPhysicalClosure": 502,
+    "sharedModule": "runtime_support/mod.rs",
+    "sharedPhysicalLines": 279,
+    "cohort": [
+      "actual_local_quota_transport_fault_and_upstream_refusal_keep_separate_origins",
+      "gateway_origin_preserves_admission_and_started_ledger_failures_without_provider_health",
+      "image_failure_aborts_siblings_but_settles_every_logical_child_once",
+      "image_fanout_uses_one_original_scope_exact_child_ids_and_common_output_metadata",
+      "systemone_maps_actual_upstream_errors_and_does_not_echo_private_bodies",
+      "systemone_uses_authoritative_provider_selection_and_normalizes_actual_usage"
+    ],
+    "invariants": "Complete existing ExtrasHost implementation byte-identical. Only parent-test visibility changed; fixture RNG remains private. Stable current C1073 PrincipalId::from_scalar replaces the old scalar tuple spelling; no future Core8c5 API is copied. Each target closure counts the shared module independently."
+  },
+  "tracedTestCallers": {
+    "tracedTestOnlyCallers": [
+      {
+        "helper": "migration::body",
+        "caller": "malformed_import_invalidates_the_derived_policy_in_the_same_commit",
+        "testOnly": true
+      },
+      {
+        "helper": "migration::body",
+        "caller": "dry_run_has_no_revision_or_store_effect_and_null_cas_does_not_overwrite_a_racer",
+        "testOnly": true
+      },
+      {
+        "helper": "migration::body",
+        "caller": "source_partial_errors_keep_valid_writes_and_return_422",
+        "testOnly": true
+      },
+      {
+        "helper": "routing::error_field",
+        "caller": "opaque_model_retains_source_availability_branch_without_a_scalar_fallback",
+        "testOnly": true
+      },
+      {
+        "helper": "routing::error_field",
+        "caller": "ordinary_responses_stream_precedes_model_and_chat_model_precedes_cap",
+        "testOnly": true
+      },
+      {
+        "helper": "routing::error_field",
+        "caller": "unknown_opaque_field_precedes_model_stream_and_content_errors",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "provider_configuration_and_invalid_vector_statuses_stay_distinct",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "base64_vectors_use_source_little_endian_float32_output_without_forwarding_the_encoding_option",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "job_retry_is_poll_driven_and_does_not_schedule_a_hidden_request",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "image_failure_aborts_siblings_but_settles_every_logical_child_once",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "image_fanout_uses_one_original_scope_exact_child_ids_and_common_output_metadata",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "systemone_uses_authoritative_provider_selection_and_normalizes_actual_usage",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "expired_input_fails_after_a_poll_extended_only_the_job_and_lookup_ttls",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "live_job_lease_refuses_a_second_runner_and_input_expiry_is_not_refreshed",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "real_aes_gcm_tamper_is_a_failed_job_without_upstream_dispatch",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "retained_jobs_encrypt_inputs_and_owner_survives_bearer_rotation",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "queued_job",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "partial_chunk_success_is_not_replayed_after_global_token_budget_exhaustion",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "explicit_failure_releases_idempotency_but_unknown_transport_never_retries",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "dispatched_expired_idempotency_is_indeterminate_and_cannot_steal_the_lease",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "idempotency_replays_without_credentials_and_conflict_never_redispatches",
+        "testOnly": true
+      },
+      {
+        "helper": "extras::scalar_source/queued_job",
+        "caller": "sync_deduplicates_orders_cache_hits_and_measures_only_actual_voyage_usage",
+        "testOnly": true
+      }
+    ],
+    "extrasAncillaryCohort": [
+      "actual_local_quota_transport_fault_and_upstream_refusal_keep_separate_origins",
+      "gateway_origin_preserves_admission_and_started_ledger_failures_without_provider_health",
+      "image_failure_aborts_siblings_but_settles_every_logical_child_once",
+      "image_fanout_uses_one_original_scope_exact_child_ids_and_common_output_metadata",
+      "systemone_maps_actual_upstream_errors_and_does_not_echo_private_bodies",
+      "systemone_uses_authoritative_provider_selection_and_normalizes_actual_usage"
+    ],
+    "noProductionResultPropagation": true
+  },
+  "sourceValidation": {
+    "classification": "SOURCE_ONLY_NOT_COMPILER_AST_OR_RUNTIME_ACCEPTANCE",
+    "base": "adc9c599ba8c2ff6d77aa1f5539096d06f9b79cc",
+    "production": [
+      {
+        "crate": "gateway-auth-contracts",
+        "before": 855,
+        "after": 855,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-claude-usage-admin",
+        "before": 338,
+        "after": 366,
+        "delta": 28,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-extras-contract",
+        "before": 440,
+        "after": 440,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-extras-runtime",
+        "before": 2440,
+        "after": 2440,
+        "delta": 0,
+        "under1000": false
+      },
+      {
+        "crate": "gateway-local-refusal",
+        "before": 325,
+        "after": 325,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-migration",
+        "before": 9753,
+        "after": 9753,
+        "delta": 0,
+        "under1000": false
+      },
+      {
+        "crate": "gateway-prompt-policy",
+        "before": 501,
+        "after": 501,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-chat",
+        "before": 841,
+        "after": 841,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-chat-controls",
+        "before": 195,
+        "after": 195,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-claude-body",
+        "before": 811,
+        "after": 811,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-collector",
+        "before": 709,
+        "after": 709,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-events",
+        "before": 246,
+        "after": 246,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-history",
+        "before": 637,
+        "after": 637,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-images",
+        "before": 723,
+        "after": 723,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-input",
+        "before": 493,
+        "after": 493,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-policy",
+        "before": 687,
+        "after": 687,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-protocol",
+        "before": 612,
+        "after": 612,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-replay",
+        "before": 635,
+        "after": 635,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-response",
+        "before": 642,
+        "after": 642,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-services",
+        "before": 814,
+        "after": 814,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-source",
+        "before": 579,
+        "after": 579,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-stream",
+        "before": 718,
+        "after": 718,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-tool-grammar",
+        "before": 389,
+        "after": 389,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-provider-writer",
+        "before": 658,
+        "after": 658,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-providers",
+        "before": 620,
+        "after": 620,
+        "delta": 0,
+        "under1000": true
+      },
+      {
+        "crate": "gateway-routing-runtime",
+        "before": 7867,
+        "after": 7867,
+        "delta": 0,
+        "under1000": false
+      },
+      {
+        "crate": "gateway-schema",
+        "before": 7494,
+        "after": 7494,
+        "delta": 0,
+        "under1000": false
+      },
+      {
+        "crate": "gateway-worker",
+        "before": 18540,
+        "after": 18540,
+        "delta": 0,
+        "under1000": false
+      }
+    ],
+    "targets": [
+      {
+        "root": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "files": [
+          "rust/crates/gateway-extras-runtime/tests/decisions.rs"
+        ],
+        "ownedPhysicalRustLines": 305,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "files": [
+          "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+          "rust/crates/gateway-extras-runtime/tests/runtime_support/mod.rs"
+        ],
+        "ownedPhysicalRustLines": 844,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-extras-runtime/tests/runtime_ancillary.rs",
+        "files": [
+          "rust/crates/gateway-extras-runtime/tests/runtime_ancillary.rs",
+          "rust/crates/gateway-extras-runtime/tests/runtime_support/mod.rs"
+        ],
+        "ownedPhysicalRustLines": 502,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "files": [
+          "rust/crates/gateway-migration/tests/profile_runtime.rs"
+        ],
+        "ownedPhysicalRustLines": 340,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "files": [
+          "rust/crates/gateway-routing-runtime/tests/source_contracts.rs"
+        ],
+        "ownedPhysicalRustLines": 1459,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "files": [
+          "rust/crates/gateway-routing-runtime/tests/source_factory.rs"
+        ],
+        "ownedPhysicalRustLines": 277,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-routing-runtime/tests/source_plan.rs",
+        "files": [
+          "rust/crates/gateway-routing-runtime/tests/source_input/mod.rs",
+          "rust/crates/gateway-routing-runtime/tests/source_plan.rs"
+        ],
+        "ownedPhysicalRustLines": 201,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "files": [
+          "rust/crates/gateway-routing-runtime/tests/staged_claude.rs"
+        ],
+        "ownedPhysicalRustLines": 615,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      },
+      {
+        "root": "rust/crates/gateway-schema/tests/source_request.rs",
+        "files": [
+          "rust/crates/gateway-schema/tests/source_request.rs"
+        ],
+        "ownedPhysicalRustLines": 102,
+        "classification": "SOURCE_MODULE_SCAN_NOT_OFFICIAL_AST_GATE"
+      }
+    ],
+    "originalAffectedCaseCount": 88,
+    "affectedCases": [
+      {
+        "originalPath": "rust/crates/gateway-claude-usage-admin/src/readback.rs",
+        "path": "rust/crates/gateway-claude-usage-admin/src/readback.rs",
+        "name": "admin_readback_preserves_both_unpaired_utf16_directions_in_raw_quota",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-claude-usage-admin/src/readback.rs",
+        "path": "rust/crates/gateway-claude-usage-admin/src/readback.rs",
+        "name": "state_readback_uses_the_last_source_property_and_missing_block_is_null",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "path": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "name": "validate_renders_lone_default_model_errors_without_null_or_escape_text_substitution",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "path": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "name": "source_partial_errors_keep_valid_writes_and_return_422",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "path": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "name": "dry_run_has_no_revision_or_store_effect_and_null_cas_does_not_overwrite_a_racer",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "path": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "name": "malformed_import_invalidates_the_derived_policy_in_the_same_commit",
+        "beforeAssertions": 6,
+        "afterAssertions": 6,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "path": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "name": "raw_profile_utf16_remains_explicit_and_refresh_bearing_pool_never_enters_common_store",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "sync_deduplicates_orders_cache_hits_and_measures_only_actual_voyage_usage",
+        "beforeAssertions": 9,
+        "afterAssertions": 9,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "idempotency_replays_without_credentials_and_conflict_never_redispatches",
+        "beforeAssertions": 6,
+        "afterAssertions": 6,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "dispatched_expired_idempotency_is_indeterminate_and_cannot_steal_the_lease",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "explicit_failure_releases_idempotency_but_unknown_transport_never_retries",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "partial_chunk_success_is_not_replayed_after_global_token_budget_exhaustion",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "budget_retries_cas_then_waits_only_inside_the_twenty_second_deadline",
+        "beforeAssertions": 7,
+        "afterAssertions": 7,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "quota_driven_cache_eviction_crosses_profiles_and_drops_the_oldest_pointer",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "cancelled_sync_never_dispatches_and_returns_distinct_499",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "retained_jobs_encrypt_inputs_and_owner_survives_bearer_rotation",
+        "beforeAssertions": 8,
+        "afterAssertions": 8,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "real_aes_gcm_tamper_is_a_failed_job_without_upstream_dispatch",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "live_job_lease_refuses_a_second_runner_and_input_expiry_is_not_refreshed",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "expired_input_fails_after_a_poll_extended_only_the_job_and_lookup_ttls",
+        "beforeAssertions": 3,
+        "afterAssertions": 3,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime_ancillary.rs",
+        "name": "systemone_uses_authoritative_provider_selection_and_normalizes_actual_usage",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime_ancillary.rs",
+        "name": "systemone_maps_actual_upstream_errors_and_does_not_echo_private_bodies",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime_ancillary.rs",
+        "name": "image_fanout_uses_one_original_scope_exact_child_ids_and_common_output_metadata",
+        "beforeAssertions": 9,
+        "afterAssertions": 9,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime_ancillary.rs",
+        "name": "image_failure_aborts_siblings_but_settles_every_logical_child_once",
+        "beforeAssertions": 6,
+        "afterAssertions": 6,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "sync_retries_only_explicit_retryable_statuses_with_bounded_backoff",
+        "beforeAssertions": 3,
+        "afterAssertions": 3,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "job_retry_is_poll_driven_and_does_not_schedule_a_hidden_request",
+        "beforeAssertions": 6,
+        "afterAssertions": 6,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "base64_vectors_use_source_little_endian_float32_output_without_forwarding_the_encoding_option",
+        "beforeAssertions": 3,
+        "afterAssertions": 3,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "provider_configuration_and_invalid_vector_statuses_stay_distinct",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "name": "cache_timestamp_projection_preserves_source_negative_zero_key_identity",
+        "beforeAssertions": 3,
+        "afterAssertions": 3,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime_ancillary.rs",
+        "name": "gateway_origin_preserves_admission_and_started_ledger_failures_without_provider_health",
+        "beforeAssertions": 6,
+        "afterAssertions": 6,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime_ancillary.rs",
+        "name": "actual_local_quota_transport_fault_and_upstream_refusal_keep_separate_origins",
+        "beforeAssertions": 6,
+        "afterAssertions": 6,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "name": "actual_extras_dispatch_uses_one_fixed_decisions_call_and_terminal_usage",
+        "beforeAssertions": 9,
+        "afterAssertions": 9,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "name": "invalid_disabled_unknown_and_unconfigured_requests_never_dispatch",
+        "beforeAssertions": 7,
+        "afterAssertions": 7,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "name": "upstream_status_and_invalid_answers_retain_failed_terminal_without_retry",
+        "beforeAssertions": 7,
+        "afterAssertions": 7,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "name": "caller_cancellation_and_predispatch_quota_failure_remain_distinct",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "path": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "name": "byte_cap_and_jev_alias_use_the_decisions_contract",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-worker/src/inference_local_lifecycle.rs",
+        "path": "rust/crates/gateway-worker/src/inference_local_lifecycle.rs",
+        "name": "constructor_failure_uses_existing_plain_runtime_500_not_new_quota_error",
+        "beforeAssertions": 4,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-schema/tests/source_request.rs",
+        "path": "rust/crates/gateway-schema/tests/source_request.rs",
+        "name": "literal_lone_instructions_and_input_are_not_scalar_parsed",
+        "beforeAssertions": 3,
+        "afterAssertions": 3,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-schema/tests/source_request.rs",
+        "path": "rust/crates/gateway-schema/tests/source_request.rs",
+        "name": "source_model_defaults_and_nonempty_lone_identity_stay_distinct",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-schema/tests/source_request.rs",
+        "path": "rust/crates/gateway-schema/tests/source_request.rs",
+        "name": "last_duplicate_model_stream_and_instructions_follow_source_json_parse",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-schema/tests/source_request.rs",
+        "path": "rust/crates/gateway-schema/tests/source_request.rs",
+        "name": "stream_rejects_null_and_strings_not_just_truthiness",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-schema/tests/source_request.rs",
+        "path": "rust/crates/gateway-schema/tests/source_request.rs",
+        "name": "http_decoder_keeps_source_bom_and_invalid_utf8_rule_only_at_byte_boundary",
+        "beforeAssertions": 3,
+        "afterAssertions": 3,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_plan.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_plan.rs",
+        "name": "unknown_opaque_field_precedes_model_stream_and_content_errors",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_plan.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_plan.rs",
+        "name": "ordinary_responses_stream_precedes_model_and_chat_model_precedes_cap",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_plan.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_plan.rs",
+        "name": "native_openrouter_chat_is_not_globally_codex_normalized",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_plan.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_plan.rs",
+        "name": "opaque_model_retains_source_availability_branch_without_a_scalar_fallback",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "name": "neutral_input_keeps_exact_original_and_lazy_controls",
+        "beforeAssertions": 3,
+        "afterAssertions": 3,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "name": "local_factory_reuses_original_identity_digest_and_one_reservation",
+        "beforeAssertions": 8,
+        "afterAssertions": 8,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "name": "local_factory_source_failure_cleans_original_without_provider_exposure",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "name": "fresh_ordinary_v3_binds_canonical_original_without_persisting_payload",
+        "beforeAssertions": 7,
+        "afterAssertions": 7,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "name": "attest_retains_original_constructor_inputs_and_one_admission",
+        "beforeAssertions": 9,
+        "afterAssertions": 9,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "name": "failed_planning_cleans_expired_original_without_provider_terminal_or_new_admission",
+        "beforeAssertions": 6,
+        "afterAssertions": 6,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_factory.rs",
+        "name": "attest_phase_cas_cannot_ignore_a_reservation_released_after_observation",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "fixture_collator_refuses_unproven_operands_even_when_equal",
+        "beforeAssertions": 1,
+        "afterAssertions": 1,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch",
+        "beforeAssertions": 6,
+        "afterAssertions": 6,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "paid_original_api_release_prevents_new_paid_exposure",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "paid_dispatch_missing_active_history_cannot_recreate_exposure",
+        "beforeAssertions": 6,
+        "afterAssertions": 6,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity",
+        "beforeAssertions": 6,
+        "afterAssertions": 6,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel",
+        "beforeAssertions": 7,
+        "afterAssertions": 7,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission",
+        "beforeAssertions": 3,
+        "afterAssertions": 3,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "embedding_job_read_without_retry_releases_and_never_commits_kernel_admission",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "paid_capability_endpoint_and_logical_model_stay_separate_from_wire_alias",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "source_availability_gate_preserves_full_compact_paid_and_reserve_cases",
+        "beforeAssertions": 8,
+        "afterAssertions": 8,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "frozen_source_classifier_quota_classes_and_fallback_matrix",
+        "beforeAssertions": 8,
+        "afterAssertions": 8,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "direct_dispatch_and_finish_count_api_once",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "explicit_not_started_abort_compensates_but_ambiguous_intent_does_not",
+        "beforeAssertions": 3,
+        "afterAssertions": 3,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "started_transport_cannot_be_refunded_by_client_cancellation",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "synthetic_hops_share_original_admission_and_stop_after_semantic_commit",
+        "beforeAssertions": 6,
+        "afterAssertions": 6,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "codex_none_and_ultra_keep_source_wire_translation_and_one_conversation",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "codex_generic429_is_not_paid_or_account_exhaustion",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "credential_generation_change_prevents_dispatch_and_allows_only_proven_compensation",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "expired_journal_recovery_never_replays_or_refunds_started_work",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "simultaneous_original_request_identity_has_one_winner",
+        "beforeAssertions": 1,
+        "afterAssertions": 1,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "cancellation_before_admission_preserves_original_reason",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "source_deepseek_extension_uses_one_captured_route_selection",
+        "beforeAssertions": 5,
+        "afterAssertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "measured_cancelled_wait_is_recorded_before_original_cancellation_error",
+        "beforeAssertions": 3,
+        "afterAssertions": 3,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "lithos_refusal_headers_use_vendor_windows_and_response_prohibition",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "lithos_response_prohibition_is_request_local_and_does_not_retry_the_rung",
+        "beforeAssertions": 3,
+        "afterAssertions": 3,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+        "name": "explicit_provider_504_survives_late_abort_and_local_deadline_never_advances",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "name": "ready_scalar_routes_match_real_original_adapter_body_headers_and_decode",
+        "beforeAssertions": 6,
+        "afterAssertions": 6,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "name": "claude_stage_uses_real_factory_and_retains_actual_model_body_decode_without_auth",
+        "beforeAssertions": 9,
+        "afterAssertions": 9,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "name": "invalid_claude_body_wins_before_hypothetical_physical_headers_without_fallback",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "name": "named_journal_preserves_scalar_null_and_utf16_workspace_and_exact_owner_fences",
+        "beforeAssertions": 11,
+        "afterAssertions": 11,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "name": "source_workspace_reclaimed_owner_and_stale_revision_cannot_dispatch",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "name": "crossed_publication_variants_and_fences_fail_closed_without_a_ready_request",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "name": "effective_phase_reaches_lookup_before_native_body_and_retains_original_controls",
+        "beforeAssertions": 4,
+        "afterAssertions": 4,
+        "execution": "NOT_RUN"
+      },
+      {
+        "originalPath": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "path": "rust/crates/gateway-routing-runtime/tests/staged_claude.rs",
+        "name": "invalid_ordinary_input_never_calls_capability_lookup_and_high_only_still_refuses",
+        "beforeAssertions": 2,
+        "afterAssertions": 2,
+        "execution": "NOT_RUN"
+      }
+    ],
+    "newCases": [
+      {
+        "path": "rust/crates/gateway-claude-usage-admin/src/readback.rs",
+        "name": "closed_error_readback_uses_the_existing_source_object_projection",
+        "assertions": 3,
+        "execution": "NOT_RUN"
+      },
+      {
+        "path": "rust/crates/gateway-migration/tests/profile_runtime.rs",
+        "name": "finite_error_test_view_keeps_null_param_and_rejects_empty_body",
+        "assertions": 5,
+        "execution": "NOT_RUN"
+      },
+      {
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime_ancillary.rs",
+        "name": "finite_response_test_view_keeps_wire_and_rejects_nonscalar_json",
+        "assertions": 4,
+        "execution": "NOT_RUN"
+      }
+    ],
+    "protectedProviderAndCarrierRefusalCases": [
+      {
+        "path": "rust/crates/gateway-admin-runtime/tests/errors_utf16.rs",
+        "sha256": "90201229be1e9ee2557b248fcbb858f4a4a502fe51708a71a2bf22fabb5235b7",
+        "caseNames": [
+          "error_history_preserves_utf16_filter_order_buckets_expiry_and_diagnostics",
+          "unauthorized_and_invalid_limit_keep_zero_query_budget",
+          "error_history_never_reinterprets_profile_v1_as_json",
+          "closed_validation_errors_keep_original_bytes_before_defaults_or_selection_effects"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-auth-contracts/tests/closed_error_body.rs",
+        "sha256": "dcd654c128c36c3fa4ffbc0c576b3d82af55241b8129ed13e06688be6b0ea77b",
+        "caseNames": [
+          "closed_auth_response_keeps_defaults_utf16_and_original_status",
+          "closed_auth_generic_json_and_direct_wire_views_match",
+          "existing_auth_source_json_and_empty_body_contracts_stay_distinct"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-extras-contract/tests/closed_error_body.rs",
+        "sha256": "79f906fd5d94c7ac81c66f7f7e0d3443f488d2b6c1858e0ef251d98ec495d2f2",
+        "caseNames": [
+          "closed_extras_response_keeps_defaults_and_original_utf16_bytes",
+          "extras_json_and_closed_wire_equality_keeps_original_source_identity",
+          "extras_generic_serializer_retains_its_actual_failure_boundary"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-local-refusal/tests/closed_error_body.rs",
+        "sha256": "9c6f278b58c447411082fd8628180fea2b3b8021fa26cb0b439a20ec76929f39",
+        "caseNames": [
+          "closed_error_preserves_untrimmed_type_and_all_optional_field_forms",
+          "closed_error_wire_preserves_control_quotes_and_surrogate_units",
+          "scalar_snapshot_matches_original_wire_and_retains_null_or_omission",
+          "cleanup_snapshots_original_scalar_before_each_diagnostic_mutation",
+          "scalar_adapter_keeps_original_nonscalar_diagnostic_disposition",
+          "ordinary_closed_carrier_cannot_forge_the_private_aggregate_kind",
+          "upstream_json_and_plain_failure_carriers_keep_original_bytes",
+          "every_utf16_unit_survives_closed_wire_through_the_defining_source_parser",
+          "empty_wire_type_and_code_remain_verbatim_while_diagnostic_type_defaults"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-local-refusal/tests/closed_error_serialize.rs",
+        "sha256": "acfd9280ac6b44fc6cc97e9d6da7684ee8d23c64492be5e75e4756b7f939bcb8",
+        "caseNames": [
+          "finite_generic_serialization_matches_wire_without_serializing_the_private_kind",
+          "finite_generic_serializer_preserves_actual_writer_failure"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-local-refusal/tests/local_refusal.rs",
+        "sha256": "c023d4a36e7ca0bd25a58cde651344f05512b719d70b3670221a5ad5931ec5f7",
+        "caseNames": [
+          "aggregate_constructor_sets_only_the_internal_identity",
+          "ordinary_same_wire_envelope_does_not_get_aggregate_identity",
+          "aggregate_source_clone_and_routing_conversion_preserve_exact_body",
+          "cleanup_keeps_aggregate_body_status_and_identity",
+          "scalar_context_code_stays_ordinary_through_clone_and_cleanup",
+          "invalid_constructor_and_client_text_cannot_supply_internal_kind",
+          "aggregate_refusal_preserves_lone_surrogates_in_message"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/buffered_terminal.rs",
+        "sha256": "aa4f0250051f04ebd5ff9f0c062c6d323803187def4d3082d5bdf021622d681a",
+        "caseNames": [
+          "buffered_error_only_retains_source502_envelope_and_error_settlement",
+          "created_before_error_is_not_misreported_as_completed_response",
+          "streaming_flat_and_nested_errors_preserve_actual_events_and_original_status",
+          "source_default_error_fields_are_used_for_buffered_nested_terminal",
+          "truncated_or_missing_terminal_still_fails_closed",
+          "first_completed_terminal_survives_a_later_error_in_both_client_modes",
+          "successful_codex_without_media_type_uses_strict_sse_in_both_client_modes",
+          "absent_codex_media_type_never_accepts_non_sse_or_missing_terminal_as_completion",
+          "missing_media_type_is_inferred_only_for_successful_fixed_codex_protocol"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/claude_body_stage.rs",
+        "sha256": "627d6549267dde47a7b9891f0613acf16daa8d0cfbde9c35f2ddc091f6480a59",
+        "caseNames": [
+          "staged_scalar_bodies_and_decode_match_one_legacy_implementation",
+          "pure_stage_has_no_material_port_and_retains_original_body_error",
+          "stage_keeps_source_effort_payload_and_actual_disabled_capability",
+          "plain_api_body_retains_scalar_golden_bytes_without_attribution"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/claude_ordinary_phase.rs",
+        "sha256": "7df4f4c2eb983b01d0a9ce758a495b71fce6d116530c5fa8a4c2f673edfb676c",
+        "caseNames": [
+          "effective_omitted_default_is_observed_before_capabilities_and_finalized_once",
+          "original_high_only_catalog_remains_an_explicit_default_medium_negative",
+          "explicit_none_nonstream_and_observed_high_keep_their_real_proof_rules",
+          "absent_effort_and_opaque_mapped_default_retain_exact_source_data",
+          "source_input_cache_reasoning_priority_finishes_before_any_capability_input",
+          "phased_and_existing_convenience_use_identical_normalized_body_and_decode",
+          "cloned_phase_retries_keep_one_normalized_outcome_and_actual_selected_kind"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/conformance.rs",
+        "sha256": "89aae5e603a8367d01b61c3aa5e3b833942cb7a70e47e7d4cffdbd191358da50",
+        "caseNames": [
+          "frozen_waterfalls_distinguish_quota_from_serving_failure",
+          "codex_replay_repair_is_exact_and_does_not_damage_provider_history",
+          "namespace_and_freeform_round_trip_keeps_identity",
+          "thinking_conflict_and_reasoning_profiles_are_provider_specific",
+          "declared_payload_bound_keeps_unicode_and_disabled_rejects",
+          "usage_preserves_missingness_and_native_cache_gross_input",
+          "transport_profiles_cerebras_and_openrouter_preserve_actual_wires",
+          "cerebras_schema_preserves_property_names_and_collapses_root_union",
+          "native_disabled_thinking_requires_exact_independent_proof",
+          "native_replay_is_scoped_complete_expiring_and_never_publicly_signed",
+          "lithos_rung_windows_recover_independently",
+          "additional_inference_routes_have_provider_payloads_and_image_billing_boundary",
+          "chat_tool_calls_null_is_absent_in_buffered_responses",
+          "direct_chat_empty_stop_is_preserved_while_responses_rejects_it",
+          "signed_claude_chat_details_are_private_and_do_not_duplicate_reasoning",
+          "direct_paid_and_synthetic_pins_preserve_catalog_admission",
+          "responses_chat_reconciles_terminal_only_output_without_duplicate_deltas",
+          "codex_transport_strips_accepted_ignored_controls_and_keeps_session_scope",
+          "previous_response_id_provider_matrix_matches_typescript_parity",
+          "native_messages_unclosed_blocks_fail_before_terminal"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/current_source_decode.rs",
+        "sha256": "1de682a21a581a55af58302eb9af0037cce9ae127b6eae30391d5697b1f85a50",
+        "caseNames": [
+          "item_alias_done_without_output_index_does_not_duplicate_text_or_refusal",
+          "identity_less_aggregate_terminal_uses_insertion_order_and_ignores_alias_duplicates",
+          "conflicting_terminal_still_errors_and_eof_is_not_a_terminal",
+          "codex_exact_context_terminal_preserves_template_output_sequence_and_original_observation",
+          "codex_normalization_requires_exact_code_provider_and_observed_identity",
+          "native_responses_decoder_preserves_lone_utf16_error_fields"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/extras_source_carriers.rs",
+        "sha256": "df50b1ede28d275e3392bb5a0487238317c779666c55f10826369763299033d8",
+        "caseNames": [
+          "image_source_prompt_user_model_default_and_unknown_key_error_remain_original",
+          "embedding_and_systemone_use_the_same_source_engine_without_scalar_payloads",
+          "source_upstream_response_text_is_retained_in_existing_json_shape"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/extras_source_golden.rs",
+        "sha256": "d34afaeb0e0e3a228526aa7aa72fb5172228156a7b8403947114299f712cd572",
+        "caseNames": [
+          "embeddings_model_is_mandatory_and_never_trimmed_into_a_different_model",
+          "embeddings_scalar_errors_and_precedence_match_source",
+          "embeddings_job_requires_input_type_and_float_format",
+          "embeddings_limits_use_utf16_characters_and_utf8_token_estimates",
+          "image_reference_urls_preserve_source_case_normalization_and_url_validation",
+          "image_base64_uses_source_syntax_without_inventing_a_canonical_padding_rule",
+          "image_unknown_null_fields_fail_before_scalar_validation_and_nullable_options_disappear",
+          "image_scalar_error_order_and_child_identity_follow_source",
+          "systemone_default_and_exact_error_envelopes_follow_source",
+          "opaque_image_parse_precedes_host_model_resolution_and_keeps_operation_kind",
+          "multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validation"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/final_edges.rs",
+        "sha256": "c16bb64644b61b025e50391c939e3a66228772dcc9e9ce0961fde8ccd6fe2016",
+        "caseNames": [
+          "explicit_null_reasoning_length_cerebras_is502_not_an_incompletion",
+          "claude_oauth_has_native_attribution_and_console_key_does_not",
+          "buffered_cerebras_chat_client_stream_replays_real_finish_and_usage",
+          "lithos_header_precedence_and_streamed_final_refusal_stay_in_band",
+          "lithos_streamed_refusal_parity_is_exposed_for_both_client_surfaces",
+          "codex_error_bytes_are_available_unchanged_before_authority_classification",
+          "buffered_chat_retains_usage_without_requesting_a_stream_usage_chunk",
+          "image_fanout_measures_every_replayed_input_byte"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/forwarding_unicode.rs",
+        "sha256": "ba1ed71e983787ed93192aaf1406e72960cb692525f77ffcd2a7257f1454f26f",
+        "caseNames": [
+          "source_bmp_prefix_is_exactly_31343_code_units",
+          "five_source_unicode_seams_match_exact_prefix_marker_counts_and_call_id",
+          "in_budget_unicode_is_verbatim_for_every_reduction_setting",
+          "disabled_unicode_refuses_preparation_with_exact_source_error"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/ordinary_preparation.rs",
+        "sha256": "40cd90288b680ad272f502cc1230f6044ac9a998aba5f46993df205b4ee54253",
+        "caseNames": [
+          "responses_input_cache_reasoning_instructions_order_matches_the_source",
+          "chat_syntax_stream_conversion_cache_then_selected_mapping_is_distinct",
+          "actual_host_default_and_catalog_wire_map_do_not_become_a_tier_allowlist",
+          "absent_catalog_is_unknown_and_source_reasoning_fields_stay_authoritative",
+          "selected_context_is_immutable_and_none_is_only_the_explicit_legacy_adapter_contract",
+          "selected_ordinary_metadata_does_not_prevalidate_direct_or_openrouter_branches",
+          "opaque_model_and_effort_wire_map_units_are_data_not_scalar_fallbacks"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/paid_lookup.rs",
+        "sha256": "0137270c2533c3a5c6b32ea12819485d8d099d98b876eacf56028f15e9d4bc86",
+        "caseNames": [
+          "exact_source_log_normalization_preserves_numeric_and_cache_contracts",
+          "fixed_query_matches_source_time_rounding_and_encodes_only_owned_key",
+          "source_page_scenarios_match_last_valid_row_and_unresolved_outcomes",
+          "unsupported_provider_and_missing_reference_never_create_http_or_zero_cost",
+          "page_request_cannot_correlate_another_attempt_and_debug_redacts_secret_url",
+          "explicit_zero_is_matched_evidence_and_malformed_zero_is_not"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/prompt_policy.rs",
+        "sha256": "19cd204786cd7bea3ccab7436d303d36e3402e487acae791559c37c28626b169",
+        "caseNames": [
+          "exact_summary_is_whole_unicode_and_all_earlier_steers_survive_every_mode",
+          "malformed_and_multiple_summary_envelopes_fail_before_item_projection",
+          "parseable_argument_elision_accounts_for_every_omitted_byte",
+          "all_profile_windows_reserves_and_safe_integer_validation_are_real",
+          "complete_body_counts_and_cerebras_real_dropped_projection_are_bound",
+          "aggregate_overflow_is_typed_for_all_profiles_and_all_history_modes",
+          "native_metadata_never_exempts_ordinary_messages_and_lone_summary_units_survive",
+          "nonempty_reasoning_tiers_remain_verbatim_and_policy_advertises_v2"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/replay_runtime.rs",
+        "sha256": "8ddc63bbbc54bca41bdc7a2194138926a575c08205638233a945ed02c602a2c1",
+        "caseNames": [
+          "decoded_messages_replay_publishes_and_restores_through_prepare_options",
+          "decoded_chat_replay_keeps_reasoning_details_and_tool_calls_through_prepare_options",
+          "lone_surrogate_native_replay_survives_prepare_source_request",
+          "native_replay_arguments_require_matching_valid_object_bytes"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/source_currency.rs",
+        "sha256": "a9595e31427c34abd9c715674507021f8b95c32ad41e025554022bc239f296db",
+        "caseNames": [
+          "ba5ef_source_projection_vectors_match",
+          "prepared_provider_wire_keeps_source_sampling_warnings_and_zero",
+          "lithos_tier_windows_use_same_case_and_trim_identity_as_dispatch"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/source_wire.rs",
+        "sha256": "9ca991e092c9be476447920eec653dd6cf3f694d3dddebdf440df3263bbd9b97",
+        "caseNames": [
+          "literal_source_units_reach_direct_provider_wire_and_input_is_immutable",
+          "actual_stringify_boundary_uses_shared_duplicate_integer_key_and_number_semantics",
+          "buffered_and_actual_sse_writer_created_progress_terminal_echo_the_same_source",
+          "utf16_tool_prefix_collision_namespace_and_map_wire_are_source_strings",
+          "direct_native_and_ordinary_branches_keep_the_source_phase_boundary",
+          "source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units",
+          "codex_replay_and_direct_chat_do_not_lose_source_text",
+          "semantic_and_usage_accessors_observe_the_authoritative_event_only",
+          "paid_and_native_claude_source_wire_and_request_echo_keep_text_and_schema_units",
+          "source_original_tool_identity_survives_buffered_and_streamed_generated_items",
+          "selected_provider_phase_errors_and_open_effort_do_not_scalarize_source_controls",
+          "reasoning_refusal_and_agent_message_envelopes_preserve_literal_units",
+          "combined_image_text_reduction_preserves_source_parts_and_exact_refusal_boundary",
+          "custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mirror",
+          "source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings",
+          "opaque_model_refusal_body_does_not_replace_or_scalarize_request_units",
+          "paid_catalog_lookup_compares_source_model_units_and_retains_billing_fragments"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/sse_boundaries.rs",
+        "sha256": "eda7e6486594bad792780258bc92562c8bdf64efe0e425900fc7ca217c8639dd",
+        "caseNames": [
+          "mixed_line_endings_frame_every_byte_split_without_merging_events"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/surplus_masking.rs",
+        "sha256": "9bac22e653c9ffd1ee65baa4e07830f148ae900ac27167371c32f81703ae3c36",
+        "caseNames": [
+          "every_surplus_inference_post_opts_in_exactly_once_in_both_wire_and_client_modes",
+          "masking_opt_in_does_not_escape_to_other_bearer_provider_requests"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/terminal_conformance.rs",
+        "sha256": "bb04db0a3e3d37ceb620409db8a96df8907346980566ca5fda5255c4fc45064f",
+        "caseNames": [
+          "reasoning_closes_before_text_and_fragmented_tools_keep_announced_indexes",
+          "truthful_terminals_distinguish_explicit_truncation_and_empty_stop",
+          "sse_incremental_utf8_mixed_line_endings_and_eof_fail_closed"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-routing-runtime/tests/local_aggregate.rs",
+        "sha256": "7156b76dbdb3408ba3e030899ba81f86a38fdbe0f643a8371c637bdd4dd1f605",
+        "caseNames": [
+          "local_aggregate_error_never_mints_attempt_or_paid_dispatch_and_cleanup_is_once"
+        ],
+        "unchangedFromBase": true
+      },
+      {
+        "path": "rust/crates/gateway-schema/tests/closed_reasoning_message.rs",
+        "sha256": "abe4f568389e5c90117b3ac2e6d77db8a921ecd22d5f928e19f960c66a16a875",
+        "caseNames": [
+          "reasoning_error_message_and_parent_param_stay_at_the_original_validation_point",
+          "nonempty_lone_unit_reasoning_remains_open_source_data"
+        ],
+        "unchangedFromBase": true
+      }
+    ],
+    "providerOriginalNames": 109,
+    "providerPriorRegressions": 15,
+    "priorCarrierCases": 11,
+    "fixtures": [
+      {
+        "path": "rust/crates/gateway-migration/tests/fixtures/audit-profile-v2-split-record.json",
+        "bytes": 5136,
+        "sha256": "d544b220677c729ba7f199ed9775249ab717bd13074aa4aa7a6c70214bc94b2d"
+      },
+      {
+        "path": "rust/crates/gateway-migration/tests/fixtures/native-source.json",
+        "bytes": 20088,
+        "sha256": "e5ab27987e5921695c459a9a1f1276627aa2722468a6c9b150ccaf63a5455290"
+      },
+      {
+        "path": "rust/crates/gateway-migration/tests/fixtures/normalization-new-york.json",
+        "bytes": 1392,
+        "sha256": "ff967c4a70856a239183852b76b33462e367be533f225bd6036c8902ba57fb66"
+      },
+      {
+        "path": "rust/crates/gateway-migration/tests/fixtures/normalization-utc.json",
+        "bytes": 1379,
+        "sha256": "892210a41fd0477019e66851e2d2134db677ac0cd57d019548b55bd44836fc1f"
+      },
+      {
+        "path": "rust/crates/gateway-migration/tests/fixtures/offline-source.json",
+        "bytes": 6141,
+        "sha256": "bbca944985e6da1980dfdeed88355e60df2a3878bd6ff290025cf18414bf09a7"
+      },
+      {
+        "path": "rust/crates/gateway-migration/tests/fixtures/routing-writer-custody.json",
+        "bytes": 9086,
+        "sha256": "abb57bf91ee934a9a3f4f923dad52984c6335dd6de88a4ea46e7faab32e5c246"
+      },
+      {
+        "path": "rust/crates/gateway-migration/tests/fixtures/source-usage-rollup-writer.json",
+        "bytes": 6461,
+        "sha256": "8a2b17f5668e0f7db9bb076daff6d1a8acff555b4a94e50a9c6eaa256d640064"
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/forwarding-unicode-source-v1.json",
+        "bytes": 6649,
+        "sha256": "50d51dadfbb45c9a8e2a69be52211a7109ae4d66de0802975d60b2a4f632475a"
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/paid-lookup-golden.json",
+        "bytes": 14958,
+        "sha256": "c9a098b4d3773573e2e0897a628ef67cc7059dc9d7613aa454411c31d38bf0c9"
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/paid-lookup-oracle.json",
+        "bytes": 1426,
+        "sha256": "7b9dbaf0b7edebdb1c00f65e0c667b737862b588681f7fc5c8709df2e848377e"
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/source-currency-golden.json",
+        "bytes": 10929,
+        "sha256": "6e4ea94ae6fb4b003b1cc0de6894b228b23d0b86c53584a2c78ca7b61d731f0d"
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/source-currency-oracle.json",
+        "bytes": 2349,
+        "sha256": "74332e04c70073583a740b06a2e50457644433618ef2f3c06f988e4ad4b7fefa"
+      },
+      {
+        "path": "rust/crates/gateway-routing-runtime/tests/fixtures/source-currency-wait.json",
+        "bytes": 302,
+        "sha256": "ed31481cdcd283e75107447faf355033e4f0a3174ab2dfd7e9370ee0cf623ac2"
+      },
+      {
+        "path": "rust/crates/gateway-routing-runtime/tests/fixtures/source-golden.json",
+        "bytes": 5763,
+        "sha256": "53d547536b990a15d297f28bea717ff3face7a84f74b595bb2b1819002db240e"
+      },
+      {
+        "path": "rust/crates/gateway-routing-runtime/tests/fixtures/source-oracle.json",
+        "bytes": 927,
+        "sha256": "5343dabbcf64df9588bb9847da02982bef188bbb820a5e210b147969679f31b9"
+      },
+      {
+        "path": "rust/crates/gateway-schema/tests/fixtures/codex-0.163.0-logprobs.json",
+        "bytes": 13584,
+        "sha256": "f6695343b57002a328460682d757bf91807783f169a352a6f5acf148232f44d7"
+      },
+      {
+        "path": "rust/crates/gateway-schema/tests/fixtures/model-controls-source-v1.json",
+        "bytes": 9564,
+        "sha256": "c3e2ad81422cb557ab994a8e2c09bb1b2bb644aaa9a96862b41c90b73a1fee7e"
+      },
+      {
+        "path": "rust/crates/gateway-schema/tests/fixtures/openai-spec-pin.json",
+        "bytes": 1856,
+        "sha256": "e831fa65c039878fc3f2df9ab74c0863c4a8cc97a1c8a5d6f6beb518963a9db6"
+      },
+      {
+        "path": "rust/crates/gateway-schema/tests/fixtures/source-catalog-sort-v1.json",
+        "bytes": 2201,
+        "sha256": "cf49ebf3aa748ed7b171fa109e72d252a10685a4c02a590330c80644c17107b0"
+      },
+      {
+        "path": "rust/crates/gateway-schema/tests/fixtures/source-currency-golden.json",
+        "bytes": 1164,
+        "sha256": "e5e0ed05c10889d3673547c6fed7966713deb724177364f0b8c08e505dad0bba"
+      },
+      {
+        "path": "rust/crates/gateway-schema/tests/fixtures/source-normalization-v1.json",
+        "bytes": 5260,
+        "sha256": "628790aa7789fdb4da2d9894c28401e1e1d88bc201e3b9dc2b4d7cba92fea572"
+      }
+    ],
+    "invariants": [
+      {
+        "path": "rust/crates/gateway-worker/src/extras.rs",
+        "section": "complete actual run/input/dispatch/settlement functions before ExtrasBody",
+        "unchangedBytes": true
+      },
+      {
+        "path": "rust/crates/gateway-worker/src/extras.rs",
+        "section": "render_response full body from tuple destructure through end",
+        "unchangedBytes": true
+      },
+      {
+        "path": "rust/crates/gateway-worker/src/inference_local_lifecycle.rs",
+        "section": "complete LocalLifecycle and response_error before wrapper_error",
+        "unchangedBytes": true
+      },
+      {
+        "path": "rust/crates/gateway-claude-usage-admin/src/readback.rs",
+        "section": "original SourceJson projection tokens and two existing null constructions",
+        "unchangedTokens": true,
+        "newNullArm": false
+      },
+      {
+        "path": "rust/crates/gateway-extras-runtime/tests/runtime_support/mod.rs",
+        "section": "complete existing ExtrasHost implementation moved byte-identically",
+        "unchangedBytes": true
+      }
+    ],
+    "normalFirstPartyDagAcyclic": true,
+    "normalEdges": {
+      "gateway-claude-usage-admin": [
+        "gateway-admin-runtime",
+        "gateway-auth",
+        "gateway-auth-contracts",
+        "gateway-core",
+        "gateway-source"
+      ],
+      "gateway-worker": [
+        "gateway-admin",
+        "gateway-admin-contracts",
+        "gateway-admin-kernel",
+        "gateway-admin-runtime",
+        "gateway-admission",
+        "gateway-auth",
+        "gateway-auth-contracts",
+        "gateway-auth-native-wire",
+        "gateway-authority",
+        "gateway-capacity-recovery",
+        "gateway-catalog-provider",
+        "gateway-catalog-runtime",
+        "gateway-claude-runtime",
+        "gateway-claude-usage-admin",
+        "gateway-claude-usage-history-records",
+        "gateway-claude-usage-protocol",
+        "gateway-claude-usage-quota",
+        "gateway-claude-usage-runtime",
+        "gateway-compaction",
+        "gateway-core",
+        "gateway-decision-protocol",
+        "gateway-extras-contract",
+        "gateway-extras-runtime",
+        "gateway-live-runtime",
+        "gateway-local-refusal",
+        "gateway-migration",
+        "gateway-observability",
+        "gateway-profile-values",
+        "gateway-provider-claude-body",
+        "gateway-provider-events",
+        "gateway-provider-images",
+        "gateway-provider-policy",
+        "gateway-provider-protocol",
+        "gateway-provider-replay",
+        "gateway-provider-response",
+        "gateway-provider-source",
+        "gateway-provider-stream",
+        "gateway-providers",
+        "gateway-publication",
+        "gateway-publication-policy",
+        "gateway-publication-transport",
+        "gateway-routing-runtime",
+        "gateway-schema",
+        "gateway-source",
+        "gateway-wait-observation",
+        "gateway-worker-http-body",
+        "gateway-worker-platform",
+        "gateway-worker-storage",
+        "gateway-worker-stream",
+        "gateway-worker-web"
+      ],
+      "gateway-extras-runtime": [
+        "gateway-auth",
+        "gateway-core",
+        "gateway-decision-runtime",
+        "gateway-extras-contract",
+        "gateway-provider-images",
+        "gateway-provider-protocol",
+        "gateway-provider-services",
+        "gateway-provider-source",
+        "gateway-schema"
+      ],
+      "gateway-migration": [
+        "gateway-admin",
+        "gateway-admin-contracts",
+        "gateway-admin-data",
+        "gateway-admin-keys",
+        "gateway-admin-runtime",
+        "gateway-auth",
+        "gateway-auth-native-wire",
+        "gateway-authority",
+        "gateway-claude-runtime",
+        "gateway-claude-usage-quota",
+        "gateway-core",
+        "gateway-migration-ledger",
+        "gateway-observability",
+        "gateway-profile-source",
+        "gateway-profile-values",
+        "gateway-routing-runtime",
+        "gateway-schema",
+        "gateway-source-audit"
+      ],
+      "gateway-routing-runtime": [
+        "gateway-auth",
+        "gateway-authority",
+        "gateway-core",
+        "gateway-decision-protocol",
+        "gateway-extras-contract",
+        "gateway-local-refusal",
+        "gateway-provider-claude-body",
+        "gateway-provider-policy",
+        "gateway-provider-protocol",
+        "gateway-provider-response",
+        "gateway-provider-stream",
+        "gateway-providers",
+        "gateway-schema",
+        "gateway-wait-observation"
+      ],
+      "gateway-local-refusal": [
+        "gateway-source"
+      ]
+    },
+    "externalRecordsUnchanged": true,
+    "externalRecordCount": 312,
+    "protectedSource": [
+      {
+        "path": "rust/Cargo.toml",
+        "sha256": "e84135d8bd5a68204f2952bc9d88705f963722079666d173d5dbc4d4a3cb51fc"
+      },
+      {
+        "path": "rust/quality-baseline.json",
+        "sha256": "eb7629c57f83b1577027c80e4d8ea472972a2cca9ae228f67d9cddb668f422eb"
+      },
+      {
+        "path": "rust/crates/gateway-source/src/js_string.rs",
+        "sha256": "a195bcc036b9f184bc562e89fa27b862c2238345a79d2a400a1b435f469b9c81"
+      },
+      {
+        "path": "rust/crates/gateway-source/src/source_json.rs",
+        "sha256": "5fc83fe546dba8f71881ab0ca0ebf3f524fb5ddd33ab0c1f11bca75590e18807"
+      },
+      {
+        "path": "rust/crates/gateway-source/src/error.rs",
+        "sha256": "b5347e26660045ac80f9c5c0a7f576b0265aaa79dbe135725bc61e6176a6cd1b"
+      },
+      {
+        "path": "rust/crates/gateway-worker/src/inference.rs",
+        "sha256": "0ee5e4b6374bc5236284e844e2798880b0fb42079911233fa8bd6f5b7f7abf63"
+      }
+    ],
+    "bannedAddedProductionViolations": [],
+    "formatMutationPasses": 1,
+    "formatCheckExit": 0,
+    "diffCheckExit": 0,
+    "testsExecuted": false,
+    "compilerExecuted": false
+  },
+  "mechanicalManifest": {
+    "path": "/workspace/.ai-rust-output/D/continuation-01a17ebe/closed-body-observation-ports-v3/mechanical-patch-manifest.json",
+    "bytes": 7682,
+    "sha256": "407480e491ecdf3672d8ec8e16e1de6bcbc858e9c074b0dd98363664a944bd5b"
+  },
+  "postimageManifest": {
+    "path": "/workspace/.ai-rust-output/D/continuation-01a17ebe/closed-body-observation-ports-v3/changed-postimages.json",
+    "bytes": 5525,
+    "sha256": "faf36f67f2d1f3f87162190ba79f0017e36963c13f5aee9d1f41c18b1b1762f3"
+  },
+  "focusedGatesPlan": {
+    "classification": "PLAN_ONLY_NO_LEASE_GRANTED_OR_COMMAND_EXECUTED",
+    "sourceBase": "adc9c599ba8c2ff6d77aa1f5539096d06f9b79cc",
+    "worktree": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3",
+    "actualObservedHost": "Linux x86_64",
+    "environment": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+    "target": "/workspace/.ai-rust-builds/provider-prompt-recovered/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3",
+    "targetOrCompilerControlModified": false,
+    "canonicalPlatform": "Canonical x86_64/confinement/fixture-tool rejection remains a blocker, never Mac acceptance. Direct GNU/WASM evidence is supplementary; no host spoof, facade or gate change. Shipping/feature-fixture Worker artifacts and real16-case/workerd/native-client acceptance remain separately controlled.",
+    "packages": [
+      "gateway-local-refusal",
+      "gateway-auth-contracts",
+      "gateway-extras-contract",
+      "gateway-claude-usage-admin",
+      "gateway-schema",
+      "gateway-extras-runtime",
+      "gateway-migration",
+      "gateway-routing-runtime",
+      "gateway-worker"
+    ],
+    "commands": [
+      {
+        "label": "parser-fixtures",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "-p",
+          "gateway-quality"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "-p",
+          "gateway-quality"
+        ],
+        "classification": "FUTURE_REQUIRED_GATE_NOT_RUN",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names."
+      },
+      {
+        "label": "structural-parser",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "run",
+          "--locked",
+          "--offline",
+          "-p",
+          "gateway-quality",
+          "--",
+          "--check",
+          "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "run",
+          "--locked",
+          "--offline",
+          "-p",
+          "gateway-quality",
+          "--",
+          "--check",
+          "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3"
+        ],
+        "classification": "FUTURE_REQUIRED_GATE_NOT_RUN",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts. Incoming global structural debt must be attributed; do not change ceilings.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names."
+      },
+      {
+        "label": "native-selected-compiler",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "check",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-local-refusal",
+          "-p",
+          "gateway-auth-contracts",
+          "-p",
+          "gateway-extras-contract",
+          "-p",
+          "gateway-claude-usage-admin",
+          "-p",
+          "gateway-schema",
+          "-p",
+          "gateway-extras-runtime",
+          "-p",
+          "gateway-migration",
+          "-p",
+          "gateway-routing-runtime",
+          "-p",
+          "gateway-worker"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "check",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-local-refusal",
+          "-p",
+          "gateway-auth-contracts",
+          "-p",
+          "gateway-extras-contract",
+          "-p",
+          "gateway-claude-usage-admin",
+          "-p",
+          "gateway-schema",
+          "-p",
+          "gateway-extras-runtime",
+          "-p",
+          "gateway-migration",
+          "-p",
+          "gateway-routing-runtime",
+          "-p",
+          "gateway-worker"
+        ],
+        "classification": "SUPPLEMENTARY_GNU_NATIVE_NOT_MAC_PROOF",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names.",
+        "stage": "native"
+      },
+      {
+        "label": "native-selected-strict-clippy",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "clippy",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-local-refusal",
+          "-p",
+          "gateway-auth-contracts",
+          "-p",
+          "gateway-extras-contract",
+          "-p",
+          "gateway-claude-usage-admin",
+          "-p",
+          "gateway-schema",
+          "-p",
+          "gateway-extras-runtime",
+          "-p",
+          "gateway-migration",
+          "-p",
+          "gateway-routing-runtime",
+          "-p",
+          "gateway-worker",
+          "--message-format=json",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings",
+          "--force-warn",
+          "clippy::pub_use",
+          "--force-warn",
+          "clippy::too_many_lines",
+          "--force-warn",
+          "clippy::excessive_nesting",
+          "--force-warn",
+          "clippy::wildcard_imports",
+          "--force-warn",
+          "clippy::unwrap_used",
+          "--force-warn",
+          "clippy::expect_used"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "clippy",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-local-refusal",
+          "-p",
+          "gateway-auth-contracts",
+          "-p",
+          "gateway-extras-contract",
+          "-p",
+          "gateway-claude-usage-admin",
+          "-p",
+          "gateway-schema",
+          "-p",
+          "gateway-extras-runtime",
+          "-p",
+          "gateway-migration",
+          "-p",
+          "gateway-routing-runtime",
+          "-p",
+          "gateway-worker",
+          "--message-format=json",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings",
+          "--force-warn",
+          "clippy::pub_use",
+          "--force-warn",
+          "clippy::too_many_lines",
+          "--force-warn",
+          "clippy::excessive_nesting",
+          "--force-warn",
+          "clippy::wildcard_imports",
+          "--force-warn",
+          "clippy::unwrap_used",
+          "--force-warn",
+          "clippy::expect_used"
+        ],
+        "classification": "FUTURE_SELECTED_STRICT_NATIVE_ALL_TARGETS",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names.",
+        "stage": "native"
+      },
+      {
+        "label": "wasm-selected-compiler",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "check",
+          "--locked",
+          "--offline",
+          "--target",
+          "wasm32-unknown-unknown",
+          "-p",
+          "gateway-local-refusal",
+          "-p",
+          "gateway-auth-contracts",
+          "-p",
+          "gateway-extras-contract",
+          "-p",
+          "gateway-claude-usage-admin",
+          "-p",
+          "gateway-schema",
+          "-p",
+          "gateway-extras-runtime",
+          "-p",
+          "gateway-migration",
+          "-p",
+          "gateway-routing-runtime",
+          "-p",
+          "gateway-worker",
+          "--lib"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "check",
+          "--locked",
+          "--offline",
+          "--target",
+          "wasm32-unknown-unknown",
+          "-p",
+          "gateway-local-refusal",
+          "-p",
+          "gateway-auth-contracts",
+          "-p",
+          "gateway-extras-contract",
+          "-p",
+          "gateway-claude-usage-admin",
+          "-p",
+          "gateway-schema",
+          "-p",
+          "gateway-extras-runtime",
+          "-p",
+          "gateway-migration",
+          "-p",
+          "gateway-routing-runtime",
+          "-p",
+          "gateway-worker",
+          "--lib"
+        ],
+        "classification": "FUTURE_SELECTED_WASM_LIBS",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names.",
+        "stage": "wasm"
+      },
+      {
+        "label": "wasm-selected-strict-clippy",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "clippy",
+          "--locked",
+          "--offline",
+          "--target",
+          "wasm32-unknown-unknown",
+          "-p",
+          "gateway-local-refusal",
+          "-p",
+          "gateway-auth-contracts",
+          "-p",
+          "gateway-extras-contract",
+          "-p",
+          "gateway-claude-usage-admin",
+          "-p",
+          "gateway-schema",
+          "-p",
+          "gateway-extras-runtime",
+          "-p",
+          "gateway-migration",
+          "-p",
+          "gateway-routing-runtime",
+          "-p",
+          "gateway-worker",
+          "--message-format=json",
+          "--lib",
+          "--",
+          "-D",
+          "warnings",
+          "--force-warn",
+          "clippy::pub_use",
+          "--force-warn",
+          "clippy::too_many_lines",
+          "--force-warn",
+          "clippy::excessive_nesting",
+          "--force-warn",
+          "clippy::wildcard_imports",
+          "--force-warn",
+          "clippy::unwrap_used",
+          "--force-warn",
+          "clippy::expect_used"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "clippy",
+          "--locked",
+          "--offline",
+          "--target",
+          "wasm32-unknown-unknown",
+          "-p",
+          "gateway-local-refusal",
+          "-p",
+          "gateway-auth-contracts",
+          "-p",
+          "gateway-extras-contract",
+          "-p",
+          "gateway-claude-usage-admin",
+          "-p",
+          "gateway-schema",
+          "-p",
+          "gateway-extras-runtime",
+          "-p",
+          "gateway-migration",
+          "-p",
+          "gateway-routing-runtime",
+          "-p",
+          "gateway-worker",
+          "--message-format=json",
+          "--lib",
+          "--",
+          "-D",
+          "warnings",
+          "--force-warn",
+          "clippy::pub_use",
+          "--force-warn",
+          "clippy::too_many_lines",
+          "--force-warn",
+          "clippy::excessive_nesting",
+          "--force-warn",
+          "clippy::wildcard_imports",
+          "--force-warn",
+          "clippy::unwrap_used",
+          "--force-warn",
+          "clippy::expect_used"
+        ],
+        "classification": "FUTURE_SELECTED_STRICT_WASM_LIBS",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names.",
+        "stage": "wasm"
+      },
+      {
+        "label": "focused-tests-gateway-local-refusal",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-local-refusal",
+          "--tests",
+          "--",
+          "--test-threads=1"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-local-refusal",
+          "--tests",
+          "--",
+          "--test-threads=1"
+        ],
+        "classification": "FUTURE_FOCUSED_TESTS_MUST_EXECUTE_NONZERO",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names."
+      },
+      {
+        "label": "focused-tests-gateway-auth-contracts",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-auth-contracts",
+          "--test",
+          "closed_error_body",
+          "--",
+          "--test-threads=1"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-auth-contracts",
+          "--test",
+          "closed_error_body",
+          "--",
+          "--test-threads=1"
+        ],
+        "classification": "FUTURE_FOCUSED_TESTS_MUST_EXECUTE_NONZERO",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names."
+      },
+      {
+        "label": "focused-tests-gateway-extras-contract",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-extras-contract",
+          "--test",
+          "closed_error_body",
+          "--",
+          "--test-threads=1"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-extras-contract",
+          "--test",
+          "closed_error_body",
+          "--",
+          "--test-threads=1"
+        ],
+        "classification": "FUTURE_FOCUSED_TESTS_MUST_EXECUTE_NONZERO",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names."
+      },
+      {
+        "label": "focused-tests-gateway-claude-usage-admin",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-claude-usage-admin",
+          "--lib",
+          "readback::tests",
+          "--",
+          "--test-threads=1"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-claude-usage-admin",
+          "--lib",
+          "readback::tests",
+          "--",
+          "--test-threads=1"
+        ],
+        "classification": "FUTURE_FOCUSED_TESTS_MUST_EXECUTE_NONZERO",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names."
+      },
+      {
+        "label": "focused-tests-gateway-schema",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-schema",
+          "--test",
+          "source_request",
+          "--test",
+          "closed_reasoning_message",
+          "--",
+          "--test-threads=1"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-schema",
+          "--test",
+          "source_request",
+          "--test",
+          "closed_reasoning_message",
+          "--",
+          "--test-threads=1"
+        ],
+        "classification": "FUTURE_FOCUSED_TESTS_MUST_EXECUTE_NONZERO",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names."
+      },
+      {
+        "label": "focused-tests-gateway-extras-runtime",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-extras-runtime",
+          "--test",
+          "runtime",
+          "--test",
+          "runtime_ancillary",
+          "--test",
+          "decisions",
+          "--",
+          "--test-threads=1"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-extras-runtime",
+          "--test",
+          "runtime",
+          "--test",
+          "runtime_ancillary",
+          "--test",
+          "decisions",
+          "--",
+          "--test-threads=1"
+        ],
+        "classification": "FUTURE_FOCUSED_TESTS_MUST_EXECUTE_NONZERO",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names."
+      },
+      {
+        "label": "focused-tests-gateway-migration",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-migration",
+          "--test",
+          "profile_runtime",
+          "--",
+          "--test-threads=1"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-migration",
+          "--test",
+          "profile_runtime",
+          "--",
+          "--test-threads=1"
+        ],
+        "classification": "FUTURE_FOCUSED_TESTS_MUST_EXECUTE_NONZERO",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names."
+      },
+      {
+        "label": "focused-tests-gateway-routing-runtime",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-routing-runtime",
+          "--test",
+          "source_plan",
+          "--test",
+          "source_factory",
+          "--test",
+          "source_contracts",
+          "--test",
+          "staged_claude",
+          "--",
+          "--test-threads=1"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-routing-runtime",
+          "--test",
+          "source_plan",
+          "--test",
+          "source_factory",
+          "--test",
+          "source_contracts",
+          "--test",
+          "staged_claude",
+          "--",
+          "--test-threads=1"
+        ],
+        "classification": "FUTURE_FOCUSED_TESTS_MUST_EXECUTE_NONZERO",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names."
+      },
+      {
+        "label": "focused-tests-gateway-worker",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3/rust",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-worker",
+          "--lib",
+          "inference_local_lifecycle::tests",
+          "--",
+          "--test-threads=1"
+        ],
+        "rawCommandArgv": [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--target",
+          "x86_64-unknown-linux-gnu",
+          "-p",
+          "gateway-worker",
+          "--lib",
+          "inference_local_lifecycle::tests",
+          "--",
+          "--test-threads=1"
+        ],
+        "classification": "FUTURE_FOCUSED_TESTS_MUST_EXECUTE_NONZERO",
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts.",
+        "executed": false,
+        "stdoutStderr": "Capture complete raw outputs exactly once on persistent output with source SHA/tree and nonzero executed-test names."
+      },
+      {
+        "label": "native-unchanged-strict-comparator",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "/workspace/.ai-rust-tools/pinned-bun1.4.0-rust1.98.1-v1/bin/bun",
+          "--no-env-file",
+          "--no-install",
+          "--eval",
+          "import { readFileSync } from \"node:fs\"; import { checkClippyDiagnostics } from \"./scripts/rust-quality-clippy.ts\"; checkClippyDiagnostics(\"/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3\",\"native\",readFileSync(\"/workspace/.ai-rust-output/D/continuation-01a17ebe/closed-body-observation-ports-v3/native-clippy.jsonl\",\"utf8\"),[\"gateway-local-refusal\", \"gateway-auth-contracts\", \"gateway-extras-contract\", \"gateway-claude-usage-admin\", \"gateway-schema\", \"gateway-extras-runtime\", \"gateway-migration\", \"gateway-routing-runtime\", \"gateway-worker\"],\"/workspace/.ai-rust-builds/provider-prompt-recovered/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3\");"
+        ],
+        "classification": "FUTURE_CHECK_ONLY_NO_BASELINE_UPDATE",
+        "executed": false,
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts. Successful complete matching Cargo JSON and current parser quality-contexts.json are mandatory; failed/incomplete input is rejected."
+      },
+      {
+        "label": "wasm-unchanged-strict-comparator",
+        "cwd": "/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3",
+        "environmentFileToSourceFirst": "/workspace/.ai-rust-control/recovery-20261027T143350Z/D/environment.sh",
+        "argv": [
+          "python3",
+          "/workspace/.ai-rust-control/recovery-20261027T143350Z/lease-exec.py",
+          "D",
+          "/workspace/.ai-rust-tools/pinned-bun1.4.0-rust1.98.1-v1/bin/bun",
+          "--no-env-file",
+          "--no-install",
+          "--eval",
+          "import { readFileSync } from \"node:fs\"; import { checkClippyDiagnostics } from \"./scripts/rust-quality-clippy.ts\"; checkClippyDiagnostics(\"/workspace/.ai-rust-source/D/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3\",\"wasm\",readFileSync(\"/workspace/.ai-rust-output/D/continuation-01a17ebe/closed-body-observation-ports-v3/wasm-clippy.jsonl\",\"utf8\"),[\"gateway-local-refusal\", \"gateway-auth-contracts\", \"gateway-extras-contract\", \"gateway-claude-usage-admin\", \"gateway-schema\", \"gateway-extras-runtime\", \"gateway-migration\", \"gateway-routing-runtime\", \"gateway-worker\"],\"/workspace/.ai-rust-builds/provider-prompt-recovered/handoff-2026-10-18-ai-rust-wasm-provider-prompt-recovered-a346dbb48c3\");"
+        ],
+        "classification": "FUTURE_CHECK_ONLY_NO_BASELINE_UPDATE",
+        "executed": false,
+        "preconditions": "LOCAL_PRESERVED for this checkpoint; explicit legitimate D compiler lease under current persistent epoch; source-bound target owner marker; Root canonical Core/family/consumer composition; unchanged frozen locks; actual OS fixture confinement and required fixture artifacts. Successful complete matching Cargo JSON and current parser quality-contexts.json are mandatory; failed/incomplete input is rejected."
+      }
+    ],
+    "heldInputs": "Core8c5 not adopted; newer AC/EX7694 and Native/WF tips not imported; other seven policies and native aggregate rendering remain held. Owner relocations and canonical composition precede qualification.",
+    "fullFamilyFollowup": "Original109 provider+15 regressions/five fixtures and full selected family acceptance still require fresh exact-composed-tree receipts; this focused unit does not replace those gates."
+  },
+  "heldSevenPolicies": [
+    "ReplayStore preparation versus postterminal remember; canonical bytes/depth64/source parity and actual publication/failure disposition remain held.",
+    "ProviderEvent<Value> scalar construction versus validated SourceJson source constructors and failure_event phase remain held.",
+    "resolve_paid_route closed billing and actual Authority/routing same-phase callers remain held.",
+    "Image plans/extract source carriers and their actual child-dispatch/accounting consumers remain held.",
+    "The total forwarded_payload_policy declaration and actual native_catalog rendering/casing remain held.",
+    "Typed local aggregate-overflow termination stays preserved; native created+exactly-one-failed physical stream mapping/client/workerd acceptance remain held.",
+    "Non-JSON raw refusal bytes/status/headers retain their legacy raw_body plus internal JSON-null sentinel representation; no absence/raw redesign here."
+  ],
+  "relocation": "Root/actual owners must port exact named hunks using base/postimage hashes and defining signatures onto current physical paths. Do not copy entire historical files or foreign branches. Complete relocation.patch is candidate-bound; new conventional test module/target must travel with their case moves. Mechanical patch is compositional, not a standalone compiling view.",
+  "currentUnknowns": "Fresh compiler/strict comparator/AST/selected tests not executed. Existing unleased nominal Core/authority/Worker consumers and seven held semantics can still block compilation. No policy or foreign6/8c5 type guessed.",
+  "durability": "Final actual commit/tree/parent and source/dirty/untracked artifacts are supplied by PRESERVE_READY. Stop after publication until LOCAL_PRESERVED; whole family remains unfinished."
+}

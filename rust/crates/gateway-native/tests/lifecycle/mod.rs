@@ -16,7 +16,7 @@ struct Supervisor {
     address: String,
 }
 fn configuration(directory: &std::path::Path) -> Value {
-    json!({"v":1,"listen":"127.0.0.1:0","identity":{"key_id":"fixture-key","owner_id":"fixture-owner","owner_epoch":"fixture-epoch","key_base64url":gateway_auth::crypto::base64url(&[11;32])},"nonce_database":directory.join("replay/nonces.sqlite3"),"sources":[]})
+    json!({"v":1,"listen":"127.0.0.1:0","identity":{"key_id":"fixture-key","owner_id":"fixture-owner","owner_epoch":"fixture-epoch","key_base64url":gateway_auth_primitives::crypto::base64url(&[11;32])},"nonce_database":directory.join("replay/nonces.sqlite3"),"sources":[]})
 }
 fn binary(name: &str) -> PathBuf {
     std::env::current_exe()

@@ -1,8 +1,7 @@
 //! Private incident-index publication is consumed only by the same retention final CAS.
 use crate::{ReplayRetention, replay_values, store};
-use gateway_core::{
-    query::QueryStore, state::RecordKey, state::RecordMutation, state::RevisionCheck,
-};
+use gateway_core::{query::QueryStore, state::RecordMutation, state::RevisionCheck};
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{data, types::ObservabilityHost};
 use gateway_observability_replay_model::{records::read_json_record, replay_model as model};
 use gateway_observability_replay_records::{incident::capture_index_document, incident::index_key};

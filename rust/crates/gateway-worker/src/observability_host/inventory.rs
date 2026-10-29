@@ -1,25 +1,26 @@
 //! Passive provider metadata over the same request-owned authority; never refreshes credentials.
 use super::RequestHost;
-use gateway_admin_runtime::{capabilities::Context, claude, claude_access};
-use gateway_auth_credentials::{
-    provider_credentials as codex, provider_credentials::CodexSourceAccount,
-};
+use gateway_admin_runtime_contracts::capabilities::Context;
+use gateway_admin_runtime_records::claude_access;
+use gateway_auth_credentials::provider_credentials::{self as codex, CodexSourceAccount};
 use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_claude_roster::claude;
 use gateway_claude_usage_history_records::types::CredentialKind;
-use gateway_core::{state::AuthorityStore, state::RevisionCheck};
+use gateway_core::state::{AuthorityStore, RevisionCheck};
+use gateway_model_selection::selection::ProviderSelection;
 use gateway_observability_contracts::{host_types::*, types::HealthProvider, types::HealthTarget};
-use gateway_schema::selection::ProviderSelection;
+use gateway_schema_values::scalar as util;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
-use serde_json::json;
+
 use std::collections::BTreeSet;
 
 fn stamp(value: f64) -> Option<i64> {
-    (value.is_finite() && value.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
+    (value.is_finite() && value.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64)
         .then(|| value.trunc() as i64)
 }
 pub(super) fn monitoring_key(env: &worker::Env) -> Option<String> {
     crate::host::provider_secret(env, "METERED_API_KEY")
-        .filter(|s| !s.chars().any(gateway_schema::util::js_whitespace))
+        .filter(|s| !s.chars().any(util::js_whitespace))
 }
 impl RequestHost {
     pub(super) async fn codex_accounts(
@@ -102,7 +103,7 @@ impl RequestHost {
         {
             configured.insert(HealthProvider::Metered);
         }
-        let selection_key = gateway_auth::store::key(json!(["uos_ai", "provider_selection", "v1"]));
+        let selection_key = gateway_catalog_inputs::state::selection_key();
         let selection = self
             .store
             .read(&selection_key)

@@ -1,11 +1,16 @@
 use super::*;
-use crate::TestResult;
-use gateway_authority::paid_types::{PaidAttempt, PaidReservation};
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId,
-    source_control::decode_source_control_record, source_json::SourceJson,
-    source_serialization as source, value::ValueEncoding,
-};
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
+use gateway_authority_paid_records::{PaidAttempt, PaidReservation};
+use gateway_authority_paid_route::PaidRouteOperations;
+use gateway_authority_test_support::TestResult;
+use gateway_contracts::model::ModelId;
+use gateway_core::source_control::decode_source_control_record;
+use gateway_kv_codec::value::ValueEncoding;
+use gateway_model_selection::aliases as model_aliases;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
+use gateway_source::{error::GatewayError, js_string::JsString16};
 
 fn logical(units: &[u16]) -> ModelId {
     ModelId::from_source(JsString16::from_units(units.to_vec()))
@@ -76,7 +81,8 @@ fn source_policy_keys_and_reasoning_round_trip_without_logical_model_conflation(
     seed_source(&store, keys::api_policy("key-a"), &expected);
     let stored = store.row(&keys::api_policy("key-a")).unwrap();
     assert_eq!(stored.value_encoding, ValueEncoding::ProfileV2);
-    let actual: gateway_authority::quota::ApiKeyPolicy = row(&store, &keys::api_policy("key-a"));
+    let actual: gateway_authority_api_protocol::ApiKeyPolicy =
+        row(&store, &keys::api_policy("key-a"));
     assert_eq!(actual, expected);
     assert_eq!(actual.paid_fallback_max_exposure_microcredits.len(), 5);
     assert_eq!(
@@ -121,7 +127,7 @@ fn source_paid_attempt_writes_exact_model_effort_and_not_transient_prompt() {
         let mut fields = source::entries(&context.body).unwrap();
         fields.push(("input".into(), SourceJson::parse(r#""\ud800""#).unwrap()));
         context.body = source::object_keys(fields).unwrap();
-        let receipt = run(super::super::paid_original::authorize(
+        let receipt = run(gateway_authority_test_support::original::authorize(
             &authority, &input, &context, NOW,
         ))
         .unwrap();
@@ -147,7 +153,7 @@ fn source_paid_attempt_writes_exact_model_effort_and_not_transient_prompt() {
         }
         assert_eq!(
             store.row(&key).unwrap().expires_at_ms,
-            Some(input.created_at_ms + gateway_authority::PAID_RETENTION_MS)
+            Some(input.created_at_ms + gateway_authority_contracts::PAID_RETENTION_MS)
         );
         let mut changed = input.clone();
         changed.model = logical(&[0xfffd]);
@@ -170,7 +176,7 @@ fn source_paid_attempt_writes_exact_model_effort_and_not_transient_prompt() {
 fn ordinary_source_v3_guard_keeps_exact_active_paid_binding_and_missing_history_refusal() {
     let (store, authority, input) = setup(logical(&[0xd800]));
     let context = context(&input);
-    let receipt = run(super::super::paid_original::authorize(
+    let receipt = run(gateway_authority_test_support::original::authorize(
         &authority, &input, &context, NOW,
     ))
     .unwrap();
@@ -185,9 +191,9 @@ fn ordinary_source_v3_guard_keeps_exact_active_paid_binding_and_missing_history_
         PaidAdmission::Reserved(value) => value,
         _ => panic!("new source request"),
     };
-    let key = super::super::paid_original::journal_key(&input.request_id.0);
+    let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
     let mut journal = decode_source_control_record(&store.row(&key).unwrap()).unwrap();
-    let original: gateway_core::identity::RequestContext = source::member(&journal, "context")
+    let original: gateway_contracts::identity::RequestContext = source::member(&journal, "context")
         .unwrap()
         .deserialize()
         .unwrap();
@@ -250,7 +256,7 @@ struct FixtureOnlyCollator {
     data: CapturedCollation,
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
-impl gateway_schema::aliases::SourceStringCollator for FixtureOnlyCollator {
+impl model_aliases::SourceStringCollator for FixtureOnlyCollator {
     fn compare(
         &self,
         left: &JsString16,
@@ -308,7 +314,7 @@ fn paid_alias_tie_uses_one_constructor_collator_and_missing_or_unknown_pairs_fai
     let mut input = paid_request("source-alias-tie", PaidProvider::Metered);
     input.model = logical(&data.ids[winner]);
     let mut context = context(&input);
-    context.original_model = gateway_schema::aliases::SYNTHETIC_MODEL.into();
+    context.original_model = model_aliases::SYNTHETIC_MODEL.into();
     context.body = source::object(vec![("model", context.original_model.to_source_json()?)])?;
     context.synthetic_hop = Some(PaidSyntheticHop::Openlux);
     let missing_collator = gateway_authority::store::Authority::with_clock(
@@ -330,7 +336,7 @@ fn paid_alias_tie_uses_one_constructor_collator_and_missing_or_unknown_pairs_fai
         calls: calls.clone(),
     });
     assert!(
-        gateway_schema::aliases::SourceStringCollator::compare(
+        model_aliases::SourceStringCollator::compare(
             &*collator,
             &JsString16::from_utf8("unknown"),
             &JsString16::from_utf8("unknown")

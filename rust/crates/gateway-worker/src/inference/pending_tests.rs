@@ -1,7 +1,7 @@
 //! Routing error selection stays with the Worker lifetime owner.
 use super::stream::cleanup_error;
-use gateway_core::error::GatewayError;
-use gateway_routing_runtime::types::{RoutingError, SourceRefusalBody};
+use gateway_local_refusal::{routing_error::RoutingError, routing_error::SourceRefusalBody};
+use gateway_source::error::GatewayError;
 
 #[test]
 fn cleanup_precedence_preserves_complete_original_or_actual_cleanup_error() {

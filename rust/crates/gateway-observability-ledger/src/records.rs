@@ -2,8 +2,9 @@
 use crate::ledger::ErrorObservation;
 use gateway_core::{
     source_control::decode_source_control_record, source_control::encode_source_control_record,
-    source_control::source_json_tree, state::RecordKey, state::RecordMutation, state::StoredRecord,
+    source_control::source_json_tree, state::RecordMutation, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{data, types::ObservabilityHost};
 use gateway_observability_request_records::request::bounded_text;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
@@ -43,7 +44,7 @@ pub fn error_document(input: &ErrorObservation) -> Result<SourceJson, GatewayErr
         stream: Option<bool>,
         terminal_type: JsString16,
         failure_kind: JsString16,
-        delivery_outcome: gateway_core::lifecycle::DeliveryOutcome,
+        delivery_outcome: gateway_contracts::lifecycle::DeliveryOutcome,
         created_at_ms: i64,
         latency_ms: i64,
         git_sha: &'a Option<String>,
@@ -115,7 +116,7 @@ pub fn admin_error_record_source(row: &StoredRecord) -> Result<SourceJson, Gatew
         field(name)?.deserialize::<f64>()?;
     }
     field("stream")?.deserialize::<Option<bool>>()?;
-    field("delivery_outcome")?.deserialize::<gateway_core::lifecycle::DeliveryOutcome>()?;
+    field("delivery_outcome")?.deserialize::<gateway_contracts::lifecycle::DeliveryOutcome>()?;
     Ok(document)
 }
 
@@ -146,7 +147,7 @@ pub fn valid_usage_rollup_source(document: &SourceJson) -> bool {
                 value.is_finite()
                     && value.fract() == 0.0
                     && value >= 0.0
-                    && value <= gateway_core::identity::MAX_SAFE_INTEGER as f64
+                    && value <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64
             })
         })
         && ["quota_sum", "spend_microcredits"]

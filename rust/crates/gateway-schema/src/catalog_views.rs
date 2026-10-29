@@ -1,8 +1,9 @@
-use crate::{
-    aliases::*, catalog::*, metadata::*, model_control as c, provider_catalog::*, selection::*,
-};
-use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson};
+use crate::{catalog::*, model_control as c, provider_catalog::*};
+use gateway_contracts::model::ModelId;
 use gateway_decision_protocol::catalog as decisions;
+use gateway_model_metadata::metadata::*;
+use gateway_model_selection::{aliases::*, selection::*};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 fn snapshot_models(input: &CatalogInput, full: bool) -> Vec<SourceJson> {
     let snapshot = if full {
         input.codex()
@@ -19,9 +20,9 @@ fn snapshot_models(input: &CatalogInput, full: bool) -> Vec<SourceJson> {
         .unwrap_or_default()
 }
 fn row_id(row: &SourceJson) -> Option<ModelId> {
-    c::get(row, "id")
+    gateway_source::source_serialization::member(row, "id")
         .as_ref()
-        .and_then(c::string)
+        .and_then(gateway_source::source_serialization::string)
         .map(ModelId::from_source)
 }
 pub fn ordinary_models(input: &CatalogInput) -> SourceJson {
@@ -40,11 +41,16 @@ pub fn ordinary_models(input: &CatalogInput) -> SourceJson {
     }
     let claude = input.available_rows("claude_code").iter().map(|r| {
         c::object(vec![
-            ("id", c::get(r, "id").unwrap_or_else(|| c::json(&()))),
+            (
+                "id",
+                gateway_source::source_serialization::member(r, "id")
+                    .unwrap_or_else(|| c::json(&())),
+            ),
             ("object", c::json("model")),
             (
                 "created",
-                c::get(r, "created").unwrap_or_else(|| c::json(&0)),
+                gateway_source::source_serialization::member(r, "created")
+                    .unwrap_or_else(|| c::json(&0)),
             ),
             ("owned_by", c::json("anthropic")),
         ])
@@ -74,7 +80,8 @@ fn discovered_capability(input: &CatalogInput, model: &SourceJson, provider: &st
         ("object", c::json("uos.model_capabilities")),
         (
             "owned_by",
-            c::get(model, "owned_by").unwrap_or_else(|| c::json(&())),
+            gateway_source::source_serialization::member(model, "owned_by")
+                .unwrap_or_else(|| c::json(&())),
         ),
         ("display_name", c::json(&id)),
         ("upstream_provider", c::json(provider)),
@@ -102,13 +109,19 @@ fn discovered_capability(input: &CatalogInput, model: &SourceJson, provider: &st
 }
 fn claude_capability(model: &SourceJson) -> SourceJson {
     let levels = claude_levels(model);
-    let window = c::positive(c::get(model, "context_window_tokens").as_ref());
-    let id = c::get(model, "id").unwrap_or_else(|| c::json(&()));
+    let window = gateway_schema_values::source_view::positive(
+        gateway_source::source_serialization::member(model, "context_window_tokens").as_ref(),
+    );
+    let id =
+        gateway_source::source_serialization::member(model, "id").unwrap_or_else(|| c::json(&()));
     let mut row = c::object(vec![
         ("id", id.clone()),
         ("object", c::json("uos.model_capabilities")),
         ("owned_by", c::json("anthropic")),
-        ("display_name", c::get(model, "display_name").unwrap_or(id)),
+        (
+            "display_name",
+            gateway_source::source_serialization::member(model, "display_name").unwrap_or(id),
+        ),
         ("upstream_provider", c::json("claude_code")),
         (
             "supported_endpoints",
@@ -116,7 +129,9 @@ fn claude_capability(model: &SourceJson) -> SourceJson {
         ),
         ("supported_reasoning_levels", c::json(&levels)),
     ]);
-    if c::get(model, "supports_disabled_thinking").is_some_and(|v| v.as_str() == "true") {
+    if gateway_source::source_serialization::member(model, "supports_disabled_thinking")
+        .is_some_and(|v| v.as_str() == "true")
+    {
         c::set(&mut row, "default_reasoning_effort", c::json("none"));
     }
     c::set(&mut row, "context_window_tokens", c::json(&window));
@@ -141,7 +156,8 @@ fn claude_capability(model: &SourceJson) -> SourceJson {
     c::set(
         &mut row,
         "max_output_tokens",
-        c::get(model, "max_output_tokens").unwrap_or_else(|| c::json(&())),
+        gateway_source::source_serialization::member(model, "max_output_tokens")
+            .unwrap_or_else(|| c::json(&())),
     );
     c::set(
         &mut row,
@@ -149,30 +165,29 @@ fn claude_capability(model: &SourceJson) -> SourceJson {
         c::object(vec![
             (
                 "image_input",
-                c::get(model, "supports_image_input").unwrap_or_else(|| c::json(&())),
+                gateway_source::source_serialization::member(model, "supports_image_input")
+                    .unwrap_or_else(|| c::json(&())),
             ),
             (
                 "pdf_input",
-                c::get(model, "supports_pdf_input").unwrap_or_else(|| c::json(&())),
+                gateway_source::source_serialization::member(model, "supports_pdf_input")
+                    .unwrap_or_else(|| c::json(&())),
             ),
         ]),
     );
     row
 }
-pub fn capabilities(input: &CatalogInput) -> SourceJson {
-    let mut rows = if input.enabled("codex") {
-        input
-            .codex()
-            .map(|s| {
-                s.models
-                    .iter()
-                    .filter_map(|r| normalized_codex_capability(input, r))
-                    .collect()
-            })
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
+pub fn capabilities(input: &CatalogInput) -> Result<SourceJson, GatewayError> {
+    let mut rows = Vec::new();
+    if input.enabled("codex")
+        && let Some(snapshot) = input.codex()
+    {
+        for record in &snapshot.models {
+            if let Some(row) = normalized_codex_capability(input, record)? {
+                rows.push(row);
+            }
+        }
+    }
     append_unique(&mut rows, configured_capabilities(input, "cerebras"), "id");
     append_unique(
         &mut rows,
@@ -202,7 +217,7 @@ pub fn capabilities(input: &CatalogInput) -> SourceJson {
     let mut rows = filter_whitelist(rows, input.whitelist.as_ref(), false);
     append_unique(&mut rows, openrouter_capabilities(input), "id");
     let snapshot = input.codex();
-    c::object(vec![
+    Ok(c::object(vec![
         ("object", c::json("list")),
         ("data", c::json(&rows)),
         ("upstream_provider", c::json("codex_chatgpt")),
@@ -217,7 +232,7 @@ pub fn capabilities(input: &CatalogInput) -> SourceJson {
             c::json(&snapshot.and_then(|s| s.client_version.as_deref())),
         ),
         ("updated_at_ms", c::json(&snapshot.map(|s| s.updated_at_ms))),
-    ])
+    ]))
 }
 fn public_entry(
     id: &ModelId,
@@ -259,13 +274,13 @@ fn add_public(
     resolved: &ResolvedMetadata,
 ) {
     if let Some(existing) = rows.iter_mut().find(|r| row_id(r).as_ref() == Some(id)) {
-        let mut providers = c::get(existing, "providers")
+        let mut providers = gateway_source::source_serialization::member(existing, "providers")
             .as_ref()
-            .and_then(c::array)
+            .and_then(gateway_source::source_serialization::array)
             .expect("constructed providers");
         providers.push(provider);
         c::set(existing, "providers", c::json(&providers));
-        if c::get(existing, "created").is_none()
+        if gateway_source::source_serialization::member(existing, "created").is_none()
             && let Some(n) = created.filter(|n| *n > 0)
         {
             c::set(existing, "created", c::json(&n));
@@ -470,10 +485,13 @@ pub fn build_catalog_snapshot(
                 &id,
                 public_provider(
                     "codex",
-                    c::get(model, "owned_by").unwrap_or_else(|| c::json(&())),
+                    gateway_source::source_serialization::member(model, "owned_by")
+                        .unwrap_or_else(|| c::json(&())),
                     c::json(&["/v1/responses", "/v1/chat/completions"]),
                 ),
-                c::positive(c::get(model, "created").as_ref()),
+                gateway_schema_values::source_view::positive(
+                    gateway_source::source_serialization::member(model, "created").as_ref(),
+                ),
                 &input.metadata(&id, record, None, true),
             );
         }
@@ -485,7 +503,8 @@ pub fn build_catalog_snapshot(
                 let owner = if claude {
                     c::json("anthropic")
                 } else {
-                    c::get(model, "owned_by").unwrap_or_else(|| c::json(&()))
+                    gateway_source::source_serialization::member(model, "owned_by")
+                        .unwrap_or_else(|| c::json(&()))
                 };
                 let paths = if claude {
                     vec!["/v1/responses".into(), "/v1/chat/completions".into()]
@@ -494,11 +513,19 @@ pub fn build_catalog_snapshot(
                 };
                 let hint = if claude {
                     Some(MetadataHint {
-                        context_window_tokens: c::positive(
-                            c::get(model, "context_window_tokens").as_ref(),
+                        context_window_tokens: gateway_schema_values::source_view::positive(
+                            gateway_source::source_serialization::member(
+                                model,
+                                "context_window_tokens",
+                            )
+                            .as_ref(),
                         ),
-                        max_context_window_tokens: c::positive(
-                            c::get(model, "context_window_tokens").as_ref(),
+                        max_context_window_tokens: gateway_schema_values::source_view::positive(
+                            gateway_source::source_serialization::member(
+                                model,
+                                "context_window_tokens",
+                            )
+                            .as_ref(),
                         ),
                         ..MetadataHint::default()
                     })
@@ -510,7 +537,9 @@ pub fn build_catalog_snapshot(
                     &mut rows,
                     &id,
                     public_provider(provider, owner, c::json(&paths)),
-                    c::positive(c::get(model, "created").as_ref()),
+                    gateway_schema_values::source_view::positive(
+                        gateway_source::source_serialization::member(model, "created").as_ref(),
+                    ),
                     &input.metadata(&id, None, hint.clone(), false),
                 );
                 if existing && let Some(hint) = hint {
@@ -559,24 +588,24 @@ pub fn public_catalog(
 ) -> Result<SourceJson, GatewayError> {
     let snapshot = build_catalog_snapshot(input, collator)?;
     let mut rows = Vec::new();
-    for mut row in c::get(&snapshot, "models")
+    for mut row in gateway_source::source_serialization::member(&snapshot, "models")
         .as_ref()
-        .and_then(c::array)
+        .and_then(gateway_source::source_serialization::array)
         .unwrap_or_default()
     {
         let id = row_id(&row).expect("constructed catalog id");
         if !ModelWhitelist::permits(input.whitelist.as_ref(), &id) {
             continue;
         }
-        let providers = c::get(&row, "providers")
+        let providers = gateway_source::source_serialization::member(&row, "providers")
             .as_ref()
-            .and_then(c::array)
+            .and_then(gateway_source::source_serialization::array)
             .unwrap_or_default();
         if providers.iter().any(|p| {
-            c::get(p, "id")
+            gateway_source::source_serialization::member(p, "id")
                 .as_ref()
-                .and_then(c::string)
-                .is_some_and(|id| c::matches(&id, "ubiquity"))
+                .and_then(gateway_source::source_serialization::string)
+                .is_some_and(|id| gateway_schema_values::source_view::matches(&id, "ubiquity"))
         }) && !input.enabled("ubiquity")
         {
             continue;
@@ -584,7 +613,7 @@ pub fn public_catalog(
         let selected: Vec<_> = providers
             .into_iter()
             .filter(|p| {
-                c::scalar(c::get(p, "id").as_ref())
+                c::scalar(gateway_source::source_serialization::member(p, "id").as_ref())
                     .is_some_and(|id| !PROVIDERS.contains(&id.as_str()) || input.enabled(&id))
             })
             .collect();
@@ -594,9 +623,12 @@ pub fn public_catalog(
         c::set(&mut row, "providers", c::json(&selected));
         rows.push(row);
     }
-    let mut sources = c::get(&snapshot, "sources").expect("constructed source summary");
+    let mut sources = gateway_source::source_serialization::member(&snapshot, "sources")
+        .expect("constructed source summary");
     for provider in PROVIDERS {
-        if !input.enabled(provider) && c::get(&sources, provider).is_some() {
+        if !input.enabled(provider)
+            && gateway_source::source_serialization::member(&sources, provider).is_some()
+        {
             c::set(
                 &mut sources,
                 provider,

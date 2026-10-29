@@ -1,15 +1,22 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_core::state::AuthorityStore;
-use gateway_migration::{
-    engine::adopt_empty,
-    graph_transport,
-    inverse::ArtifactContext,
-    native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
-    native_custody::{NativeCustody, OwnedNativeSnapshot},
-    native_inverse::{export_native_latest, export_native_rollback_bundle},
-    native_operator, native_stage,
-    staged::*,
-};
+use gateway_migration_data::custody::ArtifactContext;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_data::staged::STAGED_BATCH_MAX_BYTES;
+use gateway_migration_data::staged::StageRequest;
+use gateway_migration_graph::transport as graph_transport;
+use gateway_migration_inverse::native_inverse::export_native_latest;
+use gateway_migration_inverse::native_inverse::export_native_rollback_bundle;
+use gateway_migration_native_custody::native_custody::NativeCustody;
+use gateway_migration_native_custody::native_custody::OwnedNativeSnapshot;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare_native;
+use gateway_migration_protocol::staged::decode_stage_request;
+use gateway_migration_protocol::staged::execute_staged;
+use gateway_migration_stage::native_stage;
+use gateway_migration_stage::plan::StagePlan;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 fn fixture() -> NativeCapture {
@@ -78,7 +85,7 @@ fn private_staging_seals_exact_native_state_without_claiming_one_atomic_commit()
     assert_eq!(map(&baseline), map(&latest));
     assert!(run(execute_staged(&store, begin)).is_err());
     assert!(
-        run(store.read(&gateway_auth::api_keys::id_key("offline-key")))
+        run(store.read(&gateway_auth_primitives::api_keys::id_key("offline-key")))
             .unwrap()
             .is_some()
     );
@@ -100,17 +107,14 @@ fn bounded_closed_frames_and_global_source_audit_are_not_per_batch_guesses() {
 
 #[test]
 fn moved_complete_audit_retains_expired_typed_metadata_and_rejects_orphan_coupling() {
-    use gateway_core::{
-        tuple_key::{KeyPart, TupleKey},
-        value::PortableValue,
-    };
+    use gateway_kv_codec::{tuple_key::KeyPart, tuple_key::TupleKey, value::PortableValue};
     let source = fixture();
     let mut corrupt = source.clone();
     corrupt.entries.retain(|entry| {
         TupleKey::from_sort_bytes(entry.raw_key.clone())
             .unwrap()
             .to_record_key()
-            != gateway_auth::api_keys::id_key("offline-key")
+            != gateway_auth_primitives::api_keys::id_key("offline-key")
     });
     assert_eq!(corrupt.entries.len(), source.entries.len() - 1);
     assert!(
@@ -152,8 +156,8 @@ fn moved_complete_audit_retains_expired_typed_metadata_and_rejects_orphan_coupli
 
 fn add_expired_and_utf16_entries(
     capture: &mut NativeCapture,
-) -> Result<(gateway_core::tuple_key::TupleKey, i64), Box<dyn std::error::Error>> {
-    use gateway_core::tuple_key::{KeyPart, TupleKey};
+) -> Result<(gateway_kv_codec::tuple_key::TupleKey, i64), Box<dyn std::error::Error>> {
+    use gateway_kv_codec::tuple_key::{KeyPart, TupleKey};
     let expired_key = TupleKey::from_parts(&[
         KeyPart::String("default".into()),
         KeyPart::String("expired-native-replay".into()),
@@ -176,9 +180,9 @@ fn add_expired_and_utf16_entries(
         .sort_bytes()
         .to_vec(),
         value: NativeValue::SourceGraphV1(graph_transport::to_source_graph(
-            &gateway_core::source_graph::SourceGraph {
-                root: gateway_core::source_graph::GraphAtom::String(
-                    gateway_core::js_string::JsString16::from_units(vec![0xd800, 0, 0xdc00]),
+            &gateway_source_graph::graph::SourceGraph {
+                root: gateway_source_graph::graph::GraphAtom::String(
+                    gateway_source::js_string::JsString16::from_units(vec![0xd800, 0, 0xdc00]),
                 ),
                 nodes: vec![],
             },
@@ -191,14 +195,14 @@ fn add_expired_and_utf16_entries(
 #[test]
 fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_document()
 -> Result<(), Box<dyn std::error::Error>> {
-    use gateway_core::{tuple_key::TupleKey, value::PortableValue};
+    use gateway_kv_codec::{tuple_key::TupleKey, value::PortableValue};
     struct Host;
     impl NativeCustody for Host {
         async fn observe(
             &self,
             _: &str,
-        ) -> Result<OwnedNativeSnapshot, gateway_core::error::GatewayError> {
-            Err(gateway_core::error::GatewayError::unavailable(
+        ) -> Result<OwnedNativeSnapshot, gateway_source::error::GatewayError> {
+            Err(gateway_source::error::GatewayError::unavailable(
                 "Unexpected custody request",
                 "fixture",
             ))
@@ -210,22 +214,22 @@ fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_docume
     let mut retained = Vec::new();
     for entry in corrupt.entries {
         if TupleKey::from_sort_bytes(entry.raw_key.clone())?.to_record_key()
-            != gateway_auth::api_keys::id_key("offline-key")
+            != gateway_auth_primitives::api_keys::id_key("offline-key")
         {
             retained.push(entry);
         }
     }
     corrupt.entries = retained;
-    let corrupt_dir = native_stage::directory(&std::env::temp_dir())?;
+    let corrupt_dir = gateway_migration_spool::directory(&std::env::temp_dir())?;
     assert!(
         run(native_stage::Captured::owned(corrupt, &corrupt_dir)?.prepare(&Host)).is_err(),
         "sealed native replay must retain the complete orphan-pair audit"
     );
     std::fs::remove_dir_all(corrupt_dir)?;
     let (expired_key, expiry) = add_expired_and_utf16_entries(&mut capture)?;
-    let dir = native_stage::directory(&std::env::temp_dir())?;
+    let dir = gateway_migration_spool::directory(&std::env::temp_dir())?;
     let mut plan = run(native_stage::Captured::owned(capture.clone(), &dir)?.prepare(&Host))?;
-    let wire_dir = native_stage::directory(&std::env::temp_dir())?;
+    let wire_dir = gateway_migration_spool::directory(&std::env::temp_dir())?;
     let mut wire_plan =
         run(native_stage::Captured::owned(capture.clone(), &wire_dir)?.prepare(&Host))?;
     assert_eq!(
@@ -280,7 +284,7 @@ fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_docume
     ))?;
     let mut source_sink = Vec::new();
     let mut custody_sink = Vec::new();
-    let count = run(native_operator::write_private_latest(
+    let count = run(gateway_migration_latest::native_latest::write_latest(
         &store,
         2300,
         &Host,
@@ -298,7 +302,7 @@ fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_docume
     std::fs::write(&path, b"{\"entries\":[")?;
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-    let second = native_stage::directory(&std::env::temp_dir())?;
+    let second = gateway_migration_spool::directory(&std::env::temp_dir())?;
     assert!(native_stage::Captured::read(&path, &second).is_err());
     std::fs::remove_dir_all(dir)?;
     std::fs::remove_dir_all(wire_dir)?;
@@ -318,15 +322,15 @@ fn sealed_native_frame_emitter_refuses_spool_and_sink_faults()
         async fn observe(
             &self,
             _: &str,
-        ) -> Result<OwnedNativeSnapshot, gateway_core::error::GatewayError> {
-            Err(gateway_core::error::GatewayError::unavailable(
+        ) -> Result<OwnedNativeSnapshot, gateway_source::error::GatewayError> {
+            Err(gateway_source::error::GatewayError::unavailable(
                 "Unexpected custody request",
                 "fixture",
             ))
         }
     }
     let plan = || -> Result<_, Box<dyn std::error::Error>> {
-        let directory = native_stage::directory(&std::env::temp_dir())?;
+        let directory = gateway_migration_spool::directory(&std::env::temp_dir())?;
         let plan = run(native_stage::Captured::owned(fixture(), &directory)?.prepare(&Host))?;
         Ok((directory, plan))
     };

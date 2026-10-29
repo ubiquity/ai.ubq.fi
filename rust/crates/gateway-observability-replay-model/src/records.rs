@@ -1,5 +1,6 @@
 //! Named replay JSON/ProfileV2 DATA reader; it admits no other record family.
-use gateway_core::{state::StoredRecord, value::ValueEncoding};
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::value::ValueEncoding;
 use gateway_observability_contracts::data;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 pub fn read_json_record(row: &StoredRecord) -> Result<SourceJson, GatewayError> {

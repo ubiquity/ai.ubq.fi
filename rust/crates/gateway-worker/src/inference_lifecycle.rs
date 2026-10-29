@@ -1,14 +1,14 @@
 //! One durable request lifetime and source-derived terminal billing; telemetry never mints authority.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformTokens},
     routing_host,
 };
-use gateway_core::error::GatewayError;
 use gateway_routing_runtime::{
     session::RoutingSession,
     types::{AttemptUsage, PreparedAttempt},
 };
+use gateway_source::error::GatewayError;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_stream::observed::FinishHook;
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
@@ -21,20 +21,20 @@ pub(crate) struct Lifecycle {
     pub(crate) session: Rc<Session>,
     pub(crate) currentness: crate::inference_currentness::CurrentnessGuard,
     pub(crate) attempt: PreparedAttempt,
-    pub(crate) principal: gateway_auth::types::AuthPrincipal,
+    pub(crate) principal: gateway_auth_contracts::types::AuthPrincipal,
     pub(crate) provider_request_id: Option<String>,
     pub(crate) status: u16,
     pub(crate) store: RemoteAuthorityStore,
-    pub(crate) pricing: Option<gateway_core::source_json::SourceJson>,
+    pub(crate) pricing: Option<gateway_source::source_json::SourceJson>,
 }
 
 impl Lifecycle {
     pub(crate) async fn observe_terminal(
         &self,
-        observation: gateway_core::lifecycle::TransportObservation,
+        observation: gateway_contracts::lifecycle::TransportObservation,
         usage: Option<Value>,
     ) -> Result<(), GatewayError> {
-        let extracted = gateway_core::source_usage::extract_usage_tokens(usage.as_ref());
+        let extracted = gateway_contracts::source_usage::extract_usage_tokens(usage.as_ref());
         let paid = match &self.attempt.paid {
             Some(reservation) => {
                 crate::paid_lookup::terminal_usage(
@@ -63,7 +63,7 @@ impl Lifecycle {
     }
     pub(crate) async fn finish(
         &self,
-        observation: gateway_core::lifecycle::TransportObservation,
+        observation: gateway_contracts::lifecycle::TransportObservation,
         usage: Option<Value>,
     ) -> Result<(), GatewayError> {
         self.observe_terminal(observation, usage).await?;

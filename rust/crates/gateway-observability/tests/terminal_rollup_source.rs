@@ -1,5 +1,7 @@
 mod support;
-use gateway_core::{source_usage::extract_usage_tokens, state::StoredRecord, tuple_key::TupleKey};
+use gateway_contracts::source_usage::extract_usage_tokens;
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::tuple_key::TupleKey;
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_ledger::ledger::terminal_rollup::TerminalUsageRollup;
 use gateway_source::js_string::JsString16;

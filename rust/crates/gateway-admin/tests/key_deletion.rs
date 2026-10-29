@@ -9,18 +9,18 @@ use gateway_admin_test_support::{
     runtime_host::run,
     source_store::Store,
 };
-use gateway_auth::{
-    crypto::Secret,
-    types::{AuthHost, AuthResponse},
-};
+use gateway_auth_contracts::{types::AuthHost, types::AuthResponse};
+use gateway_auth_primitives::crypto::Secret;
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
+use gateway_authority_paid_route::PaidRouteOperations;
 use gateway_core::{
-    error::GatewayError,
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::{
     cell::{Cell, RefCell},
@@ -48,7 +48,7 @@ impl AdminHost for DeletionHooks<'_> {
     async fn prepare_key_deletion(&self, id: &str) -> Result<Vec<RevisionCheck>, GatewayError> {
         let checks = self.inner.prepare_key_deletion(id).await?;
         if self.conflict {
-            let key = gateway_auth::api_keys::id_key(id);
+            let key = gateway_auth_primitives::api_keys::id_key(id);
             let mut row = self.inner.store.read(&key).await?.unwrap();
             row.revision = "concurrent-key-writer".into();
             self.inner.store.rows.borrow_mut().insert(key.0, row);
@@ -117,16 +117,29 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
                 )
                 .await
                 .unwrap();
-            let legacy = gateway_auth::store::key(json!(["ubq_ai", "api_keys", "usage", id]));
-            let daily = gateway_auth::store::key(json!(["ubq_ai", "api_keys", "usage_daily", id]));
-            let history = gateway_auth::store::key(json!([
-                "uos_ai",
-                "paid_fallback",
-                "ledger",
-                id,
-                1,
-                "fixture-history"
-            ]));
+            let legacy = TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("ubq_ai"),
+                ScalarKeyPart::String("api_keys"),
+                ScalarKeyPart::String("usage"),
+                ScalarKeyPart::String(id),
+            ])
+            .to_record_key();
+            let daily = TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("ubq_ai"),
+                ScalarKeyPart::String("api_keys"),
+                ScalarKeyPart::String("usage_daily"),
+                ScalarKeyPart::String(id),
+            ])
+            .to_record_key();
+            let history = TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("paid_fallback"),
+                ScalarKeyPart::String("ledger"),
+                ScalarKeyPart::String(id),
+                ScalarKeyPart::Number(1),
+                ScalarKeyPart::String("fixture-history"),
+            ])
+            .to_record_key();
             for key in [&legacy, &daily, &history] {
                 store.rows.borrow_mut().insert(
                     key.0.clone(),
@@ -149,7 +162,7 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
                 assert_eq!(caps.finishes.get(), 0);
                 assert!(
                     store
-                        .read(&gateway_auth::api_keys::id_key(id))
+                        .read(&gateway_auth_primitives::api_keys::id_key(id))
                         .await
                         .unwrap()
                         .is_some()
@@ -160,7 +173,7 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
             }
             assert!(
                 store
-                    .read(&gateway_auth::api_keys::id_key(id))
+                    .read(&gateway_auth_primitives::api_keys::id_key(id))
                     .await
                     .unwrap()
                     .is_none()
@@ -210,7 +223,7 @@ struct PaidRaceStore<'a> {
 }
 
 struct PaidFixtureClock;
-impl gateway_authority::store::AuthorityClock for PaidFixtureClock {
+impl gateway_authority_contracts::AuthorityClock for PaidFixtureClock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(1_000_000)
     }
@@ -219,14 +232,13 @@ impl gateway_authority::store::AuthorityClock for PaidFixtureClock {
 async fn paid_fixture_owner_proof(
     store: &Store,
     host: &Host,
-    identity: &gateway_auth::native_auth::NativeTransportIdentity,
+    identity: &gateway_auth_native_proof::native_auth::NativeTransportIdentity,
     body: &[u8],
-) -> gateway_auth::native_auth::AuthenticatedNativeOwner {
-    use gateway_auth::{
-        crypto::base64url, native_auth::*,
-        native_replay::StoreNonceAuthority,
-    };
+) -> gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner {
+    use gateway_auth_native_proof::native_auth::*;
+    use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
     use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
+    use gateway_auth_primitives::crypto::base64url;
     let nonce = base64url(&host.random_bytes(32).unwrap());
     let time = host.now_ms().to_string();
     let mac = identity
@@ -254,9 +266,11 @@ async fn prepare_paid_fixture_custody(
     store: &Store,
     host: &Host,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
-    use gateway_authority::{keys, paid_control, paid_types::PaidRoutingPolicy};
-    use gateway_core::provider::PaidProvider;
+    use gateway_auth_native_contracts::transport::NativeCapability;
+    use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+    use gateway_authority_keys as keys;
+    use gateway_authority_paid_control_records::{self as paid_control, PaidRoutingPolicy};
+    use gateway_contracts::provider::PaidProvider;
     use gateway_publication_policy::control_publication::{
         ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
         fixture_owner_statement,
@@ -314,7 +328,7 @@ async fn prepare_paid_fixture_custody(
         StoredRecord::json("race-observation", serde_json::to_value(observation)?, None),
     );
     let mut source_checks = Vec::new();
-    for key in paid_control::paid_projection_source_keys() {
+    for key in gateway_authority_paid_evidence::paid_projection_source_keys() {
         source_checks.push(paid_control::PaidSourceCheck {
             expected_revision: store.read(&key).await?.map(|row| row.revision),
             key: key.0,
@@ -349,7 +363,7 @@ impl AuthorityStore for PaidRaceStore<'_> {
         self.store.read(key).await
     }
     async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
-        let attempt = gateway_authority::keys::paid_attempt(&self.key_id, "racing-attempt");
+        let attempt = gateway_authority_keys::paid_attempt(&self.key_id, "racing-attempt");
         if transition
             .mutations
             .iter()
@@ -395,12 +409,11 @@ impl AuthorityStore for PaidRaceStore<'_> {
 fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admission()
 -> Result<(), Box<dyn std::error::Error>> {
     run(async {
-        use gateway_authority::{
-            paid_control::PaidRequestContext,
-            paid_types::{PaidAuthorization, PaidRequest},
-        };
-        use gateway_core::{
-            identity::{ApiKeyId, PaidAttemptId, RequestId},
+        use gateway_authority_paid_control_records::PaidRequestContext;
+        use gateway_authority_paid_records::PaidRequest;
+        use gateway_authority_paid_route::authorization::PaidAuthorization;
+        use gateway_contracts::{
+            identity::ApiKeyId, identity::PaidAttemptId, identity::RequestId,
             provider::PaidProvider,
         };
         let store = Store::default();
@@ -451,7 +464,7 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
                 &PaidRequestContext {
                     original_model: request.model.clone(),
                     body: source(&json!({"model":request.model,"stream":false})),
-                    surface: gateway_providers::types::ClientSurface::Responses,
+                    surface: gateway_provider_protocol::types::ClientSurface::Responses,
                     synthetic_hop: None,
                 },
                 1_000_000,
@@ -460,7 +473,7 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
         let receipt = bind_paid_fixture_original(&authority, &store, &request, &receipt).await?;
         assert!(
             store
-                .read(&gateway_auth::api_keys::id_key(&id))
+                .read(&gateway_auth_primitives::api_keys::id_key(&id))
                 .await?
                 .is_some()
         );
@@ -477,16 +490,13 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
         );
         assert!(
             store
-                .read(&gateway_auth::api_keys::id_key(&id))
+                .read(&gateway_auth_primitives::api_keys::id_key(&id))
                 .await?
                 .is_none()
         );
         assert!(
             store
-                .read(&gateway_authority::keys::paid_attempt(
-                    &id,
-                    "racing-attempt"
-                ))
+                .read(&gateway_authority_keys::paid_attempt(&id, "racing-attempt"))
                 .await?
                 .is_none()
         );
@@ -498,14 +508,14 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
 async fn bind_paid_fixture_original(
     authority: &gateway_authority::store::Authority<PaidRaceStore<'_>, &Host>,
     store: &Store,
-    request: &gateway_authority::paid_types::PaidRequest,
-    receipt: &gateway_authority::paid_control::PaidRoutingReceipt,
-) -> Result<gateway_authority::paid_control::PaidRoutingReceipt, GatewayError> {
+    request: &gateway_authority_paid_records::PaidRequest,
+    receipt: &gateway_authority_paid_route::PaidRoutingReceipt,
+) -> Result<gateway_authority_paid_route::PaidRoutingReceipt, GatewayError> {
     // Controlled authority regression: use the canonical finite original
     // fixture chain, not a route-only receipt or a Worker-runtime claim.
-    let original = gateway_core::identity::RequestContext {
+    let original = gateway_contracts::identity::RequestContext {
         request_id: request.request_id.clone(),
-        principal: gateway_core::identity::PrincipalId("fixture-original-principal".into()),
+        principal: gateway_contracts::identity::PrincipalId("fixture-original-principal".into()),
         key_id: Some(request.key_id.clone()),
         route: request.route.clone(),
         started_at_ms: request.created_at_ms,
@@ -518,23 +528,24 @@ async fn bind_paid_fixture_original(
             1_000_000,
         )
         .await?;
-    let journal_key = gateway_auth::store::key(json!([
-        "uos_ai",
-        "routing_runtime",
-        "v1",
-        "session",
-        request.request_id.0
-    ]));
+    let journal_key = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("routing_runtime"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String("session"),
+        ScalarKeyPart::String(&request.request_id.0),
+    ])
+    .to_record_key();
     store.rows.borrow_mut().insert(
         journal_key.0,
         StoredRecord::json(
             "fixture-original-journal",
             json!({
-                "v":1,"context":original,"input_digest":gateway_auth::crypto::sha256_hex(b"fixture-original-input"),
+                "v":1,"context":original,"input_digest":gateway_auth_primitives::crypto::sha256_hex(b"fixture-original-input"),
                 "api":api,"kernel":null,"cursor":0,"attempts":[],"active":null,
                 "model_sibling_retries":0,"refreshed_versions":[],"recovery_attempted":false,"claude_unavailable":false,
                 "semantic_committed":false,"terminal_intent":null,"finished":false,"recovering":false,
-                "lease_expires_at_ms":1_000_000+gateway_authority::REQUEST_LEASE_MS,"updated_at_ms":1_000_000,"extras_family":null,
+                "lease_expires_at_ms":1_000_000+gateway_authority_contracts::REQUEST_LEASE_MS,"updated_at_ms":1_000_000,"extras_family":null,
                 "extras_child_count":null,"extras_dispatch":null,"children":[],"kernel_override":null
             }),
             None,

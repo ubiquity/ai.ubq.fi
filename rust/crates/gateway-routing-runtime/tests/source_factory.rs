@@ -1,21 +1,22 @@
-use gateway_authority::{
-    quota::ApiReservation,
-    store::{Authority, AuthorityClock, TokenSource},
-};
-use gateway_core::{
-    error::GatewayError,
-    source_json::SourceJson,
-    source_serialization as source,
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
+use gateway_authority::store::Authority;
+use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_local_refusal::routing_error::SourceRefusalBody;
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_routing_runtime::{
-    local_work::{LocalAdmissionInput, LocalProviderAdmission, LocalRequestMetadata},
-    session::RoutingSession,
-    types::{RoutingInput, SourceRefusalBody},
+    local_work::LocalAdmissionInput, local_work::LocalProviderAdmission,
+    local_work::LocalRequestMetadata, session::RoutingSession, types::RoutingInput,
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
-use gateway_schema::{request::RequestSurface, source_request::SourceRequestDocument};
-use std::sync::{Arc, Mutex};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
+use {
+    gateway_schema_values::request::RequestSurface,
+    std::sync::{Arc, Mutex},
+};
+
 fn metadata(input: RoutingInput) -> LocalRequestMetadata {
     LocalRequestMetadata {
         context: input.context,
@@ -56,7 +57,7 @@ fn admission_with_tokens<I: TokenSource + Clone>(
     .unwrap();
     run(local.resume_original()).unwrap()
 }
-fn session_key(id: &str) -> gateway_core::state::RecordKey {
+fn session_key(id: &str) -> gateway_kv_codec::key::RecordKey {
     TupleKey::from_scalar_parts(&[
         ScalarKeyPart::String("uos_ai"),
         ScalarKeyPart::String("routing_runtime"),
@@ -88,12 +89,12 @@ fn local_factory_reuses_original_identity_digest_and_one_reservation() {
     let store = Store::new();
     let source = r#"{"model":"gpt-test","input":"\ud800","instructions":"astral😀\udfff","reasoning":{"effort":"none"}}"#;
     let admission = admission(&store, "real-factory", source);
-    let key = gateway_core::tuple_key::TupleKey::from_scalar_parts(&[
-        gateway_core::tuple_key::ScalarKeyPart::String("uos_ai"),
-        gateway_core::tuple_key::ScalarKeyPart::String("routing_runtime"),
-        gateway_core::tuple_key::ScalarKeyPart::String("v1"),
-        gateway_core::tuple_key::ScalarKeyPart::String("session"),
-        gateway_core::tuple_key::ScalarKeyPart::String("real-factory"),
+    let key = gateway_kv_codec::tuple_key::TupleKey::from_scalar_parts(&[
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("uos_ai"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("routing_runtime"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("v1"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("session"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("real-factory"),
     ])
     .to_record_key();
     let before = store.value(key.clone());
@@ -129,11 +130,10 @@ fn local_factory_source_failure_cleans_original_without_provider_exposure() {
         Err(error) => error,
     };
     assert_eq!(error.error.status, 400);
-    let Some(SourceRefusalBody::Json(body)) = error.source_body else {
+    let Some(SourceRefusalBody::ClosedError(body)) = error.source_body else {
         panic!("source error body discarded")
     };
-    let error = source::member(&body, "error").unwrap();
-    let message = source::string(&source::member(&error, "message").unwrap()).unwrap();
+    let message = body.message();
     assert_eq!(message.as_units().last(), Some(&0xd800));
     assert_eq!(window(&store)["reserved_requests"], 0);
     assert_eq!(window(&store)["committed_requests"], 0);
@@ -163,12 +163,12 @@ fn fresh_ordinary_v3_binds_canonical_original_without_persisting_payload() {
     ))
     .unwrap();
     assert_eq!(session.original_source(), &original);
-    let key = gateway_core::tuple_key::TupleKey::from_scalar_parts(&[
-        gateway_core::tuple_key::ScalarKeyPart::String("uos_ai"),
-        gateway_core::tuple_key::ScalarKeyPart::String("routing_runtime"),
-        gateway_core::tuple_key::ScalarKeyPart::String("v1"),
-        gateway_core::tuple_key::ScalarKeyPart::String("session"),
-        gateway_core::tuple_key::ScalarKeyPart::String("ordinary-source-v3"),
+    let key = gateway_kv_codec::tuple_key::TupleKey::from_scalar_parts(&[
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("uos_ai"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("routing_runtime"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("v1"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("session"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("ordinary-source-v3"),
     ])
     .to_record_key();
     let row = store.value(key);

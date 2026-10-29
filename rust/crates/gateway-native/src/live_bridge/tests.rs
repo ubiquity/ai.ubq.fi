@@ -1,22 +1,30 @@
+type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+use super::socket::LiveDialContext;
 use super::{authority::LiveAuthorization, *};
-use gateway_auth::{
-    native_auth::{
-        NativeAuthHeaders, NativeCapability, NativeNonceAuthority, NativeTransportIdentity,
-    },
-    native_live::{NATIVE_LIVE_ACTION_HEADER, NativeLiveAuthenticator},
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
+use gateway_auth_native_contracts::{
+    native_live::NATIVE_LIVE_ACTION_HEADER, nonce::NativeNonceAuthority,
 };
-use gateway_auth_native_wire::native_read::*;
-use gateway_authority::native_live::wire::{NativeLiveAccess, NativeLiveFence};
-use rustls::{
-    ServerConfig, ServerConnection, StreamOwned,
-    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName},
+use gateway_auth_native_proof::{
+    native_auth::NativeTransportIdentity, native_live::NativeLiveAuthenticator,
 };
+use gateway_auth_native_wire::native_read::{
+    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_TIME_HEADER,
+    NATIVE_VERSION_HEADER,
+};
+use gateway_authority::native_live::wire::NativeLiveAccess;
+use gateway_native_authority_wire::live::NativeLiveFence;
+use gateway_native_authority_wire::live::NativeLiveRetirement;
+use gateway_native_https_test_support::live_tls::configs;
+use rustls::{ServerConnection, StreamOwned, pki_types::ServerName};
 use std::{
     collections::BTreeSet,
     io::Read,
     net::{SocketAddr, TcpListener},
     sync::atomic::AtomicUsize,
 };
+use std::{sync::atomic::Ordering, thread};
+use tungstenite::protocol::frame::coding::CloseCode;
 use tungstenite::{
     client::IntoClientRequest,
     handshake::server::{Callback, ErrorResponse, Request, Response},
@@ -28,7 +36,7 @@ impl NativeNonceAuthority for Nonces {
         Ok(())
     }
 }
-fn identity() -> NativeTransportIdentity {
+fn identity() -> Result<NativeTransportIdentity, GatewayError> {
     NativeTransportIdentity::new(
         "fixture-live".into(),
         "owner".into(),
@@ -36,10 +44,9 @@ fn identity() -> NativeTransportIdentity {
         [37; 32],
         BTreeSet::from([NativeCapability::LiveSideband]),
     )
-    .unwrap()
 }
-fn access() -> NativeLiveAccess {
-    serde_json::from_str(r#"{"access_token":"synthetic-access"}"#).unwrap()
+fn access() -> Result<NativeLiveAccess, serde_json::Error> {
+    serde_json::from_str(r#"{"access_token":"synthetic-access"}"#)
 }
 fn fence() -> NativeLiveFence {
     NativeLiveFence {
@@ -74,7 +81,7 @@ impl NativeLiveAuthority for Authority {
             connection_id: connection_id.into(),
             authorization_ref: "authorization".into(),
             fence: fence(),
-            access: Some(access()),
+            access: Some(access().map_err(|_| unavailable())?),
         })
     }
     fn recheck(
@@ -82,7 +89,7 @@ impl NativeLiveAuthority for Authority {
         _: &LiveAuthorization,
         _: Instant,
     ) -> Result<(NativeLiveFence, NativeLiveAccess), GatewayError> {
-        Ok((fence(), access()))
+        Ok((fence(), access().map_err(|_| unavailable())?))
     }
     fn retire(
         &self,
@@ -106,87 +113,62 @@ impl NativeLiveConnector for Connector {
         TcpStream::connect_timeout(&self.address, context.remaining()?).map_err(|_| unavailable())
     }
 }
-pub(super) fn configs() -> (Arc<ServerConfig>, Arc<rustls::ClientConfig>) {
-    let cert =
-        CertificateDer::from(include_bytes!("../../tests/fixtures/native-tls/leaf.der").to_vec());
-    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-        include_bytes!("../../tests/fixtures/native-tls/leaf.pk8.der").to_vec(),
-    ));
-    let server = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(vec![cert], key)
-        .unwrap();
-    let mut roots = rustls::RootCertStore::empty();
-    roots
-        .add(CertificateDer::from(
-            include_bytes!("../../tests/fixtures/native-tls/ca.der").to_vec(),
-        ))
-        .unwrap();
-    (
-        Arc::new(server),
-        Arc::new(
-            rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth(),
-        ),
-    )
-}
-fn read_head(stream: &mut TcpStream) -> (Vec<(String, String)>, Vec<u8>) {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
+fn read_head(stream: &mut TcpStream) -> TestResult<(Vec<(String, String)>, Vec<u8>)> {
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     let mut bytes = Vec::new();
     loop {
         if let Some(end) = bytes.windows(4).position(|s| s == b"\r\n\r\n") {
-            let head = std::str::from_utf8(&bytes[..end]).unwrap();
+            let head = std::str::from_utf8(&bytes[..end])?;
             assert_eq!(head.lines().next(), Some("GET /v1/native/live HTTP/1.1"));
             let headers = head
                 .lines()
                 .skip(1)
-                .map(|line| {
-                    let (k, v) = line.split_once(':').unwrap();
-                    (k.to_lowercase(), v.trim().into())
+                .map(|line| -> TestResult<_> {
+                    let (k, v) = line
+                        .split_once(':')
+                        .ok_or_else(|| std::io::Error::other("fixture header delimiter"))?;
+                    Ok((k.to_lowercase(), v.trim().into()))
                 })
-                .collect();
-            return (headers, bytes[end + 4..].to_vec());
+                .collect::<TestResult<Vec<_>>>()?;
+            return Ok((headers, bytes[end + 4..].to_vec()));
         }
         let mut chunk = [0; 4096];
-        let count = stream.read(&mut chunk).unwrap();
+        let count = stream.read(&mut chunk)?;
         assert!(count > 0);
         bytes.extend_from_slice(&chunk[..count]);
         assert!(bytes.len() < 65_536);
     }
 }
-fn start(service: NativeLiveService) -> (SocketAddr, thread::JoinHandle<()>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let handle = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let (headers, buffered) = read_head(&mut stream);
-        let one = |name: &str| {
+fn start(
+    service: NativeLiveService,
+) -> TestResult<(SocketAddr, thread::JoinHandle<TestResult<()>>)> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?;
+    let handle = thread::spawn(move || -> TestResult<()> {
+        let (mut stream, _) = listener.accept()?;
+        let (headers, buffered) = read_head(&mut stream)?;
+        let one = |name: &str| -> Result<&str, std::io::Error> {
             headers
                 .iter()
                 .find(|(key, _)| key == name)
-                .unwrap()
-                .1
-                .as_str()
+                .map(|(_, value)| value.as_str())
+                .ok_or_else(|| std::io::Error::other("fixture header missing"))
         };
-        let action_ref = one(NATIVE_LIVE_ACTION_HEADER).to_owned();
-        let identity = identity();
+        let action_ref = one(NATIVE_LIVE_ACTION_HEADER)?.to_owned();
+        let identity = identity()?;
         let proof = futures_executor::block_on(
             NativeLiveAuthenticator::new(&identity, &Nonces).authenticate_upgrade(
                 NativeAuthHeaders {
-                    version: one(NATIVE_VERSION_HEADER),
-                    key_id: one(NATIVE_KEY_HEADER),
-                    time_ms: one(NATIVE_TIME_HEADER),
-                    nonce: one(NATIVE_NONCE_HEADER),
-                    mac: one(NATIVE_MAC_HEADER),
+                    version: one(NATIVE_VERSION_HEADER)?,
+                    key_id: one(NATIVE_KEY_HEADER)?,
+                    time_ms: one(NATIVE_TIME_HEADER)?,
+                    nonce: one(NATIVE_NONCE_HEADER)?,
+                    mac: one(NATIVE_MAC_HEADER)?,
                 },
                 &action_ref,
-                crate::http_server::now_ms().unwrap(),
+                gateway_auth_native_proof::native_context::now_ms()?,
             ),
-        )
-        .unwrap();
+        )?;
         assert!(
             service
                 .handle(
@@ -200,19 +182,16 @@ fn start(service: NativeLiveService) -> (SocketAddr, thread::JoinHandle<()>) {
                 )
                 .is_ok()
         );
+        Ok(())
     });
-    (address, handle)
+    Ok((address, handle))
 }
-fn request(address: SocketAddr) -> tungstenite::handshake::client::Request {
-    let mut request = format!("ws://{address}/v1/native/live")
-        .into_client_request()
-        .unwrap();
-    let now = crate::http_server::now_ms().unwrap();
+fn request(address: SocketAddr) -> TestResult<tungstenite::handshake::client::Request> {
+    let mut request = format!("ws://{address}/v1/native/live").into_client_request()?;
+    let now = gateway_auth_native_proof::native_context::now_ms()?;
     let nonce = base64url(&[19; 32]);
-    let identity = identity();
-    let mac = identity
-        .sign_live_request(now, &nonce, "action-ref")
-        .unwrap();
+    let identity = identity()?;
+    let mac = identity.sign_live_request(now, &nonce, "action-ref")?;
     for (name, value) in [
         (NATIVE_VERSION_HEADER, "1".into()),
         (NATIVE_KEY_HEADER, identity.key_id().into()),
@@ -222,11 +201,11 @@ fn request(address: SocketAddr) -> tungstenite::handshake::client::Request {
         (NATIVE_LIVE_ACTION_HEADER, "action-ref".into()),
     ] {
         request.headers_mut().insert(
-            tungstenite::http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
-            value.parse().unwrap(),
+            tungstenite::http::HeaderName::from_bytes(name.as_bytes())?,
+            value.parse()?,
         );
     }
-    request
+    Ok(request)
 }
 
 struct FixedUpstreamHeaders;
@@ -245,35 +224,30 @@ impl Callback for FixedUpstreamHeaders {
 }
 
 #[test]
-fn actual_tls_upgrade_preserves_fixed_headers_immediate_binary_text_and_close_without_retiring() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let upstream = listener.local_addr().unwrap();
-    let (server, tls) = configs();
-    let peer = thread::spawn(move || {
-        let (stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
+fn actual_tls_upgrade_preserves_fixed_headers_immediate_binary_text_and_close_without_retiring()
+-> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let upstream = listener.local_addr()?;
+    let (server, tls) = configs()?;
+    let peer = thread::spawn(move || -> TestResult<()> {
+        let (stream, _) = listener.accept()?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         thread::sleep(Duration::from_millis(100));
-        let tls = StreamOwned::new(ServerConnection::new(server).unwrap(), stream);
+        let tls = StreamOwned::new(ServerConnection::new(server)?, stream);
         let mut socket = tungstenite::accept_hdr_with_config(
             tls,
             FixedUpstreamHeaders,
-            Some(queue::websocket_config()),
-        )
-        .unwrap();
-        socket
-            .send(Message::Binary(b"ignored".to_vec().into()))
-            .unwrap();
-        socket.send(Message::Text("upstream".into())).unwrap();
-        assert_eq!(socket.read().unwrap(), Message::Text("first".into()));
-        socket.send(Message::Text("echo:first".into())).unwrap();
-        socket
-            .close(Some(CloseFrame {
-                code: CloseCode::Library(3001),
-                reason: "closed".into(),
-            }))
-            .unwrap();
+            Some(gateway_native_live_buffer::queue::websocket_config()),
+        )?;
+        socket.send(Message::Binary(b"ignored".to_vec().into()))?;
+        socket.send(Message::Text("upstream".into()))?;
+        assert_eq!(socket.read()?, Message::Text("first".into()));
+        socket.send(Message::Text("echo:first".into()))?;
+        socket.close(Some(CloseFrame {
+            code: CloseCode::Library(3001),
+            reason: "closed".into(),
+        }))?;
+        Ok(())
     });
     let authority = Arc::new(Authority::default());
     let calls = Arc::new(AtomicUsize::new(0));
@@ -284,52 +258,50 @@ fn actual_tls_upgrade_preserves_fixed_headers_immediate_binary_text_and_close_wi
             calls: calls.clone(),
         }),
         tls,
-        server_name: ServerName::try_from("127.0.0.1").unwrap(),
+        server_name: ServerName::try_from("127.0.0.1")?,
     };
-    let (address, bridge) = start(service);
-    let stream = TcpStream::connect(address).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-    let (mut client, response) = tungstenite::client(request(address), stream).unwrap();
+    let (address, bridge) = start(service)?;
+    let stream = TcpStream::connect(address)?;
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    let (mut client, response) = tungstenite::client(request(address)?, stream)?;
     assert_eq!(response.status(), 101);
-    client
-        .send(Message::Binary(
-            vec![0xef, 0xbb, 0xbf, b'f', b'i', b'r', b's', b't'].into(),
-        ))
-        .unwrap();
-    assert_eq!(client.read().unwrap(), Message::Text("upstream".into()));
-    assert_eq!(client.read().unwrap(), Message::Text("echo:first".into()));
+    client.send(Message::Binary(
+        vec![0xef, 0xbb, 0xbf, b'f', b'i', b'r', b's', b't'].into(),
+    ))?;
+    assert_eq!(client.read()?, Message::Text("upstream".into()));
+    assert_eq!(client.read()?, Message::Text("echo:first".into()));
     assert!(
-        matches!(client.read().unwrap(),Message::Close(Some(frame)) if u16::from(frame.code)==3001&&frame.reason=="closed")
+        matches!(client.read()?,Message::Close(Some(frame)) if u16::from(frame.code)==3001&&frame.reason=="closed")
     );
-    bridge.join().unwrap();
-    peer.join().unwrap();
+    bridge
+        .join()
+        .map_err(|_| std::io::Error::other("fixture thread panicked"))??;
+    peer.join()
+        .map_err(|_| std::io::Error::other("fixture thread panicked"))??;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(authority.retired.load(Ordering::SeqCst), 0);
+    Ok(())
 }
 
 #[test]
-fn actual_tls_terminal_404_retires_before_failure_close() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let upstream = listener.local_addr().unwrap();
-    let (server, tls) = configs();
-    let peer = thread::spawn(move || {
-        let (stream, _) = listener.accept().unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut tls = StreamOwned::new(ServerConnection::new(server).unwrap(), stream);
+fn actual_tls_terminal_404_retires_before_failure_close() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let upstream = listener.local_addr()?;
+    let (server, tls) = configs()?;
+    let peer = thread::spawn(move || -> TestResult<()> {
+        let (stream, _) = listener.accept()?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let mut tls = StreamOwned::new(ServerConnection::new(server)?, stream);
         let mut bytes = Vec::new();
         while !bytes.windows(4).any(|s| s == b"\r\n\r\n") {
             let mut chunk = [0; 1024];
-            let count = tls.read(&mut chunk).unwrap();
+            let count = tls.read(&mut chunk)?;
             assert!(count > 0);
             bytes.extend_from_slice(&chunk[..count]);
         }
-        tls.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-            .unwrap();
-        tls.flush().unwrap();
+        tls.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")?;
+        tls.flush()?;
+        Ok(())
     });
     let authority = Arc::new(Authority::default());
     let service = NativeLiveService {
@@ -339,67 +311,70 @@ fn actual_tls_terminal_404_retires_before_failure_close() {
             calls: Arc::new(AtomicUsize::new(0)),
         }),
         tls,
-        server_name: ServerName::try_from("127.0.0.1").unwrap(),
+        server_name: ServerName::try_from("127.0.0.1")?,
     };
-    let (address, bridge) = start(service);
-    let stream = TcpStream::connect(address).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-    let (mut client, _) = tungstenite::client(request(address), stream).unwrap();
-    assert!(
-        matches!(client.read().unwrap(),Message::Close(Some(frame))if u16::from(frame.code)==1011)
-    );
+    let (address, bridge) = start(service)?;
+    let stream = TcpStream::connect(address)?;
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    let (mut client, _) = tungstenite::client(request(address)?, stream)?;
+    assert!(matches!(client.read()?,Message::Close(Some(frame))if u16::from(frame.code)==1011));
     assert_eq!(authority.retired.load(Ordering::SeqCst), 1);
-    bridge.join().unwrap();
-    peer.join().unwrap();
+    bridge
+        .join()
+        .map_err(|_| std::io::Error::other("fixture thread panicked"))??;
+    peer.join()
+        .map_err(|_| std::io::Error::other("fixture thread panicked"))??;
+    Ok(())
 }
 
 #[test]
-fn actual_source_version_8_pipelined_close_before_dial_makes_zero_upstream_connections() {
-    let (_, tls) = configs();
+fn actual_source_version_8_pipelined_close_before_dial_makes_zero_upstream_connections()
+-> TestResult<()> {
+    let (_, tls) = configs()?;
     let calls = Arc::new(AtomicUsize::new(0));
     let service = NativeLiveService {
         authority: Arc::new(Authority::default()),
         connector: Arc::new(Connector {
-            address: "127.0.0.1:9".parse().unwrap(),
+            address: "127.0.0.1:9".parse()?,
             calls: calls.clone(),
         }),
         tls,
-        server_name: ServerName::try_from("127.0.0.1").unwrap(),
+        server_name: ServerName::try_from("127.0.0.1")?,
     };
-    let (address, bridge) = start(service);
-    let mut request = request(address);
+    let (address, bridge) = start(service)?;
+    let mut request = request(address)?;
     request
         .headers_mut()
-        .insert("sec-websocket-version", "8".parse().unwrap());
+        .insert("sec-websocket-version", "8".parse()?);
     let mut raw = b"GET /v1/native/live HTTP/1.1\r\n".to_vec();
     for (name, value) in request.headers() {
-        raw.extend_from_slice(format!("{name}: {}\r\n", value.to_str().unwrap()).as_bytes());
+        raw.extend_from_slice(format!("{name}: {}\r\n", value.to_str()?).as_bytes());
     }
     raw.extend_from_slice(b"\r\n\x88\x80\x01\x02\x03\x04");
-    let mut client = TcpStream::connect(address).unwrap();
-    client.write_all(&raw).unwrap();
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
+    let mut client = TcpStream::connect(address)?;
+    client.write_all(&raw)?;
+    client.set_read_timeout(Some(Duration::from_secs(5)))?;
     let mut byte = [0; 1];
     let mut head = Vec::new();
     while !head.ends_with(b"\r\n\r\n") {
-        assert_eq!(client.read(&mut byte).unwrap(), 1);
+        assert_eq!(client.read(&mut byte)?, 1);
         head.push(byte[0]);
     }
     assert!(head.starts_with(b"HTTP/1.1 101"));
-    bridge.join().unwrap();
+    bridge
+        .join()
+        .map_err(|_| std::io::Error::other("fixture thread panicked"))??;
     assert_eq!(calls.load(Ordering::SeqCst), 0);
+    Ok(())
 }
 
 #[test]
-fn actual_socket_error_after_101_is_transport_unknown_without_a_second_http_response() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
+fn actual_socket_error_after_101_is_transport_unknown_without_a_second_http_response()
+-> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?;
+    let server = thread::spawn(move || -> TestResult<()> {
+        let (mut stream, _) = listener.accept()?;
         let outcome = response_committed(&mut stream, |stream| {
             stream
                 .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
@@ -408,13 +383,12 @@ fn actual_socket_error_after_101_is_transport_unknown_without_a_second_http_resp
             Err(failure("controlled post-upgrade transport failure"))
         });
         assert_eq!(outcome, NativeLiveOutcome::TransportUnknown);
+        Ok(())
     });
-    let mut client = TcpStream::connect(address).unwrap();
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
+    let mut client = TcpStream::connect(address)?;
+    client.set_read_timeout(Some(Duration::from_secs(5)))?;
     let mut received = Vec::new();
-    client.read_to_end(&mut received).unwrap();
+    client.read_to_end(&mut received)?;
     assert!(received.starts_with(b"HTTP/1.1 101 "));
     assert_eq!(
         received
@@ -424,5 +398,8 @@ fn actual_socket_error_after_101_is_transport_unknown_without_a_second_http_resp
         1
     );
     assert!(received.ends_with(b"\r\n\r\n"));
-    server.join().unwrap();
+    server
+        .join()
+        .map_err(|_| std::io::Error::other("fixture thread panicked"))??;
+    Ok(())
 }

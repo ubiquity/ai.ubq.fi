@@ -7,8 +7,9 @@ use gateway_auth_contracts::{
 use gateway_auth_passport_contracts::session::PassportDate;
 use gateway_auth_passport_sessions::sessions::{PassportSessions, session_key};
 use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use std::{
     cell::{Cell, RefCell},

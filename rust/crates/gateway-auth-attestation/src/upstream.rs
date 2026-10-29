@@ -3,6 +3,7 @@ use gateway_auth_primitives::{
     crypto::{decode_base64url, sha256_base64url},
     error::{invalid, unauthorized},
 };
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use rsa::{
     RsaPublicKey,
@@ -31,8 +32,12 @@ pub fn github_token_shape(token: &str) -> bool {
     token.starts_with("gh") || token.starts_with("github_pat_")
 }
 
-pub fn kernel_public_keys_key() -> gateway_core::state::RecordKey {
-    gateway_auth_primitives::store::key(serde_json::json!(["uos_ai", "kernel_pubkeys"]))
+pub fn kernel_public_keys_key() -> gateway_kv_codec::key::RecordKey {
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("kernel_pubkeys"),
+    ])
+    .to_record_key()
 }
 
 pub fn deno_token_shape(token: &str) -> bool {

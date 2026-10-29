@@ -1,16 +1,16 @@
 mod support;
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
-    source_serialization as source,
-};
+use gateway_contracts::model::ModelId;
+use gateway_model_metadata::metadata::MetadataHint;
+use gateway_model_selection::{aliases::SourceStringCollator, selection::ModelWhitelist};
+use gateway_model_snapshot::snapshot::ModelSnapshot;
 use gateway_schema::{
-    aliases::SourceStringCollator,
     catalog::{CatalogInput, ProviderCatalog},
     catalog_views::{build_catalog_snapshot, capabilities, ordinary_models, public_catalog},
-    metadata::MetadataHint,
     native_catalog::native_catalog,
-    selection::ModelWhitelist,
-    snapshot::ModelSnapshot,
+};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
 use support::*;
 
@@ -27,7 +27,7 @@ fn units(value: &SourceJson) -> Vec<u16> {
     value.deserialize::<JsString16>().unwrap().into_units()
 }
 
-fn snapshot(models: Vec<gateway_core::source_json::SourceJson>) -> ModelSnapshot {
+fn snapshot(models: Vec<gateway_source::source_json::SourceJson>) -> ModelSnapshot {
     ModelSnapshot {
         models,
         source: "codex_cli".into(),
@@ -49,7 +49,7 @@ fn ordinary_native_and_capability_views_keep_opaque_model_effort_and_unknown_fie
     assert_eq!(ordinary.len(), 1);
     assert_eq!(units(&member(&ordinary[0], "id")), [0xd800]);
     assert_eq!(ordinary[0].object_entries().unwrap().len(), 4);
-    let capability = rows(&capabilities(&input), "data").remove(0);
+    let capability = rows(&capabilities(&input).unwrap(), "data").remove(0);
     assert_eq!(units(&member(&capability, "id")), [0xd800]);
     assert_eq!(
         units(&member(&capability, "default_reasoning_effort")),
@@ -99,7 +99,7 @@ fn openrouter_whitelist_phase_owner_prefix_and_effort_remain_source_values() {
     input.enrichment.insert(
         id.clone(),
         MetadataHint {
-            supported_reasoning_levels: Some(vec![json(&effort)]),
+            supported_reasoning_levels: Some(vec![json(&effort).into()]),
             default_reasoning_effort: Some(effort.clone()),
             ..Default::default()
         },
@@ -114,7 +114,7 @@ fn openrouter_whitelist_phase_owner_prefix_and_effort_remain_source_values() {
         units(&member(row, "owned_by")),
         [111, 119, 110, 101, 114, 0xd800]
     );
-    let capabilities = rows(&capabilities(&input), "data");
+    let capabilities = rows(&capabilities(&input).unwrap(), "data");
     let row = capabilities
         .iter()
         .find(|r| units(&member(r, "id")) == id.as_js_string().as_units())
@@ -192,7 +192,10 @@ fn capabilities_source_label_is_exact_utf16_with_only_missing_snapshot_default()
         snapshot: Some(uploaded),
         ..Default::default()
     };
-    assert_eq!(units(&member(&capabilities(&input), "source")), original);
+    assert_eq!(
+        units(&member(&capabilities(&input).unwrap(), "source")),
+        original
+    );
 
     let mut empty = snapshot(Vec::new());
     empty.source = JsString16::default();
@@ -200,9 +203,12 @@ fn capabilities_source_label_is_exact_utf16_with_only_missing_snapshot_default()
         snapshot: Some(empty),
         ..Default::default()
     };
-    assert!(units(&member(&capabilities(&input), "source")).is_empty());
+    assert!(units(&member(&capabilities(&input).unwrap(), "source")).is_empty());
     assert_eq!(
-        units(&member(&capabilities(&CatalogInput::default()), "source")),
+        units(&member(
+            &capabilities(&CatalogInput::default()).unwrap(),
+            "source"
+        )),
         "stored_codex_models".encode_utf16().collect::<Vec<_>>()
     );
 }

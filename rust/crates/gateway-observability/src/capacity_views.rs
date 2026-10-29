@@ -1,6 +1,6 @@
 //! Source lease-guarded event/admin sampler. No timer, alarm, or inference operation.
 use crate::ObservabilityRuntime;
-use gateway_admin_runtime::capabilities::Context;
+use gateway_admin_runtime_contracts::capabilities::Context;
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_capacity_projection::{scalars::DAY, scalars::safe_i64, shapes as shape};
 use gateway_core::query::QueryStore;

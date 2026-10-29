@@ -10,10 +10,10 @@ use gateway_auth_primitives::{
 };
 use gateway_core::{
     source_control,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 
@@ -35,9 +35,14 @@ pub fn session_key(token: &str) -> RecordKey {
     digest_key(&sha256_hex(token.as_bytes()))
 }
 fn digest_key(digest: &str) -> RecordKey {
-    store::key(serde_json::json!([
-        "uos_ai", "auth", "passport", "sessions", digest
-    ]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("auth"),
+        ScalarKeyPart::String("passport"),
+        ScalarKeyPart::String("sessions"),
+        ScalarKeyPart::String(digest),
+    ])
+    .to_record_key()
 }
 pub fn unavailable() -> GatewayError {
     GatewayError::new(

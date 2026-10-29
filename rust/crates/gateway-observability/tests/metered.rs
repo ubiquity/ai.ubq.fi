@@ -15,7 +15,7 @@ struct Monitoring {
 impl ObservabilityHost for Monitoring {
     fn source_string_collator(
         &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         self.clock.source_string_collator()
     }
     fn now_ms(&self) -> i64 {

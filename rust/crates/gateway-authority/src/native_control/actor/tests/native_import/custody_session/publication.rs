@@ -2,15 +2,16 @@
 //! Config DATA here is synthetic; trusted receiver derivation is separately gated.
 use super::*;
 use crate::native_control::import::publication::PreparedNativeImportPublication;
-use gateway_auth::native_import::publication::NativeImportPublicationDisposition;
+use gateway_auth_native_protocol::native_import::publication::NativeImportPublicationDisposition;
 use gateway_auth_native_wire::{
     native_read::NATIVE_PUBLICATION_PATH,
     publication_command::{ImportAccessDocument, ImportCatalogData, ImportPublicationCommandData},
 };
-use gateway_core::{
-    provider::PaidProvider, source_control::encode_source_control_record, source_json::SourceJson,
-};
+use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_contracts::provider::PaidProvider;
+use gateway_core::source_control::encode_source_control_record;
 use gateway_schema::catalog_store;
+use gateway_source::source_json::SourceJson;
 
 fn catalog() -> SourceJson {
     SourceJson::parse(r#"{"models":[{"slug":"model-a","supported_reasoning_levels":[{"effort":"none","description":"none"}]}]}"#).unwrap()
@@ -25,6 +26,7 @@ impl Fixture {
             &SourceJson::parse("null").unwrap(),
             1_000_000,
         )
+        .unwrap()
         .unwrap();
         for (key, document) in [
             (
@@ -61,7 +63,7 @@ impl Fixture {
         started: &ImportCustodyStartedRequest,
         limited: bool,
     ) -> ImportPublicationCommandData {
-        let identity = gateway_auth::provider_credentials::codex_credential_identity(
+        let identity = gateway_auth_credentials::provider_credentials::codex_credential_identity(
             "synthetic-account",
             &Secret::new("NEW_SYNTHETIC_ACCESS".into()),
             &Secret::new(String::new()),
@@ -314,7 +316,7 @@ fn concurrent_config_replacement_and_admin_revocation_never_partially_publish() 
                     .rows
                     .lock()
                     .unwrap()
-                    .remove(&gateway_auth::passkeys::key("users", "user-fixture").0);
+                    .remove(&gateway_auth_passkeys::passkeys::key("users", "user-fixture").0);
             } else {
                 f.store
                     .rows
@@ -357,7 +359,7 @@ fn mismatched_terminal_pair_and_forged_receipt_replay_refuse_without_mutation() 
                 .is_err()
         );
         assert_eq!(before, f.snapshot());
-        let key = crate::native_control::rows::key("operation", &started.operation_id);
+        let key = gateway_authority_native_records::rows::key("operation", &started.operation_id);
         f.store.rows.lock().unwrap().get_mut(&key.0).unwrap().value["terminal"]["access_generation"] =
             json!(sha256_hex(b"wrong"));
         let before = f.snapshot();

@@ -3,21 +3,26 @@
 //! the original actor/action. This client cannot mint a local action or claim.
 use crate::owner_control::NativeControlContext;
 use crate::private_https::PrivateHttps;
-use gateway_auth::crypto::base64url;
-use gateway_auth::native_auth::NativeTransportIdentity;
-use gateway_auth_native_wire::control::{
-    NATIVE_AUTHORITY_MAX_BYTES, NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS,
-    NativeControlEnvelope, NativeControlRequest, unverified,
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_native_wire::{
+    control::{
+        NATIVE_AUTHORITY_MAX_BYTES, NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS,
+        NativeControlEnvelope, NativeControlRequest, unverified,
+    },
+    native_read::{
+        NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
+        NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
+    },
 };
-use gateway_auth_native_wire::native_read::{
-    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
-    NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
+use gateway_auth_primitives::crypto::base64url;
+use gateway_native_authority_request::NativeRenewalAuthorityRequest as Request;
+use gateway_authority_actor_records::versions::{AUTHORITY_RESPONSE_V2, RENEWAL_FENCE_V3};
+use gateway_native_authority_wire::{
+    renewal::{NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalMode},
+    renewal_response::NativeRenewalAuthorityResponse as Response,
+    source_response::SourceNativeRenewalAuthorityResponseV2 as SourceResponse,
 };
-use gateway_authority::native_control::{
-    NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalMode,
-    wire::{NativeRenewalAuthorityRequest as Request, NativeRenewalAuthorityResponse as Response},
-};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::{net::TcpStream, time::Instant};
 
 pub struct NativeAuthorityHttp {
@@ -55,6 +60,27 @@ impl NativeAuthorityHttp {
         request: &Request,
         context: &NativeControlContext<'_>,
     ) -> Result<Response, GatewayError> {
+        let (body, now) = self.exchange_body(request, context)?;
+        let decoded: Response = serde_json::from_slice(&body).map_err(|_| unverified())?;
+        self.validate(request, &decoded, now)?;
+        Ok(decoded)
+    }
+    /// Strict signed source response DATA only; no CurrentGuard or Start is minted.
+    pub fn exchange_source(
+        &self,
+        request: &Request,
+        context: &NativeControlContext<'_>,
+    ) -> Result<SourceResponse, GatewayError> {
+        let (body, now) = self.exchange_body(request, context)?;
+        let decoded: SourceResponse = serde_json::from_slice(&body).map_err(|_| unverified())?;
+        self.validate_source(request, &decoded, now)?;
+        Ok(decoded)
+    }
+    fn exchange_body(
+        &self,
+        request: &Request,
+        context: &NativeControlContext<'_>,
+    ) -> Result<(Vec<u8>, i64), GatewayError> {
         context.check()?;
         request.validate()?;
         let body = serde_json::to_vec(request).map_err(|_| unverified())?;
@@ -102,9 +128,7 @@ impl NativeAuthorityHttp {
         if response.status != 200 {
             return Err(unverified());
         }
-        let decoded: Response = serde_json::from_slice(&response.body).map_err(|_| unverified())?;
-        self.validate(request, &decoded, now)?;
-        Ok(decoded)
+        Ok((response.body, now))
     }
     fn validate(
         &self,
@@ -167,6 +191,76 @@ impl NativeAuthorityHttp {
                     publication_revision,
                 },
             ) => *v == 1 && publication_revision == expected,
+            _ => false,
+        };
+        if !valid {
+            return Err(unverified());
+        }
+        Ok(())
+    }
+    fn validate_source(
+        &self,
+        request: &Request,
+        response: &SourceResponse,
+        now: i64,
+    ) -> Result<(), GatewayError> {
+        let valid = match (request, response) {
+            (
+                Request::Claim { .. },
+                SourceResponse::Claim {
+                    v,
+                    action_ref,
+                    operation_id,
+                    claim_ref,
+                    start_permit,
+                    mode,
+                    deadline_ms,
+                    fence,
+                    publication_revision,
+                },
+            ) => {
+                let original = NativeControlEnvelope::parse(&request.original_control_body()?)?;
+                let NativeControlRequest::CodexRenewAccess {
+                    action_ref: expected,
+                } = original.request;
+                *v == AUTHORITY_RESPONSE_V2
+                    && fence.v == RENEWAL_FENCE_V3
+                    && action_ref == &expected
+                    && operation_id == &original.operation_id
+                    && identifier(claim_ref)
+                    && fence.owner_id == self.identity.owner_id()
+                    && fence.owner_epoch == self.identity.owner_epoch()
+                    && publication_revision.as_deref().is_none_or(identifier)
+                    && (publication_revision.is_none() || *mode == NativeRenewalMode::ReconcileOnly)
+                    && match mode {
+                        NativeRenewalMode::RenewOnce => {
+                            start_permit.as_deref().is_some_and(identifier)
+                                && *deadline_ms > now
+                                && *deadline_ms <= now.saturating_add(NATIVE_RENEWAL_MAX_MS)
+                        }
+                        NativeRenewalMode::ReconcileOnly => start_permit.is_none(),
+                    }
+            }
+            (Request::Recheck { .. }, SourceResponse::Recheck { v, fence }) => {
+                *v == AUTHORITY_RESPONSE_V2
+                    && fence.v == RENEWAL_FENCE_V3
+                    && fence.owner_id == self.identity.owner_id()
+                    && fence.owner_epoch == self.identity.owner_epoch()
+            }
+            (Request::Start { .. }, SourceResponse::Start { v, .. })
+            | (Request::Unknown { .. }, SourceResponse::Unknown { v }) => {
+                *v == AUTHORITY_RESPONSE_V2
+            }
+            (
+                Request::Published {
+                    publication_revision: expected,
+                    ..
+                },
+                SourceResponse::Published {
+                    v,
+                    publication_revision,
+                },
+            ) => *v == AUTHORITY_RESPONSE_V2 && publication_revision == expected,
             _ => false,
         };
         if !valid {

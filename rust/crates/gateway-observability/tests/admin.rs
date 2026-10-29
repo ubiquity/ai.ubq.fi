@@ -1,7 +1,8 @@
-use gateway_admin_runtime::{capabilities::Context, capabilities::ProviderRequest};
+use gateway_admin_runtime_contracts::{capabilities::Context, capabilities::ProviderRequest};
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_capacity_projection::{shapes::history_point, shapes::unavailable_snapshot};
-use gateway_core::{state::RecordKey, state::StoredRecord, tuple_key::TupleKey};
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_observability::{ObservabilityRuntime, api::*};
 use gateway_observability_contracts::{host_types::*, types::ObservabilityHost};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
@@ -32,7 +33,7 @@ struct AdminHost {
 impl ObservabilityHost for AdminHost {
     fn source_string_collator(
         &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {

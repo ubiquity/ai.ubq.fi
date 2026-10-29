@@ -9,7 +9,7 @@ use worker::Context;
 use super::{account::CurrentLiveAccount, body::Body};
 
 pub(super) async fn response(
-    store: crate::authority::RemoteAuthorityStore,
+    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
     account: &CurrentLiveAccount,
     response: &LiveResponse<Body>,
     context: Rc<Context>,
@@ -37,7 +37,7 @@ pub(super) async fn response(
                     .record_capacity_downtime("upstream_error", Some(status), now)
                     .await;
             }
-            let _ = background.capacity().trigger_capacity_sample().await;
+            let _ = background.trigger_capacity_sample().await;
         });
     }
     let request_id = ["x-request-id", "x-api-request-id", "x-oneapi-request-id"]
@@ -55,7 +55,7 @@ pub(super) async fn response(
 }
 
 pub(super) async fn failure(
-    store: crate::authority::RemoteAuthorityStore,
+    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
     account: &CurrentLiveAccount,
     failure: &LiveDispatchFailure<Body>,
     context: Rc<Context>,
@@ -107,8 +107,11 @@ pub(super) async fn failure(
 }
 
 fn runtime(
-    store: crate::authority::RemoteAuthorityStore,
-) -> ObservabilityRuntime<crate::authority::RemoteAuthorityStore, crate::observability_host::Host> {
+    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
+) -> ObservabilityRuntime<
+    gateway_worker_authority_binding::authority::RemoteAuthorityStore,
+    crate::observability_host::Host,
+> {
     ObservabilityRuntime::with_state(
         store,
         crate::observability_host::Host,

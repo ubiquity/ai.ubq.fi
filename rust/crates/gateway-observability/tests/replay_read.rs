@@ -1,7 +1,6 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use gateway_core::{
-    state::RecordKey, state::StoredRecord, tuple_key::TupleKey, value::PortableValue,
-};
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey, value::PortableValue};
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_replay_model::replay_model as model;
 use gateway_observability_replay_records::{

@@ -6,6 +6,11 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-admin-runtime-contracts = { workspace = true }
+gateway-authority-capacity = { workspace = true }
+gateway-contracts = { workspace = true }
+gateway-kv-codec = { workspace = true }
+gateway-model-selection = { workspace = true }
 gateway-source.workspace = true
 gateway-core.workspace = true
 gateway-auth-primitives.workspace = true

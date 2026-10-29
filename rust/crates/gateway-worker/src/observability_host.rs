@@ -1,20 +1,19 @@
 //! Real platform primitives for request-owned observational reads and writes.
-use gateway_admin_runtime::capabilities::Context;
-use gateway_core::identity::RequestId;
+use gateway_admin_runtime_contracts::capabilities::{Context, ErrorDiagnostics};
+use gateway_authority_capacity::CapacityOperations;
+use gateway_cache_experiment_runner::CacheRunOperations;
+use gateway_contracts::identity::RequestId;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_observability::{ObservabilityRuntime, ObservabilityState};
-use gateway_observability_contracts::host_types;
-use gateway_observability_contracts::{host_types::BuildIdentity, types::ObservabilityHost};
+use gateway_observability_contracts::host_types::{self, BuildIdentity};
+use gateway_observability_contracts::types::ObservabilityHost;
 use gateway_observability_metered::metered;
 use gateway_observability_replay_capture::replay_producer;
-use gateway_observability_replay_model::replay_crypto;
-use gateway_observability_replay_model::replay_crypto::ReplayBody;
-use gateway_observability_replay_observation::observation;
-use gateway_observability_replay_observation::replay_trace;
-use gateway_source::error::GatewayError;
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-};
+use gateway_observability_replay_model::replay_crypto::{self, ReplayBody};
+use gateway_observability_replay_observation::{observation, replay_trace};
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
+use std::{cell::Cell, cell::RefCell, rc::Rc};
+use {gateway_schema_values::scalar as util, gateway_source::error::GatewayError};
 mod admin;
 mod diagnostics;
 mod inventory;
@@ -24,7 +23,7 @@ thread_local! {static STATE:ObservabilityState=ObservabilityState::default();}
 pub fn shared_state() -> ObservabilityState {
     STATE.with(Clone::clone)
 }
-pub type Runtime = ObservabilityRuntime<crate::authority::RemoteAuthorityStore, RequestHost>;
+pub type Runtime = ObservabilityRuntime<RemoteAuthorityStore, RequestHost>;
 pub enum CaptureInput {
     Ready(replay_producer::ReplayInput),
     Omitted(&'static str),
@@ -76,8 +75,7 @@ pub async fn persist_failure(
 ) -> Result<replay_producer::PersistResult, GatewayError> {
     let key =
         crate::host::setting(&runtime.host().platform.env, "SENTINEL_REPLAY_KEY").and_then(|raw| {
-            replay_crypto::ReplayKey::decode(raw.trim_matches(gateway_schema::util::js_whitespace))
-                .ok()
+            replay_crypto::ReplayKey::decode(raw.trim_matches(util::js_whitespace)).ok()
         });
     runtime
         .captures()
@@ -85,18 +83,18 @@ pub async fn persist_failure(
         .await
 }
 pub struct RequestHost {
-    store: crate::authority::RemoteAuthorityStore,
+    store: RemoteAuthorityStore,
     platform: crate::host::PlatformHost,
     request_id: String,
     original_body: ReplayBody,
     admin_actor: Option<Rc<gateway_authority::native_control::actor::NativeRenewalActor>>,
-    prepared_cache_target: RefCell<Option<gateway_authority::cache_experiment::PreparedTarget>>,
+    prepared_cache_target: RefCell<Option<gateway_cache_experiment_runner::PreparedTarget>>,
     cache_target_prepared: Cell<bool>,
 }
 pub fn bind(
     request_id: &RequestId,
     original_body: &[u8],
-    store: crate::authority::RemoteAuthorityStore,
+    store: RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     _context: Rc<worker::Context>,
 ) -> Runtime {
@@ -106,12 +104,12 @@ pub fn bind(
 pub fn bind_admin(
     request_id: &RequestId,
     original_body: &[u8],
-    store: crate::authority::RemoteAuthorityStore,
+    store: RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     _context: Rc<worker::Context>,
     actor: Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
 ) -> Result<Runtime, GatewayError> {
-    if actor.scope() != gateway_authority::native_control::actor::NativeActorScope::Admin
+    if actor.scope() != gateway_authority_actor_records::scope::NativeActorScope::Admin
         || actor.context().request_id != *request_id
     {
         return Err(admin::auth_required());
@@ -127,7 +125,7 @@ pub fn bind_admin(
 fn bind_request(
     request_id: &RequestId,
     original_body: &[u8],
-    store: crate::authority::RemoteAuthorityStore,
+    store: RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     admin_actor: Option<Rc<gateway_authority::native_control::actor::NativeRenewalActor>>,
 ) -> Runtime {
@@ -143,9 +141,9 @@ fn bind_request(
     ObservabilityRuntime::with_state(store, host, shared_state())
 }
 /// Source /health is release liveness and does no provider or authority I/O.
-pub fn health_response() -> Result<gateway_auth::types::AuthResponse, GatewayError> {
+pub fn health_response() -> Result<gateway_auth_contracts::types::AuthResponse, GatewayError> {
     let identity = Host.build_identity()?;
-    let mut response = gateway_auth::types::AuthResponse::json(
+    let mut response = gateway_auth_contracts::types::AuthResponse::json(
         200,
         serde_json::json!({"status":"available","release":{"git_sha":identity.git_sha,"deployment_id":identity.deployment_id}}),
     );
@@ -179,14 +177,14 @@ pub async fn metered_diagnostics(runtime: &Runtime) -> Result<serde_json::Value,
 pub async fn error_diagnostics(
     runtime: &Runtime,
     context: &Context,
-) -> Result<gateway_admin_runtime::capabilities::ErrorDiagnostics, GatewayError> {
+) -> Result<ErrorDiagnostics, GatewayError> {
     if context.request_id != runtime.host().request_id {
         return Err(GatewayError::unavailable(
             "The administrative diagnostic receipt does not match this request.",
             "admin_body_receipt_mismatch",
         ));
     }
-    Ok(gateway_admin_runtime::capabilities::ErrorDiagnostics {
+    Ok(ErrorDiagnostics {
         retention: runtime.error_retention_diagnostics().await,
         // Source leaves unmeasured host text logs unknown, including platforms without paths.
         log_files: serde_json::json!({
@@ -204,9 +202,7 @@ impl ObservabilityHost for Host {
         gateway_claude_usage_runtime::platform::parse_date(text)
     }
 
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         gateway_worker_platform::source_collator::shared()
     }
 
@@ -242,7 +238,7 @@ impl ObservabilityHost for RequestHost {
         let seed =
             crate::claude_host::platform::bootstrap_for_source(&self.store, &self.platform).await?;
         let roster =
-            gateway_admin_runtime::claude::load_roster(&self.store, &self.platform, &seed).await?;
+            gateway_claude_roster::claude::load_roster(&self.store, &self.platform, &seed).await?;
         let host = crate::claude_host::platform::Host {
             store: self.store.clone(),
             platform: self.platform.clone(),
@@ -255,9 +251,7 @@ impl ObservabilityHost for RequestHost {
         Ok(())
     }
 
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         gateway_worker_platform::source_collator::shared()
     }
 
@@ -337,8 +331,9 @@ impl ObservabilityHost for RequestHost {
         self.inventory(context).await
     }
     async fn metered_balance_fingerprint(&self) -> Result<Option<String>, GatewayError> {
-        Ok(inventory::monitoring_key(&self.platform.env)
-            .map(|key| gateway_auth::crypto::sha256_hex(key.as_bytes())[..16].to_owned()))
+        Ok(inventory::monitoring_key(&self.platform.env).map(|key| {
+            gateway_auth_primitives::crypto::sha256_hex(key.as_bytes())[..16].to_owned()
+        }))
     }
     async fn metered_quota_snapshot(
         &self,
@@ -367,7 +362,7 @@ impl ObservabilityHost for RequestHost {
     async fn begin_codex_capacity_observation(
         &self,
         accounts: &[host_types::CapacityAccountRef],
-    ) -> Result<gateway_authority::capacity::CodexCapacityObservationFence, GatewayError> {
+    ) -> Result<gateway_authority_capacity::CodexCapacityObservationFence, GatewayError> {
         let authority = gateway_authority::store::Authority::with_clock(
             self.store.clone(),
             crate::host::PlatformTokens,
@@ -377,7 +372,7 @@ impl ObservabilityHost for RequestHost {
             .begin_codex_capacity_observation(
                 &accounts
                     .iter()
-                    .map(|a| gateway_authority::capacity::CodexCapacityAccountRef {
+                    .map(|a| gateway_authority_capacity::CodexCapacityAccountRef {
                         source_slot: a.slot,
                         account_id: a.account_id.clone(),
                     })
@@ -388,16 +383,16 @@ impl ObservabilityHost for RequestHost {
     async fn probe_codex_capacity(
         &self,
         account: &host_types::CapacityAccountRef,
-        fence: &gateway_authority::capacity::CodexCapacityObservationFence,
+        fence: &gateway_authority_capacity::CodexCapacityObservationFence,
         deadline: i64,
     ) -> Result<host_types::CapacityProbe, GatewayError> {
         self.capacity_probe(account, fence, deadline).await
     }
     async fn accept_capacity_observations(
         &self,
-        fence: &gateway_authority::capacity::CodexCapacityObservationFence,
-        observations: &[gateway_authority::capacity::CodexCapacitySample],
-    ) -> Result<gateway_authority::capacity::AcceptedCodexCapacityObservations, GatewayError> {
+        fence: &gateway_authority_capacity::CodexCapacityObservationFence,
+        observations: &[gateway_authority_capacity::CodexCapacitySample],
+    ) -> Result<gateway_authority_capacity::AcceptedCodexCapacityObservations, GatewayError> {
         gateway_authority::store::Authority::with_clock(
             self.store.clone(),
             crate::host::PlatformTokens,

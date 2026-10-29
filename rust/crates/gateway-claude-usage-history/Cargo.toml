@@ -9,6 +9,10 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
 gateway-claude-usage-history-records.workspace = true

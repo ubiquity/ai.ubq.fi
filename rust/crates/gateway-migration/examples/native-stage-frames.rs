@@ -1,12 +1,14 @@
 //! Private preparation CLI: one stopped owner-only capture into bounded stage frames.
 //! It never opens a target, an HTTP route, a service, a credential refresh or a writer.
 #![cfg(all(unix, not(target_arch = "wasm32")))]
-use gateway_auth::native_credentials::{NativeOwnerId, OwnerFence};
-use gateway_migration::{
-    native_operator::{ConfiguredNativeCustody, NativeCustodyRegistration},
-    native_stage::Captured,
-    staged::{StageOwnerBinding, StagePlan, StageRequest, decode_stage_request},
-};
+use gateway_auth_credentials::{native_credentials::NativeOwnerId, native_credentials::OwnerFence};
+use gateway_migration_data::staged::StageOwnerBinding;
+use gateway_migration_data::staged::StageRequest;
+use gateway_migration_native_custody::registry::ConfiguredNativeCustody;
+use gateway_migration_native_custody::registry::NativeCustodyRegistration;
+use gateway_migration_protocol::staged::decode_stage_request;
+use gateway_migration_stage::native_stage::Captured;
+use gateway_migration_stage::plan::StagePlan;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -65,12 +67,12 @@ struct Receipt {
     sealed: bool,
     owner_frame: bool,
     target_touched: bool,
-    summary: gateway_migration::staged::StagePlanSummary,
+    summary: gateway_migration_stage::plan::StagePlanSummary,
 }
-fn failure(message: &str) -> gateway_migration::error::MigrationError {
-    gateway_core::error::GatewayError::unavailable(message, "m20_stage_frames_invalid").into()
+fn failure(message: &str) -> gateway_migration_data::error::MigrationError {
+    gateway_source::error::GatewayError::unavailable(message, "m20_stage_frames_invalid").into()
 }
-fn sha256_file(path: &Path) -> Result<String, gateway_migration::error::MigrationError> {
+fn sha256_file(path: &Path) -> Result<String, gateway_migration_data::error::MigrationError> {
     let mut file = File::open(path).map_err(|_| failure("Private capture cannot be hashed"))?;
     let mut hash = Sha256::new();
     let mut bytes = vec![0; 1024 * 1024];
@@ -89,7 +91,7 @@ fn sha256_file(path: &Path) -> Result<String, gateway_migration::error::Migratio
         .map(|byte| format!("{byte:02x}"))
         .collect())
 }
-fn private_output(path: &Path) -> Result<File, gateway_migration::error::MigrationError> {
+fn private_output(path: &Path) -> Result<File, gateway_migration_data::error::MigrationError> {
     OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -102,8 +104,8 @@ fn write_frame(
     frame: &[u8],
     total: &mut u64,
     maximum: &mut usize,
-) -> Result<(), gateway_migration::error::MigrationError> {
-    if frame.len() > gateway_migration::staged::STAGED_BATCH_MAX_BYTES {
+) -> Result<(), gateway_migration_data::error::MigrationError> {
+    if frame.len() > gateway_migration_data::staged::STAGED_BATCH_MAX_BYTES {
         return Err(failure("Private stage frame exceeds its bound"));
     }
     file.write_all(frame)
@@ -117,7 +119,7 @@ fn write_frame(
 }
 fn registrations(
     entries: Vec<Registration>,
-) -> Result<Vec<NativeCustodyRegistration>, gateway_core::error::GatewayError> {
+) -> Result<Vec<NativeCustodyRegistration>, gateway_source::error::GatewayError> {
     entries
         .into_iter()
         .map(|registration| {
@@ -144,7 +146,7 @@ fn poll_ready<F: std::future::Future>(
         std::thread::yield_now();
     }
 }
-fn validate_input(input: &Input) -> Result<(), gateway_migration::error::MigrationError> {
+fn validate_input(input: &Input) -> Result<(), gateway_migration_data::error::MigrationError> {
     if input.v != 1
         || !input.capture.is_absolute()
         || !input.directory.is_absolute()
@@ -157,7 +159,7 @@ fn validate_input(input: &Input) -> Result<(), gateway_migration::error::Migrati
     }
     Ok(())
 }
-fn main() -> Result<(), gateway_migration::error::MigrationError> {
+fn main() -> Result<(), gateway_migration_data::error::MigrationError> {
     assert_eq!(std::env::args_os().len(), 1, "Private input is stdin only");
     let mut raw = Vec::new();
     std::io::stdin()
@@ -183,7 +185,7 @@ fn main() -> Result<(), gateway_migration::error::MigrationError> {
     }
     let registrations = registrations(input.registrations)?;
     let custody = ConfiguredNativeCustody::new(registrations)?;
-    let directory = gateway_migration::native_stage::directory(&input.directory)?;
+    let directory = gateway_migration_spool::directory(&input.directory)?;
     let source = Captured::read(&input.capture, &directory)?;
     if source.count() != input.expected.entries {
         return Err(failure(

@@ -168,7 +168,7 @@ impl<S: QueryStore, H: ObservabilityHost> CapacitySampler<'_, S, H> {
         &self,
         account: Option<&CapacityAccountRef>,
         slot: u8,
-        fence: Option<&gateway_authority::capacity::CodexCapacityObservationFence>,
+        fence: Option<&gateway_authority_capacity::CodexCapacityObservationFence>,
         at: i64,
     ) -> Result<Value, GatewayError> {
         let Some(account) = account else {
@@ -276,8 +276,8 @@ impl<S: QueryStore, H: ObservabilityHost> CapacitySampler<'_, S, H> {
             let source = if account.slot == 1 { &one } else { &two };
             let invalid =
                 || data::error("Capacity source observation does not match authority DTO");
-            observations.push(gateway_authority::capacity::CodexCapacitySample {
-                account: gateway_authority::capacity::CodexCapacityAccountRef {
+            observations.push(gateway_authority_capacity::CodexCapacitySample {
+                account: gateway_authority_capacity::CodexCapacityAccountRef {
                     source_slot: account.slot,
                     account_id: account.account_id,
                 },

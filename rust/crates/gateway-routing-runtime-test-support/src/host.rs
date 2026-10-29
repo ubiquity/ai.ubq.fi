@@ -1,16 +1,15 @@
 use crate::{seed::source_key, source_catalog::Collator, store::Store};
-use gateway_auth::{crypto::Secret, types::AuthPrincipal};
-use gateway_authority::{
-    keys,
-    paid_types::{PaidReservation, PaidUsage},
-    routing_types::CohortProof,
-};
-use gateway_core::{error::GatewayError, state::AuthorityStore};
-use gateway_providers::types::{AuthMaterial, PrepareOptions};
+use gateway_auth_contracts::types::AuthPrincipal;
+use gateway_auth_primitives::crypto::Secret;
+use gateway_authority_routing_selection::types::CohortProof;
+use gateway_authority_paid_records::{PaidReservation, PaidUsage};
+use gateway_model_selection::aliases as model_aliases;
+use gateway_provider_protocol::{types::AuthMaterial, types::PrepareOptions};
 use gateway_routing_runtime::types::{
     ClaudeOutcome, ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest,
     PublishedCredential, RefreshOutcome, ResponseHead, RoutingHost, direct_credential,
 };
+use gateway_source::error::GatewayError;
 use gateway_wait_observation::outcome::WaitOutcome;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -19,10 +18,11 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
+use {gateway_authority_keys as keys, gateway_core::state::AuthorityStore};
 #[derive(Clone)]
 pub struct Host {
     pub claude_internal_error: bool,
-    pub claude_effective: Arc<Mutex<Vec<Option<gateway_core::js_string::JsString16>>>>,
+    pub claude_effective: Arc<Mutex<Vec<Option<gateway_source::js_string::JsString16>>>>,
     pub store: Store,
     pub cancelled: Arc<AtomicBool>,
     pub cancel_wait_after_ms: Option<i64>,
@@ -32,7 +32,7 @@ pub struct Host {
     pub claude_refused: Option<(
         u16,
         BTreeMap<String, String>,
-        gateway_core::source_json::SourceJson,
+        gateway_source::source_json::SourceJson,
     )>,
     pub claude_outcomes: Arc<Mutex<VecDeque<ClaudeOutcome>>>,
     pub claude_heads: Arc<AtomicU64>,
@@ -60,7 +60,7 @@ impl Host {
 }
 impl RoutingHost for Host {
     type ClaudeHead = u64;
-    fn source_string_collator(&self) -> Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> Arc<dyn model_aliases::SourceStringCollator> {
         Arc::new(Collator::captured())
     }
     fn cancelled(&self) -> bool {
@@ -115,8 +115,8 @@ impl RoutingHost for Host {
             })
         } else if matches!(
             input.provider,
-            gateway_core::provider::UpstreamProvider::Surplus
-                | gateway_core::provider::UpstreamProvider::Metered
+            gateway_contracts::provider::UpstreamProvider::Surplus
+                | gateway_contracts::provider::UpstreamProvider::Metered
         ) {
             let config = self.store.value(keys::paid_control_config());
             let mut published =
@@ -130,7 +130,7 @@ impl RoutingHost for Host {
                 owner_epoch: config["owner_epoch"].as_str().unwrap_or_default().into(),
                 configuration_generation: config["generation"].as_str().unwrap_or_default().into(),
                 credential_binding: config[if input.provider
-                    == gateway_core::provider::UpstreamProvider::Surplus
+                    == gateway_contracts::provider::UpstreamProvider::Surplus
                 {
                     "surplus_binding"
                 } else {
@@ -152,7 +152,7 @@ impl RoutingHost for Host {
         &self,
         fence: &CredentialFence,
         _principal: &AuthPrincipal,
-        _model: &gateway_core::model::ModelId,
+        _model: &gateway_contracts::model::ModelId,
     ) -> Result<(), GatewayError> {
         if let CredentialFence::Codex {
             source_key,
@@ -183,9 +183,9 @@ impl RoutingHost for Host {
     async fn select_claude(
         &self,
         _principal: &AuthPrincipal,
-        _model: &gateway_core::model::ModelId,
-        _raw: &gateway_core::source_json::SourceJson,
-        effective_effort: Option<&gateway_core::js_string::JsString16>,
+        _model: &gateway_contracts::model::ModelId,
+        _raw: &gateway_source::source_json::SourceJson,
+        effective_effort: Option<&gateway_source::js_string::JsString16>,
     ) -> Result<ClaudeSelection, GatewayError> {
         self.claude_effective
             .lock()
@@ -210,7 +210,7 @@ impl RoutingHost for Host {
     async fn observe_claude_response(
         &self,
         _fence: &CredentialFence,
-        _model: &gateway_core::model::ModelId,
+        _model: &gateway_contracts::model::ModelId,
         _response: ResponseHead,
     ) -> Result<Self::ClaudeHead, GatewayError> {
         Ok(self.claude_heads.fetch_add(1, Ordering::SeqCst))
@@ -218,7 +218,7 @@ impl RoutingHost for Host {
     async fn finish_claude_response(
         &self,
         head: Self::ClaudeHead,
-        evidence: gateway_core::claude::ClaudeErrorEvidence,
+        evidence: gateway_contracts::claude::ClaudeErrorEvidence,
     ) -> Result<ClaudeOutcome, GatewayError> {
         if !self.consumed_heads.lock().unwrap().insert(head) {
             return Err(GatewayError::unavailable(
@@ -240,7 +240,7 @@ impl RoutingHost for Host {
     async fn recover_codex(
         &self,
         _proof: &CohortProof,
-        _model: &gateway_core::model::ModelId,
+        _model: &gateway_contracts::model::ModelId,
     ) -> Result<CodexRecovery, GatewayError> {
         Ok(CodexRecovery::Declined)
     }

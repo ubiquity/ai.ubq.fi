@@ -1,26 +1,37 @@
 //! One source full-pool evaluation. Only shared opaque permits reach a consume.
-use super::{
-    manual,
-    source_inventory::{self, SourceRuntime},
-};
-use crate::authority::RemoteAuthorityStore;
+use super::manual;
+use super::source_inventory;
+use super::source_inventory::SourceRuntime;
 use crate::host::PlatformClock;
 use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
-use gateway_auth::provider_credentials::{CodexSourceAccount, read_codex_source_pool};
 use gateway_auth::resolve::AuthService;
-use gateway_auth::types::{AuthConfig, AuthMethod, AuthRequest};
-use gateway_authority::full_pool_reset::types::{
-    AutomaticResetPermit, FullPoolEvaluation, FullPoolPreparation, SourceResetInventory,
-};
-use gateway_authority::reset_types::{FullPoolResetReconciliation, ResetClaim, ResetState};
-use gateway_authority::routing_types::{AdmittedAccount, CohortProof};
+use gateway_auth_contracts::types::AuthConfig;
+use gateway_auth_contracts::types::AuthMethod;
+use gateway_auth_contracts::types::AuthRequest;
+use gateway_auth_credentials::provider_credentials::CodexSourceAccount;
+use gateway_auth_credentials::provider_credentials::read_codex_source_pool;
 use gateway_authority::store::Authority;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{AccountBinding, RequestContext};
+use gateway_authority_reset_claim::ResetClaimOperations;
+use gateway_authority_reset_evidence::types::FullPoolResetReconciliation;
+use gateway_authority_reset_permit::ResetPermitOperations;
+use gateway_authority_reset_permit::types::AutomaticResetPermit;
+use gateway_authority_reset_permit::types::FullPoolEvaluation;
+use gateway_authority_reset_permit::types::FullPoolPreparation;
+use gateway_authority_reset_records::ResetClaim;
+use gateway_authority_reset_records::ResetState;
+use gateway_authority_reset_records::full_pool::SourceResetInventory;
+use gateway_authority_reset_recovery::ResetRecoveryOperations;
+use gateway_authority_reset_spend::ResetSpendOperations;
+use gateway_authority_routing_selection::types::AdmittedAccount;
+use gateway_authority_routing_selection::types::CohortProof;
+use gateway_contracts::identity::AccountBinding;
+use gateway_contracts::identity::RequestContext;
 use gateway_routing_runtime::types::CodexRecovery;
+use gateway_source::error::GatewayError;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_storage::store::now_ms;
 use std::cell::RefCell;
 use worker::Method;
@@ -103,7 +114,7 @@ pub async fn recover_full_pool(
     config: &AuthConfig,
     request: &RequestContext,
     proof: &CohortProof,
-    model: &gateway_core::model::ModelId,
+    model: &gateway_contracts::model::ModelId,
 ) -> Result<CodexRecovery, GatewayError> {
     check_client(store, platform, original, config, request).await?;
     if proof.model() != model {

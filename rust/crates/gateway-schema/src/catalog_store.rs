@@ -1,19 +1,18 @@
 //! Strong catalog persistence against the shared authority; no independent ledger or timers.
-use crate::{
-    catalog_cache::*,
-    snapshot::{ModelSnapshot, SnapshotOverrides, compare_client_versions, normalize_snapshot},
-};
+use crate::catalog_cache::*;
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryRequest, QuerySelector, QueryStore},
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
-    tuple_key::{KeyPart, ScalarKeyPart, TupleKey},
+    query::QueryRequest, query::QuerySelector, query::QueryStore,
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::KeyPart, tuple_key::ScalarKeyPart, tuple_key::TupleKey,
+};
+use gateway_model_snapshot::snapshot::{
+    ModelSnapshot, SnapshotOverrides, compare_client_versions, normalize_snapshot,
+};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 fn string_tuple(parts: &[&str]) -> RecordKey {
@@ -422,13 +421,13 @@ pub fn normalized_snapshot_plan(
     current: Option<&ModelSnapshot>,
     runtime: &SourceJson,
     updated_at_ms: i64,
-) -> Option<(ModelSnapshot, SourceJson)> {
+) -> Result<Option<(ModelSnapshot, SourceJson)>, GatewayError> {
     if let Some(current_version) = current
         .and_then(|s| s.client_version.as_deref())
         .filter(|s| !s.is_empty())
         && compare_client_versions(version, current_version).is_none_or(|c| c.is_lt())
     {
-        return None;
+        return Ok(None);
     }
     let next = normalize_snapshot(
         parsed,
@@ -438,9 +437,12 @@ pub fn normalized_snapshot_plan(
             updated_at_ms: Some(updated_at_ms),
         },
         updated_at_ms,
-    )?
-    .merge_prompt_cache(current);
-    let current_runtime = crate::runtime_config::normalize_runtime_config(runtime);
+    )?;
+    let Some(next) = next else {
+        return Ok(None);
+    };
+    let next = next.merge_prompt_cache(current)?;
+    let current_runtime = crate::runtime_config::normalize_runtime_config(runtime)?;
     let previous_model = current_runtime
         .as_ref()
         .and_then(crate::runtime_config::default_model);
@@ -448,14 +450,16 @@ pub fn normalized_snapshot_plan(
         .as_ref()
         .and_then(crate::runtime_config::default_reasoning_effort);
     let default = next.preserve_default(previous_model.as_ref());
-    let runtime = crate::runtime_config::build_runtime_config(
+    let runtime = crate::runtime_config::build_optional_runtime_config(
         &next,
         default.as_ref(),
         previous_effort.as_ref(),
         updated_at_ms,
-    )
-    .ok()?;
-    Some((next, runtime))
+    )?;
+    let Some(runtime) = runtime else {
+        return Ok(None);
+    };
+    Ok(Some((next, runtime)))
 }
 
 pub fn codex_snapshot_key() -> RecordKey {
@@ -495,7 +499,7 @@ pub async fn publish_normalized_snapshot<S: AuthorityStore>(
         let empty_runtime = SourceJson::parse("null")?;
         let runtime = runtime_source.as_ref().unwrap_or(&empty_runtime);
         let Some((next, next_runtime)) =
-            normalized_snapshot_plan(parsed, version, current.as_ref(), runtime, updated_at_ms)
+            normalized_snapshot_plan(parsed, version, current.as_ref(), runtime, updated_at_ms)?
         else {
             return Ok(None);
         };

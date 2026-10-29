@@ -1,9 +1,10 @@
-use gateway_auth::crypto::Secret;
-use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
-use gateway_auth::store;
-use gateway_authority::keys;
-use gateway_authority::paid_control::{PaidControlConfig, PaidControlOwner};
-use gateway_core::provider::PaidProvider;
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_primitives::crypto::Secret;
+use gateway_auth_primitives::store;
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{PaidControlConfig, PaidControlOwner};
+use gateway_contracts::provider::PaidProvider;
 use gateway_core::state::AuthorityStore;
 use gateway_publication::sender::NativePublicationSender;
 use gateway_publication::wire::{PreparedPublicationCommand, PublicationDisposition};
@@ -643,7 +644,8 @@ fn configuration_capture_retains_frozen_constructor_bytes_without_writes() {
 #[test]
 fn source_utf16_runtime_capture_and_signed_receiver_keep_the_actual_codec()
 -> Result<(), Box<dyn Error>> {
-    use gateway_core::{source_control::encode_source_control_record, source_json::SourceJson};
+    use gateway_core::source_control::encode_source_control_record;
+    use gateway_source::source_json::SourceJson;
     run(async {
         let store = Memory::default();
         let identity = publication_identity();

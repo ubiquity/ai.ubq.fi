@@ -1,27 +1,42 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_auth::store::key;
-use gateway_core::{query::*, source_graph::GraphNode, state::*, tuple_key::TupleKey};
-use gateway_migration::native_capture::NativeRevision;
-use gateway_migration::{
-    engine::adopt_empty,
-    graph_transport,
-    inverse::{ArtifactContext, export_latest},
-    native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
-    native_inverse::{export_native_latest, export_native_rollback_bundle},
-};
-use gateway_migration_test_support::fixture::{Directory, run};
+use gateway_kv_codec::tuple_key::ScalarKeyPart;
+
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_core::query::*;
+use gateway_core::state::*;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::TupleKey;
+use gateway_migration_data::custody::ArtifactContext;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeRevision;
+use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_graph::transport as graph_transport;
+use gateway_migration_inverse::inverse::export_latest;
+use gateway_migration_inverse::native_inverse::export_native_latest;
+use gateway_migration_inverse::native_inverse::export_native_rollback_bundle;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare_native;
+use gateway_migration_test_support::fixture::Directory;
+use gateway_migration_test_support::fixture::run;
 use gateway_migration_test_support::sqlite_store::SqliteStore;
+use gateway_source_graph::graph::GraphNode;
 use serde_json::json;
 
 fn fixture() -> NativeCapture {
     serde_json::from_str(include_str!("fixtures/native-source.json")).unwrap()
 }
 fn graph_key(index: i64) -> RecordKey {
-    key(json!(["default", "native-graph", index]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("default"),
+        ScalarKeyPart::String("native-graph"),
+        ScalarKeyPart::Number(index),
+    ])
+    .to_record_key()
 }
 struct Tokens(std::sync::atomic::AtomicU64);
-impl gateway_authority::store::TokenSource for Tokens {
-    fn next_token(&self) -> Result<String, gateway_core::error::GatewayError> {
+impl gateway_authority_contracts::TokenSource for Tokens {
+    fn next_token(&self) -> Result<String, gateway_source::error::GatewayError> {
         Ok(format!(
             "native-fixture-{}",
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
@@ -29,8 +44,8 @@ impl gateway_authority::store::TokenSource for Tokens {
     }
 }
 struct Clock;
-impl gateway_authority::store::AuthorityClock for Clock {
-    fn now_ms(&self) -> Result<i64, gateway_core::error::GatewayError> {
+impl gateway_authority_contracts::AuthorityClock for Clock {
+    fn now_ms(&self) -> Result<i64, gateway_source::error::GatewayError> {
         Ok(2300)
     }
 }
@@ -48,7 +63,10 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse()
     let store = SqliteStore::open(&path);
     let token = format!("u_{}", "1".repeat(64));
     assert_eq!(
-        run(gateway_auth::api_keys::authenticate(&store, &token, 2300))?.key_id,
+        run(gateway_auth_primitives::api_keys::authenticate(
+            &store, &token, 2300
+        ))?
+        .key_id,
         "offline-key"
     );
     let authority = gateway_authority::store::Authority::with_clock(
@@ -57,8 +75,8 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse()
         Clock,
     );
     let admission = run(authority.reserve_api_key(
-        &gateway_core::identity::ApiKeyId("offline-key".into()),
-        &gateway_core::identity::RequestId("native-post-restart-admission".into()),
+        &gateway_contracts::identity::ApiKeyId("offline-key".into()),
+        &gateway_contracts::identity::RequestId("native-post-restart-admission".into()),
         "responses",
         2300,
     ))?;
@@ -91,7 +109,11 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse()
     );
     let page = run(store.query(QueryRequest {
         selector: QuerySelector::Prefix {
-            prefix: key(json!(["default", "native-graph"])),
+            prefix: TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("default"),
+                ScalarKeyPart::String("native-graph"),
+            ])
+            .to_record_key(),
             start: None,
             end: None,
         },
@@ -139,7 +161,10 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse()
     );
     assert!(run(inverse.read(&graph_key(1)))?.is_none());
     assert_eq!(
-        run(gateway_auth::api_keys::authenticate(&inverse, &token, 2400))?.key_id,
+        run(gateway_auth_primitives::api_keys::authenticate(
+            &inverse, &token, 2400
+        ))?
+        .key_id,
         "offline-key"
     );
     Ok(())
@@ -147,7 +172,7 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse()
 
 #[test]
 fn source_graph_wire_matches_the_independent_bun_native_corpus() {
-    use gateway_core::source_json::SourceJson;
+    use gateway_source::source_json::SourceJson;
     let corpus = SourceJson::parse(include_str!(
         "../../gateway-core/tests/fixtures/source-graph-native.json"
     ))
@@ -224,18 +249,25 @@ fn malformed_raw_keys_graphs_counters_queues_and_business_aliases_are_atomic_ref
 #[test]
 fn pending_retirement_and_suppressed_mapping_remain_only_in_private_custody() {
     let mut input = fixture();
-    let mapping = key(json!(["uos_ai", "codex_live_calls", "v1", "fixture-call"]));
-    input.entries.push(NativeEntry{raw_key:TupleKey::from_record_key(&mapping).unwrap().sort_bytes().to_vec(),value:NativeValue::SourceGraphV1(gateway_core::source_json::SourceJson::parse(r#"{"root":{"type":"ref","ref":0},"nodes":[{"type":"object","entries":[["account_id",{"type":"string","value":"fixture-account"}],["principal_id",{"type":"string","value":"fixture-principal"}]]}]}"#).unwrap()),revision:NativeRevision{version:"14".into(),sequence:"0".into()},expiration_ms:3600000});
+    let mapping = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("codex_live_calls"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String("fixture-call"),
+    ])
+    .to_record_key();
+    input.entries.push(NativeEntry{raw_key:TupleKey::from_record_key(&mapping).unwrap().sort_bytes().to_vec(),value:NativeValue::SourceGraphV1(gateway_source::source_json::SourceJson::parse(r#"{"root":{"type":"ref","ref":0},"nodes":[{"type":"object","entries":[["account_id",{"type":"string","value":"fixture-account"}],["principal_id",{"type":"string","value":"fixture-principal"}]]}]}"#).unwrap()),revision:NativeRevision{version:"14".into(),sequence:"0".into()},expiration_ms:3600000});
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("retirement.sqlite3"));
     run(adopt_empty(&store, &prepare_native(&input).unwrap())).unwrap();
-    let marker = key(json!([
-        "uos_ai",
-        "codex_live_calls",
-        "v1",
-        "pending_retirement",
-        "fixture-call"
-    ]));
+    let marker = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("codex_live_calls"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String("pending_retirement"),
+        ScalarKeyPart::String("fixture-call"),
+    ])
+    .to_record_key();
     store.put(marker.clone(),StoredRecord::json("pending-delete",json!({"schema_version":1,"call_id":"fixture-call","upstream_status":410,"created_at_ms":2300}),None));
     assert!(run(export_native_latest(&store, 2400)).is_err());
     let context = ArtifactContext {

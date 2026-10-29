@@ -1,8 +1,7 @@
 //! Source replay-retention.ts: fenced reservations, staging and exactly-once charge release.
 use crate::{ReplayRetention, store};
-use gateway_core::{
-    query::QueryStore, state::RecordMutation, state::StoredRecord, value::PortableValue,
-};
+use gateway_core::{query::QueryStore, state::RecordMutation, state::StoredRecord};
+use gateway_kv_codec::value::PortableValue;
 use gateway_observability_contracts::{
     data, query, query::ObservationRead, query::ReplayRows, types::ObservabilityHost,
 };
@@ -12,7 +11,7 @@ use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 pub struct Reservation {
     row: schema::AccountingData,
-    key: gateway_core::state::RecordKey,
+    key: gateway_kv_codec::key::RecordKey,
 }
 pub enum Admission {
     Reserved(Reservation),

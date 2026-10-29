@@ -3,9 +3,10 @@ use gateway_claude_runtime_test_support::fixture::{
     Host, NOW, Store, account, head, raw, run, seed, selected,
 };
 
-use gateway_claude_runtime::{persistence::quota_key, pool::ClaudePoolSession, response};
-use gateway_core::claude::ClaudeErrorEvidence as ErrorEvidence;
-use gateway_providers::types::Headers;
+use gateway_claude_policy::{quota::quota_key, response};
+use gateway_claude_runtime::pool::ClaudePoolSession;
+use gateway_contracts::claude::ClaudeErrorEvidence as ErrorEvidence;
+use gateway_provider_protocol::types::Headers;
 use serde_json::Value;
 
 fn fixture() -> Value {

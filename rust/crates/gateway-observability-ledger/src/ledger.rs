@@ -1,7 +1,8 @@
 //! Source analytics.ts and admin/error-log.ts. This is the existing request ledger.
 use crate::{RequestLedger, store};
 use gateway_capacity_projection::{scalars::DAY, scalars::trim};
-use gateway_core::{lifecycle::DeliveryOutcome, query::QueryStore};
+use gateway_contracts::lifecycle::DeliveryOutcome;
+use gateway_core::query::QueryStore;
 use gateway_observability_contracts::{
     data, query, query::ObservationRead, types::ObservabilityHost,
 };
@@ -128,13 +129,13 @@ impl<S: QueryStore, H: ObservabilityHost> RequestLedger<'_, S, H> {
         if trim(key_id).is_empty() {
             return Ok(());
         }
-        let key = gateway_core::tuple_key::TupleKey::from_parts(&[
-            gateway_core::tuple_key::KeyPart::String("uos_ai".into()),
-            gateway_core::tuple_key::KeyPart::String("paid_fallback".into()),
-            gateway_core::tuple_key::KeyPart::String("ledger".into()),
-            gateway_core::tuple_key::KeyPart::String(key_id.into()),
-            gateway_core::tuple_key::KeyPart::Number(created),
-            gateway_core::tuple_key::KeyPart::source_string_utf16(request_id.as_units()),
+        let key = gateway_kv_codec::tuple_key::TupleKey::from_parts(&[
+            gateway_kv_codec::tuple_key::KeyPart::String("uos_ai".into()),
+            gateway_kv_codec::tuple_key::KeyPart::String("paid_fallback".into()),
+            gateway_kv_codec::tuple_key::KeyPart::String("ledger".into()),
+            gateway_kv_codec::tuple_key::KeyPart::String(key_id.into()),
+            gateway_kv_codec::tuple_key::KeyPart::Number(created),
+            gateway_kv_codec::tuple_key::KeyPart::source_string_utf16(request_id.as_units()),
         ])?
         .to_record_key();
         for _ in 0..3 {
@@ -166,7 +167,8 @@ impl<S: QueryStore, H: ObservabilityHost> RequestLedger<'_, S, H> {
                     created,
                 )?;
             let expiry = (created + REQUEST_RETENTION_MS as f64).max((at + 1) as f64);
-            if !expiry.is_finite() || expiry > gateway_core::identity::MAX_SAFE_INTEGER as f64 {
+            if !expiry.is_finite() || expiry > gateway_contracts::identity::MAX_SAFE_INTEGER as f64
+            {
                 return Err(data::error("Request retention overflow"));
             }
             let expiry = expiry as i64;

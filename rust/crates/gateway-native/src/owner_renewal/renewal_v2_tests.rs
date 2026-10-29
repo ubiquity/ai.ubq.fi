@@ -1,32 +1,27 @@
 use super::*;
 use crate::managed_publication_http::NativeAccessPublicationHttp;
-use gateway_auth::{
-    crypto::Secret,
-    native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity},
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_native_wire::native_read::{
+    NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH,
 };
-use gateway_auth_native_wire::native_read::*;
-use gateway_authority::{
-    cache_experiment::{
-        RefreshContext,
-        model::{
-            PROFILE, PROVIDER, SLOTS, STEPS, Sample, TELEMETRY_PROVIDER, TargetBinding, Usage,
-        },
-    },
-    native_control::NativeRenewalContext,
+use gateway_auth_primitives::crypto::Secret;
+use gateway_cache_experiment_records::{
+    RefreshContext, model::PROFILE, model::PROVIDER, model::SLOTS, model::STEPS, model::Sample,
+    model::TELEMETRY_PROVIDER, model::TargetBinding, model::Usage,
 };
-use gateway_core::identity::{
-    AccountBinding, CredentialVersion, PoolVersionstamp, RoutingAccountHash,
+use gateway_contracts::{
+    identity::AccountBinding, identity::CredentialVersion, identity::PoolVersionstamp,
+    identity::RoutingAccountHash,
 };
-use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
+use gateway_native_authority_wire::context::NativeRenewalContext;
 use serde_json::json;
 use std::{
     collections::BTreeSet,
-    io::{Read, Write},
     net::{TcpListener, TcpStream},
-    sync::Arc,
-    thread,
     time::{Duration, Instant},
 };
+mod source_tests;
 
 fn identity() -> NativeTransportIdentity {
     NativeTransportIdentity::new(
@@ -285,90 +280,19 @@ fn constructed_unsupported_fence_cannot_reconcile_or_enter_native_effects() {
         matches!(peer.peek(&mut[0;1]),Err(error) if error.kind()==std::io::ErrorKind::WouldBlock)
     );
 }
-fn request_bytes(stream: &mut impl Read) -> (String, Vec<u8>) {
-    let mut bytes = Vec::new();
-    loop {
-        if let Some(end) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
-            let head = std::str::from_utf8(&bytes[..end]).unwrap();
-            let header = |name: &str| {
-                head.lines()
-                    .filter_map(|line| line.split_once(':'))
-                    .find(|(key, _)| key.eq_ignore_ascii_case(name))
-                    .unwrap()
-                    .1
-                    .trim()
-                    .to_owned()
-            };
-            let size = header("content-length").parse::<usize>().unwrap();
-            if bytes.len() >= end + 4 + size {
-                return (
-                    header(NATIVE_NONCE_HEADER),
-                    bytes[end + 4..end + 4 + size].to_vec(),
-                );
-            }
-        }
-        assert!(bytes.len() < 100_000);
-        let mut block = [0; 4096];
-        let n = stream.read(&mut block).unwrap();
-        assert!(n > 0);
-        bytes.extend_from_slice(&block[..n]);
-    }
-}
 fn signed_recheck<T: serde::Serialize + Send + 'static>(
     value: T,
     replayed_body: bool,
 ) -> Result<Response, GatewayError> {
     let (client, peer, port) = pair();
-    peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
-    peer.set_write_timeout(Some(Duration::from_secs(3)))
-        .unwrap();
-    let server = thread::spawn(move || {
-        let cert = CertificateDer::from(
-            include_bytes!("../../tests/fixtures/native-tls/leaf.der").to_vec(),
-        );
-        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-            include_bytes!("../../tests/fixtures/native-tls/leaf.pk8.der").to_vec(),
-        ));
-        let config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(vec![cert], key)
-            .unwrap();
-        let mut tls = StreamOwned::new(ServerConnection::new(Arc::new(config)).unwrap(), peer);
-        let (nonce, body) = request_bytes(&mut tls);
-        assert!(matches!(
-            Request::parse(&body).unwrap(),
-            Request::Recheck { v: 1, .. }
-        ));
-        #[derive(serde::Serialize)]
-        struct RecheckFrame<T> {
-            v: u8,
-            operation: &'static str,
-            fence: T,
-        }
-        let response = serde_json::to_vec(&RecheckFrame {
-            v: 1,
-            operation: "recheck",
-            fence: value,
-        })
-        .unwrap();
-        let old = serde_json::to_vec(&Request::Recheck {
-            v: 1,
-            operation_id: "old-opaque-operation".into(),
-            claim_ref: "old-opaque-claim".into(),
-        })
-        .unwrap();
-        let mac = identity()
-            .sign_authority_response(
-                &nonce,
-                if replayed_body { &old } else { &body },
-                200,
-                &response,
-            )
-            .unwrap();
-        tls.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n{NATIVE_RESPONSE_MAC_HEADER}: {mac}\r\nConnection: close\r\n\r\n",response.len()).as_bytes()).unwrap();
-        tls.write_all(&response).unwrap();
-        tls.flush().unwrap();
-    });
+    let server = gateway_native_https_test_support::renewal_tls::signed_recheck(
+        peer,
+        identity(),
+        value,
+        replayed_body,
+        1,
+    )
+    .unwrap();
     let ca =
         ureq::tls::Certificate::from_der(include_bytes!("../../tests/fixtures/native-tls/ca.der"))
             .to_owned();
@@ -387,7 +311,12 @@ fn signed_recheck<T: serde::Serialize + Send + 'static>(
         },
         &context(),
     );
-    server.join().unwrap();
+    // Fixture setup/cleanup has no API-refusal channel: every failure is fatal.
+    match server.join() {
+        Ok(Ok(())) => (),
+        Ok(Err(error)) => panic!("fixed signed TLS fixture failed: {error}"),
+        Err(error) => std::panic::resume_unwind(error),
+    }
     result
 }
 #[test]
@@ -406,7 +335,8 @@ fn actual_signed_v2_rechecks_preserve_four_contexts_and_opaque_old_new_versions(
 }
 #[test]
 fn actual_signed_v2_rechecks_preserve_source_model_units_as_ordinary_strings() {
-    use gateway_core::{js_string::JsString16, model::ModelId};
+    use gateway_contracts::model::ModelId;
+    use gateway_source::js_string::JsString16;
     for units in [
         vec![0xd800],
         vec![0xdc00],

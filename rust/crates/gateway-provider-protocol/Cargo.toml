@@ -1,0 +1,23 @@
+[package]
+name = "gateway-provider-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-model-metadata.workspace = true
+gateway-schema-values.workspace = true
+gateway-contracts = { path = "../gateway-contracts" }
+gateway-source = { path = "../gateway-source" }
+gateway-core.workspace = true
+gateway-prompt-policy.workspace = true
+gateway-provider-events.workspace = true
+gateway-provider-source.workspace = true
+gateway-provider-tool-grammar.workspace = true
+gateway-schema.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

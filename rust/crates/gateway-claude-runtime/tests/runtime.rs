@@ -5,12 +5,17 @@ use gateway_claude_runtime_test_support::fixture::{
 };
 mod support;
 use crate::support::{TestResult, required};
-use gateway_admin_runtime::claude::{self, AccountUpdate};
-use gateway_claude_runtime::host::{OutcomeDecision, PoolSelection, SelectionInput};
-use gateway_claude_runtime::persistence::{clear_guards, quota_key};
-use gateway_claude_runtime::pool::ClaudePoolSession;
-use gateway_claude_runtime::quota;
-use gateway_providers::types::Headers;
+use gateway_claude_policy::{
+    host::SelectionInput,
+    quota::{self, quota_key},
+};
+use gateway_claude_roster::claude::{self, AccountUpdate};
+use gateway_claude_runtime::{
+    host::{OutcomeDecision, PoolSelection},
+    persistence::clear_guards,
+    pool::ClaudePoolSession,
+};
+use gateway_provider_protocol::types::Headers;
 use serde_json::{Value, json};
 
 #[test]
@@ -166,7 +171,7 @@ fn principal_revocation_and_current_catalog_generation_change_refuse_before_disp
     store.allow(json!([KEY]));
     config
         .generation
-        .record_success(gateway_admin_runtime::claude_generation::StateChange::CredentialStored);
+        .record_success(gateway_claude_roster::claude_generation::StateChange::CredentialStored);
     assert_eq!(
         run(session.ensure_current(&store, &host, &first, KEY, &MODEL.into(), &raw))
             .unwrap_err()
@@ -353,7 +358,7 @@ fn workspace_retry_selects_default_rotates_cohort_and_does_not_refetch_effort_ca
     let config = seed(&store, vec![a.clone()]);
     let host = Host::new(&store);
     let session = ClaudePoolSession::new(config);
-    let raw = gateway_core::source_json::SourceJson::from_serializable(
+    let raw = gateway_source::source_json::SourceJson::from_serializable(
         &json!({"model":MODEL,"input":"fixture","reasoning":{"effort":"high"}}),
     )
     .unwrap();
@@ -392,7 +397,7 @@ fn disabled_thinking_refusal_never_discovers_workspace_or_transfers_permission()
     let config = seed(&store, vec![account(1)]);
     let host = Host::new(&store);
     let session = ClaudePoolSession::new(config);
-    let raw = gateway_core::source_json::SourceJson::from_serializable(
+    let raw = gateway_source::source_json::SourceJson::from_serializable(
         &json!({"model":MODEL,"input":"fixture","reasoning":{"effort":"none"}}),
     )
     .unwrap();
@@ -476,7 +481,7 @@ fn split_surrogate_detail_survives_quota_storage_and_the_next_cooldown_response(
     let stored = store.get(&quota_key(&account)).unwrap();
     assert_eq!(
         stored.value_encoding,
-        gateway_core::value::ValueEncoding::ProfileV2
+        gateway_kv_codec::value::ValueEncoding::ProfileV2
     );
     assert!(
         stored
@@ -513,7 +518,7 @@ fn split_surrogate_detail_survives_quota_storage_and_the_next_cooldown_response(
     );
     #[derive(serde::Deserialize)]
     struct Error {
-        message: gateway_core::js_string::JsString16,
+        message: gateway_source::js_string::JsString16,
         r#type: String,
         code: String,
     }
@@ -606,7 +611,7 @@ fn quota_codec_selection_is_explicit_and_profile_v1_is_not_reinterpreted()
     let value = json!({"updated_at_ms":NOW});
     let json_record = gateway_core::state::StoredRecord::json("old", value.clone(), None);
     assert!(gateway_claude_usage_quota::parse_record(&json_record, NOW)?.is_some());
-    let portable = gateway_core::value::PortableValue::from_json(&value);
+    let portable = gateway_kv_codec::value::PortableValue::from_json(&value);
     let legacy = gateway_core::state::StoredRecord::profile("legacy", portable.clone(), None)?;
     assert_eq!(
         gateway_claude_usage_quota::parse_record(&legacy, NOW)
@@ -657,7 +662,9 @@ fn real_sqlite_close_reopen_retains_global_active_and_quota() {
 
 #[test]
 fn real_claude_selection_and_quota_cas_retain_opaque_model_units() {
-    use gateway_core::{js_string::JsString16, model::ModelId, source_json::SourceJson};
+    use gateway_contracts::model::ModelId;
+    use gateway_source::js_string::JsString16;
+    use gateway_source::source_json::SourceJson;
     let store = Store::new();
     let account = account(1);
     let config = seed(&store, vec![account.clone()]);
@@ -703,7 +710,7 @@ fn real_claude_selection_and_quota_cas_retain_opaque_model_units() {
     let stored = store.get(&quota_key(&account)).unwrap();
     assert_eq!(
         stored.value_encoding,
-        gateway_core::value::ValueEncoding::ProfileV2
+        gateway_kv_codec::value::ValueEncoding::ProfileV2
     );
     println!(
         "M35_CLAUDE_ROW_FIXTURE={}",
@@ -714,9 +721,9 @@ fn real_claude_selection_and_quota_cas_retain_opaque_model_units() {
 #[test]
 fn source_binding_snapshot_named_rotation_and_clear_preserve_units_without_scalar_grant()
 -> TestResult {
-    use gateway_core::{
-        js_string::JsString16, source_serialization as source, value::ValueEncoding,
-    };
+    use gateway_kv_codec::value::ValueEncoding;
+    use gateway_source::js_string::JsString16;
+    use gateway_source::source_serialization as source;
     use std::sync::Arc;
     let store = Store::new();
     let mut a = account(1);
@@ -786,7 +793,7 @@ fn source_binding_snapshot_named_rotation_and_clear_preserve_units_without_scala
 
 #[test]
 fn source_workspace_discovery_retains_raw_json_units_and_default_selection() {
-    use gateway_core::js_string::JsString16;
+    use gateway_source::js_string::JsString16;
     let store = Store::new();
     let a = account(1);
     let config = seed(&store, vec![a.clone()]);
@@ -838,8 +845,8 @@ fn source_capability_options_preserve_actual_same_binding_scalar_auth() -> TestR
     let first = selected(&session, &store, &host, &raw);
     let binding = first.binding();
     let secret = binding.credential.secret.try_scalar_secret()?;
-    let base = gateway_providers::types::PrepareOptions {
-        auth: gateway_providers::types::AuthMaterial {
+    let base = gateway_provider_protocol::types::PrepareOptions {
+        auth: gateway_provider_protocol::types::AuthMaterial {
             secret: secret.expose().into(),
             api_key: binding.credential.kind == claude::CredentialKind::ApiKey,
             account_id: Some(binding.account_id.clone()),
@@ -868,7 +875,7 @@ fn captured_effective_default_drives_actual_lookup_currentness_and_workspace_pro
     let binding = account(1);
     let config = seed(&store, vec![binding]);
     let host = Host::new(&store);
-    host.catalog.borrow_mut().models = vec![gateway_core::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["medium","high"]})).unwrap()];
+    host.catalog.borrow_mut().models = vec![gateway_source::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["medium","high"]})).unwrap()];
     let session = ClaudePoolSession::new(config);
     let raw = raw();
     let PoolSelection::Eligible(selected) = run(session.select(
@@ -890,16 +897,16 @@ fn captured_effective_default_drives_actual_lookup_currentness_and_workspace_pro
     run(session.ensure_current(&store, &host, &selected, KEY, &MODEL.into(), &raw)).unwrap();
     assert_eq!(host.catalog_calls.get(), 2);
     let wrong =
-        gateway_core::source_json::SourceJson::parse(r#"{"model":"other","input":"fixture"}"#)
+        gateway_source::source_json::SourceJson::parse(r#"{"model":"other","input":"fixture"}"#)
             .unwrap();
     assert!(
         run(session.ensure_current(&store, &host, &selected, KEY, &MODEL.into(), &wrong)).is_err()
     );
-    host.catalog.borrow_mut().models = vec![gateway_core::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["high"]})).unwrap()];
+    host.catalog.borrow_mut().models = vec![gateway_source::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["high"]})).unwrap()];
     assert!(
         run(session.ensure_current(&store, &host, &selected, KEY, &MODEL.into(), &raw)).is_err()
     );
-    host.catalog.borrow_mut().models = vec![gateway_core::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["medium","high"]})).unwrap()];
+    host.catalog.borrow_mut().models = vec![gateway_source::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["medium","high"]})).unwrap()];
     let observed =
         run(session.observe_response(&store, &host, &selected, head(400, Headers::new(), NOW)))
             .unwrap();

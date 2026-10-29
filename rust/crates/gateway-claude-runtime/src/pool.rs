@@ -1,37 +1,44 @@
-use crate::host::{self, ClaudePoolHost, OutcomeDecision, SelectedAccount, SelectionInput};
-use crate::response::{self, ResponseKind};
-use crate::{persistence, quota};
-use gateway_admin_runtime::{
+use crate::{
+    host::{self, OutcomeDecision, SelectedAccount},
+    persistence,
+};
+use gateway_admin_runtime_records::claude_access;
+use gateway_catalog_inputs::state::checks_current;
+use gateway_catalog_provider::host::ProviderBinding;
+use gateway_claude_policy::error::invalid;
+use gateway_claude_policy::error::unavailable;
+use gateway_claude_policy::host::now;
+use gateway_claude_policy::host::revision;
+use gateway_claude_policy::{
+    host::{ClaudePoolHost, HealthObservation, PoolConfig, ResponseObservation, SelectionInput},
+    quota,
+    response::{self, ResponseKind},
+    selection::{cooldown_body, deduplicate},
+};
+use gateway_claude_roster::{
     claude::{self, AccountBinding, CredentialKind},
-    claude_access,
     claude_generation::StateSnapshot,
 };
-use gateway_catalog_provider::host::ProviderBinding;
-use gateway_catalog_runtime::state::checks_current;
-use gateway_core::{
-    claude::ClaudeErrorEvidence as ErrorEvidence,
-    error::GatewayError,
-    js_string::JsString16,
-    model::ModelId,
-    source_json::SourceJson,
+use gateway_contracts::{claude::ClaudeErrorEvidence as ErrorEvidence, model::ModelId};
+use gateway_core::{state::AuthorityStore, state::RevisionCheck};
+use gateway_model_selection::selection::ProviderSelection;
+use gateway_provider_protocol::types::Headers;
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::{AuthorityStore, RevisionCheck},
 };
-use gateway_providers::types::Headers;
-use gateway_schema::selection::ProviderSelection;
-use serde::Serialize;
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
 };
 
 pub struct ClaudePoolSession {
-    pub(crate) config: host::PoolConfig,
+    pub(crate) config: PoolConfig,
     turns: Cell<u8>,
     attempted: RefCell<BTreeSet<String>>,
 }
 impl ClaudePoolSession {
-    pub fn new(config: host::PoolConfig) -> Self {
+    pub fn new(config: PoolConfig) -> Self {
         Self {
             config,
             turns: Cell::new(0),
@@ -49,7 +56,7 @@ impl ClaudePoolSession {
         self.turns.set(self.turns.get() + 1);
         Ok(())
     }
-    pub(crate) async fn access<S: AuthorityStore, H: host::ClaudePoolHost>(
+    pub(crate) async fn access<S: AuthorityStore, H: ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
@@ -62,13 +69,13 @@ impl ClaudePoolSession {
             .await?;
         Ok(access.policy.allows_scalar(key).then_some(access.check))
     }
-    pub async fn select<S: AuthorityStore, H: host::ClaudePoolHost>(
+    pub async fn select<S: AuthorityStore, H: ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
-        input: host::SelectionInput<'_>,
+        input: SelectionInput<'_>,
     ) -> Result<host::PoolSelection, GatewayError> {
-        if !gateway_providers::anthropic::is_claude_model(input.model)
+        if !gateway_provider_source::anthropic::is_claude_model(input.model)
             || !ProviderSelection::enabled(input.selection, "claude_code")
         {
             return Ok(host::PoolSelection::NotApplicable);
@@ -76,8 +83,8 @@ impl ClaudePoolSession {
         if self.access(store, host, input.key_id).await?.is_none() {
             return Ok(host::PoolSelection::NotApplicable);
         }
-        if gateway_schema::util::js_trim(&self.config.replay_scope).is_empty() {
-            return Err(crate::unavailable(
+        if gateway_schema_values::scalar::js_trim(&self.config.replay_scope).is_empty() {
+            return Err(unavailable(
                 "The existing Claude principal replay scope is unavailable.",
             ));
         }
@@ -93,7 +100,7 @@ impl ClaudePoolSession {
             }) else {
                 return Ok(host::PoolSelection::NotApplicable);
             };
-            let now = persistence::now(host)?;
+            let now = now(host)?;
             if quota::applicable_proof(quota.as_ref(), active, input.model, now).is_some() {
                 let next = view.accounts.iter().find(|(a, q)| {
                     quota::applicable_proof(q.as_ref(), a, input.model, host.now_ms()).is_none()
@@ -151,7 +158,7 @@ impl ClaudePoolSession {
         if claude::fingerprint(&binding.credential, binding.workspace.as_ref())
             != binding.credential_fingerprint
         {
-            return Err(crate::invalid(
+            return Err(invalid(
                 "Claude credential/workspace fingerprint is invalid.",
             ));
         }
@@ -164,11 +171,11 @@ impl ClaudePoolSession {
                 &binding.credential,
                 binding.workspace.as_ref().map(|w| &w.id),
             )
-            .ok_or_else(|| crate::invalid("Claude catalog generation changed."))?;
+            .ok_or_else(|| invalid("Claude catalog generation changed."))?;
         let mut options = retained.map(|s| s.options.clone()).unwrap_or_default();
         let effort = input.effective_effort.as_ref();
         if retained.is_some_and(|selected| selected.effective_effort.as_ref() != effort) {
-            return Err(crate::invalid(
+            return Err(invalid(
                 "Claude effective reasoning changed within the request.",
             ));
         }
@@ -214,18 +221,18 @@ impl ClaudePoolSession {
                                 .is_some_and(|a| a.iter().any(|v| v == e))
                     }))
                 {
-                    return Err(crate::invalid(
+                    return Err(invalid(
                         "Claude credential/workspace capability proof changed before dispatch.",
                     ));
                 }
             }
         }
         if !generation.is_current() {
-            return Err(crate::invalid("Claude catalog generation changed."));
+            return Err(invalid("Claude catalog generation changed."));
         }
-        let roster = claude::current_binding(store, &binding, persistence::now(host)?)
+        let roster = claude::current_binding(store, &binding, now(host)?)
             .await?
-            .ok_or_else(|| crate::invalid("Claude account binding changed."))?;
+            .ok_or_else(|| invalid("Claude account binding changed."))?;
         let access = self
             .access(store, host, input.key_id)
             .await?
@@ -241,7 +248,7 @@ impl ClaudePoolSession {
         checks.extend([roster, access]);
         let checks = deduplicate(checks)?;
         if !generation.is_current() || !checks_current(store, &checks).await? {
-            return Err(crate::invalid(
+            return Err(invalid(
                 "Claude account/native/access binding changed before dispatch.",
             ));
         }
@@ -265,7 +272,7 @@ impl ClaudePoolSession {
             workspace_continuation: retained.is_some(),
         })
     }
-    pub async fn ensure_current<S: AuthorityStore, H: host::ClaudePoolHost>(
+    pub async fn ensure_current<S: AuthorityStore, H: ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
@@ -279,9 +286,9 @@ impl ClaudePoolSession {
             || &selected.raw != raw
             || !selected.generation.is_current()
         {
-            return Err(crate::invalid("Claude request or catalog binding changed."));
+            return Err(invalid("Claude request or catalog binding changed."));
         }
-        let input = host::SelectionInput {
+        let input = SelectionInput {
             key_id,
             model,
             raw,
@@ -301,23 +308,24 @@ impl ClaudePoolSession {
         if current.catalog_identity != selected.catalog_identity
             || !checks_current(store, &selected.checks).await?
         {
-            return Err(crate::invalid(
+            return Err(invalid(
                 "Claude account/native/access binding changed before dispatch.",
             ));
         }
         Ok(())
     }
-    pub async fn observe_response<S: AuthorityStore, H: host::ClaudePoolHost>(
+    pub async fn observe_response<S: AuthorityStore, H: ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
         selected: &host::SelectedAccount,
-        response: host::ResponseObservation,
+        response: ResponseObservation,
     ) -> Result<host::AcceptedHead, GatewayError> {
         if !(100..=599).contains(&response.status)
-            || !(1..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&response.observed_at_ms)
+            || !(1..=gateway_contracts::identity::MAX_SAFE_INTEGER)
+                .contains(&response.observed_at_ms)
         {
-            return Err(crate::invalid("Claude actual response receipt is invalid."));
+            return Err(invalid("Claude actual response receipt is invalid."));
         }
         let classification = response::classify_headers(
             response.status,
@@ -341,7 +349,7 @@ impl ClaudePoolSession {
         }
         Ok(head)
     }
-    pub async fn after_outcome<S: AuthorityStore, H: host::ClaudePoolHost>(
+    pub async fn after_outcome<S: AuthorityStore, H: ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
@@ -361,14 +369,13 @@ impl ClaudePoolSession {
             return Ok(OutcomeDecision::WorkspaceContinuation(Box::new(selected)));
         }
         self.record(store, host, &head).await;
-        if claude::current_binding(store, &head.selected.binding, persistence::now(host)?)
+        if claude::current_binding(store, &head.selected.binding, now(host)?)
             .await?
             .is_none()
         {
             return Ok(OutcomeDecision::Preserve);
         }
-        let (state, _) =
-            persistence::load_quota(store, &head.selected.binding, persistence::now(host)?).await?;
+        let (state, _) = persistence::load_quota(store, &head.selected.binding, now(host)?).await?;
         if quota::applicable_proof(
             state.as_ref(),
             &head.selected.binding,
@@ -407,7 +414,7 @@ impl ClaudePoolSession {
         }
         Ok(OutcomeDecision::Preserve)
     }
-    async fn record<S: AuthorityStore, H: host::ClaudePoolHost>(
+    async fn record<S: AuthorityStore, H: ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
@@ -428,7 +435,7 @@ impl ClaudePoolSession {
         if let Some(committed) = committed
             && let Some(observation) = &head.observation
             && !observation.is_empty()
-            && let Ok(observation_id) = persistence::revision(host)
+            && let Ok(observation_id) = revision(host)
         {
             let now = host.now_ms();
             let binding = &head.selected.binding;
@@ -469,7 +476,7 @@ impl ClaudePoolSession {
         )
         .await;
     }
-    pub async fn observe_transport_failure<S: AuthorityStore, H: host::ClaudePoolHost>(
+    pub async fn observe_transport_failure<S: AuthorityStore, H: ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
@@ -479,7 +486,7 @@ impl ClaudePoolSession {
             .await;
         Ok(())
     }
-    async fn health<S: AuthorityStore, H: host::ClaudePoolHost>(
+    async fn health<S: AuthorityStore, H: ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
@@ -490,14 +497,14 @@ impl ClaudePoolSession {
     ) {
         if let Ok(Some(check)) = claude::current_binding(store, binding, host.now_ms()).await {
             let id = provider_request_id
-                .map(|id| gateway_schema::util::js_trim(&id).to_owned())
+                .map(|id| gateway_schema_values::scalar::js_trim(&id).to_owned())
                 .filter(|id| {
                     !id.is_empty()
                         && id.encode_utf16().count() <= 256
                         && !id.chars().any(|c| (c as u32) < 0x20 || c == '\x7f')
                 });
             let _ = host
-                .health_observation(&host::HealthObservation {
+                .health_observation(&HealthObservation {
                     identity: format!(
                         "{}:{}:{}",
                         binding.account_id, binding.account_cohort_id, binding.evidence_generation
@@ -510,40 +517,4 @@ impl ClaudePoolSession {
                 .await;
         }
     }
-}
-fn cooldown_body(message: &JsString16) -> Result<SourceJson, GatewayError> {
-    #[derive(Serialize)]
-    struct Error<'a> {
-        message: &'a JsString16,
-        r#type: &'static str,
-        code: &'static str,
-    }
-    #[derive(Serialize)]
-    struct Envelope<'a> {
-        error: Error<'a>,
-    }
-    SourceJson::from_serializable(&Envelope {
-        error: Error {
-            message,
-            r#type: "invalid_request_error",
-            code: "claude_code_cooling_down",
-        },
-    })
-}
-fn deduplicate(checks: Vec<RevisionCheck>) -> Result<Vec<RevisionCheck>, GatewayError> {
-    let mut map = BTreeMap::new();
-    for check in checks {
-        if let Some(old) = map.insert(check.key.0, check.expected_revision.clone())
-            && old != check.expected_revision
-        {
-            return Err(crate::invalid("Claude source checks disagree."));
-        }
-    }
-    Ok(map
-        .into_iter()
-        .map(|(key, expected_revision)| RevisionCheck {
-            key: gateway_core::state::RecordKey(key),
-            expected_revision,
-        })
-        .collect())
 }

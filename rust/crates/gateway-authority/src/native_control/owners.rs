@@ -1,22 +1,25 @@
 //! Constructor-owned fixed profile registry. Picking a resource is not renewal authorization.
-use super::{
-    actor::{self, NativeActorScope, NativeRenewalActor},
-    receiver::RegisteredRenewalOwner,
-    rows::{self, ActionRow, fail},
-};
-use crate::{
-    keys,
-    routing::LiveAccountSelection,
-    routing_types::SubscriptionPool,
-    store::{Authority, TokenSource, Transaction},
-};
-use gateway_auth::crypto::sha256_hex;
-use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
-use gateway_auth::types::AuthConfig;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::AccountBinding;
-use gateway_core::state::{AuthorityStore, RecordKey};
-use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+use super::actor;
+use super::actor::NativeRenewalActor;
+use crate::store::{Authority, Transaction};
+use gateway_auth_contracts::types::AuthConfig;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::parse_codex_source_pool;
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_authority_actor_records::scope::NativeActorScope;
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_keys as keys;
+use gateway_authority_native_records::live::mapping_key;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
+use gateway_authority_native_records::rows;
+use gateway_authority_native_records::rows::ActionRow;
+use gateway_authority_native_records::rows::fail;
+use gateway_authority_routing_records::types::SubscriptionPool;
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_authority_routing_selection::types::LiveAccountSelection;
+use gateway_contracts::identity::AccountBinding;
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 
 /// One or two explicitly configured independent native owners. No environment/default lookup.
@@ -27,7 +30,7 @@ impl RegisteredRenewalOwners {
     pub async fn for_inference<'a, S: AuthorityStore, I: TokenSource>(
         &'a self,
         authority: &Authority<S, I>,
-        admission: &crate::routing_types::AdmittedAccount,
+        admission: &gateway_authority_routing_selection::types::AdmittedAccount,
     ) -> Result<&'a RegisteredRenewalOwner, GatewayError> {
         for _ in 0..3 {
             authority
@@ -56,7 +59,8 @@ impl RegisteredRenewalOwners {
         }
         for (index, owner) in owners.iter().enumerate() {
             if owners[..index].iter().any(|prior| {
-                prior.native_owner_id() == owner.native_owner_id() || prior.home == owner.home
+                prior.native_owner_id() == owner.native_owner_id()
+                    || prior.registered_home() == owner.registered_home()
             }) {
                 return Err(fail());
             }
@@ -74,7 +78,7 @@ impl RegisteredRenewalOwners {
         let raw: Value = tx.read(&source_key).await?.ok_or_else(fail)?;
         let source = parse_codex_source_pool(&raw)?.ok_or_else(fail)?;
         let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
-        normalized.validate()?;
+        gateway_authority_routing_evidence::validation::validate_pool(&normalized)?;
         if normalized.pool_versionstamp.0 != tx.revision(&source_key).ok_or_else(fail)?
             || normalized.accounts.len() != source.accounts.len()
         {
@@ -105,7 +109,7 @@ impl RegisteredRenewalOwners {
         let owner = self
             .owners
             .iter()
-            .find(|o| o.home == native.codex_home)
+            .find(|o| o.registered_home() == native.codex_home)
             .ok_or_else(fail)?;
         if required_owner.is_some_and(|id| id != owner.native_owner_id()) {
             return Err(fail());
@@ -177,7 +181,7 @@ impl RegisteredRenewalOwners {
     pub async fn for_cache_experiment<'a, S: AuthorityStore, I: TokenSource>(
         &'a self,
         authority: &Authority<S, I>,
-        permit: &crate::cache_experiment::RefreshPermit,
+        permit: &gateway_cache_experiment_dispatch::RefreshPermit,
     ) -> Result<&'a RegisteredRenewalOwner, GatewayError> {
         for _ in 0..3 {
             let mut tx = authority.transaction(authority.fresh_time(0)?)?;
@@ -236,7 +240,8 @@ impl RegisteredRenewalOwners {
                 .ok_or_else(fail)?;
             if action.v != 2
                 || action.action_ref != action_ref
-                || action.fence.v != super::NATIVE_RENEWAL_FENCE_VERSION
+                || action.fence.v
+                    != gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION
             {
                 return Err(fail());
             }
@@ -284,7 +289,8 @@ impl RegisteredRenewalOwners {
             if action.v != 2
                 || action.action_ref != operation.action_ref
                 || action.operation_id.as_deref() != Some(operation_id)
-                || action.fence.v != super::NATIVE_RENEWAL_FENCE_VERSION
+                || action.fence.v
+                    != gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION
             {
                 return Err(fail());
             }
@@ -303,16 +309,4 @@ impl RegisteredRenewalOwners {
         }
         Err(fail())
     }
-}
-fn mapping_key(call: &str, pending: bool) -> RecordKey {
-    let mut parts = vec![
-        ScalarKeyPart::String("uos_ai"),
-        ScalarKeyPart::String("codex_live_calls"),
-        ScalarKeyPart::String("v1"),
-    ];
-    if pending {
-        parts.push(ScalarKeyPart::String("pending_retirement"));
-    }
-    parts.push(ScalarKeyPart::String(call));
-    TupleKey::from_scalar_parts(&parts).to_record_key()
 }

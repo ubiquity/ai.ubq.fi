@@ -3,11 +3,12 @@ use super::{
     actor_channel::{ImportChildCommand, OwnedImportChildChannel},
     owner_runtime::OwnedRuntime,
 };
-use crate::import_custody_protocol::{Header, unavailable};
+use crate::import_custody_protocol::unavailable;
 use gateway_authority::native_control::import::{
     custody_session::VerifiedCurrentImportStarted, remote::VerifiedCurrentImportTerminal,
 };
-use gateway_core::error::GatewayError;
+use gateway_native_custody_wire::wire::Header;
+use gateway_source::error::GatewayError;
 use std::time::{Duration, Instant};
 
 pub(crate) struct KernelSnapshot {
@@ -50,7 +51,7 @@ impl CustodianRuntime {
         client: std::net::TcpStream,
         config: &[u8],
     ) -> Result<(), GatewayError> {
-        crate::require_production_artifact()?;
+        gateway_native_connector::artifact::require_production_artifact()?;
         let prepared = crate::daemon_config::NativeDaemonConfig::read_import_stdin(config)?;
         let registry = prepared.owner_renewal.as_ref().ok_or_else(unavailable)?;
         let endpoints =
@@ -60,8 +61,9 @@ impl CustodianRuntime {
             .parent()
             .ok_or_else(unavailable)?
             .join("uos-native-import");
-        let digest =
-            gateway_auth::crypto::sha256_hex(&std::fs::read(&actor).map_err(|_| unavailable())?);
+        let digest = gateway_auth_primitives::crypto::sha256_hex(
+            &std::fs::read(&actor).map_err(|_| unavailable())?,
+        );
         self.serve_from_artifact(client, config, &actor, &digest, endpoints)
     }
     fn serve_from_artifact(
@@ -141,7 +143,7 @@ impl CustodianRuntime {
         }
         let request = peer.consume_first_quiesce(command)?;
         self.match_observation(&request, &fresh)?;
-        let now = crate::http_server::now_ms()?;
+        let now = gateway_auth_native_proof::native_context::now_ms()?;
         let remaining = fresh
             .deadline_ms()
             .checked_sub(now)
@@ -178,8 +180,8 @@ impl CustodianRuntime {
                 &request.binding.native_owner_id,
                 &request.binding.account_id_hash,
             )
-            || fresh.verified_at_ms() > crate::http_server::now_ms()?
-            || fresh.deadline_ms() <= crate::http_server::now_ms()?
+            || fresh.verified_at_ms() > gateway_auth_native_proof::native_context::now_ms()?
+            || fresh.deadline_ms() <= gateway_auth_native_proof::native_context::now_ms()?
         {
             return Err(unavailable());
         }
@@ -200,7 +202,7 @@ impl CustodianRuntime {
             || header.challenge != session.challenge
             || header.binding.canonical_bytes()? != session.binding
             || fresh.request().canonical_bytes()? != session.binding
-            || fresh.deadline_ms() <= crate::http_server::now_ms()?
+            || fresh.deadline_ms() <= gateway_auth_native_proof::native_context::now_ms()?
         {
             return Err(unavailable());
         }
@@ -223,7 +225,7 @@ impl CustodianRuntime {
         peer.require_pending(command)?;
         let header = command.header();
         let session = self.session.as_ref().ok_or_else(unavailable)?;
-        let now = crate::http_server::now_ms()?;
+        let now = gateway_auth_native_proof::native_context::now_ms()?;
         if !session.stopped
             || session.released
             || Instant::now() >= session.deadline

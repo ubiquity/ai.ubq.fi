@@ -1,5 +1,6 @@
 //! Observed request coordination maintenance; no new source abort deadline.
 use super::*;
+use gateway_authority_kernel::KernelOperations;
 
 impl<
     S: QueryStore + Clone,

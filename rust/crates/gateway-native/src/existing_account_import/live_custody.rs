@@ -1,16 +1,15 @@
 //! Actor-local sealed live channel capability; wire stopped DATA cannot construct it.
+use super::NativeImportInputs;
 use super::{ExistingAccountImportStore, actor_channel::InheritedCustodyChannel};
-use crate::{
-    import_custody_protocol::{self as wire, Frame, Header, Release, Stopped, unavailable},
-    native_import::NativeImportContext,
-};
+use crate::import_custody_protocol::{self as wire, unavailable};
 use gateway_authority::native_control::import::{
     AuthenticatedNativeImport,
     custody_session::ImportCustodyStartedRequest,
     effects::{NativeImportBinding, NativeImportStart},
     remote::AuthenticatedImportTerminal,
 };
-use gateway_core::error::GatewayError;
+use gateway_native_custody_wire::wire::{self as data, Frame, Header, Release, Stopped};
+use gateway_source::error::GatewayError;
 use std::{
     os::unix::fs::MetadataExt,
     time::{Duration, Instant},
@@ -41,7 +40,7 @@ impl<'a> LiveImportCustody<'a> {
         start: NativeImportStart<'a>,
         proof: &AuthenticatedNativeImport,
         original_body: &[u8],
-        context: &NativeImportContext<'_>,
+        context: &NativeImportInputs<'_>,
     ) -> Result<Self, GatewayError> {
         context.check_document(proof, proof.metadata(), original_body)?;
         start.require_body(original_body, context.now_ms()?)?;
@@ -66,15 +65,15 @@ impl<'a> LiveImportCustody<'a> {
             sequence: 1,
             session_ref: channel.session_ref.clone(),
             challenge: challenge.clone(),
-            binding: wire::copy_binding(&binding)?,
+            binding: data::copy_binding(&binding)?,
         };
         wire::send(
             &mut channel.socket,
             &Frame::Quiesce(header),
             deadline,
-            Some(context),
+            Some(context.context),
         )?;
-        let response = wire::receive(&mut channel.socket, deadline, Some(context))?;
+        let response = wire::receive(&mut channel.socket, deadline, Some(context.context))?;
         let Frame::Stopped(stopped) = response else {
             return Err(unavailable());
         };
@@ -108,7 +107,7 @@ impl<'a> LiveImportCustody<'a> {
     pub(super) fn bind_publication(&mut self, digest: &str) -> Result<(), GatewayError> {
         if self.uncertain
             || self.released
-            || !wire::hash(digest)
+            || !data::hash(digest)
             || self
                 .publication_digest
                 .as_deref()
@@ -124,7 +123,7 @@ impl<'a> LiveImportCustody<'a> {
     pub(super) fn release_after_verified_terminal(
         &mut self,
         terminal: &AuthenticatedImportTerminal,
-        context: &NativeImportContext<'_>,
+        context: &NativeImportInputs<'_>,
     ) -> Result<(), GatewayError> {
         if self.uncertain
             || self.released
@@ -154,13 +153,17 @@ impl<'a> LiveImportCustody<'a> {
                 sequence,
                 session_ref: self.channel.session_ref.clone(),
                 challenge: self.challenge.clone(),
-                binding: wire::copy_binding(&self.binding)?,
+                binding: data::copy_binding(&self.binding)?,
                 publication_revision: terminal.terminal().publication_revision.clone(),
             }),
             self.deadline,
-            Some(context),
+            Some(context.context),
         )?;
-        let response = wire::receive(&mut self.channel.socket, self.deadline, Some(context))?;
+        let response = wire::receive(
+            &mut self.channel.socket,
+            self.deadline,
+            Some(context.context),
+        )?;
         let Frame::Released(header) = response else {
             return Err(unavailable());
         };
@@ -190,7 +193,7 @@ impl<'a> LiveImportCustody<'a> {
         store: &ExistingAccountImportStore,
         proof: &AuthenticatedNativeImport,
         original_body: &[u8],
-        context: &NativeImportContext<'_>,
+        context: &NativeImportInputs<'_>,
     ) -> Result<(), GatewayError> {
         if self.uncertain || self.released || Instant::now() >= self.deadline {
             return Err(unavailable());
@@ -216,15 +219,19 @@ impl<'a> LiveImportCustody<'a> {
             sequence,
             session_ref: self.channel.session_ref.clone(),
             challenge: self.challenge.clone(),
-            binding: wire::copy_binding(&self.binding)?,
+            binding: data::copy_binding(&self.binding)?,
         };
         wire::send(
             &mut self.channel.socket,
             &Frame::CheckStopped(header),
             self.deadline,
-            Some(context),
+            Some(context.context),
         )?;
-        let response = wire::receive(&mut self.channel.socket, self.deadline, Some(context))?;
+        let response = wire::receive(
+            &mut self.channel.socket,
+            self.deadline,
+            Some(context.context),
+        )?;
         let Frame::Stopped(stopped) = response else {
             return Err(unavailable());
         };
@@ -259,7 +266,7 @@ fn verify(
         || stopped.session_ref != session_ref
         || stopped.challenge != challenge
         || stopped.binding.canonical_bytes()? != binding.canonical_bytes()?
-        || !wire::hash(&stopped.epoch)
+        || !data::hash(&stopped.epoch)
         || stopped.root_inode == 0
     {
         return Err(unavailable());

@@ -1,16 +1,16 @@
 //! The provider's JSON strings remain UTF-16 through selection and consumption.
-use gateway_authority::full_pool_reset::types::{
-    SourceCreditCollation, SourceResetCredit, SourceResetInventory,
-};
-use gateway_core::{
-    error::GatewayError,
-    identity::{AccountBinding, MAX_SAFE_INTEGER},
-    js_string::JsString16,
-    source_json::SourceJson,
-};
+use gateway_authority_reset_records::full_pool::SourceCreditCollation;
+use gateway_authority_reset_records::full_pool::SourceResetCredit;
+use gateway_authority_reset_records::full_pool::SourceResetInventory;
+use gateway_contracts::{identity::AccountBinding, identity::MAX_SAFE_INTEGER};
+use gateway_source::error::GatewayError;
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use std::{cmp::Ordering, collections::BTreeSet};
-use wasm_bindgen::{JsCast, JsValue};
-use worker::js_sys::{self, Function, JsString, Reflect};
+use worker::{js_sys, js_sys::Function, js_sys::JsString, js_sys::Reflect};
+use {
+    gateway_schema_values::scalar as util,
+    wasm_bindgen::{JsCast, JsValue},
+};
 
 fn invalid() -> GatewayError {
     GatewayError::unavailable(
@@ -34,9 +34,10 @@ fn field(value: &SourceJson, name: &str) -> Result<SourceJson, GatewayError> {
         .ok_or_else(invalid)
 }
 fn nonblank(value: &JsString16) -> bool {
-    value.as_units().iter().any(|unit| {
-        !char::from_u32(u32::from(*unit)).is_some_and(gateway_schema::util::js_whitespace)
-    })
+    value
+        .as_units()
+        .iter()
+        .any(|unit| !char::from_u32(u32::from(*unit)).is_some_and(util::js_whitespace))
 }
 fn text(value: &SourceJson, name: &str) -> Result<JsString16, GatewayError> {
     let value: JsString16 = field(value, name)?.deserialize()?;
@@ -239,7 +240,9 @@ impl SourceCreditCollation for SourceRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gateway_core::identity::{CredentialVersion, PoolVersionstamp, RoutingAccountHash};
+    use gateway_contracts::{
+        identity::CredentialVersion, identity::PoolVersionstamp, identity::RoutingAccountHash,
+    };
     fn binding() -> AccountBinding {
         AccountBinding {
             slot: 0,

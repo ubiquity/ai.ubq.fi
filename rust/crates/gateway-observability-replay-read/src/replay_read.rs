@@ -3,9 +3,10 @@ use crate::{ReplayReader, store};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_core::{
-    query::QueryRequest, query::QuerySelector, query::QueryStore, state::RecordKey,
-    state::RecordMutation, state::StoredRecord, value::PortableValue, value::ValueEncoding,
+    query::QueryRequest, query::QuerySelector, query::QueryStore, state::RecordMutation,
+    state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, value::PortableValue, value::ValueEncoding};
 use gateway_observability_contracts::{
     data, source_object::SourceObject, types::ObservabilityHost,
 };
@@ -309,7 +310,7 @@ impl<S: QueryStore, H: ObservabilityHost> ReplayReader<'_, S, H> {
         if after < 0 || before < after || cursor.is_some_and(|s| !model::cursor_shape(s)) {
             return Err(invalid());
         }
-        if before >= gateway_core::identity::MAX_SAFE_INTEGER {
+        if before >= gateway_contracts::identity::MAX_SAFE_INTEGER {
             return Err(failed());
         }
         let result = async {

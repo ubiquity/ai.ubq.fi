@@ -1,9 +1,9 @@
 //! KV U64 values retain their explicit portable-value encoding.
 use crate::store;
 use gateway_core::{
-    state::AuthorityStore, state::RecordKey, state::RecordMutation, state::RevisionCheck,
-    state::StoredRecord, value::PortableValue,
+    state::AuthorityStore, state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, value::PortableValue};
 use gateway_observability_contracts::{data, types::ObservabilityHost};
 use gateway_source::error::GatewayError;
 

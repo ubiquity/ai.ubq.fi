@@ -2,7 +2,7 @@ use crate::{
     ProviderHealth, completion::Completion, health::aggregate_states, health::binding_current,
     health::unknown_health,
 };
-use gateway_admin_runtime::capabilities::Context;
+use gateway_admin_runtime_contracts::capabilities::Context;
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_claude_usage_protocol::readback::quota as quota_readback;
 use gateway_core::query::QueryStore;

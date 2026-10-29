@@ -1,7 +1,9 @@
 mod support;
-use gateway_core::{
-    lifecycle::DeliveryOutcome, state::RecordKey, state::StoredRecord, tuple_key::DecodedKeyPart,
-    tuple_key::TupleKey, value::PortableValue, value::ValueEncoding,
+use gateway_contracts::lifecycle::DeliveryOutcome;
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey, value::PortableValue,
+    value::ValueEncoding,
 };
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_ledger::{

@@ -1,10 +1,9 @@
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_model_selection::{aliases::SourceStringCollator, selection::ProviderSelection};
 use gateway_schema::{
-    aliases::SourceStringCollator,
     catalog::{CatalogInput, ProviderCatalog},
     catalog_views, native_catalog,
-    selection::ProviderSelection,
 };
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{cmp::Ordering, collections::BTreeMap};
 struct Order;
@@ -56,7 +55,9 @@ fn every_listing_surface_preserves_decision_modality_and_native_excludes_it()
             .iter()
             .any(|row| row["id"] == "a/image")
     );
-    let capabilities = catalog_views::capabilities(&input).deserialize::<Value>()?;
+    let capabilities = catalog_views::capabilities(&input)
+        .unwrap()
+        .deserialize::<Value>()?;
     let decision = capabilities["data"]
         .as_array()
         .ok_or("missing capabilities")?

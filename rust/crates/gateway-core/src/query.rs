@@ -4,10 +4,10 @@ use std::future::Future;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    identity::{MAX_SAFE_INTEGER, UnixMillis},
-    state::{AuthorityStore, RecordKey, StoredRecord},
-    tuple_key::{TupleKey, decode_hex, encode_hex},
+use crate::{state::AuthorityStore, state::StoredRecord};
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, identity::UnixMillis};
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::TupleKey, tuple_key::decode_hex, tuple_key::encode_hex,
 };
 use gateway_source::error::GatewayError;
 
@@ -159,7 +159,7 @@ impl QueryRequest {
             let encoded = token
                 .strip_prefix(CURSOR_PREFIX)
                 .ok_or_else(invalid_cursor)?;
-            let bytes = decode_hex(encoded).map_err(|()| invalid_cursor())?;
+            let bytes = decode_hex(encoded).map_err(|_| invalid_cursor())?;
             let cursor: Cursor = serde_json::from_slice(&bytes).map_err(|_| invalid_cursor())?;
             if cursor.version != 1
                 || cursor.reverse != self.reverse

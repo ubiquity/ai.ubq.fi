@@ -1,22 +1,22 @@
 //! One original admission across source image children, Voyage chunks and SystemOne.
-use crate::{
-    journal::{self, Phase},
-    session::RoutingSession,
-    settlement,
-    types::*,
-};
+use crate::journal::{self, Phase};
+use crate::{session::RoutingSession, settlement, types::*};
 use futures_util::lock::Mutex;
-use gateway_authority::{
-    kernel::KernelTerminal,
-    store::{Authority, AuthorityClock, TokenSource},
+use gateway_authority::store::Authority;
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_routing_selection::types::RouteSelection;
+use gateway_authority_routing_selection::{SelectionOperations, types::AdmittedAccount};
+use gateway_authority_routing_signal::SignalOperations;
+use gateway_contracts::{
+    lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
 };
-use gateway_core::{
-    error::GatewayError, lifecycle::TransportObservation, model::ModelId,
-    provider::UpstreamProvider, query::QueryStore, source_json::SourceJson,
-    source_serialization as source,
-};
+use gateway_core::query::QueryStore;
+use gateway_source::source_serialization as source;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
-use std::rc::Rc;
+use {gateway_model_selection::aliases as model_aliases, std::rc::Rc};
 
 use gateway_extras_contract::family::ExtrasFamily;
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -68,7 +68,7 @@ pub struct DispatchTicket {
 #[derive(Clone, Debug)]
 pub struct ImageChildAttempt {
     scope: ChildScope,
-    pub request: gateway_providers::types::PreparedRequest,
+    pub request: gateway_provider_protocol::types::PreparedRequest,
     pub credential: CredentialFence,
 }
 impl ImageChildAttempt {
@@ -85,7 +85,7 @@ pub struct AdmissionHandle<S, I, C, H> {
     parent: String,
     lock: Rc<Mutex<()>>,
     input: RoutingInput,
-    source_collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
+    source_collator: std::sync::Arc<dyn model_aliases::SourceStringCollator>,
 }
 impl<
     S: QueryStore + Clone,
@@ -148,7 +148,7 @@ impl<
                 journal::unavailable("This scope cannot prepare a Codex image child.").into(),
             );
         }
-        let model = ModelId::from_source(gateway_schema::source_request::resolve_model(
+        let model = ModelId::from_source(gateway_request_normalization::syntax::resolve_model(
             source::member(&body, "model").as_ref(),
             None,
         )?);
@@ -191,7 +191,7 @@ impl<
                 .await?;
             let mut input = self.input.clone();
             input.raw = body.clone();
-            input.surface = gateway_providers::types::ClientSurface::Responses;
+            input.surface = gateway_provider_protocol::types::ClientSurface::Responses;
             let request = crate::wire::prepare(
                 &input,
                 &child.nonce,
@@ -217,12 +217,12 @@ impl<
     }
     async fn image_account(
         &self,
-        selection: gateway_authority::routing_types::RouteSelection,
+        selection: RouteSelection,
         model: &ModelId,
-    ) -> RoutingResult<Option<gateway_authority::routing_types::AdmittedAccount>> {
+    ) -> RoutingResult<Option<AdmittedAccount>> {
         Ok(Some(match selection {
-            gateway_authority::routing_types::RouteSelection::Eligible(account) => account,
-            gateway_authority::routing_types::RouteSelection::QuotaBlocked { proof, .. } => {
+            RouteSelection::Eligible(account) => account,
+            RouteSelection::QuotaBlocked { proof, .. } => {
                 let recovery = if proof.full_cohort_exhausted() {
                     self.host.recover_codex(&proof, model).await?
                 } else {
@@ -256,7 +256,7 @@ impl<
                     }
                 }
             }
-            gateway_authority::routing_types::RouteSelection::CredentialsInvalid { .. } => {
+            RouteSelection::CredentialsInvalid { .. } => {
                 return Err(GatewayError::new(
                     401,
                     "Codex subscription credentials are unavailable.",
@@ -264,7 +264,7 @@ impl<
                 )
                 .into());
             }
-            gateway_authority::routing_types::RouteSelection::ModelUnavailable { .. } => {
+            RouteSelection::ModelUnavailable { .. } => {
                 return Err(GatewayError::new(
                     404,
                     "The image child model is unavailable.",
@@ -340,8 +340,8 @@ impl<
             || self.host.cancelled()
             || matches!(
                 failure.failure,
-                gateway_providers::policy::HopFailure::Cancelled
-                    | gateway_providers::policy::HopFailure::Deadline
+                gateway_provider_policy::policy::HopFailure::Cancelled
+                    | gateway_provider_policy::policy::HopFailure::Deadline
             )
         {
             return Ok(RefusalDecision::Abort);

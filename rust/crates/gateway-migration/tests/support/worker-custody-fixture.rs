@@ -1,8 +1,4 @@
 //! Synthetic-only stdin/stdout controller; no network, child process, or live owner access.
-#[cfg(all(test, not(target_arch = "wasm32")))]
-use gateway_migration_test_support::fixture;
-#[cfg(not(target_arch = "wasm32"))]
-mod worker_custody_fixture;
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -10,7 +6,7 @@ struct Initialize {
     v: u32,
     directory: String,
     now_ms: i64,
-    capture: gateway_migration::native_capture::NativeCapture,
+    capture: gateway_migration_data::native_capture::NativeCapture,
 }
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(serde::Deserialize)]
@@ -18,14 +14,14 @@ struct Initialize {
 struct Export {
     v: u32,
     now_ms: i64,
-    artifacts: gateway_migration::operational::ArtifactInput,
+    artifacts: gateway_migration_protocol::operational::ArtifactInput,
 }
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(serde::Serialize)]
 struct Candidate {
     operation: &'static str,
-    capture: gateway_migration::native_capture::NativeCapture,
-    adoption_receipt: gateway_migration::engine::AdoptionReceipt,
+    capture: gateway_migration_data::native_capture::NativeCapture,
+    adoption_receipt: gateway_migration_prepare::engine::AdoptionReceipt,
 }
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(serde::Deserialize)]
@@ -36,16 +32,16 @@ enum Phase {
     },
     AdvanceManagedA {
         v: u32,
-        artifacts: gateway_migration::operational::ArtifactInput,
+        artifacts: gateway_migration_protocol::operational::ArtifactInput,
     },
 }
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(serde::Serialize)]
 struct Inverse {
     operation: &'static str,
-    source: gateway_migration::native_capture::NativeCapture,
-    rust_controls: Vec<gateway_migration::inverse::CustodyRecord>,
-    artifacts: gateway_migration::inverse::ArtifactContext,
+    source: gateway_migration_data::native_capture::NativeCapture,
+    rust_controls: Vec<gateway_migration_data::custody::CustodyRecord>,
+    artifacts: gateway_migration_data::custody::ArtifactContext,
 }
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(serde::Deserialize)]
@@ -74,16 +70,17 @@ struct Selector {
     operation: Option<String>,
 }
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), gateway_migration::error::MigrationError> {
-    use gateway_auth::provider_credentials::codex_source_pool_key;
+fn main() -> Result<(), gateway_migration_data::error::MigrationError> {
+    use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
     use gateway_core::state::AuthorityStore;
-    use gateway_migration::{
-        engine::adopt_empty,
-        inverse::ArtifactContext,
-        native_capture::prepare_native,
-        native_custody::{export_native_rollback_with_custody, sanitize_native_capture},
-    };
-    use worker_custody_fixture::{host, inputs, port, producers, staged, support_run};
+    use gateway_migration_data::custody::ArtifactContext;
+    use gateway_migration_fixture_custody::{host, staged};
+    use gateway_migration_fixture_inputs::{inputs, producers};
+    use gateway_migration_fixture_port::{executor::support_run, port};
+    use gateway_migration_native_custody::native_custody::export_native_rollback_with_custody;
+    use gateway_migration_native_custody::native_custody::sanitize_native_capture;
+    use gateway_migration_prepare::engine::adopt_empty;
+    use gateway_migration_prepare::engine::prepare_native;
     assert_eq!(
         std::env::args_os().len(),
         1,
@@ -91,7 +88,7 @@ fn main() -> Result<(), gateway_migration::error::MigrationError> {
     );
     // Inspect only the finite operation selector, then deserialize the ORIGINAL
     // raw document. Untagged serde buffering must not erase NativeCapture SourceJson.
-    let initial: gateway_core::source_json::SourceJson = port::read()?;
+    let initial: gateway_source::source_json::SourceJson = port::read()?;
     let selector: Selector = initial.deserialize()?;
     let init: Initialize = if selector.operation.is_none() {
         initial.deserialize()?

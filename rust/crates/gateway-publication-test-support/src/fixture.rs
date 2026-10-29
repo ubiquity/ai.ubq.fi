@@ -1,20 +1,24 @@
-use gateway_auth::crypto::{Secret, base64url};
-use gateway_auth::native_auth::{
-    AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
-    NativeNonceAuthority, NativeTransportIdentity,
+use gateway_auth_credentials::{
+    native_credentials::NativeCredentials, native_credentials::NativeOwnerId,
 };
-use gateway_auth::native_credentials::{NativeCredentials, NativeOwnerId};
-use gateway_auth::provider_credentials::{
-    CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
+use gateway_auth_credentials::{
+    provider_credentials::CodexNativeOwner, provider_credentials::CodexSourceAccount,
+    provider_credentials::CodexSourcePool, provider_credentials::codex_source_pool_key,
+};
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
+use gateway_auth_native_proof::native_auth::{
+    AuthenticatedNativeOwner, NativeAuthenticator, NativeNonceAuthority, NativeTransportIdentity,
 };
 use gateway_auth_native_wire::native_read::NATIVE_RPC_PATH;
-use gateway_authority::keys;
-use gateway_authority::routing_types::{PoolAccount, SubscriptionPool};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::PoolVersionstamp;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_auth_primitives::{crypto::Secret, crypto::base64url};
+use gateway_authority_keys as keys;
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
+use gateway_contracts::identity::PoolVersionstamp;
+use gateway_core::{
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_publication_policy::control_publication::{
     ConfiguredPaidInputs, bootstrap_fixture_owner, fixture_owner_statement,
 };
@@ -22,6 +26,7 @@ use gateway_publication_policy::protocol::{
     PublicationCarrier, PublicationRequest, PublicationResponse,
 };
 use gateway_publication_transport::transport::PublicationReceiver;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;

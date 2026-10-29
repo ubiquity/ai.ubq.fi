@@ -1,5 +1,4 @@
 //! Fixed M15 HTTP/AEAD capabilities over the original M14 dispatch reservation.
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformClock;
 use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
@@ -7,16 +6,19 @@ use crate::routing_host;
 use crate::transport::outbound;
 use crate::transport::outbound::DispatchAttempt;
 use crate::transport::outbound::PinnedDestination;
-use gateway_core::{error::GatewayError, state::AuthorityStore, tuple_key::TupleKey};
+use gateway_core::state::AuthorityStore;
 use gateway_extras_contract::types::{
     DispatchFailure, DispatchFailureOrigin, ExtrasDispatch, ExtrasHost, ExtrasProvider, ImageKind,
     PreparedCall, UpstreamResponse,
 };
-use gateway_providers::types::{AuthMaterial, PrepareOptions};
+use gateway_kv_codec::tuple_key::TupleKey;
+use gateway_provider_protocol::{types::AuthMaterial, types::PrepareOptions};
 use gateway_routing_runtime::{
     extras::{AdmissionHandle, ChildScope, DispatchTicket},
     types::TransportState,
 };
+use gateway_source::error::GatewayError;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body;
 use gateway_worker_platform::aead;
 use gateway_worker_storage::store::now_ms;
@@ -45,7 +47,7 @@ impl Host {
         catalog: crate::catalog::CatalogState,
         admission: Handle,
         images: bool,
-        default_model: Option<gateway_core::model::ModelId>,
+        default_model: Option<gateway_contracts::model::ModelId>,
     ) -> Result<Self, GatewayError> {
         let child = if images {
             None
@@ -254,10 +256,14 @@ impl ExtrasHost for Host {
             ..Default::default()
         }))
     }
-    async fn decision_models(&self) -> Result<Vec<gateway_core::model::ModelId>, GatewayError> {
+    async fn decision_models(
+        &self,
+    ) -> Result<Vec<gateway_contracts::model::ModelId>, GatewayError> {
         self.catalog.decision_models(&self.platform.store).await
     }
-    async fn image_base_model(&self) -> Result<Option<gateway_core::model::ModelId>, GatewayError> {
+    async fn image_base_model(
+        &self,
+    ) -> Result<Option<gateway_contracts::model::ModelId>, GatewayError> {
         self.images
             .as_ref()
             .map(crate::image_host::Images::model)

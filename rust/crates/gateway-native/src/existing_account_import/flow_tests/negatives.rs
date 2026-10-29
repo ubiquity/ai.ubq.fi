@@ -1,6 +1,7 @@
 //! Required negatives use the same real actors, authority, TLS and native writer.
 //! The pause controls only server scheduling; it issues no proof or outcome.
 use super::*;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use std::{net::Shutdown, sync::Condvar};
 
 pub(super) struct PhasePause {
@@ -69,47 +70,51 @@ impl Drop for PauseHandle {
 struct RequestRun {
     socket: TcpStream,
     deadline_ms: i64,
-    reply: thread::JoinHandle<Vec<u8>>,
+    reply: thread::JoinHandle<Result<Vec<u8>, GatewayError>>,
 }
 fn original_request(
     store: &base::Store,
     root: &CaseRoot,
     account: String,
     address: std::net::SocketAddr,
-) -> RequestRun {
+) -> Result<RequestRun, GatewayError> {
     let authority = authority(store);
     let identity = id();
     let config = base::config();
-    let cancel = base::Cancel;
+    let cancel = base::Cancel::default();
     let owner = RegisteredRenewalOwner::configured(
         "native-owner".into(),
-        root.path().join("home").to_str().unwrap().into(),
+        root.path()
+            .join("home")
+            .to_str()
+            .ok_or_else(base::fail)?
+            .into(),
     )
-    .unwrap();
-    let actor = admin_actor(store);
-    let client = crate::import_client::NativeImportClient::configured(
+    .map_err(|_| base::fail())?;
+    let actor = admin_actor(store)?;
+    let client = gateway_native_import_client::client::NativeImportClient::configured(
         address, &authority, &identity, &owner, &config, &cancel,
     )
-    .unwrap();
+    .map_err(|_| base::fail())?;
     let prepared = futures_executor::block_on(client.prepare(
         &actor,
         NativeImportTarget::ExistingAccount {
             account_id_hash: account,
         },
     ))
-    .unwrap();
+    .map_err(|_| base::fail())?;
     let deadline_ms = prepared.deadline_ms();
     let packet = client
         .request(prepared, NEW, now(), &base64url(&[9; 32]))
-        .unwrap();
-    let socket = TcpStream::connect(packet.endpoint()).unwrap();
+        .map_err(|_| base::fail())?;
+    let socket = TcpStream::connect(packet.endpoint()).map_err(|_| base::fail())?;
     socket
         .set_read_timeout(Some(Duration::from_secs(50)))
-        .unwrap();
+        .map_err(|_| base::fail())?;
     socket
         .set_write_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-    let mut worker = socket.try_clone().unwrap();
+        .map_err(|_| base::fail())?;
+    let mut worker = socket.try_clone().map_err(|_| base::fail())?;
     let mut head = format!(
         "POST {} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n",
         packet.path(),
@@ -120,9 +125,11 @@ fn original_request(
     }
     head.push_str("\r\n");
     let body = packet.body().to_vec();
-    let reply = thread::spawn(move || {
-        worker.write_all(head.as_bytes()).unwrap();
-        worker.write_all(&body).unwrap();
+    let reply = thread::spawn(move || -> Result<Vec<u8>, GatewayError> {
+        worker
+            .write_all(head.as_bytes())
+            .map_err(|_| base::fail())?;
+        worker.write_all(&body).map_err(|_| base::fail())?;
         let mut bytes = Vec::new();
         let read = worker.read_to_end(&mut bytes);
         if let Err(error) = read {
@@ -134,13 +141,13 @@ fn original_request(
                 "unexpected native read error {error}"
             );
         }
-        bytes
+        Ok(bytes)
     });
-    RequestRun {
+    Ok(RequestRun {
         socket,
         deadline_ms,
         reply,
-    }
+    })
 }
 fn wait_failure(group: &mut OwnedGroup) {
     let deadline = Instant::now() + Duration::from_secs(8);
@@ -205,57 +212,65 @@ fn assert_writer_stopped(root: &CaseRoot) {
     );
 }
 #[test]
-fn actual_quiet_client_eof_before_and_after_started_never_writes_or_publishes() {
+fn actual_quiet_client_eof_before_and_after_started_never_writes_or_publishes()
+-> Result<(), GatewayError> {
     for phase in ["start", "started_handler"] {
         let root = CaseRoot::new();
         let store = base::Store::default();
-        let account = setup(&store, &root.path().join("home"));
+        let account = setup(&store, &root.path().join("home"))?;
         let servers = Servers::start(store.clone(), root.path().join("home"));
         let pause = PauseHandle::install(&servers, phase, 1);
         let (mut child, address) = start_custodian(&root, &servers, account.clone());
-        let request = original_request(&store, &root, account, address);
+        let request = original_request(&store, &root, account, address)?;
         pause.wait();
-        request.socket.shutdown(Shutdown::Both).unwrap();
+        request
+            .socket
+            .shutdown(Shutdown::Both)
+            .map_err(|_| base::fail())?;
         pause.resume();
-        let response = request.reply.join().unwrap();
+        let response = request.reply.join().map_err(|_| base::fail())??;
         wait_failure(&mut child);
         no_native_effect(&root, &servers, &response);
     }
+    Ok(())
 }
 #[test]
-fn actual_custodian_death_after_stop_closes_live_actor_without_late_effect() {
+fn actual_custodian_death_after_stop_closes_live_actor_without_late_effect()
+-> Result<(), GatewayError> {
     let root = CaseRoot::new();
     let store = base::Store::default();
-    let account = setup(&store, &root.path().join("home"));
+    let account = setup(&store, &root.path().join("home"))?;
     let servers = Servers::start(store.clone(), root.path().join("home"));
     let pause = PauseHandle::install(&servers, "started_handler", 3);
     let (mut child, address) = start_custodian(&root, &servers, account.clone());
-    let request = original_request(&store, &root, account, address);
+    let request = original_request(&store, &root, account, address)?;
     pause.wait();
     assert_writer_stopped(&root);
     // Kill only the retained actual custodian Child, not an inferred PID/group.
-    let mut custodian = child.child.take().unwrap();
-    custodian.kill().unwrap();
-    assert!(!custodian.wait().unwrap().success());
+    let mut custodian = child.child.take().ok_or_else(base::fail)?;
+    custodian.kill().map_err(|_| base::fail())?;
+    assert!(!custodian.wait().map_err(|_| base::fail())?.success());
     pause.resume();
-    let response = request.reply.join().unwrap();
+    let response = request.reply.join().map_err(|_| base::fail())??;
     no_native_effect(&root, &servers, &response);
     assert_writer_stopped(&root);
+    Ok(())
 }
 #[test]
-fn actual_admin_revocation_before_native_write_refuses_the_same_started_claim() {
+fn actual_admin_revocation_before_native_write_refuses_the_same_started_claim()
+-> Result<(), GatewayError> {
     let root = CaseRoot::new();
     let store = base::Store::default();
-    let account = setup(&store, &root.path().join("home"));
+    let account = setup(&store, &root.path().join("home"))?;
     let servers = Servers::start(store.clone(), root.path().join("home"));
     let pause = PauseHandle::install(&servers, "started_handler", 3);
     let (mut child, address) = start_custodian(&root, &servers, account.clone());
-    let request = original_request(&store, &root, account, address);
+    let request = original_request(&store, &root, account, address)?;
     pause.wait();
     assert_writer_stopped(&root);
     revoke_admin(&store);
     pause.resume();
-    let response = request.reply.join().unwrap();
+    let response = request.reply.join().map_err(|_| base::fail())??;
     wait_failure(&mut child);
     no_native_effect(&root, &servers, &response);
     assert_eq!(
@@ -263,50 +278,60 @@ fn actual_admin_revocation_before_native_write_refuses_the_same_started_claim() 
             .traffic
             .phases
             .lock()
-            .unwrap()
+            .map_err(|_| base::fail())?
             .iter()
             .filter(|phase| **phase == "start")
             .count(),
         1
     );
+    Ok(())
 }
 #[test]
-fn actual_original_deadline_expiry_after_stop_never_renews_mutation_authority() {
+fn actual_original_deadline_expiry_after_stop_never_renews_mutation_authority()
+-> Result<(), GatewayError> {
     let root = CaseRoot::new();
     let store = base::Store::default();
-    let account = setup(&store, &root.path().join("home"));
+    let account = setup(&store, &root.path().join("home"))?;
     let servers = Servers::start(store.clone(), root.path().join("home"));
     let pause = PauseHandle::install(&servers, "started_handler", 3);
     let (mut child, address) = start_custodian(&root, &servers, account.clone());
-    let request = original_request(&store, &root, account, address);
+    let request = original_request(&store, &root, account, address)?;
     pause.wait();
     assert_writer_stopped(&root);
-    let remaining = request.deadline_ms.checked_sub(now()).unwrap();
+    let remaining = request
+        .deadline_ms
+        .checked_sub(now())
+        .map_err(|_| base::fail())?;
     assert!(remaining > 0 && remaining <= 45_000);
     thread::sleep(Duration::from_millis(remaining as u64 + 30));
     pause.resume();
-    let response = request.reply.join().unwrap();
+    let response = request.reply.join().map_err(|_| base::fail())??;
     wait_failure(&mut child);
     no_native_effect(&root, &servers, &response);
+    Ok(())
 }
 #[test]
-fn actual_revoked_publication_retains_native_receipt_but_never_source_success() {
+fn actual_revoked_publication_retains_native_receipt_but_never_source_success()
+-> Result<(), GatewayError> {
     let root = CaseRoot::new();
     let store = base::Store::default();
-    let account = setup(&store, &root.path().join("home"));
+    let account = setup(&store, &root.path().join("home"))?;
     let servers = Servers::start(store.clone(), root.path().join("home"));
     let pause = PauseHandle::install(&servers, "publication", 1);
     let (mut child, address) = start_custodian(&root, &servers, account.clone());
-    let request = original_request(&store, &root, account, address);
+    let request = original_request(&store, &root, account, address)?;
     pause.wait();
     assert_writer_stopped(&root);
-    assert_ne!(fs::read(root.path().join("home/auth.json")).unwrap(), OLD);
+    assert_ne!(
+        fs::read(root.path().join("home/auth.json")).map_err(|_| base::fail())?,
+        OLD
+    );
     assert!(
         fs::read_dir(root.path().join("home"))
-            .unwrap()
+            .map_err(|_| base::fail())?
             .any(|entry| {
                 entry
-                    .unwrap()
+                    .map_err(|_| base::fail())?
                     .file_name()
                     .to_string_lossy()
                     .ends_with(".receipt")
@@ -314,22 +339,23 @@ fn actual_revoked_publication_retains_native_receipt_but_never_source_success() 
     );
     revoke_admin(&store);
     pause.resume();
-    let response = request.reply.join().unwrap();
+    let response = request.reply.join().map_err(|_| base::fail())??;
     wait_failure(&mut child);
     assert!(!response.starts_with(b"HTTP/1.1 200 "));
     let record = futures_executor::block_on(store.read(&codex_source_pool_key()))
-        .unwrap()
-        .unwrap();
-    let pool =
-        gateway_auth::provider_credentials::parse_codex_source_pool(record.json_value().unwrap())
-            .unwrap()
-            .unwrap();
+        .map_err(|_| base::fail())?
+        .ok_or_else(base::fail)?;
+    let pool = gateway_auth_credentials::provider_credentials::parse_codex_source_pool(
+        record.json_value().map_err(|_| base::fail())?,
+    )
+    .map_err(|_| base::fail())?
+    .ok_or_else(base::fail)?;
     assert_eq!(
         pool.accounts[0].access_token.expose(),
         "SYNTHETIC_OLD_ACCESS"
     );
     assert_ne!(
-        fs::read(root.path().join("home/auth.json")).unwrap(),
+        fs::read(root.path().join("home/auth.json")).map_err(|_| base::fail())?,
         OLD,
         "uncertain native durability must not be rolled back or erased"
     );
@@ -338,16 +364,18 @@ fn actual_revoked_publication_retains_native_receipt_but_never_source_success() 
             .traffic
             .phases
             .lock()
-            .unwrap()
+            .map_err(|_| base::fail())?
             .contains(&"catalog_seed")
     );
     assert_eq!(servers.traffic.oauth.load(Ordering::SeqCst), 0);
+    Ok(())
 }
 #[test]
-fn actual_lost_publication_reply_reconciles_only_the_same_native_receipt() {
+fn actual_lost_publication_reply_reconciles_only_the_same_native_receipt()
+-> Result<(), GatewayError> {
     let root = CaseRoot::new();
     let store = base::Store::default();
-    let account = setup(&store, &root.path().join("home"));
+    let account = setup(&store, &root.path().join("home"))?;
     let servers = Servers::start(store.clone(), root.path().join("home"));
     servers
         .traffic
@@ -357,7 +385,7 @@ fn actual_lost_publication_reply_reconciles_only_the_same_native_receipt() {
     let (response, _) = request(&store, &root.path().join("home"), account, address, NEW);
     assert!(response.starts_with(b"HTTP/1.1 200 "));
     child.wait_clean();
-    let phases = servers.traffic.phases.lock().unwrap();
+    let phases = servers.traffic.phases.lock().map_err(|_| base::fail())?;
     assert_eq!(phases.iter().filter(|phase| **phase == "start").count(), 1);
     assert_eq!(
         phases
@@ -369,10 +397,10 @@ fn actual_lost_publication_reply_reconciles_only_the_same_native_receipt() {
     );
     assert_eq!(
         fs::read_dir(root.path().join("home"))
-            .unwrap()
+            .map_err(|_| base::fail())?
             .filter(|entry| entry
                 .as_ref()
-                .unwrap()
+                .map_err(|_| base::fail())?
                 .file_name()
                 .to_string_lossy()
                 .ends_with(".receipt"))
@@ -382,11 +410,12 @@ fn actual_lost_publication_reply_reconciles_only_the_same_native_receipt() {
     assert_eq!(servers.traffic.models.load(Ordering::SeqCst), 1);
     assert_eq!(servers.traffic.oauth.load(Ordering::SeqCst), 0);
     assert_writer_stopped(&root);
+    Ok(())
 }
 
 #[test]
-fn fixture_enabled_ordinary_entrypoints_refuse_before_reading_stdin() {
-    assert!(crate::require_production_artifact().is_err());
+fn fixture_enabled_ordinary_entrypoints_refuse_before_reading_stdin() -> Result<(), GatewayError> {
+    assert!(gateway_native_connector::artifact::require_production_artifact().is_err());
     for name in [
         "uos-native",
         "uos-native-supervisor",
@@ -402,11 +431,11 @@ fn fixture_enabled_ordinary_entrypoints_refuse_before_reading_stdin() {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .unwrap();
-        let input = child.stdin.take().unwrap();
+            .map_err(|_| base::fail())?;
+        let input = child.stdin.take().ok_or_else(base::fail)?;
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            if let Some(status) = child.try_wait().unwrap() {
+            if let Some(status) = child.try_wait().map_err(|_| base::fail())? {
                 assert_eq!(
                     status.code(),
                     Some(if name == "uos-native" { 1 } else { 78 }),
@@ -415,14 +444,14 @@ fn fixture_enabled_ordinary_entrypoints_refuse_before_reading_stdin() {
                 break;
             }
             if Instant::now() >= deadline {
-                child.kill().unwrap();
-                child.wait().unwrap();
+                child.kill().map_err(|_| base::fail())?;
+                child.wait().map_err(|_| base::fail())?;
                 panic!("fixture-enabled {name} did not refuse before stdin");
             }
             thread::sleep(Duration::from_millis(5));
         }
         drop(input);
-        let output = child.wait_with_output().unwrap();
+        let output = child.wait_with_output().map_err(|_| base::fail())?;
         assert!(
             output.stdout.is_empty(),
             "no listener or service startup may occur"
@@ -434,4 +463,5 @@ fn fixture_enabled_ordinary_entrypoints_refuse_before_reading_stdin() {
             );
         }
     }
+    Ok(())
 }

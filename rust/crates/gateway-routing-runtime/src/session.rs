@@ -1,25 +1,29 @@
-use crate::journal::unavailable;
 use crate::{
     journal::{self, Journal},
     policy::{self, RoutePlan},
     settlement,
     types::*,
 };
-use gateway_auth::types::AuthMethod;
-use gateway_authority::{
-    kernel::KernelTerminal,
-    paid_control::{PaidRequestContext, PaidRoutingReceipt, PaidSyntheticHop},
-    paid_types::PaidAuthorization,
-    routing_types::{AdmittedAccount, RouteSelection},
-    store::{Authority, AuthorityClock, TokenSource},
-};
-use gateway_core::{
-    error::GatewayError, identity::ApiKeyId, model::ModelId, provider::UpstreamProvider,
-    query::QueryStore,
-};
-use gateway_providers::policy::{LithosWindows, WaitBudget};
-use gateway_providers::types::PreparedClaudeOrdinary;
+use gateway_auth_contracts::types::AuthMethod;
+use gateway_authority::store::Authority;
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_claude_proof::ClaudeProofOperations;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_paid_control_records::{PaidRequestContext, PaidSyntheticHop};
+use gateway_authority_paid_route::{PaidRoutingReceipt, authorization::PaidAuthorization};
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_authority_routing_selection::types::{AdmittedAccount, RouteSelection};
+use gateway_contracts::{identity::ApiKeyId, model::ModelId, provider::UpstreamProvider};
+use gateway_core::query::QueryStore;
+use gateway_model_selection::aliases as model_aliases;
+use gateway_provider_claude_body::types::PreparedClaudeOrdinary;
+use gateway_provider_policy::{policy::LithosWindows, policy::WaitBudget};
+use gateway_source::error::GatewayError;
 use std::{cell::RefCell, collections::BTreeSet};
+use {crate::journal::unavailable, gateway_schema_values::request::RequestSurface};
 
 pub struct RoutingSession<S, I, C, H> {
     pub(crate) admission: crate::currentness::OriginalRoutingAdmission,
@@ -36,7 +40,7 @@ pub struct RoutingSession<S, I, C, H> {
     pub(crate) waits: RefCell<WaitBudget>,
     conversation_id: String,
     pub(crate) elapsed_wait_ms: std::cell::Cell<i64>,
-    pub(crate) source_collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
+    pub(crate) source_collator: std::sync::Arc<dyn model_aliases::SourceStringCollator>,
     pub(crate) extra_lock: std::rc::Rc<futures_util::lock::Mutex<()>>,
 }
 impl<
@@ -51,13 +55,13 @@ impl<
         &self.plan.model
     }
     /// Pricing metadata from this genuine plan; policy stays with the usage owner.
-    pub fn surplus_billing(&self) -> Option<&gateway_core::source_json::SourceJson> {
+    pub fn surplus_billing(&self) -> Option<&gateway_source::source_json::SourceJson> {
         self.plan.paid.surplus_billing.as_ref()
     }
-    pub fn original_source(&self) -> &gateway_core::source_json::SourceJson {
+    pub fn original_source(&self) -> &gateway_source::source_json::SourceJson {
         self.input.original_source()
     }
-    pub fn original_context(&self) -> &gateway_core::identity::RequestContext {
+    pub fn original_context(&self) -> &gateway_contracts::identity::RequestContext {
         &self.input.context
     }
     pub fn elapsed_wait_ms(&self) -> i64 {
@@ -119,11 +123,11 @@ impl<
             if family.is_some() { 1 } else { 3 },
             input.context.clone(),
             if family.is_some() {
-                gateway_auth::crypto::sha256_hex(input.original_source().as_bytes())
+                gateway_auth_primitives::crypto::sha256_hex(input.original_source().as_bytes())
             } else {
                 crate::local_work::original_source_digest(input.original_source())?
             },
-            now.checked_add(gateway_authority::REQUEST_LEASE_MS)
+            now.checked_add(gateway_authority_contracts::REQUEST_LEASE_MS)
                 .ok_or_else(|| unavailable("Lease overflow."))?,
             now,
         );
@@ -210,7 +214,7 @@ impl<
                 .original
                 .input
                 .original
-                .for_surface(gateway_schema::request::RequestSurface::Responses),
+                .for_surface(RequestSurface::Responses),
         );
         let source_collator = admission.original.host.source_string_collator();
         let planned: RoutingResult<(RoutePlan, String)> = (|| {
@@ -402,7 +406,7 @@ impl<
     }
     pub(crate) fn paid_context(
         &self,
-        provider: gateway_core::provider::PaidProvider,
+        provider: gateway_contracts::provider::PaidProvider,
         synthetic: bool,
     ) -> RoutingResult<PaidRequestContext> {
         let mut body = self.input.raw.clone();
@@ -412,8 +416,8 @@ impl<
             body,
             surface: self.input.surface,
             synthetic_hop: synthetic.then_some(match provider {
-                gateway_core::provider::PaidProvider::Surplus => PaidSyntheticHop::Surplus,
-                gateway_core::provider::PaidProvider::Metered => PaidSyntheticHop::Openlux,
+                gateway_contracts::provider::PaidProvider::Surplus => PaidSyntheticHop::Surplus,
+                gateway_contracts::provider::PaidProvider::Metered => PaidSyntheticHop::Openlux,
             }),
         })
     }
@@ -471,8 +475,8 @@ pub(crate) async fn reserve_original<
     I: TokenSource + Clone,
     C: AuthorityClock + Clone + 'static,
 >(
-    principal: &gateway_auth::types::AuthPrincipal,
-    context: &gateway_core::identity::RequestContext,
+    principal: &gateway_auth_contracts::types::AuthPrincipal,
+    context: &gateway_contracts::identity::RequestContext,
     row: &mut Journal,
     store: &S,
     tokens: &I,

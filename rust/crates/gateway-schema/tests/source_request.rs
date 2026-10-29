@@ -1,8 +1,8 @@
 //! Source string controls: these remain data until the separately owned runtime cutover.
-use gateway_core::{js_string::JsString16, source_json::SourceJson};
-use gateway_schema::source_request::{
-    self, SourceField, SourceModelRequest, SourceRequestDocument,
-};
+
+use gateway_request_normalization::document::SourceRequestDocument;
+use gateway_schema_values::request::{SourceField, SourceModelRequest};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 
 fn doc(raw: &str) -> SourceRequestDocument {
     SourceRequestDocument::new(SourceJson::parse(raw).unwrap()).unwrap()
@@ -10,7 +10,7 @@ fn doc(raw: &str) -> SourceRequestDocument {
 #[test]
 fn literal_lone_instructions_and_input_are_not_scalar_parsed() {
     let raw = r#"{"model":" \ud800 ","input":"\ud800","instructions":"x\udfffy"}"#;
-    let parsed = source_request::parse_http_body(raw.as_bytes()).unwrap();
+    let parsed = gateway_request_normalization::syntax::parse_http_body(raw.as_bytes()).unwrap();
     let document = SourceRequestDocument::new(parsed.clone()).unwrap();
     assert_eq!(document.original_source(), &parsed);
     assert_eq!(
@@ -38,9 +38,11 @@ fn source_model_defaults_and_nonempty_lone_identity_stay_distinct() {
     for raw in [r#"{"model":5}"#, r#"{"model":false}"#] {
         let error = doc(raw).model_request().unwrap_err();
         assert_eq!(error.status, 400);
-        let value: serde_json::Value = error.body().deserialize().unwrap();
-        assert_eq!(value["error"]["message"], "model must be a string");
-        assert!(value["error"].get("param").is_none());
+        assert_eq!(
+            error.body().message(),
+            &JsString16::from_utf8("model must be a string")
+        );
+        assert!(error.body().param().is_none());
     }
 }
 #[test]
@@ -75,9 +77,14 @@ fn stream_rejects_null_and_strings_not_just_truthiness() {
         r#"{"stream":1}"#,
     ] {
         let error = doc(raw).stream().unwrap_err();
-        let value: serde_json::Value = error.body().deserialize().unwrap();
-        assert_eq!(value["error"]["message"], "stream must be a boolean");
-        assert_eq!(value["error"]["param"], "stream");
+        assert_eq!(
+            error.body().message(),
+            &JsString16::from_utf8("stream must be a boolean")
+        );
+        assert_eq!(
+            error.body().param(),
+            Some(Some(&JsString16::from_utf8("stream")))
+        );
     }
 }
 #[test]
@@ -86,10 +93,10 @@ fn http_decoder_keeps_source_bom_and_invalid_utf8_rule_only_at_byte_boundary() {
     bytes.extend_from_slice(b"{\"input\":\"");
     bytes.push(0xff);
     bytes.extend_from_slice(b"\"}");
-    let value = source_request::parse_http_body(&bytes).unwrap();
+    let value = gateway_request_normalization::syntax::parse_http_body(&bytes).unwrap();
     assert_eq!(value.as_str(), "{\"input\":\"�\"}");
     for bytes in [b"".as_slice(), b"{", b"null trailing"] {
-        assert!(source_request::parse_http_body(bytes).is_err());
+        assert!(gateway_request_normalization::syntax::parse_http_body(bytes).is_err());
     }
     assert!(SourceRequestDocument::new(SourceJson::parse("null").unwrap()).is_err());
 }

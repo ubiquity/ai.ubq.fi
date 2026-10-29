@@ -1,4 +1,5 @@
 use gateway_auth_primitives::crypto::Secret;
+use gateway_local_refusal::closed_error_body::ClosedErrorBody;
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -71,6 +72,7 @@ pub enum AuthResponseBody {
     Empty,
     Json(Value),
     SourceJson(gateway_source::source_json::SourceJson),
+    ClosedError(ClosedErrorBody),
 }
 impl AuthResponseBody {
     pub fn as_json(&self) -> Option<&Value> {
@@ -90,6 +92,7 @@ impl AuthResponseBody {
                 )
             }),
             Self::SourceJson(value) => Ok(value.as_bytes().to_vec()),
+            Self::ClosedError(value) => Ok(value.as_bytes().to_vec()),
         }
     }
 }
@@ -99,6 +102,7 @@ impl serde::Serialize for AuthResponseBody {
             Self::Empty => serializer.serialize_none(),
             Self::Json(value) => value.serialize(serializer),
             Self::SourceJson(value) => value.serialize(serializer),
+            Self::ClosedError(value) => value.serialize(serializer),
         }
     }
 }
@@ -146,6 +150,18 @@ impl AuthResponse {
             ]),
             set_cookies: Vec::new(),
             body: AuthResponseBody::SourceJson(body),
+            stream: None,
+        }
+    }
+    pub fn closed_error(status: u16, body: ClosedErrorBody) -> Self {
+        Self {
+            status,
+            headers: BTreeMap::from([
+                ("cache-control".into(), "no-store".into()),
+                ("content-type".into(), "application/json".into()),
+            ]),
+            set_cookies: Vec::new(),
+            body: AuthResponseBody::ClosedError(body),
             stream: None,
         }
     }
@@ -219,8 +235,8 @@ pub enum AuthMethod {
 impl AuthMethod {
     /// Stable principal identity shared by admission, history and routing.
     /// Passport identity is the Passport subject, never a token or handle.
-    pub fn principal_id(&self, bearer: Option<&str>) -> gateway_core::identity::PrincipalId {
-        use gateway_core::identity::PrincipalId;
+    pub fn principal_id(&self, bearer: Option<&str>) -> gateway_contracts::identity::PrincipalId {
+        use gateway_contracts::identity::PrincipalId;
         let scalar = match self {
             Self::PassportSession { identity } => return passport_principal(identity.subject()),
             Self::PassportBearer { claims } => return passport_principal(&claims.sub),
@@ -248,10 +264,10 @@ impl AuthMethod {
 }
 fn passport_principal(
     subject: &gateway_source::js_string::JsString16,
-) -> gateway_core::identity::PrincipalId {
+) -> gateway_contracts::identity::PrincipalId {
     let mut units = "passport-user:".encode_utf16().collect::<Vec<_>>();
     units.extend_from_slice(subject.as_units());
-    gateway_core::identity::PrincipalId::from_source(
+    gateway_contracts::identity::PrincipalId::from_source(
         gateway_source::js_string::JsString16::from_units(units),
     )
 }

@@ -3,19 +3,17 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 mod live_manual;
 mod native_import;
 mod renewal_v2;
-use gateway_auth::crypto::{Secret, sha256_base64url};
-use gateway_auth::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
-use gateway_core::identity::{ApiKeyId, PrincipalId, RequestId};
+use gateway_auth_contracts::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
+use gateway_auth_primitives::crypto::{Secret, sha256_base64url};
+use gateway_contracts::identity::{ApiKeyId, PrincipalId, RequestId};
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, StoredRecord};
-use std::{
-    collections::BTreeMap,
-    future::Future,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicI64, AtomicUsize, Ordering},
-    },
-    task::{Context, Poll, Waker},
+use std::collections::BTreeMap;
+use std::future::Future;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicI64, AtomicUsize, Ordering},
 };
+use std::task::{Context, Poll, Waker};
 fn run<F: Future>(future: F) -> F::Output {
     let mut context = Context::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);
@@ -55,7 +53,7 @@ impl Store {
         *self.race.lock().unwrap() = Some((key, value));
     }
 }
-impl crate::store::AuthorityClock for Store {
+impl gateway_authority_contracts::AuthorityClock for Store {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(self.now.load(Ordering::SeqCst))
     }
@@ -120,16 +118,16 @@ impl Host {
         }
     }
 }
-impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
-        _: &gateway_auth::webauthn::CosePublicKey,
+        _: &gateway_auth_contracts::webauthn::CosePublicKey,
     ) -> Result<(), GatewayError> {
         Err(fail())
     }
     async fn verify_signature(
         &self,
-        _: gateway_auth::webauthn::SignatureInput,
+        _: gateway_auth_contracts::webauthn::SignatureInput,
     ) -> Result<bool, GatewayError> {
         Err(fail())
     }
@@ -180,7 +178,7 @@ fn request(token: &str) -> AuthRequest {
 fn context(principal: &str, key: Option<&str>) -> RequestContext {
     RequestContext {
         request_id: RequestId("original-request".into()),
-        principal: PrincipalId(principal.into()),
+        principal: PrincipalId::from_scalar(principal.into()),
         key_id: key.map(|key| ApiKeyId(key.into())),
         route: "responses".into(),
         started_at_ms: 1_000_000,
@@ -249,7 +247,7 @@ fn api_setup(store: &Store, expiry: i64) -> String {
     store.seed(
         keys::api_policy("api-fixture"),
         "policy-1",
-        crate::quota::ApiKeyPolicy {
+        gateway_authority_api_protocol::ApiKeyPolicy {
             v: 3,
             key_id: ApiKeyId("api-fixture".into()),
             expires_at_ms: expiry,
@@ -779,4 +777,11 @@ fn user_row_absolute_expiry_crossing_readonly_commit_prevents_actor_mint() {
             .is_err()
         );
     });
+}
+
+// Synthetic legacy/passkey fixture has no app-session date capability; unknown dates refuse.
+impl gateway_auth_passport_contracts::session::PassportDate for Host {
+    fn parse_date_ms(&self, _value: &gateway_source::js_string::JsString16) -> f64 {
+        f64::NAN
+    }
 }

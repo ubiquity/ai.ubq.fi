@@ -2,9 +2,9 @@
 use crate::{IncidentIndex, store};
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_core::{
-    query::QueryRequest, query::QuerySelector, query::QueryStore, state::RecordKey,
-    state::StoredRecord,
+    query::QueryRequest, query::QuerySelector, query::QueryStore, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{
     data, source_object::SourceObject, types::ObservabilityHost,
 };
@@ -48,7 +48,7 @@ impl<S: QueryStore, H: ObservabilityHost> IncidentIndex<'_, S, H> {
         input: &IncidentObservation,
     ) -> Result<IncidentIndexReceipt, GatewayError> {
         if input.observed_at_ms <= 0
-            || input.observed_at_ms > gateway_core::identity::MAX_SAFE_INTEGER
+            || input.observed_at_ms > gateway_contracts::identity::MAX_SAFE_INTEGER
         {
             return Err(data::error("Sentinel incident timestamp is invalid"));
         }

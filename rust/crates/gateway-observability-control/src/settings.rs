@@ -1,7 +1,7 @@
 //! Source admin/kernel.ts and codex/{reset,overage}-settings.ts.
 //! Display diagnostics never authorize a redemption or mutate provider credentials.
 use crate::{ControlDiagnostics, store};
-use gateway_admin_runtime::{capabilities::CodexRequest, capabilities::Context};
+use gateway_admin_runtime_contracts::{capabilities::CodexRequest, capabilities::Context};
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_auth_credentials::{
     provider_credentials::codex_source_pool_key, provider_credentials::parse_codex_source_pool,
@@ -18,17 +18,17 @@ use gateway_source::{
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
-fn reset_key(hash: &str) -> gateway_core::state::RecordKey {
-    gateway_authority::keys::reset_usage(hash)
+fn reset_key(hash: &str) -> gateway_kv_codec::key::RecordKey {
+    gateway_authority_keys::reset_usage(hash)
 }
-fn marker_key() -> gateway_core::state::RecordKey {
+fn marker_key() -> gateway_kv_codec::key::RecordKey {
     data::key(json!([
         "uos_ai",
         "migrations",
         "codex_reset_usage_legacy_global_v1"
     ]))
 }
-fn legacy_key() -> gateway_core::state::RecordKey {
+fn legacy_key() -> gateway_kv_codec::key::RecordKey {
     data::key(json!(["uos_ai", "codex_banked_reset_usage", "v1"]))
 }
 fn legacy_opt_out(value: Option<&Value>) -> bool {
@@ -224,7 +224,7 @@ impl<S: QueryStore, H: ObservabilityHost> ControlDiagnostics<'_, S, H> {
                     )
                 })?;
             let key = if overage {
-                gateway_authority::keys::overage(&hash)
+                gateway_authority_keys::overage(&hash)
             } else {
                 reset_key(&hash)
             };
@@ -254,7 +254,7 @@ impl<S: QueryStore, H: ObservabilityHost> ControlDiagnostics<'_, S, H> {
             if overage {
                 let row = self
                     .store
-                    .read(&gateway_authority::keys::overage(&hash))
+                    .read(&gateway_authority_keys::overage(&hash))
                     .await?;
                 v["allow"] =
                     json!(data::value(row.as_ref(), at)?.is_some_and(|v| v["allow"] == true));

@@ -1,0 +1,23 @@
+[package]
+name = "gateway-native-supervisor-http"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-auth-native-contracts.workspace = true
+gateway-auth-native-proof.workspace = true
+gateway-auth-native-wire.workspace = true
+gateway-source.workspace = true
+gateway-native-http-framing.workspace = true
+gateway-native-local-transport.workspace = true
+gateway-native-supervisor.workspace = true
+gateway-native-supervisor-data.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+futures-executor = "=0.3.34"
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "gateway-provider-input"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-model-metadata.workspace = true
+gateway-prompt-cache.workspace = true
+gateway-request-normalization.workspace = true
+gateway-schema-values.workspace = true
+gateway-contracts = { path = "../gateway-contracts" }
+gateway-source = { path = "../gateway-source" }
+gateway-core.workspace = true
+gateway-local-refusal.workspace = true
+gateway-provider-chat-controls.workspace = true
+gateway-provider-policy.workspace = true
+gateway-provider-protocol.workspace = true
+gateway-provider-source.workspace = true
+gateway-schema.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

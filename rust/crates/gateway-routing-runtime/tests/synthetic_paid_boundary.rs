@@ -1,20 +1,15 @@
 //! Fake-only paid boundary derived from source_contracts.rs:63-171,321-373 at 08431133.
-use gateway_authority::{
-    keys,
-    paid_control::{
-        PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
-        PaidProviderObservation, PaidRoutingProjection, PaidSourceCheck,
-        paid_projection_source_keys,
-    },
-    paid_types::PaidRoutingPolicy,
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
+    PaidProviderObservation, PaidRoutingPolicy, PaidRoutingProjection, PaidSourceCheck,
 };
-use gateway_core::{
-    lifecycle::TransportObservation,
-    provider::{PaidProvider, UpstreamProvider},
-    source_json::SourceJson,
-    state::AuthorityStore,
+use gateway_authority_paid_evidence::paid_projection_source_keys;
+use gateway_contracts::{
+    lifecycle::TransportObservation, provider::PaidProvider, provider::UpstreamProvider,
 };
-use gateway_providers::policy::{HopFailure, paid_hop_identity};
+use gateway_core::state::AuthorityStore;
+use gateway_provider_policy::{policy::HopFailure, policy::paid_hop_identity};
 use gateway_routing_runtime::{
     session::RoutingSession,
     types::{AttemptFailure, FailureOrigin, RefusalDecision, RoutingInput, TransportState},
@@ -26,6 +21,7 @@ use gateway_routing_runtime_test_support::{
     seed::{seed_key, window},
     store::Store,
 };
+use gateway_source::source_json::SourceJson;
 use serde_json::json;
 use std::collections::BTreeMap;
 

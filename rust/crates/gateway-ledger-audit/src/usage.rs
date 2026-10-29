@@ -5,7 +5,7 @@ use gateway_admin_data::validate::reference;
 use gateway_admin_data::validate::under;
 use gateway_admin_data::validate::valid_api_request;
 use gateway_admin_data::validate::valid_kernel_policy;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_migration_ledger::{
     counter::valid_api_window,
     kernel,
@@ -33,7 +33,7 @@ pub fn inspect_api_inventory(
     state.finish(known)
 }
 pub(super) struct ApiAudit {
-    orphans: Vec<Vec<(usize, String, gateway_core::js_string::JsString16)>>,
+    orphans: Vec<Vec<(usize, String, gateway_source::js_string::JsString16)>>,
     groups: Vec<(Audit, Option<GatewayError>)>,
     windows: BTreeMap<String, Option<i64>>,
     reserved: BTreeMap<String, i64>,

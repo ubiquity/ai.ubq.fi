@@ -22,7 +22,7 @@ impl Drop for RequestHost {
 impl ObservabilityHost for RequestHost {
     fn source_string_collator(
         &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {

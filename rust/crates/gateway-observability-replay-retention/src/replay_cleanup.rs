@@ -1,6 +1,7 @@
 //! Source replay eviction/expiry claims retain their charge until all chunks are gone.
 use crate::{ReplayRetention, store};
-use gateway_core::{query::QueryStore, state::RecordKey, state::RecordMutation};
+use gateway_core::{query::QueryStore, state::RecordMutation};
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{
     data, query, query::ObservationRead, query::ReplayRows, source_object::SourceObject,
     types::ObservabilityHost,

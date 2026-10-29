@@ -1,7 +1,7 @@
 mod support;
-use gateway_core::{
-    lifecycle::DeliveryOutcome, state::StoredRecord, tuple_key::TupleKey, value::PortableValue,
-};
+use gateway_contracts::lifecycle::DeliveryOutcome;
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::{tuple_key::TupleKey, value::PortableValue};
 use gateway_observability::{ObservabilityRuntime, telemetry::*};
 use gateway_observability_ledger::{ledger::ErrorObservation, ledger::REQUEST_RETENTION_MS};
 use gateway_observability_prompt::prompt::PromptEvent;
@@ -123,7 +123,7 @@ fn counters_are_real_u64_and_valid_zero_cache_fields_stay_present() {
     assert_eq!(b["usage_reported_sample_count"], 1);
     for (key, row) in memory.rows.borrow().iter() {
         assert!(!key.contains("private-model-name"));
-        if row.value_encoding == gateway_core::value::ValueEncoding::ProfileV1 {
+        if row.value_encoding == gateway_kv_codec::value::ValueEncoding::ProfileV1 {
             assert!(matches!(
                 row.portable_value().unwrap(),
                 PortableValue::KvU64(_)

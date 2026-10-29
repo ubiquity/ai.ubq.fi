@@ -1,7 +1,7 @@
 //! Private EOF/inventory verification for one streamed native capture file.
 //! It opens no source VM database, target, credential, service or writer.
 #![cfg(all(unix, not(target_arch = "wasm32")))]
-use gateway_migration::native_stage::Captured;
+use gateway_migration_stage::native_stage::Captured;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs::File, io::Read, path::PathBuf};
@@ -26,10 +26,10 @@ struct Receipt {
     eof: bool,
     spool_directory: String,
 }
-fn failure(message: &str) -> gateway_migration::error::MigrationError {
-    gateway_core::error::GatewayError::unavailable(message, "m20_capture_verify_invalid").into()
+fn failure(message: &str) -> gateway_migration_data::error::MigrationError {
+    gateway_source::error::GatewayError::unavailable(message, "m20_capture_verify_invalid").into()
 }
-fn main() -> Result<(), gateway_migration::error::MigrationError> {
+fn main() -> Result<(), gateway_migration_data::error::MigrationError> {
     assert_eq!(std::env::args_os().len(), 1, "Private input is stdin only");
     let mut raw = Vec::new();
     std::io::stdin()
@@ -67,7 +67,7 @@ fn main() -> Result<(), gateway_migration::error::MigrationError> {
             "Private capture hash differs from its producer receipt",
         ));
     }
-    let directory = gateway_migration::native_stage::directory(&input.directory)?;
+    let directory = gateway_migration_spool::directory(&input.directory)?;
     let capture = Captured::read(&input.capture, &directory)?;
     if capture.count() != input.expected_entries {
         return Err(failure(

@@ -1,19 +1,19 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_auth::store::key;
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson, state::*,
-    value::PortableValue,
-};
-use gateway_migration::{
-    capture::{PrivateCapture, SourceEntry},
-    engine::{adopt_empty, prepare},
-    inverse::export_latest,
-};
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+
+use gateway_core::state::*;
+use gateway_kv_codec::value::PortableValue;
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_data::capture::SourceEntry;
+use gateway_migration_inverse::inverse::export_latest;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::from_source_profile_with_host;
 use gateway_profile_source::codec::to_source_profile;
 use gateway_profile_values::date::{CanonicalDates, SourceDateHost};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 struct OracleDate;
 impl SourceDateHost for OracleDate {
@@ -86,9 +86,15 @@ fn raw_source_values_restart_then_export_the_latest_state_without_surrogate_loss
             .1
             .deserialize()
             .unwrap();
-        let row = run(store.read(&key(json!(["default", name]))))
-            .unwrap()
-            .unwrap();
+        let row = run(store.read(
+            &TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("default"),
+                ScalarKeyPart::String(name),
+            ])
+            .to_record_key(),
+        ))
+        .unwrap()
+        .unwrap();
         assert_eq!(
             row.portable_value().unwrap(),
             from_source_profile_with_host(&original.value, &OracleDate).unwrap()
@@ -96,13 +102,21 @@ fn raw_source_values_restart_then_export_the_latest_state_without_surrogate_loss
         assert_eq!(row.revision, original.versionstamp);
         assert_eq!(row.expires_at_ms, Some(9000));
     }
-    let changed = key(json!(["default", "lone-high"]));
+    let changed = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("default"),
+        ScalarKeyPart::String("lone-high"),
+    ])
+    .to_record_key();
     let latest = PortableValue::StringUtf16(JsString16::from_units(vec![0xde00, 0x78, 0xd83d]));
     store.put(
         changed,
         StoredRecord::profile_v2("latest-raw-write", latest.clone(), Some(8100)).unwrap(),
     );
-    let deleted = key(json!(["default", "lone-low"]));
+    let deleted = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("default"),
+        ScalarKeyPart::String("lone-low"),
+    ])
+    .to_record_key();
     let old = run(store.read(&deleted)).unwrap().unwrap();
     run(store.commit(AtomicTransition {
         checks: vec![RevisionCheck {
@@ -149,9 +163,16 @@ fn key_textencoder_fold_is_explicit_and_value_units_never_fold() {
         &prepare(&input, &CanonicalDates).unwrap(),
     ))
     .unwrap();
-    let stored = run(store.read(&key(json!(["default", "key-high", "\u{fffd}"]))))
-        .unwrap()
-        .unwrap();
+    let stored = run(store.read(
+        &TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("default"),
+            ScalarKeyPart::String("key-high"),
+            ScalarKeyPart::String("\u{fffd}"),
+        ])
+        .to_record_key(),
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(
         stored.portable_value().unwrap(),
         PortableValue::StringUtf16(JsString16::from_units(vec![0xd83d]))
@@ -184,8 +205,14 @@ fn full_capture_refuses_a_partial_binary_view_before_writing() {
     let store = SqliteStore::open(&directory.file("partial-view.sqlite3"));
     assert!(prepare(&input, &CanonicalDates).is_err());
     assert!(
-        run(store.read(&key(json!(["default", "partial-view"]))))
-            .unwrap()
-            .is_none()
+        run(store.read(
+            &TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("default"),
+                ScalarKeyPart::String("partial-view")
+            ])
+            .to_record_key()
+        ))
+        .unwrap()
+        .is_none()
     );
 }

@@ -1,10 +1,8 @@
 //! Ordinary source data helpers; no store, transaction or authority proof is exposed.
+use crate::types::ObservabilityHost;
 use gateway_auth_primitives::crypto::uuid_from_random;
-use gateway_core::{
-    state::RecordKey, state::RevisionCheck, state::StoredRecord, tuple_key::DecodedKeyPart,
-    tuple_key::TupleKey,
-};
-use gateway_observability_contracts::types::ObservabilityHost;
+use gateway_core::{state::RevisionCheck, state::StoredRecord};
+use gateway_kv_codec::{key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey};
 use gateway_source::error::GatewayError;
 use serde_json::Value;
 pub fn error(message: impl Into<String>) -> GatewayError {
@@ -53,7 +51,7 @@ pub fn value(row: Option<&StoredRecord>, now: i64) -> Result<Option<&Value>, Gat
 }
 pub fn now<H: ObservabilityHost>(host: &H) -> Result<i64, GatewayError> {
     let now = host.now_ms();
-    if (0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&now) {
+    if (0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&now) {
         Ok(now)
     } else {
         Err(error("Invalid observation clock"))

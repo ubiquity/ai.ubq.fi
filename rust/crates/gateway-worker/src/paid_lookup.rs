@@ -1,13 +1,16 @@
 //! Fixed OpenLux billing transport over the shared source-derived lookup plan.
-use crate::authority::RemoteAuthorityStore;
 use crate::host::provider_secret;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
-use gateway_authority::paid_types::{PaidAttempt, PaidCorrelation, PaidReservation, PaidUsage};
-use gateway_core::{error::GatewayError, provider::PaidProvider, state::AuthorityStore};
-use gateway_providers::paid_lookup::{
-    LookupPlan, LookupStep, OVERALL_TIMEOUT_MS, TokenLog, plan_lookup,
+use gateway_authority_paid_records::{PaidAttempt, PaidCorrelation, PaidReservation, PaidUsage};
+use gateway_contracts::provider::PaidProvider;
+use gateway_core::state::AuthorityStore;
+use gateway_provider_services::{
+    paid_lookup::LookupPlan, paid_lookup::LookupStep, paid_lookup::OVERALL_TIMEOUT_MS,
+    paid_lookup::TokenLog, paid_lookup::plan_lookup,
 };
+use gateway_source::error::GatewayError;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
 use serde_json::Value;
@@ -28,12 +31,13 @@ pub(crate) async fn stored_attempt(
     reservation: &PaidReservation,
 ) -> Result<PaidAttempt, GatewayError> {
     let key =
-        gateway_authority::keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
+        gateway_authority_keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
     let row = store
         .read(&key)
         .await?
         .ok_or_else(|| unavailable("The paid attempt is unavailable."))?;
-    let attempt = gateway_authority::paid::source_records::decode_paid_attempt_record(&key, &row)?;
+    let attempt =
+        gateway_authority_paid_records::source_records::decode_paid_attempt_record(&key, &row)?;
     if attempt.v != 3 || attempt.reservation != *reservation {
         return Err(unavailable(
             "The billing lookup does not match its admitted attempt.",
@@ -45,14 +49,18 @@ pub(crate) async fn stored_attempt(
 pub(crate) async fn terminal_usage(
     store: &RemoteAuthorityStore,
     reservation: &PaidReservation,
-    usage: Option<&gateway_core::source_usage::UsageTokens>,
-    pricing: Option<&gateway_core::source_json::SourceJson>,
+    usage: Option<&gateway_contracts::source_usage::UsageTokens>,
+    pricing: Option<&gateway_source::source_json::SourceJson>,
 ) -> Result<Option<PaidUsage>, GatewayError> {
     if reservation.provider != PaidProvider::Surplus {
         return Ok(None);
     }
     let attempt = stored_attempt(store, reservation).await?;
-    Ok(gateway_authority::paid::source_usage::surplus_usage_from_source(&attempt, usage, pricing))
+    Ok(
+        gateway_authority_paid_records::source_usage::surplus_usage_from_source(
+            &attempt, usage, pricing,
+        ),
+    )
 }
 
 pub async fn lookup(

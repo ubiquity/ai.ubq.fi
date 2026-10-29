@@ -1,0 +1,19 @@
+[package]
+name = "gateway-native-https-test-support"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+gateway-auth-native-wire.workspace = true
+gateway-auth-native-proof.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-authority.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
+
+[lints]
+workspace = true

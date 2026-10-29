@@ -1,9 +1,9 @@
 //! Source image-edit parsing using bounded original bytes and real FormData.
-use gateway_core::{
+use gateway_provider_images::extras::MultipartFile;
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_providers::extras::MultipartFile;
 use worker::{
     FormData, Method, Request, RequestInit,
     js_sys::{Array, Reflect, Uint8Array, try_iter},
@@ -168,9 +168,9 @@ mod source_tests {
         let value =
             super::image_json(br#"{"prompt":"p\ud800","model":"m\udc00","bad\ud800":true}"#)
                 .unwrap();
-        let prompt = gateway_core::source_serialization::member(&value, "prompt")
+        let prompt = gateway_source::source_serialization::member(&value, "prompt")
             .as_ref()
-            .and_then(gateway_core::source_serialization::string)
+            .and_then(gateway_source::source_serialization::string)
             .unwrap();
         assert_eq!(prompt.as_units(), &[112, 0xd800]);
         assert!(
@@ -185,7 +185,7 @@ mod source_tests {
     fn image_json_retains_existing_decoder_bom_and_invalid_json_error_phase() {
         let value = super::image_json(b"\xef\xbb\xbf{\"prompt\":\"hello\"}").unwrap();
         assert_eq!(
-            gateway_core::source_serialization::member(&value, "prompt")
+            gateway_source::source_serialization::member(&value, "prompt")
                 .unwrap()
                 .as_str(),
             "\"hello\""

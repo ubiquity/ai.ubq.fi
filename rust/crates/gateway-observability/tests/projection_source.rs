@@ -1,9 +1,13 @@
 mod support;
+use gateway_contracts::source_usage::extract_usage_tokens;
 use gateway_core::{
-    query::QueryStore, source_control::encode_source_control_record,
-    source_usage::extract_usage_tokens, state::RecordKey, state::StoredRecord, tuple_key::KeyPart,
-    tuple_key::TupleKey, value::PortableValue, value::ValueEncoding,
+    query::QueryStore, source_control::encode_source_control_record, state::StoredRecord,
 };
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey, value::PortableValue,
+    value::ValueEncoding,
+};
+use gateway_model_selection::aliases::SourceStringCollator;
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_contracts::types::ObservabilityHost;
 use gateway_observability_ledger::{
@@ -12,7 +16,6 @@ use gateway_observability_ledger::{
 use gateway_observability_test_support::{
     source_fixture::CapturedCollator, source_fixture::assert_source_eq, source_fixture::fixture,
 };
-use gateway_schema::aliases::SourceStringCollator;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,

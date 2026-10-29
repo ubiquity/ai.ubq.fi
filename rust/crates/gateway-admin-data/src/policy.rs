@@ -1,11 +1,9 @@
 //! Source-profile policy and ordinary import plans; schema binding remains mandatory.
 mod prefixes;
 pub mod retention;
-use gateway_core::{
-    error::GatewayError,
-    state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord},
-    value::PortableValue,
-};
+use gateway_source::error::GatewayError;
+use gateway_core::state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord};
+use gateway_kv_codec::value::PortableValue;
 use gateway_migration_ledger::rows::starts;
 use gateway_profile_source::line::NormalizedEntry;
 use gateway_profile_values::scalar::error;

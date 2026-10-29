@@ -1,14 +1,14 @@
 //! Source catalog runtime over one strong authority and credential-owner publication.
-use crate::authority::RemoteAuthorityStore;
-use crate::catalog_host::Host;
-use crate::host::PlatformHost;
-use gateway_catalog_provider::host::CatalogHost;
-use gateway_catalog_runtime::CatalogRuntime;
-use gateway_core::{error::GatewayError, source_json::SourceJson};
+use crate::{catalog_host::Host, host::PlatformHost};
+use gateway_catalog_admin::admin::CatalogAdmin;
+use gateway_catalog_versioned::VersionedCatalog;
 use gateway_schema::{catalog::CatalogInput, catalog_cache::CatalogResponse};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_storage::store::now_ms;
 use std::rc::Rc;
 use worker::{Context, Env, Request};
+use {gateway_catalog_provider::host::CatalogHost, gateway_catalog_runtime::CatalogRuntime};
 
 pub const DIRECT_PROVIDERS: &[(&str, &str)] = &[
     ("deepseek", "DEEPSEEK_API_KEY"),
@@ -32,14 +32,14 @@ pub async fn public_response(
     env: &Env,
     platform: &PlatformHost,
     context: Rc<Context>,
-) -> Result<gateway_auth::types::AuthResponse, GatewayError> {
+) -> Result<gateway_auth_contracts::types::AuthResponse, GatewayError> {
     let host = Host {
         store: store.clone(),
         env: env.clone(),
         platform: platform.clone(),
         context,
     };
-    Ok(gateway_catalog_provider::response::into_auth_response(
+    Ok(gateway_catalog_admin::response::into_auth_response(
         service().public_catalog(store, &host).await,
     ))
 }
@@ -97,7 +97,7 @@ pub struct CatalogState {
 impl CatalogState {
     pub async fn resolve_inference(
         mut self,
-        document: &gateway_schema::source_request::SourceRequestDocument,
+        document: &gateway_request_normalization::document::SourceRequestDocument,
     ) -> Result<Self, GatewayError> {
         self.service
             .resolve_inference_catalog(&self.host.store, &self.host, &mut self.input, document)
@@ -147,7 +147,7 @@ impl CatalogState {
     pub async fn decision_models(
         &self,
         store: &RemoteAuthorityStore,
-    ) -> Result<Vec<gateway_core::model::ModelId>, GatewayError> {
+    ) -> Result<Vec<gateway_contracts::model::ModelId>, GatewayError> {
         let publication = self.host.publication().await?;
         let state = self
             .service
@@ -179,11 +179,11 @@ impl CatalogState {
             .flat_map(|snapshot| snapshot.models)
             .filter(gateway_decision_protocol::catalog::decision_model)
             .filter_map(|row| {
-                gateway_core::source_serialization::member(&row, "id")
+                gateway_source::source_serialization::member(&row, "id")
                     .as_ref()
-                    .and_then(gateway_core::source_serialization::string)
+                    .and_then(gateway_source::source_serialization::string)
             })
-            .map(gateway_core::model::ModelId::from_source)
+            .map(gateway_contracts::model::ModelId::from_source)
             .collect())
     }
     pub async fn native_models(

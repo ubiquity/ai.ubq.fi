@@ -288,3 +288,24 @@ fn actual_measurement_projection_and_its_error_fallback_remain_caller_owned() ->
     assert_eq!(failed, estimate(&body, PromptProfile::Cerebras)?);
     Ok(())
 }
+
+#[test]
+fn declaration_preserves_the_complete_frozen_policy_and_internal_summary() {
+    let policy = gateway_prompt_policy::declaration::FORWARDED_PAYLOAD_DECLARATION;
+    assert_eq!(policy.version, "deepseek-forwarded-payload/v2");
+    assert_eq!(policy.mode, "bytes");
+    assert_eq!(policy.per_message_limit, 65_536);
+    let summary = policy.summary_exemption;
+    assert_eq!(summary.version, "codex-compaction-summary/v1");
+    assert_eq!(
+        summary.prefix,
+        "Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:"
+    );
+    assert_eq!(summary.prefix.len(), 399);
+    assert_eq!(summary.prefix_bytes, 399);
+    assert_eq!(
+        summary.prefix_sha256,
+        "e9b088e794a6bb9082ac053fcc760bd818d7e720ee4bcdc72c6e480de7b7cb0e"
+    );
+    assert_eq!(summary.max_per_request, 1);
+}

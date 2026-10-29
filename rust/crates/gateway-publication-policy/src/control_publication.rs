@@ -1,21 +1,16 @@
 //! Fixed same-authority control publication by an authenticated configuration
 //! owner. Constructor inputs are trusted runtime configuration, never HTTP JSON.
-use gateway_auth::{
-    crypto::{Secret, sha256_hex},
-    native_auth::{AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity},
-    store,
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeTransportIdentity};
+use gateway_auth_primitives::{crypto::Secret, crypto::sha256_hex, store};
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
-use gateway_authority::{
-    keys,
-    paid_control::{
-        PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
-    },
-};
-use gateway_core::{
-    error::GatewayError,
-    provider::PaidProvider,
-    state::{AuthorityStore, RecordMutation, RevisionCheck, StoredRecord},
-};
+use gateway_contracts::provider::PaidProvider;
+use gateway_core::state::{AuthorityStore, RecordMutation, RevisionCheck, StoredRecord};
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 
 /// Dedicated constructor state; neither the keys nor their raw configuration are
@@ -85,7 +80,7 @@ impl ConfiguredPaidInputs {
         struct Fingerprint<'a> {
             v: u32,
             immutable: &'a Value,
-            runtime: Option<gateway_core::source_json::SourceJson>,
+            runtime: Option<gateway_source::source_json::SourceJson>,
             surplus_binding: Option<String>,
             openlux_discovery_binding: Option<String>,
             openlux_binding: Option<String>,
@@ -101,7 +96,7 @@ impl ConfiguredPaidInputs {
             openlux_discovery_binding: self.discovery_binding(PaidProvider::Metered),
             openlux_binding: self.binding(PaidProvider::Metered),
         };
-        let encoded = gateway_core::source_json::SourceJson::from_serializable(&value)?;
+        let encoded = gateway_source::source_json::SourceJson::from_serializable(&value)?;
         Ok(sha256_hex(encoded.as_str().as_bytes()))
     }
 
@@ -163,8 +158,13 @@ pub fn configured_paid_binding(provider: PaidProvider, key: &Secret) -> String {
     sha256_hex(format!("uos-paid-provider-binding-v1\0{name}\0{}", key.expose()).as_bytes())
 }
 
-pub fn runtime_config_key() -> gateway_core::state::RecordKey {
-    store::key(json!(["uos_ai", "runtime_config", "v2"]))
+pub fn runtime_config_key() -> gateway_kv_codec::key::RecordKey {
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("runtime_config"),
+        ScalarKeyPart::String("v2"),
+    ])
+    .to_record_key()
 }
 
 fn owner(identity: &NativeTransportIdentity) -> PaidControlOwner {
@@ -455,11 +455,10 @@ mod candidate_tests {
 
     #[test]
     fn profile_v2_runtime_uses_existing_lossless_fingerprint_envelope() {
-        use gateway_core::{
-            source_control::{decode_source_control_record, encode_source_control_record},
-            source_json::SourceJson,
-            source_serialization as source,
+        use gateway_core::source_control::{
+            decode_source_control_record, encode_source_control_record,
         };
+        use gateway_source::{source_json::SourceJson, source_serialization as source};
         let identity = identity();
         let owner = owner(&identity);
         let inputs = inputs();
@@ -467,7 +466,7 @@ mod candidate_tests {
         let runtime = encode_source_control_record("planned-runtime", &raw, None).unwrap();
         assert_eq!(
             runtime.value_encoding,
-            gateway_core::value::ValueEncoding::ProfileV2
+            gateway_kv_codec::value::ValueEncoding::ProfileV2
         );
         let expected = source::object_keys(vec![
             (

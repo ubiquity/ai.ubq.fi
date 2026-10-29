@@ -1,13 +1,19 @@
 //! Fixed native owner-effect injection. The shared authority implementation
 //! owns action preparation, current-fact checks, claims and reconciliation.
-use gateway_auth::native_auth::{AuthenticatedNativeOwner, NativeAuthHeaders};
+use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
 use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlResponse};
-use gateway_core::error::GatewayError;
-use std::{
-    future::Future,
-    time::{Instant, SystemTime, UNIX_EPOCH},
-};
+use gateway_source::error::GatewayError;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+/// The context is reachable, but only the real receiver can construct it.
+/// ```compile_fail,E0624
+/// use gateway_native::owner_control::NativeControlContext;
+/// use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+/// let headers=NativeAuthHeaders {version:"1",key_id:"key",time_ms:"1",nonce:"nonce",mac:"mac"};
+/// let disconnected=||false;
+/// let _=NativeControlContext::admitted(std::time::Instant::now(),&disconnected,headers);
+/// ```
 pub struct NativeControlContext<'a> {
     deadline: Instant,
     disconnected: &'a dyn Fn() -> bool,
@@ -37,7 +43,7 @@ impl<'a> NativeControlContext<'a> {
             .duration_since(UNIX_EPOCH)
             .ok()
             .and_then(|duration| i64::try_from(duration.as_millis()).ok())
-            .filter(|value| *value <= gateway_core::identity::MAX_SAFE_INTEGER)
+            .filter(|value| *value <= gateway_contracts::identity::MAX_SAFE_INTEGER)
             .ok_or_else(|| {
                 GatewayError::unavailable(
                     "Native control clock is unavailable",
@@ -51,10 +57,7 @@ impl<'a> NativeControlContext<'a> {
     }
     pub fn check(&self) -> Result<(), GatewayError> {
         if self.cancelled() {
-            return Err(GatewayError::unavailable(
-                "Native control was interrupted; reconcile the original action",
-                "native_control_outcome_unknown",
-            ));
+            return Err(gateway_auth_native_proof::native_context::control_interrupted());
         }
         Ok(())
     }
@@ -72,13 +75,4 @@ pub trait NativeOwnerRenewalHandler: Send + Sync {
         raw_body: &[u8],
         context: &NativeControlContext<'_>,
     ) -> Result<NativeControlResponse, GatewayError>;
-}
-
-/// Constructor-owned bridge to the original durable action. The start hook
-/// must atomically commit possible-effect intent and refuse replay/unknown.
-/// None of these methods can be supplied by deserializing request fields.
-pub trait NativeRenewalGuard {
-    fn now_ms(&self) -> Result<i64, GatewayError>;
-    fn ensure_current(&self) -> impl Future<Output = Result<(), GatewayError>>;
-    fn start_refresh(&self) -> impl Future<Output = Result<(), GatewayError>>;
 }

@@ -5,20 +5,23 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
     source_input as body,
 };
-use gateway_admin_runtime::{AdminRuntime, RuntimeConfig, capabilities::UnboundCapabilities};
-use gateway_auth::{
+use gateway_admin_runtime::AdminRuntime;
+use gateway_admin_runtime_contracts::{RuntimeConfig, capabilities::UnboundCapabilities};
+use gateway_auth_contracts::{
     types::{AuthHost, AuthMethod, AuthPrincipal, AuthResponse},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    query::*,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
+    query::*, source_control::decode_source_control_record,
+    source_control::encode_source_control_record, state::*,
+};
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::*,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -96,12 +99,12 @@ impl QueryStore for Store {
     }
 }
 struct Clock;
-impl gateway_authority::store::AuthorityClock for Clock {
+impl gateway_authority_contracts::AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(NOW)
     }
 }
-impl gateway_authority::store::TokenSource for Store {
+impl gateway_authority_contracts::TokenSource for Store {
     fn next_token(&self) -> Result<String, GatewayError> {
         let n = self.serial.get() + 1;
         self.serial.set(n);
@@ -368,11 +371,11 @@ fn nonreset_admin_preserves_actual_index_and_cas_while_live_retention_remains_or
     let reservation = run(authority.reserve_kernel(
         "owner",
         "repo",
-        &gateway_core::identity::RequestId("real-reservation".into()),
+        &gateway_contracts::identity::RequestId("real-reservation".into()),
         "responses",
         NOW,
     ))?;
-    let key = gateway_authority::keys::kernel_window("owner", Some("repo"));
+    let key = gateway_authority_keys::kernel_window("owner", Some("repo"));
     let live = store.rows.borrow()[&key.0].clone();
     assert_eq!(
         live.expires_at_ms,
@@ -410,7 +413,7 @@ fn nonreset_admin_preserves_actual_index_and_cas_while_live_retention_remains_or
     assert_eq!(*store.rows.borrow(), before);
     run(authority.record_kernel_terminal_intent(
         &reservation,
-        gateway_authority::kernel::KernelTerminal::Committed,
+        gateway_authority_kernel_protocol::KernelTerminal::Committed,
         NOW,
     ))?;
     assert_eq!(
@@ -440,7 +443,7 @@ fn positive_mapless_source_view_is_not_a_writable_or_live_bound_window()
         AdminOperation::KernelUsageSet,
         input(selector(&label, "repo", true)),
     ))?;
-    let key = gateway_authority::keys::kernel_window("owner", Some("repo"));
+    let key = gateway_authority_keys::kernel_window("owner", Some("repo"));
     let before = store.rows.borrow()[&key.0].clone();
     let mut document = decode_source_control_record(&before)?;
     body::set(&mut document, "reserved_requests", body::json(&1));
@@ -465,7 +468,7 @@ fn positive_mapless_source_view_is_not_a_writable_or_live_bound_window()
         run(authority.reserve_kernel(
             "owner",
             "repo",
-            &gateway_core::identity::RequestId("unbound".into()),
+            &gateway_contracts::identity::RequestId("unbound".into()),
             "responses",
             NOW
         ))
@@ -508,7 +511,11 @@ fn queue_keeps_original_broader_labels_and_actual_source_presence_filter() {
         capabilities: &UnboundCapabilities,
         config: &config,
     };
-    let key = gateway_auth::store::key(json!(["uos_ai", "kernel_policy_queue"]));
+    let key = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("kernel_policy_queue"),
+    ])
+    .to_record_key();
     store.rows.borrow_mut().insert(
         key.0,
         encode_source_control_record("actual-queue-input", &fixture.input_rows, None).unwrap(),
@@ -520,7 +527,7 @@ fn queue_keeps_original_broader_labels_and_actual_source_presence_filter() {
         ),
         &fixture.initial_response.body,
     );
-    let key = gateway_authority::keys::kernel_policy_source(&fixture.policy_owner, None).unwrap();
+    let key = gateway_authority_keys::kernel_policy_source(&fixture.policy_owner, None).unwrap();
     store.rows.borrow_mut().insert(
         key.0,
         encode_source_control_record("source-presence-only", &fixture.policy_value, None).unwrap(),
@@ -639,7 +646,7 @@ fn inherited_active_org_index_is_not_discarded_by_source_repo_policy_creation()
     let reservation = run(authority.reserve_kernel(
         "owner",
         "repo",
-        &gateway_core::identity::RequestId("actual-org-reservation".into()),
+        &gateway_contracts::identity::RequestId("actual-org-reservation".into()),
         "responses",
         NOW,
     ))?;

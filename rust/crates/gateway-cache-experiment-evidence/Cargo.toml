@@ -1,0 +1,26 @@
+[package]
+name = "gateway-cache-experiment-evidence"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-model-snapshot.workspace = true
+gateway-prompt-cache.workspace = true
+gateway-schema-values.workspace = true
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
+gateway-auth = { path = "../gateway-auth" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
+gateway-core = { path = "../gateway-core" }
+gateway-schema = { path = "../gateway-schema" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

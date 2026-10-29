@@ -4,17 +4,17 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
 };
 use gateway_admin_keys::keys::*;
-use gateway_auth::{
-    crypto::Secret,
-    types::{AuthConfig, AuthHost, AuthRequest, AuthResponse},
-    upstream::*,
+use gateway_auth_contracts::{
+    types::AuthConfig, types::AuthHost, types::AuthRequest, types::AuthResponse, upstream::*,
 };
+use gateway_auth_primitives::crypto::Secret;
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryEntry, QueryPage, QueryRequest, QuerySelector, QueryStore},
-    source_json::SourceJson,
-    state::*,
+    query::QueryEntry, query::QueryPage, query::QueryRequest, query::QuerySelector,
+    query::QueryStore, state::AtomicTransition, state::AuthorityStore, state::CommitOutcome,
+    state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -159,10 +159,10 @@ impl AuthHost for Host {
     }
 }
 
-impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
-        _: &gateway_auth::webauthn::CosePublicKey,
+        _: &gateway_auth_contracts::webauthn::CosePublicKey,
     ) -> Result<(), GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",
@@ -171,7 +171,7 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
     }
     async fn verify_signature(
         &self,
-        _: gateway_auth::webauthn::SignatureInput,
+        _: gateway_auth_contracts::webauthn::SignatureInput,
     ) -> Result<bool, GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",
@@ -204,14 +204,14 @@ impl AdminHost for Caps {
 fn seeded_store() -> Store {
     let store = Store::default();
     let record = api_key();
-    let key = gateway_auth::api_keys::id_key(&record.policy.id);
+    let key = gateway_auth_primitives::api_keys::id_key(&record.policy.id);
     let RecordMutation::Put { key, record } =
         record_mutation(key, &record, None, "record-revision").unwrap()
     else {
         panic!("API key record is a put");
     };
     store.rows.borrow_mut().insert(key.0, record);
-    let window = gateway_authority::keys::api_window("key-1", "v3:1000", 1000);
+    let window = gateway_authority_keys::api_window("key-1", "v3:1000", 1000);
     store.rows.borrow_mut().insert(
         window.0,
         StoredRecord::json(

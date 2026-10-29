@@ -8,12 +8,15 @@ publish.workspace = true
 [features]
 fixture-phase = []
 
-[dependencies]
-gateway-core.workspace = true
-gateway-providers.workspace = true
-serde_json.workspace = true
-futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
-worker.workspace = true
-
 [lints]
 workspace = true
+
+[dependencies]
+gateway-contracts = { workspace = true }
+gateway-source = { workspace = true }
+serde_json = { workspace = true }
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+worker = { workspace = true }
+gateway-provider-events = { workspace = true }
+gateway-provider-stream = { workspace = true }
+gateway-provider-protocol = { workspace = true }

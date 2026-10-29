@@ -1,9 +1,11 @@
 //! Fixed synthetic source -> one persisted authority -> latest native inverse.
-use gateway_core::error::GatewayError;
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 #[cfg(not(target_arch = "wasm32"))]
 use gateway_migration_test_support::fixture;
 #[cfg(not(target_arch = "wasm32"))]
 use gateway_migration_test_support::sqlite_store;
+use gateway_source::error::GatewayError;
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(
@@ -12,16 +14,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "The fixture accepts no source, credential or target arguments"
     );
     use fixture::{Directory, run};
-    use gateway_auth::store::key;
-    use gateway_core::{source_graph::GraphNode, state::*};
-    use gateway_migration::{
-        engine::adopt_empty,
-        native_capture::{NativeCapture, prepare_native},
-        native_inverse::export_native_latest,
-    };
+
+    use gateway_core::state::*;
+    use gateway_migration_data::native_capture::NativeCapture;
+    use gateway_migration_inverse::native_inverse::export_native_latest;
+    use gateway_migration_prepare::engine::adopt_empty;
+    use gateway_migration_prepare::engine::prepare_native;
+    use gateway_source_graph::graph::GraphNode;
     use sqlite_store::SqliteStore;
     struct Tokens(std::sync::atomic::AtomicU64);
-    impl gateway_authority::store::TokenSource for Tokens {
+    impl gateway_authority_contracts::TokenSource for Tokens {
         fn next_token(&self) -> Result<String, GatewayError> {
             Ok(format!(
                 "native-fixture-{}",
@@ -30,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     struct Clock;
-    impl gateway_authority::store::AuthorityClock for Clock {
+    impl gateway_authority_contracts::AuthorityClock for Clock {
         fn now_ms(&self) -> Result<i64, GatewayError> {
             Ok(2300)
         }
@@ -45,7 +47,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = SqliteStore::open(&path);
     let token = format!("u_{}", "1".repeat(64));
     assert_eq!(
-        run(gateway_auth::api_keys::authenticate(&store, &token, 2300))?.key_id,
+        run(gateway_auth_primitives::api_keys::authenticate(
+            &store, &token, 2300
+        ))?
+        .key_id,
         "offline-key"
     );
     let authority = gateway_authority::store::Authority::with_clock(
@@ -54,13 +59,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Clock,
     );
     run(authority.reserve_api_key(
-        &gateway_core::identity::ApiKeyId("offline-key".into()),
-        &gateway_core::identity::RequestId("native-post-restart-admission".into()),
+        &gateway_contracts::identity::ApiKeyId("offline-key".into()),
+        &gateway_contracts::identity::RequestId("native-post-restart-admission".into()),
         "responses",
         2300,
     ))?;
     drop(authority);
-    let key = key(serde_json::json!(["default", "native-graph", 0]));
+    let key = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("default"),
+        ScalarKeyPart::String("native-graph"),
+        ScalarKeyPart::Number(0),
+    ])
+    .to_record_key();
     let original = run(store.read(&key))?.ok_or("Expected retained fixture row")?;
     let mut graph = original.source_graph_value()?;
     for node in &mut graph.nodes {

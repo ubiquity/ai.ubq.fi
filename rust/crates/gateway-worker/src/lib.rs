@@ -1,7 +1,5 @@
-use gateway_core::{
-    error::GatewayError,
-    health::{DEPLOYMENT_ID_HEADER, GIT_SHA_HEADER, ReleaseIdentity},
-};
+use gateway_contracts::health::{DEPLOYMENT_ID_HEADER, GIT_SHA_HEADER, ReleaseIdentity};
+use gateway_source::error::GatewayError;
 #[cfg(feature = "entrypoint")]
 use worker::event;
 use worker::{Context, Env, Method, Request, Response, Result};
@@ -10,8 +8,6 @@ use {gateway_worker_web::response::GatewayResponse, native_host::NativeBindings,
 mod admin_host;
 mod admin_support_host;
 mod admission;
-mod agent_messages;
-pub mod authority;
 mod cache_experiment_host;
 mod candidate_bindings;
 mod catalog;
@@ -36,7 +32,6 @@ mod lifecycle;
 mod live_host;
 mod live_http;
 /// Rust-only fixture composition; no native capture HTTP route is exposed.
-pub mod migration_host;
 mod native_authority;
 pub mod native_host;
 mod native_transport;
@@ -152,7 +147,7 @@ pub async fn fetch_with_bindings(
             env,
             Rc::new(context),
             identity.git_sha(),
-            gateway_core::identity::RequestId(request_id.clone()),
+            gateway_contracts::identity::RequestId(request_id.clone()),
             native,
         )
         .await

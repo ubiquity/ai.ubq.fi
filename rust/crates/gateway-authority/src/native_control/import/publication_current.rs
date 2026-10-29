@@ -1,31 +1,35 @@
 //! Recognize only the exact already-published group owned by this original import.
 //! This private issuer never accepts arbitrary revisions, flags or ignored keys.
-use super::super::actor::{self, NativeActorScope, StoredNativeActor};
-use super::super::receiver::NativeRenewalAuthority;
-use super::super::rows::{self, GenerationEffect, OperationRow, Phase, TerminalPublication};
-use super::super::{NativeRenewalCancellation, OWNER_RENEWAL_MAX_MS};
-use super::{action::ImportActionRow, effects, unavailable};
-use crate::store::{TokenSource, Transaction};
-use crate::{
-    keys,
-    paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig},
-    routing_types::SubscriptionPool,
+use super::{
+    super::{OWNER_RENEWAL_MAX_MS, actor, receiver::NativeRenewalAuthority},
+    effects, unavailable,
 };
-use gateway_auth::provider_credentials::{
+use crate::store::Transaction;
+use gateway_auth_credentials::provider_credentials::{
     MANAGED_NATIVE_SOURCE_VERSION, codex_source_pool_key, parse_codex_source_pool,
 };
 use gateway_auth_native_wire::publication_data::{
     ImportCatalogDisposition, ImportPublicationDataV1,
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
-use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
+use gateway_authority_actor_records::{legacy::StoredNativeActor, scope::NativeActorScope};
+use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
+use gateway_authority_keys as keys;
+use gateway_authority_native_records::{
+    import_action::ImportActionRow,
+    rows::{self, GenerationEffect, OperationRow, Phase, TerminalPublication},
+};
+use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
+use gateway_authority_routing_records::types::SubscriptionPool;
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 use serde_json::Value;
+use {gateway_model_snapshot::snapshot::ModelSnapshot, gateway_schema::catalog_store};
 
 /// Response DATA only. No serializer, permission constructor or stored schema.
 #[derive(Debug, PartialEq)]
 pub(crate) struct NativeImportModelsProjection {
     pub(crate) count: usize,
-    pub(crate) source: gateway_core::js_string::JsString16,
+    pub(crate) source: gateway_source::js_string::JsString16,
     pub(crate) updated_at_ms: i64,
     pub(crate) client_version: Option<String>,
 }
@@ -67,7 +71,7 @@ pub(super) async fn completion_metadata<
             return Err(unavailable());
         }
         record.validate_version()?;
-        let sort_key = gateway_core::tuple_key::TupleKey::from_record_key(&key)?;
+        let sort_key = gateway_kv_codec::tuple_key::TupleKey::from_record_key(&key)?;
         let payload = serde_json::to_string(&record.value).map_err(|_| unavailable())?;
         let encoding = serde_json::to_value(record.value_encoding).map_err(|_| unavailable())?;
         let encoding = encoding.as_str().ok_or_else(unavailable)?;
@@ -234,7 +238,7 @@ pub(super) async fn verify<S: AuthorityStore, I: TokenSource, C: NativeRenewalCa
     let raw: Value = tx.read(&source_key).await?.ok_or_else(unavailable)?;
     let source = parse_codex_source_pool(&raw)?.ok_or_else(unavailable)?;
     let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(unavailable)?;
-    normalized.validate()?;
+    gateway_authority_routing_evidence::validation::validate_pool(&normalized)?;
     if tx.revision(&source_key).as_deref() != Some(publication.source_revision.as_str())
         || tx.revision(&keys::pool()).as_deref() != Some(publication.normalized_revision.as_str())
         || publication.source_revision != publication.publication_revision
@@ -269,7 +273,7 @@ pub(super) async fn verify<S: AuthorityStore, I: TokenSource, C: NativeRenewalCa
         || identity.credential_version.0 != publication.credential_version
         || identity.native_generation_hash != publication.access_generation
         || native.generation_hash != publication.access_generation
-        || native.codex_home != control.registered.home
+        || native.codex_home != control.registered.registered_home()
         || native.external_user_id.is_some()
         || !account.refresh_token.expose().is_empty()
         || native.managed_source.as_ref().is_none_or(|value| {
@@ -282,7 +286,7 @@ pub(super) async fn verify<S: AuthorityStore, I: TokenSource, C: NativeRenewalCa
     let catalog: Option<ModelSnapshot> = tx
         .read_source_control(&catalog_store::codex_snapshot_key())
         .await?;
-    let _: Option<gateway_core::source_json::SourceJson> = tx
+    let _: Option<gateway_source::source_json::SourceJson> = tx
         .read_source_control(&catalog_store::runtime_config_key())
         .await?;
     let generation_value: Option<String> = tx.read(&catalog_store::auth_generation_key()).await?;

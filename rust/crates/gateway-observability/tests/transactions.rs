@@ -1,9 +1,11 @@
 mod support;
+use gateway_contracts::lifecycle::DeliveryOutcome;
 use gateway_core::{
-    lifecycle::DeliveryOutcome, query::QueryPage, query::QueryRequest, query::QueryStore,
-    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
-    state::RecordMutation, state::RevisionCheck, state::StoredRecord, tuple_key::TupleKey,
+    query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
+    state::AuthorityStore, state::CommitOutcome, state::RecordMutation, state::RevisionCheck,
+    state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_contracts::{
     types::HealthEvent, types::HealthProvider, types::HealthTarget, types::HealthWrite,
@@ -93,8 +95,10 @@ fn error() -> ErrorObservation {
 fn fixture(mode: Race) -> (Store, Host) {
     let memory = Memory::default();
     let source =
-        TupleKey::from_scalar_parts(&[gateway_core::tuple_key::ScalarKeyPart::String("source")])
-            .to_record_key();
+        TupleKey::from_scalar_parts(&[gateway_kv_codec::tuple_key::ScalarKeyPart::String(
+            "source",
+        )])
+        .to_record_key();
     memory.rows.borrow_mut().insert(
         source.0.clone(),
         StoredRecord::json("current-source", serde_json::json!({"v":1}), None),

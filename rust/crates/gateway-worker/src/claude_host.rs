@@ -3,22 +3,23 @@ pub(crate) mod admin;
 pub(crate) mod catalog;
 pub(crate) mod platform;
 
-use crate::{authority::RemoteAuthorityStore, host::PlatformHost};
-use gateway_admin_runtime::claude_generation::StateGeneration;
-use gateway_auth::types::{AuthMethod, AuthPrincipal};
+use crate::host::PlatformHost;
+use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
+use gateway_claude_policy::{host::PoolConfig, host::SelectionInput};
+use gateway_claude_roster::claude_generation::StateGeneration;
 use gateway_claude_runtime::{
-    host::{OutcomeDecision, PoolConfig, PoolSelection, SelectedAccount, SelectionInput},
-    pool::ClaudePoolSession,
+    host::OutcomeDecision, host::PoolSelection, host::SelectedAccount, pool::ClaudePoolSession,
 };
-use gateway_core::{
-    claude::ClaudeErrorEvidence, error::GatewayError, model::ModelId, source_json::SourceJson,
-};
-use gateway_providers::replay::{ReplayContext, ReplayStore, ReplayTransport};
+use gateway_contracts::{claude::ClaudeErrorEvidence, model::ModelId};
+use gateway_model_selection::selection::ProviderSelection;
+use gateway_provider_protocol::replay::ReplayTransport;
+use gateway_provider_replay::{replay::ReplayContext, replay::ReplayStore};
 use gateway_routing_runtime::types::{
     ClaudeOutcome, ClaudeSelection, CredentialFence, PreparedAttempt, PreparedWireRequest,
     PublishedCredential, ResponseHead,
 };
-use gateway_schema::selection::ProviderSelection;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
 
@@ -38,7 +39,7 @@ struct RequestState {
     key_id: String,
     model: ModelId,
     raw: SourceJson,
-    effective_effort: Option<gateway_core::js_string::JsString16>,
+    effective_effort: Option<gateway_source::js_string::JsString16>,
     session: ClaudePoolSession,
     selected: RefCell<Option<SelectedAccount>>,
 }
@@ -104,17 +105,17 @@ impl Binding {
         principal: &AuthPrincipal,
         model: &ModelId,
         raw: &SourceJson,
-        effective_effort: Option<&gateway_core::js_string::JsString16>,
+        effective_effort: Option<&gateway_source::js_string::JsString16>,
     ) -> Result<ClaudeSelection, GatewayError> {
         let AuthMethod::KvApiKey { key_id, .. } = &principal.method else {
             return Ok(ClaudeSelection::NotApplicable);
         };
-        if !gateway_providers::anthropic::is_claude_model(model) {
+        if !gateway_provider_source::anthropic::is_claude_model(model) {
             return Ok(ClaudeSelection::NotApplicable);
         }
-        let selection = gateway_catalog_runtime::state::read_json(
+        let selection = gateway_catalog_inputs::state::read_json(
             &self.store,
-            &gateway_catalog_runtime::state::selection_key(),
+            &gateway_catalog_inputs::state::selection_key(),
         )
         .await?
         .as_ref()
@@ -124,7 +125,7 @@ impl Binding {
         }
         let allowed_key_ids =
             crate::admin_host::config(&self.host.platform.env).claude_allowed_key_ids;
-        let access = gateway_admin_runtime::claude_access::load_policy(
+        let access = gateway_admin_runtime_records::claude_access::load_policy(
             &self.store,
             &self.host.platform,
             &allowed_key_ids,
@@ -220,10 +221,10 @@ impl Binding {
         &self,
         fence: &CredentialFence,
         model: &ModelId,
-        body: &gateway_providers::types::PreparedClaudeBody,
+        body: &gateway_provider_claude_body::types::PreparedClaudeBody,
     ) -> Result<
         crate::transport::outbound::ConstructedRequest,
-        gateway_routing_runtime::types::RoutingError,
+        gateway_local_refusal::routing_error::RoutingError,
     > {
         let (_request, selected) = self.selected(fence, model)?;
         platform::physical_request(selected.binding(), body)
@@ -270,7 +271,7 @@ impl Binding {
                 &self.store,
                 &self.host,
                 &selected,
-                gateway_claude_runtime::host::ResponseObservation {
+                gateway_claude_policy::host::ResponseObservation {
                     status: response.status,
                     headers: response.headers,
                     provider_request_id: response.provider_request_id,
@@ -353,11 +354,11 @@ fn credential(selected: &SelectedAccount) -> PublishedCredential {
     }
     PublishedCredential::Claude {
         fence: credential_fence(selected),
-        body_options: gateway_providers::types::ClaudeBodyOptions {
+        body_options: gateway_provider_claude_body::types::ClaudeBodyOptions {
             native_reasoning_efforts: options.native_reasoning_efforts,
             supports_disabled_thinking: options.supports_disabled_thinking,
             restored_native_messages: options.restored_native_messages,
-            ..gateway_providers::types::ClaudeBodyOptions::new(kind)
+            ..gateway_provider_claude_body::types::ClaudeBodyOptions::new(kind)
         },
     }
 }
@@ -422,7 +423,7 @@ fn invalid(message: &str) -> GatewayError {
 
 /// Closed observational models target using the exact caller's read binding.
 pub(crate) fn models_probe_request(
-    account: &gateway_admin_runtime::claude::AccountBinding,
+    account: &gateway_claude_roster::claude::AccountBinding,
 ) -> Result<crate::transport::outbound::ConstructedRequest, GatewayError> {
     let headers = platform::headers(account, true)
         .map_err(|_| *crate::inference_local_lifecycle::wrapper_error().error)?;

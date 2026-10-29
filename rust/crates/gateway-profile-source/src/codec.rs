@@ -1,7 +1,6 @@
 //! Source-profile JSON leaves preserve JavaScript UTF16 without passing through Value.
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson, value::PortableValue,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_kv_codec::value::PortableValue;
 use gateway_profile_values::{
     codec::{binary_alignment, collection_key, regexp, same_primitive, to_profile},
     coercion::{decode_base64, encode_base64, js_number, normalize_bigint},
@@ -524,7 +523,7 @@ pub fn to_source_profile(value: &PortableValue) -> Result<SourceJson, GatewayErr
 }
 
 pub struct SourceNormalizedEntry {
-    pub key: gateway_core::state::RecordKey,
+    pub key: gateway_kv_codec::key::RecordKey,
     pub parts: Vec<Value>,
     pub value: PortableValue,
 }
@@ -532,7 +531,7 @@ pub fn normalize_source_import_line_with_host(
     line: &str,
     host: &dyn SourceDateHost,
 ) -> Result<Option<SourceNormalizedEntry>, GatewayError> {
-    use gateway_core::tuple_key::{BigIntKey, KeyPart, TupleKey};
+    use gateway_kv_codec::tuple_key::{BigIntKey, KeyPart, TupleKey};
     if line.trim().is_empty() {
         return Ok(None);
     }

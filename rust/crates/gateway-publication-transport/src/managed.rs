@@ -1,20 +1,22 @@
 //! Managed-source publication is separate from external access_publish v1.
 //! Only an access projection is encoded; physical refresh material stays native.
-use gateway_auth::crypto::{Secret, base64url};
-use gateway_auth::managed_access::ManagedAccessProjection;
-use gateway_auth::native_auth::NativeTransportIdentity;
-use gateway_auth::native_credentials::native_refresh_time_ns;
-use gateway_auth::provider_credentials::{codex_credential_identity, valid_native_generation};
+use gateway_auth_credentials::managed_access::ManagedAccessProjection;
+use gateway_auth_credentials::native_credentials::native_refresh_time_ns;
+use gateway_auth_credentials::{
+    provider_credentials::codex_credential_identity, provider_credentials::valid_native_generation,
+};
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_PUBLICATION_PATH,
     NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
-use gateway_core::error::GatewayError;
+use gateway_auth_primitives::{crypto::Secret, crypto::base64url};
 use gateway_publication::wire::PublicationDisposition;
 use gateway_publication_policy::protocol::{
     OwnedNativeAuthHeaders, PublicationCarrier, PublicationRequest, decode_response_error, invalid,
     unverified,
 };
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 
 pub const MANAGED_PUBLICATION_MAX_BYTES: usize = 65_536;

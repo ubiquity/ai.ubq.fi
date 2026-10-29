@@ -3,13 +3,11 @@ use super::*;
 use crate::native_control::import::remote::RemoteImportAuthority;
 use gateway_auth_native_wire::native_read::*;
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
-use std::{
-    io::{Read, Write},
-    net::{TcpListener, TcpStream},
-    sync::Arc,
-    thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(not(feature = "native-import-fixture"))]
 const CA: &[u8] =
     include_bytes!("../../../../../../../../gateway-native/tests/fixtures/import-tls/ca.der");
@@ -138,7 +136,7 @@ fn read_http(stream: &mut impl Read) -> Option<(BTreeMap<String, String>, Vec<u8
         .map(|(key, value)| (key.to_ascii_lowercase(), value.trim().to_owned()))
         .collect::<BTreeMap<_, _>>();
     let length: usize = headers.get("content-length")?.parse().ok()?;
-    if length > gateway_auth::native_import::authority::import_authority_request_max_bytes() {
+    if length > gateway_auth_native_import_data::native_import::authority::import_authority_request_max_bytes() {
         return None;
     }
     let mut body = vec![0; length];
@@ -195,7 +193,7 @@ fn peer(f: Fixture, fault: Fault) -> Peer {
                         &body,
                     )
                     .await?;
-                if gateway_auth::native_import::authority::ImportCustodyStartedWire::parse(&body)
+                if gateway_auth_native_import_data::native_import::authority::ImportCustodyStartedWire::parse(&body)
                     .is_ok()
                 {
                     control.handle_import_started(&owner, &body).await
@@ -308,7 +306,7 @@ fn actual_tls_local_body_mac_original_claim_start_and_readonly_b1_agree() {
         assert!(!text.contains(std::str::from_utf8(PRIVATE_BODY).unwrap()));
         assert!(!text.contains(&sha256_hex(PRIVATE_BODY)));
     }
-    let key = crate::native_control::rows::key("operation", &metadata.operation_id);
+    let key = gateway_authority_native_records::rows::key("operation", &metadata.operation_id);
     assert_eq!(result.final_rows[&key.0]["value"]["phase"], "unknown");
 }
 #[test]
@@ -340,7 +338,7 @@ fn wrong_body_or_mac_and_revoked_finish_cannot_mint_remote_body_proof() {
                 1
             }
         );
-        let key = crate::native_control::rows::key("operation", &metadata.operation_id);
+        let key = gateway_authority_native_records::rows::key("operation", &metadata.operation_id);
         assert!(result.final_rows.get(&key.0).is_none());
     }
 }
@@ -358,7 +356,7 @@ fn lost_actual_start_reply_consumes_client_permit_and_cannot_repeat_effect() {
     assert!(client.start_import(&mut claim, &proof).unwrap().is_none());
     drop(client);
     let result = task.join().unwrap();
-    let key = crate::native_control::rows::key("operation", &metadata.operation_id);
+    let key = gateway_authority_native_records::rows::key("operation", &metadata.operation_id);
     assert_eq!(result.final_rows[&key.0]["value"]["phase"], "started");
     assert_eq!(result.bodies.len(), 4);
 }

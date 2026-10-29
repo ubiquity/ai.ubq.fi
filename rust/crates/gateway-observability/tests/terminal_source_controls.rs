@@ -1,8 +1,9 @@
 mod support;
-use gateway_core::{
-    source_control::encode_source_control_record, source_usage::extract_usage_tokens,
-    state::RecordKey, state::StoredRecord, tuple_key::DecodedKeyPart, tuple_key::TupleKey,
-    value::PortableValue, value::ValueEncoding,
+use gateway_contracts::source_usage::extract_usage_tokens;
+use gateway_core::{source_control::encode_source_control_record, state::StoredRecord};
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey, value::PortableValue,
+    value::ValueEncoding,
 };
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_ledger::{

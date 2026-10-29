@@ -1,0 +1,24 @@
+[package]
+name = "gateway-authority-paid-records"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-schema-values.workspace = true
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
+gateway-authority-contracts.workspace = true
+gateway-authority-keys.workspace = true
+gateway-core.workspace = true
+gateway-schema.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+gateway-authority-paid-test-support = { path = "../gateway-authority-paid-test-support" }

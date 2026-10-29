@@ -1,5 +1,5 @@
 //! Existing bounded request headers; limits come only from route policy.
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::collections::BTreeMap;
 use worker::Request;
 

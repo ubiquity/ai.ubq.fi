@@ -1,9 +1,9 @@
 use base64::{Engine, engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_core::{
     query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
-    state::AuthorityStore, state::CommitOutcome, state::RecordKey, state::RecordMutation,
-    state::StoredRecord, tuple_key::DecodedKeyPart, tuple_key::TupleKey,
+    state::AuthorityStore, state::CommitOutcome, state::RecordMutation, state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey};
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_contracts::{host_types::BuildIdentity, types::ObservabilityHost};
 use gateway_observability_replay_capture::{
@@ -32,7 +32,7 @@ struct CaptureHost {
 impl ObservabilityHost for CaptureHost {
     fn source_string_collator(
         &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         self.clock.source_string_collator()
     }
     fn now_ms(&self) -> i64 {

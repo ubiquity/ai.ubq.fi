@@ -2,30 +2,33 @@
 //! from the authenticated shared-store reverse receiver, never a local ledger.
 use crate::{
     authority_http::{NativeAuthorityHttp, authority_deadline},
-    owner_control::{NativeControlContext, NativeOwnerRenewalHandler, NativeRenewalGuard},
-    transport::{NativeOwnerTransport, renew_owned_guarded},
-    unix::{NativeOwnerLocation, UnixOwnerTransport},
+    owner_control::{NativeControlContext, NativeOwnerRenewalHandler},
 };
-use gateway_auth::{
-    crypto::base64url,
+use gateway_auth_credentials::{
     managed_access::ManagedAccessProjection,
-    native_auth::AuthenticatedNativeOwner,
     native_credentials::{
         NativeCredentials, NativeGeneration, NativeOwnerId, OwnerFence, native_refresh_time_ns,
     },
 };
+use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
 use gateway_auth_native_wire::control::{
     NativeControlDisposition as Disposition, NativeControlEnvelope, NativeControlRequest,
     NativeControlResponse, unverified,
 };
-use gateway_authority::native_control::{
-    NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalFence, NativeRenewalMode,
-    wire::{
-        NativeRenewalAuthorityRequest as Request, NativeRenewalAuthorityResponse as Response,
-        OriginalControlHeaders,
-    },
+use gateway_auth_primitives::crypto::base64url;
+use gateway_native_authority_request::{
+    NativeRenewalAuthorityRequest as Request, OriginalControlHeaders,
 };
-use gateway_core::error::GatewayError;
+use gateway_native_authority_wire::{
+    renewal::{NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalFence, NativeRenewalMode},
+    renewal_response::NativeRenewalAuthorityResponse as Response,
+};
+use gateway_native_local_transport::{
+    guard::NativeRenewalGuard,
+    transport::{NativeOwnerTransport, renew_owned_guarded},
+    unix::{NativeOwnerLocation, UnixOwnerTransport},
+};
+use gateway_source::error::GatewayError;
 use std::cell::RefCell;
 
 pub(crate) fn require_current_fence(fence: &NativeRenewalFence) -> Result<(), GatewayError> {
@@ -200,7 +203,7 @@ impl<P: NativeAccessPublisher> NativeOwnerRenewalHandler for NativeOwnerRenewalS
         context: &NativeControlContext<'_>,
     ) -> Result<NativeControlResponse, GatewayError> {
         proof.require_request(
-            gateway_auth::native_auth::NativeCapability::OwnerRenewal,
+            gateway_auth_native_contracts::transport::NativeCapability::OwnerRenewal,
             gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH,
             raw,
             context.now_ms()?,

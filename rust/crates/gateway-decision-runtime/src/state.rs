@@ -1,10 +1,8 @@
-use gateway_core::{
-    error::GatewayError,
-    query::QueryStore,
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
+use gateway_core::query::QueryStore;
 use gateway_extras_contract::types::ExtrasHost;
-use gateway_schema::selection::ProviderSelection;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_model_selection::selection::ProviderSelection;
+use gateway_source::error::GatewayError;
 fn invalid() -> GatewayError {
     GatewayError::unavailable(
         "Embeddings durable state is invalid.",
@@ -13,7 +11,7 @@ fn invalid() -> GatewayError {
 }
 pub fn now<H: ExtrasHost>(host: &H) -> Result<i64, GatewayError> {
     let now = host.now_ms();
-    if (0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&now) {
+    if (0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&now) {
         Ok(now)
     } else {
         Err(invalid())

@@ -8,10 +8,12 @@ use gateway_auth_primitives::{
     crypto::{Secret, sha256_hex},
     store,
 };
-use gateway_core::{
-    identity::{CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash},
-    state::{AuthorityStore, RecordKey},
+use gateway_contracts::identity::{
+    CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash,
 };
+use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -374,7 +376,11 @@ pub fn parse_codex_auth_binding(
 }
 
 pub fn codex_source_pool_key() -> RecordKey {
-    store::key(json!(["ubq_ai", "codex_auth"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("ubq_ai"),
+        ScalarKeyPart::String("codex_auth"),
+    ])
+    .to_record_key()
 }
 
 #[derive(Clone, Debug, PartialEq)]

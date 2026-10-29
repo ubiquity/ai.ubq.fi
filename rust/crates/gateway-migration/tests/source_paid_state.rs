@@ -1,24 +1,24 @@
 #![cfg(not(target_arch = "wasm32"))]
 //! Source-shaped stopped input exercises M20's real projection/reader/inverse.
 //! This does not replace the separately required actual M19 writer fixture.
+use gateway_contracts::model::ModelId;
 use gateway_core::{
-    js_string::JsString16,
-    model::ModelId,
-    source_control::{encode_source_control_record, source_json_tree},
-    source_json::SourceJson,
-    source_serialization as source,
-    value::PortableValue,
+    source_control::encode_source_control_record, source_control::source_json_tree,
 };
-use gateway_migration::{
-    capture::{PrivateCapture, SourceEntry},
-    engine::{adopt_empty, prepare},
-    inverse::export_latest,
-};
+use gateway_kv_codec::value::PortableValue;
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_data::capture::SourceEntry;
+use gateway_migration_inverse::inverse::export_latest;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::from_source_profile;
 use gateway_profile_source::codec::to_source_profile;
 use gateway_profile_values::date::CanonicalDates;
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::{Value, json};
 
 fn entry(parts: Value, document: SourceJson) -> SourceEntry {
@@ -81,11 +81,12 @@ fn latest_paid_projection_preserves_current_model_effort_and_source_only_fields(
     run(adopt_empty(&store, &prepare(&capture, &CanonicalDates)?))?;
     drop(store);
     let store = SqliteStore::open(&path);
-    let key = gateway_authority::keys::paid_attempt(key_id, attempt_id);
+    let key = gateway_authority_keys::paid_attempt(key_id, attempt_id);
     let original = run(gateway_core::state::AuthorityStore::read(&store, &key))?
         .ok_or("Expected retained fixture row")?;
-    let mut current =
-        gateway_authority::paid::source_records::decode_paid_attempt_record(&key, &original)?;
+    let mut current = gateway_authority_paid_records::source_records::decode_paid_attempt_record(
+        &key, &original,
+    )?;
     assert_eq!(current.model.as_js_string().as_units(), &[0xd800]);
     assert_eq!(
         current

@@ -1,24 +1,29 @@
 use super::*;
-use crate::{
-    manual_reset::*,
-    native_live::wire::*,
-    native_live::*,
-    reset::*,
-    reset_types::*,
-    routing_codec::{normalize, parse_routing_state},
-    routing_types::*,
-};
-use gateway_auth::{
-    native_auth::{
-        NativeAuthHeaders, NativeCapability, NativeNonceAuthority, NativeTransportIdentity,
-    },
-    native_live::NativeLiveAuthenticator,
-    provider_credentials::{CodexSourceAccount, CodexSourcePool, codex_source_pool_key},
-};
-use gateway_core::{
-    identity::{ActiveSelection, ActiveTransitionReason, PoolVersionstamp},
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
+use crate::manual_reset::*;
+use crate::native_live::wire::*;
+use crate::native_live::*;
+use gateway_auth_credentials::provider_credentials::CodexSourceAccount;
+use gateway_auth_credentials::provider_credentials::CodexSourcePool;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
+use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_native_proof::native_live::NativeLiveAuthenticator;
+use gateway_authority_reset_records::{AccountDayBudget, ResetState, manual::parse_manual_intent};
+use gateway_authority_reset_records::{ResetClaim, ResetConfig, ResetMode};
+use gateway_authority_reset_spend::ResetSpendOperations;
+use gateway_authority_routing_evidence::{capacity::CapacityObservation, capacity::CapacityState};
+use gateway_authority_routing_evidence::{capacity::CapacityWindow, capacity::CapacityWindows};
+use gateway_authority_routing_records::{codec::normalize, codec::parse_routing_state};
+use gateway_authority_routing_records::{types::PoolAccount, types::QuotaBlock};
+use gateway_authority_routing_records::{types::QuotaBlockSource, types::SubscriptionPool};
+use gateway_authority_routing_selection::types::*;
+use gateway_contracts::identity::PoolVersionstamp;
+use gateway_contracts::{identity::ActiveSelection, identity::ActiveTransitionReason};
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_native_authority_wire::live::NativeLiveAuthorityResponse;
+use gateway_native_authority_wire::live::NativeLiveRetirement;
 use std::collections::BTreeSet;
 
 struct UniqueTokens(AtomicUsize);
@@ -142,8 +147,8 @@ async fn proof(
     identity: &NativeTransportIdentity,
     body: &[u8],
     n: u8,
-) -> gateway_auth::native_live::AuthenticatedNativeLive {
-    let nonce = gateway_auth::crypto::base64url(&[n; 32]);
+) -> gateway_auth_native_proof::native_live::AuthenticatedNativeLive {
+    let nonce = gateway_auth_primitives::crypto::base64url(&[n; 32]);
     let mac = identity
         .sign_live_authority_request(1_000_000, &nonce, body)
         .unwrap();
@@ -372,7 +377,7 @@ fn live_rechecks_current_external_access_and_reconciles_real_terminal_after_revo
         store.seed(
             keys::paid_control_owner(),
             "owner-one",
-            crate::paid_control::PaidControlOwner {
+            gateway_authority_paid_control_records::PaidControlOwner {
                 v: 1,
                 owner_id: identity.owner_id().into(),
                 owner_epoch: identity.owner_epoch().into(),

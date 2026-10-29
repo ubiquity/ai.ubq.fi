@@ -1,28 +1,32 @@
 //! One explicit manual reset. Shared authority owns every intent, budget and promotion.
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformClock;
 use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
-use gateway_auth::{
-    provider_credentials::{CodexSourceAccount, read_codex_source_pool},
-    types::{AuthConfig, AuthResponse},
+use gateway_auth_contracts::{types::AuthConfig, types::AuthResponse};
+use gateway_auth_credentials::{
+    provider_credentials::CodexSourceAccount, provider_credentials::read_codex_source_pool,
 };
 use gateway_authority::{
-    capacity_rules::parse_capacity_observation,
-    manual_reset::{ManualResetPreparation, ManualResetTarget},
-    native_control::actor::NativeRenewalActor,
-    reset_types::{ResetClaim, ResetState},
-    routing_types::CapacityObservation,
-    store::Authority,
+    manual_reset::ManualResetPreparation, manual_reset::ManualResetTarget,
+    native_control::actor::NativeRenewalActor, store::Authority,
+};
+use gateway_authority_reset_records::{ResetClaim, ResetState};
+use gateway_authority_reset_spend::ResetSpendOperations;
+use gateway_authority_routing_evidence::{
+    capacity::CapacityObservation, capacity::parse_capacity_observation,
 };
 use gateway_core::state::AuthorityStore;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_storage::store::now_ms;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
-use worker::{Method, Url};
+use {
+    gateway_schema_values::scalar as util,
+    worker::{Method, Url},
+};
 
 pub(super) async fn consume(
     store: &RemoteAuthorityStore,
@@ -70,7 +74,7 @@ async fn run(
     };
     let invocation = action.invocation()?;
     let previous = store
-        .read(&gateway_authority::keys::reset_redemption(
+        .read(&gateway_authority_keys::reset_redemption(
             &invocation.identity.account_id_hash,
             &invocation.identity.quota_generation,
         ))
@@ -243,8 +247,8 @@ pub(super) fn headers(account: &CodexSourceAccount, content: bool) -> BTreeMap<S
 }
 pub(super) fn endpoints(_platform: &PlatformHost) -> Result<(Url, Url), GatewayError> {
     let base = "https://chatgpt.com/backend-api/codex";
-    let mut url = Url::parse(gateway_schema::util::js_trim(base))
-        .map_err(|_| unavailable("Reset base URL is invalid."))?;
+    let mut url =
+        Url::parse(util::js_trim(base)).map_err(|_| unavailable("Reset base URL is invalid."))?;
     if url.scheme() != "https"
         || !url.username().is_empty()
         || url.password().is_some()

@@ -1,4 +1,4 @@
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use std::{collections::BTreeMap, future::Future};
 
 pub const LIVE_CALL_MAX_BODY_BYTES: usize = 1_048_576;

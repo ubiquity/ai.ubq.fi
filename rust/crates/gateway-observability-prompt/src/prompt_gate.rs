@@ -4,7 +4,8 @@ use crate::{
     prompt::known_release, prompt::model_hash, prompt::model_text,
 };
 use gateway_auth_primitives::crypto::sha256_hex;
-use gateway_core::{query::QueryStore, state::RecordKey};
+use gateway_core::query::QueryStore;
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{data, types::ObservabilityHost};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};

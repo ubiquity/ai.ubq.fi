@@ -1,5 +1,9 @@
-use gateway_core::{source_graph::{ErrorKind, GraphAtom, GraphNode, SourceGraph, ViewKind}, state::StoredRecord, value::{PortableValue, ValueEncoding}};
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::{value::PortableValue, value::ValueEncoding};
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
+use gateway_source_graph::{
+    graph::ErrorKind, graph::GraphAtom, graph::GraphNode, graph::SourceGraph, graph::ViewKind,
+};
 use serde::Serialize;
 use serde_json::{Value, json};
 

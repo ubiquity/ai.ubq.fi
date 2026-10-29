@@ -1,6 +1,6 @@
 //! Original authenticated capture request dispatch; defining operations retain all effects.
 use crate::ObservabilityRuntime;
-use gateway_admin_runtime::{capabilities::CaptureRequest, capabilities::Context};
+use gateway_admin_runtime_contracts::{capabilities::CaptureRequest, capabilities::Context};
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_core::query::QueryStore;
 use gateway_observability_contracts::types::ObservabilityHost;

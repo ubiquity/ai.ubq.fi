@@ -1,9 +1,9 @@
 use gateway_admin_kernel::kernel_auth;
 use gateway_admin_test_support::{contract_host::Host, runtime_host::run, source_store::Store};
-use gateway_core::{
-    error::GatewayError,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, StoredRecord},
-};
+use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, StoredRecord};
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::cell::Cell;
 
@@ -24,8 +24,8 @@ fn kernel_auth_validates_both_source_policies_before_repo_precedence() {
             store: &store,
             host: &host,
         };
-        let repo = gateway_authority::keys::kernel_policy("owner", Some("repo"));
-        let org = gateway_authority::keys::kernel_policy("owner", None);
+        let repo = gateway_authority_keys::kernel_policy("owner", Some("repo"));
+        let org = gateway_authority_keys::kernel_policy("owner", None);
         store.rows.borrow_mut().insert(
             repo.0,
             StoredRecord::json("repo", kernel_source_policy("repo", Some("repo")), None),
@@ -57,16 +57,19 @@ fn kernel_auth_validates_both_source_policies_before_repo_precedence() {
         assert_eq!(result.queue_recorded, None);
         assert!(
             store
-                .read(&gateway_auth::store::key(json!([
-                    "uos_ai",
-                    "kernel_policy_queue"
-                ])))
+                .read(
+                    &TupleKey::from_scalar_parts(&[
+                        ScalarKeyPart::String("uos_ai"),
+                        ScalarKeyPart::String("kernel_policy_queue")
+                    ])
+                    .to_record_key()
+                )
                 .await
                 .unwrap()
                 .is_none()
         );
         store.rows.borrow_mut().insert(
-            gateway_authority::keys::kernel_policy("owner", Some("repo")).0,
+            gateway_authority_keys::kernel_policy("owner", Some("repo")).0,
             StoredRecord::json("stored-null", Value::Null, None),
         );
         assert_eq!(
@@ -89,7 +92,11 @@ fn kernel_missing_policy_queue_retries_cas_without_double_counting_and_keeps_200
             store: &store,
             host: &host,
         };
-        let key = gateway_auth::store::key(json!(["uos_ai", "kernel_policy_queue"]));
+        let key = TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("kernel_policy_queue"),
+        ])
+        .to_record_key();
         let mut rows: Vec<Value> = (0..201).map(|index| json!({"owner":"other","repo":format!("repo-{index}"),"request_count":1,"first_seen_at_ms":index,"last_seen_at_ms":index,"last_route":"/old"})).collect();
         rows.push(json!({"owner":" owner ","repo":" repo ","request_count":5.9,"first_seen_at_ms":10,"last_seen_at_ms":20,"last_route":"/original"}));
         rows.push(json!({"owner":"","repo":"invalid"}));

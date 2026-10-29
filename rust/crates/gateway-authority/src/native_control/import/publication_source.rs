@@ -1,26 +1,22 @@
 //! Fixed source/normalized/catalog mutations for one verified original import.
 use super::*;
-use crate::{
-    keys,
-    routing_types::{PoolAccount, SubscriptionPool},
-    store::Transaction,
-};
-use gateway_auth::{
-    crypto::Secret,
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, MANAGED_NATIVE_SOURCE_VERSION, ManagedNativeSource,
-        codex_source_pool_key, parse_codex_source_pool,
-    },
+use crate::store::Transaction;
+use gateway_auth_credentials::provider_credentials::{
+    CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
+    ManagedNativeSource, codex_source_pool_key, parse_codex_source_pool,
 };
 use gateway_auth_native_wire::publication_command as command;
-use gateway_core::{
-    identity::PoolVersionstamp,
-    source_control::encode_source_control_record,
-    source_json::SourceJson,
-    state::{RecordMutation, StoredRecord},
-};
-use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
+use gateway_auth_primitives::crypto::Secret;
+use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_authority_keys as keys;
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
+use gateway_contracts::identity::PoolVersionstamp;
+use gateway_core::source_control::encode_source_control_record;
+use gateway_core::state::{RecordMutation, StoredRecord};
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
+use {gateway_model_snapshot::snapshot::ModelSnapshot, gateway_schema::catalog_store};
 
 pub(super) struct SourcePlan {
     pub mutations: Vec<RecordMutation>,
@@ -47,7 +43,7 @@ pub(super) async fn prepare<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
         return Err(unavailable());
     }
     let access = Secret::new(wire.document.access_token.clone());
-    let identity = gateway_auth::provider_credentials::codex_credential_identity(
+    let identity = gateway_auth_credentials::provider_credentials::codex_credential_identity(
         &wire.document.account_id,
         &access,
         &Secret::new(String::new()),
@@ -63,7 +59,7 @@ pub(super) async fn prepare<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
         refresh_token: Secret::new(String::new()),
         updated_at_ms: wire.document.updated_at_ms,
         native_owner: Some(CodexNativeOwner {
-            codex_home: control.registered.home.clone(),
+            codex_home: control.registered.registered_home().to_owned(),
             generation_hash: wire.access_generation.clone(),
             native_refreshed_at: wire.document.native_refreshed_at.clone(),
             external_user_id: None,
@@ -74,43 +70,8 @@ pub(super) async fn prepare<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
         }),
     };
     source.updated_at_ms = tx.now as f64;
-    let accounts = source
-        .accounts
-        .iter()
-        .zip(&normalized.accounts)
-        .map(|(account, old)| {
-            let id = account.identity();
-            PoolAccount {
-                account_id_hash: id.routing_account_hash,
-                admin_account_hash: id.administrative_account_hash,
-                credential_version: id.credential_version,
-                enabled: old.enabled,
-            }
-        })
-        .collect();
-    let projected = SubscriptionPool {
-        v: 1,
-        pool_versionstamp: PoolVersionstamp(wire.publication_revision.clone()),
-        accounts,
-    };
-    let mut mutations = vec![
-        RecordMutation::Put {
-            key: source_key,
-            record: StoredRecord::json(
-                &wire.publication_revision,
-                source.private_source_value(),
-                None,
-            ),
-        },
-        RecordMutation::Put {
-            key: keys::pool(),
-            record: StoredRecord::json(
-                &wire.publication_revision,
-                serde_json::to_value(projected).map_err(|_| unavailable())?,
-                None,
-            ),
-        },
-    ];
+    let mut mutations =
+        source_mutations(source_key, source, &normalized, &wire.publication_revision)?;
     let catalog_key = catalog_store::codex_snapshot_key();
     let runtime_key = catalog_store::runtime_config_key();
     let generation_key = catalog_store::auth_generation_key();
@@ -144,7 +105,7 @@ pub(super) async fn prepare<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
                 current.as_ref(),
                 runtime_source.as_ref().unwrap_or(&empty),
                 tx.now,
-            )
+            )?
             .ok_or_else(super::publication::conflict)?;
             let runtime = encode_source_control_record(&wire.publication_revision, &runtime, None)?;
             let generation = control.authority.tokens.next_token()?;
@@ -175,6 +136,46 @@ pub(super) async fn prepare<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
         }
         _ => Err(unavailable()),
     }
+}
+fn source_mutations(
+    source_key: RecordKey,
+    source: CodexSourcePool,
+    normalized: &SubscriptionPool,
+    publication_revision: &str,
+) -> Result<Vec<RecordMutation>, GatewayError> {
+    let accounts = source
+        .accounts
+        .iter()
+        .zip(&normalized.accounts)
+        .map(|(account, old)| {
+            let id = account.identity();
+            PoolAccount {
+                account_id_hash: id.routing_account_hash,
+                admin_account_hash: id.administrative_account_hash,
+                credential_version: id.credential_version,
+                enabled: old.enabled,
+            }
+        })
+        .collect();
+    let projected = SubscriptionPool {
+        v: 1,
+        pool_versionstamp: PoolVersionstamp(publication_revision.to_owned()),
+        accounts,
+    };
+    Ok(vec![
+        RecordMutation::Put {
+            key: source_key,
+            record: StoredRecord::json(publication_revision, source.private_source_value(), None),
+        },
+        RecordMutation::Put {
+            key: keys::pool(),
+            record: StoredRecord::json(
+                publication_revision,
+                serde_json::to_value(projected).map_err(|_| unavailable())?,
+                None,
+            ),
+        },
+    ])
 }
 pub(super) fn missing_catalog() -> GatewayError {
     GatewayError::new(

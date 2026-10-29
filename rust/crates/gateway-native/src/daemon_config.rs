@@ -1,9 +1,10 @@
 //! Trusted local startup input only. There is no dotenv discovery, default
 //! listener, public configuration route, command or caller-selected source path.
-use crate::supervisor::SourceId;
-use gateway_auth::crypto::{base64url, decode_base64url};
-use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
-use gateway_core::error::GatewayError;
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_primitives::crypto::{base64url, decode_base64url};
+use gateway_native_supervisor::supervisor::SourceId;
+use gateway_source::error::GatewayError;
 use serde::Deserialize;
 use std::{collections::BTreeSet, io::Read, net::SocketAddr, path::PathBuf};
 
@@ -246,7 +247,7 @@ impl NativeDaemonConfig {
         if self.v != 1
             || !self.listen.ip().is_loopback()
             || !self.nonce_database.is_absolute()
-            || self.sources.len() > crate::supervisor::MAX_SOURCES
+            || self.sources.len() > gateway_native_supervisor::supervisor::MAX_SOURCES
         {
             return Err(invalid());
         }

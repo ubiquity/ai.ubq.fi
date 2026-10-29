@@ -1,4 +1,6 @@
-use gateway_core::{error::GatewayError, source_json::SourceJson, source_serialization as source};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::Value;
 
 pub fn decode(raw: &SourceJson) -> Result<SourceJson, GatewayError> {

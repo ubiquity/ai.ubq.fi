@@ -1,4 +1,4 @@
-use gateway_core::source_usage::extract_source_usage_tokens;
+use gateway_contracts::source_usage::extract_source_usage_tokens;
 use gateway_observability_prompt::prompt::PromptEvent;
 use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
@@ -23,7 +23,7 @@ fn event() -> PromptEvent {
 #[test]
 fn all_source_fixtures_map_without_reinterpreting_or_inventing_usage() {
     let cases: Vec<Value> = serde_json::from_str(include_str!(
-        "../../gateway-core/src/source_usage_cases.json"
+        "../../gateway-contracts/src/source_usage_cases.json"
     ))
     .unwrap();
     assert_eq!(cases.len(), 34);
@@ -84,7 +84,7 @@ fn absent_usage_clears_prior_counts_and_explicit_null_stays_invalid() {
         ]),
         json!(["missing", null, null, null, false])
     );
-    let usage = gateway_core::source_usage::extract_usage_tokens(Some(&Value::Null)).unwrap();
+    let usage = gateway_contracts::source_usage::extract_usage_tokens(Some(&Value::Null)).unwrap();
     event.set_source_usage(Some(&usage));
     assert_eq!(event.usage_telemetry_status, "invalid");
     assert_eq!(event.input_tokens, None);

@@ -1,7 +1,16 @@
-use gateway_core::{
+use gateway_prompt_cache::{
+    compat::{compact_capabilities, normalize_capabilities},
+    metadata::{
+        compact_capabilities_source, concrete_scope_source, merge_capabilities_source,
+        normalize_capabilities_source, normalize_scope_source,
+    },
+    profile::SCOPE_PROFILE,
+};
+
+use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
-use gateway_schema::prompt_cache::*;
+
 fn raw(value: &str) -> SourceJson {
     SourceJson::parse(value).unwrap()
 }

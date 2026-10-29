@@ -1,7 +1,8 @@
 //! Source ba5ef05e provider/health.ts and paid-fallback/health.ts.
 use crate::{ProviderHealth, completion::Completion, store};
 use gateway_capacity_projection::{scalars::is_record, scalars::trim};
-use gateway_core::{query::QueryStore, state::AuthorityStore, state::RecordKey};
+use gateway_core::{query::QueryStore, state::AuthorityStore};
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{data, types::*};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};

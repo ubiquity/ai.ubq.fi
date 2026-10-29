@@ -1,8 +1,7 @@
 use crate::{CapacitySampler, store};
 use gateway_capacity_projection::{math as capacity_math, scalars::safe_i64, shapes as shape};
-use gateway_core::{
-    query::QueryStore, state::RecordKey, state::RecordMutation, state::StoredRecord,
-};
+use gateway_core::{query::QueryStore, state::RecordMutation, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_capacity_events::capacity_events::event_key;
 use gateway_observability_contracts::{
     data, query, query::CapacityRows, query::ObservationRead, types::ObservabilityHost,

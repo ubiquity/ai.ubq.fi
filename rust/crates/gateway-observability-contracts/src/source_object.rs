@@ -1,5 +1,5 @@
 //! Explicit logical source object/portable-JSON DATA; no record codec is inferred.
-use gateway_core::value::PortableValue;
+use gateway_kv_codec::value::PortableValue;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 #[derive(Clone)]

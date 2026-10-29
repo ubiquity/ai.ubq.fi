@@ -1,9 +1,7 @@
 //! Actual schema -> admission -> provider -> terminal transport path.
-use crate::authority::RemoteAuthorityStore;
 use crate::catalog::CatalogState;
 use crate::host::{PlatformClock, PlatformHost, PlatformTokens};
 use crate::inference_lifecycle::{Lifecycle, Session, finish_hook};
-use crate::routing_host;
 use crate::transport::outbound::{
     DispatchAttempt, DispatchFailure, DispatchOrigin, PinnedDestination, send_constructed,
     send_http,
@@ -11,40 +9,33 @@ use crate::transport::outbound::{
 use crate::{
     inference_capture::Capture, inference_currentness::CurrentnessGuard, inference_local::Start,
 };
-use gateway_auth_contracts::types::{AuthMethod, AuthPrincipal};
-use gateway_core::{
-    claude::ClaudeErrorEvidence,
-    identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},
-    provider::UpstreamProvider,
+use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
+use gateway_contracts::{
+    claude::ClaudeErrorEvidence, identity::ApiKeyId, identity::PrincipalId,
+    identity::RequestContext, identity::RequestId, provider::UpstreamProvider,
 };
+use gateway_local_refusal::routing_error::RoutingError;
 use gateway_observability_replay_observation::replay_trace::{AttemptTrace, TraceTerminal};
-use gateway_providers::types::Headers;
+use gateway_provider_protocol::types::Headers;
+use gateway_request_normalization::{document::SourceRequestDocument, syntax::parse_http_body};
 use gateway_routing_runtime::{
-    local_work::LocalRequestMetadata,
-    session::RoutingSession,
-    types::{
-        AttemptFailure, FailureOrigin, PreparedAttempt, PreparedWireRequest, RefusalDecision,
-        ResponseDecision, ResponseHead, RoutingError, RoutingInput, TransportState,
-        WorkspaceContinuation,
-    },
-};
-use gateway_schema::{
-    request::RequestSurface,
-    source_request::{SourceRequestDocument, parse_http_body},
+    local_work::LocalRequestMetadata, session::RoutingSession, types::AttemptFailure,
+    types::FailureOrigin, types::PreparedAttempt, types::PreparedWireRequest,
+    types::RefusalDecision, types::ResponseDecision, types::ResponseHead, types::RoutingInput,
+    types::TransportState, types::WorkspaceContinuation,
 };
 use gateway_source::error::GatewayError;
-use gateway_worker_http_body::body;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
+use gateway_worker_http_body::{body, protocol::correlation};
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
 use std::{cell::RefCell, rc::Rc};
 use worker::{Context, Method, Request, Response};
-
-use gateway_worker_http_body::protocol::correlation;
+use {crate::routing_host, gateway_schema_values::request::RequestSurface};
 
 mod late_failure;
 mod stream;
 mod task;
-
 use gateway_worker_stream::control::ATTEMPT_DEADLINE_MS;
 type ResponseResult = Result<Response, GatewayError>;
 
@@ -185,11 +176,11 @@ impl Dispatch<'_> {
                     body: Vec::new(),
                     body_complete: false,
                     failure: if self.cancellation.client_aborted() {
-                        gateway_providers::policy::HopFailure::Cancelled
+                        gateway_provider_policy::policy::HopFailure::Cancelled
                     } else if self.cancellation.signal().aborted() {
-                        gateway_providers::policy::HopFailure::Deadline
+                        gateway_provider_policy::policy::HopFailure::Deadline
                     } else {
-                        gateway_providers::policy::HopFailure::Transport
+                        gateway_provider_policy::policy::HopFailure::Transport
                     },
                     transport: if continuing || failure.attempt == DispatchAttempt::Started {
                         TransportState::Started
@@ -277,7 +268,7 @@ impl Dispatch<'_> {
                     headers,
                     body: capture.bytes,
                     body_complete: capture.complete,
-                    failure: gateway_providers::policy::HopFailure::Status(status),
+                    failure: gateway_provider_policy::policy::HopFailure::Status(status),
                     transport: TransportState::Started,
                     semantic_committed: false,
                     cancelled: self.cancellation.signal().aborted(),
@@ -632,7 +623,8 @@ impl Inference<'_> {
                 return Err(error);
             }
         };
-        let event_stream = gateway_providers::response::is_event_stream(provider, status, &headers);
+        let event_stream =
+            gateway_provider_stream::response::is_event_stream(provider, status, &headers);
         // Everything fallible has finished before this synchronous owner transfer.
         let Some(stream::PendingLifetime {
             session,

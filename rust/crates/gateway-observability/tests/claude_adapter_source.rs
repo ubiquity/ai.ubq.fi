@@ -1,13 +1,14 @@
 //! Only the exact request-bound SourceJson and finite settings-selector adapters.
-use gateway_admin_runtime::{
+use gateway_admin_runtime_contracts::{
     capabilities::CodexRequest, capabilities::Context, capabilities::ProviderRequest,
 };
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_capacity_projection::{shapes::history_point, shapes::unavailable_snapshot};
 use gateway_core::{
     query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
-    state::AuthorityStore, state::CommitOutcome, state::RecordKey, state::StoredRecord,
+    state::AuthorityStore, state::CommitOutcome, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_contracts::{host_types::CapacityAccountRef, types::ObservabilityHost};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
@@ -28,7 +29,7 @@ struct AdapterHost {
 impl ObservabilityHost for AdapterHost {
     fn source_string_collator(
         &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {
@@ -202,9 +203,9 @@ fn only_matched_existing_ascii_hash_enters_unchanged_boolean_keys_no_checks_and_
         let memory = AuditMemory::default();
         let runtime = ObservabilityRuntime::new(memory.clone(), host(vec![]));
         let key = if overage {
-            gateway_authority::keys::overage(&hash)
+            gateway_authority_keys::overage(&hash)
         } else {
-            gateway_authority::keys::reset_usage(&hash)
+            gateway_authority_keys::reset_usage(&hash)
         };
         for flag in [true, false] {
             let quoted = serde_json::to_string(&hash).unwrap();

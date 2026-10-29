@@ -1,8 +1,8 @@
 use gateway_core::{
     query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
-    state::AuthorityStore, state::CommitOutcome, state::RecordKey, state::RecordMutation,
-    state::StoredRecord,
+    state::AuthorityStore, state::CommitOutcome, state::RecordMutation, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::types::ObservabilityHost;
 use gateway_source::error::GatewayError;
 use std::{
@@ -156,7 +156,7 @@ pub struct Host {
 }
 // Non-comparison fixture only: unexpected source ordering must fail, never guess.
 struct MissingSourceCollator;
-impl gateway_schema::aliases::SourceStringCollator for MissingSourceCollator {
+impl gateway_model_selection::aliases::SourceStringCollator for MissingSourceCollator {
     fn compare(
         &self,
         _left: &gateway_source::js_string::JsString16,
@@ -171,7 +171,7 @@ impl gateway_schema::aliases::SourceStringCollator for MissingSourceCollator {
 impl ObservabilityHost for Host {
     fn source_string_collator(
         &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         std::sync::Arc::new(MissingSourceCollator)
     }
     fn now_ms(&self) -> i64 {

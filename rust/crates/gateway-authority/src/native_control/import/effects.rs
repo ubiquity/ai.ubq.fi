@@ -1,9 +1,10 @@
 //! The import uses the original operation/generation rows, not a second effect ledger.
-use super::super::rows::{GenerationEffect, OperationRow, Phase};
 use super::custody_session::ImportCustodyStartedRequest;
 use super::*;
 use crate::store::Transaction;
-use gateway_auth::crypto::sha256_hex;
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_authority_native_records::rows::{self, GenerationEffect, OperationRow, Phase};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeImportBinding {
@@ -76,7 +77,7 @@ impl NativeImportStart<'_> {
 }
 pub(super) fn generation_key(
     row: &ImportActionRow,
-) -> Result<gateway_core::state::RecordKey, GatewayError> {
+) -> Result<gateway_kv_codec::key::RecordKey, GatewayError> {
     Ok(rows::key(
         "generation",
         &super::super::facts::digest(&(

@@ -1,6 +1,6 @@
 //! Source analytics-only chart observations. These keys never enter routing/reset state.
 use crate::{CapacityEvents, store};
-use gateway_admin_runtime::capabilities::Context;
+use gateway_admin_runtime_contracts::capabilities::Context;
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_capacity_projection::{
     math::bucketed, scalars::safe_i64, shapes::BUCKET_MS, shapes::RETENTION_MS,
@@ -29,7 +29,9 @@ pub fn parse_observations(value: &Value) -> Option<Vec<Value>> {
     let mut points = Vec::with_capacity(values.len());
     for value in values {
         let point = read_history(value)?;
-        if !bucketed(&point) || gateway_schema::util::json_stringify(&point).len() > 16 * 1024 {
+        if !bucketed(&point)
+            || gateway_schema_values::scalar::json_stringify(&point).len() > 16 * 1024
+        {
             return None;
         }
         points.push(point)

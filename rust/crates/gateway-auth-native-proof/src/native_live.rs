@@ -3,8 +3,9 @@ use gateway_auth_native_contracts::native_live::{
     authority_response_input, authority_signature_input, request_signature_input,
 };
 // URL, bearer, filesystem path or serialized permission crosses this boundary.
-use crate::native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity};
+use crate::native_auth::NativeTransportIdentity;
 use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
 use gateway_auth_native_wire::native_read::{NATIVE_AUTH_WINDOW_MS, NATIVE_WIRE_VERSION};
 use gateway_auth_primitives::crypto::{base64url, decode_base64url, sha256_hex};
 use gateway_source::error::GatewayError;
@@ -156,7 +157,7 @@ impl<'a, R: NativeNonceAuthority> NativeLiveAuthenticator<'a, R> {
     ) -> Result<AuthenticatedNativeLive, GatewayError> {
         if headers.version != NATIVE_WIRE_VERSION.to_string()
             || headers.key_id != self.identity.key_id()
-            || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&now_ms)
+            || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&now_ms)
         {
             return Err(invalid());
         }

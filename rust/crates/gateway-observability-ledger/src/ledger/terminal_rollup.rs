@@ -1,11 +1,12 @@
 //! Source recordTerminalUsageRollup: one event-owned, bounded write to the existing rollup.
 use crate::{RequestLedger, records::valid_usage_rollup_source, store};
 use gateway_capacity_projection::scalars::trim;
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, source_usage::UsageTokens};
 use gateway_core::{
-    identity::MAX_SAFE_INTEGER, query::QueryStore, source_control::decode_source_control_record,
-    source_control::encode_source_control_record, source_usage::UsageTokens, state::RecordMutation,
-    tuple_key::KeyPart, tuple_key::TupleKey,
+    query::QueryStore, source_control::decode_source_control_record,
+    source_control::encode_source_control_record, state::RecordMutation,
 };
+use gateway_kv_codec::{tuple_key::KeyPart, tuple_key::TupleKey};
 use gateway_observability_contracts::{data, types::ObservabilityHost};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
@@ -90,7 +91,9 @@ impl<S: QueryStore, H: ObservabilityHost> RequestLedger<'_, S, H> {
             ),
             KeyPart::source_string_utf16(model.as_units()),
             KeyPart::String(provider.into()),
-            KeyPart::Number(f64::from(gateway_authority::paid::rollup_shard(&request))),
+            KeyPart::Number(f64::from(gateway_authority_paid_records::rollup_shard(
+                &request,
+            ))),
         ])?
         .to_record_key();
         for _ in 0..3 {

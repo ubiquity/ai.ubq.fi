@@ -1,0 +1,30 @@
+[package]
+name = "gateway-worker-authority-binding"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
+gateway-kv-codec = { path = "../gateway-kv-codec" }
+gateway-migration-data = { path = "../gateway-migration-data" }
+gateway-migration-profile = { path = "../gateway-migration-profile" }
+gateway-migration-protocol = { path = "../gateway-migration-protocol" }
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+gateway-admin-runtime.workspace = true
+gateway-auth-contracts.workspace = true
+gateway-core.workspace = true
+gateway-migration.workspace = true
+gateway-profile-values.workspace = true
+gateway-source.workspace = true
+gateway-worker-http-body.workspace = true
+gateway-worker-platform.workspace = true
+gateway-worker-storage.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen.workspace = true
+worker.workspace = true
+
+[lints]
+workspace = true

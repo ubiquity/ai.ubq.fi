@@ -4,23 +4,21 @@ use crate::{
     host::{PlatformHost, response_bytes},
     native_transport::{NativeTransport, unavailable},
 };
-use gateway_auth::{
-    crypto::{base64url, decode_base64url},
-    native_auth::{NativeCapability, NativeTransportIdentity},
-    types::AuthResponse,
-};
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::{
-    control::{
-        NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS, NativeControlEnvelope,
-        NativeControlResponse, unverified,
-    },
-    native_read::{
-        AuthStream, NATIVE_CONTROL_PATH, NATIVE_FOLLOW_PATH, NATIVE_MAX_BODY_BYTES,
-        NATIVE_RESPONSE_MAC_HEADER, NATIVE_RPC_PATH, NATIVE_WIRE_VERSION, NativeReadRequest,
-        NativeRpcEnvelope, NativeRpcResponse,
-    },
+    control::NATIVE_CONTROL_MAX_BYTES, control::NATIVE_RENEWAL_MAX_MS,
+    control::NativeControlDisposition, control::NativeControlEnvelope,
+    control::NativeControlRequest, control::NativeControlResponse, control::unverified,
+    native_read::AuthStream, native_read::NATIVE_CONTROL_PATH, native_read::NATIVE_FOLLOW_PATH,
+    native_read::NATIVE_MAX_BODY_BYTES, native_read::NATIVE_RESPONSE_MAC_HEADER,
+    native_read::NATIVE_RPC_PATH, native_read::NATIVE_WIRE_VERSION, native_read::NativeReadRequest,
+    native_read::NativeRpcEnvelope, native_read::NativeRpcResponse,
 };
-use gateway_core::error::GatewayError;
+use gateway_auth_primitives::{crypto::base64url, crypto::decode_base64url};
+use gateway_authority::{native_control::receiver::NativeRenewalAuthority, store::Authority};
+use gateway_source::error::GatewayError;
 use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
 use serde::Deserialize;
 use std::{collections::BTreeSet, rc::Rc};
@@ -123,11 +121,8 @@ impl NativeBindings {
         &self,
         fence: &gateway_routing_runtime::types::CredentialFence,
         platform: &PlatformHost,
-        original: &gateway_core::identity::RequestContext,
+        original: &gateway_contracts::identity::RequestContext,
     ) -> Result<gateway_routing_runtime::types::RefreshOutcome, GatewayError> {
-        use gateway_authority::{
-            native_control::receiver::NativeRenewalAuthority, store::Authority,
-        };
         let gateway_routing_runtime::types::CredentialFence::Codex {
             admission,
             source_revision,
@@ -179,9 +174,9 @@ impl NativeBindings {
     pub(crate) async fn renew_live_create(
         &self,
         actor: &gateway_authority::native_control::actor::NativeRenewalActor,
-        selected: &gateway_authority::routing::LiveAccountSelection,
+        selected: &gateway_authority_routing_selection::types::LiveAccountSelection,
         platform: &PlatformHost,
-        config: &gateway_auth::types::AuthConfig,
+        config: &gateway_auth_contracts::types::AuthConfig,
     ) -> Result<(), GatewayError> {
         let transport = self.transport()?;
         let authority = gateway_authority::store::Authority::with_clock(
@@ -213,7 +208,7 @@ impl NativeBindings {
         actor: &gateway_authority::native_control::actor::NativeRenewalActor,
         call_id: &str,
         platform: &PlatformHost,
-        config: &gateway_auth::types::AuthConfig,
+        config: &gateway_auth_contracts::types::AuthConfig,
     ) -> Result<(), GatewayError> {
         let transport = self.transport()?;
         let authority = gateway_authority::store::Authority::with_clock(
@@ -241,10 +236,10 @@ impl NativeBindings {
     pub(crate) async fn renew_cache_experiment(
         &self,
         actor: &gateway_authority::native_control::actor::NativeRenewalActor,
-        permit: &gateway_authority::cache_experiment::RefreshPermit,
+        permit: &gateway_cache_experiment_dispatch::RefreshPermit,
         platform: &PlatformHost,
-        config: &gateway_auth::types::AuthConfig,
-    ) -> Result<gateway_core::identity::PoolVersionstamp, GatewayError> {
+        config: &gateway_auth_contracts::types::AuthConfig,
+    ) -> Result<gateway_contracts::identity::PoolVersionstamp, GatewayError> {
         let transport = self.transport()?;
         let authority = gateway_authority::store::Authority::with_clock(
             platform.store.clone(),
@@ -267,7 +262,7 @@ impl NativeBindings {
             .prepare_cache_experiment_renewal(actor, permit)
             .await?;
         let verified = self.complete_renewal(&action, &receiver, platform).await?;
-        Ok(gateway_core::identity::PoolVersionstamp(
+        Ok(gateway_contracts::identity::PoolVersionstamp(
             verified.source_revision,
         ))
     }
@@ -277,13 +272,12 @@ impl NativeBindings {
         action: &gateway_authority::native_control::NativeRenewalAction,
         receiver: &gateway_authority::native_control::receiver::NativeRenewalAuthority<
             '_,
-            crate::authority::RemoteAuthorityStore,
+            gateway_worker_authority_binding::authority::RemoteAuthorityStore,
             crate::host::PlatformTokens,
             PlatformHost,
         >,
         platform: &PlatformHost,
-    ) -> Result<gateway_authority::native_control::NativeRenewalFence, GatewayError> {
-        use gateway_auth_native_wire::control::{NativeControlDisposition, NativeControlRequest};
+    ) -> Result<gateway_native_authority_wire::renewal::NativeRenewalFence, GatewayError> {
         let envelope = NativeControlEnvelope {
             v: NATIVE_WIRE_VERSION,
             operation_id: gateway_worker_platform::random::opaque_token()?,

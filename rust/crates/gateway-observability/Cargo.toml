@@ -6,24 +6,33 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-gateway-observability-control.workspace = true
-gateway-observability-capacity.workspace = true
-gateway-observability-capacity-events.workspace = true
-gateway-observability-replay-capture.workspace = true
-gateway-observability-incidents.workspace = true
-gateway-observability-replay-read.workspace = true
-gateway-observability-replay-retention.workspace = true
-gateway-observability-replay-state.workspace = true
-gateway-observability-replay-records.workspace = true
-gateway-observability-replay-model.workspace = true
-gateway-observability-health.workspace = true
-gateway-auth-credentials.workspace = true
-gateway-auth-contracts.workspace = true
-gateway-auth-primitives.workspace = true
-gateway-observability-contracts.workspace = true
-gateway-observability-ledger.workspace = true
-gateway-observability-prompt.workspace = true
+gateway-observability-control = { workspace = true }
+gateway-observability-capacity = { workspace = true }
+gateway-observability-capacity-events = { workspace = true }
+gateway-observability-replay-capture = { workspace = true }
+gateway-observability-incidents = { workspace = true }
+gateway-observability-replay-read = { workspace = true }
+gateway-observability-replay-retention = { workspace = true }
+gateway-observability-replay-state = { workspace = true }
+gateway-observability-replay-records = { workspace = true }
+gateway-observability-replay-model = { workspace = true }
+gateway-observability-health = { workspace = true }
+gateway-observability-contracts = { workspace = true }
+gateway-observability-ledger = { workspace = true }
+gateway-observability-prompt = { workspace = true }
+gateway-model-selection.workspace = true
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
+gateway-schema-values.workspace = true
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-source.workspace = true
+gateway-authority-paid-backfill = { path = "../gateway-authority-paid-backfill" }
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-capacity = { path = "../gateway-authority-capacity" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
 gateway-quota-projection.workspace = true
 gateway-claude-usage-protocol.workspace = true
 gateway-claude-usage-history.workspace = true
@@ -50,8 +59,18 @@ zeroize = "=1.9.1"
 workspace = true
 
 [dev-dependencies]
-gateway-observability-replay-observation.workspace = true
-gateway-observability-metered.workspace = true
+gateway-observability-replay-observation = { workspace = true }
+gateway-observability-metered = { workspace = true }
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
+gateway-claude-policy = { path = "../gateway-claude-policy" }
+gateway-claude-roster = { path = "../gateway-claude-roster" }
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
 gateway-admin.workspace = true
 gateway-claude-runtime.workspace = true
 gateway-claude-usage-runtime.workspace = true

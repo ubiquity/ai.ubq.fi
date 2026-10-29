@@ -1,0 +1,432 @@
+use crate::SettingsAdmin;
+use gateway_admin_contracts::{
+    fields, operations::AdminInput, routes::AdminOperation, source_input as source_body,
+};
+use gateway_admin_kernel_runtime::KernelAdmin;
+use gateway_admin_runtime_contracts::capabilities::RuntimeCapabilities;
+use gateway_admin_runtime_records::{
+    kernel_data::{default_limit_key, default_window_key},
+    store,
+};
+use gateway_auth_contracts::types::{AuthHost, AuthResponse};
+use gateway_auth_primitives::{
+    error::{conflict, invalid},
+    store::{check, commit, put},
+};
+use gateway_authority_kernel_protocol::KernelDefaults;
+use gateway_authority_keys as keys;
+use gateway_contracts::model::ModelId;
+use gateway_core::{
+    query::QueryStore, source_control::decode_source_control_record,
+    source_control::encode_source_control_record, state::RecordMutation, state::StoredRecord,
+};
+use gateway_kv_codec::key::RecordKey;
+use gateway_model_metadata::reasoning::ModelReasoning;
+use gateway_model_snapshot::snapshot::ModelSnapshot;
+use gateway_schema::{
+    catalog_store::runtime_config_key,
+    runtime_config::{
+        build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
+    },
+};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use serde_json::json;
+
+fn response(model: &ModelId, effort: &JsString16, defaults: &KernelDefaults) -> SourceJson {
+    source_body::object(vec![(
+        "defaults",
+        source_body::object(vec![
+            ("model", source_body::json(model)),
+            ("reasoning_effort", source_body::json(effort)),
+            (
+                "kernel_policy_limit_requests",
+                source_body::json(&defaults.usage_limit_requests),
+            ),
+            (
+                "kernel_policy_window_ms",
+                source_body::json(&defaults.window_ms),
+            ),
+        ]),
+    )])
+}
+fn runtime_value(row: Option<&StoredRecord>, now: i64) -> Result<Option<SourceJson>, GatewayError> {
+    let Some(row) = row else { return Ok(None) };
+    row.validate_version()?;
+    if row.expires_at_ms.is_some_and(|expiry| expiry <= now) {
+        return Ok(None);
+    }
+    normalize_runtime_config(&decode_source_control_record(row)?)
+}
+impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> SettingsAdmin<'_, S, H, C> {
+    pub async fn defaults(
+        &self,
+        op: AdminOperation,
+        input: &AdminInput,
+    ) -> Result<AuthResponse, GatewayError> {
+        if op == AdminOperation::DefaultsGet {
+            let row = self.store.read(&runtime_config_key()).await?;
+            let runtime = runtime_value(row.as_ref(), input.now_ms)?;
+            let defaults = (KernelAdmin {
+                store: self.store,
+                host: self.host,
+                capabilities: self.capabilities,
+            })
+            .kernel_defaults(input.now_ms)
+            .await?;
+            let (model, effort) = model_defaults(runtime.as_ref());
+            let mut body = response(&model, &effort, &defaults);
+            source_body::set(
+                &mut body,
+                "metered_quota",
+                source_body::json(&self.capabilities.metered_diagnostics().await?),
+            );
+            return Ok(AuthResponse::source_json(200, body));
+        }
+        let body = &input.body;
+        if let Some(error) = validate_defaults_fields(body)? {
+            return Ok(error);
+        }
+        let limit=source_body::member(body,"kernel_policy_limit_requests").as_ref().map(|value|fields::source_limit(value).ok_or_else(||invalid("kernel_policy_limit_requests must be a non-negative number or -1 for unlimited"))).transpose()?;
+        let window = source_body::member(body, "kernel_policy_window_ms")
+            .as_ref()
+            .map(|value| {
+                fields::source_positive(value)
+                    .ok_or_else(|| invalid("kernel_policy_window_ms must be a positive number"))
+            })
+            .transpose()?;
+        for _ in 0..3 {
+            let rk = runtime_config_key();
+            let rr = self.store.read(&rk).await?;
+            let lk = default_limit_key();
+            let lr = self.store.read(&lk).await?;
+            let wk = default_window_key();
+            let wr = self.store.read(&wk).await?;
+            let dk = keys::kernel_defaults();
+            let dr = self.store.read(&dk).await?;
+            let runtime = runtime_value(rr.as_ref(), input.now_ms)?;
+            let old = (KernelAdmin {
+                store: self.store,
+                host: self.host,
+                capabilities: self.capabilities,
+            })
+            .kernel_defaults(input.now_ms)
+            .await?;
+            let defaults = KernelDefaults {
+                usage_limit_requests: limit.unwrap_or(old.usage_limit_requests),
+                window_ms: window.unwrap_or(old.window_ms),
+            };
+            let (model, effort, next_runtime) =
+                match defaults_runtime(body, &runtime, input.now_ms)? {
+                    DefaultRuntime::Continue(values) => values,
+                    DefaultRuntime::Break(response) => return Ok(response),
+                };
+            let response = response(&model, &effort, &defaults);
+            if next_runtime.is_none() && limit.is_none() && window.is_none() {
+                return Ok(AuthResponse::source_json(200, response));
+            }
+            let cutover_key = keys::kernel_cutover();
+            let rows = [(&lk, lr.as_ref()), (&wk, wr.as_ref()), (&dk, dr.as_ref())];
+            let guard = if window.is_some() && defaults.window_ms != old.window_ms {
+                let Some(row) = self
+                    .defaults_cutover(&cutover_key, input.now_ms, rows)
+                    .await?
+                else {
+                    continue;
+                };
+                Some(row)
+            } else {
+                None
+            };
+            let revision = store::revision(self.host)?;
+            let result = async {
+                let mut checks = vec![
+                    check(&rk, rr.as_ref()),
+                    check(&lk, lr.as_ref()),
+                    check(&wk, wr.as_ref()),
+                    check(&dk, dr.as_ref()),
+                ];
+                let mut writes = Vec::new();
+                if let Some(guard) = &guard {
+                    checks.push(check(&cutover_key, Some(guard)));
+                    writes.push(RecordMutation::Delete {
+                        key: cutover_key.clone(),
+                    });
+                }
+                if let Some(runtime) = next_runtime {
+                    writes.push(RecordMutation::Put {
+                        key: rk,
+                        record: encode_source_control_record(&revision, &runtime, None)?,
+                    });
+                }
+                if let Some(limit) = limit {
+                    writes.push(put(lk, &limit, None, &revision)?);
+                }
+                if let Some(window) = window {
+                    writes.push(put(wk, &window, None, &revision)?);
+                }
+                if limit.is_some() || window.is_some() {
+                    writes.push(put(dk, &defaults, None, &revision)?);
+                }
+                commit(self.store, checks, writes).await
+            }
+            .await;
+            match result {
+                Ok(true) => return Ok(AuthResponse::source_json(200, response)),
+                other => {
+                    if let Some(guard) = &guard {
+                        (KernelAdmin {
+                            store: self.store,
+                            host: self.host,
+                            capabilities: self.capabilities,
+                        })
+                        .release_cutover(&cutover_key, guard)
+                        .await?;
+                    }
+                    other?;
+                }
+            }
+        }
+        Err(conflict("Defaults were modified concurrently; retry"))
+    }
+
+    async fn defaults_cutover(
+        &self,
+        cutover_key: &RecordKey,
+        now: i64,
+        rows: [(&RecordKey, Option<&StoredRecord>); 3],
+    ) -> Result<Option<StoredRecord>, GatewayError> {
+        let [(lk, lr), (wk, wr), (dk, dr)] = rows;
+        let current = self.store.read(cutover_key).await?;
+        if store::value(current.as_ref(), now)?.is_some() {
+            return Ok(None);
+        }
+        let revision = store::revision(self.host)?;
+        let marker = json!({"v":2,"id":revision,"created_at_ms":now,"expires_at_ms":now+300000});
+        if !commit(
+            self.store,
+            vec![
+                check(cutover_key, current.as_ref()),
+                check(lk, lr),
+                check(wk, wr),
+                check(dk, dr),
+            ],
+            vec![put(
+                cutover_key.clone(),
+                &marker,
+                Some(now + 300000),
+                &revision,
+            )?],
+        )
+        .await?
+        {
+            return Ok(None);
+        }
+        let row =
+            self.store.read(cutover_key).await?.ok_or_else(|| {
+                store::corrupt("Kernel default-window cutover guard is unavailable")
+            })?;
+        if row.revision != revision {
+            return Err(store::corrupt(
+                "Kernel default-window cutover guard changed",
+            ));
+        }
+        match (KernelAdmin {
+            store: self.store,
+            host: self.host,
+            capabilities: self.capabilities,
+        })
+        .live_default_reservations(now)
+        .await
+        {
+            Ok(false) => Ok(Some(row)),
+            result => {
+                (KernelAdmin {
+                    store: self.store,
+                    host: self.host,
+                    capabilities: self.capabilities,
+                })
+                .release_cutover(cutover_key, &row)
+                .await?;
+                Err(match result {
+                    Ok(_) => conflict(
+                        "Active Kernel quota reservations must settle before changing the default window",
+                    ),
+                    Err(error) => error,
+                })
+            }
+        }
+    }
+}
+
+fn validate_defaults_fields(body: &SourceJson) -> Result<Option<AuthResponse>, GatewayError> {
+    let fields = fields::source_entries(body).ok_or_else(|| invalid("Invalid JSON body"))?;
+    for (name, _) in fields {
+        if ![
+            "model",
+            "reasoning_effort",
+            "kernel_policy_limit_requests",
+            "kernel_policy_window_ms",
+        ]
+        .iter()
+        .any(|allowed| name.as_units().iter().copied().eq(allowed.encode_utf16()))
+        {
+            if let Ok(name) = name.try_utf8() {
+                return Err(invalid(&format!("Unknown defaults field: {name}")));
+            }
+            let mut units = "Unknown defaults field: "
+                .encode_utf16()
+                .collect::<Vec<_>>();
+            units.extend_from_slice(name.as_units());
+            let error = gateway_local_refusal::source_error::SourceRequestError::new(
+                400,
+                JsString16::from_units(units),
+                "invalid_request_error",
+                Some("invalid_request_error"),
+                None,
+            );
+            return Ok(Some(AuthResponse::closed_error(
+                error.status,
+                error.body().clone(),
+            )));
+        }
+    }
+    Ok(None)
+}
+
+type DefaultRuntime =
+    std::ops::ControlFlow<AuthResponse, (ModelId, JsString16, Option<SourceJson>)>;
+
+fn defaults_runtime(
+    body: &SourceJson,
+    runtime: &Option<SourceJson>,
+    now: i64,
+) -> Result<DefaultRuntime, GatewayError> {
+    let (mut model, mut effort) = model_defaults(runtime.as_ref());
+    if source_body::member(body, "model").is_none()
+        && source_body::member(body, "reasoning_effort").is_none()
+    {
+        return Ok(DefaultRuntime::Continue((model, effort, None)));
+    }
+    if runtime.is_none() {
+        return Err(GatewayError::unavailable(
+            "Runtime configuration is unavailable",
+            "server_error",
+        ));
+    }
+    if let Some(raw) = source_body::member(body, "model") {
+        model = fields::source_text(Some(&raw))
+            .filter(|text| {
+                !text
+                    .as_units()
+                    .iter()
+                    .any(|unit| source_body::whitespace(*unit))
+            })
+            .map(ModelId::from_source)
+            .ok_or_else(|| invalid("model must be a non-empty string"))?;
+    }
+    if model.as_js_string().as_units().is_empty() {
+        return Err(invalid("model must be a non-empty string"));
+    }
+    let snapshot = runtime
+        .as_ref()
+        .and_then(|value| source_body::member(value, "codex_models"))
+        .and_then(|value| value.deserialize::<ModelSnapshot>().ok())
+        .filter(|value| !value.models.is_empty())
+        .ok_or_else(|| conflict("No Codex model snapshot stored"))?;
+    let record = snapshot
+        .models
+        .iter()
+        .find(|record| {
+            source_body::member(record, "slug")
+                .as_ref()
+                .and_then(source_body::text)
+                .as_ref()
+                == Some(model.as_js_string())
+        })
+        .ok_or_else(|| invalid("model is not in the stored Codex model list"))?;
+    let reasoning = ModelReasoning::from_record(Some(record));
+    effort = if let Some(raw) = source_body::member(body, "reasoning_effort") {
+        fields::source_text(Some(&raw))
+            .ok_or_else(|| invalid("reasoning_effort must be a non-empty string"))?
+    } else {
+        reasoning
+            .default_level
+            .or_else(|| reasoning.levels.first().cloned())
+            .unwrap_or_else(|| JsString16::from_utf8("none"))
+    };
+    let next_runtime = Some(
+        match build_runtime_config(&snapshot, Some(&model), Some(&effort), now) {
+            Ok(value) => value,
+            Err(error) => {
+                // The original scalar error path remains unchanged;
+                // only an actual source-reflected opaque message needs
+                // the existing lossless source response rail.
+                if SourceJson::from_serializable(&error.diagnostic().envelope)?.as_bytes()
+                    == error.body().as_bytes()
+                {
+                    return Err(error.diagnostic().clone());
+                }
+                return Ok(DefaultRuntime::Break(AuthResponse::closed_error(
+                    error.status,
+                    error.body().clone(),
+                )));
+            }
+        },
+    );
+    Ok(DefaultRuntime::Continue((model, effort, next_runtime)))
+}
+
+fn model_defaults(runtime: Option<&SourceJson>) -> (ModelId, JsString16) {
+    (
+        runtime
+            .and_then(default_model)
+            .unwrap_or_else(|| ModelId::from_scalar("")),
+        runtime
+            .and_then(default_reasoning_effort)
+            .unwrap_or_else(|| JsString16::from_utf8("medium")),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{defaults_runtime, validate_defaults_fields};
+    use gateway_auth_contracts::types::AuthResponseBody;
+    use gateway_source::{error::GatewayError, source_json::SourceJson};
+
+    #[test]
+    fn closed_error_keeps_source_wire_and_scalar_phase() -> Result<(), Box<dyn std::error::Error>> {
+        let input = SourceJson::parse(r#"{"\ud800":1}"#)?;
+        let response =
+            validate_defaults_fields(&input)?.ok_or("unknown source field response missing")?;
+        let AuthResponseBody::ClosedError(body) = &response.body else {
+            return Err("unknown source field lost the closed error carrier".into());
+        };
+        assert_eq!(response.status, 400);
+        assert_eq!(
+            body.as_str(),
+            r#"{"error":{"message":"Unknown defaults field: \ud800","type":"invalid_request_error","code":"invalid_request_error"}}"#
+        );
+        assert_eq!(response.body.to_bytes()?, body.as_bytes());
+        assert_eq!(response.headers["content-type"], "application/json");
+        assert_eq!(response.headers["cache-control"], "no-store");
+        assert!(response.set_cookies.is_empty());
+        assert!(response.stream.is_none());
+
+        let input = SourceJson::parse(r#"{"model":"m"}"#)?;
+        let runtime = Some(SourceJson::parse(
+            r#"{"default_model":"m","default_reasoning_effort":"none","codex_models":{"models":[{"slug":"m"}],"source":"","updated_at_ms":1}}"#,
+        )?);
+        let error = defaults_runtime(&input, &runtime, 1)
+            .err()
+            .ok_or("scalar runtime failure changed phase")?;
+        assert_eq!(
+            error,
+            GatewayError::new(
+                503,
+                "runtime config requires valid Codex catalog metadata",
+                Some("runtime_config_invalid"),
+            )
+        );
+        Ok(())
+    }
+}

@@ -1,5 +1,6 @@
 //! Source capture-owned budget/accounting rows. This is unrelated to paid accounting.
-use gateway_core::{state::AuthorityStore, state::RecordKey, state::StoredRecord};
+use gateway_core::{state::AuthorityStore, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{data, source_object::SourceObject};
 use gateway_observability_replay_model::{
     records::read_json_record, replay_crypto, replay_model as model,
@@ -29,7 +30,8 @@ impl RetentionLimits {
     /// Source's injectable test seam; the public runtime always uses Default.
     pub fn for_fixture(bytes: u64) -> Self {
         Self {
-            budget: bytes.clamp(65_536, gateway_core::identity::MAX_SAFE_INTEGER as u64) as f64,
+            budget: bytes.clamp(65_536, gateway_contracts::identity::MAX_SAFE_INTEGER as u64)
+                as f64,
         }
     }
     pub fn reserve(self) -> f64 {

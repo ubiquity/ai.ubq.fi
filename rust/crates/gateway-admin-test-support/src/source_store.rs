@@ -1,7 +1,8 @@
-use gateway_core::error::GatewayError;
 use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::error::GatewayError;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,

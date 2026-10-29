@@ -4,7 +4,7 @@ use base64::{
     Engine, alphabet, engine::DecodePaddingMode, engine::GeneralPurpose,
     engine::GeneralPurposeConfig, engine::general_purpose::URL_SAFE_NO_PAD,
 };
-use gateway_core::{state::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey};
+use gateway_kv_codec::{key::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey};
 use gateway_observability_contracts::{data, source_object::SourceObject};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Deserializer, Serialize};

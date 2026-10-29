@@ -1,11 +1,10 @@
 //! Admin runtime fixture storage retaining CAS, query and read-count behavior.
 use gateway_core::{
-    error::GatewayError,
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 use std::{
     cell::{Cell, RefCell},
@@ -19,17 +18,13 @@ pub struct Store {
     pub conflicts: Cell<u32>,
 }
 impl Store {
-    pub fn put(&self, parts: Value, value: Value) {
-        let key = gateway_auth::store::key(parts);
+    pub fn put(&self, key: RecordKey, value: Value) {
         self.rows
             .borrow_mut()
             .insert(key.0, StoredRecord::json("fixture", value, None));
     }
-    pub fn get(&self, parts: Value) -> Option<Value> {
-        self.rows
-            .borrow()
-            .get(&gateway_auth::store::key(parts).0)
-            .map(|r| r.value.clone())
+    pub fn get(&self, key: RecordKey) -> Option<Value> {
+        self.rows.borrow().get(&key.0).map(|r| r.value.clone())
     }
 }
 impl AuthorityStore for Store {
@@ -75,7 +70,7 @@ impl QueryStore for Store {
             }
         }
         entries.sort_by_key(|e| {
-            gateway_core::tuple_key::TupleKey::from_record_key(&e.key)
+            gateway_kv_codec::tuple_key::TupleKey::from_record_key(&e.key)
                 .unwrap_or_else(|error| panic!("Invalid fixture key: {error}"))
         });
         if request.reverse {

@@ -3,21 +3,24 @@ use super::{ResponseResult, dispatch_attempts};
 use crate::inference_lifecycle::{Lifecycle, Usage, finish_hook};
 use crate::routing_host;
 use gateway_admission::handoff::{Pending, enqueue};
-use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal, provider::UpstreamProvider};
-use gateway_providers::response::decode_response;
-use gateway_providers::types::Headers;
-use gateway_providers::types::{DecodePlan, ProviderEvent};
+use gateway_contracts::{lifecycle::SemanticTerminal, provider::UpstreamProvider};
+use gateway_local_refusal::routing_error::RoutingError;
+use gateway_model_selection::aliases as model_aliases;
+use gateway_provider_events::event::ProviderEvent;
+use gateway_provider_protocol::types::DecodePlan;
+use gateway_provider_protocol::types::Headers;
+use gateway_provider_response::response::decode_response;
 use gateway_routing_runtime::types::PreparedWireRequest;
-use gateway_routing_runtime::types::{
-    AttemptFailure, FailureOrigin, RefusalDecision, RoutingError, TransportState,
+use gateway_routing_runtime::{
+    types::AttemptFailure, types::FailureOrigin, types::RefusalDecision, types::TransportState,
 };
+use gateway_source::error::GatewayError;
 use gateway_worker_http_body::body;
 use gateway_worker_http_body::protocol::{
     CEREBRAS_RATE_LIMIT_HEADERS, apply_warnings, cerebras_error_body, copy_headers, interrupted,
     invalid, provider_correlation, set_header, stream_failure,
 };
-use gateway_worker_platform::cancellation::Cancellation;
-use gateway_worker_platform::cancellation::Deadline;
+use gateway_worker_platform::cancellation::{Cancellation, Deadline};
 use gateway_worker_storage::store::now_ms;
 use gateway_worker_stream::observed::{FinishHook, ObservationHandle, ObservedStream};
 use gateway_worker_stream::relay::PrepareDisposition;
@@ -33,9 +36,9 @@ pub(super) struct PendingLifetime {
     pub(super) deadline: Option<Deadline>,
 }
 pub(super) fn cleanup_error(
-    original: gateway_routing_runtime::types::RoutingError,
-    cleanup: Result<(), gateway_routing_runtime::types::RoutingError>,
-) -> gateway_routing_runtime::types::RoutingError {
+    original: gateway_local_refusal::routing_error::RoutingError,
+    cleanup: Result<(), gateway_local_refusal::routing_error::RoutingError>,
+) -> gateway_local_refusal::routing_error::RoutingError {
     match cleanup {
         Ok(()) => original,
         Err(error) => error,
@@ -44,7 +47,7 @@ pub(super) fn cleanup_error(
 impl PendingLifetime {
     pub(super) async fn cleanup(
         self,
-        error: gateway_routing_runtime::types::RoutingError,
+        error: gateway_local_refusal::routing_error::RoutingError,
         capture: Rc<crate::inference_capture::Capture>,
         cancellation: Rc<Cancellation>,
     ) -> ResponseResult {
@@ -73,7 +76,8 @@ impl Selected {
         attempt: gateway_routing_runtime::types::PreparedAttempt,
     ) -> Self {
         let headers = upstream.headers().entries().collect::<Headers>();
-        let plan = gateway_providers::response::response_plan(attempt.request.decode(), &headers);
+        let plan =
+            gateway_provider_protocol::response::response_plan(attempt.request.decode(), &headers);
         Self {
             upstream,
             attempt,
@@ -85,10 +89,10 @@ impl Selected {
         }
     }
     pub(super) fn needs_preparation(&self, session: &crate::inference_lifecycle::Session) -> bool {
-        gateway_schema::aliases::is_synthetic(session.selected_model())
+        model_aliases::is_synthetic(session.selected_model())
             && self.attempt.paid.is_none()
             && self.attempt.request.stream()
-            && self.plan.surface == gateway_providers::types::ClientSurface::Responses
+            && self.plan.surface == gateway_provider_protocol::types::ClientSurface::Responses
             && matches!(
                 self.plan.provider,
                 UpstreamProvider::Lithos
@@ -96,7 +100,7 @@ impl Selected {
                     | UpstreamProvider::Openrouter
             )
             && self.upstream.status_code() < 400
-            && gateway_providers::response::is_event_stream(
+            && gateway_provider_stream::response::is_event_stream(
                 self.plan.provider,
                 self.upstream.status_code(),
                 &self.headers,
@@ -204,7 +208,7 @@ pub(super) struct Reply<'a> {
     pub(super) host: &'a crate::host::PlatformHost,
     pub(super) capture: &'a Rc<crate::inference_capture::Capture>,
     pub(super) responses: bool,
-    pub(super) principal: &'a gateway_auth::types::AuthPrincipal,
+    pub(super) principal: &'a gateway_auth_contracts::types::AuthPrincipal,
     pub(super) client_stream: bool,
     pub(super) event_stream: bool,
     pub(super) status: u16,
@@ -242,7 +246,10 @@ impl Reply<'_> {
                 self.responses,
                 self.provider,
             );
-            if gateway_providers::sse::is_lithos_stream_refusal(&self.decode_plan, self.status) {
+            if gateway_provider_stream::sse::is_lithos_stream_refusal(
+                &self.decode_plan,
+                self.status,
+            ) {
                 return self.lithos_refusal().await;
             }
             if self.provider == UpstreamProvider::Cerebras {
@@ -399,7 +406,7 @@ impl Reply<'_> {
         set_header(
             &mut response,
             "x-uos-upstream",
-            gateway_providers::policy::direct_provider_label(self.provider),
+            gateway_provider_source::policy::direct_provider_label(self.provider),
         )?;
         provider_correlation(&mut response, self.provider, &self.headers)?;
         apply_warnings(&mut response, self.prepared.warnings())?;
@@ -525,7 +532,7 @@ impl Reply<'_> {
 impl TerminalObserver for Lifecycle {
     fn observe_terminal(
         &self,
-        observation: gateway_core::lifecycle::TransportObservation,
+        observation: gateway_contracts::lifecycle::TransportObservation,
         usage: Option<serde_json::Value>,
     ) -> impl std::future::Future<Output = Result<(), GatewayError>> {
         Lifecycle::observe_terminal(self, observation, usage)
@@ -661,7 +668,7 @@ impl super::Inference<'_> {
                                 body: Vec::new(),
                                 body_complete: false,
                                 failure:
-                                    gateway_providers::policy::HopFailure::StreamBeforeSemantic,
+                                    gateway_provider_policy::policy::HopFailure::StreamBeforeSemantic,
                                 transport: TransportState::Started,
                                 semantic_committed: false,
                                 cancelled: self.host.cancellation.signal().aborted(),

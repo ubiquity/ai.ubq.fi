@@ -1,6 +1,7 @@
 use crate::routes::AdminOperation;
-use gateway_auth::types::{AuthPrincipal, AuthResponse};
-use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson};
+use gateway_auth_contracts::{types::AuthPrincipal, types::AuthResponse};
+use gateway_contracts::model::ModelId;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use std::{collections::BTreeMap, future::Future};
 
 /// Finite business capabilities, not an arbitrary command/path/SQL/URL forwarding interface.

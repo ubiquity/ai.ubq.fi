@@ -2,8 +2,8 @@
 //! It opens one private stopped capture and writes no database, target, or
 //! credential. A later preparation still requires the existing custody gate.
 #![cfg(all(unix, not(target_arch = "wasm32")))]
-use gateway_migration::error::MigrationError;
-use gateway_migration::native_stage::Captured;
+use gateway_migration_data::error::MigrationError;
+use gateway_migration_stage::native_stage::Captured;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -34,14 +34,14 @@ struct Receipt {
     selected_capture_sha256: String,
     selected_capture_path: String,
     selected_capture_bytes: u64,
-    manifest: gateway_migration::core_state::CoreStateManifest,
+    manifest: gateway_migration_core_state::CoreStateManifest,
     eof: bool,
     spool_directory: String,
     target_touched: bool,
     credential_opened: bool,
 }
-fn failure(message: &str) -> gateway_migration::error::MigrationError {
-    gateway_core::error::GatewayError::unavailable(message, "m20_core_state_manifest_invalid")
+fn failure(message: &str) -> gateway_migration_data::error::MigrationError {
+    gateway_source::error::GatewayError::unavailable(message, "m20_core_state_manifest_invalid")
         .into()
 }
 fn main() -> Result<(), MigrationError> {
@@ -125,7 +125,7 @@ fn execute(input: Input) -> Result<Receipt, MigrationError> {
             "Private capture hash differs from its producer receipt",
         ));
     }
-    let directory = gateway_migration::native_stage::directory(&input.directory)?;
+    let directory = gateway_migration_spool::directory(&input.directory)?;
     let capture = Captured::read(&input.capture, &directory)?;
     if capture.count() != input.expected_entries {
         return Err(failure(
@@ -172,10 +172,11 @@ fn execute(input: Input) -> Result<Receipt, MigrationError> {
 #[cfg(test)]
 mod tests {
     use super::{Input, execute, hash_file, write_selected};
-    use gateway_core::tuple_key::{KeyPart, TupleKey};
-    use gateway_migration::native_capture::{
-        NativeCapture, NativeEntry, NativeRevision, NativeValue,
-    };
+    use gateway_kv_codec::{tuple_key::KeyPart, tuple_key::TupleKey};
+    use gateway_migration_data::native_capture::NativeCapture;
+    use gateway_migration_data::native_capture::NativeEntry;
+    use gateway_migration_data::native_capture::NativeRevision;
+    use gateway_migration_data::native_capture::NativeValue;
     use std::{
         fs,
         os::unix::fs::{DirBuilderExt, PermissionsExt},
@@ -270,7 +271,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         window.value = NativeValue::SourceGraphV1(
-            gateway_core::source_json::SourceJson::from_serializable(
+            gateway_source::source_json::SourceJson::from_serializable(
                 &serde_json::json!({"root":{"type":"ref","ref":0},"nodes":[{"type":"object","entries":entries}]}),
             ).unwrap(),
         );

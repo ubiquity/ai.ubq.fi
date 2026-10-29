@@ -1,15 +1,11 @@
 //! Already-authorized finite admin operations; account/quota policy stays in m12/m21.
-use crate::authority::RemoteAuthorityStore;
-use crate::host::PlatformHost;
-use crate::host::response_bytes;
-use crate::transport::outbound::PinnedDestination;
-use crate::transport::outbound::construct_request;
-use crate::transport::outbound::send_constructed;
-use gateway_admin_runtime::{
-    capabilities::{ClaudeRequest, ClaudeSubmission, Context},
-    claude::{self, AccountBinding, AccountUpdate, Credential},
+use crate::{
+    host::{PlatformHost, response_bytes},
+    transport::outbound::{PinnedDestination, construct_request, send_constructed},
 };
-use gateway_auth_contracts::{types::AuthHost, types::AuthResponse};
+use gateway_admin_runtime_contracts::capabilities::{ClaudeRequest, ClaudeSubmission, Context};
+use gateway_auth_contracts::types::{AuthHost, AuthResponse};
+use gateway_claude_roster::claude::{self, AccountBinding, AccountUpdate, Credential};
 use gateway_claude_usage_admin::{
     check_target_cohort, matching_target, readback::subscription_block, select_source_account,
     submitted_workspace,
@@ -20,6 +16,7 @@ use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body::discard_response;
 use gateway_worker_platform::cancellation::Cancellation;
 use serde::Serialize;
@@ -155,10 +152,14 @@ async fn submit<H: ObservabilityHost>(
     } else {
         target(store, platform, source_account_id.as_ref())
             .await
-            .map_err(|error| gateway_auth::types::invalid(&error.envelope.error.message))?
+            .map_err(|error| {
+                gateway_auth_primitives::error::invalid(&error.envelope.error.message)
+            })?
     };
     if input.account_id.is_some() && old.is_none() {
-        return Err(gateway_auth::types::invalid("Claude account was not found"));
+        return Err(gateway_auth_primitives::error::invalid(
+            "Claude account was not found",
+        ));
     }
     let secret = input
         .credential
@@ -176,7 +177,7 @@ async fn submit<H: ObservabilityHost>(
         input.label.clone(),
         platform.now_ms(),
     )
-    .ok_or_else(|| gateway_auth::types::invalid("credential is invalid"))?;
+    .ok_or_else(|| gateway_auth_primitives::error::invalid("credential is invalid"))?;
     let workspace_id = match &input.workspace_id {
         Some(id) => id.as_ref(),
         None => old

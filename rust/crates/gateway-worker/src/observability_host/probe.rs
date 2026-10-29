@@ -1,19 +1,15 @@
 //! Fixed free provider GETs with one actual request cancellation and absolute deadline.
 use super::{RequestHost, unavailable};
-use crate::transport::outbound::PinnedDestination;
-use crate::transport::outbound::send_constructed;
-use crate::transport::outbound::send_http;
-use gateway_admin_runtime::claude;
-use gateway_auth_credentials::{
-    provider_credentials as codex, provider_credentials::CodexSourceAccount,
-};
+use crate::transport::outbound::{PinnedDestination, send_constructed, send_http};
+use gateway_auth_credentials::provider_credentials::{self as codex, CodexSourceAccount};
+use gateway_claude_roster::claude;
 use gateway_observability_contracts::{host_types::*, types::HealthEvent, types::HealthTarget};
+use gateway_schema_values::scalar as util;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_worker_platform::cancellation::Cancellation;
-use gateway_worker_platform::cancellation::Deadline;
+use gateway_worker_platform::cancellation::{Cancellation, Deadline};
 use std::collections::BTreeMap;
 use worker::{Method, Response};
 
@@ -371,7 +367,7 @@ impl RequestHost {
             }
             let bytes = reply.response.bytes().await.unwrap_or_default();
             let text = String::from_utf8_lossy(&bytes);
-            let trimmed = text.trim_matches(gateway_schema::util::js_whitespace);
+            let trimmed = text.trim_matches(util::js_whitespace);
             let error = if trimmed.is_empty() {
                 JsString16::from_utf8("Claude models probe returned an error status.")
             } else {
@@ -470,7 +466,7 @@ impl RequestHost {
                     .and_then(|p| serde_json::from_slice::<serde_json::Value>(&p).ok());
                 let normalize = |v: Option<&serde_json::Value>| {
                     v.and_then(serde_json::Value::as_str)
-                        .map(|v| v.trim_matches(gateway_schema::util::js_whitespace))
+                        .map(|v| v.trim_matches(util::js_whitespace))
                         .filter(|v| {
                             !v.is_empty()
                                 && v.encode_utf16().count() <= 320
@@ -494,7 +490,7 @@ impl RequestHost {
     pub(super) async fn capacity_probe(
         &self,
         account: &CapacityAccountRef,
-        fence: &gateway_authority::capacity::CodexCapacityObservationFence,
+        fence: &gateway_authority_capacity::CodexCapacityObservationFence,
         deadline: i64,
     ) -> Result<CapacityProbe, GatewayError> {
         let expected = fence

@@ -1,5 +1,13 @@
-use gateway_core::provider::PaidProvider;
-use gateway_providers::paid_lookup::*;
+use gateway_contracts::provider::PaidProvider;
+use gateway_provider_services::paid_lookup::LookupPlan;
+use gateway_provider_services::paid_lookup::LookupStep;
+use gateway_provider_services::paid_lookup::MAX_PAGES;
+use gateway_provider_services::paid_lookup::NoLookupReason;
+use gateway_provider_services::paid_lookup::OVERALL_TIMEOUT_MS;
+use gateway_provider_services::paid_lookup::OpenluxLookup;
+use gateway_provider_services::paid_lookup::TokenLog;
+use gateway_provider_services::paid_lookup::normalize_token_log;
+use gateway_provider_services::paid_lookup::plan_lookup;
 use serde_json::{Value, json};
 
 fn golden() -> Value {

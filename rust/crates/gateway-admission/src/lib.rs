@@ -4,7 +4,7 @@
 
 pub mod handoff;
 
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, VecDeque},

@@ -1,6 +1,6 @@
 //! Current Claude subscription block projection, retaining source property order and UTF16 leaves.
-use gateway_auth::types::AuthResponseBody;
-use gateway_core::{error::GatewayError, source_json::SourceJson};
+use gateway_auth_contracts::types::AuthResponseBody;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::Value;
 pub fn subscription_block(body: AuthResponseBody) -> Result<SourceJson, GatewayError> {
     match body {
@@ -8,26 +8,33 @@ pub fn subscription_block(body: AuthResponseBody) -> Result<SourceJson, GatewayE
             SourceJson::from_serializable(value.get("claude_code").unwrap_or(&Value::Null))
         }
         AuthResponseBody::Empty => SourceJson::parse("null"),
-        AuthResponseBody::SourceJson(value) => Ok(value
-            .object_entries()?
-            .into_iter()
-            .rev()
-            .find(|(key, _)| {
-                key.as_units()
-                    .iter()
-                    .copied()
-                    .eq("claude_code".encode_utf16())
-            })
-            .map(|(_, value)| value)
-            .unwrap_or(SourceJson::parse("null")?)),
+        AuthResponseBody::SourceJson(value) => source_subscription_block(value),
+        AuthResponseBody::ClosedError(value) => {
+            source_subscription_block(SourceJson::parse(value.as_str())?)
+        }
     }
+}
+
+fn source_subscription_block(value: SourceJson) -> Result<SourceJson, GatewayError> {
+    Ok(value
+        .object_entries()?
+        .into_iter()
+        .rev()
+        .find(|(key, _)| {
+            key.as_units()
+                .iter()
+                .copied()
+                .eq("claude_code".encode_utf16())
+        })
+        .map(|(_, value)| value)
+        .unwrap_or(SourceJson::parse("null")?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::subscription_block;
-    use gateway_auth::types::{AuthResponse, AuthResponseBody};
-    use gateway_core::source_json::SourceJson;
+    use gateway_auth_contracts::types::{AuthResponse, AuthResponseBody};
+    use gateway_source::source_json::SourceJson;
     use serde_json::{Value, json};
     #[test]
     fn admin_readback_preserves_both_unpaired_utf16_directions_in_raw_quota() {
@@ -67,5 +74,26 @@ mod tests {
                 .as_str(),
             "null"
         );
+    }
+    #[test]
+    fn closed_error_readback_uses_the_existing_source_object_projection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let error = gateway_local_refusal::source_error::SourceRequestError::new(
+            400,
+            gateway_source::js_string::JsString16::from_units(vec![0xd800, 0, 0xdc00]),
+            " claude_code ",
+            Some("claude_code"),
+            Some(None),
+        );
+        let wire = error.body().as_bytes().to_vec();
+        let finite = AuthResponseBody::ClosedError(error.body().clone());
+        let source = AuthResponseBody::SourceJson(SourceJson::parse_bytes(&wire)?);
+        assert_eq!(subscription_block(finite)?, subscription_block(source)?);
+        assert_eq!(
+            subscription_block(AuthResponseBody::ClosedError(error.body().clone()))?.as_str(),
+            "null"
+        );
+        assert_eq!(error.body().as_bytes(), wire);
+        Ok(())
     }
 }

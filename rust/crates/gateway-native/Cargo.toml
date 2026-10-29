@@ -10,14 +10,45 @@ default = []
 native-import-fixture = ["gateway-authority/native-import-fixture"]
 
 [dependencies]
+gateway-authority-actor-records.workspace = true
+gateway-native-authority-request = { path = "../gateway-native-authority-request" }
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-native-authority-wire.workspace = true
+gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
 gateway-auth-native-wire.workspace = true
+gateway-auth-native-contracts.workspace = true
+gateway-auth-native-proof.workspace = true
+gateway-auth-native-protocol.workspace = true
+gateway-source.workspace = true
 gateway-core = { path = "../gateway-core" }
-gateway-auth = { path = "../gateway-auth" }
 gateway-authority = { path = "../gateway-authority" }
 gateway-publication = { path = "../gateway-publication" }
-gateway-native-supervisor-read.workspace = true
+gateway-native-confinement.workspace = true
+gateway-native-connector.workspace = true
+gateway-native-connected-io.workspace = true
+gateway-native-custody-wire.workspace = true
+gateway-native-http-framing.workspace = true
+gateway-native-import-client.workspace = true
+gateway-native-import-source.workspace = true
+gateway-native-live-buffer.workspace = true
+gateway-native-local-transport.workspace = true
+gateway-native-replay.workspace = true
+gateway-native-supervisor.workspace = true
+gateway-native-supervisor-data.workspace = true
+gateway-native-supervisor-http.workspace = true
 gateway-publication-policy.workspace = true
 gateway-publication-transport.workspace = true
+gateway-auth-contracts.workspace = true
+gateway-auth-credentials.workspace = true
+gateway-auth-native-import-data.workspace = true
+gateway-auth-passkeys.workspace = true
+gateway-auth-primitives.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 time = { version = "=0.3.44", features = ["parsing", "formatting"] }
@@ -39,10 +70,14 @@ webpki-roots = "=1.0.9"
 name = "uos-native"
 path = "src/bin/uos-native.rs"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(target_os = "linux")'.dev-dependencies]
 landlock = "=0.4.7"
-seccompiler = "=0.5.0"
-libc = "=0.2.191"
+
+[dev-dependencies]
+gateway-schema.workspace = true
+gateway-kv-codec.workspace = true
+gateway-native-https-test-support.workspace = true
+gateway-native-import-test-support.workspace = true
 
 [lints]
 workspace = true

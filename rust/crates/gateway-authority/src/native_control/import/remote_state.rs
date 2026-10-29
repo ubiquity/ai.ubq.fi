@@ -2,7 +2,7 @@
 //! no fake local action or deserialized body/start capability exists.
 use super::effects::NativeImportBinding;
 use super::*;
-use gateway_auth::native_import::authority::ImportAuthorityStateData;
+use gateway_auth_native_contracts::native_import::state::ImportAuthorityStateData;
 #[cfg(unix)]
 use std::sync::Arc;
 

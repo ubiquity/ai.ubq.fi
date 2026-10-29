@@ -1,12 +1,11 @@
 #![cfg(target_os = "linux")]
 
-use gateway_auth::{
-    crypto::base64url,
-    native_auth::{NativeCapability, NativeTransportIdentity},
-};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::native_read::{
     NATIVE_FOLLOW_PATH, NATIVE_MAX_BODY_BYTES, NATIVE_RPC_PATH,
 };
+use gateway_auth_primitives::crypto::base64url;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
@@ -199,7 +198,7 @@ fn signed_request(path: &str, body: &Value, nonce: u8, chunked: bool) -> Vec<u8>
     )
     .unwrap();
     let body = serde_json::to_vec(body).unwrap();
-    let now = gateway_native::http_server::now_ms().unwrap();
+    let now = gateway_auth_native_proof::native_context::now_ms().unwrap();
     let nonce = base64url(&[nonce; 32]);
     let mac = identity.sign(path, now, &nonce, &body).unwrap();
     let framing = if chunked {

@@ -1,27 +1,26 @@
 //! Original-request identity, rechecked from fixed source rows. Never a native operation grant.
-use crate::{
-    keys,
-    store::{Authority, TokenSource, Transaction},
-};
-use gateway_auth::api_keys;
-use gateway_auth::crypto::{decode_base64url, sha256_hex};
-use gateway_auth::passkeys::{self, PasskeySession, PasskeyUser};
+use crate::store::{Authority, Transaction};
 use gateway_auth::resolve::AuthService;
-use gateway_auth::session_index;
-use gateway_auth::types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest};
-use gateway_auth::upstream;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::RequestContext;
-use gateway_core::state::{AuthorityStore, RecordKey, RevisionCheck};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NativeActorScope {
-    Client,
-    Admin,
-}
+use gateway_auth_attestation::upstream;
+use gateway_auth_contracts::passkeys::{PasskeySession, PasskeyUser};
+use gateway_auth_contracts::types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest};
+use gateway_auth_passkeys::{passkeys, session_index};
+use gateway_auth_passport_contracts::session::PassportDate;
+use gateway_auth_primitives::api_keys;
+use gateway_auth_primitives::crypto::{decode_base64url, sha256_hex};
+use gateway_authority_actor_records::legacy::policy_digest;
+use gateway_authority_actor_records::legacy::{
+    ConfigMethod, SourceActor, StoredNativeActor, config_digest,
+};
+use gateway_authority_actor_records::scope::NativeActorScope;
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_keys as keys;
+use gateway_contracts::identity::RequestContext;
+use gateway_core::state::{AuthorityStore, RevisionCheck};
+use gateway_kv_codec::key::RecordKey;
+use gateway_schema::catalog_store::runtime_config_key as runtime_key;
+use gateway_source::error::GatewayError;
+use serde_json::Value;
 
 /// Minted only by real AuthService authentication of the original request.
 /// ```compile_fail
@@ -66,86 +65,17 @@ impl NativeRenewalActor {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct StoredNativeActor {
-    v: u8,
-    principal: String,
-    scope: NativeActorScope,
-    config_digest: String,
-    owner_revision: Option<String>,
-    config_revision: Option<String>,
-    runtime_revision: Option<String>,
-    #[serde(deserialize_with = "required_expiry")]
-    source_valid_until_ms: Option<i64>,
-    source: SourceActor,
-}
-impl StoredNativeActor {
-    pub(crate) fn principal(&self) -> &str {
-        &self.principal
-    }
-    pub(crate) fn scope(&self) -> NativeActorScope {
-        self.scope
-    }
-}
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum SourceActor {
-    ApiKey {
-        key_id: String,
-        token_hash: String,
-        hash_revision: String,
-        policy_revision: Option<String>,
-        #[serde(deserialize_with = "required_expiry")]
-        expires_at_ms: Option<i64>,
-    },
-    Session {
-        digest: String,
-        index_revision: String,
-        session_revision: String,
-        user_id: String,
-        user_revision: String,
-        expires_at_ms: i64,
-    },
-    Configuration {
-        method: ConfigMethod,
-        token_hash: Option<String>,
-        valid_until_ms: Option<i64>,
-    },
-    Passport {
-        sub: String,
-        jti: String,
-        expires_at_ms: i64,
-    },
-    Kernel {
-        owner: String,
-        repo: String,
-        state_id: String,
-        scope: String,
-        expires_at_ms: i64,
-        repo_revision: Option<String>,
-        org_revision: Option<String>,
-        defaults_revision: Option<String>,
-        cutover_revision: Option<String>,
-        keys_revision: Option<String>,
-    },
-}
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ConfigMethod {
-    AuthAllowlist,
-    AdminAllowlist,
-    Deno,
-    Disabled,
-}
-
 pub(crate) struct CurrentNativeActor {
     pub principal: String,
     pub scope: NativeActorScope,
     pub policy_digest: String,
 }
 
-pub async fn authenticate_client_actor<S: AuthorityStore, I: TokenSource, H: AuthHost>(
+pub async fn authenticate_client_actor<
+    S: AuthorityStore,
+    I: TokenSource,
+    H: AuthHost + PassportDate,
+>(
     authority: &Authority<S, I>,
     host: &H,
     config: &AuthConfig,
@@ -167,7 +97,11 @@ pub async fn authenticate_client_actor<S: AuthorityStore, I: TokenSource, H: Aut
     )
     .await
 }
-pub async fn authenticate_admin_actor<S: AuthorityStore, I: TokenSource, H: AuthHost>(
+pub async fn authenticate_admin_actor<
+    S: AuthorityStore,
+    I: TokenSource,
+    H: AuthHost + PassportDate,
+>(
     authority: &Authority<S, I>,
     host: &H,
     config: &AuthConfig,
@@ -202,7 +136,7 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
     let now = authority.fresh_time(0)?;
     crate::text(&context.request_id.0)?;
     crate::text(&context.route)?;
-    if context.principal.0 != principal_id(&principal)
+    if context.principal != principal_id(&principal)
         || context.started_at_ms < 0
         || context.started_at_ms > now
     {
@@ -246,7 +180,8 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
                     Some(expires_at_ms.map_or(source_expiry, |expiry| expiry.min(source_expiry)));
             }
             let policy_key = keys::api_policy(key_id);
-            let _: Option<crate::quota::ApiKeyPolicy> = tx.read(&policy_key).await?;
+            let _: Option<gateway_authority_api_protocol::ApiKeyPolicy> =
+                tx.read(&policy_key).await?;
             SourceActor::ApiKey {
                 key_id: key_id.clone(),
                 token_hash: policy.token_hash.clone(),
@@ -336,18 +271,10 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
                 keys_revision: before.keys_revision,
             }
         }
-        AuthMethod::PassportSession { claims }
-            if claims.is_admin && claims.agent_token_id.is_none() =>
-        {
-            SourceActor::Passport {
-                sub: claims.sub.clone(),
-                jti: claims.jti.clone(),
-                expires_at_ms: claims.exp.checked_mul(1000).ok_or_else(fail)?,
-            }
+        AuthMethod::PassportSession { identity } => {
+            gateway_authority_actor_records::legacy::passport_source(identity)?
         }
-        AuthMethod::PassportSession { .. } | AuthMethod::PassportBearer { .. } => {
-            return Err(fail());
-        }
+        AuthMethod::PassportBearer { .. } => return Err(fail()),
         method => {
             let method = match method {
                 AuthMethod::AuthTokensAllowlist => ConfigMethod::AuthAllowlist,
@@ -370,7 +297,7 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
     let runtime_revision = observed(&mut tx, &runtime_key()).await?;
     let mut stored = StoredNativeActor {
         v: 1,
-        principal: principal_id(&principal),
+        principal: principal_id(&principal).try_scalar().map_err(|_| fail())?,
         scope,
         config_digest: config_digest(config)?,
         owner_revision,
@@ -459,166 +386,24 @@ pub(crate) async fn read_current<S: AuthorityStore, I: TokenSource>(
     stored: &StoredNativeActor,
     config: &AuthConfig,
 ) -> Result<CurrentNativeActor, GatewayError> {
-    if stored.v != 1 || stored.config_digest != config_digest(config)? {
-        return Err(fail());
-    }
-    ensure_lifetime(stored, tx.now)?;
-    if observed(tx, &keys::paid_control_owner()).await? != stored.owner_revision
-        || observed(tx, &keys::paid_control_config()).await? != stored.config_revision
-        || observed(tx, &runtime_key()).await? != stored.runtime_revision
-    {
-        return Err(fail());
-    }
-    let principal = match &stored.source {
-        SourceActor::Session {
-            digest,
-            index_revision,
-            session_revision,
-            user_id,
-            user_revision,
-            expires_at_ms,
-        } => {
-            let key = session_index::index_key(digest)?;
-            let index: session_index::SessionRevisionFence =
-                tx.read(&key).await?.ok_or_else(fail)?;
-            let user_key = passkeys::key("users", user_id);
-            let user: PasskeyUser = tx.read(&user_key).await?.ok_or_else(fail)?;
-            if index.v != 1
-                || index.session_digest != *digest
-                || index.session_revision != *session_revision
-                || index.user_id != *user_id
-                || index.expires_at_ms != *expires_at_ms
-                || tx.revision(&key).as_ref() != Some(index_revision)
-                || tx.revision(&user_key).as_ref() != Some(user_revision)
-                || user.id != *user_id
-                || (stored.scope == NativeActorScope::Admin && !user.is_admin)
-            {
-                return Err(fail());
-            }
-            format!("passkey-user:{user_id}")
-        }
-        SourceActor::ApiKey {
-            key_id,
-            token_hash,
-            hash_revision,
-            policy_revision,
-            ..
-        } => {
-            if stored.scope == NativeActorScope::Admin
-                || token_hash.len() != 43
-                || !token_hash
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-            {
-                return Err(fail());
-            }
-            let key = api_keys::hash_key(token_hash);
-            let record: api_keys::ApiKeyHashRecord = tx.read(&key).await?.ok_or_else(fail)?;
-            let policy = api_keys::policy_from_record(token_hash.clone(), record, tx.now)?;
-            let policy_key = keys::api_policy(key_id);
-            let normalized: Option<crate::quota::ApiKeyPolicy> = tx.read(&policy_key).await?;
-            if let Some(normalized) = &normalized {
-                normalized.validate(&gateway_core::identity::ApiKeyId(key_id.clone()), tx.now)?;
-            }
-            if policy.key_id != *key_id
-                || tx.revision(&key).as_ref() != Some(hash_revision)
-                || tx.revision(&policy_key) != *policy_revision
-                || normalized.as_ref().is_some_and(|normalized| {
-                    policy.expires_at_ms != normalized.expires_at_ms
-                        || policy.window_ms != normalized.window_ms
-                        || policy.usage_limit_requests != normalized.usage_limit_requests
-                })
-            {
-                return Err(fail());
-            }
-            format!("api-key:{key_id}")
-        }
-        SourceActor::Configuration {
-            method, token_hash, ..
-        } => match method {
-            ConfigMethod::AuthAllowlist => {
-                if stored.scope == NativeActorScope::Admin
-                    || !config.auth_tokens.iter().any(|token| {
-                        Some(sha256_hex(token.expose().as_bytes())).as_ref() == token_hash.as_ref()
-                    })
-                {
-                    return Err(fail());
-                }
-                "auth-method:auth_tokens_allowlist".into()
-            }
-            ConfigMethod::AdminAllowlist => {
-                if !config.admin_tokens.iter().any(|token| {
-                    Some(sha256_hex(token.expose().as_bytes())).as_ref() == token_hash.as_ref()
-                }) {
-                    return Err(fail());
-                }
-                "auth-method:admin_allowlist".into()
-            }
-            ConfigMethod::Deno => {
-                if token_hash.is_none() {
-                    return Err(fail());
-                }
-                "auth-method:deno_deploy_token".into()
-            }
-            ConfigMethod::Disabled => token_hash.as_ref().map_or_else(
-                || "local-auth-disabled".into(),
-                |hash| format!("bearer-sha256:{hash}"),
-            ),
-        },
-        SourceActor::Passport {
-            sub,
-            jti,
-            expires_at_ms,
-        } => {
-            if stored.scope != NativeActorScope::Admin
-                || sub.is_empty()
-                || jti.is_empty()
-                || *expires_at_ms <= tx.now
-            {
-                return Err(fail());
-            }
-            format!("passport-user:{sub}")
-        }
-        SourceActor::Kernel {
-            owner,
-            repo,
-            scope,
-            repo_revision,
-            org_revision,
-            defaults_revision,
-            cutover_revision,
-            keys_revision,
-            ..
-        } => {
-            if stored.scope == NativeActorScope::Admin || !matches!(scope.as_str(), "org" | "repo")
-            {
-                return Err(fail());
-            }
-            if observed(tx, &keys::kernel_policy(owner, Some(repo))).await? != *repo_revision
-                || observed(tx, &keys::kernel_policy(owner, None)).await? != *org_revision
-                || observed(tx, &keys::kernel_defaults()).await? != *defaults_revision
-                || observed(tx, &keys::kernel_cutover()).await? != *cutover_revision
-                || observed(tx, &upstream::kernel_public_keys_key()).await? != *keys_revision
-            {
-                return Err(fail());
-            }
-            format!(
-                "github-repo:{}/{}",
-                owner.to_lowercase(),
-                repo.to_lowercase()
-            )
-        }
+    let now = tx.now;
+    let evidence = {
+        let reader = tx.routing_read_store();
+        gateway_authority_actor_currentness::legacy::LegacyActorReader::new(&reader, config, now)?
+            .read(stored)
+            .await?
     };
-    if principal != stored.principal {
-        return Err(fail());
+    for check in evidence.revision_checks() {
+        if !tx.expect(&check.key, &check.expected_revision) {
+            return Err(fail());
+        }
     }
     Ok(CurrentNativeActor {
-        principal,
-        scope: stored.scope,
-        policy_digest: digest(stored)?,
+        principal: evidence.principal().to_owned(),
+        scope: evidence.scope(),
+        policy_digest: evidence.policy_digest().to_owned(),
     })
 }
-
 fn ensure_lifetime(stored: &StoredNativeActor, now: i64) -> Result<(), GatewayError> {
     if stored
         .source_valid_until_ms
@@ -646,11 +431,6 @@ pub(crate) fn validate_current_time(
     crate::validate_time(now)?;
     ensure_lifetime(stored, now)
 }
-fn required_expiry<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<i64>, D::Error> {
-    Option::<i64>::deserialize(deserializer)
-}
 async fn observed<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     key: &RecordKey,
@@ -658,39 +438,13 @@ async fn observed<S: AuthorityStore, I: TokenSource>(
     tx.observe_revision(key).await?;
     Ok(tx.revision(key))
 }
-fn digest(value: &impl Serialize) -> Result<String, GatewayError> {
-    Ok(sha256_hex(&serde_json::to_vec(value).map_err(|_| fail())?))
-}
-fn config_digest(config: &AuthConfig) -> Result<String, GatewayError> {
-    digest(
-        &json!({"v":1,"auth":config.auth_tokens.iter().map(|secret|sha256_hex(secret.expose().as_bytes())).collect::<Vec<_>>(),"admin":config.admin_tokens.iter().map(|secret|sha256_hex(secret.expose().as_bytes())).collect::<Vec<_>>(),"production":config.production,"hosted":config.hosted,"git":config.git_sha_known,"candidate":config.candidate_passkeys,"relay":config.extra_relay_origins,"kernel":config.kernel_public_keys_pem.iter().map(|pem|sha256_hex(pem.as_bytes())).collect::<Vec<_>>(),"app":config.deno_app_slug,"org":config.deno_org_slug,"deployment":config.deno_deployment_id}),
-    )
-}
 /// Source-exact projection; only actual AuthService authentication can mint an actor.
-pub fn principal_id(principal: &AuthPrincipal) -> String {
-    match &principal.method {
-        AuthMethod::KvApiKey { key_id, .. } => format!("api-key:{key_id}"),
-        AuthMethod::PasskeySession { user_id, .. } => format!("passkey-user:{user_id}"),
-        AuthMethod::PassportSession { claims } | AuthMethod::PassportBearer { claims } => {
-            format!("passport-user:{}", claims.sub)
-        }
-        AuthMethod::GithubToken { owner, repo, .. } => format!(
-            "github-repo:{}/{}",
-            owner.to_lowercase(),
-            repo.to_lowercase()
-        ),
-        AuthMethod::AuthTokensAllowlist => "auth-method:auth_tokens_allowlist".into(),
-        AuthMethod::AdminAllowlist => "auth-method:admin_allowlist".into(),
-        AuthMethod::DenoDeployToken => "auth-method:deno_deploy_token".into(),
-        AuthMethod::Disabled => principal.token.as_ref().map_or_else(
-            || "local-auth-disabled".into(),
-            |token| format!("bearer-sha256:{}", sha256_hex(token.expose().as_bytes())),
-        ),
-    }
+pub fn principal_id(principal: &AuthPrincipal) -> gateway_contracts::identity::PrincipalId {
+    principal
+        .method
+        .principal_id(principal.token.as_ref().map(|token| token.expose()))
 }
-fn runtime_key() -> RecordKey {
-    gateway_auth::store::key(json!(["uos_ai", "runtime_config", "v2"]))
-}
+
 fn fail() -> GatewayError {
     GatewayError::unavailable(
         "Original-request native actor authority is unavailable or changed.",

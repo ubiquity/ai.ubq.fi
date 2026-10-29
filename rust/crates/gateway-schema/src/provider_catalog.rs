@@ -1,7 +1,10 @@
 //! Provider-declared catalog projections; credentials/configuration are injected observations.
-use crate::{aliases::*, catalog::*, metadata::*, model_control as c};
-use gateway_core::{js_string::JsString16, model::ModelId, source_json::SourceJson};
+use crate::{catalog::*, model_control as c};
+use gateway_contracts::model::ModelId;
 use gateway_decision_protocol::catalog as decisions;
+use gateway_model_metadata::metadata::*;
+use gateway_model_selection::aliases::*;
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 pub const CEREBRAS_IDS: &[&str] = &["gpt-oss-120b", "qwen-3.8-27b"];
 pub fn provider_hint(provider: &str, id: &ModelId) -> MetadataHint {
     match provider {
@@ -144,7 +147,11 @@ pub fn configured_capabilities(input: &CatalogInput, provider: &str) -> Vec<Sour
     configured_model_rows(input, provider)
         .iter()
         .filter_map(|model| {
-            let id = ModelId::from_source(c::get(model, "id").as_ref().and_then(c::string)?);
+            let id = ModelId::from_source(
+                gateway_source::source_serialization::member(model, "id")
+                    .as_ref()
+                    .and_then(gateway_source::source_serialization::string)?,
+            );
             let hint = provider_hint(provider, &id);
             let mut resolved = input.metadata(&id, None, Some(hint.clone()), false);
             if provider == "ubiquity" {
@@ -203,7 +210,11 @@ pub fn openrouter_models(input: &CatalogInput) -> Vec<SourceJson> {
         return Vec::new();
     }
     let mut rows: Vec<_> = decisions::served_models(input.rows("openrouter"))
-        .filter_map(|r| c::get(r, "id").as_ref().and_then(c::string))
+        .filter_map(|r| {
+            gateway_source::source_serialization::member(r, "id")
+                .as_ref()
+                .and_then(gateway_source::source_serialization::string)
+        })
         .map(|id| {
             let id = ModelId::from_source(id);
             c::object(vec![
@@ -230,11 +241,19 @@ pub fn openrouter_capabilities(input: &CatalogInput) -> Vec<SourceJson> {
     openrouter_models(input)
         .iter()
         .filter_map(|model| {
-            let id = ModelId::from_source(c::get(model, "id").as_ref().and_then(c::string)?);
+            let id = ModelId::from_source(
+                gateway_source::source_serialization::member(model, "id")
+                    .as_ref()
+                    .and_then(gateway_source::source_serialization::string)?,
+            );
             let jev = id.matches_scalar("typesafe/jev-latest");
             let resolved = input.metadata(&id, None, None, false);
             let discovered = input.rows("openrouter").iter().find(|r| {
-                c::get(r, "id").as_ref().and_then(c::string).as_ref() == Some(id.as_js_string())
+                gateway_source::source_serialization::member(r, "id")
+                    .as_ref()
+                    .and_then(gateway_source::source_serialization::string)
+                    .as_ref()
+                    == Some(id.as_js_string())
             });
             let levels = if jev {
                 vec!["none".into()]
@@ -249,7 +268,8 @@ pub fn openrouter_capabilities(input: &CatalogInput) -> Vec<SourceJson> {
                 ("object", c::json("uos.model_capabilities")),
                 (
                     "owned_by",
-                    c::get(model, "owned_by").unwrap_or_else(|| c::json(&())),
+                    gateway_source::source_serialization::member(model, "owned_by")
+                        .unwrap_or_else(|| c::json(&())),
                 ),
                 (
                     "display_name",
@@ -307,16 +327,21 @@ pub fn openrouter_capabilities(input: &CatalogInput) -> Vec<SourceJson> {
 pub fn normalized_codex_capability(
     input: &CatalogInput,
     record: &SourceJson,
-) -> Option<SourceJson> {
-    let id = ModelId::from_source(c::trim(&c::identifier(record)?));
+) -> Result<Option<SourceJson>, gateway_source::error::GatewayError> {
+    let id = ModelId::from_source(gateway_schema_values::source_view::js_trim_source(
+        &match gateway_schema_values::source_view::identifier(record) {
+            Some(id) => id,
+            None => return Ok(None),
+        },
+    ));
     if id.as_js_string().as_units().is_empty() {
-        return None;
+        return Ok(None);
     }
-    let reasoning = crate::reasoning::ModelReasoning::from_record(Some(record));
+    let reasoning = gateway_model_metadata::reasoning::ModelReasoning::from_record(Some(record));
     let resolved = input.metadata(&id, Some(record), None, true);
-    let owner = c::get(record, "owned_by")
+    let owner = gateway_source::source_serialization::member(record, "owned_by")
         .as_ref()
-        .and_then(c::string)
+        .and_then(gateway_source::source_serialization::string)
         .unwrap_or_else(|| "openai".into());
     let mut row = c::object(vec![
         ("id", c::json(&id)),
@@ -324,7 +349,8 @@ pub fn normalized_codex_capability(
         ("owned_by", c::json(&owner)),
         (
             "display_name",
-            c::get(record, "display_name").unwrap_or_else(|| c::json(&())),
+            gateway_source::source_serialization::member(record, "display_name")
+                .unwrap_or_else(|| c::json(&())),
         ),
         ("upstream_provider", c::json("codex_chatgpt")),
         (
@@ -336,7 +362,10 @@ pub fn normalized_codex_capability(
             "default_reasoning_effort",
             c::json(&reasoning.default_level),
         ),
-        ("reasoning_effort_wire_map", reasoning.wire_efforts),
+        (
+            "reasoning_effort_wire_map",
+            reasoning.wire_efforts.to_source_json()?,
+        ),
     ]);
     apply_resolved_fields(&mut row, &resolved, false, true);
     c::set(
@@ -349,10 +378,10 @@ pub fn normalized_codex_capability(
         "reasoning_source",
         c::json(&resolved.reasoning_source),
     );
-    if let Some(cache) =
-        crate::prompt_cache::normalize_capabilities_source(c::get(record, "prompt_cache").as_ref())
-    {
+    if let Some(cache) = gateway_prompt_cache::metadata::normalize_capabilities_source(
+        gateway_source::source_serialization::member(record, "prompt_cache").as_ref(),
+    ) {
         c::set(&mut row, "prompt_cache", cache);
     }
-    Some(row)
+    Ok(Some(row))
 }

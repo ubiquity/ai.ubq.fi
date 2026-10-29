@@ -1,16 +1,16 @@
 //! Source Claude quota truth. Health/history remain optional post-acceptance subscribers.
 pub mod observation;
+use gateway_contracts::model::ModelId;
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    model::ModelId,
     source_control::{encode_source_control_record, source_json_tree},
-    source_json::SourceJson,
-    source_serialization as source,
     state::StoredRecord,
-    value::{PortableValue, ValueEncoding},
 };
-use gateway_schema::util::js_trim;
+use gateway_kv_codec::value::{PortableValue, ValueEncoding};
+use gateway_schema_values::scalar::js_trim;
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -105,7 +105,9 @@ fn number(value: Option<&Value>) -> Option<f64> {
     value?.as_f64().filter(|n| n.is_finite())
 }
 fn safe_integer(n: f64) -> bool {
-    n.is_finite() && n.fract() == 0.0 && n.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64
+    n.is_finite()
+        && n.fract() == 0.0
+        && n.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64
 }
 fn optional_nonnegative(value: Option<&Value>) -> Option<Option<f64>> {
     match value {

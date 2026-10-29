@@ -9,6 +9,10 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-schema-values.workspace = true
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
 gateway-core.workspace = true
 gateway-schema.workspace = true
 gateway-claude-usage-protocol.workspace = true

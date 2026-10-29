@@ -1,16 +1,27 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, query::*, source_graph::*, state::*,
-    tuple_key::TupleKey,
-};
-use gateway_migration::{
-    graph_transport,
-    native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
-    staged::*,
-};
-use gateway_migration_test_support::fixture::{Directory, run};
+use gateway_core::query::*;
+use gateway_core::state::*;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::ScalarKeyPart;
+use gateway_kv_codec::tuple_key::TupleKey;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_data::staged::StageOwnerAccount;
+use gateway_migration_data::staged::StageOwnerBinding;
+use gateway_migration_data::staged::StageRequest;
+use gateway_migration_graph::transport as graph_transport;
+use gateway_migration_prepare::engine::prepare_native;
+use gateway_migration_protocol::staged::execute_staged;
+use gateway_migration_stage::plan::StagePlan;
+use gateway_migration_test_support::fixture::Directory;
+use gateway_migration_test_support::fixture::run;
 use gateway_migration_test_support::sqlite_store::SqliteStore;
-use serde_json::{Value, json};
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
+use gateway_source_graph::graph::*;
+use serde_json::Value;
+use serde_json::json;
 use std::cell::Cell;
 
 fn graph(value: &Value) -> SourceGraph {
@@ -52,17 +63,17 @@ fn graph(value: &Value) -> SourceGraph {
 }
 
 fn fixture() -> NativeCapture {
-    let identity = gateway_auth::provider_credentials::codex_credential_identity(
+    let identity = gateway_auth_credentials::provider_credentials::codex_credential_identity(
         "initial-account",
-        &gateway_auth::crypto::Secret::new("synthetic-access".into()),
-        &gateway_auth::crypto::Secret::new(String::new()),
+        &gateway_auth_primitives::crypto::Secret::new("synthetic-access".into()),
+        &gateway_auth_primitives::crypto::Secret::new(String::new()),
     );
     let mut capture: NativeCapture =
         serde_json::from_str(include_str!("fixtures/native-source.json")).unwrap();
     let pool = json!({"accounts":[{"account_id":"initial-account","access_token":"synthetic-access","refresh_token":"","updated_at_ms":2200,"native_owner":{"codex_home":"/synthetic/initial-owner","generation_hash":identity.native_generation_hash,"native_refreshed_at":"2026-10-19T00:00:00.000000000Z","managed_source":{"v":2,"generation_hash":"8".repeat(64)}}}],"updated_at_ms":2200});
     capture.entries.push(NativeEntry {
         raw_key: TupleKey::from_record_key(
-            &gateway_auth::provider_credentials::codex_source_pool_key(),
+            &gateway_auth_credentials::provider_credentials::codex_source_pool_key(),
         )
         .unwrap()
         .sort_bytes()
@@ -74,8 +85,14 @@ fn fixture() -> NativeCapture {
     capture
 }
 
-fn manifest_key() -> gateway_core::state::RecordKey {
-    gateway_auth::store::key(json!(["uos_ai", "migration", "v3", "manifest"]))
+fn manifest_key() -> gateway_kv_codec::key::RecordKey {
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("migration"),
+        ScalarKeyPart::String("v3"),
+        ScalarKeyPart::String("manifest"),
+    ])
+    .to_record_key()
 }
 
 struct Target {
@@ -99,16 +116,18 @@ fn sealed(directory: &Directory, name: &str) -> Target {
     let source_git_sha = value["source_git_sha"].as_str().unwrap().to_owned();
     let native = &value["native_revision"];
     let captured_at_ms = value["captured_at_ms"].as_i64().unwrap();
-    let source = run(store.read(&gateway_auth::provider_credentials::codex_source_pool_key()))
-        .unwrap()
-        .unwrap();
-    let normalized = run(store.read(&gateway_authority::keys::pool()))
-        .unwrap()
-        .unwrap();
-    let pool =
-        gateway_auth::provider_credentials::parse_codex_source_pool(source.json_value().unwrap())
+    let source =
+        run(store.read(&gateway_auth_credentials::provider_credentials::codex_source_pool_key()))
             .unwrap()
             .unwrap();
+    let normalized = run(store.read(&gateway_authority_keys::pool()))
+        .unwrap()
+        .unwrap();
+    let pool = gateway_auth_credentials::provider_credentials::parse_codex_source_pool(
+        source.json_value().unwrap(),
+    )
+    .unwrap()
+    .unwrap();
     let accounts = pool
         .accounts
         .iter()
@@ -141,7 +160,7 @@ fn sealed(directory: &Directory, name: &str) -> Target {
 }
 
 fn owner(store: &SqliteStore) -> Option<StoredRecord> {
-    run(store.read(&gateway_authority::keys::paid_control_owner())).unwrap()
+    run(store.read(&gateway_authority_keys::paid_control_owner())).unwrap()
 }
 
 #[test]
@@ -226,7 +245,7 @@ fn owner_binding_refuses_unsealed_wrong_facts_stale_revision_and_duplicate_owner
     );
     target
         .store
-        .put(gateway_authority::keys::paid_control_owner(), other.clone());
+        .put(gateway_authority_keys::paid_control_owner(), other.clone());
     assert!(
         run(execute_staged(
             &target.store,
@@ -256,7 +275,7 @@ impl AuthorityStore for FaultStore {
         self.inner.read(key).await
     }
     async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
-        let owner_key = gateway_authority::keys::paid_control_owner();
+        let owner_key = gateway_authority_keys::paid_control_owner();
         let owner_commit = transition.mutations.iter().any(
             |mutation| matches!(mutation, RecordMutation::Put { key, .. } if key == &owner_key),
         );
@@ -305,7 +324,7 @@ fn owner_binding_rolls_back_on_commit_failure_and_reconciles_a_lost_response() {
         .is_err()
     );
     assert!(
-        run(failed.read(&gateway_authority::keys::paid_control_owner()))
+        run(failed.read(&gateway_authority_keys::paid_control_owner()))
             .unwrap()
             .is_none()
     );
@@ -324,7 +343,7 @@ fn owner_binding_rolls_back_on_commit_failure_and_reconciles_a_lost_response() {
         ))
         .is_err()
     );
-    let bound = run(lost.read(&gateway_authority::keys::paid_control_owner()))
+    let bound = run(lost.read(&gateway_authority_keys::paid_control_owner()))
         .unwrap()
         .unwrap();
     assert_eq!(bound.revision, target.binding.owner_revision);
@@ -335,7 +354,7 @@ fn owner_binding_rolls_back_on_commit_failure_and_reconciles_a_lost_response() {
     .unwrap();
     assert!(retry.owner_bound);
     assert_eq!(
-        run(lost.read(&gateway_authority::keys::paid_control_owner()))
+        run(lost.read(&gateway_authority_keys::paid_control_owner()))
             .unwrap()
             .unwrap(),
         bound
@@ -383,7 +402,7 @@ fn owner_binding_never_claims_activation_and_preserves_exact_source_inventory() 
     }))
     .unwrap();
     assert_eq!(after.entries.len(), before.entries.len() + 1);
-    let owner_key = gateway_authority::keys::paid_control_owner();
+    let owner_key = gateway_authority_keys::paid_control_owner();
     let mut old = before
         .entries
         .into_iter()

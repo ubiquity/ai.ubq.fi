@@ -92,9 +92,9 @@ impl UpstreamTrace {
                         keys.into_iter()
                             .map(|key| format!(
                                 "{}:{}",
-                                gateway_schema::util::json_stringify(&serde_json::Value::String(
-                                    key.clone()
-                                )),
+                                gateway_schema_values::scalar::json_stringify(
+                                    &serde_json::Value::String(key.clone())
+                                ),
                                 canonical(&fields[key])
                             ))
                             .collect::<Vec<_>>()
@@ -105,7 +105,7 @@ impl UpstreamTrace {
                     "[{}]",
                     values.iter().map(canonical).collect::<Vec<_>>().join(",")
                 ),
-                _ => gateway_schema::util::json_stringify(value),
+                _ => gateway_schema_values::scalar::json_stringify(value),
             }
         }
         Ok(canonical(&value))
@@ -118,7 +118,7 @@ impl UpstreamTrace {
                 ));
             }
             if attempt.started_at_ms < 0
-                || attempt.started_at_ms > gateway_core::identity::MAX_SAFE_INTEGER
+                || attempt.started_at_ms > gateway_contracts::identity::MAX_SAFE_INTEGER
                 || attempt
                     .chunk_times_ms
                     .iter()
@@ -296,7 +296,7 @@ impl AttemptTrace {
             headers
                 .iter()
                 .find(|(key, _)| key.eq_ignore_ascii_case(name))
-                .map(|(_, v)| v.trim_matches(gateway_schema::util::js_whitespace))
+                .map(|(_, v)| v.trim_matches(gateway_schema_values::scalar::js_whitespace))
                 .filter(|v| !v.is_empty())
         };
         attempt.wire.content_type = Some(match get("content-type").map(str::to_ascii_lowercase) {

@@ -1,28 +1,24 @@
 //! Fixture-only authority initialization and configuration publication.
 //! HTTP protocol composition stays in gateway-worker-fixture.
 
-use gateway_auth::{
-    crypto::{Secret, base64url},
-    native_auth::{NativeAuthHeaders, NativeAuthenticator, NativeTransportIdentity},
-    native_replay::StoreNonceAuthority,
-    provider_credentials::{
-        CodexSourceAccount, CodexSourcePool, codex_source_pool_key, parse_codex_source_pool,
-    },
+use gateway_auth_credentials::{
+    provider_credentials::CodexSourceAccount, provider_credentials::CodexSourcePool,
+    provider_credentials::codex_source_pool_key, provider_credentials::parse_codex_source_pool,
 };
+use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+use gateway_auth_native_proof::native_auth::{NativeAuthenticator, NativeTransportIdentity};
+use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
-use gateway_authority::{
-    keys,
-    paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
-    routing_types::{PoolAccount, SubscriptionPool},
+use gateway_auth_primitives::{crypto::Secret, crypto::base64url};
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
+use gateway_contracts::{identity::PoolVersionstamp, provider::PaidProvider};
 use gateway_core::{
-    error::GatewayError,
-    identity::PoolVersionstamp,
-    provider::PaidProvider,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
 };
 use gateway_publication::sender::NativePublicationSender;
 use gateway_publication_policy::control_publication::{
@@ -33,7 +29,8 @@ use gateway_publication_policy::protocol::{
     PublicationCarrier, PublicationRequest, PublicationResponse,
 };
 use gateway_publication_transport::transport::PublicationReceiver;
-use gateway_worker::authority::RemoteAuthorityStore;
+use gateway_source::error::GatewayError;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 
 fn nonce() -> Result<[u8; 32], GatewayError> {
     gateway_worker_platform::random::random_bytes(32)?
@@ -355,7 +352,9 @@ mod tests {
                 format!("fixture-refresh-{}", account.account_id)
             );
             assert_eq!(
-                gateway_auth::provider_credentials::codex_access_expiry_ms(&account.access_token),
+                gateway_auth_credentials::provider_credentials::codex_access_expiry_ms(
+                    &account.access_token
+                ),
                 Some((now + 3_600_000) as f64)
             );
         }
@@ -363,24 +362,19 @@ mod tests {
         rejected["accounts"][0]["refresh_token"] = serde_json::json!("");
         assert!(super::parse_codex_source_pool(&rejected).unwrap().is_none());
     }
-    use gateway_auth::{
-        crypto::base64url,
-        native_auth::{NativeAuthHeaders, NativeAuthenticator},
-        native_replay::StoreNonceAuthority,
-    };
-    use gateway_authority::{keys, paid_control::PaidControlConfig};
+    use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+    use gateway_auth_native_proof::native_auth::NativeAuthenticator;
+    use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
+    use gateway_auth_primitives::crypto::base64url;
     use gateway_core::{
-        error::GatewayError,
-        state::{
-            AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation,
-            StoredRecord,
-        },
+        state::AtomicTransition, state::AuthorityStore, state::CommitOutcome,
+        state::RecordMutation, state::StoredRecord,
     };
+    use gateway_kv_codec::key::RecordKey;
     use gateway_publication_policy::control_publication::{
         PreparedConfigurationPublication, bootstrap_fixture_owner, fixture_owner_statement,
         runtime_config_key,
     };
-    use gateway_publication_transport::transport::PublicationReceiver;
     use std::{
         cell::RefCell,
         collections::{BTreeMap, BTreeSet},
@@ -398,7 +392,9 @@ mod tests {
             "fixture-matrix-owner".into(),
             "fixture-matrix-epoch".into(),
             [31; 32],
-            BTreeSet::from([gateway_auth::native_auth::NativeCapability::ConfigurationPublish]),
+            BTreeSet::from([
+                gateway_auth_native_contracts::transport::NativeCapability::ConfigurationPublish,
+            ]),
         )
     }
     fn inputs() -> Result<super::ConfiguredPaidInputs, GatewayError> {
@@ -453,7 +449,10 @@ mod tests {
             Poll::Pending => panic!("in-memory publication must complete without I/O"),
         }
     }
-    async fn owner(store: &Memory, identity: &gateway_auth::native_auth::NativeTransportIdentity) {
+    async fn owner(
+        store: &Memory,
+        identity: &gateway_auth_native_proof::native_auth::NativeTransportIdentity,
+    ) {
         let body = fixture_owner_statement(identity).unwrap();
         let nonce = base64url(&[1; 32]);
         let time = NOW.to_string();

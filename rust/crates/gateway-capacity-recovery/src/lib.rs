@@ -3,13 +3,18 @@
 use gateway_auth_credentials::{
     provider_credentials::CodexSourceSnapshot, provider_credentials::read_codex_source_pool,
 };
-use gateway_authority::{
-    capacity::{CodexCapacityAccountRef, CodexCapacitySample},
-    routing_types::{CapacityState, CohortProof, RouteSelection},
-    store::{Authority, TokenSource},
+use gateway_authority::store::Authority;
+use gateway_authority_capacity::{
+    CapacityOperations, CodexCapacityAccountRef, CodexCapacitySample,
+};
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_routing_evidence::capacity::CapacityState;
+use gateway_authority_routing_selection::{
+    SelectionOperations, types::CohortProof, types::RouteSelection,
 };
 use gateway_capacity_projection::shapes;
-use gateway_core::{model::ModelId, state::AuthorityStore};
+use gateway_contracts::model::ModelId;
+use gateway_core::state::AuthorityStore;
 use gateway_observability_contracts::{
     host_types::CapacityAccountRef, host_types::CapacityProbe, types::ObservabilityHost,
 };

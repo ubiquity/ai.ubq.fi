@@ -1,5 +1,6 @@
 use gateway_auth_passkeys::session_index::{index_key, validate_custody_record};
-use gateway_core::state::{RecordKey, StoredRecord};
+use gateway_kv_codec::key::RecordKey;
+use gateway_core::state::StoredRecord;
 use serde_json::json;
 
 fn row() -> (RecordKey, StoredRecord) {

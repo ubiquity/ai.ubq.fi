@@ -1,7 +1,8 @@
 //! Source metered-quota.ts monitoring only; this never authorizes a paid request.
 use crate::store;
 use gateway_capacity_projection::scalars::is_record;
-use gateway_core::{state::AuthorityStore, state::RecordKey, state::RecordMutation};
+use gateway_core::{state::AuthorityStore, state::RecordMutation};
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{data, types::ObservabilityHost};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
@@ -59,7 +60,7 @@ pub fn token_usage_state(envelope: &Value, at: i64) -> Result<Value, GatewayErro
         || !["total_available", "total_granted", "total_used"]
             .iter()
             .all(|f| safe(&data[f]))
-        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&at)
+        || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&at)
     {
         return Err(data::error(
             "Metered account API returned invalid token usage data",

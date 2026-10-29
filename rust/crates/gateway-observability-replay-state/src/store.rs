@@ -1,8 +1,9 @@
 //! Private effect glue; callers own the complete named operation and its keys/checks.
 use gateway_core::{
-    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
-    state::RecordMutation, state::StoredRecord,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{batch::normalize_changes, data, types::ObservabilityHost};
 use gateway_source::error::GatewayError;
 use serde_json::Value;
@@ -34,7 +35,7 @@ pub(crate) fn replay_mutation<
     T: serde::Serialize,
 >(
     host: &H,
-    key: gateway_core::state::RecordKey,
+    key: gateway_kv_codec::key::RecordKey,
     previous: Option<&gateway_core::state::StoredRecord>,
     value: &T,
     expiry: Option<i64>,

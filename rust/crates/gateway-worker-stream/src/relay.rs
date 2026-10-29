@@ -5,15 +5,13 @@ use crate::{
     observed::ObservationHandle,
 };
 use futures_util::Stream;
-use gateway_core::{
-    error::GatewayError,
-    lifecycle::{SemanticTerminal, TransportObservation},
-    provider::UpstreamProvider,
+use gateway_contracts::{
+    lifecycle::SemanticTerminal, lifecycle::TransportObservation, provider::UpstreamProvider,
 };
-use gateway_providers::{
-    sse::{KEEPALIVE_INTERVAL_MS, StreamDecoder},
-    types::{ClientSurface, DecodePlan, ProviderEvent},
-};
+use gateway_provider_events::event::ProviderEvent;
+use gateway_provider_protocol::{types::ClientSurface, types::DecodePlan};
+use gateway_provider_stream::{sse::KEEPALIVE_INTERVAL_MS, sse::StreamDecoder};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,

@@ -1,0 +1,23 @@
+[package]
+name = "gateway-cache-experiment-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-schema-values.workspace = true
+gateway-contracts.workspace = true
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-routing-signal = { path = "../gateway-authority-routing-signal" }
+gateway-cache-experiment-campaign = { path = "../gateway-cache-experiment-campaign" }
+gateway-cache-experiment-dispatch = { path = "../gateway-cache-experiment-dispatch" }
+gateway-cache-experiment-evidence = { path = "../gateway-cache-experiment-evidence" }
+gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
+gateway-core = { path = "../gateway-core" }
+gateway-schema = { path = "../gateway-schema" }
+gateway-source = { path = "../gateway-source" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

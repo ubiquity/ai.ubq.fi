@@ -1,15 +1,14 @@
 use gateway_core::{
-    error::GatewayError,
-    query::*,
+    query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
     source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::*,
-    tuple_key::TupleKey,
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
-use gateway_schema::{
-    catalog::CatalogInput, catalog_cache::*, catalog_store::*, metadata::MetadataHint,
-    selection::ProviderSelection,
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_model_metadata::metadata::MetadataHint;
+use gateway_model_selection::selection::ProviderSelection;
+use gateway_schema::{catalog::CatalogInput, catalog_cache::*, catalog_store::*};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
 use serde_json::{Value, json};
 use std::{
@@ -459,7 +458,7 @@ fn typed_catalog_keys_and_paginated_pruning_use_shared_tuple_contract() -> TestR
 #[test]
 fn catalog_json_reads_reject_valid_typed_profile_records_instead_of_treating_them_as_missing() {
     let store = Store::default();
-    let typed = gateway_core::value::PortableValue::from_json(&json!({"models":[]}));
+    let typed = gateway_kv_codec::value::PortableValue::from_json(&json!({"models":[]}));
     let record = StoredRecord::profile("typed", typed, None).unwrap();
     store
         .records
@@ -496,7 +495,7 @@ fn normalized_source_publication_retains_model_effort_codecs_and_generation_fenc
         assert_eq!(record.expires_at_ms, None);
         assert_eq!(
             record.value_encoding,
-            gateway_core::value::ValueEncoding::ProfileV2
+            gateway_kv_codec::value::ValueEncoding::ProfileV2
         );
         assert!(
             decode_source_control_record(&record)

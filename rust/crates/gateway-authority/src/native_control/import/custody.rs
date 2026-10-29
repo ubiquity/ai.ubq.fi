@@ -1,6 +1,6 @@
 //! Exact data schemas only. Legacy proof-only rows never become effect capabilities.
 use super::*;
-use gateway_core::source_json::SourceJson;
+use gateway_source::source_json::SourceJson;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -22,7 +22,7 @@ struct LegacyAction {
     metadata: NativeImportMetadata,
     target: NativeImportTarget,
     actor: StoredNativeActor,
-    context: gateway_core::identity::RequestContext,
+    context: gateway_contracts::identity::RequestContext,
     created_at_ms: i64,
     deadline_ms: i64,
     facts: LegacyFacts,
@@ -37,7 +37,10 @@ fn exact<T: Serialize>(value: &SourceJson, row: &T) -> Result<(), GatewayError> 
 fn common(
     kind: (u8, NativeImportKind),
     selection: (&NativeImportMetadata, &NativeImportTarget),
-    original: (&StoredNativeActor, &gateway_core::identity::RequestContext),
+    original: (
+        &StoredNativeActor,
+        &gateway_contracts::identity::RequestContext,
+    ),
     lifetime: (i64, i64),
     id: &str,
 ) -> Result<(), GatewayError> {
@@ -51,7 +54,12 @@ fn common(
         || kind != NativeImportKind::CodexAuth
         || metadata.action_ref != id
         || actor.scope() != NativeActorScope::Admin
-        || context.principal.0 != actor.principal()
+        || context
+            .principal
+            .try_scalar()
+            .map_err(|_| unavailable())?
+            .as_str()
+            != actor.principal()
         || deadline != crate::add(created, OWNER_RENEWAL_MAX_MS)?
     {
         return Err(unavailable());
@@ -68,7 +76,7 @@ pub(in crate::native_control) fn validate_custody(
     value: &SourceJson,
     id: &str,
 ) -> Result<(), GatewayError> {
-    let version = gateway_core::source_serialization::member(value, "v")
+    let version = gateway_source::source_serialization::member(value, "v")
         .and_then(|v| v.deserialize::<u8>().ok())
         .ok_or_else(unavailable)?;
     if version == 1 {
@@ -84,7 +92,7 @@ pub(in crate::native_control) fn validate_custody(
             return Err(unavailable());
         };
         if row.facts.account_id_hash != *account_id_hash
-            || row.facts.slot > gateway_core::identity::MAX_SAFE_INTEGER as u64
+            || row.facts.slot > gateway_contracts::identity::MAX_SAFE_INTEGER as u64
         {
             return Err(unavailable());
         }

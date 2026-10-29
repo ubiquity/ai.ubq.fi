@@ -2,8 +2,8 @@ use crate::coercion::{decode_base64, encode_base64, js_number, js_string, normal
 use crate::date::{CanonicalDates, SourceDateHost, format_iso};
 use crate::scalar::{error, json_number};
 
-use gateway_core::error::GatewayError;
-use gateway_core::value::PortableValue;
+use gateway_source::error::GatewayError;
+use gateway_kv_codec::value::PortableValue;
 use serde_json::{Value, json};
 
 pub fn binary_alignment(kind: &str) -> Option<usize> {

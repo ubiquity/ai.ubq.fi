@@ -1,4 +1,5 @@
 use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
 // Authenticated native/configuration owner proofs. No deserializable proof,
 // arbitrary fingerprint authority, provider credential or permissive fallback.
 use gateway_auth_native_protocol::native::{publication_response_input, signature_input};
@@ -8,17 +9,6 @@ use gateway_source::error::GatewayError;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::collections::BTreeSet;
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum NativeCapability {
-    SupervisorRead,
-    ConfigurationPublish,
-    AccessPublish,
-    OwnerRenewal,
-    CodexAuthImport,
-    NativeProfileImport,
-    LiveSideband,
-}
 
 #[derive(Clone)]
 pub struct NativeTransportIdentity {
@@ -220,17 +210,10 @@ impl NativeTransportIdentity {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct NativeAuthHeaders<'a> {
-    pub version: &'a str,
-    pub key_id: &'a str,
-    pub time_ms: &'a str,
-    pub nonce: &'a str,
-    pub mac: &'a str,
-}
-
 #[derive(Clone, Debug)]
 pub struct AuthenticatedNativeOwner {
+    #[cfg(unix)]
+    pub(crate) admission_identity: std::sync::Arc<()>,
     owner_id: String,
     owner_epoch: String,
     transport_key_fingerprint: String,
@@ -308,6 +291,44 @@ pub struct NativeAuthenticator<'a, R> {
     pub(crate) replay: &'a R,
 }
 impl<'a, R: NativeNonceAuthority> NativeAuthenticator<'a, R> {
+    #[cfg(unix)]
+    pub async fn authenticate_control_request<'c>(
+        &self,
+        headers: NativeAuthHeaders<'_>,
+        body: &[u8],
+        disconnected: &'c dyn Fn() -> bool,
+    ) -> Result<
+        (
+            AuthenticatedNativeOwner,
+            gateway_auth_native_wire::control::NativeControlEnvelope,
+            crate::native_context::NativeControlContext<'c>,
+        ),
+        GatewayError,
+    > {
+        use crate::native_context::{NativeControlContext, NativeRequestLifetime, now_ms};
+        use gateway_auth_native_wire::{
+            control::{NATIVE_RENEWAL_MAX_MS, NativeControlEnvelope},
+            native_read::NATIVE_CONTROL_PATH,
+        };
+        use std::time::{Duration, Instant};
+        let proof = self
+            .authenticate(NATIVE_CONTROL_PATH, headers, body, now_ms()?)
+            .await?;
+        proof.require_request(
+            NativeCapability::OwnerRenewal,
+            NATIVE_CONTROL_PATH,
+            body,
+            now_ms()?,
+        )?;
+        let envelope = NativeControlEnvelope::parse(body)?;
+        let lifetime = NativeRequestLifetime::until(
+            Instant::now() + Duration::from_millis(NATIVE_RENEWAL_MAX_MS as u64),
+            disconnected,
+        );
+        let context =
+            NativeControlContext::admitted(lifetime, headers, proof.admission_identity.clone());
+        Ok((proof, envelope, context))
+    }
     pub fn new(identity: &'a NativeTransportIdentity, replay: &'a R) -> Self {
         Self { identity, replay }
     }
@@ -320,7 +341,7 @@ impl<'a, R: NativeNonceAuthority> NativeAuthenticator<'a, R> {
     ) -> Result<AuthenticatedNativeOwner, GatewayError> {
         if headers.version != "1"
             || headers.key_id != self.identity.key_id
-            || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&now_ms)
+            || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&now_ms)
         {
             return Err(unauthorized());
         }
@@ -354,6 +375,8 @@ impl<'a, R: NativeNonceAuthority> NativeAuthenticator<'a, R> {
             .consume_nonce(headers.key_id, headers.nonce, valid_through, now_ms)
             .await?;
         Ok(AuthenticatedNativeOwner {
+            #[cfg(unix)]
+            admission_identity: std::sync::Arc::new(()),
             owner_id: self.identity.owner_id.clone(),
             owner_epoch: self.identity.owner_epoch.clone(),
             transport_key_fingerprint: self.identity.key_fingerprint.clone(),

@@ -1,10 +1,7 @@
 //! Passive request-owned replay evidence. It never authorizes dispatch or settlement.
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformHost;
-use crate::observability_host;
-use crate::observability_host::CaptureInput;
-use futures_util::Stream;
-use gateway_core::{
+use crate::observability_host::{self, CaptureInput};
+use gateway_contracts::{
     lifecycle::BodyOutcome, lifecycle::ReaderTermination, lifecycle::SemanticTerminal,
     lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
 };
@@ -12,13 +9,13 @@ use gateway_observability_replay_observation::{
     observation::{ClientFailureObservation, FailureObservation, should_persist},
     replay_trace::{AttemptTrace, TraceProvider, TraceRecorder, TraceTerminal},
 };
-use gateway_providers::sse::{
-    MAX_CHAT_EVENT_BYTES, MAX_RESPONSES_EVENT_BYTES, SseFrame, SseParser,
-};
+use gateway_provider_events::{framing::SseFrame, framing::SseParser};
+use gateway_provider_stream::{sse::MAX_CHAT_EVENT_BYTES, sse::MAX_RESPONSES_EVENT_BYTES};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
 use std::{
@@ -28,6 +25,7 @@ use std::{
     task::{Context, Poll},
 };
 use worker::{Request, Response, ResponseBody};
+use {futures_util::Stream, gateway_schema_values::scalar as util};
 
 pub struct Capture {
     runtime: observability_host::Runtime,
@@ -46,7 +44,7 @@ pub struct Capture {
 }
 #[derive(Clone)]
 struct TerminalRequest {
-    context: gateway_core::identity::RequestContext,
+    context: gateway_contracts::identity::RequestContext,
     model: Option<JsString16>,
     reasoning: Option<JsString16>,
     prompt_cache_key_present: bool,
@@ -106,7 +104,7 @@ impl Capture {
     }
     pub async fn begin(
         &self,
-        context: &gateway_core::identity::RequestContext,
+        context: &gateway_contracts::identity::RequestContext,
         model: &ModelId,
         raw: &SourceJson,
         stream: bool,
@@ -119,7 +117,7 @@ impl Capture {
     }
     pub(crate) async fn begin_local(
         &self,
-        context: &gateway_core::identity::RequestContext,
+        context: &gateway_contracts::identity::RequestContext,
         raw: &SourceJson,
         stream: bool,
     ) {
@@ -131,7 +129,7 @@ impl Capture {
     }
     async fn begin_request(
         &self,
-        context: &gateway_core::identity::RequestContext,
+        context: &gateway_contracts::identity::RequestContext,
         model: Option<&JsString16>,
         raw: &SourceJson,
         stream: bool,
@@ -148,10 +146,9 @@ impl Capture {
         let prompt_cache_key_present = source::member(raw, "prompt_cache_key")
             .and_then(|value| source::string(&value))
             .is_some_and(|key| {
-                key.as_units().iter().any(|unit| {
-                    !char::from_u32(u32::from(*unit))
-                        .is_some_and(gateway_schema::util::js_whitespace)
-                })
+                key.as_units()
+                    .iter()
+                    .any(|unit| !char::from_u32(u32::from(*unit)).is_some_and(util::js_whitespace))
             });
         *self.terminal_request.borrow_mut() = Some(TerminalRequest {
             context: context.clone(),
@@ -183,7 +180,7 @@ impl Capture {
         &self,
         observation: TransportObservation,
         usage: Option<&serde_json::Value>,
-        paid: Option<&gateway_authority::paid_types::PaidAttempt>,
+        paid: Option<&gateway_authority_paid_records::PaidAttempt>,
     ) {
         let Some(request) = self.terminal_request.borrow().clone() else {
             return;
@@ -197,7 +194,7 @@ impl Capture {
                 wire.terminal.clone(),
             )
         };
-        let extracted = gateway_core::source_usage::extract_usage_tokens(usage);
+        let extracted = gateway_contracts::source_usage::extract_usage_tokens(usage);
         let completed = self.local_completed.get() || source_completed(observation);
         let mut event = gateway_observability_prompt::prompt::PromptEvent {
             provider: Some(provider.clone()),
@@ -265,7 +262,7 @@ impl Capture {
                 let at = now_ms()?;
                 let mut patch = serde_json::json!({"status_code":status,"provider":provider,"completed_at_ms":at,"latency_ms":at.saturating_sub(request.context.started_at_ms).max(0),"input_tokens":extracted.as_ref().and_then(|usage|usage.input_tokens),"output_tokens":extracted.as_ref().and_then(|usage|usage.output_tokens),"provider_request_id":self.provider_request_id.borrow().clone()});
                 if let Some(paid) = paid {
-                    let billing = match paid.billing_state { gateway_core::lifecycle::BillingState::Pending => "pending", gateway_core::lifecycle::BillingState::Settled => "reconciled", gateway_core::lifecycle::BillingState::NotBilled => "not_billed", gateway_core::lifecycle::BillingState::Unresolved => "unresolved" };
+                    let billing = match paid.billing_state { gateway_contracts::lifecycle::BillingState::Pending => "pending", gateway_contracts::lifecycle::BillingState::Settled => "reconciled", gateway_contracts::lifecycle::BillingState::NotBilled => "not_billed", gateway_contracts::lifecycle::BillingState::Unresolved => "unresolved" };
                     patch["billing_status"] = serde_json::json!(billing);
                     patch["provider_request_id"] = serde_json::json!(paid.provider_request_id);
                     patch["provider_quota"] = serde_json::json!(paid.provider_quota);
@@ -400,7 +397,7 @@ impl Capture {
     }
     pub fn start(&self, provider: UpstreamProvider) -> Option<AttemptTrace> {
         self.client.borrow_mut().provider =
-            gateway_providers::policy::direct_provider_label(provider).into();
+            gateway_provider_source::policy::direct_provider_label(provider).into();
         let provider = match provider {
             UpstreamProvider::ChatgptCodex => TraceProvider::ChatgptCodex,
             UpstreamProvider::Surplus => TraceProvider::Surplus,
@@ -456,7 +453,7 @@ impl Capture {
         let mut client = self.client.borrow_mut();
         client.status = if provisional { 200 } else { status };
         client.stream = stream;
-        client.provider = gateway_providers::policy::direct_provider_label(provider).into();
+        client.provider = gateway_provider_source::policy::direct_provider_label(provider).into();
         client.parser = stream.then(|| {
             SseParser::new(if responses {
                 MAX_RESPONSES_EVENT_BYTES
@@ -493,7 +490,7 @@ impl Capture {
         &self,
         observation: TransportObservation,
         usage: Option<&serde_json::Value>,
-        paid: Option<&gateway_authority::paid_types::PaidAttempt>,
+        paid: Option<&gateway_authority_paid_records::PaidAttempt>,
     ) {
         if self.deferred_http.get() && self.expects_provisional_stream() {
             return;

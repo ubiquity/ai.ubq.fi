@@ -9,13 +9,20 @@ use crate::{
         RoutingResult, TransportState,
     },
 };
-use gateway_authority::kernel::KernelTerminal;
-use gateway_authority::store::{AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
-use gateway_core::lifecycle::{PaidTerminalState, SemanticTerminal, TransportObservation};
-use gateway_core::provider::UpstreamProvider;
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
+use gateway_authority_paid_ledger::PaidLedgerOperations;
+use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_authority_routing_signal::SignalOperations;
+use gateway_contracts::lifecycle::{PaidTerminalState, SemanticTerminal, TransportObservation};
+use gateway_contracts::provider::UpstreamProvider;
 use gateway_core::query::QueryStore;
-use gateway_providers::policy::{HopDecision, HopFailure};
+use gateway_provider_policy::{policy::HopDecision, policy::HopFailure};
+use gateway_source::error::GatewayError;
 
 impl<
     S: QueryStore + Clone,
@@ -140,19 +147,20 @@ impl<
                     .into());
                 }
             };
-            let input = gateway_authority::paid_types::PaidRequest {
+            let input = gateway_authority_paid_records::PaidRequest {
                 key_id: reservation.key_id.clone(),
                 request_id: reservation.request_id.clone(),
                 attempt_id: reservation.attempt_id.clone(),
                 provider: reservation.provider,
                 model: record.model.clone(),
                 route: self.input.context.route.clone(),
-                path: if self.input.surface == gateway_providers::types::ClientSurface::Chat {
-                    "/v1/chat/completions"
-                } else {
-                    "/v1/responses"
-                }
-                .into(),
+                path:
+                    if self.input.surface == gateway_provider_protocol::types::ClientSurface::Chat {
+                        "/v1/chat/completions"
+                    } else {
+                        "/v1/responses"
+                    }
+                    .into(),
                 stream: self.input.streamed(),
                 reasoning: self.input.requested_reasoning(),
                 created_at_ms: self.input.context.started_at_ms,
@@ -173,7 +181,7 @@ impl<
                 .await?;
             Self::check_paid_credential(&record.fence, &receipt)?;
             let authorization = if synthetic {
-                gateway_authority::paid_types::PaidAuthorization::DirectPaidModel
+                PaidAuthorization::DirectPaidModel
             } else {
                 self.paid_authorization(row).await?
             };
@@ -182,7 +190,7 @@ impl<
                 .reserve_paid(&input, &authorization, &receipt, self.now()?)
                 .await?
             {
-                gateway_authority::paid_types::PaidAdmission::Existing(current)
+                gateway_authority_paid_records::PaidAdmission::Existing(current)
                     if current == *reservation => {}
                 _ => {
                     return Err(unavailable("The paid reservation changed before dispatch.").into());
@@ -349,14 +357,15 @@ impl<
         let mut decision = RefusalDecision::Return;
         let mut cursor = record.cursor;
         if self.plan.synthetic && record.paid.is_none() {
-            decision = match gateway_providers::policy::deepseek_decision(failure.failure, false) {
-                HopDecision::Advance => {
-                    cursor += 1;
-                    RefusalDecision::Continue
-                }
-                HopDecision::Abort => RefusalDecision::Abort,
-                HopDecision::Deliver => RefusalDecision::Return,
-            };
+            decision =
+                match gateway_provider_policy::policy::deepseek_decision(failure.failure, false) {
+                    HopDecision::Advance => {
+                        cursor += 1;
+                        RefusalDecision::Continue
+                    }
+                    HopDecision::Abort => RefusalDecision::Abort,
+                    HopDecision::Deliver => RefusalDecision::Return,
+                };
         } else if let CredentialFence::Codex { admission, .. } = &record.fence
             && failure.origin == FailureOrigin::Provider
         {
@@ -364,7 +373,7 @@ impl<
                 decision = RefusalDecision::Continue;
             }
         } else if record.paid.is_some() && failure.origin == FailureOrigin::Provider {
-            if gateway_providers::policy::paid_should_advance(
+            if gateway_provider_policy::policy::paid_should_advance(
                 failure.status,
                 self.plan.hops.get(cursor + 1).is_some(),
             ) {
@@ -409,7 +418,7 @@ impl<
         &self,
         row: &Journal,
         record: &AttemptRecord,
-        admission: &gateway_authority::routing_types::AdmittedAccount,
+        admission: &gateway_authority_routing_selection::types::AdmittedAccount,
         failure: &AttemptFailure,
     ) -> RoutingResult<bool> {
         if let Some(block) = classify::codex_quota(
@@ -464,13 +473,14 @@ impl<
     }
     async fn lithos_refusal(
         &self,
-        model: &gateway_core::model::ModelId,
+        model: &gateway_contracts::model::ModelId,
         failure: &AttemptFailure,
     ) -> RoutingResult<RefusalDecision> {
         let now = self.now()?;
-        let response_prohibited = gateway_providers::lithos::retry_prohibited(&failure.headers);
+        let response_prohibited =
+            gateway_provider_policy::lithos::retry_prohibited(&failure.headers);
         let wait = lithos_wait_ms(&failure.headers, now);
-        let rung = gateway_providers::policy::lithos_canonical(model);
+        let rung = gateway_provider_policy::policy::lithos_canonical(model);
         self.lithos_attempted.borrow_mut().insert(rung.clone());
         if response_prohibited {
             self.lithos_no_retry.borrow_mut().insert(rung);
@@ -551,8 +561,8 @@ fn paid_terminal(terminal: SemanticTerminal) -> PaidTerminalState {
         SemanticTerminal::Failed | SemanticTerminal::Error => PaidTerminalState::Failed,
     }
 }
-fn lithos_wait_ms(headers: &gateway_providers::types::Headers, now: i64) -> Option<i64> {
-    let wait = gateway_providers::lithos::rate_limit_wait(headers, now as f64, |raw| {
+fn lithos_wait_ms(headers: &gateway_provider_protocol::types::Headers, now: i64) -> Option<i64> {
+    let wait = gateway_provider_policy::lithos::rate_limit_wait(headers, now as f64, |raw| {
         chrono::DateTime::parse_from_rfc2822(raw)
             .ok()
             .map(|date| date.timestamp_millis() as f64)

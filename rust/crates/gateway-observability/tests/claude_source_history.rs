@@ -1,6 +1,6 @@
 //! Actual frozen Bun writer cases, plus the named post-acceptance carrier only.
 //! This fixture grants no quota, routing, native credential or live provider authority.
-use gateway_admin_runtime::capabilities::Context;
+use gateway_admin_runtime_contracts::capabilities::Context;
 use gateway_capacity_projection::{
     shapes::BUCKET_MS, shapes::RETENTION_MS, shapes::unavailable_snapshot,
 };
@@ -9,9 +9,9 @@ use gateway_claude_usage_history_records::{
 };
 use gateway_core::{
     source_control::decode_source_control_record, source_control::encode_source_control_record,
-    state::RecordKey, state::RevisionCheck, state::StoredRecord, tuple_key::TupleKey,
-    value::ValueEncoding,
+    state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey, value::ValueEncoding};
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_contracts::{
     host_types::*, types::HealthProvider, types::HealthTarget, types::ObservabilityHost,
@@ -501,7 +501,7 @@ struct InventoryHost {
 impl ObservabilityHost for InventoryHost {
     fn source_string_collator(
         &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {
@@ -545,7 +545,7 @@ fn inventory(memory: &Memory, current: bool) -> InventoryHost {
     let base = Host::default();
     base.at.set(AT);
     let source=SourceJson::parse(r#"{"kind":"api_key","secret":"sk-ant-api-ab\ud83d\ude00synthetic-hidden-middle-tail","label":"label\udc00","updated_at_ms":1}"#).unwrap();
-    let credential = gateway_admin_runtime::claude::parse_source_credential(&source, "kv").unwrap();
+    let credential = gateway_claude_roster::claude::parse_source_credential(&source, "kv").unwrap();
     let bound = key(json!(["synthetic-binding"]));
     memory.rows.borrow_mut().insert(
         bound.0.clone(),

@@ -1,12 +1,14 @@
 //! One source ordinary outcome is visible before real selected-account capability lookup.
-use gateway_core::{
+use gateway_model_metadata::reasoning::ModelReasoning;
+use gateway_provider_claude_body::{
+    types::ClaudeBodyOptions, types::ClaudeCredentialKind, types::OrdinaryPhaseOptions,
+    types::PreparedClaudeBody, types::PreparedClaudeOrdinary,
+};
+use gateway_provider_protocol::{types::ClientSurface, types::OrdinaryPreparationContext};
+use gateway_schema::catalog::RequestModelMetadata;
+use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
-use gateway_providers::types::{
-    ClaudeBodyOptions, ClaudeCredentialKind, ClientSurface, OrdinaryPhaseOptions,
-    OrdinaryPreparationContext, PreparedClaudeBody, PreparedClaudeOrdinary,
-};
-use gateway_schema::{catalog::RequestModelMetadata, reasoning::ModelReasoning};
 use serde_json::json;
 fn raw(text: &str) -> SourceJson {
     SourceJson::parse(text).unwrap()
@@ -40,7 +42,8 @@ fn original() -> SourceJson {
     raw(r#"{"model":"claude-sonnet-4-5","input":"fixture:matrix:claude:stream","stream":true}"#)
 }
 #[test]
-fn effective_omitted_default_is_observed_before_capabilities_and_finalized_once() {
+fn effective_omitted_default_is_observed_before_capabilities_and_finalized_once()
+-> Result<(), String> {
     let original = original();
     let initial_phase_options = fixture_phase_options();
     // Before correction the account selector sees original omitted reasoning and
@@ -62,7 +65,7 @@ fn effective_omitted_default_is_observed_before_capabilities_and_finalized_once(
         &"claude-sonnet-4-5".into(),
         &initial_phase_options,
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     assert_eq!(
         phase.effective_effort(),
         Some(&JsString16::from_utf8("medium"))
@@ -75,28 +78,33 @@ fn effective_omitted_default_is_observed_before_capabilities_and_finalized_once(
     // A finalizer that wrongly reruns normalization would inject this different
     // default and fail. It must consume the phase, not read phase inputs again.
     observed.ordinary_preparation = phase_options(
-        SourceJson::from_serializable(&json!({})).unwrap(),
+        SourceJson::from_serializable(&json!({})).map_err(|error| format!("{error:?}"))?,
         "must-not-run-twice",
     )
     .ordinary_preparation;
-    let prepared = PreparedClaudeBody::from_ordinary(phase, &original, &observed).unwrap();
+    let prepared = PreparedClaudeBody::from_ordinary(phase, &original, &observed)
+        .map_err(|error| format!("{error:?}"))?;
     assert!(prepared.stream());
     assert_eq!(prepared.decode().request, original);
-    let output = source::member(prepared.body(), "output_config").unwrap();
+    let output =
+        source::member(prepared.body(), "output_config").ok_or("missing expected fixture value")?;
     assert_eq!(
-        source::string(&source::member(&output, "effort").unwrap()),
+        gateway_provider_source::source::string(
+            &source::member(&output, "effort").ok_or("missing expected fixture value")?
+        ),
         Some("medium".into())
     );
     assert!(source::member(&prepared.decode().request, "reasoning").is_none());
+    Ok(())
 }
 #[test]
-fn original_high_only_catalog_remains_an_explicit_default_medium_negative() {
+fn original_high_only_catalog_remains_an_explicit_default_medium_negative() -> Result<(), String> {
     let original = original();
     let high_only_phase_options = phase_options(
         SourceJson::from_serializable(
             &json!({"supported_reasoning_levels":["none","high"],"default_reasoning_level":"none"}),
         )
-        .unwrap(),
+        .map_err(|error| format!("{error:?}"))?,
         "medium",
     );
     let phase = PreparedClaudeOrdinary::prepare(
@@ -105,19 +113,23 @@ fn original_high_only_catalog_remains_an_explicit_default_medium_negative() {
         &"claude-sonnet-4-5".into(),
         &high_only_phase_options,
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     let error = PreparedClaudeBody::from_ordinary(
         phase,
         &original,
         &selected_capabilities(&["high"], true),
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected fixture rejection")?;
     assert_eq!(error.status, 400);
-    let fields = source::member(error.body(), "error").unwrap();
+    let fields = source::member(error.body(), "error").ok_or("missing expected fixture value")?;
     assert_eq!(
-        source::string(&source::member(&fields, "param").unwrap()),
+        gateway_provider_source::source::string(
+            &source::member(&fields, "param").ok_or("missing expected fixture value")?
+        ),
         Some("reasoning".into())
     );
+    Ok(())
 }
 #[test]
 fn explicit_none_nonstream_and_observed_high_keep_their_real_proof_rules() {
@@ -156,7 +168,7 @@ fn explicit_none_nonstream_and_observed_high_keep_their_real_proof_rules() {
     }
 }
 #[test]
-fn absent_effort_and_opaque_mapped_default_retain_exact_source_data() {
+fn absent_effort_and_opaque_mapped_default_retain_exact_source_data() -> Result<(), String> {
     let original = original();
     let phase = PreparedClaudeOrdinary::prepare(
         ClientSurface::Responses,
@@ -164,11 +176,11 @@ fn absent_effort_and_opaque_mapped_default_retain_exact_source_data() {
         &"claude-sonnet-4-5".into(),
         &OrdinaryPhaseOptions::default(),
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     assert!(phase.effective_effort().is_none());
     let prepared =
         PreparedClaudeBody::from_ordinary(phase, &original, &selected_capabilities(&[], false))
-            .unwrap();
+            .map_err(|error| format!("{error:?}"))?;
     assert!(source::member(prepared.body(), "thinking").is_none());
     let phase_options = phase_options(
         raw(r#"{"reasoning_effort_wire_map":{"host-default":"wire\ud800"}}"#),
@@ -180,20 +192,26 @@ fn absent_effort_and_opaque_mapped_default_retain_exact_source_data() {
         &"claude-sonnet-4-5".into(),
         &phase_options,
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     let effort = JsString16::from_units("wire".encode_utf16().chain([0xd800]).collect());
     assert_eq!(phase.effective_effort(), Some(&effort));
     let mut observed = selected_capabilities(&[], false);
     observed.native_reasoning_efforts = Some(vec![effort.clone()]);
-    let prepared = PreparedClaudeBody::from_ordinary(phase, &original, &observed).unwrap();
-    let output = source::member(prepared.body(), "output_config").unwrap();
+    let prepared = PreparedClaudeBody::from_ordinary(phase, &original, &observed)
+        .map_err(|error| format!("{error:?}"))?;
+    let output =
+        source::member(prepared.body(), "output_config").ok_or("missing expected fixture value")?;
     assert_eq!(
-        source::string(&source::member(&output, "effort").unwrap()),
+        gateway_provider_source::source::string(
+            &source::member(&output, "effort").ok_or("missing expected fixture value")?
+        ),
         Some(effort)
     );
+    Ok(())
 }
 #[test]
-fn source_input_cache_reasoning_priority_finishes_before_any_capability_input() {
+fn source_input_cache_reasoning_priority_finishes_before_any_capability_input() -> Result<(), String>
+{
     let options = phase_options(raw(r#"{"prompt_cache":false}"#), "medium");
     let cases = [
         (
@@ -219,19 +237,24 @@ fn source_input_cache_reasoning_priority_finishes_before_any_capability_input() 
             &"claude-sonnet-4-5".into(),
             &options,
         )
-        .unwrap_err();
-        let fields = source::member(error.body(), "error").unwrap();
+        .err()
+        .ok_or("expected fixture rejection")?;
+        let fields =
+            source::member(error.body(), "error").ok_or("missing expected fixture value")?;
         assert_eq!(
-            source::string(&source::member(&fields, "message").unwrap()),
+            gateway_provider_source::source::string(
+                &source::member(&fields, "message").ok_or("missing expected fixture value")?
+            ),
             Some(message.into())
         );
         assert_eq!(
             source::member(&fields, "param")
                 .as_ref()
-                .and_then(source::string),
+                .and_then(gateway_provider_source::source::string),
             param.map(JsString16::from_utf8)
         );
     }
+    Ok(())
 }
 #[test]
 fn phased_and_existing_convenience_use_identical_normalized_body_and_decode() {
@@ -266,7 +289,8 @@ fn phased_and_existing_convenience_use_identical_normalized_body_and_decode() {
 }
 
 #[test]
-fn cloned_phase_retries_keep_one_normalized_outcome_and_actual_selected_kind() {
+fn cloned_phase_retries_keep_one_normalized_outcome_and_actual_selected_kind() -> Result<(), String>
+{
     let original = original();
     let mut initial = fixture_phase_options();
     let phase = PreparedClaudeOrdinary::prepare(
@@ -275,7 +299,7 @@ fn cloned_phase_retries_keep_one_normalized_outcome_and_actual_selected_kind() {
         &"claude-sonnet-4-5".into(),
         &initial,
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     // Change the old input after preparation. Neither a clone nor finalization
     // may reread these defaults, allowed models or ordinary metadata.
     initial = phase_options(raw(r#"{}"#), "must-not-run-twice");
@@ -287,24 +311,32 @@ fn cloned_phase_retries_keep_one_normalized_outcome_and_actual_selected_kind() {
     selected.native_reasoning_efforts = Some(vec!["medium".into(), "high".into()]);
     for kind in [ClaudeCredentialKind::ApiKey, ClaudeCredentialKind::Oauth] {
         selected.kind = kind;
-        let prepared =
-            PreparedClaudeBody::from_ordinary(phase.clone(), &original, &selected).unwrap();
+        let prepared = PreparedClaudeBody::from_ordinary(phase.clone(), &original, &selected)
+            .map_err(|error| format!("{error:?}"))?;
         assert_eq!(prepared.kind(), kind);
         assert!(prepared.stream());
         assert_eq!(prepared.decode().request, original);
         assert_eq!(prepared.decode().upstream_model, *phase.model());
-        let output = source::member(prepared.body(), "output_config").unwrap();
+        let output = source::member(prepared.body(), "output_config")
+            .ok_or("missing expected fixture value")?;
         assert_eq!(
-            source::string(&source::member(&output, "effort").unwrap()),
+            gateway_provider_source::source::string(
+                &source::member(&output, "effort").ok_or("missing expected fixture value")?
+            ),
             Some("medium".into())
         );
         let system = source::member(prepared.body(), "system");
         if kind == ClaudeCredentialKind::Oauth {
-            let blocks = source::array(&system.unwrap()).unwrap();
+            let blocks = gateway_source::source_serialization::array(
+                &system.ok_or("missing expected fixture value")?,
+            )
+            .ok_or("missing expected fixture value")?;
             assert_eq!(blocks.len(), 1);
             assert_eq!(
-                source::string(&source::member(&blocks[0], "text").unwrap()),
-                Some(gateway_providers::finalize::CLAUDE_ATTRIBUTION.into())
+                gateway_provider_source::source::string(
+                    &source::member(&blocks[0], "text").ok_or("missing expected fixture value")?
+                ),
+                Some(gateway_provider_claude_body::finalize::CLAUDE_ATTRIBUTION.into())
             );
         } else {
             assert!(system.is_none());
@@ -315,4 +347,5 @@ fn cloned_phase_retries_keep_one_normalized_outcome_and_actual_selected_kind() {
     // A successful earlier account never turns the retained data into proof.
     selected.native_reasoning_efforts = Some(vec!["high".into()]);
     assert!(PreparedClaudeBody::from_ordinary(phase, &original, &selected).is_err());
+    Ok(())
 }
