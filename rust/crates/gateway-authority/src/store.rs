@@ -86,6 +86,16 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         Ok(now)
     }
 
+    pub(crate) fn callback_owner_selector<'s, 'o>(
+        &'s self,
+        owners: &'o [gateway_authority_native_records::owner::RegisteredRenewalOwner],
+    ) -> gateway_authority_native_callback_owner::CallbackOwnerSelector<'s, 'o, S> {
+        gateway_authority_native_callback_owner::CallbackOwnerSelector::new(
+            &self.store,
+            self.clock.as_deref(),
+            owners,
+        )
+    }
     pub fn store(&self) -> &S {
         &self.store
     }

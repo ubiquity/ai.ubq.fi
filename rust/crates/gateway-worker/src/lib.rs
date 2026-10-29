@@ -104,7 +104,7 @@ pub async fn fetch_with_bindings(
         Err(error) => return error_response(error).map(Into::into),
     };
     if native_authority::is_path(&request.path()) {
-        let response = match native_authority::handle(request, &env, &native).await {
+        let response = match native_authority::handle(request, &env, &native, &request_id).await {
             Ok(response) => response,
             Err(error) => error_response(error)?,
         };

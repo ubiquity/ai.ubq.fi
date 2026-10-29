@@ -7,15 +7,14 @@ use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapabili
 use gateway_auth_native_proof::native_auth::NativeAuthenticator;
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::{
-    NATIVE_CONTROL_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER,
-    NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH, NATIVE_RESPONSE_MAC_HEADER,
-    NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
+    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_PUBLICATION_PATH,
+    NATIVE_RENEWAL_AUTHORITY_PATH, NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER,
+    NATIVE_VERSION_HEADER,
 };
 use gateway_authority::native_control::receiver::NativeRenewalAuthority;
-use gateway_authority::{native_control::NativeRenewalControl, store::Authority};
+use gateway_authority::store::Authority;
 use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_native_authority_request::NativeRenewalAuthorityRequest as RenewalRequest;
-use gateway_native_authority_wire::renewal_response::NativeRenewalAuthorityResponse as RenewalResponse;
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body::request_bytes;
@@ -30,7 +29,7 @@ pub fn is_path(path: &str) -> bool {
     path == NATIVE_RENEWAL_AUTHORITY_PATH
         || path == gateway_auth_native_proof::native_live::NATIVE_LIVE_AUTHORITY_PATH
 }
-struct Incoming(Cancellation);
+struct Incoming(std::rc::Rc<Cancellation>);
 impl NativeRenewalCancellation for Incoming {
     fn cancelled(&self) -> bool {
         self.0.signal().aborted()
@@ -119,6 +118,7 @@ pub async fn handle(
     mut request: Request,
     env: &Env,
     native: &NativeBindings,
+    request_id: &str,
 ) -> Result<Response, GatewayError> {
     if request.method() != Method::Post {
         return Err(GatewayError::new(
@@ -129,7 +129,8 @@ pub async fn handle(
     }
     let transport = native.transport()?;
     let headers = Headers::read(&request)?;
-    let incoming = Incoming(Cancellation::from_request(&request)?);
+    let cancellation = std::rc::Rc::new(Cancellation::from_request(&request)?);
+    let incoming = Incoming(cancellation.clone());
     let path = request.path();
     let maximum = if path == NATIVE_RENEWAL_AUTHORITY_PATH {
         // The authenticator still applies each complete typed operation's old/new limit.
@@ -192,152 +193,63 @@ pub async fn handle(
         )?;
         let parsed = RenewalRequest::parse(&bytes)?;
         let owners = native.renewal_owners()?;
-        let owner = match &parsed {
-            RenewalRequest::Claim { .. } => {
-                let original = parsed.original_control_body()?;
-                let envelope =
-                    gateway_auth_native_wire::control::NativeControlEnvelope::parse(&original)?;
-                let gateway_auth_native_wire::control::NativeControlRequest::CodexRenewAccess {
-                    action_ref,
-                } = &envelope.request;
-                owners.for_action(&authority, action_ref).await?
+        let selected = owners.for_callback(&authority, &parsed).await?;
+        let owner = selected.owner();
+        let (status, output) = match selected.version() {
+            gateway_authority_native_callback_owner::RenewalActionVersion::Legacy2 => {
+                let receiver = NativeRenewalAuthority::configured(
+                    &authority,
+                    &transport.identity,
+                    owner,
+                    &config,
+                    &incoming,
+                );
+                result(
+                    gateway_authority_native_callback::execute_legacy(
+                        &receiver,
+                        &transport.identity,
+                        &replay,
+                        &PlatformClock,
+                        &bytes,
+                    )
+                    .await,
+                )?
             }
-            RenewalRequest::Start {
-                operation_id,
-                claim_ref,
-                ..
-            }
-            | RenewalRequest::Recheck {
-                operation_id,
-                claim_ref,
-                ..
-            }
-            | RenewalRequest::Published {
-                operation_id,
-                claim_ref,
-                ..
-            }
-            | RenewalRequest::Unknown {
-                operation_id,
-                claim_ref,
-                ..
-            } => {
-                owners
-                    .for_operation(&authority, operation_id, claim_ref)
-                    .await?
+            gateway_authority_native_callback_owner::RenewalActionVersion::Source3 => {
+                let (_, original) = crate::runtime::original_auth_request(&request, &path)?;
+                let host = crate::host::PlatformHost {
+                    cancellation,
+                    store: store.clone(),
+                    env: env.clone(),
+                    native: native.clone(),
+                    original,
+                    request_id: gateway_contracts::identity::RequestId(request_id.into()),
+                };
+                let receiver = authority.source_native_lifecycle(
+                    &host,
+                    &config,
+                    &transport.identity,
+                    owner,
+                    &incoming,
+                );
+                result(
+                    gateway_authority_native_callback::execute_source(
+                        &receiver,
+                        &proof,
+                        &transport.identity,
+                        &replay,
+                        &PlatformClock,
+                        &bytes,
+                    )
+                    .await,
+                )?
             }
         };
-        let receiver = NativeRenewalAuthority::configured(
-            &authority,
-            &transport.identity,
-            owner,
-            &config,
-            &incoming,
-        );
-        let output = execute_renewal(&receiver, &transport.identity, &replay, &bytes).await;
-        let (status, output) = result(output)?;
         let mac =
             transport
                 .identity
                 .sign_authority_response(&headers.nonce, &bytes, status, &output)?;
         response(status, output, mac)
-    }
-}
-
-async fn execute_renewal<C: NativeRenewalCancellation>(
-    receiver: &NativeRenewalAuthority<'_, RemoteAuthorityStore, PlatformTokens, C>,
-    identity: &gateway_auth_native_proof::native_auth::NativeTransportIdentity,
-    replay: &StoreNonceAuthority<'_, RemoteAuthorityStore>,
-    bytes: &[u8],
-) -> Result<RenewalResponse, GatewayError> {
-    let request = RenewalRequest::parse(bytes)?;
-    match request {
-        RenewalRequest::Claim {
-            original_auth_headers,
-            ..
-        } => {
-            let original = RenewalRequest::parse(bytes)?.original_control_body()?;
-            let proof = NativeAuthenticator::new(identity, replay)
-                .authenticate(
-                    NATIVE_CONTROL_PATH,
-                    original_auth_headers.borrowed(),
-                    &original,
-                    now_ms()?,
-                )
-                .await?;
-            let envelope =
-                gateway_auth_native_wire::control::NativeControlEnvelope::parse(&original)?;
-            let gateway_auth_native_wire::control::NativeControlRequest::CodexRenewAccess {
-                action_ref,
-            } = &envelope.request;
-            let claim = receiver
-                .claim(&proof, action_ref, &envelope.operation_id, &original)
-                .await?;
-            Ok(RenewalResponse::Claim {
-                v: 1,
-                action_ref: claim.action().action_ref().into(),
-                operation_id: claim.operation_id().into(),
-                claim_ref: claim.claim_ref().into(),
-                start_permit: claim.start_permit().map(str::to_owned),
-                publication_revision: claim.publication_revision().map(str::to_owned),
-                mode: claim.mode(),
-                deadline_ms: claim.action().deadline_ms(),
-                fence: claim.action().fence().clone(),
-            })
-        }
-        RenewalRequest::Start {
-            operation_id,
-            claim_ref,
-            start_permit,
-            ..
-        } => {
-            let mut claim = receiver
-                .resolve_claim(&operation_id, &claim_ref, Some(&start_permit))
-                .await?;
-            Ok(RenewalResponse::Start {
-                v: 1,
-                mode: receiver.start(&mut claim).await?,
-            })
-        }
-        RenewalRequest::Recheck {
-            operation_id,
-            claim_ref,
-            ..
-        } => {
-            let claim = receiver
-                .resolve_claim(&operation_id, &claim_ref, None)
-                .await?;
-            Ok(RenewalResponse::Recheck {
-                v: 1,
-                fence: receiver.recheck(&claim).await?,
-            })
-        }
-        RenewalRequest::Published {
-            operation_id,
-            claim_ref,
-            publication_revision,
-            ..
-        } => {
-            let claim = receiver
-                .resolve_claim(&operation_id, &claim_ref, None)
-                .await?;
-            let receipt = receiver.published(&claim, &publication_revision).await?;
-            Ok(RenewalResponse::Published {
-                v: 1,
-                publication_revision: receipt.publication_revision().into(),
-            })
-        }
-        RenewalRequest::Unknown {
-            operation_id,
-            claim_ref,
-            ..
-        } => {
-            let claim = receiver
-                .resolve_claim(&operation_id, &claim_ref, None)
-                .await?;
-            receiver.unknown(&claim).await?;
-            Ok(RenewalResponse::Unknown { v: 1 })
-        }
     }
 }
 
@@ -355,7 +267,7 @@ pub async fn managed_publication(
     }
     let transport = native.transport()?;
     let headers = Headers::read(request)?;
-    let incoming = Incoming(Cancellation::from_request(request)?);
+    let incoming = Incoming(std::rc::Rc::new(Cancellation::from_request(request)?));
     let replay = StoreNonceAuthority::new(store);
     let proof = NativeAuthenticator::new(&transport.identity, &replay)
         .authenticate(

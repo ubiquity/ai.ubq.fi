@@ -182,6 +182,41 @@ fn actual_source_managed_publication_atomically_advances_generation_and_replays_
                 .publication_revision(),
             "publication"
         );
+        // C3-CALLBACK-1: actual managed terminal through the signed callback executor.
+        let callback = serde_json::to_vec(
+            &gateway_native_authority_request::NativeRenewalAuthorityRequest::Published {
+                v: 1,
+                operation_id: "operation".into(),
+                claim_ref: claim.claim_ref().into(),
+                publication_revision: "publication".into(),
+            },
+        )?;
+        let path = gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH;
+        let nonce = base64url(&[83; 32]);
+        let mac = id.sign(path, NOW, &nonce, &callback)?;
+        let replay = gateway_auth_native_protocol::native_replay::StoreNonceAuthority::new(&store);
+        let peer = gateway_auth_native_proof::native_auth::NativeAuthenticator::new(&id, &replay)
+            .authenticate(
+                path,
+                gateway_auth_native_contracts::transport::NativeAuthHeaders {
+                    version: "1",
+                    key_id: id.key_id(),
+                    time_ms: &NOW.to_string(),
+                    nonce: &nonce,
+                    mac: &mac,
+                },
+                &callback,
+                NOW,
+            )
+            .await?;
+        let reply = gateway_authority_native_callback::execute_source(
+            &lifecycle, &peer, &id, &replay, &host, &callback,
+        )
+        .await?;
+        assert!(
+            matches!(reply, gateway_native_authority_wire::source_response::SourceNativeRenewalAuthorityResponseV2::Published { v: 2, ref publication_revision } if publication_revision == "publication")
+        );
+        // End C3-CALLBACK-1 assertion extension.
         let raw = store
             .read(&rows::key("operation", "operation"))
             .await?

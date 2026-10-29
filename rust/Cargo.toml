@@ -1,5 +1,7 @@
 [workspace]
 members = [
+  "crates/gateway-authority-native-callback",
+  "crates/gateway-authority-native-callback-owner",
   "crates/gateway-authority-native-custody",
   "crates/gateway-authority-native-live",
   "crates/gateway-authority-native-import",

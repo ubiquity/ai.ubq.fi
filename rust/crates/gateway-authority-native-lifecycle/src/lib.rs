@@ -18,6 +18,7 @@ use gateway_authority_contracts::{
     AuthorityClock, NativeRenewalCancellation, TokenSource, add, text, validate_time,
 };
 use gateway_authority_native_context_facts::SourceNativeContextFactsReader;
+use gateway_authority_native_records::lifecycle_data::{generation_key, metadata};
 use gateway_authority_native_records::{
     owner::RegisteredRenewalOwner,
     rows::{self, GenerationEffect, OperationRow, Phase, TerminalPublication, conflict, fail},
@@ -132,6 +133,25 @@ impl<
             actors: ActorService::new(store, host, config),
             context,
         }
+    }
+    pub fn require_callback_peer(
+        &self,
+        proof: &AuthenticatedNativeOwner,
+        exact_body: &[u8],
+    ) -> Result<(), GatewayError> {
+        proof.require_request(
+            NativeCapability::OwnerRenewal,
+            NATIVE_RENEWAL_AUTHORITY_PATH,
+            exact_body,
+            self.cleanup_time(0)?,
+        )?;
+        if proof.owner_id() != self.context.identity.owner_id()
+            || proof.owner_epoch() != self.context.identity.owner_epoch()
+            || proof.transport_key_fingerprint() != self.context.identity.key_fingerprint()
+        {
+            return Err(fail());
+        }
+        Ok(())
     }
     fn transaction(&self, now: i64) -> Result<Transaction<'_, S, I>, GatewayError> {
         Transaction::new(self.store, self.tokens, now)
@@ -740,24 +760,4 @@ impl<
         }
         Err(conflict())
     }
-}
-fn generation_key(
-    fence: &SourceNativeRenewalFenceV3,
-) -> Result<gateway_kv_codec::key::RecordKey, GatewayError> {
-    rows::generation_key_parts(
-        &fence.native_owner_id,
-        &fence.account_id_hash,
-        &fence.source_native_generation,
-    )
-}
-fn metadata(row: &StoredRecord, now: i64) -> Result<(), GatewayError> {
-    row.validate_version()?;
-    text(&row.revision)?;
-    if let Some(expiry) = row.expires_at_ms {
-        validate_time(expiry)?;
-        if expiry <= now {
-            return Err(fail());
-        }
-    }
-    Ok(())
 }
