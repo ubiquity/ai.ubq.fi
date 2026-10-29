@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-routing-journal.workspace = true
 gateway-model-snapshot.workspace = true
 gateway-model-selection.workspace = true
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }

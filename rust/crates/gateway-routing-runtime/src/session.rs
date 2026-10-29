@@ -1,5 +1,5 @@
 use crate::{
-    journal::{self, Journal},
+    journal::{self},
     policy::{self, RoutePlan},
     settlement,
     types::*,
@@ -21,6 +21,7 @@ use gateway_core::query::QueryStore;
 use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_claude_body::types::PreparedClaudeOrdinary;
 use gateway_provider_policy::{policy::LithosWindows, policy::WaitBudget};
+use gateway_routing_journal::record::{CredentialFence, Journal};
 use gateway_source::error::GatewayError;
 use std::{cell::RefCell, collections::BTreeSet};
 use {crate::journal::unavailable, gateway_schema_values::request::RequestSurface};
@@ -119,7 +120,7 @@ impl<
         };
         let streamed = input.streamed();
         // Fresh ordinary requests use source binding v3; generated extras keep v1 bytes.
-        let mut row = Journal::empty(
+        let mut row = journal::empty(
             if family.is_some() { 1 } else { 3 },
             input.context.clone(),
             if family.is_some() {

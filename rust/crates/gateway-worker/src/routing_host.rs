@@ -12,15 +12,15 @@ use gateway_kv_codec::key::RecordKey;
 use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_protocol::{types::AuthMaterial, types::PrepareOptions};
 use gateway_routing_runtime::types::{
-    ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
-    RefreshOutcome, RoutingHost, direct_credential,
+    ClaudeSelection, CodexRecovery, CredentialRequest, PublishedCredential, RefreshOutcome,
+    RoutingHost, direct_credential,
 };
-use gateway_source::error::GatewayError;
 use gateway_wait_observation::outcome::WaitOutcome;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_storage::store::now_ms;
 use worker::Env;
 use {gateway_catalog_control::control::publish_paid_routing, gateway_core::state::AuthorityStore};
+use {gateway_routing_journal::record::CredentialFence, gateway_source::error::GatewayError};
 
 #[derive(Clone)]
 pub struct Host {

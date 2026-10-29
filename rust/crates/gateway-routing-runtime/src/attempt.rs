@@ -1,7 +1,6 @@
 use crate::{
-    journal, journal::AttemptRecord, journal::Journal, journal::Phase, journal::unavailable,
-    policy::RouteHop, session::RoutingSession, settlement, types::ClaudeSelection,
-    types::CodexRecovery, types::CredentialFence, types::PreparedAttempt,
+    journal, journal::unavailable, policy::RouteHop, session::RoutingSession, settlement,
+    types::ClaudeSelection, types::CodexRecovery, types::PreparedAttempt,
     types::PublishedCredential, types::RoutingHost, types::RoutingResult,
 };
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
@@ -18,6 +17,8 @@ use gateway_core::query::QueryStore;
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_local_refusal::{routing_error::RoutingError, routing_error::SourceRefusalBody};
 use gateway_provider_protocol::types::ClientSurface;
+use gateway_routing_journal::reader;
+use gateway_routing_journal::record::{AttemptRecord, CredentialFence, Journal, Phase};
 use gateway_source::error::GatewayError;
 
 type SelectedHop = (
@@ -39,7 +40,7 @@ impl<
             if self.host.cancelled() {
                 return Err(self.host.cancellation_error().into());
             }
-            let (_, row) = journal::load(&self.store, self.id()).await?;
+            let (_, row) = reader::load(&self.store, self.id()).await?;
             settlement::ensure_active(&row)?;
             if row.extras_family.is_some() {
                 return Err(unavailable("Extras dispatch requires an opaque child scope.").into());

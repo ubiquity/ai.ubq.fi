@@ -1,5 +1,5 @@
-use crate::{journal, journal::Journal, journal::Phase, types::RecoveredSession};
-use crate::{types::RevisionCheckWire, types::RoutingHost};
+use crate::types::RoutingHost;
+use crate::{journal, types::RecoveredSession};
 use gateway_authority::store::Authority;
 use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
@@ -10,6 +10,8 @@ use gateway_contracts::lifecycle::SemanticTerminal;
 use gateway_contracts::lifecycle::TransportObservation;
 use gateway_core::{query::QueryRequest, query::QuerySelector};
 use gateway_core::{query::QueryStore, state::AuthorityStore, state::RevisionCheck};
+use gateway_routing_journal::reader;
+use gateway_routing_journal::record::{Journal, Phase, RevisionCheckWire};
 use gateway_source::error::GatewayError;
 
 pub(crate) async fn finish_record<
@@ -26,7 +28,7 @@ pub(crate) async fn finish_record<
     mut observed: TransportObservation,
 ) -> Result<RecoveredSession, GatewayError> {
     let now = clock.now_ms()?;
-    let (_, old) = journal::load(store, id).await?;
+    let (_, old) = reader::load(store, id).await?;
     if let Some(local) = old.local_work.as_ref().filter(|local| {
         local.phase != gateway_local_journal::local_work::LocalWorkPhase::ProviderPlanned
     }) {
@@ -197,7 +199,7 @@ pub async fn recover_pending<
                 "Pending session key identity mismatch.",
             ));
         }
-        let (old, row) = journal::load(&store, id).await?;
+        let (old, row) = reader::load(&store, id).await?;
         let local_pending = row.local_work.as_ref().is_some_and(|local| {
             local.phase == gateway_local_journal::local_work::LocalWorkPhase::TerminalPending
         });
@@ -209,7 +211,7 @@ pub async fn recover_pending<
             continue;
         }
         let fence = RevisionCheck {
-            key: journal::key(id),
+            key: reader::session_key(id),
             expected_revision: Some(old.revision),
         };
         // CAS claims only the exact expired snapshot. Live renewals race safely.
@@ -220,10 +222,12 @@ pub async fn recover_pending<
             now,
             &[RevisionCheckWire::from(&fence)],
             |j| {
-                if j.terminal_intent.is_none() && !j.local_work.as_ref().is_some_and(|local| {
-                    local.phase
-                        == gateway_local_journal::local_work::LocalWorkPhase::TerminalPending
-                }) && j.lease_expires_at_ms > now
+                if j.terminal_intent.is_none()
+                    && !j.local_work.as_ref().is_some_and(|local| {
+                        local.phase
+                            == gateway_local_journal::local_work::LocalWorkPhase::TerminalPending
+                    })
+                    && j.lease_expires_at_ms > now
                 {
                     return Err(journal::unavailable("Routing lease is still active."));
                 }

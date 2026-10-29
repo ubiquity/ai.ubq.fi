@@ -10,6 +10,7 @@ use gateway_provider_protocol::{
 };
 use gateway_provider_response::response::decode_response;
 use gateway_provider_stream::sse::StreamDecoder;
+use gateway_routing_journal::record::CredentialFence;
 use gateway_schema::catalog::CatalogInput;
 use serde_json::{Value, json};
 

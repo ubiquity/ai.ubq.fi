@@ -1796,6 +1796,7 @@ dependencies = [
  "gateway-native-authority-request",
  "gateway-native-authority-wire",
  "gateway-provider-policy",
+ "gateway-routing-journal",
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
@@ -4590,6 +4591,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-routing-journal"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-api-protocol",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-paid-records",
+ "gateway-authority-routing-selection",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-extras-contract",
+ "gateway-kv-codec",
+ "gateway-local-journal",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-routing-runtime"
 version = "0.1.0"
 dependencies = [
@@ -4637,6 +4656,7 @@ dependencies = [
  "gateway-provider-stream",
  "gateway-providers",
  "gateway-request-normalization",
+ "gateway-routing-journal",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
  "gateway-schema-values",
@@ -4667,6 +4687,7 @@ dependencies = [
  "gateway-model-selection",
  "gateway-model-snapshot",
  "gateway-provider-protocol",
+ "gateway-routing-journal",
  "gateway-routing-runtime",
  "gateway-schema",
  "gateway-source",
@@ -4852,6 +4873,7 @@ dependencies = [
  "gateway-publication-policy",
  "gateway-publication-transport",
  "gateway-request-normalization",
+ "gateway-routing-journal",
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",

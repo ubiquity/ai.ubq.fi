@@ -6,6 +6,12 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Rust routing journals have one complete stored-DATA owner - 2026-10-28
+
+The complete routing journal schema, validated tuple-key serde, source codec, session key and expiry-aware reader belong to `gateway-routing-journal`. Ordinary public stored DATA serves all production readers and does not mint admission, currentness, paid, native or mutation authority. Reads retain source-control encoding/version checks, local-work then version-selected context decoding, complete nested serde and round-trip shape equality, request-id binding and original errors; no field-only reader substitutes.
+
+Routing keeps its private empty constructor, writes, token and retention schedule, legacy scalar guard, pending/session atomic group and final CAS. General context serde, ordinary-v3 UTF16 and held Extras-v1/local-v2 domains are unchanged. This defining move adds no public raw-parts constructor, update callback, getter, proof factory, re-export or runtime policy; all original tests and assertions remain.
+
 ## Rust Auth key construction uses closed typed producers - 2026-10-28
 
 The shared Auth `key(Value)` constructor and its Admin and migration forwarding constructors are retired. Fixed scalar producers use the existing defining `TupleKey::from_scalar_parts` and `ScalarKeyPart` contract, while finite-float and genuinely dynamic derived keys use the existing checked tuple APIs at their original construction sites. The bounded Claude history/rollup DATA methods return their existing family errors for nonfinite input while retaining every finite number bit pattern, signed zero and the exact absent-reset string discriminator. Profile scan inputs are actual typed keys; derived window and retirement probes retain their existing fallible planning boundary and original raw keys.

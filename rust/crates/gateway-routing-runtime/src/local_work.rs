@@ -1,6 +1,6 @@
 //! One original admission before local work; no provider plan or attempt is invented.
-use crate::{journal, journal::Journal, policy::RoutePlan, session::RoutingSession};
-use crate::{session::reserve_original, types::RecoveredSession, types::RevisionCheckWire};
+use crate::{journal, policy::RoutePlan, session::RoutingSession};
+use crate::{session::reserve_original, types::RecoveredSession};
 use crate::{types::RoutingHost, types::RoutingResult};
 use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_auth_primitives::crypto::sha256_hex;
@@ -20,6 +20,8 @@ use gateway_local_journal::local_work::{
     SOURCE_REQUEST_BINDING_DOMAIN, SOURCE_REQUEST_BINDING_VERSION,
 };
 use gateway_request_normalization::document::SourceRequestDocument;
+use gateway_routing_journal::reader;
+use gateway_routing_journal::record::{Journal, RevisionCheckWire};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 
 pub mod completion;
@@ -137,7 +139,7 @@ fn admitting_local_journal<I: TokenSource>(
     }
     let digest = original_source_digest(input.original.original_source())?;
     let nonce = tokens.next_token()?;
-    let mut row = Journal::empty(
+    let mut row = journal::empty(
         2,
         context.clone(),
         digest,
@@ -351,7 +353,7 @@ impl<
             return Err(self.host.cancellation_error().into());
         }
         let now = self.now()?;
-        let (record, row) = journal::load(&self.store, self.id()).await?;
+        let (record, row) = reader::load(&self.store, self.id()).await?;
         self.owned(&row)?;
         if row.lease_expires_at_ms <= now
             || row
@@ -362,7 +364,7 @@ impl<
             return Err(invalid().into());
         }
         let mut checks = vec![RevisionCheckWire {
-            key: journal::key(self.id()),
+            key: reader::session_key(self.id()),
             expected_revision: Some(record.revision),
         }];
         let mut api_expires = None;
@@ -703,7 +705,7 @@ pub(crate) async fn finish_local_record<
     observation: LocalTerminalObservation,
     expected: Option<completion::OriginalBinding<'_>>,
 ) -> Result<RecoveredSession, GatewayError> {
-    let (_, old) = journal::load(store, id).await?;
+    let (_, old) = reader::load(store, id).await?;
     let local = old.local_work.as_ref().ok_or_else(invalid)?;
     if expected
         .as_ref()

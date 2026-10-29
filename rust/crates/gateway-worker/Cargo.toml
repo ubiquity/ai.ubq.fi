@@ -17,6 +17,7 @@ fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 workspace = true
 
 [dependencies]
+gateway-routing-journal.workspace = true
 gateway-catalog-admin = { path = "../gateway-catalog-admin" }
 gateway-catalog-control = { path = "../gateway-catalog-control" }
 gateway-catalog-inputs = { path = "../gateway-catalog-inputs" }

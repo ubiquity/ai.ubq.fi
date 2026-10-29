@@ -194,7 +194,7 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() -> T
         assert!(attempt.paid.is_some());
         assert!(matches!(
             attempt.credential,
-            gateway_routing_runtime::types::CredentialFence::Paid { .. }
+            gateway_routing_journal::record::CredentialFence::Paid { .. }
         ));
         session.before_dispatch(&attempt).await?;
         session.transport_started(&attempt).await?;
