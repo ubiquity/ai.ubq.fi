@@ -98,11 +98,8 @@ pub fn parse_catalog(body: &str) -> Option<SourceJson> {
     }
     Some(parsed)
 }
-fn source_stringify(value: &SourceJson) -> String {
-    source::canonical(value)
-        .expect("source catalog value")
-        .as_str()
-        .to_owned()
+fn source_stringify(value: &SourceJson) -> Result<String, GatewayError> {
+    Ok(source::canonical(value)?.as_str().to_owned())
 }
 pub fn gzip(body: &str) -> Result<Vec<u8>, GatewayError> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -388,7 +385,7 @@ pub fn catalog_response(
     conditional: Option<&str>,
     cache_state: CacheState,
     input: &gateway_catalog_input::catalog::CatalogInput,
-) -> CatalogResponse {
+) -> Result<CatalogResponse, GatewayError> {
     let active_whitelist = input
         .whitelist
         .as_ref()
@@ -410,10 +407,10 @@ pub fn catalog_response(
     let body = if stored_only {
         catalog.body.clone()
     } else {
-        source_stringify(&crate::native_catalog::native_catalog(
+        source_stringify(&gateway_catalog_records::native::native_catalog(
             Some(&catalog.parsed),
             input,
-        ))
+        )?)?
     };
     let etag = client_etag(&body);
     let not_modified = conditional_matches(conditional, &etag);
@@ -426,20 +423,22 @@ pub fn catalog_response(
     ]
     .into_iter()
     .collect();
-    CatalogResponse {
+    Ok(CatalogResponse {
         status: if not_modified { 304 } else { 200 },
         body: (!not_modified).then_some(body),
         headers,
-    }
+    })
 }
 
 pub fn fallback_response(
     input: &gateway_catalog_input::catalog::CatalogInput,
-) -> Option<CatalogResponse> {
-    let body = crate::native_catalog::native_catalog_fallback(input)?;
-    Some(CatalogResponse {
+) -> Result<Option<CatalogResponse>, GatewayError> {
+    let Some(body) = gateway_catalog_records::native::native_catalog_fallback(input)? else {
+        return Ok(None);
+    };
+    Ok(Some(CatalogResponse {
         status: 200,
-        body: Some(source_stringify(&body)),
+        body: Some(source_stringify(&body)?),
         headers: [
             ("Content-Type".into(), "application/json".into()),
             ("Cache-Control".into(), "private, max-age=300".into()),
@@ -447,7 +446,7 @@ pub fn fallback_response(
         ]
         .into_iter()
         .collect(),
-    })
+    }))
 }
 /// A rotation during fenced publication cannot reuse an old generation or invent a fallback.
 pub fn rotation_unavailable() -> GatewayError {

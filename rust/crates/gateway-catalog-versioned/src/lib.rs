@@ -82,12 +82,7 @@ async fn response<S: QueryStore, H: CatalogHost>(
     let state = runtime
         .load_state(store, &publication, host.now_ms())
         .await?;
-    Ok(catalog_cache::catalog_response(
-        cached,
-        conditional,
-        cache_state,
-        &state.input,
-    ))
+    catalog_cache::catalog_response(cached, conditional, cache_state, &state.input)
 }
 async fn fallback<S: QueryStore, H: CatalogHost>(
     runtime: &CatalogRuntime,
@@ -119,7 +114,7 @@ async fn fallback<S: QueryStore, H: CatalogHost>(
     let state = runtime
         .load_state(store, &publication, host.now_ms())
         .await?;
-    catalog_cache::fallback_response(&state.input).ok_or_else(|| unavailable(message))
+    catalog_cache::fallback_response(&state.input)?.ok_or_else(|| unavailable(message))
 }
 async fn current<S: QueryStore, H: CatalogHost>(
     store: &S,

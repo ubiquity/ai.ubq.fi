@@ -237,14 +237,14 @@ fn client_conditionals_bind_served_bytes_including_enrichment() -> TestResult {
         }),
         ..CatalogInput::default()
     };
-    let response = catalog_response(&loaded, None, CacheState::Hit, &input);
+    let response = catalog_response(&loaded, None, CacheState::Hit, &input).unwrap();
     assert_eq!(response.body.as_deref(), Some(loaded.body.as_str()));
     let etag = response
         .headers
         .get("ETag")
         .ok_or("missing fixture value")?;
     assert_ne!(etag, "upstream-tag");
-    let conditional = catalog_response(&loaded, Some(etag), CacheState::Hit, &input);
+    let conditional = catalog_response(&loaded, Some(etag), CacheState::Hit, &input).unwrap();
     assert_eq!(conditional.status, 304);
     assert!(conditional.body.is_none());
     assert!(!conditional_matches(Some("W/\"wrong\""), etag));
@@ -741,13 +741,13 @@ fn verified_legacy_native_cache_repairs_before_client_validator_without_writes()
         ..CatalogInput::default()
     };
     let old_tag = client_etag(&legacy_body);
-    let response = catalog_response(&loaded, Some(&old_tag), CacheState::Hit, &input);
+    let response = catalog_response(&loaded, Some(&old_tag), CacheState::Hit, &input).unwrap();
     assert_eq!(response.status, 200);
     let body = response.body.as_ref().ok_or("served body")?;
     let tag = response.headers.get("ETag").ok_or("served tag")?;
     assert_eq!(tag, &client_etag(body));
     assert_ne!(tag, &old_tag);
-    let current = catalog_response(&loaded, Some(tag), CacheState::Hit, &input);
+    let current = catalog_response(&loaded, Some(tag), CacheState::Hit, &input).unwrap();
     assert_eq!(current.status, 304);
     assert!(current.body.is_none());
     assert_eq!(*store.records.borrow(), durable);
