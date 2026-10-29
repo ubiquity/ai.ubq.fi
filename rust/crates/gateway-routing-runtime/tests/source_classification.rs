@@ -1,6 +1,6 @@
 use gateway_contracts::model::ModelId;
+use gateway_routing_classification::classify;
 use gateway_source::{source_json::SourceJson, source_serialization as source};
-use gateway_routing_runtime::classify;
 
 #[test]
 fn unsupported_model_keeps_source_utf16_and_never_becomes_a_quota_signal() {

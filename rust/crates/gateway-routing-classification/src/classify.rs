@@ -199,7 +199,7 @@ pub fn unsupported_model(
         ))
     .then_some(detail)
 }
-pub(crate) fn model_unavailable_error(
+pub fn model_unavailable_error(
     model: &ModelId,
 ) -> gateway_local_refusal::source_error::SourceRequestError {
     gateway_local_refusal::source_error::SourceRequestError::new(

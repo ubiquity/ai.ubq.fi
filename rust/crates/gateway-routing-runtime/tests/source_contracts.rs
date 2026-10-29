@@ -7,12 +7,13 @@ use gateway_contracts::{
 use gateway_local_refusal::routing_error::SourceRefusalBody;
 use gateway_model_selection::selection as model_selection;
 use gateway_provider_policy::policy::HopFailure;
+use gateway_routing_classification::classify;
 use gateway_routing_contract_test_support::{
     fixtures::TestResult, fixtures::complete, fixtures::fixture, fixtures::next_attempt,
     fixtures::refusal, fixtures::set_source, fixtures::source_plan,
 };
 use gateway_routing_runtime::{
-    classify, policy, policy::class, session::RoutingSession, settlement::recover_pending,
+    policy, policy::class, session::RoutingSession, settlement::recover_pending,
     types::AttemptUsage, types::PreparedWireRequest, types::RefusalDecision, types::RoutingHost,
     types::TransportState,
 };

@@ -289,7 +289,7 @@ impl ExperimentIo for Host<'_> {
                 gateway_worker_http_body::body::refusal_probe(raw, &response.cancellation, 1_000)
                     .await;
             let headers = raw.headers().entries().collect();
-            if let Some(block) = gateway_routing_runtime::classify::codex_quota(
+            if let Some(block) = gateway_routing_classification::classify::codex_quota(
                 Some(status),
                 &headers,
                 &body.bytes,
