@@ -26,6 +26,12 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-cache-experiment-runner = { path = "../gateway-cache-experiment-runner" }
+gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
+gateway-cache-experiment-dispatch = { path = "../gateway-cache-experiment-dispatch" }
+gateway-cache-experiment-campaign = { path = "../gateway-cache-experiment-campaign" }
+gateway-authority-test-support = { path = "../gateway-authority-test-support" }
+gateway-authority = { path = "../gateway-authority" }
 gateway-auth-native-protocol = { path = "../gateway-auth-native-protocol" }
 gateway-authority-native-callback-owner = { path = "../gateway-authority-native-callback-owner" }
 gateway-authority-native-callback = { path = "../gateway-authority-native-callback" }

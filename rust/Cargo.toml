@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/gateway-worker-fixture-passport",
   "crates/gateway-authority-native-callback",
   "crates/gateway-authority-native-callback-owner",
   "crates/gateway-authority-native-custody",
