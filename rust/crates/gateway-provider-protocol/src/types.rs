@@ -56,7 +56,7 @@ impl std::fmt::Debug for AuthMaterial {
 #[derive(Clone, Debug)]
 pub struct OrdinaryPreparationContext {
     prompt_cache: Option<SourceJson>,
-    reasoning: gateway_schema::reasoning::ModelReasoning,
+    reasoning: gateway_model_metadata::reasoning::ModelReasoning,
     default_effort: JsString16,
 }
 
@@ -74,7 +74,7 @@ impl OrdinaryPreparationContext {
     pub fn prompt_cache(&self) -> Option<&SourceJson> {
         self.prompt_cache.as_ref()
     }
-    pub fn reasoning(&self) -> &gateway_schema::reasoning::ModelReasoning {
+    pub fn reasoning(&self) -> &gateway_model_metadata::reasoning::ModelReasoning {
         &self.reasoning
     }
     pub fn default_effort(&self) -> &JsString16 {

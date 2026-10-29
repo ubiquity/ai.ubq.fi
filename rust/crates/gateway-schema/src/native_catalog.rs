@@ -1,5 +1,6 @@
 //! Rich exact-client-version Codex catalog. Never substitute the official model-list envelope.
-use crate::{catalog::*, metadata::*, model_control as c, provider_catalog::*};
+use crate::{catalog::*, model_control as c, provider_catalog::*};
+use gateway_model_metadata::metadata::*;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use {gateway_contracts::model::ModelId, gateway_prompt_policy::declaration};
 fn description(effort: &JsString16) -> JsString16 {
@@ -178,7 +179,7 @@ pub fn configured_native_records(input: &CatalogInput, provider: &str) -> Vec<So
         c::set(&mut row,"description",c::json(match provider{"deepseek"=>"DeepSeek official API (deepseek-flash) served by this gateway.","lithos"=>"LithosAI API (Chat Completions) served by this gateway.","cerebras"=>"Cerebras API (Chat Completions) served by this gateway.",_=>"Latest DeepSeek Flash waterfall: official DeepSeek, OpenRouter, LithosAI, Surplus, and OpenLux. Each hop uses the provider's latest alias and falls back only on infrastructure or serving failures."}));
         c::set(&mut row,"owned_by",c::json(provider));c::set(&mut row,"supported_endpoint_types",c::json(&if provider=="ubiquity"{vec!["openai-response"]}else{vec!["openai-response","openai-chat"]}));
         let hint=provider_hint(provider,&id);let resolved=if provider=="cerebras"||provider=="ubiquity"{resolve_metadata(&MetadataSources{provider:Some(hint.clone()),..MetadataSources::default()})}else{input.metadata(&id,None,Some(hint.clone()),false)};
-        let levels=hint.supported_reasoning_levels.as_deref().unwrap_or(&[]);let levels=levels.iter().filter_map(gateway_source::source_serialization::string).map(|e|{
+        let levels=hint.supported_reasoning_levels.as_deref().unwrap_or(&[]);let levels=levels.iter().filter_map(gateway_model_metadata::advertised_level::AdvertisedLevel::string).map(|e|{
             let label=if provider=="deepseek"{JsString16::from_utf8(if gateway_schema_values::source_view::matches(&e,"none"){"Disable thinking mode"}else if gateway_schema_values::source_view::matches(&e,"low"){"Thinking effort: low"}else if gateway_schema_values::source_view::matches(&e,"high"){"Thinking effort: high"}else{"Thinking effort: maximum"})}else{description(&e)};
             c::object(vec![("effort",c::json(&e)),("description",c::json(&label))])
         }).collect::<Vec<_>>();

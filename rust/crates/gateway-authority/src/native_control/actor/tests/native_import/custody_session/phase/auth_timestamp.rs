@@ -1,7 +1,7 @@
 //! Genuine publication preserves input auth time, not later upsert/catalog time.
 use super::*;
 use gateway_core::source_control::decode_source_control_record;
-use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
+use {gateway_model_snapshot::snapshot::ModelSnapshot, gateway_schema::catalog_store};
 #[test]
 fn seed_refresh_and_limited429_selected_auth_times_survive_later_publication_clock() {
     run(async {

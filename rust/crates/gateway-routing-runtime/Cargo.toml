@@ -57,6 +57,7 @@ gateway-provider-claude-body = { workspace = true }
 gateway-local-refusal = { workspace = true }
 
 [dev-dependencies]
+gateway-model-snapshot.workspace = true
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-auth-passport-contracts = { path = "../gateway-auth-passport-contracts" }
 gateway-auth-passport-sessions = { path = "../gateway-auth-passport-sessions" }

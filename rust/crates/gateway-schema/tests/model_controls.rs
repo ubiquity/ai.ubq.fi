@@ -1,15 +1,13 @@
 //! Model/effort controls and pinned Bun ordering evidence; not a host Intl or runtime substitute.
 use gateway_contracts::model::ModelId;
 use gateway_core::source_control;
+use gateway_model_metadata::reasoning::{ModelReasoning, effort_for_codex, resolve_reasoning};
 use gateway_model_selection::{
     aliases::SourceStringCollator,
     selection::{AccountModelCatalog, AccountModelsStore, ModelWhitelist},
 };
-use gateway_schema::{
-    catalog::{CatalogInput, request_model_metadata, validate_model_available},
-    reasoning::{ModelReasoning, effort_for_codex, resolve_reasoning},
-    snapshot::{ModelSnapshot, SnapshotOverrides, normalize_snapshot},
-};
+use gateway_model_snapshot::snapshot::{ModelSnapshot, SnapshotOverrides, normalize_snapshot};
+use gateway_schema::catalog::{CatalogInput, request_model_metadata, validate_model_available};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -298,7 +296,9 @@ fn uploaded_snapshot_source_label_is_opaque_and_scalar_default_is_unchanged() {
             ("source", label.clone()),
         ])
         .unwrap();
-        let snapshot = normalize_snapshot(&envelope, &SnapshotOverrides::default(), 1).unwrap();
+        let snapshot = normalize_snapshot(&envelope, &SnapshotOverrides::default(), 1)
+            .unwrap()
+            .unwrap();
         assert_eq!(snapshot.source, source::string(&label).unwrap());
         assert_eq!(
             snapshot.default_model(),
@@ -311,7 +311,9 @@ fn uploaded_snapshot_source_label_is_opaque_and_scalar_default_is_unchanged() {
         r#"[{"slug":"ordinary"}]"#,
         r#"{"models":[{"slug":"ordinary"}],"source":null}"#,
     ] {
-        let snapshot = normalize_snapshot(&raw(input), &SnapshotOverrides::default(), 1).unwrap();
+        let snapshot = normalize_snapshot(&raw(input), &SnapshotOverrides::default(), 1)
+            .unwrap()
+            .unwrap();
         assert_eq!(snapshot.source, "codex_cli".into());
     }
     let input = raw(r#"{"models":[{"slug":"ordinary"}],"source":"original"}"#);
@@ -321,6 +323,7 @@ fn uploaded_snapshot_source_label_is_opaque_and_scalar_default_is_unchanged() {
     };
     assert_eq!(
         normalize_snapshot(&input, &blank_override, 1)
+            .unwrap()
             .unwrap()
             .source,
         "original".into()
@@ -333,7 +336,97 @@ fn uploaded_snapshot_source_label_is_opaque_and_scalar_default_is_unchanged() {
     assert_eq!(
         normalize_snapshot(&input, &override_source, 1)
             .unwrap()
+            .unwrap()
             .source,
         opaque
+    );
+}
+
+#[test]
+fn reasoning_wire_serde_retains_arbitrary_raw_shapes_and_byte_equality() {
+    for wire in [
+        "null",
+        "17",
+        r#""raw""#,
+        r#"[null,{"effort":"custom"}]"#,
+        r#"{"z":null,"\ud800":{"effort":" low "},"0":"opaque"}"#,
+    ] {
+        let model = raw(&format!(
+            "{{\"levels\":[],\"default_level\":null,\"wire_efforts\":{wire}}}"
+        ))
+        .deserialize::<ModelReasoning>()
+        .unwrap();
+        let encoded = SourceJson::from_serializable(&model).unwrap();
+        assert_eq!(
+            source::member(&encoded, "wire_efforts").unwrap().as_str(),
+            wire
+        );
+        assert_eq!(model, encoded.deserialize::<ModelReasoning>().unwrap());
+    }
+    let generated = ModelReasoning::from_record(Some(&raw(
+        r#"{"reasoning_effort_wire_map":{" 2 ":" x ","1":"\ud800","\ud800":"\udc00"," 2":"last"}}"#,
+    )));
+    let encoded = SourceJson::from_serializable(&generated).unwrap();
+    assert_eq!(
+        source::member(&encoded, "wire_efforts").unwrap().as_str(),
+        r#"{"1":"\ud800","2":"last","\ud800":"\udc00"}"#
+    );
+    assert_eq!(generated, encoded.deserialize::<ModelReasoning>().unwrap());
+    let spaced = raw(r#"{"levels":[],"default_level":null,"wire_efforts":{ "1":"\ud800","2":"last","\ud800":"\udc00"}}"#).deserialize::<ModelReasoning>().unwrap();
+    assert_ne!(generated, spaced);
+}
+#[test]
+fn reasoning_hints_keep_raw_elements_and_total_provider_data() {
+    use gateway_model_metadata::metadata::{MetadataHint, MetadataSources, resolve_metadata};
+    let input =
+        raw(r#"{"supported_reasoning_levels":[null,{"effort":" \ud800 "},false,["x"],"\udc00"]}"#);
+    let hint = input.deserialize::<MetadataHint>().unwrap();
+    let encoded = SourceJson::from_serializable(&hint).unwrap();
+    assert_eq!(
+        source::member(&encoded, "supported_reasoning_levels"),
+        source::member(&input, "supported_reasoning_levels")
+    );
+    let resolved = resolve_metadata(&MetadataSources {
+        provider: Some(hint),
+        ..MetadataSources::default()
+    });
+    let levels = resolved.supported_reasoning_levels.unwrap();
+    assert!(
+        levels[0]
+            .as_units()
+            .iter()
+            .copied()
+            .eq("none".encode_utf16())
+    );
+    assert_eq!(levels[1].as_units(), &[0xd800]);
+    assert_eq!(levels[2].as_units(), &[0xdc00]);
+    let provider =
+        MetadataHint::provider(-1, &[" custom ", "null", "\n", "nonstandard"], " default ");
+    let decoded = SourceJson::from_serializable(&provider)
+        .unwrap()
+        .deserialize::<MetadataHint>()
+        .unwrap();
+    assert_eq!(provider, decoded);
+    assert_eq!(
+        resolve_metadata(&MetadataSources {
+            provider: Some(provider),
+            ..MetadataSources::default()
+        }),
+        resolve_metadata(&MetadataSources {
+            provider: Some(decoded),
+            ..MetadataSources::default()
+        })
+    );
+    let invalid = ModelSnapshot {
+        models: Vec::new(),
+        source: "source".into(),
+        updated_at_ms: 1,
+        client_version: None,
+    };
+    assert!(gateway_schema::runtime_config::build_runtime_config(&invalid, None, None, 1).is_err());
+    assert_eq!(
+        gateway_schema::runtime_config::build_optional_runtime_config(&invalid, None, None, 1)
+            .unwrap(),
+        None
     );
 }

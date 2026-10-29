@@ -1,10 +1,11 @@
 //! One source ordinary outcome is visible before real selected-account capability lookup.
+use gateway_model_metadata::reasoning::ModelReasoning;
 use gateway_provider_claude_body::{
     types::ClaudeBodyOptions, types::ClaudeCredentialKind, types::OrdinaryPhaseOptions,
     types::PreparedClaudeBody, types::PreparedClaudeOrdinary,
 };
 use gateway_provider_protocol::{types::ClientSurface, types::OrdinaryPreparationContext};
-use gateway_schema::{catalog::RequestModelMetadata, reasoning::ModelReasoning};
+use gateway_schema::catalog::RequestModelMetadata;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };

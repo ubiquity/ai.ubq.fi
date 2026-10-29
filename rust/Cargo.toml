@@ -111,6 +111,8 @@ members = [
   "crates/gateway-compaction-test-support",
   "crates/gateway-prompt-policy",
   "crates/gateway-schema",
+  "crates/gateway-model-snapshot",
+  "crates/gateway-model-metadata",
   "crates/gateway-prompt-cache",
   "crates/gateway-request-normalization",
   "crates/gateway-model-selection",
@@ -324,6 +326,8 @@ gateway-compaction-render = { path = "crates/gateway-compaction-render" }
 gateway-compaction-test-support = { path = "crates/gateway-compaction-test-support" }
 gateway-prompt-policy = { path = "crates/gateway-prompt-policy" }
 gateway-schema = { path = "crates/gateway-schema" }
+gateway-model-snapshot = { path = "crates/gateway-model-snapshot" }
+gateway-model-metadata = { path = "crates/gateway-model-metadata" }
 gateway-prompt-cache = { path = "crates/gateway-prompt-cache" }
 gateway-request-normalization = { path = "crates/gateway-request-normalization" }
 gateway-model-selection = { path = "crates/gateway-model-selection" }
