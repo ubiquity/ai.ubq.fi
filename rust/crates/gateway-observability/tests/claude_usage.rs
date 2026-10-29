@@ -89,6 +89,12 @@ impl AuthHost for Fixture {
         Err(missing())
     }
 }
+// No JS Date runtime in this admin-token fixture; Passport dates remain unavailable.
+impl gateway_auth_passport_contracts::session::PassportDate for Fixture {
+    fn parse_date_ms(&self, _: &JsString16) -> f64 {
+        f64::NAN
+    }
+}
 impl HistoryHost for Fixture {
     fn now_ms(&self) -> i64 {
         self.base.at.get()
@@ -428,7 +434,7 @@ fn stored_derived_meter_tampering_cannot_create_a_retained_usage_transition() ->
     let mut points = member(&view, "points")?.array_items()?;
     assert_eq!(points.len(), 2);
     let latest: Point = points[1].deserialize()?;
-    let key = latest.history_key();
+    let key = latest.history_key()?;
     let row = run(host.store.read(&key))?.ok_or("history row absent")?;
     let mut snapshot = SourceObject::parse(&member(&points[1], "usage_snapshot")?)?;
     snapshot.set("meters", &Vec::<SourceJson>::new())?;

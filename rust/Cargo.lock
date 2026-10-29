@@ -4301,6 +4301,7 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-credentials",
+ "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-capacity",

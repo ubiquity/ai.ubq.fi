@@ -648,11 +648,17 @@ fn actual_capacity_history_rollups_and_upstream_response_bytes_keep_one_source_d
     let usage = SourceJson::parse(
         r#"{"source":"oauth_usage","state":"unsupported_credential","status":null,"message":null,"attempted_at_ms":7200000,"observed_at_ms":null}"#,
     )?;
+    // Retain the frozen SourceJson observation, including its UTF16 leaves, as header DATA.
+    let headers = replace(
+        &event(1).observation,
+        "source",
+        SourceJson::parse(r#""response_headers""#)?,
+    );
     let account = &mut host.inventory.claude.accounts[0];
     account.quota = account
         .quota
         .as_ref()
-        .map(|quota| replace(quota, "usage", usage));
+        .map(|quota| replace(&replace(quota, "usage", usage), "response_headers", headers));
     let runtime = ObservabilityRuntime::new(memory.clone(), host);
     assert!(run(runtime.record_claude_capacity_observation(&event(1)))?);
     memory.rows.borrow_mut().insert(
