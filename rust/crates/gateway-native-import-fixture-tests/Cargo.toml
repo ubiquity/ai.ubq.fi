@@ -11,7 +11,7 @@ native-import-fixture = ["gateway-native-import-store/native-import-fixture", "g
 
 [dependencies]
 gateway-native-http-admission.workspace = true
-gateway-native-owner-inspector.workspace = true
+gateway-native-owner-inspector = { path = "../gateway-native-owner-inspector" }
 gateway-native-import-test-support = { path = "../gateway-native-import-test-support" }
 gateway-auth-passport-contracts = { path = "../gateway-auth-passport-contracts" }
 gateway-authority-native-records = { path = "../gateway-authority-native-records" }
