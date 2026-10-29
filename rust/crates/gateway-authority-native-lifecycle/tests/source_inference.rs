@@ -262,6 +262,34 @@ fn real_v3_writer_and_owned_refresh_await_prepare_lossless_source_inference_then
             RoutingSession::begin(input, store.clone(), host, store.clone(), store.clone())
                 .await
                 .map_err(|error| *error.error)?;
+        let paid_request = gateway_authority_paid_records::PaidRequest {
+            key_id: gateway_contracts::identity::ApiKeyId("paid-target".into()),
+            request_id: original.request_id.clone(),
+            attempt_id: gateway_contracts::identity::PaidAttemptId("paid-attempt".into()),
+            provider: gateway_contracts::provider::PaidProvider::Surplus,
+            model: gateway_contracts::model::ModelId::from("gpt-test"),
+            route: original.route.clone(),
+            path: "/v1/responses".into(),
+            stream: false,
+            reasoning: None,
+            created_at_ms: original.started_at_ms,
+        };
+        let admitted_record = store
+            .read(&rows::session_key(&original.request_id.0))
+            .await?
+            .ok_or("admitted journal")?;
+        let paid_checks = gateway_authority_paid_evidence::capture_original(
+            &store,
+            &paid_request,
+            &original,
+            None,
+            RUNTIME_NOW,
+        )
+        .await?;
+        assert!(paid_checks.iter().any(|check| {
+            check.key == rows::session_key(&original.request_id.0)
+                && check.expected_revision.as_deref() == Some(admitted_record.revision.as_str())
+        }));
         let attempt = session
             .next_attempt()
             .await
@@ -287,30 +315,24 @@ fn real_v3_writer_and_owned_refresh_await_prepare_lossless_source_inference_then
             &rows::session_key(&original.request_id.0),
             &raw,
         )?;
-        let paid_request = gateway_authority_paid_records::PaidRequest {
-            key_id: gateway_contracts::identity::ApiKeyId("paid-target".into()),
-            request_id: original.request_id.clone(),
-            attempt_id: gateway_contracts::identity::PaidAttemptId("paid-attempt".into()),
-            provider: gateway_contracts::provider::PaidProvider::Surplus,
-            model: gateway_contracts::model::ModelId::from("gpt-test"),
-            route: original.route.clone(),
-            path: "/v1/responses".into(),
-            stream: false,
-            reasoning: None,
-            created_at_ms: original.started_at_ms,
-        };
-        let paid_checks = gateway_authority_paid_evidence::capture_original(
+        let paid_error = gateway_authority_paid_evidence::capture_original(
             &store,
             &paid_request,
             &original,
             None,
             RUNTIME_NOW,
         )
-        .await?;
-        assert!(
-            paid_checks
-                .iter()
-                .any(|check| check.key == rows::session_key(&original.request_id.0))
+        .await
+        .err()
+        .ok_or("active attempt accepted by prospective paid capture")?;
+        assert_eq!(paid_error.status, 503);
+        assert_eq!(
+            paid_error.envelope.error.code.as_deref(),
+            Some("paid_control_unavailable")
+        );
+        assert_eq!(
+            paid_error.envelope.error.message,
+            "Original request ownership is missing, expired, finalizing or changed."
         );
         let journal = decode_source_control_record(&raw)?;
         assert_eq!(decode_journal_context(&journal)?, original);
