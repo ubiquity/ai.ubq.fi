@@ -1,7 +1,8 @@
 use super::*;
+use gateway_routing_plan::input::RoutingInput;
 use gateway_routing_runtime::{
     session::RoutingSession,
-    types::{AttemptFailure, FailureOrigin, RoutingInput, TransportState},
+    types::{AttemptFailure, FailureOrigin, TransportState},
 };
 use std::{
     future::Future,
@@ -42,7 +43,7 @@ pub(super) async fn prepare(
         client_version: Some("0.163.0".into()),
     });
     let input = RoutingInput::from_source_request(
-        gateway_routing_runtime::local_work::LocalRequestMetadata {
+        gateway_routing_plan::input::LocalRequestMetadata {
             context: case.context.clone(),
             principal,
             catalog,

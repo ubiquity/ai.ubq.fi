@@ -48,6 +48,7 @@ gateway-publication-policy = { path = "../gateway-publication-policy" }
 gateway-publication-transport = { path = "../gateway-publication-transport" }
 gateway-request-normalization = { path = "../gateway-request-normalization" }
 gateway-routing-journal = { path = "../gateway-routing-journal" }
+gateway-routing-plan.workspace = true
 gateway-routing-runtime = { path = "../gateway-routing-runtime" }
 gateway-schema = { path = "../gateway-schema" }
 gateway-schema-values = { path = "../gateway-schema-values" }

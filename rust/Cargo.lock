@@ -5828,6 +5828,7 @@ dependencies = [
  "gateway-publication-transport",
  "gateway-request-normalization",
  "gateway-routing-journal",
+ "gateway-routing-plan",
  "gateway-routing-runtime",
  "gateway-schema",
  "gateway-schema-values",

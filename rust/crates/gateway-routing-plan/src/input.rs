@@ -2,6 +2,7 @@ use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_catalog_input::catalog::CatalogInput;
 use gateway_contracts::identity::RequestContext;
 use gateway_local_refusal::routing_error::RoutingError;
+use gateway_provider_protocol::types::ClientSurface;
 use gateway_schema_values::request::RequestSurface;
 use gateway_source::source_json::SourceJson;
 
