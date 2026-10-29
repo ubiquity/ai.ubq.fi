@@ -42,7 +42,7 @@ pub mod source_field {
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<RequestContext, D::Error> {
-        let raw = SourceJson::deserialize(deserializer)?;
+        let raw = <SourceJson as Deserialize<'de>>::deserialize(deserializer)?;
         RequestContext::from_source_json(&raw).map_err(serde::de::Error::custom)
     }
 }

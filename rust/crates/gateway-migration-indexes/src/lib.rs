@@ -1,4 +1,4 @@
-use gateway_auth_passkeys::{passkeys::PasskeyCredential, passkeys::PasskeyUser};
+use gateway_auth_contracts::passkeys::{PasskeyCredential, PasskeyUser};
 use gateway_authority_api_protocol::{ApiUsageRequest, ApiUsageState, ApiUsageWindow};
 use gateway_authority_kernel_protocol::{KernelDefaults, KernelReservation, KernelWindow};
 use gateway_authority_keys as keys;
@@ -141,7 +141,7 @@ fn derive_basics<'a>(
             .iter()
             .map(|account| {
                 let identity = account.identity();
-                gateway_authority::routing_types::PoolAccount {
+                gateway_authority_routing_records::types::PoolAccount {
                     account_id_hash: identity.routing_account_hash,
                     admin_account_hash: identity.administrative_account_hash,
                     credential_version: identity.credential_version,
@@ -151,7 +151,7 @@ fn derive_basics<'a>(
                 }
             })
             .collect();
-        let normalized = gateway_authority::routing_types::SubscriptionPool {
+        let normalized = gateway_authority_routing_records::types::SubscriptionPool {
             v: 1,
             pool_versionstamp: gateway_contracts::identity::PoolVersionstamp(
                 source.revision.clone(),
@@ -223,7 +223,7 @@ fn bind_identity<'a>(
             return Err(invalid("Passkey user omits credential index"));
         }
     } else if starts(&row.parts, &["uos_ai", "auth", "sessions"]) {
-        let session: gateway_auth_passkeys::passkeys::PasskeySession =
+        let session: gateway_auth_contracts::passkeys::PasskeySession =
             decode(row.record.json_value()?)?;
         derived.push((
             gateway_auth_passkeys::session_index::index_key(

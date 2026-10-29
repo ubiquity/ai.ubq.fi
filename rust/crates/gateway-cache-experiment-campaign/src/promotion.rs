@@ -7,11 +7,9 @@ use gateway_cache_experiment_records::{
     source::{catalog_key, json as source_json, owns, record_key, runtime_key, set_member},
 };
 use gateway_contracts::model::ModelId;
-use gateway_schema::{
-    runtime_config::{
-        build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
-    },
-    snapshot::ModelSnapshot,
+use gateway_model_snapshot::snapshot::ModelSnapshot;
+use gateway_schema::runtime_config::{
+    build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
 };
 use gateway_schema_values::source_view::js_trim_source;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
@@ -51,7 +49,11 @@ pub trait CachePromotionOperations: CacheCampaignFactory {
                 let snapshot = raw
                     .as_ref()
                     .and_then(|v| v.deserialize::<ModelSnapshot>().ok());
-                let normalized = runtime.as_ref().and_then(normalize_runtime_config);
+                let normalized = runtime
+                    .as_ref()
+                    .map(normalize_runtime_config)
+                    .transpose()?
+                    .flatten();
                 let reason = if !owns(&lease, &permit.cycle_owner, current) {
                     Some(Reason::PromotionConflict)
                 } else if tx.revision(&codex_source_pool_key()).as_deref()
@@ -164,19 +166,15 @@ fn publication_plan(
         &ModelId::from_scalar(&target.model),
         PROVIDER,
         &source_json(&published),
-    );
-    let next_runtime =
-        default
-            .as_ref()
-            .zip(next_snapshot.as_ref())
-            .and_then(|(default, snapshot)| {
-                build_runtime_config(
-                    snapshot,
-                    Some(default),
-                    default_reasoning_effort(normalized).as_ref(),
-                    current,
-                )
-                .ok()
-            });
+    )?;
+    let next_runtime = match default.as_ref().zip(next_snapshot.as_ref()) {
+        Some((default, snapshot)) => gateway_schema::runtime_config::build_optional_runtime_config(
+            snapshot,
+            Some(default),
+            default_reasoning_effort(normalized).as_ref(),
+            current,
+        )?,
+        None => None,
+    };
     Ok((next_snapshot, next_runtime))
 }

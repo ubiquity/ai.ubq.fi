@@ -4,12 +4,10 @@ use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
 use gateway_contracts::{
     identity::ApiKeyId, identity::PrincipalId, identity::RequestContext, identity::RequestId,
 };
+use gateway_model_snapshot::snapshot::ModelSnapshot;
 use gateway_provider_protocol::types::ClientSurface;
 use gateway_routing_runtime::types::RoutingInput;
-use gateway_schema::{
-    catalog::{CatalogInput, ProviderCatalog},
-    snapshot::ModelSnapshot,
-};
+use gateway_schema::catalog::{CatalogInput, ProviderCatalog};
 use serde_json::json;
 
 pub const NOW: i64 = 1_800_000_000_000;

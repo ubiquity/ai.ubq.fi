@@ -15,10 +15,10 @@ use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_model_selection::aliases as model_aliases;
 use gateway_model_selection::selection::ProviderSelection;
+use gateway_provider_policy::policy;
 use gateway_provider_policy::policy::DeepseekHop;
 use gateway_provider_policy::policy::PaidRoutingInput;
 use gateway_provider_protocol::types::ClientSurface;
-use gateway_providers::policy;
 use gateway_schema::catalog_store;
 use gateway_source::source_serialization as source;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
@@ -365,7 +365,7 @@ async fn route_current<S: AuthorityStore>(
         allowed_paid_providers: allowed,
         synthetic_hop: pinned,
         ubiquity_enabled: ProviderSelection::enabled(selection.as_ref(), "ubiquity"),
-    });
+    })?;
     if !plan.providers.contains(&request.provider) {
         return Err(control_error(
             "The exact source endpoint/tools/synthetic plan does not permit this paid provider.",

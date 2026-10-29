@@ -1,5 +1,6 @@
 //! Source string controls: these remain data until the separately owned runtime cutover.
-use gateway_schema::source_request::{self, SourceRequestDocument};
+
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_schema_values::request::{SourceField, SourceModelRequest};
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 
@@ -9,7 +10,7 @@ fn doc(raw: &str) -> SourceRequestDocument {
 #[test]
 fn literal_lone_instructions_and_input_are_not_scalar_parsed() {
     let raw = r#"{"model":" \ud800 ","input":"\ud800","instructions":"x\udfffy"}"#;
-    let parsed = source_request::parse_http_body(raw.as_bytes()).unwrap();
+    let parsed = gateway_request_normalization::syntax::parse_http_body(raw.as_bytes()).unwrap();
     let document = SourceRequestDocument::new(parsed.clone()).unwrap();
     assert_eq!(document.original_source(), &parsed);
     assert_eq!(
@@ -92,10 +93,10 @@ fn http_decoder_keeps_source_bom_and_invalid_utf8_rule_only_at_byte_boundary() {
     bytes.extend_from_slice(b"{\"input\":\"");
     bytes.push(0xff);
     bytes.extend_from_slice(b"\"}");
-    let value = source_request::parse_http_body(&bytes).unwrap();
+    let value = gateway_request_normalization::syntax::parse_http_body(&bytes).unwrap();
     assert_eq!(value.as_str(), "{\"input\":\"�\"}");
     for bytes in [b"".as_slice(), b"{", b"null trailing"] {
-        assert!(source_request::parse_http_body(bytes).is_err());
+        assert!(gateway_request_normalization::syntax::parse_http_body(bytes).is_err());
     }
     assert!(SourceRequestDocument::new(SourceJson::parse("null").unwrap()).is_err());
 }

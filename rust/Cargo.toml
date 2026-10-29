@@ -114,6 +114,10 @@ members = [
   "crates/gateway-compaction-test-support",
   "crates/gateway-prompt-policy",
   "crates/gateway-schema",
+  "crates/gateway-model-snapshot",
+  "crates/gateway-model-metadata",
+  "crates/gateway-prompt-cache",
+  "crates/gateway-request-normalization",
   "crates/gateway-model-selection",
   "crates/gateway-chat-normalization",
   "crates/gateway-responses-normalization",
@@ -195,6 +199,7 @@ members = [
   "crates/gateway-live-runtime",
   "crates/gateway-wait-observation",
   "crates/gateway-worker",
+  "crates/gateway-worker-agent-messages",
   "crates/gateway-worker-authority-binding",
   "crates/gateway-worker-http-body",
   "crates/gateway-worker-web",
@@ -324,6 +329,10 @@ gateway-compaction-render = { path = "crates/gateway-compaction-render" }
 gateway-compaction-test-support = { path = "crates/gateway-compaction-test-support" }
 gateway-prompt-policy = { path = "crates/gateway-prompt-policy" }
 gateway-schema = { path = "crates/gateway-schema" }
+gateway-model-snapshot = { path = "crates/gateway-model-snapshot" }
+gateway-model-metadata = { path = "crates/gateway-model-metadata" }
+gateway-prompt-cache = { path = "crates/gateway-prompt-cache" }
+gateway-request-normalization = { path = "crates/gateway-request-normalization" }
 gateway-model-selection = { path = "crates/gateway-model-selection" }
 gateway-chat-normalization = { path = "crates/gateway-chat-normalization" }
 gateway-responses-normalization = { path = "crates/gateway-responses-normalization" }
@@ -409,6 +418,7 @@ gateway-worker-http-body = { path = "crates/gateway-worker-http-body" }
 gateway-worker-web = { path = "crates/gateway-worker-web" }
 gateway-worker-platform = { path = "crates/gateway-worker-platform" }
 gateway-worker-storage = { path = "crates/gateway-worker-storage" }
+gateway-worker-agent-messages = { path = "crates/gateway-worker-agent-messages" }
 gateway-worker-authority-binding = { path = "crates/gateway-worker-authority-binding" }
 gateway-worker-stream = { path = "crates/gateway-worker-stream" }
 gateway-worker-fixture-setup = { path = "crates/gateway-worker-fixture-setup" }

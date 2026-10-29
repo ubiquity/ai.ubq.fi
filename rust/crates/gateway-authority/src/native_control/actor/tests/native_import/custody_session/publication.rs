@@ -26,6 +26,7 @@ impl Fixture {
             &SourceJson::parse("null").unwrap(),
             1_000_000,
         )
+        .unwrap()
         .unwrap();
         for (key, document) in [
             (

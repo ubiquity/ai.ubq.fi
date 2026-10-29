@@ -31,11 +31,9 @@ use gateway_auth_contracts::{
 use gateway_auth_passport_contracts::actor_data::PassportActorDataV2;
 use gateway_auth_passport_contracts::session::PassportDate;
 use gateway_auth_passport_sessions::sessions::{PassportSessions, session_key};
-use gateway_authority_actor_currentness::app::ActorService;
 use gateway_authority_actor_records::{
     legacy::config_digest, scope::NativeActorScope, source::StoredNativeActorV2,
 };
-use gateway_contracts::{identity::PrincipalId, identity::RequestContext, identity::RequestId};
 use gateway_core::{
     state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
     state::StoredRecord,
@@ -46,6 +44,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
     future::Future,
+    sync::atomic::{AtomicBool, AtomicI64, AtomicU16, AtomicUsize, Ordering},
     task::{Context, Poll, Waker},
 };
 
@@ -84,20 +83,20 @@ impl AuthorityStore for Store {
     }
 }
 struct Host {
-    status: Cell<u16>,
-    hold: Cell<bool>,
-    admin: Cell<bool>,
-    calls: Cell<usize>,
-    now: Cell<i64>,
+    status: AtomicU16,
+    hold: AtomicBool,
+    admin: AtomicBool,
+    calls: AtomicUsize,
+    now: AtomicI64,
 }
 impl Default for Host {
     fn default() -> Self {
         Self {
-            status: Cell::new(200),
-            hold: Cell::new(false),
-            admin: Cell::new(true),
-            calls: Cell::new(0),
-            now: Cell::new(NOW),
+            status: AtomicU16::new(200),
+            hold: AtomicBool::new(false),
+            admin: AtomicBool::new(true),
+            calls: AtomicUsize::new(0),
+            now: AtomicI64::new(NOW),
         }
     }
 }
@@ -123,7 +122,7 @@ impl WebAuthnCrypto for Host {
 }
 impl AuthHost for Host {
     fn now_ms(&self) -> i64 {
-        self.now.get()
+        self.now.load(Ordering::SeqCst)
     }
     fn random_bytes(&self, n: usize) -> Result<Vec<u8>, GatewayError> {
         Ok(vec![7; n])
@@ -148,9 +147,10 @@ impl AuthHost for Host {
             app_session_token.expose(),
             format!("uos_app_session_{}", "A".repeat(43))
         );
-        self.calls.set(self.calls.get() + 1);
+        self.calls
+            .store(self.calls.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
         std::future::poll_fn(|_| {
-            if self.hold.get() {
+            if self.hold.load(Ordering::SeqCst) {
                 Poll::Pending
             } else {
                 Poll::Ready(())
@@ -159,10 +159,10 @@ impl AuthHost for Host {
         .await;
         let body = format!(
             r#"{{"authenticated":true,"session":{{"subject":"\ud800\u0000","clientId":"ai","audience":"ai","origin":"https://ai.ubq.fi","redirectUri":"https://ai.ubq.fi/auth/callback","createdAt":"10/27/2026"}},"user":{{"id":"\ud800\u0000","handle":"","isAdmin":{},"scopes":[]}}}}"#,
-            self.admin.get()
+            self.admin.load(Ordering::SeqCst)
         );
         Ok(AuthUpstreamResponse {
-            status: self.status.get(),
+            status: self.status.load(Ordering::SeqCst),
             body: body.into_bytes(),
         })
     }
@@ -189,7 +189,7 @@ async fn create(store: &Store, host: &Host) -> Result<String, GatewayError> {
 
 impl AuthorityClock for Host {
     fn now_ms(&self) -> Result<i64, GatewayError> {
-        Ok(self.now.get())
+        Ok(self.now.load(Ordering::SeqCst))
     }
 }
 #[derive(Default)]
@@ -351,7 +351,7 @@ fn complete_source_manual_flow_charges_once_settles_after_revocation_and_promote
         let renewed = service
             .renew_source_manual_reset_before_redeem(&action, &submitted)
             .await?;
-        host.admin.set(false);
+        host.admin.store(false, Ordering::SeqCst);
         assert!(
             service
                 .renew_source_manual_reset_before_redeem(&action, &renewed)
@@ -378,8 +378,8 @@ fn complete_source_manual_flow_charges_once_settles_after_revocation_and_promote
                 .await
                 .is_err()
         );
-        host.admin.set(true);
-        host.now.set(NOW + 10);
+        host.admin.store(true, Ordering::SeqCst);
+        host.now.store(NOW + 10, Ordering::SeqCst);
         let result = service
             .promote_source_manual_reset(&action, &verified, &usage(&pool, NOW + 10, 0.0))
             .await?;
@@ -481,7 +481,7 @@ fn known_unknown_remains_nonreplayable_after_restart_and_new_spend_age() -> Test
         terminal
             .record_reset_outcome(&submitted, ResetState::Unknown, None, Some("unknown"), NOW)
             .await?;
-        host.now.set(NOW + 60_000);
+        host.now.store(NOW + 60_000, Ordering::SeqCst);
         let restarted = SourceManualResetService::new(&store, &tokens, Some(&host), &host, &config);
         assert!(matches!(
             restarted.claim_source_manual_reset(&action).await?,

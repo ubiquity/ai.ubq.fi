@@ -1,5 +1,5 @@
 //! Dynamic metadata resolution: source-specific reasoning precedence, widest sourced context.
-use crate::reasoning::advertised_effort;
+use crate::advertised_level::AdvertisedLevel;
 use gateway_schema_values::scalar::*;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
@@ -9,12 +9,11 @@ pub struct MetadataHint {
     pub max_context_window_tokens: Option<i64>,
     pub auto_compact_token_limit_tokens: Option<i64>,
     pub effective_context_window_percent: Option<i64>,
-    pub supported_reasoning_levels: Option<Vec<SourceJson>>,
+    pub supported_reasoning_levels: Option<Vec<AdvertisedLevel>>,
     pub default_reasoning_effort: Option<JsString16>,
 }
 impl MetadataHint {
     pub fn codex(record: &SourceJson) -> Self {
-        use crate::model_control as c;
         Self {
             context_window_tokens: gateway_schema_values::source_view::positive(
                 gateway_source::source_serialization::member(record, "context_window").as_ref(),
@@ -38,7 +37,8 @@ impl MetadataHint {
                 "supported_reasoning_levels",
             )
             .as_ref()
-            .and_then(gateway_source::source_serialization::array),
+            .and_then(gateway_source::source_serialization::array)
+            .map(|levels| levels.into_iter().map(AdvertisedLevel::from).collect()),
             default_reasoning_effort: gateway_source::source_serialization::member(
                 record,
                 "default_reasoning_level",
@@ -65,14 +65,16 @@ impl MetadataHint {
             context_window_tokens: Some(window),
             max_context_window_tokens: Some(window),
             supported_reasoning_levels: Some(
-                levels.iter().map(crate::model_control::json).collect(),
+                levels
+                    .iter()
+                    .map(|level| AdvertisedLevel::provider(level))
+                    .collect(),
             ),
             default_reasoning_effort: Some(default.into()),
             ..Self::default()
         }
     }
     pub fn from_openrouter(record: &SourceJson) -> Self {
-        use crate::model_control as c;
         let reasoning = gateway_source::source_serialization::member(record, "reasoning");
         Self {
             context_window_tokens: gateway_schema_values::source_view::positive(
@@ -87,7 +89,8 @@ impl MetadataHint {
                 .as_ref()
                 .and_then(|r| gateway_source::source_serialization::member(r, "supported_efforts"))
                 .as_ref()
-                .and_then(gateway_source::source_serialization::array),
+                .and_then(gateway_source::source_serialization::array)
+                .map(|levels| levels.into_iter().map(AdvertisedLevel::from).collect()),
             default_reasoning_effort: reasoning
                 .as_ref()
                 .and_then(|r| gateway_source::source_serialization::member(r, "default_effort"))
@@ -179,7 +182,7 @@ pub fn resolve_metadata(sources: &MetadataSources) -> ResolvedMetadata {
         };
         let mut list = Vec::new();
         if let Some(raw) = &hint.supported_reasoning_levels {
-            for effort in raw.iter().filter_map(advertised_effort) {
+            for effort in raw.iter().filter_map(AdvertisedLevel::advertised_effort) {
                 gateway_schema_values::source_view::push_unique(&mut list, effort);
             }
         }

@@ -270,13 +270,13 @@ fn nonempty_reasoning_tiers_remain_verbatim_and_policy_advertises_v2() -> TestRe
     // Advertised DATA keeps the original tier; source wire projection is a later boundary.
     let record =
         SourceJson::parse(r#"{"supported_reasoning_levels":["ultra","provider-future-tier"]}"#)?;
-    let advertised = gateway_schema::reasoning::ModelReasoning::from_record(Some(&record));
+    let advertised = gateway_model_metadata::reasoning::ModelReasoning::from_record(Some(&record));
     assert_eq!(
         advertised.levels,
         vec!["ultra".into(), "provider-future-tier".into()]
     );
     assert_eq!(
-        gateway_schema::reasoning::effort_for_codex(&"none".into(), &advertised),
+        gateway_model_metadata::reasoning::effort_for_codex(&"none".into(), &advertised),
         "none".into()
     );
     for profile in profiles() {

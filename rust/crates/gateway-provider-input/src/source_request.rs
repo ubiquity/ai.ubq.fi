@@ -4,7 +4,7 @@ use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_provider_policy::request::canonical_source_model;
 use gateway_provider_protocol::types::ClientSurface;
 use gateway_provider_source::source as s;
-use gateway_schema::source_request::SourceRequestDocument;
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_schema_values::request::RequestSurface;
 use gateway_schema_values::request::SourceModelRequest;
 use gateway_source::js_string::JsString16;

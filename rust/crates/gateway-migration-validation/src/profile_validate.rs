@@ -132,7 +132,8 @@ pub async fn validate<S: QueryStore>(store: &S, now: i64) -> Result<AuthResponse
         .iter()
         .filter(|r| starts(&r.parts, &["uos_ai", "codex_manual_reset"]))
     {
-        let intent = gateway_authority::manual_reset::parse_manual_intent(row.record.json_value()?);
+        let intent =
+            gateway_authority_reset_records::manual::parse_manual_intent(row.record.json_value()?);
         if row.parts.len() != 4
             || row.parts[2] != "v1"
             || !intent
@@ -207,7 +208,9 @@ pub async fn validate<S: QueryStore>(store: &S, now: i64) -> Result<AuthResponse
         .map(|row| gateway_core::source_control::decode_source_control_record(&row.record))
         .transpose()?
         .as_ref()
-        .and_then(gateway_schema::runtime_config::normalize_runtime_config);
+        .map(gateway_schema::runtime_config::normalize_runtime_config)
+        .transpose()?
+        .flatten();
     settings.insert("runtime_config_v2", config.is_some());
     if config.is_none() {
         audited

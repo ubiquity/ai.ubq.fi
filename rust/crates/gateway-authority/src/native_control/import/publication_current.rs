@@ -21,9 +21,9 @@ use gateway_authority_native_records::{
 use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::state::AuthorityStore;
-use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
 use gateway_source::error::GatewayError;
 use serde_json::Value;
+use {gateway_model_snapshot::snapshot::ModelSnapshot, gateway_schema::catalog_store};
 
 /// Response DATA only. No serializer, permission constructor or stored schema.
 #[derive(Debug, PartialEq)]

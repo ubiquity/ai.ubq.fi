@@ -9,8 +9,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-auth-contracts = { workspace = true }
+gateway-auth-primitives = { workspace = true }
 gateway-auth-native-contracts.workspace = true
 gateway-auth-passkeys = { path = "../gateway-auth-passkeys" }
+gateway-auth-passport-contracts = { workspace = true }
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
 gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
@@ -37,9 +40,6 @@ gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
 gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
-gateway-auth-contracts = { workspace = true }
-gateway-auth-primitives = { workspace = true }
-gateway-auth-passport-contracts = { workspace = true }
 gateway-source = { workspace = true }
 gateway-auth-native-wire = { workspace = true }
 gateway-admin-test-support = { workspace = true }

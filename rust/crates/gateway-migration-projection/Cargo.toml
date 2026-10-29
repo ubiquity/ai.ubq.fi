@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-auth-passkeys = { path = "../gateway-auth-passkeys" }
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }
@@ -13,6 +14,10 @@ gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
 gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-reset-records = { path = "../gateway-authority-reset-records" }
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-claude-roster = { path = "../gateway-claude-roster" }
 gateway-claude-usage-quota = { path = "../gateway-claude-usage-quota" }
 gateway-contracts = { path = "../gateway-contracts" }
 gateway-kv-codec = { path = "../gateway-kv-codec" }

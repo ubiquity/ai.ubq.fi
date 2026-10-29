@@ -19,15 +19,15 @@ pub fn prepare_import_catalog(
     }
     .validate()?;
     crate::validate_time(observed_at_ms)?;
-    let snapshot = gateway_schema::snapshot::normalize_snapshot(
+    let snapshot = gateway_model_snapshot::snapshot::normalize_snapshot(
         snapshot,
-        &gateway_schema::snapshot::SnapshotOverrides {
+        &gateway_model_snapshot::snapshot::SnapshotOverrides {
             source: Some("chatgpt_codex".into()),
             client_version: Some(client_version.into()),
             updated_at_ms: Some(observed_at_ms),
         },
         observed_at_ms,
-    )
+    )?
     .ok_or_else(unavailable)?;
     let snapshot = gateway_source::source_serialization::canonical(
         &SourceJson::from_serializable(&snapshot)?,

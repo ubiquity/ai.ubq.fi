@@ -148,7 +148,7 @@ impl<
                 journal::unavailable("This scope cannot prepare a Codex image child.").into(),
             );
         }
-        let model = ModelId::from_source(gateway_schema::source_request::resolve_model(
+        let model = ModelId::from_source(gateway_request_normalization::syntax::resolve_model(
             source::member(&body, "model").as_ref(),
             None,
         )?);

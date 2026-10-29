@@ -11,6 +11,11 @@ use gateway_kv_codec::key::RecordKey;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{collections::BTreeMap, collections::BTreeSet};
+fn decode_json_record<T: DeserializeOwned>(row: &StoredRecord) -> Result<T, GatewayError> {
+    serde_json::from_value(row.json_value()?.clone())
+        .map_err(|_| invalid("Malformed authority record."))
+}
+
 pub(crate) struct Transaction<'a, S, I> {
     store: &'a S,
     tokens: &'a I,

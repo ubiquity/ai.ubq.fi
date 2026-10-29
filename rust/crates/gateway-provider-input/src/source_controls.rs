@@ -2,7 +2,7 @@ use gateway_contracts::model::ModelId;
 use gateway_provider_protocol::types::ClientSurface;
 use gateway_provider_protocol::types::OrdinaryPreparationContext;
 use gateway_provider_source::source as s;
-use gateway_schema::source_request::SourceRequestDocument;
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_schema_values::request::SourceField;
 use gateway_schema_values::request::{RequestSurface, SourceModelRequest};
 use gateway_source::js_string::JsString16;
@@ -229,7 +229,7 @@ fn map_effort(
 ) -> Result<SourceJson, gateway_source::error::GatewayError> {
     s::quoted(&context.map_or_else(
         || effort.clone(),
-        |context| gateway_schema::reasoning::effort_for_codex(effort, context.reasoning()),
+        |context| gateway_model_metadata::reasoning::effort_for_codex(effort, context.reasoning()),
     ))
 }
 
@@ -241,7 +241,7 @@ fn validate_cache(
     input_key: &str,
 ) -> s::Result<()> {
     if let Some(context) = context {
-        gateway_schema::source_request::cache_capability::validate_known_unsupported_prompt_cache(
+        gateway_prompt_cache::capability::validate_known_unsupported_prompt_cache(
             model,
             context.prompt_cache(),
             raw,

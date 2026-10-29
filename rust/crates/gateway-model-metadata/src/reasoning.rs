@@ -1,30 +1,28 @@
 //! src/request-policy.ts:98-163,412-451,565-613; tiers are deliberately open UTF16 strings.
-use crate::model_control as control;
+use crate::effort_wire::EffortWireMap;
 use gateway_source::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source,
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModelReasoning {
     pub levels: Vec<JsString16>,
     pub default_level: Option<JsString16>,
-    /// Authoritative ordinary JSON object; keys/values are source UTF16 strings.
-    pub wire_efforts: SourceJson,
+    /// Retained raw JSON or private normalized UTF16 wire pairs; ordinary DATA.
+    pub wire_efforts: EffortWireMap,
 }
 impl Default for ModelReasoning {
     fn default() -> Self {
         Self {
             levels: Vec::new(),
             default_level: None,
-            wire_efforts: control::object(Vec::new()),
+            wire_efforts: EffortWireMap::normalized(Vec::new()),
         }
     }
 }
 /// Callers own the normalization phase; construction/equality of ModelId never invokes trim.
 pub fn advertised_effort(value: &SourceJson) -> Option<JsString16> {
-    let raw = if control::is_object(value) {
+    let raw = if source::entries(value).is_some() {
         gateway_source::source_serialization::member(value, "effort")?
     } else {
         value.clone()
@@ -68,7 +66,7 @@ impl ModelReasoning {
         {
             levels.push(default.clone());
         }
-        let mut wire_efforts = Vec::<(JsString16, SourceJson)>::new();
+        let mut wire_efforts = Vec::<(JsString16, JsString16)>::new();
         if let Some(wires) = record
             .and_then(|r| {
                 gateway_source::source_serialization::member(r, "reasoning_effort_wire_map")
@@ -82,7 +80,6 @@ impl ModelReasoning {
                     continue;
                 }
                 if let Some(value) = gateway_schema_values::source_view::normalized(Some(&value)) {
-                    let value = control::json(&value);
                     if let Some((_, old)) = wire_efforts.iter_mut().find(|(old, _)| old == &key) {
                         *old = value;
                     } else {
@@ -94,31 +91,14 @@ impl ModelReasoning {
         Self {
             levels,
             default_level,
-            wire_efforts: source::object_keys(wire_efforts).expect("source effort-map object"),
+            wire_efforts: EffortWireMap::normalized(wire_efforts),
         }
     }
     pub fn wire_effort(&self, effort: &JsString16) -> Option<JsString16> {
-        source::entries(&self.wire_efforts)?
-            .into_iter()
-            .find(|(key, _)| key == effort)
-            .and_then(|(_, value)| source::string(&value))
+        self.wire_efforts.wire_effort(effort)
     }
 }
 /// Explicit old scalar adapters; source runtime callers use source_request directly.
-pub fn parse_effort(value: Option<&Value>, field: &str) -> Result<Option<String>, GatewayError> {
-    let value = crate::source_request::scalar_value(value)?;
-    crate::source_request::reasoning::parse_effort(value.as_ref(), field)
-        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
-        .map(|value| value.try_utf8())
-        .transpose()
-}
-pub fn parse_reasoning(value: Option<&Value>) -> Result<Option<Map<String, Value>>, GatewayError> {
-    let value = crate::source_request::scalar_value(value)?;
-    crate::source_request::reasoning::parse_reasoning(value.as_ref())
-        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
-        .map(|value| value.deserialize())
-        .transpose()
-}
 pub fn effort_for_codex(effort: &JsString16, model: &ModelReasoning) -> JsString16 {
     if gateway_schema_values::source_view::matches(effort, "none") {
         "none".into()
@@ -138,28 +118,45 @@ pub fn resolve_reasoning(
     model: &ModelReasoning,
     default_effort: &JsString16,
 ) -> Result<ResolvedReasoning, gateway_local_refusal::source_error::SourceRequestError> {
-    let parsed = crate::source_request::reasoning::parse_reasoning(value)?;
+    let parsed = gateway_request_normalization::syntax::parse_reasoning(value)?;
     let label = parsed
         .as_ref()
         .and_then(|r| gateway_source::source_serialization::member(r, "effort"))
         .as_ref()
         .and_then(|v| gateway_schema_values::source_view::normalized(Some(v)))
         .unwrap_or_else(|| default_effort.clone());
-    let mut value = parsed.unwrap_or_else(|| {
-        control::object(vec![(
+    let mut value = match parsed {
+        Some(value) => value,
+        None => source::object(vec![(
             "effort",
-            control::json(&effort_for_codex(&label, model)),
-        )])
-    });
+            source::quoted(&effort_for_codex(&label, model))?,
+        )])?,
+    };
     if let Some(effort) = gateway_source::source_serialization::member(&value, "effort")
         .as_ref()
         .and_then(gateway_source::source_serialization::string)
     {
-        control::set(
-            &mut value,
-            "effort",
-            control::json(&effort_for_codex(&effort, model)),
-        );
+        value = reasoning_with_effort(value, &effort_for_codex(&effort, model))?;
     }
     Ok(ResolvedReasoning { label, value })
+}
+
+fn reasoning_with_effort(
+    value: SourceJson,
+    effort: &JsString16,
+) -> Result<SourceJson, gateway_source::error::GatewayError> {
+    let mut fields = source::entries(&value).ok_or_else(|| {
+        gateway_source::error::GatewayError::unavailable(
+            "Invalid source JSON serialization.",
+            "source_json_serialization_invalid",
+        )
+    })?;
+    let key = JsString16::from_utf8("effort");
+    let next = source::quoted(effort)?;
+    if let Some((_, old)) = fields.iter_mut().find(|(name, _)| name == &key) {
+        *old = next;
+    } else {
+        fields.push((key, next));
+    }
+    source::object_keys(fields)
 }

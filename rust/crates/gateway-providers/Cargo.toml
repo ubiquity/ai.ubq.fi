@@ -28,6 +28,8 @@ gateway-provider-source = { workspace = true }
 gateway-provider-tool-grammar = { workspace = true }
 
 [dev-dependencies]
+gateway-model-metadata.workspace = true
+gateway-request-normalization.workspace = true
 gateway-provider-chat = { workspace = true }
 gateway-provider-chat-controls = { workspace = true }
 gateway-provider-claude-body = { workspace = true }

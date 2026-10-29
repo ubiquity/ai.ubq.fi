@@ -15,14 +15,12 @@ use gateway_contracts::lifecycle::TransportObservation;
 use gateway_contracts::{identity::MAX_SAFE_INTEGER, identity::RequestContext};
 use gateway_core::query::QueryStore;
 use gateway_core::{state::AuthorityStore, state::StoredRecord};
-use gateway_local_journal::local_work::LocalSemanticOutcome;
-use gateway_local_journal::local_work::SOURCE_REQUEST_BINDING_DOMAIN;
-use gateway_local_journal::local_work::SOURCE_REQUEST_BINDING_VERSION;
-use gateway_local_journal::{local_work::LocalTerminalObservation, local_work::LocalWorkKind};
-use gateway_local_journal::{local_work::LocalWorkPhase, local_work::LocalWorkRecord};
-use gateway_schema::{catalog::CatalogInput, source_request::SourceRequestDocument};
-use gateway_source::error::GatewayError;
-use gateway_source::source_json::SourceJson;
+use gateway_local_journal::local_work::{
+    LocalSemanticOutcome, LocalTerminalObservation, LocalWorkKind, LocalWorkPhase, LocalWorkRecord,
+    SOURCE_REQUEST_BINDING_DOMAIN, SOURCE_REQUEST_BINDING_VERSION,
+};
+use gateway_request_normalization::document::SourceRequestDocument;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 
 pub mod completion;
 mod coordination;
@@ -32,7 +30,7 @@ mod coordination;
 pub struct LocalRequestMetadata {
     pub context: RequestContext,
     pub principal: AuthPrincipal,
-    pub catalog: CatalogInput,
+    pub catalog: gateway_schema::catalog::CatalogInput,
     pub runtime: Option<SourceJson>,
     pub client_version: String,
     pub native_session_id: Option<String>,
@@ -131,7 +129,7 @@ fn admitting_local_journal<I: TokenSource>(
         || context.started_at_ms < 0
         || now < context.started_at_ms
         || context.request_id.0.trim().is_empty()
-        || context.principal.0.trim().is_empty()
+        || !gateway_local_journal::context::principal_has_non_whitespace(&context.principal)
         || context.route.trim().is_empty()
         || context.key_id.as_ref().map(|v| v.0.as_str()) != expected_key
     {

@@ -5,15 +5,15 @@ use crate::{
     types::PublishedCredential, types::RoutingHost, types::RoutingResult,
 };
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
-use gateway_authority_paid_records::{
-    PaidAdmission, PaidAuthorization, PaidRequest, PaidReservation,
-};
-use gateway_authority_routing_selection::types::RouteSelection;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
+use gateway_authority_paid_ledger::PaidLedgerOperations;
+use gateway_authority_paid_records::{PaidAdmission, PaidRequest, PaidReservation};
+use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};
+use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
+use gateway_authority_routing_signal::SignalOperations;
+use gateway_contracts::provider::UpstreamProvider::{ChatgptCodex, ClaudeCode};
 use gateway_contracts::{identity::PaidAttemptId, model::ModelId};
 use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
-use gateway_contracts::{
-    provider::UpstreamProvider::ChatgptCodex, provider::UpstreamProvider::ClaudeCode,
-};
 use gateway_core::query::QueryStore;
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_local_refusal::{routing_error::RoutingError, routing_error::SourceRefusalBody};

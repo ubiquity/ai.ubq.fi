@@ -9,10 +9,10 @@ use gateway_admin_runtime_contracts::{
 use gateway_auth_contracts::types::{AuthMethod, AuthPrincipal, AuthResponseBody};
 use gateway_contracts::model::ModelId;
 use gateway_core::{source_control::encode_source_control_record, state::StoredRecord};
+use gateway_model_snapshot::snapshot::ModelSnapshot;
 use gateway_schema::{
     catalog_store::{codex_snapshot_key, runtime_config_key},
     runtime_config::build_runtime_config,
-    snapshot::ModelSnapshot,
 };
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};

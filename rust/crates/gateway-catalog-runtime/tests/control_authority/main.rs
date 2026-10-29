@@ -20,9 +20,8 @@ use gateway_core::{
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
 use gateway_kv_codec::key::RecordKey;
-use gateway_schema::{
-    catalog_store, runtime_config::build_runtime_config, snapshot::ModelSnapshot,
-};
+use gateway_model_snapshot::snapshot::ModelSnapshot;
+use gateway_schema::{catalog_store, runtime_config::build_runtime_config};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
@@ -349,8 +348,13 @@ fn context(model: &str) -> Result<PaidRequestContext, GatewayError> {
 mod native_configuration {
     use super::*;
     use gateway_auth::native::NATIVE_RPC_PATH;
-    use gateway_auth_native_proof::{native_auth::AuthenticatedNativeOwner, native_auth::NativeAuthenticator, native_auth::NativeNonceAuthority, native_auth::NativeTransportIdentity};
-    use gateway_auth_native_contracts::{transport::NativeAuthHeaders, transport::NativeCapability};
+    use gateway_auth_native_contracts::{
+        transport::NativeAuthHeaders, transport::NativeCapability,
+    };
+    use gateway_auth_native_proof::{
+        native_auth::AuthenticatedNativeOwner, native_auth::NativeAuthenticator,
+        native_auth::NativeNonceAuthority, native_auth::NativeTransportIdentity,
+    };
     use gateway_auth_primitives::crypto::{Secret, base64url};
     use gateway_publication_policy::control_publication::{
         ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
