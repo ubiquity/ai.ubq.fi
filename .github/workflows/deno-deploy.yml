@@ -328,9 +328,20 @@ jobs:
           bun --no-env-file --no-install run test:vps ops/tests/first-bun-cutover.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
           bun --no-env-file --no-install run test:deploy-guards "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
           bun --no-env-file --no-install run test:vps ops/tests/vps-release.test.ts "--native-kv-binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
-      - name: Complete native and full Bun gates
+      - name: Complete native-mode Bun test profiles
         shell: bash
-        run: sh scripts/verify.sh --native-kv-binding="$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")"
+        run: |
+          set -euo pipefail
+          sh -c '. scripts/_bootstrap.sh; ensure_deps' scripts/verify.sh
+          native_binding=$(cat "$RUNNER_TEMP/uos-native-kv/receipt.json")
+          fail=0
+          for profile in deploy-guards vps main sentinel quality benchmark; do
+            if ! bun --no-env-file --no-install scripts/test-runner.ts "$profile" "--native-kv-binding=$native_binding"; then
+              echo "!!! FAILED: native $profile"
+              fail=1
+            fi
+          done
+          exit "$fail"
       - name: Verify retained mixed-client runtime evidence
         if: ${{ success() && needs.scope.outputs.needs_worker_runtime == 'true' }}
         run: |
