@@ -132,7 +132,8 @@ pub async fn validate<S: QueryStore>(store: &S, now: i64) -> Result<AuthResponse
         .iter()
         .filter(|r| starts(&r.parts, &["uos_ai", "codex_manual_reset"]))
     {
-        let intent = gateway_authority::manual_reset::parse_manual_intent(row.record.json_value()?);
+        let intent =
+            gateway_authority_reset_records::manual::parse_manual_intent(row.record.json_value()?);
         if row.parts.len() != 4
             || row.parts[2] != "v1"
             || !intent
