@@ -15,6 +15,7 @@ use gateway_routing_runtime::{
     types::AttemptFailure, types::FailureOrigin, types::RefusalDecision, types::TransportState,
 };
 use gateway_source::error::GatewayError;
+use gateway_worker_capture::capture::Capture;
 use gateway_worker_http_body::body;
 use gateway_worker_http_body::protocol::{
     CEREBRAS_RATE_LIMIT_HEADERS, apply_warnings, cerebras_error_body, copy_headers, interrupted,
@@ -48,7 +49,7 @@ impl PendingLifetime {
     pub(super) async fn cleanup(
         self,
         error: gateway_local_refusal::routing_error::RoutingError,
-        capture: Rc<crate::inference_capture::Capture>,
+        capture: Rc<Capture>,
         cancellation: Rc<Cancellation>,
     ) -> ResponseResult {
         let error = cleanup_error(
@@ -118,7 +119,7 @@ impl SelectedLifetime {
     async fn cleanup(
         self,
         error: RoutingError,
-        capture: Rc<crate::inference_capture::Capture>,
+        capture: Rc<Capture>,
         cancellation: Rc<Cancellation>,
     ) -> ResponseResult {
         let usage = self.usage.borrow().clone();
@@ -143,7 +144,7 @@ impl ReplyFinish {
     pub(super) fn selected(
         value: SelectedLifetime,
         context: Rc<worker::Context>,
-        capture: Rc<crate::inference_capture::Capture>,
+        capture: Rc<Capture>,
         cancellation: Rc<Cancellation>,
     ) -> Self {
         let mut owner = Pending::new(value);
@@ -156,10 +157,7 @@ impl ReplyFinish {
         });
         Self::Selected(owner)
     }
-    fn take_hook(
-        &mut self,
-        capture: &Rc<crate::inference_capture::Capture>,
-    ) -> Result<FinishHook, RoutingError> {
+    fn take_hook(&mut self, capture: &Rc<Capture>) -> Result<FinishHook, RoutingError> {
         match self {
             Self::Ordinary(hook) => hook
                 .take()
@@ -184,7 +182,7 @@ impl ReplyFinish {
 
 async fn capture_error(
     error: RoutingError,
-    capture: &Rc<crate::inference_capture::Capture>,
+    capture: &Rc<Capture>,
     cancellation: &Cancellation,
 ) -> ResponseResult {
     let result = crate::inference_source::error_response(error, capture).await;
@@ -206,7 +204,7 @@ pub(super) struct Reply<'a> {
     pub(super) deadline: Option<Deadline>,
     pub(super) context: Rc<worker::Context>,
     pub(super) host: &'a crate::host::PlatformHost,
-    pub(super) capture: &'a Rc<crate::inference_capture::Capture>,
+    pub(super) capture: &'a Rc<Capture>,
     pub(super) responses: bool,
     pub(super) principal: &'a gateway_auth_contracts::types::AuthPrincipal,
     pub(super) client_stream: bool,

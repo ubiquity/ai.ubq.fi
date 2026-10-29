@@ -6,9 +6,7 @@ use crate::transport::outbound::{
     DispatchAttempt, DispatchFailure, DispatchOrigin, PinnedDestination, send_constructed,
     send_http,
 };
-use crate::{
-    inference_capture::Capture, inference_currentness::CurrentnessGuard, inference_local::Start,
-};
+use crate::{inference_currentness::CurrentnessGuard, inference_local::Start};
 use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
 use gateway_contracts::{
     claude::ClaudeErrorEvidence, identity::ApiKeyId, identity::PrincipalId,
@@ -26,6 +24,10 @@ use gateway_routing_runtime::{
 };
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
+use gateway_worker_capture::capture::Capture;
+use gateway_worker_capture_runtime::{
+    binding::CaptureResources, identity::CaptureBuild, runtime::CaptureRuntime,
+};
 use gateway_worker_http_body::{body, protocol::correlation};
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
@@ -131,7 +133,7 @@ impl Dispatch<'_> {
         match result {
             Ok(response) => {
                 let observed_at_ms = now_ms()?;
-                let response = crate::inference_capture::upstream(
+                let response = gateway_worker_capture::capture::upstream(
                     response,
                     trace,
                     self.cancellation.clone(),
@@ -366,7 +368,20 @@ pub async fn run(
             })
         })
         .unwrap_or_else(|| "0.100.0".into());
-    let capture = Capture::new(request, &bytes, store.clone(), host, context.clone());
+    let capture_request_id = host.request_id.clone();
+    let build = CaptureBuild::new(
+        env!("UOS_RUST_BUILD_GIT_SHA"),
+        env!("UOS_RUST_BUILD_DEPLOYMENT_ID"),
+    );
+    let capture_runtime = CaptureRuntime::bind(
+        &host.request_id,
+        &bytes,
+        store.clone(),
+        CaptureResources::new(host.env.clone(), host.cancellation.clone(), context.clone()),
+        crate::observability_host::shared_state(),
+        build,
+    );
+    let capture = Capture::new(request, capture_request_id, capture_runtime, build);
     task::drive(task::RequestTask::start(OwnedRequest {
         bytes,
         principal: principal.clone(),

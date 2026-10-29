@@ -8,12 +8,10 @@ use gateway_observability::{ObservabilityRuntime, ObservabilityState};
 use gateway_observability_contracts::host_types::{self, BuildIdentity};
 use gateway_observability_contracts::types::ObservabilityHost;
 use gateway_observability_metered::metered;
-use gateway_observability_replay_capture::replay_producer;
-use gateway_observability_replay_model::replay_crypto::{self, ReplayBody};
-use gateway_observability_replay_observation::{observation, replay_trace};
+use gateway_observability_replay_model::replay_crypto::ReplayBody;
+use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
-use {gateway_schema_values::scalar as util, gateway_source::error::GatewayError};
 mod admin;
 mod diagnostics;
 mod inventory;
@@ -24,64 +22,6 @@ pub fn shared_state() -> ObservabilityState {
     STATE.with(Clone::clone)
 }
 pub type Runtime = ObservabilityRuntime<RemoteAuthorityStore, RequestHost>;
-pub enum CaptureInput {
-    Ready(replay_producer::ReplayInput),
-    Omitted(&'static str),
-}
-/// The original accepted body receipt and actual request headers supply capture input.
-pub fn capture_input(
-    runtime: &Runtime,
-    request: &worker::Request,
-    upstream: replay_trace::UpstreamTrace,
-) -> Result<CaptureInput, GatewayError> {
-    if request.method() != worker::Method::Post {
-        return Ok(CaptureInput::Omitted("non_post"));
-    }
-    let host = runtime.host();
-    if host.original_body.as_bytes().len() > replay_crypto::MAX_REQUEST_BYTES {
-        return Ok(CaptureInput::Omitted("body_over_limit"));
-    }
-    let url = request
-        .url()
-        .map_err(|_| unavailable("Capture request URL is invalid."))?;
-    let endpoint = format!(
-        "{}{}",
-        url.path(),
-        url.query().map(|q| format!("?{q}")).unwrap_or_default()
-    );
-    let headers = request.headers().entries().collect();
-    let request = replay_producer::ReplayRequest {
-        endpoint,
-        method: "POST".into(),
-        body: ReplayBody::from_vec(host.original_body.as_bytes().to_vec()),
-        content_type: request
-            .headers()
-            .get("content-type")
-            .map_err(|_| unavailable("Capture request headers are invalid."))?,
-        headers,
-        request_id: host.request_id.clone(),
-        upstream,
-    };
-    Ok(CaptureInput::Ready(replay_producer::ReplayInput::new(
-        host, request,
-    )?))
-}
-/// Await from the same request/terminal event owner; no capture task is left floating.
-pub async fn persist_failure(
-    runtime: &Runtime,
-    input: replay_producer::ReplayInput,
-    observation: observation::FailureObservation,
-    client: observation::ClientFailureObservation,
-) -> Result<gateway_observability_replay_read::duplicate::PersistResult, GatewayError> {
-    let key =
-        crate::host::setting(&runtime.host().platform.env, "SENTINEL_REPLAY_KEY").and_then(|raw| {
-            replay_crypto::ReplayKey::decode(raw.trim_matches(util::js_whitespace)).ok()
-        });
-    runtime
-        .captures()
-        .persist_failure(input, observation, client, key.as_ref())
-        .await
-}
 pub struct RequestHost {
     store: RemoteAuthorityStore,
     platform: crate::host::PlatformHost,
@@ -213,7 +153,7 @@ impl ObservabilityHost for Host {
         gateway_worker_platform::random::random_bytes(length)
     }
     fn compare_labels(&self, left: &str, right: &str) -> Result<std::cmp::Ordering, GatewayError> {
-        crate::admin_host::compare_labels(left, right)
+        gateway_worker_platform::labels::compare_labels(left, right)
     }
     async fn wait_ms(&self, milliseconds: u32) -> Result<(), GatewayError> {
         worker::Delay::from(std::time::Duration::from_millis(u64::from(milliseconds))).await;

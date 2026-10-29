@@ -52,6 +52,8 @@ gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-provider-services = { path = "../gateway-provider-services" }
 gateway-worker-agent-messages = { workspace = true }
 gateway-worker-authority-binding = { workspace = true }
+gateway-worker-capture = { workspace = true }
+gateway-worker-capture-runtime = { workspace = true }
 gateway-native-authority-wire = { workspace = true }
 gateway-source = { workspace = true }
 gateway-authority-actor-records = { path = "../gateway-authority-actor-records" }

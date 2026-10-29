@@ -9,6 +9,7 @@ use gateway_routing_runtime::{
 };
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
+use gateway_worker_capture::capture::Capture;
 use gateway_worker_stream::observed::FinishHook;
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
@@ -80,7 +81,7 @@ pub(crate) fn finish_hook(
     lifecycle: Rc<Lifecycle>,
     usage: Usage,
     permit: Option<gateway_admission::Permit>,
-    capture: Rc<crate::inference_capture::Capture>,
+    capture: Rc<Capture>,
 ) -> FinishHook {
     Box::new(move |observation| {
         Box::pin(async move {
