@@ -24,7 +24,8 @@ use gateway_kv_codec::{
     key::RecordKey,
     tuple_key::{ScalarKeyPart, TupleKey},
 };
-use gateway_routing_runtime::types::RoutingInput;
+use gateway_routing_plan::input::RoutingInput;
+
 use gateway_routing_runtime_test_support::{
     input::{NOW, input},
     store::Store,

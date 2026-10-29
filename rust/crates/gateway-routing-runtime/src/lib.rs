@@ -6,7 +6,6 @@ mod dispatch;
 pub mod extras;
 mod journal;
 pub mod local_work;
-pub mod policy;
 mod response_head;
 pub mod session;
 pub mod settlement;

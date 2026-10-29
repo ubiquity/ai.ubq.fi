@@ -5,6 +5,7 @@ use gateway_extras_contract::family::ExtrasFamily;
 use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::ClaudeCredentialKind};
 use gateway_provider_policy::policy::HopFailure;
 use gateway_routing_journal::record::CredentialFence;
+use gateway_routing_plan::input::RoutingInput;
 use gateway_routing_runtime::{session::*, types::*};
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use serde_json::json;

@@ -1,10 +1,13 @@
 use gateway_model_selection::aliases as model_aliases;
+use gateway_routing_plan::input::RoutingInput;
+use gateway_routing_plan::policy;
+use gateway_routing_plan::policy::RouteHop;
 use gateway_source::error::GatewayError;
 mod source_input;
 use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
 use gateway_local_refusal::{routing_error::RoutingError, routing_error::SourceRefusalBody};
 use gateway_provider_protocol::types::ClientSurface;
-use gateway_routing_runtime::{policy, policy::RouteHop, types::RoutingInput};
+
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use source_input::{NOW, input};
 fn fixture_json<T: serde::Serialize + ?Sized>(value: &T) -> SourceJson {

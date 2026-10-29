@@ -1,7 +1,4 @@
-use crate::{
-    policy,
-    types::{PreparedWireRequest, PublishedCredential, RoutingInput, RoutingResult},
-};
+use crate::types::{PreparedWireRequest, PublishedCredential};
 use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_provider_claude_body::{
@@ -10,6 +7,9 @@ use gateway_provider_claude_body::{
 use gateway_provider_protocol::{types::ClientSurface, types::OrdinaryPreparationContext};
 use gateway_providers::source_request::prepare_source_request;
 use gateway_routing_journal::record::CredentialFence;
+use gateway_routing_plan::input::RoutingInput;
+use gateway_routing_plan::input::RoutingResult;
+use gateway_routing_plan::policy;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };

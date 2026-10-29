@@ -4,9 +4,10 @@ use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_local_refusal::routing_error::SourceRefusalBody;
 use gateway_request_normalization::document::SourceRequestDocument;
+use gateway_routing_plan::input::LocalRequestMetadata;
+use gateway_routing_plan::input::RoutingInput;
 use gateway_routing_runtime::{
-    local_work::LocalAdmissionInput, local_work::LocalProviderAdmission,
-    local_work::LocalRequestMetadata, session::RoutingSession, types::RoutingInput,
+    local_work::LocalAdmissionInput, local_work::LocalProviderAdmission, session::RoutingSession,
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use gateway_source::{

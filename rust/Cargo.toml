@@ -188,6 +188,7 @@ members = [
   "crates/gateway-observability-prompt",
   "crates/gateway-observability-request-records",
   "crates/gateway-routing-classification",
+  "crates/gateway-routing-plan",
   "crates/gateway-routing-journal",
     "crates/gateway-routing-runtime",
   "crates/gateway-routing-contract-test-support",
@@ -433,6 +434,7 @@ gateway-observability-ledger = { path = "crates/gateway-observability-ledger" }
 gateway-observability-prompt = { path = "crates/gateway-observability-prompt" }
 gateway-observability-request-records = { path = "crates/gateway-observability-request-records" }
 gateway-routing-classification = { path = "crates/gateway-routing-classification" }
+gateway-routing-plan = { path = "crates/gateway-routing-plan" }
 gateway-routing-journal = { path = "crates/gateway-routing-journal" }
 gateway-routing-runtime = { path = "crates/gateway-routing-runtime" }
 gateway-routing-contract-test-support = { path = "crates/gateway-routing-contract-test-support" }

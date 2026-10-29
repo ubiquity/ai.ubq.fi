@@ -26,6 +26,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-routing-plan.workspace = true
 gateway-model-selection.workspace = true
 gateway-cache-experiment-runner = { path = "../gateway-cache-experiment-runner" }
 gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }

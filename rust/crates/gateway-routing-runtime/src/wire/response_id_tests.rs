@@ -12,6 +12,7 @@ use gateway_provider_protocol::{
 use gateway_provider_response::response::decode_response;
 use gateway_provider_stream::sse::StreamDecoder;
 use gateway_routing_journal::record::CredentialFence;
+use gateway_routing_plan::input::RoutingInput;
 use serde_json::{Value, json};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;

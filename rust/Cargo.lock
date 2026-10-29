@@ -1922,6 +1922,7 @@ dependencies = [
  "gateway-native-authority-wire",
  "gateway-provider-policy",
  "gateway-routing-journal",
+ "gateway-routing-plan",
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
@@ -5195,6 +5196,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-provider-policy",
+ "gateway-routing-plan",
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-source",
@@ -5217,6 +5219,26 @@ dependencies = [
  "gateway-source",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "gateway-routing-plan"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gateway-auth-contracts",
+ "gateway-authority-routing-evidence",
+ "gateway-catalog-input",
+ "gateway-contracts",
+ "gateway-decision-protocol",
+ "gateway-local-refusal",
+ "gateway-model-selection",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
+ "gateway-request-normalization",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde",
 ]
 
 [[package]]
@@ -5271,6 +5293,7 @@ dependencies = [
  "gateway-routing-classification",
  "gateway-routing-contract-test-support",
  "gateway-routing-journal",
+ "gateway-routing-plan",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
  "gateway-schema-values",
@@ -5303,6 +5326,7 @@ dependencies = [
  "gateway-model-snapshot",
  "gateway-provider-protocol",
  "gateway-routing-journal",
+ "gateway-routing-plan",
  "gateway-routing-runtime",
  "gateway-source",
  "gateway-wait-observation",
@@ -5502,6 +5526,7 @@ dependencies = [
  "gateway-request-normalization",
  "gateway-routing-classification",
  "gateway-routing-journal",
+ "gateway-routing-plan",
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",

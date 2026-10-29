@@ -7,6 +7,7 @@ use gateway_local_journal::local_completion::LocalCompletedJournalPlan;
 use gateway_local_refusal::routing_error::RoutingError;
 use gateway_routing_journal::reader;
 use gateway_routing_journal::record::{Journal, RevisionCheckWire};
+use gateway_routing_plan::input::RoutingResult;
 
 pub struct PendingLocalCompletion<S, I, C, H> {
     original: Option<LocalWorkHandle<S, I, C, H>>,

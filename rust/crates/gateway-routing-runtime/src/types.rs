@@ -2,10 +2,8 @@ use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_auth_primitives::crypto::Secret;
 use gateway_authority_paid_records::{PaidReservation, PaidUsage};
 use gateway_authority_routing_selection::types::{AdmittedAccount, CohortProof};
-use gateway_catalog_input::catalog::CatalogInput;
 use gateway_contracts::{
-    identity::RequestContext, lifecycle::TransportObservation, model::ModelId,
-    provider::UpstreamProvider,
+    lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
 };
 use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::PreparedClaudeBody};
@@ -17,66 +15,8 @@ use gateway_routing_journal::record::CredentialFence;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_wait_observation::outcome::WaitOutcome;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::future::Future;
-use {gateway_schema_values::request::RequestSurface, serde_json::Value};
-
-#[derive(Clone, Debug)]
-pub struct RoutingInput {
-    pub context: RequestContext,
-    pub principal: AuthPrincipal,
-    pub raw: gateway_source::source_json::SourceJson,
-    pub surface: ClientSurface,
-    pub catalog: CatalogInput,
-    pub runtime: Option<gateway_source::source_json::SourceJson>,
-    pub client_version: String,
-    pub native_session_id: Option<String>,
-    /// Existing server-side request retry policy; never read from client JSON.
-    pub retry_prohibited: bool,
-}
-
-impl RoutingInput {
-    /// Neutral data construction only; validation remains in source-defined planning phases.
-    pub fn from_source_request(
-        metadata: crate::local_work::LocalRequestMetadata,
-        request: gateway_request_normalization::ordinary::OrdinarySourceRequest,
-    ) -> Self {
-        Self {
-            context: metadata.context,
-            principal: metadata.principal,
-            raw: request.original_source().clone(),
-            surface: match request.surface() {
-                RequestSurface::Responses => ClientSurface::Responses,
-                RequestSurface::ChatCompletions => ClientSurface::Chat,
-            },
-            catalog: metadata.catalog,
-            runtime: metadata.runtime,
-            client_version: metadata.client_version,
-            native_session_id: metadata.native_session_id,
-            retry_prohibited: metadata.retry_prohibited,
-        }
-    }
-    pub fn original_source(&self) -> &gateway_source::source_json::SourceJson {
-        &self.raw
-    }
-    pub fn source_member(&self, name: &str) -> Option<gateway_source::source_json::SourceJson> {
-        gateway_source::source_serialization::member(&self.raw, name)
-    }
-    pub fn streamed(&self) -> bool {
-        self.source_member("stream")
-            .is_some_and(|value| value.as_str() == "true")
-    }
-    pub fn requested_reasoning(&self) -> Option<gateway_source::js_string::JsString16> {
-        self.source_member("reasoning")
-            .and_then(|value| gateway_source::source_serialization::member(&value, "effort"))
-            .and_then(|value| gateway_source::source_serialization::string(&value))
-            .or_else(|| {
-                self.source_member("reasoning_effort")
-                    .and_then(|value| gateway_source::source_serialization::string(&value))
-            })
-    }
-}
-use gateway_local_refusal::routing_error::RoutingError;
-pub type RoutingResult<T> = Result<T, RoutingError>;
 
 #[derive(Clone)]
 pub enum PublishedCredential {
@@ -370,6 +310,7 @@ pub struct RecoveredSession {
 #[cfg(test)]
 mod source_cleanup_tests {
     use super::*;
+    use gateway_local_refusal::routing_error::RoutingError;
     use gateway_source::{js_string::JsString16, source_json::SourceJson};
     #[test]
     fn cleanup_diagnostic_never_overwrites_original_source_wire_truth() {

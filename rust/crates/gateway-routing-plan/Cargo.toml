@@ -1,0 +1,25 @@
+[package]
+name = "gateway-routing-plan"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gateway-auth-contracts.workspace = true
+gateway-authority-routing-evidence.workspace = true
+gateway-catalog-input.workspace = true
+gateway-contracts.workspace = true
+gateway-decision-protocol.workspace = true
+gateway-local-refusal.workspace = true
+gateway-model-selection.workspace = true
+gateway-provider-policy.workspace = true
+gateway-provider-protocol.workspace = true
+gateway-request-normalization.workspace = true
+gateway-schema-values.workspace = true
+gateway-source.workspace = true
+chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
+serde.workspace = true

@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-routing-plan.workspace = true
 gateway-catalog-input.workspace = true
 gateway-routing-classification.workspace = true
 gateway-routing-journal.workspace = true

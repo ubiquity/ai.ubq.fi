@@ -1,6 +1,7 @@
 //! Observed request coordination maintenance; no new source abort deadline.
 use super::*;
 use gateway_authority_kernel::KernelOperations;
+use gateway_routing_plan::input::RoutingResult;
 
 impl<
     S: QueryStore + Clone,

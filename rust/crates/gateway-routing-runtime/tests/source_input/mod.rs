@@ -7,6 +7,7 @@ use gateway_contracts::{
 };
 use gateway_model_snapshot::snapshot::ModelSnapshot;
 use gateway_provider_protocol::types::ClientSurface;
+use gateway_routing_plan::input::RoutingInput;
 use serde_json::json;
 
 pub const NOW: i64 = 1_800_000_000_000;

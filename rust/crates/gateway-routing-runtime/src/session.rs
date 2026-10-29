@@ -1,6 +1,5 @@
 use crate::{
     journal::{self},
-    policy::{self, RoutePlan},
     settlement,
     types::*,
 };
@@ -22,6 +21,11 @@ use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_claude_body::types::PreparedClaudeOrdinary;
 use gateway_provider_policy::{policy::LithosWindows, policy::WaitBudget};
 use gateway_routing_journal::record::{CredentialFence, Journal};
+use gateway_routing_plan::input::RoutingInput;
+use gateway_routing_plan::input::RoutingResult;
+use gateway_routing_plan::policy;
+use gateway_routing_plan::policy;
+use gateway_routing_plan::policy::RoutePlan;
 use gateway_source::error::GatewayError;
 use std::{cell::RefCell, collections::BTreeSet};
 use {crate::journal::unavailable, gateway_schema_values::request::RequestSurface};

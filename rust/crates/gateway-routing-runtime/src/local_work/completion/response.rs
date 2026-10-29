@@ -2,6 +2,7 @@
 use super::*;
 use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_kernel::KernelOperations;
+use gateway_routing_plan::input::RoutingResult;
 use std::{cell::RefCell, rc::Rc};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -10,9 +10,10 @@ use gateway_contracts::{
 };
 use gateway_core::state::AuthorityStore;
 use gateway_provider_policy::{policy::HopFailure, policy::paid_hop_identity};
+use gateway_routing_plan::input::RoutingInput;
 use gateway_routing_runtime::{
     session::RoutingSession,
-    types::{AttemptFailure, FailureOrigin, RefusalDecision, RoutingInput, TransportState},
+    types::{AttemptFailure, FailureOrigin, RefusalDecision, TransportState},
 };
 use gateway_routing_runtime_test_support::{
     exec::run,

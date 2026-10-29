@@ -10,10 +10,9 @@ use gateway_contracts::{
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_request_normalization::document::SourceRequestDocument;
+use gateway_routing_plan::input::LocalRequestMetadata;
 use gateway_routing_runtime::{
-    currentness::RoutingLeaseState,
-    local_work::{LocalAdmissionInput, LocalRequestMetadata},
-    session::RoutingSession,
+    currentness::RoutingLeaseState, local_work::LocalAdmissionInput, session::RoutingSession,
     types::AttemptUsage,
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
@@ -32,7 +31,7 @@ fn journal_key(id: &str) -> RecordKey {
     ])
     .to_record_key()
 }
-fn kernel_input(store: &Store, id: &str) -> gateway_routing_runtime::types::RoutingInput {
+fn kernel_input(store: &Store, id: &str) -> gateway_routing_plan::input::RoutingInput {
     seed_pool(store);
     store.seed(
         keys::kernel_policy("owner", Some("repo")),

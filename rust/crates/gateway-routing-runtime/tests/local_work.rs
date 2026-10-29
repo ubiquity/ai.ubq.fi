@@ -19,13 +19,14 @@ use gateway_local_journal::{
     local_work::LocalSemanticOutcome, local_work::LocalTerminalObservation,
 };
 use gateway_request_normalization::document::SourceRequestDocument;
+use gateway_routing_plan::input::LocalRequestMetadata;
+use gateway_routing_plan::policy;
 use gateway_routing_runtime::{
     custody,
     local_work::{
         completion::response::{LocalAccountingProgress, LocalWireKind},
         *,
     },
-    policy,
     session::RoutingSession,
     settlement::recover_pending,
     types::RoutingHost,

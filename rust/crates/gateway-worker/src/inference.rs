@@ -16,11 +16,11 @@ use gateway_local_refusal::routing_error::RoutingError;
 use gateway_observability_replay_observation::replay_trace::{AttemptTrace, TraceTerminal};
 use gateway_provider_protocol::types::Headers;
 use gateway_request_normalization::{document::SourceRequestDocument, syntax::parse_http_body};
+use gateway_routing_plan::input::{LocalRequestMetadata, RoutingInput};
 use gateway_routing_runtime::{
-    local_work::LocalRequestMetadata, session::RoutingSession, types::AttemptFailure,
-    types::FailureOrigin, types::PreparedAttempt, types::PreparedWireRequest,
-    types::RefusalDecision, types::ResponseDecision, types::ResponseHead, types::RoutingInput,
-    types::TransportState, types::WorkspaceContinuation,
+    session::RoutingSession, types::AttemptFailure, types::FailureOrigin, types::PreparedAttempt,
+    types::PreparedWireRequest, types::RefusalDecision, types::ResponseDecision,
+    types::ResponseHead, types::TransportState, types::WorkspaceContinuation,
 };
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;

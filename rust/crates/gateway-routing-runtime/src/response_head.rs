@@ -8,6 +8,7 @@ use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_contracts::claude::ClaudeErrorEvidence;
 use gateway_core::query::QueryStore;
 use gateway_routing_journal::record::{CredentialFence, Phase, RevisionCheckWire};
+use gateway_routing_plan::input::RoutingResult;
 use gateway_source::error::GatewayError;
 
 impl<

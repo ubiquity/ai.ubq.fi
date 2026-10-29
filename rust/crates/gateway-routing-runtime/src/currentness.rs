@@ -1,6 +1,6 @@
 //! Observed ordinary-request leases, never an imported or reusable I/O grant.
 use crate::journal;
-use crate::{session::RoutingSession, types::RoutingHost, types::RoutingResult};
+use crate::{session::RoutingSession, types::RoutingHost};
 use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel::KernelOperations;
@@ -12,6 +12,7 @@ use gateway_core::{state::RevisionCheck, state::StoredRecord};
 use gateway_local_journal::local_work::LocalWorkPhase;
 use gateway_routing_journal::reader;
 use gateway_routing_journal::record::{AttemptRecord, Journal, Phase};
+use gateway_routing_plan::input::RoutingResult;
 use gateway_source::error::GatewayError;
 use std::cell::RefCell;
 

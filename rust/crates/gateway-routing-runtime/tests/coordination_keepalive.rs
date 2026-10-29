@@ -12,6 +12,7 @@ use gateway_core::{
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_request_normalization::document::SourceRequestDocument;
+use gateway_routing_plan::input::LocalRequestMetadata;
 use gateway_routing_runtime::{local_work::*, session::RoutingSession};
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use gateway_source::error::GatewayError;
