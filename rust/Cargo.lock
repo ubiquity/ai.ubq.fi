@@ -3946,7 +3946,6 @@ dependencies = [
  "gateway-native-authority-request",
  "gateway-native-authority-wire",
  "gateway-native-confinement",
- "gateway-native-connected-io",
  "gateway-native-connector",
  "gateway-native-custody-io",
  "gateway-native-custody-wire",
@@ -3961,6 +3960,7 @@ dependencies = [
  "gateway-native-live-buffer",
  "gateway-native-local-transport",
  "gateway-native-owner-inspector",
+ "gateway-native-private-https",
  "gateway-native-replay",
  "gateway-native-supervisor",
  "gateway-native-supervisor-data",
@@ -8569,4 +8569,17 @@ dependencies = [
  "gateway-source",
  "rustix",
  "time",
+]
+
+[[package]]
+name = "gateway-native-private-https"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
+ "gateway-native-connected-io",
+ "gateway-native-https-test-support",
+ "gateway-source",
+ "ureq",
+ "url",
 ]

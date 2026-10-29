@@ -1,7 +1,6 @@
 //! Authenticated fixed reverse authority over one preconnected TLS capability.
 //! Parsed references are observations until the same-store receiver verifies
 //! the original actor/action. This client cannot mint a local action or claim.
-use crate::private_https::PrivateHttps;
 use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_proof::native_context::NativeControlContext;
 use gateway_auth_native_wire::{
@@ -20,6 +19,7 @@ use gateway_native_authority_wire::{
     renewal::NativeRenewalMode, renewal_response::NativeRenewalAuthorityResponse as Response,
     source_response::SourceNativeRenewalAuthorityResponseV2 as SourceResponse,
 };
+use gateway_native_private_https::transport::PrivateHttps;
 use gateway_source::error::GatewayError;
 use std::{net::TcpStream, time::Instant};
 

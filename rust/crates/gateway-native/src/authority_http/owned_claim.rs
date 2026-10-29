@@ -202,7 +202,7 @@ impl NativeAuthorityHttp {
         let response = self.transport.send(
             &headers,
             &body,
-            Instant::now() + crate::private_https::NATIVE_HTTPS_SEND_TIMEOUT,
+            Instant::now() + gateway_native_private_https::transport::NATIVE_HTTPS_SEND_TIMEOUT,
             NATIVE_CONTROL_MAX_BYTES,
         )?;
         let signatures = response

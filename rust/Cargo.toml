@@ -269,6 +269,7 @@ members = [
   "crates/gateway-native-import-validation",
   "crates/gateway-native-owned-writer",
   "crates/gateway-native-owner-inspector",
+  "crates/gateway-native-private-https",
 ]
 exclude = ["vendor/webauthn-rs-core-0.6.1-dev"]
 resolver = "3"
@@ -280,6 +281,7 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-native-private-https = { path = "crates/gateway-native-private-https" }
 gateway-worker-native-fixture = { path = "crates/gateway-worker-native-fixture" }
 gateway-worker-native-external-fixture = { path = "crates/gateway-worker-native-external-fixture" }
 gateway-native-external-publication-wire = { path = "crates/gateway-native-external-publication-wire" }

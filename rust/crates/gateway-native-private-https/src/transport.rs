@@ -16,7 +16,7 @@ use ureq::{
     },
 };
 
-pub(crate) const NATIVE_HTTPS_SEND_TIMEOUT: Duration = Duration::from_secs(45);
+pub const NATIVE_HTTPS_SEND_TIMEOUT: Duration = Duration::from_secs(45);
 
 #[derive(Debug)]
 struct FixedResolver {
@@ -64,11 +64,11 @@ impl Connector for OnceConnector {
     }
 }
 
-pub(crate) struct PrivateHttps {
+pub struct PrivateHttps {
     target: String,
     agent: ureq::Agent,
 }
-pub(crate) struct PrivateResponse {
+pub struct PrivateResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
