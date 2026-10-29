@@ -1,0 +1,27 @@
+[package]
+name = "gateway-worker-capture-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-contracts.workspace = true
+gateway-model-selection.workspace = true
+gateway-observability.workspace = true
+gateway-observability-contracts.workspace = true
+gateway-observability-ledger.workspace = true
+gateway-observability-prompt.workspace = true
+gateway-observability-replay-capture.workspace = true
+gateway-observability-replay-model.workspace = true
+gateway-observability-replay-observation.workspace = true
+gateway-schema-values.workspace = true
+gateway-source.workspace = true
+gateway-worker-authority-binding.workspace = true
+gateway-worker-platform.workspace = true
+gateway-worker-storage.workspace = true
+serde_json.workspace = true
+worker.workspace = true
+
+[lints]
+workspace = true

@@ -5426,6 +5426,8 @@ dependencies = [
  "gateway-wait-observation",
  "gateway-worker-agent-messages",
  "gateway-worker-authority-binding",
+ "gateway-worker-capture",
+ "gateway-worker-capture-runtime",
  "gateway-worker-http-body",
  "gateway-worker-platform",
  "gateway-worker-storage",
@@ -5479,6 +5481,52 @@ dependencies = [
  "serde",
  "serde_json",
  "wasm-bindgen",
+ "worker",
+]
+
+[[package]]
+name = "gateway-worker-capture"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "gateway-authority-paid-records",
+ "gateway-contracts",
+ "gateway-observability-ledger",
+ "gateway-observability-prompt",
+ "gateway-observability-replay-observation",
+ "gateway-provider-events",
+ "gateway-provider-source",
+ "gateway-provider-stream",
+ "gateway-schema-values",
+ "gateway-source",
+ "gateway-worker-capture-runtime",
+ "gateway-worker-platform",
+ "gateway-worker-storage",
+ "gateway-worker-web",
+ "gateway-worker-wire-observation",
+ "serde_json",
+ "worker",
+]
+
+[[package]]
+name = "gateway-worker-capture-runtime"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-model-selection",
+ "gateway-observability",
+ "gateway-observability-contracts",
+ "gateway-observability-ledger",
+ "gateway-observability-prompt",
+ "gateway-observability-replay-capture",
+ "gateway-observability-replay-model",
+ "gateway-observability-replay-observation",
+ "gateway-schema-values",
+ "gateway-source",
+ "gateway-worker-authority-binding",
+ "gateway-worker-platform",
+ "gateway-worker-storage",
+ "serde_json",
  "worker",
 ]
 

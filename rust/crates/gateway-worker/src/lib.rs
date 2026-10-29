@@ -21,7 +21,6 @@ mod extras_host;
 mod host;
 mod image_host;
 mod inference;
-mod inference_capture;
 mod inference_currentness;
 mod inference_lifecycle;
 mod inference_local;

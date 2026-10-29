@@ -1,10 +1,10 @@
 //! Approved post-head HTTP failure encoding; original failure DATA stays internal.
-use crate::inference_capture::Capture;
 use futures_util::StreamExt;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
+use gateway_worker_capture::capture::Capture;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_web::http_failure::{error_detail, frames};
 use std::{rc::Rc, task::Poll};

@@ -1,7 +1,7 @@
 //! Authoritative source-wire errors; diagnostics never replace the original body.
-use crate::inference_capture::Capture;
 use gateway_local_refusal::routing_error::RoutingError;
 use gateway_source::error::GatewayError;
+use gateway_worker_capture::capture::Capture;
 use std::rc::Rc;
 use worker::Response;
 

@@ -1,6 +1,4 @@
 //! Passive request-owned replay evidence. It never authorizes dispatch or settlement.
-use crate::host::PlatformHost;
-use crate::observability_host::{self, CaptureInput};
 use gateway_contracts::{
     lifecycle::BodyOutcome, lifecycle::ReaderTermination, lifecycle::SemanticTerminal,
     lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
@@ -15,7 +13,10 @@ use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
+use gateway_worker_capture_runtime::{
+    identity::CaptureBuild,
+    runtime::{CaptureInput, CaptureRuntime},
+};
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
 use gateway_worker_wire_observation::head::HeadState;
@@ -29,7 +30,8 @@ use worker::{Request, Response, ResponseBody};
 use {futures_util::Stream, gateway_schema_values::scalar as util};
 
 pub struct Capture {
-    runtime: observability_host::Runtime,
+    runtime: CaptureRuntime,
+    build: CaptureBuild,
     request_id: String,
     request: Request,
     trace: TraceRecorder,
@@ -65,20 +67,14 @@ struct ClientWire {
 impl Capture {
     pub fn new(
         request: Request,
-        original: &[u8],
-        store: RemoteAuthorityStore,
-        platform: &PlatformHost,
-        context: Rc<worker::Context>,
+        request_id: gateway_contracts::identity::RequestId,
+        runtime: CaptureRuntime,
+        build: CaptureBuild,
     ) -> Rc<Self> {
         Rc::new(Self {
-            request_id: platform.request_id.0.clone(),
-            runtime: observability_host::bind(
-                &platform.request_id,
-                original,
-                store,
-                platform,
-                context,
-            ),
+            request_id: request_id.0,
+            runtime,
+            build,
             request,
             trace: TraceRecorder::default(),
             trace_valid: Cell::new(true),
@@ -116,7 +112,7 @@ impl Capture {
         self.begin_request(context, Some(model.as_js_string()), raw, stream)
             .await;
     }
-    pub(crate) async fn begin_local(
+    pub async fn begin_local(
         &self,
         context: &gateway_contracts::identity::RequestContext,
         raw: &SourceJson,
@@ -166,7 +162,7 @@ impl Capture {
                 fields.push((JsString16::from_utf8("model"), SourceJson::from_serializable(&model)?));
                 fields.push((JsString16::from_utf8("reasoning"), SourceJson::from_serializable(&reasoning)?));
                 let record = source::object_keys(fields)?;
-                self.runtime.ledger().record_request_log_source(&key.0, &record).await
+                self.runtime.record_request_log_source(&key.0, &record).await
             }.await;
             if let Err(error) = result {
                 worker::console_error!(
@@ -215,17 +211,14 @@ impl Capture {
         event.set_source_usage(extracted.as_ref());
         let _telemetry = self
             .runtime
-            .prompt()
-            .record_prompt_telemetry(&event, env!("UOS_RUST_BUILD_GIT_SHA"))
+            .record_prompt_telemetry(&event, self.build.git_sha())
             .await;
         let _analytics = self
             .runtime
-            .prompt()
-            .record_prompt_analytics(&event, env!("UOS_RUST_BUILD_GIT_SHA"))
+            .record_prompt_analytics(&event, self.build.git_sha())
             .await;
         if let Err(error) = self
             .runtime
-            .ledger()
             .record_terminal_usage_rollup(
                 gateway_observability_ledger::ledger::terminal_rollup::TerminalUsageRollup {
                     model: request.model.as_ref(),
@@ -279,7 +272,7 @@ impl Capture {
                     fields.push((JsString16::from_utf8("native_http_failure"), original.clone()));
                 }
                 let patch = source::object_keys(fields)?;
-                self.runtime.ledger().update_request_log_source(&key.0, request.context.started_at_ms, &self.request_id, &patch).await
+                self.runtime.update_request_log_source(&key.0, request.context.started_at_ms, &self.request_id, &patch).await
             }.await;
             if let Err(error) = result {
                 worker::console_error!(
@@ -324,7 +317,6 @@ impl Capture {
             _ => None,
         };
         self.runtime
-            .ledger()
             .record_admin_error(&gateway_observability_ledger::ledger::ErrorObservation {
                 request_id: self.request_id.clone(),
                 route: request.context.route.clone(),
@@ -338,8 +330,8 @@ impl Capture {
                 delivery_outcome: observation.delivery,
                 created_at_ms: at,
                 latency_ms: at.saturating_sub(request.context.started_at_ms).max(0),
-                git_sha: Some(env!("UOS_RUST_BUILD_GIT_SHA").into()),
-                deno_revision: Some(env!("UOS_RUST_BUILD_DEPLOYMENT_ID").into()),
+                git_sha: Some(self.build.git_sha().into()),
+                deno_revision: Some(self.build.deployment_id().into()),
             })
             .await
     }
@@ -347,7 +339,7 @@ impl Capture {
     pub fn correlate(&self, provider_request_id: Option<&str>) {
         *self.provider_request_id.borrow_mut() = provider_request_id.map(str::to_owned);
     }
-    pub(crate) fn bind_head(&self, head: Rc<HeadState>) {
+    pub fn bind_head(&self, head: Rc<HeadState>) {
         *self.head.borrow_mut() = Some(head);
     }
     fn expects_provisional_stream(&self) -> bool {
@@ -362,7 +354,7 @@ impl Capture {
             .as_ref()
             .is_some_and(|head| head.is_delivery_lost())
     }
-    pub(crate) fn provisional_wire(&self) {
+    pub fn provisional_wire(&self) {
         let mut wire = self.client.borrow_mut();
         if wire.status != 200 || !wire.stream {
             wire.status = 200;
@@ -375,7 +367,7 @@ impl Capture {
             wire.error_param = None;
         }
     }
-    pub(crate) fn late_http_wire(&self, original: SourceJson) {
+    pub fn late_http_wire(&self, original: SourceJson) {
         *self.original_http_failure.borrow_mut() = Some(original);
         // The inner selected HTTP body may finish after conversion. Only the
         // actual outer wire finisher may release this capture deferral.
@@ -387,10 +379,10 @@ impl Capture {
         }
         self.provisional_wire();
     }
-    pub(crate) fn observe_wire_bytes(&self, bytes: &[u8]) {
+    pub fn observe_wire_bytes(&self, bytes: &[u8]) {
         self.bytes(bytes);
     }
-    pub(crate) async fn finish_provisional(&self, observation: TransportObservation) {
+    pub async fn finish_provisional(&self, observation: TransportObservation) {
         if self.deferred_http.replace(false) {
             self.provisional_wire();
         }
@@ -422,7 +414,7 @@ impl Capture {
         }
     }
     /// Only the genuine K2 one-shot wire choice supplies local completion data.
-    pub(crate) fn configure_local(&self, status: u16, stream: bool, completed: bool) {
+    pub fn configure_local(&self, status: u16, stream: bool, completed: bool) {
         self.local_completed.set(completed);
         let mut client = self.client.borrow_mut();
         client.status = status;
@@ -430,10 +422,10 @@ impl Capture {
         client.provider = "gateway".into();
         client.parser = stream.then(|| SseParser::new(MAX_RESPONSES_EVENT_BYTES));
     }
-    pub(crate) async fn finish_local(&self, observation: TransportObservation) {
+    pub async fn finish_local(&self, observation: TransportObservation) {
         self.finish(observation, None, None).await;
     }
-    pub(crate) async fn finish_buffered_local(&self, response: &Response) {
+    pub async fn finish_buffered_local(&self, response: &Response) {
         if let ResponseBody::Body(bytes) = response.body() {
             self.bytes(bytes);
         }
@@ -668,15 +660,18 @@ impl Capture {
                 "replay_trace_unavailable",
             ));
         }
-        match observability_host::capture_input(&self.runtime, &self.request, self.trace.seal())? {
+        match self
+            .runtime
+            .capture_input(&self.request, self.trace.seal())?
+        {
             CaptureInput::Ready(input) => {
-                let _disposition =
-                    observability_host::persist_failure(&self.runtime, input, internal, client)
-                        .await?;
+                let _disposition = self
+                    .runtime
+                    .persist_failure(input, internal, client)
+                    .await?;
             }
             CaptureInput::Omitted(reason) => {
                 self.runtime
-                    .captures()
                     .record_capture_omission(&self.request_id, reason)
                     .await?;
             }
