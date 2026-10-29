@@ -80,6 +80,6 @@ impl Serialize for EffortWireMap {
 }
 impl<'de> Deserialize<'de> for EffortWireMap {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        SourceJson::deserialize(deserializer).map(Self::from)
+        <SourceJson as Deserialize<'de>>::deserialize(deserializer).map(Self::from)
     }
 }

@@ -60,6 +60,6 @@ impl Serialize for AdvertisedLevel {
 }
 impl<'de> Deserialize<'de> for AdvertisedLevel {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        SourceJson::deserialize(deserializer).map(Self::from)
+        <SourceJson as Deserialize<'de>>::deserialize(deserializer).map(Self::from)
     }
 }
