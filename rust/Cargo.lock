@@ -3244,7 +3244,7 @@ dependencies = [
  "gateway-extras-contract",
  "gateway-provider-protocol",
  "gateway-provider-services",
- "gateway-providers",
+ "gateway-provider-source",
  "gateway-source",
  "serde",
  "serde_json",

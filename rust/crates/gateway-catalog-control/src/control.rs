@@ -1,11 +1,11 @@
 //! Fixed paid control publications, derived in the same store as admission/accounting.
 //! These records are provenance and a coarse index; only authority issues a request receipt.
 use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::PaidRoutingPolicy;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
     PaidProviderObservation, PaidRoutingProjection, PaidSourceCheck,
 };
-use gateway_authority_paid_records::PaidRoutingPolicy;
 use gateway_catalog_input::{
     catalog::{CatalogInput, ProviderCatalog},
     runtime_config::normalize_runtime_config,
@@ -610,7 +610,7 @@ pub async fn publish_paid_routing<S: QueryStore, H: CatalogHost>(
     if source_valid_until.is_some_and(|until| until <= now) {
         return Err(stale());
     }
-    let policy = coarse_policy(&input);
+    let policy = coarse_policy(&input)?;
     let projection = PaidRoutingProjection {
         policy,
         provenance: PaidProjectionProvenance {
@@ -789,7 +789,7 @@ impl CapturedSource {
         })
     }
 }
-fn coarse_policy(input: &CatalogInput) -> PaidRoutingPolicy {
+fn coarse_policy(input: &CatalogInput) -> Result<PaidRoutingPolicy, GatewayError> {
     let mut codex_models = input
         .snapshot
         .as_ref()
@@ -864,7 +864,7 @@ fn coarse_policy(input: &CatalogInput) -> PaidRoutingPolicy {
                     allowed_paid_providers: pinned,
                     synthetic_hop: hop,
                     ubiquity_enabled: input.enabled("ubiquity"),
-                });
+                })?;
                 for provider in plan.providers {
                     if !allowed.contains(&provider) {
                         allowed.push(provider);
@@ -880,12 +880,12 @@ fn coarse_policy(input: &CatalogInput) -> PaidRoutingPolicy {
             result.insert(model, providers);
         }
     }
-    PaidRoutingPolicy {
+    Ok(PaidRoutingPolicy {
         v: 2,
         codex_enabled: input.enabled("codex"),
         codex_models,
         models: result,
-    }
+    })
 }
 
 fn check(key: RecordKey, record: Option<&StoredRecord>) -> RevisionCheck {

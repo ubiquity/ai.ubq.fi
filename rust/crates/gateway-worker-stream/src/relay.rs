@@ -270,7 +270,7 @@ impl<C: StreamControl> Core<C> {
         }
     }
 
-    fn failure_event(&self, sequence: u64) -> ProviderEvent {
+    fn failure_event(&self, sequence: u64) -> Result<ProviderEvent, GatewayError> {
         let code = match self.plan.provider {
             UpstreamProvider::Deepseek => "deepseek_upstream_stream_error",
             UpstreamProvider::Lithos => "lithos_upstream_stream_error",
@@ -340,7 +340,7 @@ impl<C: StreamControl, O: TerminalObserver> Relay<C, O> {
         drop(self.core.source.take());
         Some(
             observed
-                .map(|()| event.encode_sse().into_bytes())
+                .and_then(|()| event.map(|event| event.encode_sse().into_bytes()))
                 .map_err(|error| worker::Error::RustError(error.envelope.error.message)),
         )
     }

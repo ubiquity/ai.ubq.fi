@@ -60,11 +60,7 @@ fn member(value: &SourceJson, key: &str) -> SourceJson {
     source::member(value, key).unwrap_or_else(|| json_source(&()))
 }
 fn runtime_error(error: SourceRequestError) -> SourceRequestError {
-    let message = source::member(error.body(), "error")
-        .and_then(|v| source::member(&v, "message"))
-        .as_ref()
-        .and_then(source::string)
-        .expect("source error message");
+    let message = error.body().message().clone();
     let includes = |text: &str| {
         let pattern = text.encode_utf16().collect::<Vec<_>>();
         message
@@ -504,15 +500,9 @@ mod source_error_tests {
             None,
         ));
         assert_eq!(error.status, 409);
-        assert_eq!(
-            source::string(&member(&member(error.body(), "error"), "message")),
-            Some(message)
-        );
-        assert_eq!(
-            member(&member(error.body(), "error"), "code"),
-            json_source("runtime_config_invalid")
-        );
-        assert!(error.body().deserialize::<Value>().is_err());
+        assert_eq!(error.body().message(), &message);
+        assert_eq!(error.body().code(), Some("runtime_config_invalid"));
+        assert!(serde_json::from_str::<Value>(error.body().as_str()).is_err());
         let large = runtime_error(lift(GatewayError::new(
             503,
             "runtime config is too large",

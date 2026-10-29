@@ -24,7 +24,6 @@ use gateway_routing_journal::record::{CredentialFence, Journal};
 use gateway_routing_plan::input::RoutingInput;
 use gateway_routing_plan::input::RoutingResult;
 use gateway_routing_plan::policy;
-use gateway_routing_plan::policy;
 use gateway_routing_plan::policy::RoutePlan;
 use gateway_source::error::GatewayError;
 use std::{cell::RefCell, collections::BTreeSet};

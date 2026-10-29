@@ -8,7 +8,7 @@ use gateway_extras_contract::types::{
 };
 use gateway_provider_protocol::types::PrepareOptions;
 use gateway_provider_services::extras::EmbeddingsProfile;
-use gateway_providers::extras;
+use gateway_provider_source::extras;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 pub fn configured_error() -> GatewayError {
