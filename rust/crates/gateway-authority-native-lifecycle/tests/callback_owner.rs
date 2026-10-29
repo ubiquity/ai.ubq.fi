@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 mod support;
 use gateway_auth_contracts::types::AuthConfig;
 use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
@@ -36,7 +37,7 @@ fn actual_source_action_selects_only_registered_owner_and_owned_cleanup_survives
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owners[0], &cancel),
@@ -47,7 +48,7 @@ fn actual_source_action_selects_only_registered_owner_and_owned_cleanup_survives
         let lifecycle = SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativeLifecycleContext::configured(&id, &owners[0], &cancel),
@@ -61,7 +62,7 @@ fn actual_source_action_selects_only_registered_owner_and_owned_cleanup_survives
                 &body,
             )
             .await?;
-        let selector = CallbackOwnerSelector::new(&store, Some(&host), &owners);
+        let selector = CallbackOwnerSelector::new(&store, Some(&host.now), &owners);
         let request = Request::Recheck {
             v: 1,
             operation_id: "operation".into(),
@@ -73,7 +74,10 @@ fn actual_source_action_selects_only_registered_owner_and_owned_cleanup_survives
         assert!(selector.legacy_action(action.action_ref()).await.is_err());
         store.0.borrow_mut().remove(&codex_source_pool_key().0);
         store.0.borrow_mut().remove(&keys::pool().0);
-        host.now.set(AuthorityClock::now_ms(&host)? + 60_000);
+        host.now.0.store(
+            AuthorityClock::now_ms(&host.now)? + 60_000,
+            Ordering::SeqCst,
+        );
         assert!(selector.callback(&request).await.is_err());
         let cleanup = Request::Unknown {
             v: 1,
@@ -94,7 +98,7 @@ fn actual_source_action_selects_only_registered_owner_and_owned_cleanup_survives
             "/tmp/foreign-source".into(),
         )?];
         assert!(
-            CallbackOwnerSelector::new(&store, Some(&host), &foreign)
+            CallbackOwnerSelector::new(&store, Some(&host.now), &foreign)
                 .callback(&cleanup)
                 .await
                 .is_err()

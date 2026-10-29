@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 mod support;
 use gateway_auth_contracts::types::AuthConfig;
 use gateway_auth_native_contracts::transport::NativeCapability;
@@ -67,7 +68,7 @@ fn authenticated_unknown_refuses_wrong_peer_body_operation_claim_then_settles_af
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -78,7 +79,7 @@ fn authenticated_unknown_refuses_wrong_peer_body_operation_claim_then_settles_af
         let service = gateway_authority_native_lifecycle::SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             gateway_authority_native_lifecycle::SourceNativeLifecycleContext::configured(
@@ -119,19 +120,19 @@ fn authenticated_unknown_refuses_wrong_peer_body_operation_claim_then_settles_af
         let before: rows::OperationRow = serde_json::from_value(row.json_value()?.clone())?;
         assert_eq!(before.phase, rows::Phase::Started);
         store.0.borrow_mut().remove(&session_key(&token).0);
-        host.now.set(NOW + 50_000);
+        host.now.0.store(NOW + 50_000, Ordering::SeqCst);
         let cancelled = Cancel(true);
         let cleanup = gateway_authority_native_lifecycle::SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             gateway_authority_native_lifecycle::SourceNativeLifecycleContext::configured(
                 &id, &owner, &cancelled,
             ),
         );
-        let proof = signed_unknown(&id, &body, 25, host.now.get()).await?;
+        let proof = signed_unknown(&id, &body, 25, host.now.0.load(Ordering::SeqCst)).await?;
         let calls = host.calls.get();
         cleanup.record_unknown(&proof, &body).await?;
         cleanup.record_unknown(&proof, &body).await?;
@@ -164,7 +165,7 @@ fn authenticated_unknown_preserves_both_recorded_terminal_and_publication_withou
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -175,7 +176,7 @@ fn authenticated_unknown_preserves_both_recorded_terminal_and_publication_withou
         let service = gateway_authority_native_lifecycle::SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             gateway_authority_native_lifecycle::SourceNativeLifecycleContext::configured(

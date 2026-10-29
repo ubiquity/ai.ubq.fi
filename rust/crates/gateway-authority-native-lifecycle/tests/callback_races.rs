@@ -1,4 +1,5 @@
 use gateway_core::state::AuthorityStore;
+use std::sync::atomic::Ordering;
 mod callback_actor_support;
 mod callback_support;
 mod support;
@@ -37,7 +38,7 @@ fn callback_each_currentness_phase_refuses_logout_config_source_and_expiry_chang
                 let prep = SourceNativeRenewalService::new(
                     &store,
                     &tokens,
-                    Some(&host),
+                    Some(&host.now),
                     &host,
                     &config,
                     SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -48,7 +49,7 @@ fn callback_each_currentness_phase_refuses_logout_config_source_and_expiry_chang
                 let service = SourceNativeLifecycleService::new(
                     &store,
                     &tokens,
-                    Some(&host),
+                    Some(&host.now),
                     &host,
                     &config,
                     SourceNativeLifecycleContext::configured(&id, &owner, &cancel),
@@ -107,7 +108,7 @@ fn callback_each_currentness_phase_refuses_logout_config_source_and_expiry_chang
                     "source" => {
                         store.0.borrow_mut().get_mut(&gateway_auth_credentials::provider_credentials::codex_source_pool_key().0).ok_or("source")?.revision="source-during-actual-c".into();
                     }
-                    "expiry" => host.now.set(NOW + 60_000),
+                    "expiry" => host.now.0.store(NOW + 60_000, Ordering::SeqCst),
                     _ => unreachable!(),
                 }
                 host.hold.set(false);

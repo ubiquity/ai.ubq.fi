@@ -123,7 +123,7 @@ fn actual_source_managed_publication_atomically_advances_generation_and_replays_
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -134,7 +134,7 @@ fn actual_source_managed_publication_atomically_advances_generation_and_replays_
         let lifecycle = gateway_authority_native_lifecycle::SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             gateway_authority_native_lifecycle::SourceNativeLifecycleContext::configured(
@@ -150,7 +150,7 @@ fn actual_source_managed_publication_atomically_advances_generation_and_replays_
         let service = gateway_authority_native_managed::SourceNativeManagedService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             gateway_authority_native_managed::SourceNativeManagedContext::configured(
@@ -272,7 +272,7 @@ fn logout_at_managed_publication_final_cas_writes_none_of_the_original_atomic_gr
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -283,7 +283,7 @@ fn logout_at_managed_publication_final_cas_writes_none_of_the_original_atomic_gr
         let lifecycle = gateway_authority_native_lifecycle::SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             gateway_authority_native_lifecycle::SourceNativeLifecycleContext::configured(
@@ -313,7 +313,7 @@ fn logout_at_managed_publication_final_cas_writes_none_of_the_original_atomic_gr
         let service = gateway_authority_native_managed::SourceNativeManagedService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             gateway_authority_native_managed::SourceNativeManagedContext::configured(

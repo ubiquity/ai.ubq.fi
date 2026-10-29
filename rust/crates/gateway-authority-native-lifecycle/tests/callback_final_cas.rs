@@ -39,7 +39,7 @@ fn callback_original_final_cas_refuses_stale_actor_source_mapping_and_version() 
                 let prep = SourceNativeRenewalService::new(
                     &store,
                     &tokens,
-                    Some(&host),
+                    Some(&host.now),
                     &host,
                     &config,
                     SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -50,7 +50,7 @@ fn callback_original_final_cas_refuses_stale_actor_source_mapping_and_version() 
                 let service = SourceNativeLifecycleService::new(
                     &store,
                     &tokens,
-                    Some(&host),
+                    Some(&host.now),
                     &host,
                     &config,
                     SourceNativeLifecycleContext::configured(&id, &owner, &cancel),

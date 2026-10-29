@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 mod support;
 use gateway_auth_contracts::types::AuthConfig;
 use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
@@ -69,7 +70,7 @@ fn closed_source_callback_emits_response_two_and_owned_unknown_needs_no_new_pass
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -80,7 +81,7 @@ fn closed_source_callback_emits_response_two_and_owned_unknown_needs_no_new_pass
         let service = SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativeLifecycleContext::configured(&id, &owner, &cancel),
@@ -161,13 +162,13 @@ fn closed_source_callback_emits_response_two_and_owned_unknown_needs_no_new_pass
             .borrow_mut()
             .remove(&gateway_auth_passport_sessions::sessions::session_key(&token).0);
         host.status.set(401);
-        host.now.set(NOW + 60_000);
+        host.now.0.store(NOW + 60_000, Ordering::SeqCst);
         let calls = host.calls.get();
         let cancelled = Cancel(true);
         let cleanup = SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativeLifecycleContext::configured(&id, &owner, &cancelled),
@@ -177,7 +178,8 @@ fn closed_source_callback_emits_response_two_and_owned_unknown_needs_no_new_pass
             operation_id: "operation".into(),
             claim_ref,
         })?;
-        let peer = authority_peer(&id, &replay, &raw, host.now.get(), 16).await?;
+        let peer =
+            authority_peer(&id, &replay, &raw, host.now.0.load(Ordering::SeqCst), 16).await?;
         assert!(matches!(
             execute_source(&cleanup, &peer, &id, &replay, &host, &raw).await?,
             Response::Unknown { v: 2 }

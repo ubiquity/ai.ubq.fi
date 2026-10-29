@@ -7,6 +7,7 @@ use gateway_authority_paid_records::{PaidReservation, PaidUsage};
 use gateway_authority_routing_selection::types::CohortProof;
 use gateway_contracts::{claude::ClaudeErrorEvidence, model::ModelId};
 use gateway_core::state::AuthorityStore;
+use gateway_model_selection::aliases::SourceStringCollator;
 use gateway_routing_journal::record::CredentialFence;
 use gateway_routing_runtime::types::{
     ClaudeOutcome, ClaudeSelection, CodexRecovery, CredentialRequest, PublishedCredential,
@@ -64,7 +65,7 @@ impl NativeRefreshHost {
 }
 impl RoutingHost for NativeRefreshHost {
     type ClaudeHead = u64;
-    fn source_string_collator(&self) -> Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> Arc<dyn SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn cancelled(&self) -> bool {

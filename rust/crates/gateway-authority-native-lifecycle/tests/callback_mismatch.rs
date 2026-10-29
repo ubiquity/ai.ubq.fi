@@ -32,7 +32,7 @@ fn callback_action_operation_claim_and_permit_mismatches_never_start() -> TestRe
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -43,7 +43,7 @@ fn callback_action_operation_claim_and_permit_mismatches_never_start() -> TestRe
         let service = SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativeLifecycleContext::configured(&id, &owner, &cancel),
@@ -125,7 +125,7 @@ fn callback_duplicate_start_and_old_new_generation_replay_start_once() -> TestRe
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -136,7 +136,7 @@ fn callback_duplicate_start_and_old_new_generation_replay_start_once() -> TestRe
         let service = SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativeLifecycleContext::configured(&id, &owner, &cancel),

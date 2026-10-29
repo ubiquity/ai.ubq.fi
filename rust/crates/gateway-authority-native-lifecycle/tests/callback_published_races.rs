@@ -1,4 +1,5 @@
 use gateway_core::state::AuthorityStore;
+use std::sync::atomic::Ordering;
 mod callback_actor_support;
 mod callback_managed_support;
 mod callback_race_support;
@@ -46,7 +47,7 @@ fn callback_published_currentness_and_final_cas_refuse_without_erasing_real_term
             let prep = SourceNativeRenewalService::new(
                 &store,
                 &tokens,
-                Some(&host),
+                Some(&host.now),
                 &host,
                 &config,
                 SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -57,7 +58,7 @@ fn callback_published_currentness_and_final_cas_refuse_without_erasing_real_term
             let service = SourceNativeLifecycleService::new(
                 &store,
                 &tokens,
-                Some(&host),
+                Some(&host.now),
                 &host,
                 &config,
                 SourceNativeLifecycleContext::configured(&id, &owner, &cancel),
@@ -90,7 +91,7 @@ fn callback_published_currentness_and_final_cas_refuse_without_erasing_real_term
             let publisher = gateway_authority_native_managed::SourceNativeManagedService::new(
                 &store,
                 &tokens,
-                Some(&host),
+                Some(&host.now),
                 &host,
                 &config,
                 gateway_authority_native_managed::SourceNativeManagedContext::configured(
@@ -142,7 +143,7 @@ fn callback_published_currentness_and_final_cas_refuse_without_erasing_real_term
                     "source-await" => {
                         store.inner.0.borrow_mut().get_mut(&gateway_auth_credentials::provider_credentials::codex_source_pool_key().0).ok_or("source")?.revision="published-source-race".into();
                     }
-                    "expiry-await" => host.now.set(NOW + 60_000),
+                    "expiry-await" => host.now.0.store(NOW + 60_000, Ordering::SeqCst),
                     _ => unreachable!(),
                 }
                 host.hold.set(false);

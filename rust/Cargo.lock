@@ -1917,6 +1917,7 @@ dependencies = [
  "gateway-core",
  "gateway-kv-codec",
  "gateway-local-journal",
+ "gateway-model-selection",
  "gateway-native-authority-request",
  "gateway-native-authority-wire",
  "gateway-provider-policy",

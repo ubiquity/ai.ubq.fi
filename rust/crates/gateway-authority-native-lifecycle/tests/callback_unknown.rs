@@ -1,4 +1,5 @@
 use gateway_core::state::AuthorityStore;
+use std::sync::atomic::Ordering;
 mod callback_actor_support;
 mod callback_managed_support;
 mod callback_support;
@@ -35,7 +36,7 @@ fn callback_unknown_after_cancel_deadline_logout_and_pool_loss_needs_no_new_c() 
             let prep = SourceNativeRenewalService::new(
                 &store,
                 &tokens,
-                Some(&host),
+                Some(&host.now),
                 &host,
                 &config,
                 SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -46,7 +47,7 @@ fn callback_unknown_after_cancel_deadline_logout_and_pool_loss_needs_no_new_c() 
             let service = SourceNativeLifecycleService::new(
                 &store,
                 &tokens,
-                Some(&host),
+                Some(&host.now),
                 &host,
                 &config,
                 SourceNativeLifecycleContext::configured(&id, &owner, &cancel),
@@ -79,13 +80,13 @@ fn callback_unknown_after_cancel_deadline_logout_and_pool_loss_needs_no_new_c() 
                     .remove(&gateway_authority_keys::pool().0);
             }
             if loss == "deadline" || loss == "all" {
-                host.now.set(NOW + 60_000)
+                host.now.0.store(NOW + 60_000, Ordering::SeqCst)
             }
             let cancel = Cancel(loss == "cancel" || loss == "all");
             let cleanup = SourceNativeLifecycleService::new(
                 &store,
                 &tokens,
-                Some(&host),
+                Some(&host.now),
                 &host,
                 &config,
                 SourceNativeLifecycleContext::configured(&id, &owner, &cancel),
@@ -137,7 +138,7 @@ fn callback_unknown_preserves_genuine_terminal_publication() -> TestResult {
         let prep = SourceNativeRenewalService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativePreparationContext::configured(&id, &owner, &cancel),
@@ -148,7 +149,7 @@ fn callback_unknown_preserves_genuine_terminal_publication() -> TestResult {
         let service = SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativeLifecycleContext::configured(&id, &owner, &cancel),
@@ -174,7 +175,7 @@ fn callback_unknown_preserves_genuine_terminal_publication() -> TestResult {
         let publisher = gateway_authority_native_managed::SourceNativeManagedService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             gateway_authority_native_managed::SourceNativeManagedContext::configured(
@@ -224,12 +225,12 @@ fn callback_unknown_preserves_genuine_terminal_publication() -> TestResult {
             .0
             .borrow_mut()
             .remove(&gateway_authority_keys::pool().0);
-        host.now.set(NOW + 60_000);
+        host.now.0.store(NOW + 60_000, Ordering::SeqCst);
         let stopped = Cancel(true);
         let cleanup = SourceNativeLifecycleService::new(
             &store,
             &tokens,
-            Some(&host),
+            Some(&host.now),
             &host,
             &config,
             SourceNativeLifecycleContext::configured(&id, &owner, &stopped),

@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 mod callback_support;
 mod inference_fixture;
 mod support;
@@ -55,7 +56,7 @@ async fn inference_input(
     AuthConfig,
 )> {
     seed_pool(store);
-    host.now.set(RUNTIME_NOW);
+    host.now.0.store(RUNTIME_NOW, Ordering::SeqCst);
     let native = identity()?;
     let raw = store
         .read(&codex_source_pool_key())
