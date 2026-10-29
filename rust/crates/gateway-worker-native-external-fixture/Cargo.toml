@@ -1,0 +1,65 @@
+[package]
+name = "gateway-worker-native-external-fixture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+gateway-native-authority-request = { path = "../gateway-native-authority-request" }
+gateway-auth = { path = "../gateway-auth" }
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-native-protocol = { path = "../gateway-auth-native-protocol" }
+gateway-auth-native-wire = { path = "../gateway-auth-native-wire" }
+gateway-auth-passport-sessions = { path = "../gateway-auth-passport-sessions" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-authority = { path = "../gateway-authority" }
+gateway-authority-actor-currentness = { path = "../gateway-authority-actor-currentness" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-native-preparation = { path = "../gateway-authority-native-preparation" }
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
+gateway-cache-experiment-campaign = { path = "../gateway-cache-experiment-campaign" }
+gateway-cache-experiment-dispatch = { path = "../gateway-cache-experiment-dispatch" }
+gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
+gateway-cache-experiment-runner = { path = "../gateway-cache-experiment-runner" }
+gateway-catalog-input = { path = "../gateway-catalog-input" }
+gateway-contracts = { path = "../gateway-contracts" }
+gateway-core = { path = "../gateway-core" }
+gateway-kv-codec = { path = "../gateway-kv-codec" }
+gateway-model-selection = { path = "../gateway-model-selection" }
+gateway-model-snapshot = { path = "../gateway-model-snapshot" }
+gateway-native-external-publication-wire = { path = "../gateway-native-external-publication-wire" }
+gateway-provider-policy = { path = "../gateway-provider-policy" }
+gateway-provider-protocol = { path = "../gateway-provider-protocol" }
+gateway-publication = { path = "../gateway-publication" }
+gateway-publication-policy = { path = "../gateway-publication-policy" }
+gateway-publication-transport = { path = "../gateway-publication-transport" }
+gateway-request-normalization = { path = "../gateway-request-normalization" }
+gateway-routing-journal = { path = "../gateway-routing-journal" }
+gateway-routing-runtime = { path = "../gateway-routing-runtime" }
+gateway-schema = { path = "../gateway-schema" }
+gateway-schema-values = { path = "../gateway-schema-values" }
+gateway-source = { path = "../gateway-source" }
+gateway-wait-observation = { path = "../gateway-wait-observation" }
+gateway-worker = { path = "../gateway-worker", default-features = false }
+gateway-worker-authority-binding = { path = "../gateway-worker-authority-binding" }
+gateway-worker-fixture-passport = { path = "../gateway-worker-fixture-passport" }
+gateway-worker-fixture-setup = { path = "../gateway-worker-fixture-setup" }
+gateway-worker-platform = { path = "../gateway-worker-platform" }
+gateway-worker-storage = { path = "../gateway-worker-storage" }
+gateway-worker-web = { path = "../gateway-worker-web" }
+serde.workspace = true
+serde_json.workspace = true
+worker.workspace = true

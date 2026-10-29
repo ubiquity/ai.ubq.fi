@@ -32,3 +32,19 @@ impl RegisteredRenewalOwner {
         &self.home
     }
 }
+
+/// Validate the complete fixed configured registry; selection is ordinary DATA only.
+pub fn validate_registered(owners: &[RegisteredRenewalOwner]) -> Result<(), GatewayError> {
+    if !(1..=2).contains(&owners.len()) {
+        return Err(fail());
+    }
+    for (index, owner) in owners.iter().enumerate() {
+        if owners[..index].iter().any(|prior| {
+            prior.native_owner_id() == owner.native_owner_id()
+                || prior.registered_home() == owner.registered_home()
+        }) {
+            return Err(fail());
+        }
+    }
+    Ok(())
+}

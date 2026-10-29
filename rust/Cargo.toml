@@ -8,6 +8,8 @@ members = [
   "crates/gateway-authority-native-import",
   "crates/gateway-authority-native-import-facts",
   "crates/gateway-authority-native-inference-facts",
+  "crates/gateway-native-external-publication-wire",
+  "crates/gateway-authority-native-external",
   "crates/gateway-authority-native-managed",
   "crates/gateway-native-authority-request",
   "crates/gateway-authority-native-lifecycle",
@@ -239,6 +241,8 @@ members = [
   "crates/gateway-worker-storage",
   "crates/gateway-worker-stream",
   "crates/gateway-capacity-recovery",
+  "crates/gateway-worker-native-fixture",
+  "crates/gateway-worker-native-external-fixture",
   "crates/gateway-worker-fixture",
   "crates/gateway-worker-fixture-setup",
   "crates/gateway-observability-test-support",
@@ -261,6 +265,10 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-worker-native-fixture = { path = "crates/gateway-worker-native-fixture" }
+gateway-worker-native-external-fixture = { path = "crates/gateway-worker-native-external-fixture" }
+gateway-native-external-publication-wire = { path = "crates/gateway-native-external-publication-wire" }
+gateway-authority-native-external = { path = "crates/gateway-authority-native-external" }
 gateway-native-daemon-config = { path = "crates/gateway-native-daemon-config" }
 gateway-native-http-admission = { path = "crates/gateway-native-http-admission" }
 gateway-authority-actor-records = { path = "crates/gateway-authority-actor-records" }

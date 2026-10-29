@@ -52,18 +52,17 @@ impl RegisteredRenewalOwners {
     }
 
     pub fn configured(owners: Vec<RegisteredRenewalOwner>) -> Result<Self, GatewayError> {
-        if !(1..=2).contains(&owners.len()) {
-            return Err(fail());
-        }
-        for (index, owner) in owners.iter().enumerate() {
-            if owners[..index].iter().any(|prior| {
-                prior.native_owner_id() == owner.native_owner_id()
-                    || prior.registered_home() == owner.registered_home()
-            }) {
-                return Err(fail());
-            }
-        }
+        gateway_authority_native_records::owner::validate_registered(&owners)?;
         Ok(Self { owners })
+    }
+    pub fn for_source_publication(
+        &self,
+        id: &str,
+    ) -> Result<&RegisteredRenewalOwner, GatewayError> {
+        self.owners
+            .iter()
+            .find(|owner| owner.native_owner_id() == id)
+            .ok_or_else(fail)
     }
     async fn account<'a, S: AuthorityStore, I: TokenSource>(
         &'a self,

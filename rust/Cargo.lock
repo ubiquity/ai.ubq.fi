@@ -1800,6 +1800,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-native-external"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-wire",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-primitives",
+ "gateway-authority-actor-currentness",
+ "gateway-authority-actor-records",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-native-context-facts",
+ "gateway-authority-native-records",
+ "gateway-authority-routing-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-native-authority-wire",
+ "gateway-native-external-publication-wire",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority-native-import"
 version = "0.1.0"
 dependencies = [
@@ -1899,6 +1927,7 @@ dependencies = [
  "gateway-authority-native-callback",
  "gateway-authority-native-callback-owner",
  "gateway-authority-native-context-facts",
+ "gateway-authority-native-external",
  "gateway-authority-native-import",
  "gateway-authority-native-managed",
  "gateway-authority-native-preparation",
@@ -1920,7 +1949,10 @@ dependencies = [
  "gateway-model-selection",
  "gateway-native-authority-request",
  "gateway-native-authority-wire",
+ "gateway-native-external-publication-wire",
  "gateway-provider-policy",
+ "gateway-publication",
+ "gateway-publication-policy",
  "gateway-routing-journal",
  "gateway-routing-plan",
  "gateway-routing-runtime",
@@ -4054,6 +4086,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-native-external-publication-wire"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-wire",
+ "gateway-auth-primitives",
+ "gateway-native-authority-wire",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-native-http-admission"
 version = "0.1.0"
 dependencies = [
@@ -5105,6 +5151,7 @@ dependencies = [
  "gateway-authority",
  "gateway-authority-contracts",
  "gateway-core",
+ "gateway-native-external-publication-wire",
  "gateway-publication",
  "gateway-publication-policy",
  "gateway-source",
@@ -5444,6 +5491,7 @@ dependencies = [
  "gateway-authority-keys",
  "gateway-authority-native-callback",
  "gateway-authority-native-callback-owner",
+ "gateway-authority-native-external",
  "gateway-authority-native-records",
  "gateway-authority-paid-backfill",
  "gateway-authority-paid-control-records",
@@ -5498,6 +5546,7 @@ dependencies = [
  "gateway-model-selection",
  "gateway-native-authority-request",
  "gateway-native-authority-wire",
+ "gateway-native-external-publication-wire",
  "gateway-observability",
  "gateway-observability-contracts",
  "gateway-observability-ledger",
@@ -5674,6 +5723,8 @@ dependencies = [
  "gateway-worker-authority-binding",
  "gateway-worker-fixture-passport",
  "gateway-worker-fixture-setup",
+ "gateway-worker-native-external-fixture",
+ "gateway-worker-native-fixture",
  "gateway-worker-platform",
  "gateway-worker-storage",
  "gateway-worker-web",
@@ -5738,11 +5789,108 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-worker-native-external-fixture"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
+ "gateway-auth-passport-sessions",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-actor-currentness",
+ "gateway-authority-contracts",
+ "gateway-authority-native-preparation",
+ "gateway-authority-native-records",
+ "gateway-authority-paid-records",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
+ "gateway-cache-experiment-campaign",
+ "gateway-cache-experiment-dispatch",
+ "gateway-cache-experiment-records",
+ "gateway-cache-experiment-runner",
+ "gateway-catalog-input",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-model-selection",
+ "gateway-model-snapshot",
+ "gateway-native-authority-request",
+ "gateway-native-external-publication-wire",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
+ "gateway-publication",
+ "gateway-publication-policy",
+ "gateway-publication-transport",
+ "gateway-request-normalization",
+ "gateway-routing-journal",
+ "gateway-routing-runtime",
+ "gateway-schema",
+ "gateway-schema-values",
+ "gateway-source",
+ "gateway-wait-observation",
+ "gateway-worker",
+ "gateway-worker-authority-binding",
+ "gateway-worker-fixture-passport",
+ "gateway-worker-fixture-setup",
+ "gateway-worker-platform",
+ "gateway-worker-storage",
+ "gateway-worker-web",
+ "serde",
+ "serde_json",
+ "worker",
+]
+
+[[package]]
+name = "gateway-worker-native-fixture"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
+ "gateway-auth-passkeys",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-passport-sessions",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-actor-currentness",
+ "gateway-authority-contracts",
+ "gateway-authority-native-records",
+ "gateway-authority-routing-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-native-external-publication-wire",
+ "gateway-publication-policy",
+ "gateway-publication-transport",
+ "gateway-source",
+ "gateway-worker",
+ "gateway-worker-authority-binding",
+ "gateway-worker-fixture-passport",
+ "gateway-worker-fixture-setup",
+ "gateway-worker-platform",
+ "gateway-worker-storage",
+ "gateway-worker-web",
+ "serde_json",
+ "worker",
+]
+
+[[package]]
 name = "gateway-worker-platform"
 version = "0.1.0"
 dependencies = [
  "futures-util",
  "gateway-admission",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-wire",
+ "gateway-authority-contracts",
  "gateway-model-selection",
  "gateway-schema",
  "gateway-source",

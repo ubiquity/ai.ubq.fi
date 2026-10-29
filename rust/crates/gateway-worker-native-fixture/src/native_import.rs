@@ -309,7 +309,7 @@ pub(super) async fn initialize(
         &serde_json::to_vec(&meta).map_err(|_| invalid())?,
     )))
 }
-pub(super) async fn fetch(
+pub async fn fetch(
     request: Request,
     env: Env,
     context: Context,

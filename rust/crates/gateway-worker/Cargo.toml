@@ -18,6 +18,8 @@ workspace = true
 
 [dependencies]
 gateway-routing-plan.workspace = true
+gateway-authority-native-external.workspace = true
+gateway-native-external-publication-wire.workspace = true
 gateway-catalog-input.workspace = true
 gateway-observability-replay-read = { workspace = true }
 gateway-authority-native-callback-owner = { path = "../gateway-authority-native-callback-owner" }
