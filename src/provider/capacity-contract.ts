@@ -121,6 +121,8 @@ export type ProviderCapacityClaudeSource = Readonly<{
   usage_snapshot?: ClaudeCodeUsageSnapshot;
   usage_stale?: boolean;
   source: "claude_code";
+  /** Absent on legacy browser snapshots; new header-only projections always set it. */
+  quota_source?: "response_headers";
   label: "Claude subscription";
   account_id?: string | null;
   account_cohort_id?: string | null;
@@ -179,6 +181,7 @@ export type ProviderCapacityView = Readonly<
 
 /** Additive Claude evidence; never widen the persisted Codex/metered tuple. */
 export type ClaudeCapacityHistoryPoint = Readonly<{
+  source?: "response_headers";
   usage_snapshot?: ClaudeCodeUsageSnapshot;
   v: 1;
   point_id: string;

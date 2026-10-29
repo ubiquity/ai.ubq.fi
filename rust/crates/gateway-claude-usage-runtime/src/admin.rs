@@ -14,6 +14,41 @@ pub struct Target {
     pub account_id: JsString16,
     pub cohort_id: Option<JsString16>,
 }
+/// Passive compatibility DATA; this value carries no administrative authority.
+pub struct PassiveRead {
+    pub observed_at_ms: Option<f64>,
+}
+pub async fn passive_read<S: AuthorityStore, H: AuthHost>(
+    store: &S,
+    host: &H,
+    seed: &Bootstrap,
+    body: &SourceJson,
+) -> Result<PassiveRead, GatewayError> {
+    let target = parse(body)?;
+    let account = resolve(store, host, seed, &target).await?;
+    let state = collect::load(store, &account, host.now_ms()).await?;
+    Ok(PassiveRead {
+        observed_at_ms: state
+            .and_then(|q| q.response_headers)
+            .map(|h| h.observed_at_ms),
+    })
+}
+pub fn passive_response(read: PassiveRead, data: SourceJson) -> Result<AuthResponse, GatewayError> {
+    AuthResponse::source_json(
+        200,
+        source::object(vec![
+            ("data", data),
+            ("refreshed", raw(&false)?),
+            ("reason", raw(&"response_headers")?),
+            ("observed_at_ms", raw(&read.observed_at_ms)?),
+            ("usage", raw(&Option::<u8>::None)?),
+            (
+                "message",
+                raw(&"Quota updates from response headers on ordinary Claude requests.")?,
+            ),
+        ])?,
+    )
+}
 /// Existing authenticated composition owns access; this owns the complete fenced action.
 pub async fn refresh<S: AuthorityStore, H: UsageHost>(
     store: &S,

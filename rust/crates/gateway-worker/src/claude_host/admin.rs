@@ -53,9 +53,9 @@ pub async fn admin<H: ObservabilityHost>(
                 platform: platform.clone(),
             };
             let result =
-                gateway_claude_usage_runtime::admin::refresh(store, &host, &seed, &document)
+                gateway_claude_usage_runtime::admin::passive_read(store, &host, &seed, &document)
                     .await?;
-            gateway_claude_usage_runtime::admin::response(
+            gateway_claude_usage_runtime::admin::passive_response(
                 result,
                 block(observations, context).await?,
             )

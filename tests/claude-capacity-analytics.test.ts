@@ -30,7 +30,7 @@ import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts
 const recordClaudeCodeQuotaOutcome = async (kv: Kv, input: Omit<Parameters<typeof recordBoundQuotaOutcome>[1], "binding">) => {
   const binding = await resolveClaudeCodeAccount(kv, () => null);
   assert(binding);
-  return await recordBoundQuotaOutcome(kv, { ...input, binding });
+  return await recordBoundQuotaOutcome(kv, { observation_source: "response_headers", ...input, binding });
 };
 
 const NOW_MS = 1_800_000_000_000;
@@ -53,6 +53,7 @@ test("an unconfigured tier reports not_configured without inventing a credential
   await withKv(async (kv) => {
     const source = await claudeCapacitySource(kv as unknown as Kv, NOW_MS, nullEnv);
     assert.equal(source.source, "claude_code");
+    assert.equal(source.quota_source, "response_headers");
     assert.equal(source.state, "unavailable");
     assert.equal(source.failure_kind, "not_configured");
     assert.equal(source.credential_kind, null);
@@ -91,6 +92,7 @@ test("a configured tier reports its credential, workspace, and observed subscrip
     });
     const source = await claudeCapacitySource(store, NOW_MS, nullEnv);
     assert.equal(source.state, "available");
+    assert.equal(source.quota_source, "response_headers");
     assert.equal(source.credential_kind, "api_key");
     assert.equal(source.workspace_id, "wrkspc_01ErorW3iFLRvQy55cpNWtEt");
     assert.equal(source.failure_kind, null);
@@ -106,7 +108,7 @@ test("a configured tier reports its credential, workspace, and observed subscrip
   });
 });
 
-test("direct usage state is visible in capacity without becoming an inference guard", async () => {
+test("historical direct usage diagnostics do not override accepted header evidence", async () => {
   await withKv(async (kv) => {
     const store = kv as unknown as Kv;
     await storeClaudeCodeStoredCredential(store, { secret: "sk-ant-oat-usage-state-fixture" });
@@ -131,10 +133,7 @@ test("direct usage state is visible in capacity without becoming an inference gu
       nowMs: NOW_MS,
     });
     const observed = await claudeCapacitySource(store, NOW_MS + 1_000, nullEnv);
-    const usage = observed.usage;
-    assert(usage);
-    assert.equal(usage.state, "ok");
-    assert.equal(usage.source, "oauth_usage");
+    assert.equal(observed.usage, null);
     assert.equal(observed.windows.five_hour?.used_percent, 42);
 
     await recordClaudeCodeQuotaOutcome(store, {
@@ -153,7 +152,7 @@ test("direct usage state is visible in capacity without becoming an inference gu
     assert.equal(missingScope.state, "available", "a usage-only scope failure does not disable inference");
     assert.equal(missingScope.last_error, null);
     assert.equal(missingScope.cooldown_until_ms, null);
-    assert.equal(missingScope.usage?.state, "scope_missing");
+    assert.equal(missingScope.usage, null);
     assert.equal(missingScope.windows.five_hour?.used_percent, 42, "the last accepted window is preserved");
   });
 });
@@ -234,6 +233,7 @@ test("current Claude roster rows and retained history stay account/cohort-bound 
       [second, 0.4, NOW_MS - 1_900_000],
     ] as const) {
       await recordBoundQuotaOutcome(store, {
+        observation_source: "response_headers",
         binding,
         response_status: 200,
         nowMs: NOW_MS,
@@ -637,62 +637,41 @@ const directUsagePayload = (at: number, used = 42) => ({
   seven_day: { utilization: 12, resets_at: new Date(at + 86_400_000).toISOString() },
 });
 
-test("capacity polling collects every Claude account before inference and returns newly persisted history", async () => {
+test("capacity polling reads header evidence without direct Claude requests or new samples", async () => {
   await withKv(async (kv) => {
     const store = kv as unknown as Kv;
-    await storeClaudeCodeStoredCredential(store, { secret: "sk-ant-oat-poll-one" });
-    const first = await resolveClaudeCodeAccount(store, nullEnv);
-    assert(first);
-    const second = await updateClaudeCodeAccount(store, { createNew: true, credential: { ...first.credential, secret: "sk-ant-oat-poll-two" } }, nullEnv);
-    await recordBoundQuotaOutcome(store, {
-      binding: second,
-      observation: null,
-      config_error: { kind: "workspace", status: 403, message: "existing guard" },
+    await storeClaudeCodeStoredCredential(store, { secret: "sk-ant-oat-passive-capacity" });
+    await recordClaudeCodeQuotaOutcome(store, {
+      observation: {
+        windows: { "5h": { status: "allowed", utilization: 0.42, reset_at_ms: null, observed_at_ms: NOW_MS } },
+        standard: {},
+        representative_claim: null,
+        observed_at_ms: NOW_MS,
+      },
       nowMs: NOW_MS,
     });
     let at = NOW_MS;
-    let calls = 0;
-    const authorizations = new Set<string | null>();
-    const fetcher = (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = input instanceof Request ? input.url : String(input);
-      assert.doesNotMatch(url, /\/v1\/messages|\/v1\/responses|\/v1\/chat/);
-      if (url !== "https://api.anthropic.com/api/oauth/usage") return Promise.resolve(Response.json({}, { status: 503 }));
-      assert.equal(init?.method, "GET");
-      assert.equal(init.body, undefined);
-      authorizations.add(new Headers(init.headers).get("authorization"));
-      calls++;
-      at += 5;
-      return Promise.resolve(Response.json(directUsagePayload(at, calls > 2 ? 61 : 42)));
+    let claudeCalls = 0;
+    const fetcher = (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : input.toString();
+      if (url.startsWith("https://api.anthropic.com/")) claudeCalls += 1;
+      return Promise.resolve(Response.json({}, { status: 503 }));
     };
-    const read = async () =>
-      (await handleProviderCapacity(new Request("http://localhost/admin/providers/capacity"), { kv: store, fetcher, now: () => at })).json();
-    const initial = await read();
-    assert.equal(calls, 2);
-    assert.equal(authorizations.size, 2, "each request uses its bound account credential");
+    const initial = await (
+      await handleProviderCapacity(new Request("http://localhost/admin/providers/capacity"), { kv: store, fetcher, now: () => at })
+    ).json();
     assert.equal(initial.claude.windows.five_hour.used_percent, 42);
-    assert.equal(initial.claude_history.points.length, 2, "the first response includes the accepted observations");
-    assert.equal(initial.claude_accounts.find((row: { account_id: string }) => row.account_id === second.account_id).usage.state, "ok");
-    assert.equal(initial.claude_accounts.find((row: { account_id: string }) => row.account_id === second.account_id).last_error.message, "existing guard");
-    await read();
-    assert.equal(calls, 2, "fresh reads do not call upstream or synthesize measurements");
-    at += CLAUDE_CODE_USAGE_FRESH_MS;
-    await recordBoundQuotaOutcome(store, {
-      binding: first,
-      observation: {
-        windows: { "5h": { status: "allowed", utilization: 0.5, reset_at_ms: at + 18_000_000, observed_at_ms: at } },
-        standard: {},
-        representative_claim: null,
-        observed_at_ms: at,
-      },
-      nowMs: at,
-    });
-    const repeated = await read();
-    assert.equal(calls, 4, "new inference headers do not suppress recurring direct reads");
-    assert.equal(repeated.claude.windows.five_hour.used_percent, 61);
+    assert.equal(initial.claude_history.points.length, 1);
+    at += 35_000;
+    const later = await (await handleProviderCapacity(new Request("http://localhost/admin/providers/capacity"), { kv: store, fetcher, now: () => at })).json();
+    assert.equal(later.claude.windows.five_hour.used_percent, 42);
+    assert.equal(later.claude.source_observed_at_ms, NOW_MS);
+    assert.equal(later.claude_history.points.length, 1);
+    assert.equal(claudeCalls, 0);
   });
 });
 
-test("manual and sampler usage refreshes share an account lease and preserve observations after failure", async () => {
+test("legacy direct-usage storage retains its independent lease and cannot become header evidence", async () => {
   await withKv(async (kv) => {
     const store = kv as unknown as Kv;
     await storeClaudeCodeStoredCredential(store, { secret: "sk-ant-oat-concurrent-usage" });

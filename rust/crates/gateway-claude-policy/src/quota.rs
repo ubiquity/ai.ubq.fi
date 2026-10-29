@@ -66,6 +66,7 @@ pub fn merge(
     let empty = QuotaObservation::empty(now);
     let observation = input.observation.unwrap_or(&empty);
     let mut next = previous.cloned().unwrap_or(QuotaState {
+        response_headers: None,
         usage: None,
         usage_snapshot: None,
         pool_proofs: None,
@@ -168,6 +169,7 @@ pub fn merge(
 }
 pub fn clear(previous: Option<&QuotaState>, now: i64) -> QuotaState {
     let mut next = previous.cloned().unwrap_or(QuotaState {
+        response_headers: None,
         usage: None,
         usage_snapshot: None,
         pool_proofs: None,
@@ -215,6 +217,7 @@ pub async fn record_usage<S: AuthorityStore, H: AuthHost>(
             .transpose()?
             .flatten();
         let mut next = previous.unwrap_or(QuotaState {
+            response_headers: None,
             usage: None,
             usage_snapshot: None,
             pool_proofs: None,

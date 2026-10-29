@@ -696,3 +696,42 @@ fn actual_capacity_history_rollups_and_upstream_response_bytes_keep_one_source_d
     assert_eq!(snapshot(&memory), before);
     Ok(())
 }
+
+#[test]
+fn explicit_header_source_roundtrips_and_legacy_point_identity_is_unchanged() {
+    let legacy = event(0);
+    let old_point = point_for_observation(&legacy).unwrap().unwrap();
+    assert!(source::member(&old_point, "source").is_none());
+    let mut marked = legacy.clone();
+    marked.source = Some("response_headers".into());
+    let point = point_for_observation(&marked).unwrap().unwrap();
+    assert_eq!(
+        text(&point, "source"),
+        JsString16::from_utf8("response_headers")
+    );
+    assert_ne!(text(&point, "point_id"), text(&old_point, "point_id"));
+    marked.source = None;
+    assert_eq!(point_for_observation(&marked).unwrap().unwrap(), old_point);
+    marked.source = Some("response_headers".into());
+    let (memory, runtime) = setup(marked.sampled_at_ms);
+    assert!(run(runtime.record_claude_capacity_observation(&marked)).unwrap());
+    let encoded = serde_json::to_vec(&*memory.rows.borrow()).unwrap();
+    let reopened = Memory::default();
+    *reopened.rows.borrow_mut() = serde_json::from_slice(&encoded).unwrap();
+    let host = Host::default();
+    host.at.set(marked.sampled_at_ms);
+    let restarted = ObservabilityRuntime::new(reopened, host);
+    let history = run(restarted.claude_capacity_history(marked.sampled_at_ms));
+    assert_eq!(
+        text(&rows(&history)[0], "source"),
+        JsString16::from_utf8("response_headers")
+    );
+    for marker in ["null", "\"oauth_usage\""] {
+        let invalid = replace(&point, "source", SourceJson::parse(marker).unwrap());
+        assert!(
+            invalid
+                .deserialize::<gateway_claude_usage_history_records::Point>()
+                .is_err()
+        );
+    }
+}

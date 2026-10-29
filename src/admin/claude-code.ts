@@ -23,8 +23,7 @@ import {
   discoverClaudeCodeModels,
   type ClaudeCodeModelsSnapshot,
 } from "../provider/claude-code-models.ts";
-import { clearClaudeCodeQuotaGuards } from "../provider/claude-code-quota.ts";
-import { refreshClaudeCodeUsage } from "../provider/claude-code-usage-refresh.ts";
+import { clearClaudeCodeQuotaGuards, loadClaudeCodeQuotaState } from "../provider/claude-code-quota.ts";
 import { getPassiveProviderHealthSnapshot } from "../health.ts";
 import {
   resolveClaudeCodeAccount,
@@ -217,61 +216,24 @@ const resolveClaudeUsageRefreshTarget = async (req: Request, kv: Kv, options: Cl
   return { kind: "refresh", account };
 };
 
-const runClaudeUsageRefresh = async (kv: Kv, account: ClaudeCodeAccountBinding, options: ClaudeUsageRefreshOptions): Promise<Response> => {
-  const refreshed = await refreshClaudeCodeUsage(kv, account, options);
-  if (refreshed.kind === "changed") return openaiError(409, "Claude account changed during usage refresh", "claude_code_account_changed");
-  if (refreshed.kind === "busy")
-    return json(200, {
-      data: await claudeSubscriptionBlock(),
-      refreshed: false,
-      reason: "refresh_in_progress",
-      message: "A usage refresh is already in progress.",
-    });
-  if (refreshed.kind === "fresh")
-    return json(200, {
-      data: await claudeSubscriptionBlock(),
-      refreshed: false,
-      reason: "fresh",
-      observed_at_ms: refreshed.usage.attempted_at_ms,
-      usage: refreshed.usage,
-    });
-  const { result, usage } = refreshed;
-  const data = await claudeSubscriptionBlock();
-  if (result.ok) {
-    return json(200, {
-      data,
-      refreshed: true,
-      source: "oauth_usage",
-      observed_at_ms: result.observed_at_ms,
-      usage,
-    });
-  }
-  if (result.kind === "scope_missing" || result.kind === "unsupported_credential") {
-    return json(200, {
-      data,
-      refreshed: false,
-      reason: result.kind,
-      message: result.message ?? "This credential cannot read Claude usage.",
-      usage,
-    });
-  }
-  return openaiError(502, result.message ?? "Claude usage could not be read from the upstream service", "claude_usage_unavailable", {
-    headers: result.retry_after_ms === null ? undefined : { "Retry-After": String(Math.max(1, Math.ceil(result.retry_after_ms / 1_000))) },
-  });
-};
-
 /**
- * Explicit operator refresh for the quota meter. This reads Anthropic's OAuth
- * usage endpoint directly; it never sends a Messages request or starts a turn.
- * A setup token without `user:profile` returns a non-fatal, explicit state so
- * inference remains available and the missing scope is visible in diagnostics.
+ * Compatibility read for clients with the former refresh action. Meter evidence
+ * comes only from ordinary inference response headers; this route never probes.
  */
 export const handleAdminClaudeCodeQuotaRefresh = async (req: Request, options: ClaudeUsageRefreshOptions = {}): Promise<Response> => {
   const kv = await getKv();
   if (!kv) return openaiError(503, "Claude quota storage is unavailable", "server_error");
   const target = await resolveClaudeUsageRefreshTarget(req, kv, options);
   if (target.kind === "response") return target.response;
-  return await runClaudeUsageRefresh(kv, target.account, options);
+  const quota = await loadClaudeCodeQuotaState(kv, target.account);
+  return json(200, {
+    data: await claudeSubscriptionBlock(),
+    refreshed: false,
+    reason: "response_headers",
+    observed_at_ms: quota?.response_headers?.observed_at_ms ?? null,
+    usage: null,
+    message: "Quota updates from response headers on ordinary Claude requests.",
+  });
 };
 
 export const handleAdminClaudeCodeAuthDelete = async (req?: Request): Promise<Response> => {

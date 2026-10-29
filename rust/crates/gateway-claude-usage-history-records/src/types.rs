@@ -21,6 +21,23 @@ pub struct ClaudeAcceptedObservation {
     pub response_status: Option<u16>,
     pub state: ClaudeObservationState,
     pub observation: SourceJson,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "header_source"
+    )]
+    pub source: Option<String>,
+}
+pub(crate) fn header_source<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    let marker = String::deserialize(deserializer)?;
+    if marker != "response_headers" {
+        return Err(serde::de::Error::custom(
+            "Invalid Claude header source marker",
+        ));
+    }
+    Ok(Some(marker))
 }
 impl ClaudeAcceptedObservation {
     pub fn from_source(value: &SourceJson) -> Result<Self, GatewayError> {

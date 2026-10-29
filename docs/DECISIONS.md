@@ -6,6 +6,12 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Cached Claude projections require explicit header provenance - 2026-10-28
+
+Every new admin Claude capacity row carries `quota_source: "response_headers"` to identify the header-only projection contract. The marker does not assert that measurements exist. Browser snapshots without that marker remain cached, but their current Claude windows, observation clocks, standard limits and current-row chart contributions are hidden until a marked projection arrives. Account identity, serving state, Codex/other cached providers and independently proven header history remain available. Both the TypeScript and Rust producers emit the same marker; no OpenAI wire schema, IndexedDB migration, cache wipe or retention deadline changes.
+
+Reason: pre-change IndexedDB snapshots could contain OAuth-derived values that the newer renderer mislabeled as response headers when the fresh fetch failed. The renderer now rejects that unproven current projection at the display boundary without rewriting the stored payload.
+
 ## Rust routing journals have one complete stored-DATA owner - 2026-10-28
 
 The complete routing journal schema, validated tuple-key serde, source codec, session key and expiry-aware reader belong to `gateway-routing-journal`. Ordinary public stored DATA serves all production readers and does not mint admission, currentness, paid, native or mutation authority. Reads retain source-control encoding/version checks, local-work then version-selected context decoding, complete nested serde and round-trip shape equality, request-id binding and original errors; no field-only reader substitutes.
@@ -31,6 +37,20 @@ Reason: source-valid Passport subjects can contain lone UTF16 units, but the ord
 The structural capacity leaf moves the existing finite JSON capacity validation, chart/history projection and folding into `gateway-capacity-projection`. It defines the five existing scalar data helpers and depends only on `gateway-core` and `serde_json`. Observability retains event identity, privacy selection, storage, currentness, authority acceptance and all effects; recovery and Worker consumers import the defining data functions directly. Bodies, thresholds, ordering, comparator errors and wire shapes remain source-compatible.
 
 This registration is a mechanical integration candidate for the separately owned leaf. Root integration and final acceptance remain separate; observability is still oversized and this transfer does not complete that family or the Rust port.
+
+## Claude capacity is observed only from ordinary response headers - 2026-10-28
+
+The Claude meter and current capacity projection use an explicitly marked response-header observation captured by the existing ordinary-inference quota acceptance path. Subscription windows and API-key limit families retain their own observation timestamps; missing families and headerless responses invent no measurements. Canonical routing quota, proofs, cooldowns and settlement keep their existing behavior. Old canonical values without header provenance and retained direct-usage snapshots are not relabeled as header evidence. New header history carries `source: "response_headers"`; legacy history without a direct snapshot remains readable as header history.
+
+The capacity sampler never calls Claude's OAuth usage endpoint, and direct-usage freshness cannot force a capacity refresh. The former manual refresh route is a passive compatibility read that reports `refreshed: false` with a response-headers reason. The visible meter waits for normal Claude traffic when no proven headers exist. This supersedes the 2026-10-25 direct-usage collection decision and adds no OAuth grant, credential work, synthetic inference, timer or service activation.
+
+Claude history follows the active account in each capacity snapshot without an account dropdown or a pinned manual selection. A missing active projection may use matching subscription metadata, but an explicit empty projection or account/cohort mismatch remains empty. This is a view-only choice: retained history is preserved and other provider charts are unchanged.
+
+## Direct Claude usage honors the provider retry deadline - 2026-10-27
+
+A direct usage HTTP 429 with a valid `Retry-After` stores an absolute retry deadline in that account cohort's usage metadata. Automatic capacity collection and manual usage refresh share the deadline across KV reopen and process restart. A suppressed manual refresh returns HTTP 429 with the remaining `Retry-After`; a successful read clears the deadline. Missing or malformed deadlines retain the existing 30-second attempt freshness, and an expired deadline does not extend that freshness. Failed reads preserve the last successful meter snapshot and never set an inference quota block or cooldown.
+
+Reason: the HTTP reader parsed `Retry-After` but the collector discarded it, allowing another usage request after 30 seconds even when the provider requested a longer pause. Reversal risk: discarding this usage-only deadline restores early retries; placing it in the inference cooldown would incorrectly deny otherwise eligible model requests.
 
 ## Passport browser sign-in uses revocable permanent app sessions - 2026-10-27
 
@@ -2654,6 +2674,7 @@ Source profile/line codecs are defined in `gateway-profile-source`, quota projec
 Reason: the remaining 4,121-line admin-data crate exceeded the owner's 1,000-line limit. Moving the exact shared finite predicates to the ledger data owner closes dependency cycles without duplicate algorithms. The complete audit preserves its original key/inventory EOF checks, observer order, deferred API/kernel/paid/reset/model failure order, codec bytes, raw keys, revisions and absolute expiry; no inventory pass or row collection is added.
 
 Reversal risk: aggregating these definitions restores oversized-crate debt, and facade exports hide the supported defining paths. This source-only split grants no credential, state capture/conversion, provider spend, runtime/service activation or deployment authority.
+
 ## Worker stream preparation retains the original request lifetime - 2026-10-25
 
 Direct synthetic SSE hops hold metadata until semantic output and use the same Session and admission for presemantic fallback. The first semantic terminal releases only its upstream reader. An already-armed lifetime owner survives asynchronous response preparation until the existing registered body finisher takes ownership; generic admission handoff retains caller-owned values without expanding authority. A feature-only fixture observes a pending preparation phase and drops the genuine Rust handler future while its caller signal remains un-aborted; those features stay off in shipping builds. Cerebras remains buffered and the existing subscription and authoritative 402/429 paid-tier policy stays unchanged. Source checks and fixture design do not establish runtime acceptance.
@@ -2692,7 +2713,6 @@ A WASM library check does not imply a shipping Worker build. Affected compiled o
 
 Reason: a native-only extraction changes root manifests and local lock records, while a test-only edit changes no production dependency input. Unconditional whole-workspace and Worker selection obscured these distinctions. Reversal risk: narrowing from only the new graph, matching lock dependencies by name alone, or treating an uncertain input as absent could omit a real consumer; those cases must expand selection or fail.
 
-
 ## Free synthetic Responses may publish an accepted upstream SSE head - 2026-10-27
 
 The owner approved early SSE commitment on 2026-10-27 at12:18UTC after reviewing the ordinary HTTP-status tradeoff. Only the existing presemantic-held unpaid synthetic Flash Responses stream may publish common HTTP200/SSE headers after actual validation/admission and a real accepted physical200SSE head/body from Lithos, DeepSeek or OpenRouter. The same request-owned selection task continues fallback inside that body; provider/attempt/rate/RetryAfter headers are omitted while the final provider remains unknown. Paid, direct, Chat, nonstream and paths with no accepted head retain their previous behavior.
@@ -2700,7 +2720,6 @@ The owner approved early SSE commitment on 2026-10-27 at12:18UTC after reviewing
 If all later hops fail after commitment, the client receives one truthful created+failed Responses SSE envelope, empty output/null missing usage and HTTP200, while original selected HTTP status/safe headers/error/completeness and final provider attribution remain internal passive failure DATA. This changes the prior ordinary mixed200presemanticEOF→400/503 JSON/status result. Header readiness is never admission proof, semantic success, client delivery or billed spend. One original permit/currentness/deadline/settlement owner must survive handoff and actual body cancellation; no fake abort, cloned permit, heartbeat or timer is introduced.
 
 The named optional request-log native_http_failure SourceJson field preserves that original passive HTTP observation and is absent for legacy/unset records. Record normalization has its own bounded defining data crate; store/CAS/keys/expiry/effects remain with Observability. Original16 cancellation, ordering, unknown-spend and cleanup predicates remain gates, with only explicitly conflicting header/wire expectations versioned. The later b5b48 event-driven Bun EOF correction is separate evidence and is not silently treated as a Worker cancellation guarantee or this frozen source contract. This decision authorizes no service activation, deployment, credentials, provider spend or private-state adoption.
-
 
 ## Rust host wait observations preserve real failures and unknown elapsed time - 2026-10-27
 
@@ -2730,7 +2749,6 @@ The actual coordination Durable Object, fixed `RemoteAuthorityStore` wire and pr
 
 Consumers use the defining module directly. Wire DTOs, State, Stub, selectors and effect factories remain private; the existing finite `profile_migration` method is public only to retain its existing AdminHost call across the crate boundary. No raw store getter, forwarded name, new proof constructor or authorization from stored DATA is introduced. Source relocation is separate from actual shipping/fixture class exports, SQLite instantiation, runtime and client acceptance.
 
-
 ## Rust admin presentation and pricing DATA have a defining web owner - 2026-10-27
 
 The existing provider-picker projection, OpenLux metadata decoder and pricing projection are defined in `gateway-worker-web::admin_picker` and `gateway-worker-web::admin_pricing`, together with their six original pure private cases. Subscription/account-email reads and their private credential-parser case, metadata fetches, clocks, cancellation, credentials, native operations and all mutation effects remain request-owned. These DATA operations preserve exact fields, labels, endpoint declarations, errors, missing/null behavior, source UTF16, duplicate-key handling and pricing precedence; pricing metadata grants no inference or billing authority. The existing borrowed secret map is inspected only for key presence and is never serialized.
@@ -2742,7 +2760,6 @@ The reduced CORE_STATE selector recognizes only the source v1 collector lease ke
 The source-derived v1 Claude capacity `history`, `rollup` and `usage_rollup` key shapes are excluded only from the reduced capture under the existing historical-observability policy. Their readers are administrative analytics, and their writers run after accepted quota persistence. Unknown Claude versions, kinds and key shapes fail closed. The full-history export keeps its existing retention behavior, while a reduced inverse describes the selected subset and its later writes and deletions. Historical manifest counts remain provenance; a fresh capture computes its own write budget.
 
 Reason: the previous selector rejected a live source collector lease and retained the entire Claude capacity subtree despite the reduced profile's history exclusion. The fixed source-writer fixture contains the lease, full current quota snapshot and all three history kinds, including source UTF16 and unclamped meter values. Its controlled CAS-clock expiry metadata is synthetic and never substitutes for native-store expiry evidence. Reversal risk: a blanket prefix rule can drop new operational families or retain unbounded history, while normalizing a retained lease or quota row can lose current state or renew expiry. This source decision authorizes no private capture, live adoption, credential/provider operation or service change; actual native custody and final integrated runtime acceptance remain separate requirements.
-
 
 ## Rust migration uses bounded owners without widening preparation authority - 2026-10-27
 

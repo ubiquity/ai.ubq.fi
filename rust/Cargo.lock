@@ -2733,7 +2733,6 @@ dependencies = [
 name = "gateway-claude-runtime"
 version = "0.1.0"
 dependencies = [
- "gateway-admin-runtime",
  "gateway-admin-runtime-records",
  "gateway-auth",
  "gateway-auth-contracts",
@@ -2766,7 +2765,6 @@ dependencies = [
 name = "gateway-claude-runtime-test-support"
 version = "0.1.0"
 dependencies = [
- "gateway-admin-runtime",
  "gateway-admin-runtime-records",
  "gateway-auth",
  "gateway-auth-contracts",
@@ -2862,7 +2860,6 @@ dependencies = [
 name = "gateway-claude-usage-runtime"
 version = "0.1.0"
 dependencies = [
- "gateway-admin-runtime",
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-primitives",

@@ -20,20 +20,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         let at = data::now(self.host.as_ref())?;
-        let inventory = self.host.provider_inventory(&context).await?;
+        let _inventory = self.host.provider_inventory(&context).await?;
         let cached = self.capacity().persisted_capacity_view().await?;
-        let usage_fresh = inventory.claude.accounts.iter().all(|a| {
-            a.quota
-                .as_ref()
-                .and_then(|q| source::member(q, "usage"))
-                .as_ref()
-                .and_then(gateway_claude_usage_protocol::state::read)
-                .is_some_and(|u| u.fresh(at))
-        });
         let fresh = cached["cache_state"] != "unavailable"
             && gateway_capacity_projection::scalars::safe_i64(&cached["snapshot_at_ms"])
                 .is_some_and(|t| at - t < 30000);
-        let mut body = if !live && fresh && usage_fresh {
+        let mut body = if !live && fresh {
             cached
         } else {
             match self.capacity().refresh_capacity_view(live).await {
@@ -46,7 +38,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 Err(_) => cached,
             }
         };
-        // Rebuild after collection; the same response includes the newly accepted evidence.
+        // Reproject current account/header evidence on cached and refreshed reads.
         let inventory = self.host.provider_inventory(&context).await?;
         let at = data::now(self.host.as_ref())?;
         let mut source_accounts = Vec::new();

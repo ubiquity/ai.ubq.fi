@@ -234,23 +234,6 @@ impl ObservabilityHost for RequestHost {
         gateway_claude_usage_runtime::platform::parse_date(text)
     }
 
-    async fn collect_claude_usage(&self) -> Result<(), GatewayError> {
-        let seed =
-            crate::claude_host::platform::bootstrap_for_source(&self.store, &self.platform).await?;
-        let roster =
-            gateway_claude_roster::claude::load_roster(&self.store, &self.platform, &seed).await?;
-        let host = crate::claude_host::platform::Host {
-            store: self.store.clone(),
-            platform: self.platform.clone(),
-        };
-        let _results =
-            futures_util::future::join_all(roster.roster.accounts.iter().map(|account| {
-                gateway_claude_usage_runtime::collect::refresh(&self.store, &host, account)
-            }))
-            .await;
-        Ok(())
-    }
-
     fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         gateway_worker_platform::source_collator::shared()
     }

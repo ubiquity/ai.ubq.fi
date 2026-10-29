@@ -1,4 +1,5 @@
 //! Source Claude quota truth. Health/history remain optional post-acceptance subscribers.
+pub mod headers;
 pub mod observation;
 use gateway_contracts::model::ModelId;
 use gateway_core::{
@@ -80,6 +81,12 @@ pub struct PoolProof {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct QuotaState {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "headers::deserialize_optional"
+    )]
+    pub response_headers: Option<headers::HeaderObservation>,
     #[serde(default)]
     pub usage: Option<gateway_claude_usage_protocol::state::UsageState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -240,6 +247,7 @@ mod proof_map {
 pub fn parse_state(value: &Value) -> Option<QuotaState> {
     value.as_object()?;
     Some(QuotaState {
+        response_headers: value.get("response_headers").and_then(headers::read),
         usage: value
             .get("usage")
             .and_then(|v| SourceJson::from_serializable(v).ok())
@@ -379,6 +387,9 @@ fn parse_profile_state(value: &PortableValue) -> Option<QuotaState> {
         .and_then(gateway_claude_usage_protocol::state::read);
     state.usage_snapshot = source_field("usage_snapshot")
         .filter(|v| gateway_claude_usage_protocol::snapshot::provenance(v).is_some());
+    state.response_headers = source_field("response_headers")
+        .as_ref()
+        .and_then(headers::read_source);
 
     state.pool_proofs = profile_member(value, "pool_proofs").map(|proofs| {
         let rows: Vec<(JsString16, &PortableValue)> = match proofs {

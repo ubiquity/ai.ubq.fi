@@ -43,13 +43,13 @@ fn view(
     out
 }
 pub fn unavailable_claude(at: i64) -> Value {
-    json!({"source":"claude_code","label":"Claude subscription","state":"unavailable","source_observed_at_ms":null,"snapshot_at_ms":at,"failure_kind":"not_configured","failure_status":null,"credential_kind":null,"workspace_id":null,"windows":{"five_hour":null,"seven_day":null},"standard":[],"usage":null,"blocked_until_ms":null,"cooldown_until_ms":null,"last_error":null})
+    json!({"source":"claude_code","quota_source":"response_headers","label":"Claude subscription","state":"unavailable","source_observed_at_ms":null,"snapshot_at_ms":at,"failure_kind":"not_configured","failure_status":null,"credential_kind":null,"workspace_id":null,"windows":{"five_hour":null,"seven_day":null},"standard":[],"usage":null,"blocked_until_ms":null,"cooldown_until_ms":null,"last_error":null})
 }
 pub fn claude_source(
     account: &ClaudeAccountReadback,
     health: &Value,
     at: i64,
-    dates: &impl Fn(&gateway_source::js_string::JsString16) -> Option<i64>,
+    _dates: &impl Fn(&gateway_source::js_string::JsString16) -> Option<i64>,
 ) -> Result<SourceJson, GatewayError> {
     let empty = SourceJson::parse("{}")?;
     let quota = SourceObject::parse(account.quota.as_ref().unwrap_or(&empty))?;
@@ -68,8 +68,30 @@ pub fn claude_source(
         None
     };
     let failing = blocked || cooling || error_fields.is_some();
-    let windows = field("windows");
-    let standard = field("standard");
+    let headers = quota.get("response_headers").and_then(|raw| {
+        let fields = SourceObject::parse(raw).ok()?;
+        let marker = fields.get("source").and_then(source::string);
+        let valid_clock = fields
+            .get("observed_at_ms")
+            .and_then(integer)
+            .is_some_and(|at| at > 0.0);
+        (marker
+            == Some(gateway_source::js_string::JsString16::from_utf8(
+                "response_headers",
+            ))
+            && valid_clock
+            && fields.get("usage_snapshot").is_none())
+        .then_some(fields)
+    });
+    let measured = |name: &str| {
+        headers
+            .as_ref()
+            .and_then(|h| h.get(name))
+            .cloned()
+            .unwrap_or_else(|| null.clone())
+    };
+    let windows = measured("windows");
+    let standard = measured("standard");
     let mut observed = Vec::new();
     for document in [&windows, &standard] {
         if document.as_str().trim_start().starts_with('{') {
@@ -86,27 +108,10 @@ pub fn claude_source(
             }
         }
     }
-    let projected = quota
-        .get("usage_snapshot")
-        .and_then(|s| gateway_claude_usage_protocol::snapshot::read(s, dates))
-        .map(|s| gateway_claude_usage_protocol::snapshot::serialize(&s))
-        .transpose()?;
-    let snapshot = projected.as_ref();
-    let usage = quota
-        .get("usage")
-        .and_then(gateway_claude_usage_protocol::state::read);
-    let usage_stale = snapshot.is_some_and(|s| {
-        usage.as_ref().is_none_or(|u| u.state != "ok")
-            || gateway_claude_usage_protocol::snapshot::provenance(s)
-                .is_some_and(|(_, t)| at - t >= 30_000)
-    });
-    let observed = snapshot
-        .and_then(gateway_claude_usage_protocol::snapshot::provenance)
-        .map(|(_, t)| t as f64)
-        .or_else(|| observed.into_iter().reduce(f64::max));
+    let observed = observed.into_iter().reduce(f64::max);
     let state = if failing {
         "unavailable"
-    } else if usage_stale || observed.is_some_and(|t| at as f64 - t > shape::STALE_MS as f64) {
+    } else if observed.is_some_and(|t| at as f64 - t > shape::STALE_MS as f64) {
         "stale"
     } else {
         "available"
@@ -128,13 +133,14 @@ pub fn claude_source(
     let window = |name| gateway_claude_usage_history_records::window_source(&windows, name);
     let mut standard_rows = Vec::new();
     if standard.as_str().trim_start().starts_with('{') {
-        for (family, value) in source::entries(&standard)
-            .ok_or_else(|| data::error("Invalid Claude standard metadata"))?
-        {
+        for family in ["requests", "input-tokens", "output-tokens"] {
+            let Some(value) = source::member(&standard, family) else {
+                continue;
+            };
             let value = SourceObject::parse(&value)?;
             let leaf = |name| value.get(name).cloned().unwrap_or_else(|| null.clone());
             standard_rows.push(source::object(vec![
-                ("family", family.to_source_json()?),
+                ("family", SourceJson::from_serializable(&family)?),
                 ("limit", leaf("limit")),
                 ("remaining", leaf("remaining")),
                 ("reset_at_ms", leaf("reset_at_ms")),
@@ -142,7 +148,7 @@ pub fn claude_source(
         }
     }
     let mut document = SourceObject::parse(&SourceJson::from_serializable(
-        &json!({"source":"claude_code","label":"Claude subscription","account_id":account.account_id,"account_cohort_id":account.account_cohort_id,"state":state,"source_observed_at_ms":observed,"snapshot_at_ms":at,"failure_kind":if failing{Some("upstream_error")}else{None},"failure_status":failure_status,"credential_kind":account.credential.kind}),
+        &json!({"source":"claude_code","quota_source":"response_headers","label":"Claude subscription","account_id":account.account_id,"account_cohort_id":account.account_cohort_id,"state":state,"source_observed_at_ms":observed,"snapshot_at_ms":at,"failure_kind":if failing{Some("upstream_error")}else{None},"failure_status":failure_status,"credential_kind":account.credential.kind}),
     )?)?;
     document.set("workspace_id", &account.workspace.as_ref().map(|w| &w.id))?;
     document.set(
@@ -153,11 +159,7 @@ pub fn claude_source(
         ])?,
     )?;
     document.set("standard", &standard_rows)?;
-    document.set("usage", &usage)?;
-    if let Some(snapshot) = snapshot {
-        document.set("usage_snapshot", snapshot)?;
-        document.set("usage_stale", &usage_stale)?;
-    }
+    document.set("usage", &null)?;
     document.set("blocked_until_ms", &field("blocked_until_ms"))?;
     document.set("cooldown_until_ms", &field("cooldown_until_ms"))?;
     document.set("last_error", &error)?;
@@ -260,12 +262,9 @@ impl<S: QueryStore, H: ObservabilityHost> CapacitySampler<'_, S, H> {
             self.slot_capacity(accounts.iter().find(|a| a.slot == 1), 1, fence.as_ref(), at),
             self.slot_capacity(accounts.iter().find(|a| a.slot == 2), 2, fence.as_ref(), at),
         );
-        let (((one, two), metered), _usage) = futures_util::future::join(
-            futures_util::future::join(
-                codex,
-                self.host.metered_quota_snapshot(force_metered, at + 8000),
-            ),
-            self.host.collect_claude_usage(),
+        let ((one, two), metered) = futures_util::future::join(
+            codex,
+            self.host.metered_quota_snapshot(force_metered, at + 8000),
         )
         .await;
         let one = one?;

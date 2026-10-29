@@ -59,6 +59,10 @@ const context = {
   formatOptionalText: (value: unknown) => (typeof value === "string" ? value : "unknown"),
 };
 const sourceText = adminScript;
+const claudeProjectionSource = sourceText.slice(
+  sourceText.indexOf("const claudeHeaderProjectionForDisplay ="),
+  sourceText.indexOf("const renderClaudeCapacitySource =")
+);
 // Execute the shipped presenters, including their DOM fact writer. No copy of
 // their status conditions or network/application bootstrap runs in this fixture.
 runInNewContext(
@@ -288,12 +292,12 @@ test("shipped Claude rows never reuse another account or replacement cohort's ma
   assert.equal(rendered[1], null, "a poll racing credential replacement displays unknown metadata, never the replacement's provenance");
 });
 
-test("the restored Claude meter exposes an explicit refresh control", () => {
-  assert.match(sourceText, /dataset\.capacityRefresh/);
-  assert.match(sourceText, /Refresh usage/);
-  assert.match(sourceText, /\/admin\/providers\/claude-code\/quota\/refresh/);
-  assert.match(sourceText, /Usage read/);
-  assert.match(sourceText, /user:profile scope missing/);
+test("the Claude meter displays observed response headers without a direct refresh action", () => {
+  assert.match(sourceText, /"Quota source", "Claude response headers"/);
+  assert.match(sourceText, /"Last observed"/);
+  assert.match(sourceText, /"Awaiting response headers"/);
+  assert.doesNotMatch(sourceText, /dataset\.capacityRefresh|Refresh usage|refreshClaudeUsage/);
+  assert.doesNotMatch(sourceText, /\/admin\/providers\/claude-code\/quota\/refresh|OAuth usage API|user:profile scope missing/);
   assert.doesNotMatch(sourceText, /minimal streaming Claude request/);
   assert.doesNotMatch(sourceText, /claudeUsageAutoRefreshAttempted/);
   assert.match(sourceText, /refreshAnalyticsView\(\);\s*}, 30_000\)/);
@@ -318,7 +322,8 @@ test("shipped shared capacity list supports legacy singleton and distinct roster
     },
   };
   runInNewContext(
-    sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const unavailableCodexCapacitySource =")) +
+    claudeProjectionSource +
+      sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const unavailableCodexCapacitySource =")) +
       "\nglobalThis.render = renderProviderCapacityList;",
     fixture
   );
@@ -490,7 +495,8 @@ test("shipped capacity summary counts exactly displayed Claude roster or legacy 
     formatCapacityTimestamp: () => "observed",
   };
   runInNewContext(
-    sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const renderProviderCapacityList =")) +
+    claudeProjectionSource +
+      sourceText.slice(sourceText.indexOf("const claudeCapacitySourcesForDisplay ="), sourceText.indexOf("const renderProviderCapacityList =")) +
       sourceText.slice(sourceText.indexOf("const unavailableCodexCapacitySource ="), sourceText.indexOf("const CAPACITY_CHART_SVG_NS =")) +
       sourceText.slice(sourceText.indexOf("const renderProviderCapacity ="), sourceText.indexOf("const loadProviderCapacity =")) +
       "\nglobalThis.render = renderProviderCapacity;",
@@ -741,6 +747,7 @@ test("shipped retention renderer refuses incomplete, errored, unavailable or cor
 });
 
 const claudeChartContext = {
+  latestClaudeSubscription: null,
   CAPACITY_CHART_BUCKET_MS: 900_000,
   clampCapacityChartPercent: (value: number) => Math.max(0, Math.min(100, value)),
   formatCapacityTimestamp: (value: unknown) => {
@@ -802,9 +809,9 @@ test("shipped Claude chart breaks cohort, reset, unavailable and missing-bucket 
   const aggregate = /const CAPACITY_CHART_SERIES = ([^;]+);/.exec(sourceText)?.[1] ?? "";
   assert.doesNotMatch(aggregate, /claude/, "Claude never changes Codex aggregate membership");
   assert.doesNotMatch(
-    sourceText.slice(sourceText.indexOf("const renderClaudeHistorySelector ="), sourceText.indexOf("const renderClaudeHistoryPaths =")),
+    sourceText.slice(sourceText.indexOf("const claudeHistoryAccountId ="), sourceText.indexOf("const renderClaudeHistoryPaths =")),
     /fetch\(|mutateClaude|activate/,
-    "history selection is view-only"
+    "automatic history account selection is view-only"
   );
 });
 

@@ -29,7 +29,6 @@ gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-contracts = { workspace = true }
 gateway-kv-codec = { workspace = true }
 gateway-auth = { path = "../gateway-auth" }
-gateway-admin-runtime = { path = "../gateway-admin-runtime" }
 gateway-provider-source = { workspace = true }
 gateway-provider-protocol = { workspace = true }
 
