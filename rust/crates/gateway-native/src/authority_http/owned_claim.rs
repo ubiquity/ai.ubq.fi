@@ -1,6 +1,6 @@
 //! Private native protocol ownership, minted only after the actual signed Claim exchange.
 use super::*;
-use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeCapability};
+use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
 use gateway_native_authority_request::OriginalControlHeaders;
 use gateway_native_authority_request::response::{
     RenewalResponseVersion as Version, response_version,
@@ -59,7 +59,7 @@ impl NativeAuthorityHttp {
         context: &NativeControlContext<'_>,
     ) -> Result<VerifiedOwnedRenewalClaim, GatewayError> {
         proof.require_request(
-            NativeCapability::OwnerRenewal,
+            gateway_auth_native_contracts::transport::NativeCapability::OwnerRenewal,
             gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH,
             raw,
             context.now_ms()?,
