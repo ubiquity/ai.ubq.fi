@@ -4,8 +4,14 @@ use gateway_authority_capacity::CapacityOperations;
 use gateway_cache_experiment_runner::CacheRunOperations;
 use gateway_contracts::identity::RequestId;
 use gateway_model_selection::aliases as model_aliases;
-use gateway_observability::{ObservabilityRuntime, ObservabilityState, host_types::BuildIdentity};
-use gateway_observability::{replay_crypto::ReplayBody, types::ObservabilityHost};
+use gateway_observability::{ObservabilityRuntime, ObservabilityState};
+use gateway_observability_contracts::host_types::{self, BuildIdentity};
+use gateway_observability_contracts::types::ObservabilityHost;
+use gateway_observability_metered::metered;
+use gateway_observability_replay_capture::replay_producer;
+use gateway_observability_replay_model::replay_crypto::{self, ReplayBody};
+use gateway_observability_replay_observation::{observation, replay_trace};
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 use {gateway_schema_values::scalar as util, gateway_source::error::GatewayError};
 mod admin;
@@ -17,26 +23,22 @@ thread_local! {static STATE:ObservabilityState=ObservabilityState::default();}
 pub fn shared_state() -> ObservabilityState {
     STATE.with(Clone::clone)
 }
-pub type Runtime = ObservabilityRuntime<
-    gateway_worker_authority_binding::authority::RemoteAuthorityStore,
-    RequestHost,
->;
+pub type Runtime = ObservabilityRuntime<RemoteAuthorityStore, RequestHost>;
 pub enum CaptureInput {
-    Ready(gateway_observability::replay_producer::ReplayInput),
+    Ready(replay_producer::ReplayInput),
     Omitted(&'static str),
 }
 /// The original accepted body receipt and actual request headers supply capture input.
 pub fn capture_input(
     runtime: &Runtime,
     request: &worker::Request,
-    upstream: gateway_observability::replay_trace::UpstreamTrace,
+    upstream: replay_trace::UpstreamTrace,
 ) -> Result<CaptureInput, GatewayError> {
     if request.method() != worker::Method::Post {
         return Ok(CaptureInput::Omitted("non_post"));
     }
     let host = runtime.host();
-    if host.original_body.as_bytes().len() > gateway_observability::replay_crypto::MAX_REQUEST_BYTES
-    {
+    if host.original_body.as_bytes().len() > replay_crypto::MAX_REQUEST_BYTES {
         return Ok(CaptureInput::Omitted("body_over_limit"));
     }
     let url = request
@@ -48,7 +50,7 @@ pub fn capture_input(
         url.query().map(|q| format!("?{q}")).unwrap_or_default()
     );
     let headers = request.headers().entries().collect();
-    let request = gateway_observability::replay_producer::ReplayRequest {
+    let request = replay_producer::ReplayRequest {
         endpoint,
         method: "POST".into(),
         body: ReplayBody::from_vec(host.original_body.as_bytes().to_vec()),
@@ -60,30 +62,28 @@ pub fn capture_input(
         request_id: host.request_id.clone(),
         upstream,
     };
-    Ok(CaptureInput::Ready(
-        gateway_observability::replay_producer::ReplayInput::new(host, request)?,
-    ))
+    Ok(CaptureInput::Ready(replay_producer::ReplayInput::new(
+        host, request,
+    )?))
 }
 /// Await from the same request/terminal event owner; no capture task is left floating.
 pub async fn persist_failure(
     runtime: &Runtime,
-    input: gateway_observability::replay_producer::ReplayInput,
-    observation: gateway_observability::replay_producer::FailureObservation,
-    client: gateway_observability::replay_producer::ClientFailureObservation,
-) -> Result<gateway_observability::replay_producer::PersistResult, GatewayError> {
+    input: replay_producer::ReplayInput,
+    observation: observation::FailureObservation,
+    client: observation::ClientFailureObservation,
+) -> Result<replay_producer::PersistResult, GatewayError> {
     let key =
         crate::host::setting(&runtime.host().platform.env, "SENTINEL_REPLAY_KEY").and_then(|raw| {
-            gateway_observability::replay_crypto::ReplayKey::decode(
-                raw.trim_matches(util::js_whitespace),
-            )
-            .ok()
+            replay_crypto::ReplayKey::decode(raw.trim_matches(util::js_whitespace)).ok()
         });
     runtime
+        .captures()
         .persist_failure(input, observation, client, key.as_ref())
         .await
 }
 pub struct RequestHost {
-    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
+    store: RemoteAuthorityStore,
     platform: crate::host::PlatformHost,
     request_id: String,
     original_body: ReplayBody,
@@ -94,7 +94,7 @@ pub struct RequestHost {
 pub fn bind(
     request_id: &RequestId,
     original_body: &[u8],
-    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
+    store: RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     _context: Rc<worker::Context>,
 ) -> Runtime {
@@ -104,7 +104,7 @@ pub fn bind(
 pub fn bind_admin(
     request_id: &RequestId,
     original_body: &[u8],
-    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
+    store: RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     _context: Rc<worker::Context>,
     actor: Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
@@ -125,7 +125,7 @@ pub fn bind_admin(
 fn bind_request(
     request_id: &RequestId,
     original_body: &[u8],
-    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
+    store: RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     admin_actor: Option<Rc<gateway_authority::native_control::actor::NativeRenewalActor>>,
 ) -> Runtime {
@@ -171,10 +171,7 @@ pub async fn metered_diagnostics(runtime: &Runtime) -> Result<serde_json::Value,
     } else {
         None
     };
-    Ok(gateway_observability::metered::diagnostics(
-        configured,
-        snapshot.as_ref(),
-    ))
+    Ok(metered::diagnostics(configured, snapshot.as_ref()))
 }
 /// Retention maintenance and host-log diagnostics belong to this same administrative request.
 pub async fn error_diagnostics(
@@ -261,7 +258,7 @@ impl ObservabilityHost for RequestHost {
     async fn backfill_paid_usage(
         &self,
         limit: u32,
-    ) -> Result<gateway_observability::host_types::PaidBackfillReceipt, GatewayError> {
+    ) -> Result<host_types::PaidBackfillReceipt, GatewayError> {
         self.paid_backfill(limit).await
     }
     async fn recheck_codex_slot(&self, slot: u8) -> Result<bool, GatewayError> {
@@ -269,7 +266,7 @@ impl ObservabilityHost for RequestHost {
     }
     async fn cache_experiment_target(
         &self,
-    ) -> Result<gateway_observability::host_types::CacheExperimentTarget, GatewayError> {
+    ) -> Result<host_types::CacheExperimentTarget, GatewayError> {
         self.prepare_cache_target().await
     }
     async fn run_fixed_cache_experiment(
@@ -280,22 +277,21 @@ impl ObservabilityHost for RequestHost {
     }
     async fn codex_reset_available_count(
         &self,
-        account: &gateway_observability::host_types::CapacityAccountRef,
+        account: &host_types::CapacityAccountRef,
         deadline: i64,
     ) -> Result<Option<i64>, GatewayError> {
         self.reset_count(account, deadline).await
     }
     async fn codex_reset_credits(
         &self,
-        account: &gateway_observability::host_types::CapacityAccountRef,
+        account: &host_types::CapacityAccountRef,
         deadline: i64,
-    ) -> Result<Option<Vec<gateway_observability::host_types::ResetCreditDiagnostic>>, GatewayError>
-    {
+    ) -> Result<Option<Vec<host_types::ResetCreditDiagnostic>>, GatewayError> {
         self.reset_credits(account, deadline).await
     }
     async fn codex_overage_diagnostics(
         &self,
-        account: &gateway_observability::host_types::CapacityAccountRef,
+        account: &host_types::CapacityAccountRef,
         deadline: i64,
     ) -> Result<Option<serde_json::Value>, GatewayError> {
         self.overage(account, deadline).await
@@ -331,7 +327,7 @@ impl ObservabilityHost for RequestHost {
     async fn provider_inventory(
         &self,
         context: &Context,
-    ) -> Result<gateway_observability::host_types::ProviderInventory, GatewayError> {
+    ) -> Result<host_types::ProviderInventory, GatewayError> {
         self.inventory(context).await
     }
     async fn metered_balance_fingerprint(&self) -> Result<Option<String>, GatewayError> {
@@ -347,7 +343,7 @@ impl ObservabilityHost for RequestHost {
         if inventory::monitoring_key(&self.platform.env).is_none() {
             return Ok(None);
         }
-        gateway_observability::metered::quota_snapshot(&self.store, self, force, deadline).await
+        metered::quota_snapshot(&self.store, self, force, deadline).await
     }
     async fn fetch_metered_quota(&self, deadline: i64) -> Result<serde_json::Value, GatewayError> {
         self.monitoring_get(deadline).await
@@ -355,17 +351,17 @@ impl ObservabilityHost for RequestHost {
     async fn probe_upstream_health(
         &self,
         deadline: i64,
-    ) -> Result<gateway_observability::host_types::UpstreamHealthEvidence, GatewayError> {
+    ) -> Result<host_types::UpstreamHealthEvidence, GatewayError> {
         self.upstream_health(deadline).await
     }
     async fn codex_capacity_accounts(
         &self,
-    ) -> Result<Vec<gateway_observability::host_types::CapacityAccountRef>, GatewayError> {
+    ) -> Result<Vec<host_types::CapacityAccountRef>, GatewayError> {
         self.capacity_accounts().await
     }
     async fn begin_codex_capacity_observation(
         &self,
-        accounts: &[gateway_observability::host_types::CapacityAccountRef],
+        accounts: &[host_types::CapacityAccountRef],
     ) -> Result<gateway_authority_capacity::CodexCapacityObservationFence, GatewayError> {
         let authority = gateway_authority::store::Authority::with_clock(
             self.store.clone(),
@@ -386,10 +382,10 @@ impl ObservabilityHost for RequestHost {
     }
     async fn probe_codex_capacity(
         &self,
-        account: &gateway_observability::host_types::CapacityAccountRef,
+        account: &host_types::CapacityAccountRef,
         fence: &gateway_authority_capacity::CodexCapacityObservationFence,
         deadline: i64,
-    ) -> Result<gateway_observability::host_types::CapacityProbe, GatewayError> {
+    ) -> Result<host_types::CapacityProbe, GatewayError> {
         self.capacity_probe(account, fence, deadline).await
     }
     async fn accept_capacity_observations(

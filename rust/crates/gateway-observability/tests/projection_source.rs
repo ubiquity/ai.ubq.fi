@@ -8,12 +8,13 @@ use gateway_kv_codec::{
     value::ValueEncoding,
 };
 use gateway_model_selection::aliases::SourceStringCollator;
-use gateway_observability::{
-    ObservabilityRuntime, ledger::terminal_rollup::TerminalUsageRollup,
-    records::usage_rollup_record_source, types::ObservabilityHost,
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::types::ObservabilityHost;
+use gateway_observability_ledger::{
+    ledger::terminal_rollup::TerminalUsageRollup, records::usage_rollup_record_source,
 };
-use gateway_observability_test_support::source_fixture::{
-    CapturedCollator, assert_source_eq, fixture,
+use gateway_observability_test_support::{
+    source_fixture::CapturedCollator, source_fixture::assert_source_eq, source_fixture::fixture,
 };
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
@@ -90,13 +91,15 @@ fn write<S: QueryStore, H: ObservabilityHost>(
     ))
     .unwrap();
     assert!(
-        run(runtime.record_terminal_usage_rollup(TerminalUsageRollup {
-            model: Some(model),
-            provider: Some(" chatgpt_codex "),
-            request_id: request,
-            request_created_at_ms: Some(1000.9),
-            usage: Some(&usage)
-        }))
+        run(runtime
+            .ledger()
+            .record_terminal_usage_rollup(TerminalUsageRollup {
+                model: Some(model),
+                provider: Some(" chatgpt_codex "),
+                request_id: request,
+                request_created_at_ms: Some(1000.9),
+                usage: Some(&usage)
+            }))
         .unwrap()
     );
 }

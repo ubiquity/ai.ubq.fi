@@ -1,23 +1,20 @@
 //! Actual frozen Bun writer cases, plus the named post-acceptance carrier only.
 //! This fixture grants no quota, routing, native credential or live provider authority.
-use gateway_claude_usage_history_records::{
-    types::{ClaudeAcceptedObservation, ClaudeObservationState, CredentialKind},
-    *,
-};
-use gateway_model_selection::aliases as model_aliases;
-mod support;
 use gateway_admin_runtime_contracts::capabilities::Context;
 use gateway_capacity_projection::{
     shapes::BUCKET_MS, shapes::RETENTION_MS, shapes::unavailable_snapshot,
+};
+use gateway_claude_usage_history_records::{
+    types::ClaudeAcceptedObservation, types::ClaudeObservationState, types::CredentialKind, *,
 };
 use gateway_core::{
     source_control::decode_source_control_record, source_control::encode_source_control_record,
     state::RevisionCheck, state::StoredRecord,
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey, value::ValueEncoding};
-use gateway_observability::{
-    ObservabilityRuntime, host_types::*, types::HealthProvider, types::HealthTarget,
-    types::ObservabilityHost,
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{
+    host_types::*, types::HealthProvider, types::HealthTarget, types::ObservabilityHost,
 };
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
@@ -502,7 +499,9 @@ struct InventoryHost {
     inventory: ProviderInventory,
 }
 impl ObservabilityHost for InventoryHost {
-    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {
@@ -596,7 +595,9 @@ fn passive_response_preserves_actual_source_masked_hint_labels_workspace_allowli
         assert_eq!(hint.as_units()[13], 0xd83d);
         let runtime = ObservabilityRuntime::new(memory.clone(), host);
         let before = snapshot(&memory);
-        let body = response(run(runtime.passive_provider_response(false, context()))?)?;
+        let body = response(run(runtime
+            .health()
+            .passive_provider_response(false, context()))?)?;
         let claude = member(&body, "claude_code");
         let account = &member(&claude, "accounts").array_items()?[0];
         assert_eq!(text(&member(account, "credential"), "hint"), hint);
@@ -683,7 +684,7 @@ fn actual_capacity_history_rollups_and_upstream_response_bytes_keep_one_source_d
         text(&rollups, "claude_rollup_scan"),
         JsString16::from_utf8("ok")
     );
-    let health = response(run(runtime.upstream_health_response())?)?;
+    let health = response(run(runtime.health().upstream_health_response())?)?;
     assert_eq!(
         text(
             &member(&member(&health, "probes"), "claude_workspace"),

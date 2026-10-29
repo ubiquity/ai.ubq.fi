@@ -8,10 +8,7 @@ use gateway_claude_roster::claude;
 use gateway_claude_usage_history_records::types::CredentialKind;
 use gateway_core::state::{AuthorityStore, RevisionCheck};
 use gateway_model_selection::selection::ProviderSelection;
-use gateway_observability::{
-    host_types::*,
-    types::{HealthProvider, HealthTarget},
-};
+use gateway_observability_contracts::{host_types::*, types::HealthProvider, types::HealthTarget};
 use gateway_schema_values::scalar as util;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 
@@ -149,7 +146,7 @@ impl RequestHost {
         };
         let monitoring = monitoring_key(&self.platform.env).is_some();
         let metered = if monitoring {
-            gateway_observability::metered::cached_snapshot(&self.store, at)
+            gateway_observability_metered::metered::cached_snapshot(&self.store, at)
                 .await
                 .unwrap_or(None)
         } else {

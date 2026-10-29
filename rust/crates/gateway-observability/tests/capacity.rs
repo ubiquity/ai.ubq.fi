@@ -1,12 +1,3 @@
-use gateway_authority_capacity::{
-    AcceptedCodexCapacityObservations, CapacityOperations, CodexCapacityAccountRef,
-    CodexCapacityObservationFence, CodexCapacitySample,
-};
-use gateway_authority_contracts::{AuthorityClock, TokenSource};
-use gateway_authority_paid_control_records::PaidControlOwner;
-use gateway_authority_routing_evidence::capacity::parse_capacity_store;
-use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
-use gateway_model_selection::aliases as model_aliases;
 mod support;
 use gateway_auth_credentials::{
     provider_credentials::CodexSourceAccount, provider_credentials::CodexSourcePool,
@@ -14,20 +5,22 @@ use gateway_auth_credentials::{
 };
 use gateway_auth_primitives::crypto::Secret;
 use gateway_authority::store::Authority;
+use gateway_authority_capacity::{
+    AcceptedCodexCapacityObservations, CapacityOperations, CodexCapacityAccountRef,
+    CodexCapacityObservationFence, CodexCapacitySample,
+};
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::PaidControlOwner;
+use gateway_authority_routing_evidence::capacity::parse_capacity_store;
+use gateway_authority_routing_records::{types::PoolAccount, types::SubscriptionPool};
 use gateway_contracts::identity::PoolVersionstamp;
 use gateway_core::state::StoredRecord;
-use gateway_observability::{ObservabilityRuntime, host_types::*, types::ObservabilityHost};
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{host_types::*, types::ObservabilityHost};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
-use std::{
-    cell::Cell,
-    rc::Rc,
-    sync::{
-        Arc,
-        atomic::{AtomicI64, Ordering},
-    },
-};
+use std::{cell::Cell, rc::Rc, sync::Arc, sync::atomic::AtomicI64, sync::atomic::Ordering};
 use support::{Host, Memory, run};
 #[derive(Clone)]
 struct Clock(Arc<AtomicI64>);
@@ -60,7 +53,9 @@ impl CapacityHost {
     }
 }
 impl ObservabilityHost for CapacityHost {
-    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_model_selection::aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {
@@ -211,7 +206,7 @@ fn setup(change_owner: bool) -> (Memory, ObservabilityRuntime<Memory, CapacityHo
 #[test]
 fn actual_authority_fence_precedes_get_and_original_time_reaches_c_and_history() {
     let (memory, runtime) = setup(false);
-    assert!(run(runtime.sample_capacity_on_event()).unwrap());
+    assert!(run(runtime.capacity().sample_capacity_on_event()).unwrap());
     assert_eq!(runtime.host().stage.get(), 3);
     let value = memory.rows.borrow()[&keys::capacity().0]
         .json_value()
@@ -230,7 +225,7 @@ fn actual_authority_fence_precedes_get_and_original_time_reaches_c_and_history()
             .used_percent,
         Some(25.0)
     );
-    let history = run(runtime.capacity_history(1123)).unwrap();
+    let history = run(runtime.capacity().capacity_history(1123)).unwrap();
     assert_eq!(history.len(), 1);
     assert_eq!(history[0]["sampled_at_ms"], 1000);
     assert!(!memory.rows.borrow().contains_key(&keys::routing().0));
@@ -238,13 +233,17 @@ fn actual_authority_fence_precedes_get_and_original_time_reaches_c_and_history()
 #[test]
 fn source_rotation_during_get_cannot_publish_a_successor_capacity_or_history() {
     let (memory, runtime) = setup(true);
-    let error = run(runtime.sample_capacity_on_event()).unwrap_err();
+    let error = run(runtime.capacity().sample_capacity_on_event()).unwrap_err();
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("codex_capacity_source_changed")
     );
     assert_eq!(runtime.host().stage.get(), 3);
     assert!(!memory.rows.borrow().contains_key(&keys::capacity().0));
-    assert!(run(runtime.capacity_history(1123)).unwrap().is_empty());
+    assert!(
+        run(runtime.capacity().capacity_history(1123))
+            .unwrap()
+            .is_empty()
+    );
     assert!(!memory.rows.borrow().contains_key(&keys::routing().0));
 }

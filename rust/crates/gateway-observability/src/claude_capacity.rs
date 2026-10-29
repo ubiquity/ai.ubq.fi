@@ -1,8 +1,9 @@
 //! Composition of accepted observations with the extracted retained-history owner.
-use crate::{ObservabilityRuntime, types::ObservabilityHost};
+use crate::ObservabilityRuntime;
 use gateway_claude_usage_history::{History, HistoryHost};
 use gateway_claude_usage_history_records::types::ClaudeAcceptedObservation;
 use gateway_core::query::QueryStore;
+use gateway_observability_contracts::types::ObservabilityHost;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 struct Host<'a, H>(&'a H);
 impl<H: ObservabilityHost> HistoryHost for Host<'_, H> {

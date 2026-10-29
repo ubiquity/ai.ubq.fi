@@ -1,17 +1,17 @@
 mod support;
-use gateway_source::{
-    js_string::JsString16, source_json::SourceJson, source_serialization as source,
-};
-use gateway_core::{source_control::encode_source_control_record, state::StoredRecord};
 use gateway_contracts::source_usage::extract_usage_tokens;
+use gateway_core::{source_control::encode_source_control_record, state::StoredRecord};
 use gateway_kv_codec::{
     key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey, value::PortableValue,
     value::ValueEncoding,
 };
-use gateway_observability::{
-    ObservabilityRuntime,
-    ledger::terminal_rollup::TerminalUsageRollup,
-    records::{usage_rollup_record_source, valid_usage_rollup_source},
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_ledger::{
+    ledger::terminal_rollup::TerminalUsageRollup, records::usage_rollup_record_source,
+    records::valid_usage_rollup_source,
+};
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 use serde_json::json;
 use support::{Host, Memory, run};
@@ -35,13 +35,15 @@ fn actual_terminal_writer_preserves_first_source_label_on_usv_key_collisions_and
         let model = JsString16::from_units(model);
         let runtime = ObservabilityRuntime::new(memory.clone(), host.clone());
         assert!(
-            run(runtime.record_terminal_usage_rollup(TerminalUsageRollup {
-                model: Some(&model),
-                provider: Some(" chatgpt_codex "),
-                request_id: "same-shard",
-                request_created_at_ms: Some(1000.9),
-                usage: Some(&usage)
-            }))
+            run(runtime
+                .ledger()
+                .record_terminal_usage_rollup(TerminalUsageRollup {
+                    model: Some(&model),
+                    provider: Some(" chatgpt_codex "),
+                    request_id: "same-shard",
+                    request_created_at_ms: Some(1000.9),
+                    usage: Some(&usage)
+                }))
             .unwrap()
         );
     }
@@ -94,13 +96,15 @@ fn astral_and_literal_escape_models_remain_distinct_and_scalar_rows_stay_json() 
         JsString16::from_utf8("astral😀"),
     ] {
         assert!(
-            run(runtime.record_terminal_usage_rollup(TerminalUsageRollup {
-                model: Some(&model),
-                provider: Some("chatgpt_codex"),
-                request_id: "same-shard",
-                request_created_at_ms: None,
-                usage: Some(&usage)
-            }))
+            run(runtime
+                .ledger()
+                .record_terminal_usage_rollup(TerminalUsageRollup {
+                    model: Some(&model),
+                    provider: Some("chatgpt_codex"),
+                    request_id: "same-shard",
+                    request_created_at_ms: None,
+                    usage: Some(&usage)
+                }))
             .unwrap()
         );
     }

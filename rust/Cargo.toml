@@ -166,6 +166,22 @@ members = [
   "crates/gateway-migration",
   "crates/gateway-claude-runtime",
   "crates/gateway-observability",
+  "crates/gateway-observability-control",
+  "crates/gateway-observability-capacity",
+  "crates/gateway-observability-capacity-events",
+  "crates/gateway-observability-replay-capture",
+  "crates/gateway-observability-incidents",
+  "crates/gateway-observability-replay-read",
+  "crates/gateway-observability-replay-observation",
+  "crates/gateway-observability-replay-retention",
+  "crates/gateway-observability-replay-state",
+  "crates/gateway-observability-replay-records",
+  "crates/gateway-observability-metered",
+  "crates/gateway-observability-replay-model",
+  "crates/gateway-observability-health",
+  "crates/gateway-observability-contracts",
+  "crates/gateway-observability-ledger",
+  "crates/gateway-observability-prompt",
   "crates/gateway-observability-request-records",
   "crates/gateway-routing-journal",
     "crates/gateway-routing-runtime",
@@ -383,6 +399,22 @@ gateway-migration-protocol = { path = "crates/gateway-migration-protocol" }
 gateway-migration = { path = "crates/gateway-migration" }
 gateway-claude-runtime = { path = "crates/gateway-claude-runtime" }
 gateway-observability = { path = "crates/gateway-observability" }
+gateway-observability-control = { path = "crates/gateway-observability-control" }
+gateway-observability-capacity = { path = "crates/gateway-observability-capacity" }
+gateway-observability-capacity-events = { path = "crates/gateway-observability-capacity-events" }
+gateway-observability-replay-capture = { path = "crates/gateway-observability-replay-capture" }
+gateway-observability-incidents = { path = "crates/gateway-observability-incidents" }
+gateway-observability-replay-read = { path = "crates/gateway-observability-replay-read" }
+gateway-observability-replay-observation = { path = "crates/gateway-observability-replay-observation" }
+gateway-observability-replay-retention = { path = "crates/gateway-observability-replay-retention" }
+gateway-observability-replay-state = { path = "crates/gateway-observability-replay-state" }
+gateway-observability-replay-records = { path = "crates/gateway-observability-replay-records" }
+gateway-observability-metered = { path = "crates/gateway-observability-metered" }
+gateway-observability-replay-model = { path = "crates/gateway-observability-replay-model" }
+gateway-observability-health = { path = "crates/gateway-observability-health" }
+gateway-observability-contracts = { path = "crates/gateway-observability-contracts" }
+gateway-observability-ledger = { path = "crates/gateway-observability-ledger" }
+gateway-observability-prompt = { path = "crates/gateway-observability-prompt" }
 gateway-observability-request-records = { path = "crates/gateway-observability-request-records" }
 gateway-routing-journal = { path = "crates/gateway-routing-journal" }
 gateway-routing-runtime = { path = "crates/gateway-routing-runtime" }

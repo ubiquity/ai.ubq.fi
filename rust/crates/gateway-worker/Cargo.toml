@@ -18,6 +18,13 @@ workspace = true
 
 [dependencies]
 gateway-routing-journal.workspace = true
+gateway-observability-contracts = { workspace = true }
+gateway-observability-ledger = { workspace = true }
+gateway-observability-metered = { workspace = true }
+gateway-observability-prompt = { workspace = true }
+gateway-observability-replay-capture = { workspace = true }
+gateway-observability-replay-model = { workspace = true }
+gateway-observability-replay-observation = { workspace = true }
 gateway-catalog-admin = { path = "../gateway-catalog-admin" }
 gateway-catalog-control = { path = "../gateway-catalog-control" }
 gateway-catalog-inputs = { path = "../gateway-catalog-inputs" }

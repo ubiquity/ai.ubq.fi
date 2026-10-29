@@ -20,7 +20,7 @@ use gateway_authority_routing_signal::SignalOperations;
 use gateway_contracts::{identity::PoolVersionstamp, provider::CodexQuotaClass};
 use gateway_core::state::StoredRecord;
 use gateway_model_selection::aliases as model_aliases;
-use gateway_observability::host_types::*;
+use gateway_observability_contracts::host_types::*;
 use gateway_observability_test_support::{runtime::Host, runtime::Memory, runtime::run};
 use serde_json::{Value, json};
 use std::cell::Cell;

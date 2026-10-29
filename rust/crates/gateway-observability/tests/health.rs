@@ -1,16 +1,13 @@
 mod support;
-use gateway_core::state::{RevisionCheck, StoredRecord};
-use gateway_observability::{
-    ObservabilityRuntime,
-    health::*,
-    types::{HealthEvent as E, HealthProvider as P, HealthTarget, HealthWrite as W},
+use gateway_core::{state::RevisionCheck, state::StoredRecord};
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{
+    types::HealthEvent as E, types::HealthProvider as P, types::HealthTarget,
+    types::HealthWrite as W,
 };
+use gateway_observability_health::health::*;
 use serde_json::json;
-use std::{
-    future::Future,
-    pin::pin,
-    task::{Context, Poll, Waker},
-};
+use std::{future::Future, pin::pin, task::Context, task::Poll, task::Waker};
 use support::{Host, Memory, run};
 
 #[test]
@@ -134,48 +131,66 @@ fn durable_health_transitions_first_correlation_heartbeat_and_restart() {
     let runtime = ObservabilityRuntime::new(memory.clone(), host.clone());
     let target = HealthTarget::codex("account");
     assert_eq!(
-        run(runtime.observe_provider(target.clone(), E::Success, Some(200), None)),
+        run(runtime
+            .health()
+            .observe_provider(target.clone(), E::Success, Some(200), None)),
         W::Stored
     );
     assert_eq!(
-        run(runtime.observe_provider(target.clone(), E::Success, Some(200), None)),
+        run(runtime
+            .health()
+            .observe_provider(target.clone(), E::Success, Some(200), None)),
         W::Throttled
     );
     assert_eq!(
-        run(runtime.observe_provider(target.clone(), E::Success, Some(200), Some("r1"))),
+        run(runtime
+            .health()
+            .observe_provider(target.clone(), E::Success, Some(200), Some("r1"))),
         W::Stored
     );
     host.at.set(100001);
     assert_eq!(
-        run(runtime.observe_provider(target.clone(), E::Success, Some(200), Some("r2"))),
+        run(runtime
+            .health()
+            .observe_provider(target.clone(), E::Success, Some(200), Some("r2"))),
         W::Throttled
     );
     assert_eq!(
-        run(runtime.provider_health(&target, 100001)).unwrap()["last_provider_request_id"],
+        run(runtime.health().provider_health(&target, 100001)).unwrap()["last_provider_request_id"],
         "r1"
     );
     assert_eq!(
-        run(runtime.observe_provider(target.clone(), E::UpstreamError, Some(503), None)),
+        run(runtime
+            .health()
+            .observe_provider(target.clone(), E::UpstreamError, Some(503), None)),
         W::Stored
     );
     assert_eq!(
-        run(runtime.observe_provider(target.clone(), E::Success, Some(200), None)),
+        run(runtime
+            .health()
+            .observe_provider(target.clone(), E::Success, Some(200), None)),
         W::Stored
     );
-    let view = run(runtime.provider_health(&target, 100001)).unwrap();
+    let view = run(runtime.health().provider_health(&target, 100001)).unwrap();
     assert_eq!(view["state"], "healthy");
     assert_eq!(view["last_provider_request_id"], serde_json::Value::Null);
     assert_eq!(
-        run(runtime.provider_health(&target, 100001 + STALE_AFTER_MS)).unwrap()["stale"],
+        run(runtime
+            .health()
+            .provider_health(&target, 100001 + STALE_AFTER_MS))
+        .unwrap()["stale"],
         false
     );
     assert_eq!(
-        run(runtime.provider_health(&target, 100002 + STALE_AFTER_MS)).unwrap()["stale"],
+        run(runtime
+            .health()
+            .provider_health(&target, 100002 + STALE_AFTER_MS))
+        .unwrap()["stale"],
         true
     );
     let restarted = ObservabilityRuntime::new(memory.clone(), host);
     assert_eq!(
-        run(restarted.provider_health(&target, 100001)).unwrap(),
+        run(restarted.health().provider_health(&target, 100001)).unwrap(),
         view
     );
     assert!(
@@ -195,13 +210,19 @@ fn concurrent_cold_bursts_coalesce_and_transitions_preserve_arrival_order() {
     let target = HealthTarget::codex("account");
     memory.pause.set(true);
     let mut cx = Context::from_waker(Waker::noop());
-    let first = runtime.observe_provider(target.clone(), E::Success, Some(200), None);
+    let first = runtime
+        .health()
+        .observe_provider(target.clone(), E::Success, Some(200), None);
     let mut first = pin!(first);
     assert!(matches!(first.as_mut().poll(&mut cx), Poll::Pending));
-    let same = runtime.observe_provider(target.clone(), E::Success, Some(200), None);
+    let same = runtime
+        .health()
+        .observe_provider(target.clone(), E::Success, Some(200), None);
     let mut same = pin!(same);
     assert!(matches!(same.as_mut().poll(&mut cx), Poll::Pending));
-    let next = runtime.observe_provider(target.clone(), E::UpstreamError, Some(503), None);
+    let next = runtime
+        .health()
+        .observe_provider(target.clone(), E::UpstreamError, Some(503), None);
     let mut next = pin!(next);
     assert!(matches!(next.as_mut().poll(&mut cx), Poll::Pending));
     memory.pause.set(false);
@@ -210,7 +231,7 @@ fn concurrent_cold_bursts_coalesce_and_transitions_preserve_arrival_order() {
     assert_eq!(run(same), W::Coalesced);
     assert_eq!(memory.commits.get(), 2);
     assert_eq!(
-        run(runtime.provider_health(&target, 10)).unwrap()["last_event"],
+        run(runtime.health().provider_health(&target, 10)).unwrap()["last_event"],
         "upstream_error"
     );
 }
@@ -219,9 +240,10 @@ fn stale_claude_binding_and_store_failures_never_create_routing_evidence() {
     let memory = Memory::default();
     let host = Host::default();
     let runtime = ObservabilityRuntime::new(memory.clone(), host);
-    let row_key = gateway_kv_codec::tuple_key::TupleKey::from_json_parts(&[json!("source-binding")])
-        .unwrap()
-        .to_record_key();
+    let row_key =
+        gateway_kv_codec::tuple_key::TupleKey::from_json_parts(&[json!("source-binding")])
+            .unwrap()
+            .to_record_key();
     memory.rows.borrow_mut().insert(
         row_key.0.clone(),
         StoredRecord::json("generation2", json!({}), None),
@@ -235,17 +257,24 @@ fn stale_claude_binding_and_store_failures_never_create_routing_evidence() {
         }],
     };
     assert_eq!(
-        run(runtime.observe_provider(target.clone(), E::QuotaExhausted, Some(429), None)),
+        run(runtime
+            .health()
+            .observe_provider(target.clone(), E::QuotaExhausted, Some(429), None)),
         W::BindingChanged
     );
     assert_eq!(
-        run(runtime.provider_health(&target, 0)).unwrap(),
+        run(runtime.health().provider_health(&target, 0)).unwrap(),
         unknown_health()
     );
     assert_eq!(memory.commits.get(), 0);
     memory.unavailable.set(true);
     assert_eq!(
-        run(runtime.observe_provider(HealthTarget::codex("account"), E::Success, Some(200), None)),
+        run(runtime.health().observe_provider(
+            HealthTarget::codex("account"),
+            E::Success,
+            Some(200),
+            None
+        )),
         W::Unavailable
     );
 }

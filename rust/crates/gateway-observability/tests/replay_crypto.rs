@@ -1,8 +1,5 @@
-use base64::{
-    Engine,
-    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
-};
-use gateway_observability::replay_crypto::*;
+use base64::{Engine, engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD};
+use gateway_observability_replay_model::replay_crypto::*;
 use serde_json::Value;
 fn fixture() -> Value {
     serde_json::from_str(include_str!("fixtures/crypto-source.json")).unwrap()

@@ -1,19 +1,19 @@
 mod support;
-use gateway_source::{
-    js_string::JsString16, source_json::SourceJson, source_serialization as source,
-};
 use gateway_contracts::lifecycle::DeliveryOutcome;
+use gateway_core::state::StoredRecord;
 use gateway_kv_codec::{
     key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey, value::PortableValue,
     value::ValueEncoding,
 };
-use gateway_core::state::StoredRecord;
-use gateway_observability::{
-    ObservabilityRuntime,
-    incidents::IncidentObservation,
-    ledger::{ERROR_RETENTION_MS, ErrorObservation},
-    prompt::PromptEvent,
-    records::{admin_error_record_source, record_source_json},
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_ledger::{
+    ledger::ERROR_RETENTION_MS, ledger::ErrorObservation, records::admin_error_record_source,
+    records::record_source_json,
+};
+use gateway_observability_prompt::prompt::PromptEvent;
+use gateway_observability_replay_records::incident::IncidentObservation;
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 use serde_json::json;
 use support::{Host, Memory, run};
@@ -48,7 +48,7 @@ fn error_actual_writer_and_named_reader_keep_model_effort_revision_and_retention
     let clock = Host::default();
     clock.at.set(1000);
     let runtime = ObservabilityRuntime::new(memory.clone(), clock);
-    assert!(run(runtime.record_admin_error(&error())).unwrap());
+    assert!(run(runtime.ledger().record_admin_error(&error())).unwrap());
     let rows = memory.rows.borrow();
     let record = rows.values().next().unwrap();
     assert_eq!(record.value_encoding, ValueEncoding::ProfileV2);
@@ -76,8 +76,11 @@ fn request_source_entrypoint_cas_patch_and_restart_keep_exact_units_without_shad
     clock.at.set(1000);
     let runtime = ObservabilityRuntime::new(memory.clone(), clock.clone());
     let doc=SourceJson::parse(r#"{"id":"source-request","route":"responses","created_at_ms":1000,"model":"\ud800","reasoning":"r\udfff"}"#).unwrap();
-    run(runtime.record_request_log_source("source-key", &doc)).unwrap();
-    run(runtime.update_request_log_source(
+    run(runtime
+        .ledger()
+        .record_request_log_source("source-key", &doc))
+    .unwrap();
+    run(runtime.ledger().update_request_log_source(
         "source-key",
         1000,
         "source-request",
@@ -85,7 +88,7 @@ fn request_source_entrypoint_cas_patch_and_restart_keep_exact_units_without_shad
     ))
     .unwrap();
     let runtime = ObservabilityRuntime::new(memory.clone(), clock);
-    let rows = run(runtime.request_logs("source-key", 10)).unwrap();
+    let rows = run(runtime.ledger().request_logs("source-key", 10)).unwrap();
     assert_eq!(units(&rows[0], "model"), [0xd800]);
     assert_eq!(units(&rows[0], "reasoning"), [114, 0xdfff]);
     assert_eq!(
@@ -126,21 +129,23 @@ fn incident_latest_intentionally_redacts_non_slug_source_units_without_hashing_t
         let host = Host::default();
         host.at.set(1000);
         let runtime = ObservabilityRuntime::new(memory, host);
-        let receipt = run(runtime.record_incident_index(&IncidentObservation {
-            endpoint: "/v1/responses".into(),
-            method: "POST".into(),
-            git_sha: "a".repeat(40),
-            observed_at_ms: 1000,
-            status: 502,
-            stream: true,
-            completed: false,
-            framing_valid: true,
-            terminal_type: Some("response.failed".into()),
-            provider: Some("surplus".into()),
-            model: Some(model),
-            reasoning: Some(effort),
-            failure_kind: None,
-        }))
+        let receipt = run(runtime
+            .incidents()
+            .record_incident_index(&IncidentObservation {
+                endpoint: "/v1/responses".into(),
+                method: "POST".into(),
+                git_sha: "a".repeat(40),
+                observed_at_ms: 1000,
+                status: 502,
+                stream: true,
+                completed: false,
+                framing_valid: true,
+                terminal_type: Some("response.failed".into()),
+                provider: Some("surplus".into()),
+                model: Some(model),
+                reasoning: Some(effort),
+                failure_kind: None,
+            }))
         .unwrap();
         let document = receipt.record.json_value().unwrap();
         match expected {
@@ -180,14 +185,15 @@ fn prompt_models_use_source_text_encoder_hashes_and_never_enter_durable_keys() {
     host.at.set(1000);
     let runtime = ObservabilityRuntime::new(memory.clone(), host);
     let release = "a".repeat(40);
-    let high =
-        run(runtime
-            .record_prompt_telemetry(&prompt(JsString16::from_units(vec![0xd800])), &release));
-    let replacement =
-        run(runtime
-            .record_prompt_telemetry(&prompt(JsString16::from_units(vec![0xfffd])), &release));
-    let literal =
-        run(runtime.record_prompt_telemetry(&prompt(JsString16::from_utf8(r"\ud800")), &release));
+    let high = run(runtime
+        .prompt()
+        .record_prompt_telemetry(&prompt(JsString16::from_units(vec![0xd800])), &release));
+    let replacement = run(runtime
+        .prompt()
+        .record_prompt_telemetry(&prompt(JsString16::from_units(vec![0xfffd])), &release));
+    let literal = run(runtime
+        .prompt()
+        .record_prompt_telemetry(&prompt(JsString16::from_utf8(r"\ud800")), &release));
     assert_eq!(high["status"], "recorded");
     assert_eq!(high["model_hash"], replacement["model_hash"]);
     assert_ne!(high["model_hash"], literal["model_hash"]);
@@ -209,7 +215,7 @@ fn named_error_reader_refuses_missing_fields_and_wrong_codec_without_general_adm
     let host = Host::default();
     host.at.set(1000);
     let runtime = ObservabilityRuntime::new(memory.clone(), host);
-    run(runtime.record_admin_error(&error())).unwrap();
+    run(runtime.ledger().record_admin_error(&error())).unwrap();
     let record = memory.rows.borrow().values().next().unwrap().clone();
     let doc = admin_error_record_source(&record).unwrap();
     let mut fields = doc.object_entries().unwrap();
@@ -232,14 +238,14 @@ fn scalar_error_wire_is_unchanged_and_gateway_auth_failure_keeps_zero_kv_path() 
     let mut input = error();
     input.status = 401;
     input.provider = "gateway".into();
-    assert!(!run(runtime.record_admin_error(&input)).unwrap());
+    assert!(!run(runtime.ledger().record_admin_error(&input)).unwrap());
     assert_eq!(memory.reads.get(), 0);
     assert_eq!(memory.commits.get(), 0);
     input.status = 503;
     input.provider = "surplus".into();
     input.model = Some(JsString16::from_utf8(" gpt-test "));
     input.reasoning = Some(JsString16::from_utf8("new-tier"));
-    run(runtime.record_admin_error(&input)).unwrap();
+    run(runtime.ledger().record_admin_error(&input)).unwrap();
     let rows = memory.rows.borrow();
     let record = rows.values().next().unwrap();
     assert_eq!(record.value_encoding, ValueEncoding::Json);
@@ -305,10 +311,14 @@ fn actual_source_observation_goldens_match_telemetry_and_analytics_hash_preimage
         host.at.set(1000);
         let runtime = ObservabilityRuntime::new(memory.clone(), host);
         let event = prompt(model);
-        let recorded = run(runtime.record_prompt_telemetry(&event, &"a".repeat(40)));
+        let recorded = run(runtime
+            .prompt()
+            .record_prompt_telemetry(&event, &"a".repeat(40)));
         assert_eq!(recorded["model_hash"], telemetry);
         assert_eq!(
-            run(runtime.record_prompt_analytics(&event, &"a".repeat(40)))["status"],
+            run(runtime
+                .prompt()
+                .record_prompt_analytics(&event, &"a".repeat(40)))["status"],
             "recorded"
         );
         let mut found = false;

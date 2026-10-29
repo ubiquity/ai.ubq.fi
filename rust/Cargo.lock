@@ -2525,6 +2525,7 @@ dependencies = [
  "gateway-kv-codec",
  "gateway-model-selection",
  "gateway-observability",
+ "gateway-observability-contracts",
  "gateway-observability-test-support",
  "gateway-schema",
  "gateway-source",
@@ -3631,6 +3632,7 @@ dependencies = [
  "gateway-migration-data",
  "gateway-migration-ledger",
  "gateway-observability",
+ "gateway-observability-ledger",
  "gateway-profile-source",
  "gateway-schema",
  "gateway-source",
@@ -4181,6 +4183,22 @@ dependencies = [
  "gateway-core",
  "gateway-kv-codec",
  "gateway-model-selection",
+ "gateway-observability-capacity",
+ "gateway-observability-capacity-events",
+ "gateway-observability-contracts",
+ "gateway-observability-control",
+ "gateway-observability-health",
+ "gateway-observability-incidents",
+ "gateway-observability-ledger",
+ "gateway-observability-metered",
+ "gateway-observability-prompt",
+ "gateway-observability-replay-capture",
+ "gateway-observability-replay-model",
+ "gateway-observability-replay-observation",
+ "gateway-observability-replay-read",
+ "gateway-observability-replay-records",
+ "gateway-observability-replay-retention",
+ "gateway-observability-replay-state",
  "gateway-observability-request-records",
  "gateway-observability-test-support",
  "gateway-quota-projection",
@@ -4196,9 +4214,289 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-observability-capacity"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "gateway-admin-runtime",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-capacity",
+ "gateway-capacity-projection",
+ "gateway-claude-usage-history-records",
+ "gateway-claude-usage-protocol",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-capacity-events",
+ "gateway-observability-contracts",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-capacity-events"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
+ "gateway-auth-contracts",
+ "gateway-capacity-projection",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-contracts",
+ "gateway-schema",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-contracts"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-capacity",
+ "gateway-claude-usage-history-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-model-selection",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-control"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-keys",
+ "gateway-capacity-projection",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-contracts",
+ "gateway-observability-prompt",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-health"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
+ "gateway-auth-contracts",
+ "gateway-capacity-projection",
+ "gateway-claude-usage-protocol",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-contracts",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-incidents"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-runtime",
+ "gateway-auth-contracts",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-contracts",
+ "gateway-observability-replay-model",
+ "gateway-observability-replay-records",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-ledger"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority",
+ "gateway-authority-paid-records",
+ "gateway-capacity-projection",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-contracts",
+ "gateway-observability-request-records",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-metered"
+version = "0.1.0"
+dependencies = [
+ "gateway-capacity-projection",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-contracts",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-prompt"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-primitives",
+ "gateway-capacity-projection",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-contracts",
+ "gateway-observability-request-records",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-replay-capture"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-contracts",
+ "gateway-observability-incidents",
+ "gateway-observability-replay-model",
+ "gateway-observability-replay-observation",
+ "gateway-observability-replay-read",
+ "gateway-observability-replay-records",
+ "gateway-observability-replay-retention",
+ "gateway-observability-replay-state",
+ "gateway-schema",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "zeroize",
+]
+
+[[package]]
+name = "gateway-observability-replay-model"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "base64 0.22.1",
+ "flate2",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-contracts",
+ "gateway-source",
+ "hkdf",
+ "hmac 0.12.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "zeroize",
+]
+
+[[package]]
+name = "gateway-observability-replay-observation"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-observability-contracts",
+ "gateway-schema",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "zeroize",
+]
+
+[[package]]
+name = "gateway-observability-replay-read"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "gateway-auth-contracts",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-contracts",
+ "gateway-observability-replay-model",
+ "gateway-observability-replay-records",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-replay-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-primitives",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-contracts",
+ "gateway-observability-replay-model",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-replay-retention"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-contracts",
+ "gateway-observability-replay-model",
+ "gateway-observability-replay-records",
+ "gateway-observability-replay-state",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-replay-state"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-observability-contracts",
+ "gateway-observability-replay-model",
+ "gateway-observability-replay-records",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-observability-request-records"
 version = "0.1.0"
 dependencies = [
+ "gateway-core",
  "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
@@ -4214,6 +4512,7 @@ dependencies = [
  "gateway-kv-codec",
  "gateway-model-selection",
  "gateway-observability",
+ "gateway-observability-contracts",
  "gateway-schema",
  "gateway-source",
 ]
@@ -4964,6 +5263,13 @@ dependencies = [
  "gateway-native-authority-request",
  "gateway-native-authority-wire",
  "gateway-observability",
+ "gateway-observability-contracts",
+ "gateway-observability-ledger",
+ "gateway-observability-metered",
+ "gateway-observability-prompt",
+ "gateway-observability-replay-capture",
+ "gateway-observability-replay-model",
+ "gateway-observability-replay-observation",
  "gateway-observability-test-support",
  "gateway-profile-values",
  "gateway-provider-claude-body",

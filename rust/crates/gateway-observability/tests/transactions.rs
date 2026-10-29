@@ -1,5 +1,4 @@
 mod support;
-use gateway_source::error::GatewayError;
 use gateway_contracts::lifecycle::DeliveryOutcome;
 use gateway_core::{
     query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
@@ -7,11 +6,12 @@ use gateway_core::{
     state::StoredRecord,
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
-use gateway_observability::{
-    ObservabilityRuntime,
-    ledger::ErrorObservation,
-    types::{HealthEvent, HealthProvider, HealthTarget, HealthWrite},
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{
+    types::HealthEvent, types::HealthProvider, types::HealthTarget, types::HealthWrite,
 };
+use gateway_observability_ledger::ledger::ErrorObservation;
+use gateway_source::error::GatewayError;
 use std::{cell::Cell, rc::Rc};
 use support::{Host, Memory, run};
 #[derive(Clone, Copy)]
@@ -95,8 +95,10 @@ fn error() -> ErrorObservation {
 fn fixture(mode: Race) -> (Store, Host) {
     let memory = Memory::default();
     let source =
-        TupleKey::from_scalar_parts(&[gateway_kv_codec::tuple_key::ScalarKeyPart::String("source")])
-            .to_record_key();
+        TupleKey::from_scalar_parts(&[gateway_kv_codec::tuple_key::ScalarKeyPart::String(
+            "source",
+        )])
+        .to_record_key();
     memory.rows.borrow_mut().insert(
         source.0.clone(),
         StoredRecord::json("current-source", serde_json::json!({"v":1}), None),
@@ -118,7 +120,7 @@ fn fixture(mode: Race) -> (Store, Host) {
 fn source_unconditional_write_overwrites_a_concurrent_destination_without_an_added_read_guard() {
     let (store, host) = fixture(Race::Destination);
     let runtime = ObservabilityRuntime::new(store.clone(), host);
-    assert!(run(runtime.record_admin_error(&error())).unwrap());
+    assert!(run(runtime.ledger().record_admin_error(&error())).unwrap());
     assert_eq!(store.attempts.get(), 1);
     assert_eq!(store.memory.reads.get(), 0);
     assert!(store.memory.rows.borrow().values().any(|row| {
@@ -142,7 +144,9 @@ fn changed_explicit_source_fence_never_becomes_an_observation_write() {
         }],
     };
     assert_eq!(
-        run(runtime.observe_provider(target, HealthEvent::Success, Some(200), None)),
+        run(runtime
+            .health()
+            .observe_provider(target, HealthEvent::Success, Some(200), None)),
         HealthWrite::BindingChanged
     );
     assert_eq!(store.memory.rows.borrow().len(), 1);
@@ -152,7 +156,7 @@ fn unknown_commit_receipt_is_not_replayed_or_reported_as_no_effect() {
     let (store, host) = fixture(Race::Unknown);
     let runtime = ObservabilityRuntime::new(store.clone(), host);
     assert_eq!(
-        run(runtime.record_admin_error(&error()))
+        run(runtime.ledger().record_admin_error(&error()))
             .unwrap_err()
             .envelope
             .error

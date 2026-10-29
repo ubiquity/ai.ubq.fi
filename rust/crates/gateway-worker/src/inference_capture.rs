@@ -1,13 +1,12 @@
 //! Passive request-owned replay evidence. It never authorizes dispatch or settlement.
 use crate::host::PlatformHost;
-use crate::observability_host;
-use crate::observability_host::CaptureInput;
+use crate::observability_host::{self, CaptureInput};
 use gateway_contracts::{
     lifecycle::BodyOutcome, lifecycle::ReaderTermination, lifecycle::SemanticTerminal,
     lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
 };
-use gateway_observability::{
-    replay_producer::{ClientFailureObservation, FailureObservation, should_persist},
+use gateway_observability_replay_observation::{
+    observation::{ClientFailureObservation, FailureObservation, should_persist},
     replay_trace::{AttemptTrace, TraceProvider, TraceRecorder, TraceTerminal},
 };
 use gateway_provider_events::{framing::SseFrame, framing::SseParser};
@@ -166,7 +165,7 @@ impl Capture {
                 fields.push((JsString16::from_utf8("model"), SourceJson::from_serializable(&model)?));
                 fields.push((JsString16::from_utf8("reasoning"), SourceJson::from_serializable(&reasoning)?));
                 let record = source::object_keys(fields)?;
-                self.runtime.record_request_log_source(&key.0, &record).await
+                self.runtime.ledger().record_request_log_source(&key.0, &record).await
             }.await;
             if let Err(error) = result {
                 worker::console_error!(
@@ -197,7 +196,7 @@ impl Capture {
         };
         let extracted = gateway_contracts::source_usage::extract_usage_tokens(usage);
         let completed = self.local_completed.get() || source_completed(observation);
-        let mut event = gateway_observability::prompt::PromptEvent {
+        let mut event = gateway_observability_prompt::prompt::PromptEvent {
             provider: Some(provider.clone()),
             model: request.model.clone(),
             route: request.context.route.clone(),
@@ -215,16 +214,19 @@ impl Capture {
         event.set_source_usage(extracted.as_ref());
         let _telemetry = self
             .runtime
+            .prompt()
             .record_prompt_telemetry(&event, env!("UOS_RUST_BUILD_GIT_SHA"))
             .await;
         let _analytics = self
             .runtime
+            .prompt()
             .record_prompt_analytics(&event, env!("UOS_RUST_BUILD_GIT_SHA"))
             .await;
         if let Err(error) = self
             .runtime
+            .ledger()
             .record_terminal_usage_rollup(
-                gateway_observability::ledger::terminal_rollup::TerminalUsageRollup {
+                gateway_observability_ledger::ledger::terminal_rollup::TerminalUsageRollup {
                     model: request.model.as_ref(),
                     provider: Some(&provider),
                     request_id: &self.request_id,
@@ -276,7 +278,7 @@ impl Capture {
                     fields.push((JsString16::from_utf8("native_http_failure"), original.clone()));
                 }
                 let patch = source::object_keys(fields)?;
-                self.runtime.update_request_log_source(&key.0, request.context.started_at_ms, &self.request_id, &patch).await
+                self.runtime.ledger().update_request_log_source(&key.0, request.context.started_at_ms, &self.request_id, &patch).await
             }.await;
             if let Err(error) = result {
                 worker::console_error!(
@@ -321,7 +323,8 @@ impl Capture {
             _ => None,
         };
         self.runtime
-            .record_admin_error(&gateway_observability::ledger::ErrorObservation {
+            .ledger()
+            .record_admin_error(&gateway_observability_ledger::ledger::ErrorObservation {
                 request_id: self.request_id.clone(),
                 route: request.context.route.clone(),
                 status,
@@ -672,6 +675,7 @@ impl Capture {
             }
             CaptureInput::Omitted(reason) => {
                 self.runtime
+                    .captures()
                     .record_capture_omission(&self.request_id, reason)
                     .await?;
             }

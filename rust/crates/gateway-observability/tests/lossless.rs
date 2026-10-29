@@ -5,9 +5,8 @@ use gateway_core::state::StoredRecord;
 use gateway_kv_codec::{
     tuple_key::DecodedKeyPart, tuple_key::TupleKey, value::PortableValue, value::ValueEncoding,
 };
-use gateway_observability::{
-    ObservabilityRuntime, ledger::ErrorObservation, records::record_source_json,
-};
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_ledger::{ledger::ErrorObservation, records::record_source_json};
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use support::{Host, Memory, run};
@@ -33,7 +32,7 @@ fn split_surrogate_model_survives_cas_update_restart_and_actual_raw_response_byt
     clock.at.set(1000);
     let runtime = ObservabilityRuntime::new(memory.clone(), clock.clone());
     let model = format!("{}😀", "a".repeat(119));
-    run(runtime.record_request_log(
+    run(runtime.ledger().record_request_log(
         "fixture-key",
         &json!({"id":"fixture-request","route":"responses","created_at_ms":1000,"model":model}),
     ))
@@ -42,7 +41,7 @@ fn split_surrogate_model_survives_cas_update_restart_and_actual_raw_response_byt
         memory.rows.borrow().values().next().unwrap().value_encoding,
         ValueEncoding::ProfileV2
     );
-    run(runtime.update_request_log(
+    run(runtime.ledger().update_request_log(
         "fixture-key",
         1000,
         "fixture-request",
@@ -50,7 +49,7 @@ fn split_surrogate_model_survives_cas_update_restart_and_actual_raw_response_byt
     ))
     .unwrap();
     let runtime = ObservabilityRuntime::new(memory.clone(), clock);
-    let rows = run(runtime.request_logs("fixture-key", 20)).unwrap();
+    let rows = run(runtime.ledger().request_logs("fixture-key", 20)).unwrap();
     let model = units(&rows[0], "model");
     assert_eq!(model.len(), 120);
     assert_eq!(model[119], 0xd83d);
@@ -82,7 +81,7 @@ fn source_tuple_uses_usv_key_bytes_while_the_logical_request_id_keeps_its_units(
     clock.at.set(1000);
     let runtime = ObservabilityRuntime::new(memory.clone(), clock);
     let id = format!("{}😀", "a".repeat(119));
-    run(runtime.record_request_log(
+    run(runtime.ledger().record_request_log(
         "fixture-key",
         &json!({"id":id,"route":"responses","created_at_ms":1000}),
     ))
@@ -129,7 +128,7 @@ fn error_terminal_and_failure_use_profile_v2_without_changing_other_record_encod
         git_sha: Some("a".repeat(40)),
         deno_revision: Some("fixture-release".into()),
     };
-    assert!(run(runtime.record_admin_error(&observation)).unwrap());
+    assert!(run(runtime.ledger().record_admin_error(&observation)).unwrap());
     let row = memory.rows.borrow().values().next().unwrap().clone();
     assert_eq!(row.value_encoding, ValueEncoding::ProfileV2);
     assert!(row.json_value().is_err());
@@ -140,7 +139,7 @@ fn error_terminal_and_failure_use_profile_v2_without_changing_other_record_encod
         assert_eq!(text[159], 0xd83d)
     }
     memory.rows.borrow_mut().clear();
-    run(runtime.record_request_log(
+    run(runtime.ledger().record_request_log(
         "fixture-key",
         &json!({"id":"scalar-request","route":"responses","created_at_ms":1000,"model":"scalar"}),
     ))
@@ -168,7 +167,7 @@ fn source_created_time_signed_zero_keeps_two_distinct_tuple_keys() {
     clock.at.set(1000);
     let runtime = ObservabilityRuntime::new(memory.clone(), clock);
     for created in [0.0, -0.0] {
-        run(runtime.record_request_log(
+        run(runtime.ledger().record_request_log(
             "fixture-key",
             &json!({"id":"same-id","created_at_ms":created,"route":"responses"}),
         ))
@@ -187,7 +186,7 @@ fn source_created_time_signed_zero_keeps_two_distinct_tuple_keys() {
         signs.push(created.is_sign_negative());
         assert_eq!(
             record.expires_at_ms,
-            Some(gateway_observability::ledger::REQUEST_RETENTION_MS)
+            Some(gateway_observability_ledger::ledger::REQUEST_RETENTION_MS)
         );
     }
     signs.sort();
