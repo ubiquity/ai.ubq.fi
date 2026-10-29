@@ -3,10 +3,10 @@ use super::{
     actor_channel::{ImportChildCommand, OwnedImportChildChannel},
     owner_runtime::OwnedRuntime,
 };
-use crate::import_custody_protocol::unavailable;
 use gateway_authority::native_control::import::{
     custody_session::VerifiedCurrentImportStarted, remote::VerifiedCurrentImportTerminal,
 };
+use gateway_native_custody_io::protocol::unavailable;
 use gateway_native_custody_wire::wire::Header;
 use gateway_source::error::GatewayError;
 use std::time::{Duration, Instant};

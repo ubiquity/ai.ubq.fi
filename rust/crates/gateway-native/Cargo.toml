@@ -34,6 +34,7 @@ gateway-publication = { path = "../gateway-publication" }
 gateway-native-confinement.workspace = true
 gateway-native-connector.workspace = true
 gateway-native-connected-io.workspace = true
+gateway-native-custody-io.workspace = true
 gateway-native-custody-wire.workspace = true
 gateway-native-http-framing.workspace = true
 gateway-native-import-client.workspace = true

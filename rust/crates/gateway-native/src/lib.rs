@@ -8,8 +8,6 @@ mod daemon_startup;
 #[cfg(unix)]
 pub mod existing_account_import;
 #[cfg(unix)]
-mod import_custody_protocol;
-#[cfg(unix)]
 pub mod live_bridge;
 #[cfg(unix)]
 pub mod managed_publication_http;

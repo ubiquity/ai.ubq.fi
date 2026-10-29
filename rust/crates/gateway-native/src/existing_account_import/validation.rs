@@ -24,11 +24,9 @@ pub(super) struct ValidatedNativeImport<'a> {
 }
 
 use super::{ExistingAccountImportStore, live_custody::LiveImportCustody};
-use crate::{
-    import_custody_protocol::unavailable,
-    private_https::{PrivateHttps, PrivateResponse},
-};
+use crate::private_https::{PrivateHttps, PrivateResponse};
 use gateway_authority::native_control::import::AuthenticatedNativeImport;
+use gateway_native_custody_io::protocol::unavailable;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use std::{
     net::TcpStream,

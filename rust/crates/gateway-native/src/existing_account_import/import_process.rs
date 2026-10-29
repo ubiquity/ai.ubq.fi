@@ -4,7 +4,6 @@ use super::{
     ExistingAccountImportStore,
     actor_channel::{ActorBootstrap, InheritedCustodyChannel},
 };
-use crate::import_custody_protocol::unavailable;
 use gateway_auth_native_contracts::native_import::{NativeImportKind, NativeImportMetadata};
 use gateway_auth_native_proof::{
     native_auth::NativeTransportIdentity,
@@ -12,6 +11,7 @@ use gateway_auth_native_proof::{
 };
 use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_native_records::owner::RegisteredRenewalOwner;
+use gateway_native_custody_io::protocol::unavailable;
 use gateway_native_custody_wire::bootstrap::ImportEndpointData;
 use gateway_native_daemon_config::config::NativeDaemonConfig;
 use gateway_native_http_framing::{

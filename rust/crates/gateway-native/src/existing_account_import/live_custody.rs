@@ -1,13 +1,13 @@
 //! Actor-local sealed live channel capability; wire stopped DATA cannot construct it.
 use super::NativeImportInputs;
 use super::{ExistingAccountImportStore, actor_channel::InheritedCustodyChannel};
-use crate::import_custody_protocol::{self as wire, unavailable};
 use gateway_authority::native_control::import::{
     AuthenticatedNativeImport,
     custody_session::ImportCustodyStartedRequest,
     effects::{NativeImportBinding, NativeImportStart},
     remote::AuthenticatedImportTerminal,
 };
+use gateway_native_custody_io::protocol::{self as wire, unavailable};
 use gateway_native_custody_wire::wire::{self as data, Frame, Header, Release, Stopped};
 use gateway_source::error::GatewayError;
 use std::{

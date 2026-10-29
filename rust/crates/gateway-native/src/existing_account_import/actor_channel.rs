@@ -1,7 +1,7 @@
 //! Safe fixed-role Child/bootstrap channel. Neither an accepted socket nor JSON is custody.
 use super::{exclusive_owner::PinnedExecutable, import_endpoints::ResolvedImportEndpoints};
-use crate::import_custody_protocol::{self as wire, unavailable};
 use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_native_custody_io::protocol::{self as wire, unavailable};
 use gateway_native_custody_wire::bootstrap::{Bootstrap, ImportEndpointData};
 use gateway_native_custody_wire::wire::{Frame, Header, HeaderView, Stopped};
 use gateway_source::error::GatewayError;

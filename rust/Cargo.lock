@@ -3656,6 +3656,7 @@ dependencies = [
  "gateway-native-confinement",
  "gateway-native-connected-io",
  "gateway-native-connector",
+ "gateway-native-custody-io",
  "gateway-native-custody-wire",
  "gateway-native-daemon-config",
  "gateway-native-http-admission",
@@ -3747,6 +3748,20 @@ dependencies = [
  "gateway-source",
  "rustix",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-native-custody-io"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-contracts",
+ "gateway-native-custody-wire",
+ "gateway-native-http-admission",
+ "gateway-source",
+ "getrandom 0.4.3",
  "serde_json",
 ]
 

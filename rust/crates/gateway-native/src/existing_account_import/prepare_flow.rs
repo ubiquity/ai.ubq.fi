@@ -10,12 +10,12 @@ use super::{
     live_custody::LiveImportCustody,
     validation::{ImportValidation, ValidatedNativeImport, ValidationOutcome},
 };
-use crate::import_custody_protocol::unavailable;
 use gateway_authority::native_control::import::effects::NativeImportClaim;
 use gateway_authority::native_control::import::effects::NativeImportMode;
 use gateway_authority::native_control::import::remote::AuthenticatedImportTerminal;
 use gateway_authority::native_control::import::remote::RemoteImportAuthority;
 use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_native_custody_io::protocol::unavailable;
 use gateway_native_import_source::catalog::CatalogValidation;
 use gateway_source::error::GatewayError;
 
