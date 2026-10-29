@@ -1,7 +1,7 @@
 //! Complete request-owned accepted replay input and failure capture production.
 pub mod replay_producer;
 use gateway_observability_incidents::IncidentIndex;
-use gateway_observability_replay_read::ReplayReader;
+use gateway_observability_replay_read::duplicate::ReplayDuplicates;
 use gateway_observability_replay_retention::ReplayRetention;
 use gateway_observability_replay_state::{ReplayBootstrapState, ReplayMetadata};
 pub struct ReplayCapture<'a, S, H> {
@@ -22,7 +22,7 @@ impl<'a, S, H> ReplayCapture<'a, S, H> {
     fn incidents(&self) -> IncidentIndex<'_, S, H> {
         IncidentIndex::new(self.store, self.host)
     }
-    fn reader(&self) -> ReplayReader<'_, S, H> {
-        ReplayReader::new(self.store, self.host)
+    fn duplicates(&self) -> ReplayDuplicates<'_, S, H> {
+        ReplayDuplicates::new(self.store, self.host, self.state.clone())
     }
 }

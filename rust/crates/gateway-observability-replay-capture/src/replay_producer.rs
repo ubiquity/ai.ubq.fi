@@ -7,7 +7,6 @@ use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{
     data, host_types::BuildIdentity, source_object::SourceObject, types::ObservabilityHost,
 };
-use gateway_observability_incidents::incidents::IncidentEvidence;
 use gateway_observability_replay_model::{
     records::read_json_record, replay_crypto, replay_crypto::FingerprintInput,
     replay_crypto::ReplayBody, replay_crypto::ReplayKey, replay_model as model,
@@ -17,6 +16,7 @@ use gateway_observability_replay_observation::{
     observation::bounded_param, observation::should_persist, observation::should_signal,
     replay_trace::UpstreamTrace,
 };
+use gateway_observability_replay_read::duplicate::{DuplicateCapture, PersistResult};
 use gateway_observability_replay_records::{
     accounting as schema, accounting::RetentionLimits, incident::IncidentObservation,
 };
@@ -108,23 +108,6 @@ impl ReplayInput {
         &self.request_id
     }
 }
-#[derive(Clone, Debug)]
-pub enum PersistResult {
-    Stored {
-        manifest: model::Manifest,
-        manifest_key: RecordKey,
-    },
-    Duplicate {
-        fingerprint: String,
-        manifest_key: RecordKey,
-    },
-    Disabled {
-        reason: &'static str,
-    },
-    Incomplete {
-        reason: &'static str,
-    },
-}
 fn settings(input: &ReplayInput, observation: &FailureObservation) -> serde_json::Value {
     let mut out = serde_json::json!({"source":"unavailable","provider_route":observation.provider_route,"model_requested":null,"reasoning_requested":null,"stream_requested":null,"stream_observed":observation.stream});
     let decoded = String::from_utf8_lossy(input.body.as_bytes());
@@ -188,14 +171,6 @@ struct Metadata<'a> {
     body_sha256: String,
     body_bytes: usize,
     downstream: Downstream<'a>,
-}
-struct DuplicateCapture<'a> {
-    fingerprint: &'a str,
-    dedupe: &'a gateway_core::state::StoredRecord,
-    index: Option<&'a str>,
-    at: i64,
-    limits: RetentionLimits,
-    state: model::CaptureState,
 }
 struct CaptureEvent<'a> {
     input: &'a ReplayInput,
@@ -422,8 +397,9 @@ impl<S: QueryStore, H: ObservabilityHost> ReplayCapture<'_, S, H> {
         };
         if let Some(row) = self.replay_row(&schema::dedupe_key(&fingerprint)).await? {
             return self
-                .replay_duplicate(
-                    input,
+                .duplicates()
+                .persist_duplicate(
+                    input.request_id(),
                     key,
                     DuplicateCapture {
                         fingerprint: &fingerprint,
@@ -574,8 +550,9 @@ impl<S: QueryStore, H: ObservabilityHost> ReplayCapture<'_, S, H> {
             && let Some(row) = self.replay_row(&schema::dedupe_key(&fingerprint)).await?
         {
             return self
-                .replay_duplicate(
-                    input,
+                .duplicates()
+                .persist_duplicate(
+                    input.request_id(),
                     key,
                     DuplicateCapture {
                         fingerprint: &fingerprint,
@@ -589,114 +566,6 @@ impl<S: QueryStore, H: ObservabilityHost> ReplayCapture<'_, S, H> {
                 .await;
         }
         result
-    }
-    async fn replay_duplicate(
-        &self,
-        input: &ReplayInput,
-        key: &ReplayKey,
-        context: DuplicateCapture<'_>,
-    ) -> Result<PersistResult, GatewayError> {
-        let DuplicateCapture {
-            fingerprint,
-            dedupe,
-            index,
-            at,
-            limits,
-            state,
-        } = context;
-        let row = SourceObject::parse(&read_json_record(dedupe)?)?;
-        let parts = row
-            .get("manifest_key")
-            .ok_or_else(|| data::error("Replay dedupe record is invalid"))?
-            .array_items()?;
-        if parts.len() != 7 {
-            return Err(data::error("Replay dedupe key is invalid"));
-        }
-        let manifest_key = model::tuple_from_source(&parts)?;
-        let winner = self.replay_row(&manifest_key).await?;
-        let manifest = winner
-            .as_ref()
-            .map(|r| model::Manifest::from_source(&read_json_record(r)?))
-            .transpose()?;
-        if manifest.as_ref().is_some_and(|m| {
-            m.fingerprint != fingerprint || !m.matches_key(&manifest_key).unwrap_or(false)
-        }) {
-            return Err(data::error("Replay dedupe winner identity is invalid"));
-        }
-        let captured = row
-            .get("captured_at_ms")
-            .and_then(|v| v.deserialize::<f64>().ok())
-            .filter(|n| model::safe_integer(*n))
-            .or_else(|| manifest.as_ref().map(|m| m.captured_at_ms))
-            .unwrap_or(at as f64);
-        let expires = row
-            .get("expires_at_ms")
-            .and_then(|v| v.deserialize::<f64>().ok())
-            .filter(|n| model::safe_integer(*n))
-            .or_else(|| manifest.as_ref().map(|m| m.expires_at_ms))
-            .unwrap_or((at + model::PAYLOAD_TTL) as f64);
-        if let Some(index) = index {
-            let manifest = manifest
-                .as_ref()
-                .ok_or_else(|| data::error("Incident replay winner is unavailable"))?;
-            let exported = self.reader().export_manifest(manifest).await?;
-            let mut ciphertext = Zeroizing::new(Vec::new());
-            for chunk in exported.chunks {
-                ciphertext.extend(
-                    URL_SAFE_NO_PAD
-                        .decode(chunk)
-                        .map_err(|_| data::error("Replay ciphertext chunk is invalid"))?,
-                )
-            }
-            let iv: Vec<u8> = model::url_decode(&manifest.iv)?;
-            let iv: [u8; 12] = iv
-                .try_into()
-                .map_err(|_| data::error("Replay IV is invalid"))?;
-            let plain = key.decrypt(&iv, fingerprint, &ciphertext)?;
-            if plain.len() < 4 {
-                return Err(data::error("Replay winner plaintext is truncated"));
-            }
-            let length = u32::from_be_bytes(plain[..4].try_into().expect("four bytes")) as usize;
-            let bytes = plain
-                .get(4..4 + length)
-                .ok_or_else(|| data::error("Replay winner metadata is truncated"))?;
-            let metadata = SourceObject::parse(&SourceJson::parse_bytes(bytes)?)?;
-            let git_sha = metadata
-                .get("git_sha")
-                .and_then(|v| v.deserialize::<String>().ok());
-            self.incidents()
-                .bind_incident_evidence(&IncidentEvidence {
-                    index_fingerprint: index,
-                    reference_fingerprint: fingerprint,
-                    manifest_key: &manifest_key,
-                    manifest_record: winner.as_ref().expect("manifest owner"),
-                    capture_id: &manifest.capture_id,
-                    git_sha: git_sha.as_deref(),
-                    captured_at_ms: manifest.captured_at_ms as i64,
-                    expires_at_ms: manifest.expires_at_ms as i64,
-                    ciphertext_sha256: &sha256_hex(&ciphertext),
-                    observed_at_ms: at,
-                })
-                .await?;
-        }
-        let status = model::Status {
-            version: 1.0,
-            request_id: input.request_id.clone(),
-            status: state,
-            reason: None,
-            captured_at_ms: captured,
-            manifest_key: Some(parts),
-            fingerprint: Some(fingerprint.into()),
-            expires_at_ms: Some(expires),
-        };
-        let _ = self
-            .replay_state()
-            .admit_replay_status(&status, limits)
-            .await?;
-        Ok(PersistResult::Duplicate {
-            fingerprint: fingerprint.into(),
-            manifest_key,
-        })
     }
     async fn replay_row(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
         let row = self.store.read(key).await?;

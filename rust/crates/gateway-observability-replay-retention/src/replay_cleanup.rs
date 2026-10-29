@@ -3,8 +3,7 @@ use crate::{ReplayRetention, store};
 use gateway_core::{query::QueryStore, state::RecordMutation};
 use gateway_kv_codec::key::RecordKey;
 use gateway_observability_contracts::{
-    data, query, query::ObservationRead, query::ReplayRows, source_object::SourceObject,
-    types::ObservabilityHost,
+    data, query, query::ObservationRead, query::ReplayRows, types::ObservabilityHost,
 };
 use gateway_observability_replay_model::{records::read_json_record, replay_model as model};
 use gateway_observability_replay_records::accounting as schema;
@@ -71,14 +70,9 @@ impl<S: QueryStore, H: ObservabilityHost> ReplayRetention<'_, S, H> {
         }
         let dedupe = schema::dedupe_key(&row.fingerprint);
         if let Some(previous) = self.store.read(&dedupe).await? {
-            let value = SourceObject::parse(&read_json_record(&previous)?)?;
-            if let Some(parts) = value
-                .get("manifest_key")
-                .map(|v| v.array_items())
-                .transpose()?
-                && parts.len() == 7
-                && model::tuple_from_source(&parts)? == key
-            {
+            if gateway_observability_replay_read::reference::dedupe_record_matches_claimed_manifest(
+                &previous, &key,
+            )? {
                 let _ = store::commit(
                     self.store,
                     vec![data::check(&dedupe, Some(&previous))],

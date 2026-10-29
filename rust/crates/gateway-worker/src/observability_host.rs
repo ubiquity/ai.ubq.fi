@@ -72,7 +72,7 @@ pub async fn persist_failure(
     input: replay_producer::ReplayInput,
     observation: observation::FailureObservation,
     client: observation::ClientFailureObservation,
-) -> Result<replay_producer::PersistResult, GatewayError> {
+) -> Result<gateway_observability_replay_read::duplicate::PersistResult, GatewayError> {
     let key =
         crate::host::setting(&runtime.host().platform.env, "SENTINEL_REPLAY_KEY").and_then(|raw| {
             replay_crypto::ReplayKey::decode(raw.trim_matches(util::js_whitespace)).ok()

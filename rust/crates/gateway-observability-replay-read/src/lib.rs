@@ -1,4 +1,6 @@
 //! Complete fixed replay export operations; no raw store/transaction access.
+pub mod duplicate;
+pub mod reference;
 pub mod replay_read;
 mod store;
 pub struct ReplayReader<'a, S, H> {

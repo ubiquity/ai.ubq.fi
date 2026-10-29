@@ -263,7 +263,7 @@ impl<S: QueryStore, H: ObservabilityHost> ReplayReader<'_, S, H> {
             let Some(fingerprint) = status.data.fingerprint.as_ref() else {
                 return response(Vec::new(), None, Some(status.source_json()?));
             };
-            let key = model::tuple_from_source(parts)?;
+            let key = crate::reference::tuple_from_source(parts)?;
             let row = self.replay_row(&key).await?;
             let manifest = match row.as_ref() {
                 Some(row) => manifest_from_row(row)?,
@@ -407,7 +407,7 @@ impl<S: QueryStore, H: ObservabilityHost> ReplayReader<'_, S, H> {
                 if manifest_parts.len() != 7 {
                     return Err(failed());
                 }
-                let key = model::tuple_from_source(&manifest_parts)?;
+                let key = crate::reference::tuple_from_source(&manifest_parts)?;
                 let Some(row) = self.replay_row(&key).await? else {
                     let _ = store::commit(
                         self.store,

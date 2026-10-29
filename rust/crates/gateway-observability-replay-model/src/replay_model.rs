@@ -6,7 +6,7 @@ use base64::{
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey};
 use gateway_observability_contracts::{data, source_object::SourceObject};
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub const PAYLOAD_TTL: i64 = 48 * 60 * 60 * 1000;
@@ -118,23 +118,6 @@ pub fn manifest_key(at: f64, fingerprint: &str, id: &str) -> Result<RecordKey, G
         KeyPart::String(id.into()),
     ])
     .map(|k| k.to_record_key())
-}
-pub(crate) fn tuple_from_source(parts: &[SourceJson]) -> Result<RecordKey, GatewayError> {
-    let mut key = Vec::new();
-    for value in parts {
-        let text = value.as_str();
-        if text.starts_with('"') {
-            key.push(KeyPart::source_string_utf16(
-                value.deserialize::<JsString16>()?.as_units(),
-            ))
-        } else if let Ok(value) = value.deserialize::<bool>() {
-            key.push(KeyPart::Boolean(value))
-        } else {
-            let value = value.deserialize::<f64>()?;
-            key.push(KeyPart::Number(value))
-        }
-    }
-    TupleKey::from_parts(&key).map(|k| k.to_record_key())
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Manifest {

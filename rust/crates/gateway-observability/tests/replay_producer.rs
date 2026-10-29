@@ -7,7 +7,7 @@ use gateway_kv_codec::{key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::Tup
 use gateway_observability::ObservabilityRuntime;
 use gateway_observability_contracts::{host_types::BuildIdentity, types::ObservabilityHost};
 use gateway_observability_replay_capture::{
-    replay_producer::PersistResult, replay_producer::ReplayInput, replay_producer::ReplayRequest,
+    replay_producer::ReplayInput, replay_producer::ReplayRequest,
 };
 use gateway_observability_replay_model::{
     replay_crypto::ReplayBody, replay_crypto::ReplayKey, replay_model,
@@ -16,6 +16,7 @@ use gateway_observability_replay_observation::{
     observation::ClientFailureObservation, observation::FailureObservation,
     replay_trace::UpstreamTrace,
 };
+use gateway_observability_replay_read::duplicate::PersistResult;
 use gateway_observability_replay_records::accounting::RetentionLimits;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,

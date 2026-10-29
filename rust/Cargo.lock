@@ -4548,15 +4548,20 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "gateway-auth-contracts",
+ "gateway-auth-primitives",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
  "gateway-observability-contracts",
+ "gateway-observability-incidents",
  "gateway-observability-replay-model",
  "gateway-observability-replay-records",
+ "gateway-observability-replay-state",
+ "gateway-observability-test-support",
  "gateway-source",
  "serde",
  "serde_json",
+ "zeroize",
 ]
 
 [[package]]
@@ -4582,6 +4587,7 @@ dependencies = [
  "gateway-kv-codec",
  "gateway-observability-contracts",
  "gateway-observability-replay-model",
+ "gateway-observability-replay-read",
  "gateway-observability-replay-records",
  "gateway-observability-replay-state",
  "gateway-source",
@@ -5400,6 +5406,7 @@ dependencies = [
  "gateway-observability-replay-capture",
  "gateway-observability-replay-model",
  "gateway-observability-replay-observation",
+ "gateway-observability-replay-read",
  "gateway-observability-test-support",
  "gateway-profile-values",
  "gateway-provider-claude-body",
