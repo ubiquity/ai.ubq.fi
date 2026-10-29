@@ -81,7 +81,7 @@ impl UpstreamTrace {
     pub fn canonical(&self) -> Result<String, GatewayError> {
         self.validate()?;
         let value = serde_json::to_value(self.0.as_ref())
-            .map_err(|_| crate::data::error("Upstream trace serialization failed"))?;
+            .map_err(|_| data::error("Upstream trace serialization failed"))?;
         fn canonical(value: &serde_json::Value) -> String {
             match value {
                 serde_json::Value::Object(fields) => {
@@ -113,7 +113,7 @@ impl UpstreamTrace {
     pub fn validate(&self) -> Result<(), GatewayError> {
         for attempt in &self.0.attempts {
             if matches!(attempt.provider, TraceProvider::ClaudeCode) {
-                return Err(crate::data::error(
+                return Err(data::error(
                     "The frozen source upstream parser rejects Claude trace providers",
                 ));
             }
@@ -124,12 +124,10 @@ impl UpstreamTrace {
                     .iter()
                     .any(|t| !(0..=604_800_000).contains(t))
             {
-                return Err(crate::data::error("Upstream trace timing is invalid"));
+                return Err(data::error("Upstream trace timing is invalid"));
             }
             if attempt.terminal != TraceTerminal::Pending && attempt.ended_at_ms.is_none() {
-                return Err(crate::data::error(
-                    "Upstream trace termination time is missing",
-                ));
+                return Err(data::error("Upstream trace termination time is missing"));
             }
         }
         Ok(())
