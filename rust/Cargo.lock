@@ -5375,6 +5375,7 @@ dependencies = [
  "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
  "gateway-auth-passport",
+ "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-actor-records",

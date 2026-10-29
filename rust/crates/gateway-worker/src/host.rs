@@ -9,8 +9,8 @@ use gateway_source::error::GatewayError;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::crypto;
 use gateway_worker_platform::random;
-use std::{collections::BTreeMap, rc::Rc};
-use worker::{Env, Fetch, Method, Request, RequestInit, RequestRedirect, Response, Url};
+use std::rc::Rc;
+use worker::{Env, Fetch, Request, RequestInit, RequestRedirect, Response, Url};
 use {futures_util::StreamExt, gateway_schema_values::scalar as util};
 
 pub const AUTH_SETTINGS: &[&str] = &[

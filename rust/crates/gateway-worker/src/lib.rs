@@ -8,6 +8,7 @@ use {gateway_worker_web::response::GatewayResponse, native_host::NativeBindings,
 mod admin_host;
 mod admin_support_host;
 mod admission;
+mod auth_passport_host;
 mod cache_experiment_host;
 mod candidate_bindings;
 mod catalog;
