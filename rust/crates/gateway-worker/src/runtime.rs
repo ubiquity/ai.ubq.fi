@@ -114,7 +114,7 @@ pub async fn route(
             .map(Into::into);
     }
     if path == "/uos/agent-messages" {
-        return crate::agent_messages::handle(
+        return gateway_worker_agent_messages::http::handle(
             request,
             &principal.ok_or_else(gateway_auth_primitives::error::unauthorized)?,
             &store,

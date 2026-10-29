@@ -38,6 +38,7 @@ gateway-authority-native-records = { path = "../gateway-authority-native-records
 gateway-auth-passport = { path = "../gateway-auth-passport" }
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-provider-services = { path = "../gateway-provider-services" }
+gateway-worker-agent-messages = { workspace = true }
 gateway-worker-authority-binding = { workspace = true }
 gateway-native-authority-wire = { workspace = true }
 gateway-source = { workspace = true }

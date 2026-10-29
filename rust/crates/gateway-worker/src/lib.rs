@@ -1,5 +1,5 @@
-use gateway_source::error::GatewayError;
 use gateway_contracts::health::{DEPLOYMENT_ID_HEADER, GIT_SHA_HEADER, ReleaseIdentity};
+use gateway_source::error::GatewayError;
 #[cfg(feature = "entrypoint")]
 use worker::event;
 use worker::{Context, Env, Method, Request, Response, Result};
@@ -8,7 +8,6 @@ use {gateway_worker_web::response::GatewayResponse, native_host::NativeBindings,
 mod admin_host;
 mod admin_support_host;
 mod admission;
-mod agent_messages;
 mod cache_experiment_host;
 mod candidate_bindings;
 mod catalog;
