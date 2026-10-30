@@ -212,7 +212,7 @@ impl Binding {
             PoolSelection::Eligible(selected) => {
                 let published = credential(&selected);
                 *request.selected.borrow_mut() = Some(*selected);
-                Ok(ClaudeSelection::Eligible(Box::new(published)))
+                Ok(ClaudeSelection::Eligible(Box::new(published?)))
             }
         }
     }
@@ -309,7 +309,7 @@ impl Binding {
             OutcomeDecision::WorkspaceContinuation(selected) => {
                 let published = credential(&selected);
                 *request.selected.borrow_mut() = Some(*selected);
-                Ok(ClaudeOutcome::WorkspaceContinuation(Box::new(published)))
+                Ok(ClaudeOutcome::WorkspaceContinuation(Box::new(published?)))
             }
         }
     }
@@ -337,7 +337,7 @@ fn replay_context(selected: &SelectedAccount) -> Option<ReplayContext> {
     })
 }
 
-fn credential(selected: &SelectedAccount) -> PublishedCredential {
+fn credential(selected: &SelectedAccount) -> Result<PublishedCredential, GatewayError> {
     let kind = platform::credential_kind(&selected.binding().credential);
     let mut options = selected.prepare_options(Default::default());
     if let Some(context) = replay_context(selected) {
@@ -349,10 +349,10 @@ fn credential(selected: &SelectedAccount) -> PublishedCredential {
                 &mut options,
                 ReplayTransport::Messages,
                 now,
-            );
-        });
+            )
+        })?;
     }
-    PublishedCredential::Claude {
+    Ok(PublishedCredential::Claude {
         fence: credential_fence(selected),
         body_options: gateway_provider_claude_body::types::ClaudeBodyOptions {
             native_reasoning_efforts: options.native_reasoning_efforts,
@@ -360,7 +360,7 @@ fn credential(selected: &SelectedAccount) -> PublishedCredential {
             restored_native_messages: options.restored_native_messages,
             ..gateway_provider_claude_body::types::ClaudeBodyOptions::new(kind)
         },
-    }
+    })
 }
 
 /// Publish a completed Claude native response for the next turn in the same
