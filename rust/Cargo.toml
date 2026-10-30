@@ -254,6 +254,22 @@ members = [
   "crates/gateway-migration-fixture-custody",
   "crates/gateway-migration-copied-store-support",
   "crates/gateway-migration-test-support",
+  "crates/gateway-native-custody-engine",
+  "crates/gateway-native-import-actor",
+  "crates/gateway-native-import-context",
+  "crates/gateway-native-import-fixture-tests",
+  "crates/gateway-native-import-flow-authority",
+  "crates/gateway-native-import-flow-process",
+  "crates/gateway-native-import-http",
+  "crates/gateway-native-import-publication-http",
+  "crates/gateway-native-import-request",
+  "crates/gateway-native-import-root",
+  "crates/gateway-native-import-store",
+  "crates/gateway-native-import-tools",
+  "crates/gateway-native-import-validation",
+  "crates/gateway-native-owned-writer",
+  "crates/gateway-native-owner-inspector",
+  "crates/gateway-native-private-https",
 ]
 exclude = ["vendor/webauthn-rs-core-0.6.1-dev"]
 resolver = "3"
@@ -265,6 +281,7 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-native-private-https = { path = "crates/gateway-native-private-https" }
 gateway-worker-native-fixture = { path = "crates/gateway-worker-native-fixture" }
 gateway-worker-native-external-fixture = { path = "crates/gateway-worker-native-external-fixture" }
 gateway-native-external-publication-wire = { path = "crates/gateway-native-external-publication-wire" }

@@ -1,0 +1,30 @@
+[package]
+name = "gateway-native-import-context"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+native-import-fixture = ["gateway-authority/native-import-fixture"]
+
+[dependencies]
+gateway-auth-credentials.workspace = true
+gateway-auth-native-contracts.workspace = true
+gateway-auth-native-proof.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-authority.workspace = true
+gateway-authority-contracts.workspace = true
+gateway-core.workspace = true
+gateway-native-custody-io.workspace = true
+gateway-native-http-admission.workspace = true
+gateway-native-http-framing.workspace = true
+gateway-native-import-source.workspace = true
+gateway-native-replay.workspace = true
+gateway-source.workspace = true
+serde_json.workspace = true
+time = { version = "=0.3.44", features = ["parsing", "formatting"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,37 @@
+[package]
+name = "gateway-native-import-request"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+native-import-fixture = ["gateway-native-custody-wire/native-import-fixture", "gateway-native-import-context/native-import-fixture", "gateway-native-import-http/native-import-fixture", "gateway-native-import-publication-http/native-import-fixture", "gateway-native-import-root/native-import-fixture", "gateway-authority/native-import-fixture"]
+
+[dependencies]
+gateway-auth-credentials.workspace = true
+gateway-auth-native-proof.workspace = true
+gateway-auth-native-wire.workspace = true
+gateway-authority.workspace = true
+gateway-authority-contracts.workspace = true
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
+gateway-native-connector.workspace = true
+gateway-native-custody-io.workspace = true
+gateway-native-custody-wire = { path = "../gateway-native-custody-wire" }
+gateway-native-daemon-config.workspace = true
+gateway-native-http-admission.workspace = true
+gateway-native-http-framing.workspace = true
+gateway-native-import-context = { path = "../gateway-native-import-context" }
+gateway-native-import-http = { path = "../gateway-native-import-http" }
+gateway-native-import-publication-http = { path = "../gateway-native-import-publication-http" }
+gateway-native-import-root = { path = "../gateway-native-import-root" }
+gateway-native-import-source.workspace = true
+gateway-native-replay.workspace = true
+gateway-source.workspace = true
+rustix = { version = "=1.1.5", features = ["net", "time", "fs", "process", "event"] }
+serde_json.workspace = true
+time = { version = "=0.3.44", features = ["parsing", "formatting"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,81 @@
+[package]
+name = "gateway-native-import-fixture-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+native-import-fixture = ["gateway-native-import-store/native-import-fixture", "gateway-native-custody-engine/native-import-fixture", "gateway-native-import-tools/native-import-fixture"]
+
+[dependencies]
+gateway-native-http-admission.workspace = true
+gateway-native-owner-inspector = { path = "../gateway-native-owner-inspector" }
+gateway-native-import-test-support = { path = "../gateway-native-import-test-support" }
+gateway-auth-passport-contracts = { path = "../gateway-auth-passport-contracts" }
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-authority-contracts.workspace = true
+gateway-authority-keys.workspace = true
+gateway-authority-paid-control-records.workspace = true
+gateway-authority-routing-records.workspace = true
+gateway-auth-native-wire.workspace = true
+gateway-authority.workspace = true
+gateway-core.workspace = true
+gateway-native-import-client.workspace = true
+gateway-native-replay.workspace = true
+gateway-auth-contracts.workspace = true
+gateway-auth-credentials.workspace = true
+gateway-auth-native-contracts.workspace = true
+gateway-auth-native-proof.workspace = true
+gateway-auth-passkeys.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-source.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+gateway-native-import-flow-authority = { path = "../gateway-native-import-flow-authority" }
+gateway-native-import-flow-process = { path = "../gateway-native-import-flow-process" }
+gateway-native-import-store = { path = "../gateway-native-import-store" }
+gateway-native-custody-engine = { path = "../gateway-native-custody-engine" }
+gateway-native-import-tools = { path = "../gateway-native-import-tools" }
+gateway-native-import-source.workspace = true
+gateway-auth-native-import-data.workspace = true
+gateway-publication-policy.workspace = true
+gateway-publication-transport.workspace = true
+gateway-native-connector.workspace = true
+
+
+[lints]
+workspace = true
+
+[[test]]
+name = "import_flow_positive"
+path = "tests/import_flow_positive.rs"
+required-features = ["native-import-fixture"]
+
+[[test]]
+name = "import_flow_negative"
+path = "tests/import_flow_negative.rs"
+required-features = ["native-import-fixture"]
+
+[[test]]
+name = "import_owned_children"
+path = "tests/import_owned_children.rs"
+required-features = ["native-import-fixture"]
+
+[target.'cfg(unix)'.dependencies]
+futures-executor = "=0.3.34"
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
+rustix = { version = "=1.1.5", features = ["net", "time", "fs", "process", "event"] }
+
+[[test]]
+name = "import_receipts"
+path = "tests/import_receipts.rs"
+required-features = ["native-import-fixture"]
+
+[[test]]
+name = "import_foundation"
+path = "tests/import_foundation.rs"

@@ -6,8 +6,6 @@ pub mod connector_supervisor;
 #[cfg(unix)]
 mod daemon_startup;
 #[cfg(unix)]
-pub mod existing_account_import;
-#[cfg(unix)]
 pub mod live_bridge;
 #[cfg(unix)]
 pub mod managed_publication_http;
@@ -15,8 +13,6 @@ pub mod managed_publication_http;
 pub mod native_request_process;
 #[cfg(unix)]
 pub mod owner_renewal;
-#[cfg(unix)]
-mod private_https;
 
 #[cfg(all(test, unix))]
 mod checked_wire_context;

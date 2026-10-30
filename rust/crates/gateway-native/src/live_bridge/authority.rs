@@ -1,4 +1,3 @@
-use crate::private_https::PrivateHttps;
 use gateway_auth_native_contracts::native_live::{
     NATIVE_LIVE_AUTHORITY_MAX_BYTES, NATIVE_LIVE_AUTHORITY_PATH,
 };
@@ -13,6 +12,7 @@ use gateway_native_authority_request::live::NativeLiveAuthorityRequest as Reques
 use gateway_native_authority_wire::live::{
     NativeLiveAuthorityResponse as Response, NativeLiveFence, NativeLiveRetirement,
 };
+use gateway_native_private_https::transport::PrivateHttps;
 use gateway_source::error::GatewayError;
 use std::{net::TcpStream, time::Instant};
 

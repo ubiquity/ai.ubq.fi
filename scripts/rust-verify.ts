@@ -1,3 +1,5 @@
+import { NATIVE_IMPORT_CASES, NATIVE_IMPORT_CHILDREN, NATIVE_IMPORT_ROLES, NATIVE_IMPORT_PACKAGES, NATIVE_IMPORT_PROCESS, type NativeImportPackage } from "./rust-native-import-contract.ts";
+export { NATIVE_IMPORT_CASES } from "./rust-native-import-contract.ts";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -195,8 +197,8 @@ const cargoExecutable = (message: Table, manifest: string, cwd: string, target: 
   const executable = message.executable;
   return { name: artifact.name, kind: kind[0], source, executable, sha256: artifactHash(executable, target), test: profile.test };
 };
-const cargoExecutables = (stdout: string, cwd: string, target: string): CargoExecutable[] => {
-  const manifest = realpathSync(join(cwd, "crates/gateway-native/Cargo.toml"));
+const cargoExecutables = (stdout: string, cwd: string, target: string, packageRole: NativeImportPackage = "native"): CargoExecutable[] => {
+  const manifest = realpathSync(join(cwd, "crates", NATIVE_IMPORT_PACKAGES[packageRole], "Cargo.toml"));
   const executables: CargoExecutable[] = [];
   let finished = false;
   for (const line of stdout.split("\n").filter((line) => line.trim() !== "")) {
@@ -263,10 +265,11 @@ const nativeLibrarySelection = async (
 ): Promise<Readonly<{ argv: readonly string[]; names: readonly string[] }>> => {
   const argv = [cargo, "test", ...flags, "--lib", "--"];
   const original = nativeTestNames((await checked({ argv: [...argv, "--list"], cwd, isolated: true })).stdout);
-  if (OWNED_CHILD_CASES.some((name) => !original.includes(name))) throw new Error("Expected exact owned-child lib case is missing");
+  if ([...OWNED_CHILD_CASES, "existing_account_import::foundation_tests::controlled_async_writer_child"].some((name) => original.includes(name)))
+    throw new Error("Native fixture case leaked into ordinary feature-off inventory");
   // Same-binary diagnostics failed in parallel and passed serially; fixtures share TMPDIR ancestors
   // whose ACL observations require stable metadata.
-  const filtered = [...argv, "--exact", ...OWNED_CHILD_CASES.flatMap((name) => ["--skip", name]), "--test-threads=1"];
+  const filtered = [...argv, "--exact", "--test-threads=1"];
   const names = nativeTestNames((await checked({ argv: [...filtered, "--list"], cwd, isolated: true })).stdout);
   requireTestNames(
     names,
@@ -388,7 +391,6 @@ export const executeDarwinNativeTests = async (
       if (cargoDoctestsSelected(compile.stdout, cwd)) await pair([cargo, "test", ...flags, "--doc", "--"], true);
     } else if (tests.length !== 2) throw new Error("Focused prelaunch compilation emitted additional selected tests");
     await pair([prelaunch.executable, "--test-threads=1", "--nocapture"], false);
-    await runLibraryCases(library, OWNED_CHILD_CASES, pair);
     await unchanged();
     checkedArtifacts(allArtifacts, target);
     if (!bothTestCountsPositive(listed, passed)) throw new Error("Selected native tests listed or executed zero passing tests");
@@ -398,151 +400,20 @@ export const executeDarwinNativeTests = async (
   }
 };
 
-export const NATIVE_IMPORT_CASES = [
-  {
-    name: "existing_account_import::flow_tests::actual_existing_account_original_start_owned_child_custody_durability_and_publication",
-    boundary: "prelaunch",
-    seconds: 90,
-  },
-  {
-    name: "existing_account_import::flow_tests::negatives::actual_quiet_client_eof_before_and_after_started_never_writes_or_publishes",
-    boundary: "prelaunch",
-    seconds: 90,
-  },
-  {
-    name: "existing_account_import::flow_tests::negatives::actual_custodian_death_after_stop_closes_live_actor_without_late_effect",
-    boundary: "prelaunch",
-    seconds: 90,
-  },
-  {
-    name: "existing_account_import::flow_tests::negatives::actual_admin_revocation_before_native_write_refuses_the_same_started_claim",
-    boundary: "prelaunch",
-    seconds: 90,
-  },
-  {
-    name: "existing_account_import::flow_tests::negatives::actual_original_deadline_expiry_after_stop_never_renews_mutation_authority",
-    boundary: "prelaunch",
-    seconds: 90,
-  },
-  {
-    name: "existing_account_import::flow_tests::negatives::actual_revoked_publication_retains_native_receipt_but_never_source_success",
-    boundary: "prelaunch",
-    seconds: 90,
-  },
-  {
-    name: "existing_account_import::flow_tests::negatives::actual_lost_publication_reply_reconciles_only_the_same_native_receipt",
-    boundary: "prelaunch",
-    seconds: 90,
-  },
-  {
-    name: "existing_account_import::flow_tests::negatives::fixture_enabled_ordinary_entrypoints_refuse_before_reading_stdin",
-    boundary: "loopback",
-    seconds: 20,
-  },
-  { name: "actual_import_profile_exact_names_fixed_ports_process_and_sibling_controls", target: "import_policy", boundary: "prelaunch", seconds: 30 },
-  {
-    name: "existing_account_import::live_custody::tests::raw_stopped_replay_wrong_session_sequence_challenge_and_binding_are_not_live_custody",
-    boundary: "loopback",
-    seconds: 15,
-  },
-  {
-    name: "existing_account_import::custodian_runtime::tests::a_stopped_session_rejects_new_kernel_epoch_or_root_identity",
-    boundary: "offline",
-    seconds: 10,
-  },
-] as const;
-// Same accepted M44 all-exit cleanup. Process census is task cleanup only, never custody authority.
-const NATIVE_IMPORT_PROCESS = String.raw`import subprocess,json,os,signal,time,sys,tempfile,re
-payload=json.loads(sys.argv[1]);receipt={};p=None;owned={};interrupted=None
-def snapshot():
- rows={}
- for line in subprocess.check_output(['/bin/ps','-axo','pid=,ppid=,pgid=,lstart=,command='],text=True).splitlines():
-  parts=line.strip().split(None,8)
-  if len(parts)==9:rows[int(parts[0])]={'ppid':int(parts[1]),'pgid':int(parts[2]),'started':' '.join(parts[3:8]),'command':parts[8]}
- return rows
-def observe():
- rows=snapshot()
- if p is not None and p.poll() is None and p.pid in rows and p.pid not in owned:owned[p.pid]=rows[p.pid]
- changed=True
- while changed:
-  changed=False
-  for pid,row in rows.items():
-   parent=rows.get(row['ppid']);prior=owned.get(row['ppid'])
-   if pid not in owned and parent is not None and prior is not None and parent['started']==prior['started'] and parent['pgid']==prior['pgid']:
-    owned[pid]=row;changed=True
- return {pid:rows[pid] for pid,prior in owned.items() if pid in rows and rows[pid]['started']==prior['started'] and rows[pid]['pgid']==prior['pgid']}
-def stop_groups(current,sig):
- for group in sorted({row['pgid'] for row in current.values()}):
-  try:os.killpg(group,sig)
-  except ProcessLookupError:pass
-  receipt.setdefault('settlement_signals',[]).append({'group':group,'signal':sig})
-def settle():
- if p is None:return
- current=observe()
- if current:stop_groups(current,signal.SIGTERM)
- until=time.monotonic()+3
- while current and time.monotonic()<until:
-  p.poll();time.sleep(.05);current=observe()
- if current:stop_groups(current,signal.SIGKILL)
- if p.poll() is None:p.wait(timeout=5)
- until=time.monotonic()+2
- current=observe()
- while current and time.monotonic()<until:
-  time.sleep(.05);current=observe()
- receipt['owned_process_observations']=owned;receipt['owned_processes_remaining']=current
- if current:raise RuntimeError('Owned task processes did not settle: '+repr(current))
-def interrupt(signum,_frame):
- global interrupted
- interrupted=signum
- raise InterruptedError('Native flow driver received signal '+str(signum))
-old_handlers={sig:signal.signal(sig,interrupt) for sig in [signal.SIGINT,signal.SIGTERM]}
-output=tempfile.TemporaryFile()
-try:
- p=subprocess.Popen(payload['argv'],cwd=payload['cwd'],env=payload['environment'],stdout=output,stderr=subprocess.STDOUT,start_new_session=True)
- deadline=time.monotonic()+payload['seconds']
- while p.poll() is None:
-  observe()
-  if time.monotonic()>=deadline:raise TimeoutError('Exact native import case deadline')
-  time.sleep(.1)
- output.seek(0);text=output.read().decode();print(text,flush=True)
- results=re.findall(r'test result: (.+)',text)
- assert p.returncode==0 and len(results)==1 and results[0].startswith('ok. 1 passed; 0 failed; 0 ignored;'), 'Exact native import case failed'
- receipt['status']='passed'
-except BaseException as error:receipt['status']='failed';receipt['error']=repr(error);raise
-finally:
- for sig in old_handlers:signal.signal(sig,signal.SIG_IGN)
- try:settle()
- except BaseException as error:receipt['status']='failed';receipt['settlement_error']=repr(error)
- output.seek(0)
- if receipt.get('status')!='passed':print(output.read().decode(),flush=True)
- output.close();receipt['exit']=None if p is None else p.returncode;receipt['interrupted_signal']=interrupted
- if interrupted is not None:receipt['status']='failed'
- print(json.dumps({'nativeImportProcess':receipt}),flush=True)
- if receipt.get('status')!='passed' and 'error' not in receipt:raise RuntimeError('Owned native import cleanup failed')
-`;
-const importFixtureArtifacts = (stdout: string, cwd: string, target: string): CargoExecutable[] => {
-  const artifacts = cargoExecutables(stdout, cwd, target);
-  const manifest = realpathSync(join(cwd, "crates/gateway-native/Cargo.toml"));
+
+const importFixtureArtifacts = (stdout: string, cwd: string, target: string, packageRole: NativeImportPackage): CargoExecutable[] => {
+  const artifacts = cargoExecutables(stdout, cwd, target, packageRole);
+  const manifest = realpathSync(join(cwd, "crates", NATIVE_IMPORT_PACKAGES[packageRole], "Cargo.toml"));
   for (const line of stdout.split("\n").filter((line) => line.trim() !== "")) {
     const message = table(JSON.parse(line));
-    if (
-      message.reason !== "compiler-artifact" ||
-      !message.executable ||
-      typeof message.manifest_path !== "string" ||
-      realpathSync(message.manifest_path) !== manifest
-    )
-      continue;
+    if (message.reason !== "compiler-artifact" || !message.executable || typeof message.manifest_path !== "string" || realpathSync(message.manifest_path) !== manifest) continue;
     const profile = table(message.profile);
-    if (!strings(message.features).includes("native-import-fixture") || profile.opt_level !== "3" || profile.debug_assertions !== true)
+    const features = strings(message.features);
+    if (profile.opt_level !== "3" || profile.debug_assertions !== true || (packageRole !== "custody" && !features.includes("native-import-fixture")))
       throw new Error("Native fixture must be optimized-debug with its exact feature, never production release");
+    if (packageRole === "custody" && features.includes("native-import-fixture")) throw new Error("Fixed DATA role received an unexpected fixture feature");
   }
   return artifacts;
-};
-const nativeImportPolicyArtifact = (tests: readonly CargoExecutable[], cwd: string): CargoExecutable => {
-  const policy = tests.find((item) => item.kind === "test" && item.name === "import_policy" && item.test);
-  if (policy?.source !== realpathSync(join(cwd, "crates/gateway-native/tests/import_policy.rs")))
-    throw new Error("Missing exact native import policy artifact");
-  return policy;
 };
 export const executeDarwinNativeImportTests = async (cwd: string, inherited: Record<string, string>, run: CommandRunner = runCommand): Promise<number> => {
   if (run === runCommand && (process.platform !== "darwin" || process.arch !== "arm64")) throw new Error("Native import fixtures require Darwin ARM64");
@@ -571,37 +442,27 @@ export const executeDarwinNativeImportTests = async (cwd: string, inherited: Rec
   if (!environment.TMPDIR || !inside(realpathSync(dirname(environment.RUSTUP_HOME)), realpathSync(environment.TMPDIR)))
     throw new Error("Prepared task-local TMPDIR is required for native import fixtures");
   const cargo = rustToolPath("cargo", environment, { platform: "darwin", arch: "arm64" });
-  const flags = [
-    "--locked",
-    "--offline",
-    "--config",
-    "profile.test.opt-level=3",
-    "--config",
-    "profile.dev.opt-level=3",
-    "-p",
-    "gateway-native",
-    "--features",
-    "native-import-fixture",
-  ];
-  const compile = async (argv: readonly string[]): Promise<CargoExecutable[]> => {
+  const flags = ["--locked", "--offline", "--config", "profile.test.opt-level=3", "--config", "profile.dev.opt-level=3"];
+  const compile = async (packageRole: NativeImportPackage, argv: readonly string[]): Promise<CargoExecutable[]> => {
     const result = await checked({ argv: ["/usr/bin/sandbox-exec", "-f", offline, cargo, ...argv], cwd });
-    return importFixtureArtifacts(result.stdout, cwd, target);
+    return importFixtureArtifacts(result.stdout, cwd, target, packageRole);
   };
-  const tests = await compile(["test", ...flags, "--lib", "--test", "import_policy", "--no-run", "--message-format=json"]);
-  const testArtifacts = tests.filter((item) => item.test);
-  const library = nativeLibraryArtifact(testArtifacts, cwd);
-  const importPolicy = nativeImportPolicyArtifact(tests, cwd);
+  const tests: CargoExecutable[] = [];
+  for (const packageRole of ["native", "flow", "custody", "tools"] as const) {
+    const selectors = packageRole === "native" ? ["--test", "import_policy"] : packageRole === "flow" ? ["--test", "import_flow_positive", "--test", "import_flow_negative", "--test", "import_owned_children"] : packageRole === "custody" ? ["--test", "custody_identity"] : ["--lib"];
+    const feature = packageRole === "custody" ? [] : ["--features", "native-import-fixture"];
+    tests.push(...await compile(packageRole, ["test", ...flags, "-p", NATIVE_IMPORT_PACKAGES[packageRole], ...feature, ...selectors, "--no-run", "--message-format=json"]));
+  }
+  const selected = new Map<string, CargoExecutable>();
+  for (const artifact of tests) {
+    const matches = NATIVE_IMPORT_ROLES.filter((role) => artifact.test && artifact.name === role.name && artifact.kind === role.kind && artifact.source === realpathSync(join(cwd, "crates", NATIVE_IMPORT_PACKAGES[role.package], role.source)));
+    const role = matches[0];
+    if (matches.length !== 1 || selected.has(role.tag)) throw new Error("Missing, duplicate or unknown fixed native import artifact identity");
+    selected.set(role.tag, artifact);
+  }
+  if (selected.size !== NATIVE_IMPORT_ROLES.length) throw new Error("Missing exact finite native import artifact role");
   const names = ["uos-native-owner-inspect", "uos-native", "uos-native-supervisor", "uos-native-request", "uos-native-connector", "uos-native-import"];
-  const built = await compile([
-    "build",
-    ...flags,
-    "--example",
-    "uos-native-import-fixture",
-    "--example",
-    CONNECTOR_EXAMPLE,
-    ...names.flatMap((name) => ["--bin", name]),
-    "--message-format=json",
-  ]);
+  const built = await compile("native", ["build", ...flags, "-p", "gateway-native", "--features", "native-import-fixture", "--example", "uos-native-import-fixture", "--example", CONNECTOR_EXAMPLE, ...names.flatMap((name) => ["--bin", name]), "--message-format=json"]);
   for (const name of [...names, "uos-native-import-fixture", CONNECTOR_EXAMPLE])
     if (!built.some((item) => item.name === name && !item.test)) throw new Error("Missing exact native fixture role/guard artifact");
   const artifacts = [...tests, ...built];
@@ -610,21 +471,26 @@ export const executeDarwinNativeImportTests = async (cwd: string, inherited: Rec
     if (digest(readFileSync(offline)) !== profileHash) throw new Error("Native fixture offline profile changed");
   };
   verify();
-  const listing = await checked({ argv: [library.executable, "--list"], cwd, isolated: true });
-  const inventory = nativeTestNames(listing.stdout);
-  const policyListing = await checked({ argv: [importPolicy.executable, "--list"], cwd, isolated: true });
-  const policyInventory = nativeTestNames(policyListing.stdout);
-  if (NATIVE_IMPORT_CASES.some((item) => !("target" in item ? policyInventory : inventory).includes(item.name)))
-    throw new Error("Missing exact finite native import case");
+  for (const role of NATIVE_IMPORT_ROLES) {
+    const artifact = selected.get(role.tag);
+    if (!artifact) throw new Error("Missing fixed native import role");
+    const listing = await checked({ argv: [artifact.executable, "--list"], cwd, isolated: true });
+    const inventory = nativeTestNames(listing.stdout);
+    const expected = [...NATIVE_IMPORT_CASES.filter((item) => item.role === role.tag).map((item) => item.name), ...NATIVE_IMPORT_CHILDREN[role.tag]];
+    if (expected.some((name) => !inventory.includes(name))) throw new Error("Missing exact finite native import case or child role");
+    if (role.package === "flow" || role.package === "custody") requireTestNames(inventory, expected);
+  }
   console.log(
     JSON.stringify({ nativeImportSource: source, tree, feature: "native-import-fixture", profile: "optimized-debug", artifacts, cases: NATIVE_IMPORT_CASES })
   );
   for (const item of NATIVE_IMPORT_CASES) {
     verify();
-    const selected = [("target" in item ? importPolicy : library).executable, "--exact", item.name, "--nocapture", "--test-threads=1"];
-    let argv: readonly string[] = selected;
-    if (item.boundary === "loopback") argv = testNetworkArgv(selected);
-    if (item.boundary === "offline") argv = ["/usr/bin/sandbox-exec", "-f", offline, ...selected];
+    const artifact = selected.get(item.role);
+    if (!artifact) throw new Error("Unknown fixed native import case role");
+    const command = [artifact.executable, "--exact", item.name, "--nocapture", "--test-threads=1"];
+    let argv: readonly string[] = command;
+    if (item.boundary === "loopback") argv = testNetworkArgv(command);
+    if (item.boundary === "offline") argv = ["/usr/bin/sandbox-exec", "-f", offline, ...command];
     const payload = {
       argv,
       cwd,

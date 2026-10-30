@@ -3946,7 +3946,6 @@ dependencies = [
  "gateway-native-authority-request",
  "gateway-native-authority-wire",
  "gateway-native-confinement",
- "gateway-native-connected-io",
  "gateway-native-connector",
  "gateway-native-custody-io",
  "gateway-native-custody-wire",
@@ -3954,11 +3953,14 @@ dependencies = [
  "gateway-native-http-admission",
  "gateway-native-http-framing",
  "gateway-native-https-test-support",
+ "gateway-native-import-actor",
  "gateway-native-import-client",
  "gateway-native-import-source",
  "gateway-native-import-test-support",
  "gateway-native-live-buffer",
  "gateway-native-local-transport",
+ "gateway-native-owner-inspector",
+ "gateway-native-private-https",
  "gateway-native-replay",
  "gateway-native-supervisor",
  "gateway-native-supervisor-data",
@@ -4063,10 +4065,15 @@ dependencies = [
 name = "gateway-native-custody-wire"
 version = "0.1.0"
 dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
  "gateway-authority",
+ "gateway-native-confinement",
+ "gateway-native-custody-io",
  "gateway-source",
  "serde",
  "serde_json",
+ "time",
 ]
 
 [[package]]
@@ -8204,3 +8211,379 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+[[package]]
+name = "gateway-native-custody-engine"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-native-proof",
+ "gateway-auth-native-wire",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-native-records",
+ "gateway-core",
+ "gateway-native-confinement",
+ "gateway-native-custody-io",
+ "gateway-native-custody-wire",
+ "gateway-native-daemon-config",
+ "gateway-native-http-admission",
+ "gateway-native-import-tools",
+ "gateway-native-owned-writer",
+ "gateway-native-owner-inspector",
+ "gateway-source",
+ "getrandom 0.4.3",
+ "rustix",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "gateway-native-import-actor"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-native-proof",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-native-records",
+ "gateway-native-connector",
+ "gateway-native-custody-io",
+ "gateway-native-import-context",
+ "gateway-native-import-publication-http",
+ "gateway-native-import-request",
+ "gateway-native-import-source",
+ "gateway-native-import-store",
+ "gateway-native-import-validation",
+ "gateway-source",
+]
+
+[[package]]
+name = "gateway-native-import-context"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-core",
+ "gateway-native-custody-io",
+ "gateway-native-http-admission",
+ "gateway-native-http-framing",
+ "gateway-native-import-source",
+ "gateway-native-replay",
+ "gateway-source",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "gateway-native-import-fixture-tests"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-import-data",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-wire",
+ "gateway-auth-passkeys",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-native-records",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-native-connector",
+ "gateway-native-custody-engine",
+ "gateway-native-http-admission",
+ "gateway-native-import-client",
+ "gateway-native-import-flow-authority",
+ "gateway-native-import-flow-process",
+ "gateway-native-import-source",
+ "gateway-native-import-store",
+ "gateway-native-import-test-support",
+ "gateway-native-import-tools",
+ "gateway-native-owner-inspector",
+ "gateway-native-replay",
+ "gateway-publication-policy",
+ "gateway-publication-transport",
+ "gateway-source",
+ "rustix",
+ "rustls",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-native-import-flow-authority"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-import-data",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-wire",
+ "gateway-auth-passkeys",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-native-records",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-native-import-client",
+ "gateway-native-import-source",
+ "gateway-native-import-test-support",
+ "gateway-native-replay",
+ "gateway-publication-policy",
+ "gateway-publication-transport",
+ "gateway-source",
+ "rustix",
+ "rustls",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-native-import-flow-process"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-wire",
+ "gateway-auth-passkeys",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-native-records",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-native-custody-engine",
+ "gateway-native-import-client",
+ "gateway-native-import-flow-authority",
+ "gateway-native-import-store",
+ "gateway-native-import-test-support",
+ "gateway-native-replay",
+ "gateway-source",
+ "rustix",
+ "rustls",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-native-import-http"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-native-connected-io",
+ "gateway-native-custody-io",
+ "gateway-native-custody-wire",
+ "gateway-native-import-publication-http",
+ "gateway-native-import-source",
+ "gateway-source",
+ "serde_json",
+ "time",
+ "ureq",
+ "url",
+]
+
+[[package]]
+name = "gateway-native-import-publication-http"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-import-data",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
+ "gateway-auth-primitives",
+ "gateway-native-connected-io",
+ "gateway-native-custody-io",
+ "gateway-native-https-test-support",
+ "gateway-source",
+ "getrandom 0.4.3",
+ "serde_json",
+ "time",
+ "ureq",
+ "url",
+]
+
+[[package]]
+name = "gateway-native-import-request"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-wire",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-native-records",
+ "gateway-native-connector",
+ "gateway-native-custody-io",
+ "gateway-native-custody-wire",
+ "gateway-native-daemon-config",
+ "gateway-native-http-admission",
+ "gateway-native-http-framing",
+ "gateway-native-import-context",
+ "gateway-native-import-http",
+ "gateway-native-import-publication-http",
+ "gateway-native-import-root",
+ "gateway-native-import-source",
+ "gateway-native-replay",
+ "gateway-source",
+ "rustix",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "gateway-native-import-root"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-native-records",
+ "gateway-native-custody-io",
+ "gateway-source",
+ "rustix",
+]
+
+[[package]]
+name = "gateway-native-import-store"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-native-records",
+ "gateway-core",
+ "gateway-native-custody-engine",
+ "gateway-native-custody-io",
+ "gateway-native-http-admission",
+ "gateway-native-import-context",
+ "gateway-native-import-publication-http",
+ "gateway-native-import-request",
+ "gateway-native-import-root",
+ "gateway-native-import-source",
+ "gateway-native-import-validation",
+ "gateway-source",
+ "rustix",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "gateway-native-import-tools"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-wire",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-native-confinement",
+ "gateway-native-connector",
+ "gateway-native-custody-io",
+ "gateway-native-custody-wire",
+ "gateway-native-daemon-config",
+ "gateway-source",
+ "rustix",
+ "serde",
+ "serde_json",
+ "time",
+ "url",
+]
+
+[[package]]
+name = "gateway-native-import-validation"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-native-import-data",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-native-records",
+ "gateway-native-custody-io",
+ "gateway-native-import-context",
+ "gateway-native-import-http",
+ "gateway-native-import-request",
+ "gateway-native-import-root",
+ "gateway-native-import-source",
+ "gateway-source",
+ "rustix",
+ "serde",
+ "time",
+]
+
+[[package]]
+name = "gateway-native-owned-writer"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
+ "gateway-native-confinement",
+ "gateway-source",
+ "rustix",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "gateway-native-owner-inspector"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
+ "gateway-native-confinement",
+ "gateway-source",
+ "rustix",
+ "time",
+]
+
+[[package]]
+name = "gateway-native-private-https"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
+ "gateway-native-connected-io",
+ "gateway-native-https-test-support",
+ "gateway-source",
+ "ureq",
+ "url",
+]

@@ -1,0 +1,34 @@
+[package]
+name = "gateway-native-import-publication-http"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+native-import-fixture = []
+
+[dependencies]
+gateway-auth-credentials.workspace = true
+gateway-auth-native-contracts.workspace = true
+gateway-auth-native-import-data.workspace = true
+gateway-auth-native-proof.workspace = true
+gateway-auth-native-protocol.workspace = true
+gateway-auth-native-wire.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-native-connected-io.workspace = true
+gateway-native-custody-io.workspace = true
+gateway-native-https-test-support.workspace = true
+gateway-source.workspace = true
+getrandom = "=0.4.3"
+serde_json.workspace = true
+time = { version = "=0.3.44", features = ["parsing", "formatting"] }
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
+url = "=2.5.8"
+
+[dev-dependencies]
+gateway-native-https-test-support.workspace = true
+
+[lints]
+workspace = true

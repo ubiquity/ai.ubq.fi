@@ -1,0 +1,22 @@
+[package]
+name = "gateway-native-owned-writer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+native-import-fixture = []
+
+[dependencies]
+gateway-auth-credentials.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-native-confinement.workspace = true
+gateway-source.workspace = true
+rustix = { version = "=1.1.5", features = ["net", "time", "fs", "process", "event"] }
+serde_json.workspace = true
+time = { version = "=0.3.44", features = ["parsing", "formatting"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,36 @@
+[package]
+name = "gateway-native-custody-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+native-import-fixture = ["gateway-native-custody-wire/native-import-fixture", "gateway-native-import-tools/native-import-fixture", "gateway-native-owned-writer/native-import-fixture", "gateway-native-owner-inspector/native-import-fixture", "gateway-authority/native-import-fixture"]
+
+[dependencies]
+gateway-auth-native-proof.workspace = true
+gateway-auth-native-wire.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-authority.workspace = true
+gateway-authority-contracts.workspace = true
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
+gateway-core.workspace = true
+gateway-native-confinement.workspace = true
+gateway-native-custody-io.workspace = true
+gateway-native-custody-wire = { path = "../gateway-native-custody-wire" }
+gateway-native-daemon-config.workspace = true
+gateway-native-http-admission.workspace = true
+gateway-native-import-tools = { path = "../gateway-native-import-tools" }
+gateway-native-owned-writer = { path = "../gateway-native-owned-writer" }
+gateway-native-owner-inspector = { path = "../gateway-native-owner-inspector" }
+gateway-source.workspace = true
+getrandom = "=0.4.3"
+rustix = { version = "=1.1.5", features = ["net", "time", "fs", "process", "event"] }
+serde.workspace = true
+serde_json.workspace = true
+time = { version = "=0.3.44", features = ["parsing", "formatting"] }
+
+[lints]
+workspace = true
