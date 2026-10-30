@@ -4,7 +4,7 @@ use gateway_extras_contract::types::{
     DispatchFailure, ExtrasDispatch, ExtrasHost, ExtrasRequest, ExtrasResponse, Headers, ImageKind,
     UpstreamResponse,
 };
-use gateway_providers::extras;
+use gateway_provider_images::extras;
 use gateway_schema_values::value::Value as SourceValue;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
