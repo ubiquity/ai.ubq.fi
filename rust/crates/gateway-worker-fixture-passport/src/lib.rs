@@ -81,7 +81,11 @@ impl AuthHost for Host {
         )));
         let mut request = Request::new_with_init(&input.url(), &init).map_err(|_| invalid())?;
         for (k, v) in input.headers() {
-            request.headers_mut().set(&k, &v).map_err(|_| invalid())?;
+            request
+                .headers_mut()
+                .map_err(|_| invalid())?
+                .set(&k, &v)
+                .map_err(|_| invalid())?;
         }
         let mut response = self
             .env
