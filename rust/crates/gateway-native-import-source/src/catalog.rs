@@ -3,6 +3,7 @@ use crate::{documents as document, error::unavailable};
 use gateway_auth_credentials::native_credentials::NativeCredentials;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 
+#[derive(Clone)]
 pub enum CatalogValidation {
     Normalized {
         snapshot: SourceJson,
