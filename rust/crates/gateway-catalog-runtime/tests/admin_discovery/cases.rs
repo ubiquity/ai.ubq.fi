@@ -47,9 +47,7 @@ fn models_get_retains_raw_extensions_and_contains_only_optional_read_failures() 
         run(runtime.admin_catalog(&store, &host, AdminCatalogOperation::WhitelistGet))
             .unwrap_err()
             .body()
-            .deserialize::<Value>()
-            .unwrap()["error"]["code"]
-            .as_str(),
+            .code(),
         Some("fixture_read")
     );
 }
@@ -96,7 +94,7 @@ fn picker_is_unfiltered_uses_actual_host_order_and_keeps_runtime_when_optional_s
         .unwrap()
         .input;
     assert!(
-        ordinary_models(&input).unwrap()["data"]
+        ordinary_models(&input)["data"]
             .as_array()
             .unwrap()
             .is_empty()
@@ -112,9 +110,7 @@ fn picker_is_unfiltered_uses_actual_host_order_and_keeps_runtime_when_optional_s
         run(runtime.admin_catalog(&store, &host, AdminCatalogOperation::Catalog))
             .unwrap_err()
             .body()
-            .deserialize::<Value>()
-            .unwrap()["error"]["code"]
-            .as_str(),
+            .code(),
         Some("fixture_collation")
     );
 }
@@ -376,7 +372,7 @@ fn anonymous_surplus_is_publicly_visible_without_enabling_ordinary_or_paid_routi
     let ordinary = run(runtime.load_state(&store, &publication, host.now.get())).unwrap();
     assert!(ordinary.input.rows("surplus").is_empty());
     assert!(
-        ordinary_models(&ordinary.input).unwrap()["data"]
+        ordinary_models(&ordinary.input)["data"]
             .as_array()
             .unwrap()
             .is_empty()

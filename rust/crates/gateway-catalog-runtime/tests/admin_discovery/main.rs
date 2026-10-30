@@ -42,7 +42,9 @@ fn scalar(value: &SourceJson) -> Value {
     }
 }
 fn ordinary_models(input: &gateway_catalog_input::catalog::CatalogInput) -> Value {
-    scalar(&ordinary_models_source(input))
+    let models = ordinary_models_source(input)
+        .unwrap_or_else(|error| panic!("ordinary catalog fixture failed: {error:?}"));
+    scalar(&models)
 }
 fn public_catalog(input: &gateway_catalog_input::catalog::CatalogInput) -> Value {
     scalar(&public_catalog_source(input, Host::new().source_string_collator().as_ref()).unwrap())
