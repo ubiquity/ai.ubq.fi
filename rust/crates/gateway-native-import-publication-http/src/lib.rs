@@ -29,7 +29,7 @@ impl AuthenticatedImportPublicationReply {
 impl AuthenticatedImportPublicationReply {
     pub fn require_current_terminal_data(
         &self,
-        current: &gateway_auth_native_import_data::native_import::authority::result::ImportAuthorityTerminalData,
+        current: &gateway_auth_native_import_data::native_import::authority::ImportAuthorityTerminalData,
         request_digest: &str,
     ) -> Result<(), GatewayError> {
         let p = &self.publication.publication;
