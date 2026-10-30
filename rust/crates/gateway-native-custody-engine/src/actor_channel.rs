@@ -47,7 +47,8 @@ impl<'cfg> OwnedImportChildChannel<'cfg> {
     pub(crate) fn receive(&mut self) -> Result<ImportChildCommand, GatewayError> {
         self.check_live()?;
         self.policy.require_idle()?;
-        let frame = wire::receive(&mut self.socket, self.deadline(), None)?;
+        let deadline = self.deadline();
+        let frame = wire::receive(&mut self.socket, deadline, None)?;
         self.check_live()?;
         let data = self.policy.accept_received(frame)?;
         Ok(ImportChildCommand { data })
@@ -80,7 +81,8 @@ impl<'cfg> OwnedImportChildChannel<'cfg> {
     }
     fn reply(&mut self, command: &ImportChildCommand, response: Frame) -> Result<(), GatewayError> {
         self.require_pending(command)?;
-        wire::send(&mut self.socket, &response, self.deadline(), None)?;
+        let deadline = self.deadline();
+        wire::send(&mut self.socket, &response, deadline, None)?;
         self.check_live()?;
         self.policy.commit_reply()
     }

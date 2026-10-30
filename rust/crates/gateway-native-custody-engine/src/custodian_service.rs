@@ -10,8 +10,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-struct OwnedPeerCancellation(Arc<Mutex<OwnedImportChildChannel>>);
-impl NativeRenewalCancellation for OwnedPeerCancellation {
+struct OwnedPeerCancellation<'cfg>(Arc<Mutex<OwnedImportChildChannel<'cfg>>>);
+impl NativeRenewalCancellation for OwnedPeerCancellation<'_> {
     fn cancelled(&self) -> bool {
         self.0
             .lock()
@@ -19,9 +19,9 @@ impl NativeRenewalCancellation for OwnedPeerCancellation {
             .unwrap_or(true)
     }
 }
-pub(crate) fn serve(
+pub(crate) fn serve<'cfg>(
     runtime: &mut CustodianRuntime,
-    peer: OwnedImportChildChannel,
+    peer: OwnedImportChildChannel<'cfg>,
     connection: gateway_native_import_tools::endpoints::CustodyAuthorityConnection,
     identity: NativeTransportIdentity,
 ) -> Result<(), GatewayError> {
