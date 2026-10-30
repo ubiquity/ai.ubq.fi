@@ -91,7 +91,11 @@ impl<'cfg> VerifiedImportLaunch<'cfg> {
             client_peer: client.peer_addr().map_err(|_| unavailable())?,
             custody_local: actor_socket.local_addr().map_err(|_| unavailable())?,
             custody_peer: actor_socket.peer_addr().map_err(|_| unavailable())?,
-            endpoints: self.endpoints,
+            endpoints: gateway_native_custody_wire::bootstrap::ImportEndpointData {
+                authority: self.endpoints.authority,
+                models: self.endpoints.models,
+                oauth: self.endpoints.oauth,
+            },
             native_owner_id: self.native_owner_id.clone(),
             account_id_hash: self.account_id_hash.clone(),
         };

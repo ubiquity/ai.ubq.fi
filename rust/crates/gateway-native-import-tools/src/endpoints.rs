@@ -138,14 +138,14 @@ pub struct CustodyAuthorityConnection {
 }
 impl ResolvedImportEndpoints {
     pub fn resolve_import(
-        config: &gateway_native_daemon_config::config::NativeDaemonConfig,
+        config: &gateway_native_daemon_config::config::PreparedNativeDaemonConfig,
     ) -> Result<Self, GatewayError> {
         let registry = config.owner_renewal.as_ref().ok_or_else(unavailable)?;
         Self::resolve(registry.authority_origin())
     }
     pub fn connect_custody_authority(
         &self,
-        config: &gateway_native_daemon_config::config::NativeDaemonConfig,
+        config: &gateway_native_daemon_config::config::PreparedNativeDaemonConfig,
     ) -> Result<CustodyAuthorityConnection, GatewayError> {
         let registry = config.owner_renewal.as_ref().ok_or_else(unavailable)?;
         self.require_origin(registry.authority_origin())?;

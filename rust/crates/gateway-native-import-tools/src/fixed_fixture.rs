@@ -3,7 +3,7 @@
 use crate::endpoints::{CustodyAuthorityConnection, ResolvedImportEndpoints};
 use crate::launch::VerifiedImportLaunch;
 use gateway_auth_primitives::crypto::sha256_hex;
-use gateway_native_daemon_config::config::NativeDaemonConfig;
+use gateway_native_daemon_config::config::PreparedNativeDaemonConfig;
 use gateway_source::error::GatewayError;
 use std::{
     fs,
@@ -110,7 +110,7 @@ impl FixedCustodianFixturePlan {
 impl PreparedCustodianFixtureService {
     pub fn connect_custody_authority(
         &self,
-        config: &NativeDaemonConfig,
+        config: &PreparedNativeDaemonConfig,
     ) -> Result<CustodyAuthorityConnection, GatewayError> {
         self.endpoints.connect_custody_authority(config)
     }

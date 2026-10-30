@@ -5,7 +5,7 @@ use crate::{
     launch::VerifiedImportLaunch,
 };
 use gateway_native_custody_io::protocol::unavailable;
-use gateway_native_daemon_config::config::NativeDaemonConfig;
+use gateway_native_daemon_config::config::{NativeDaemonConfig, PreparedNativeDaemonConfig};
 use gateway_source::error::GatewayError;
 use std::path::{Path, PathBuf};
 
@@ -40,7 +40,7 @@ impl FixedCustodianService {
     }
     pub fn connect_custody_authority(
         &self,
-        config: &NativeDaemonConfig,
+        config: &PreparedNativeDaemonConfig,
     ) -> Result<CustodyAuthorityConnection, GatewayError> {
         match self {
             Self::Production(service) => service.endpoints.connect_custody_authority(config),
