@@ -39,6 +39,7 @@ pub enum AdminCatalogOperation {
     WhitelistGet,
     WhitelistSet { document: SourceJson },
     Catalog,
+    CatalogCached,
     Refresh,
 }
 fn persist_error(message: &str) -> GatewayError {
@@ -126,6 +127,52 @@ async fn admin_catalog_view<S: QueryStore, H: AdminCatalogHost>(
     runtime
         .load_public_state(store, &publication, host.now_ms())
         .await
+}
+
+async fn cached_admin_catalog_view<S: QueryStore, H: AdminCatalogHost>(
+    runtime: &CatalogRuntime,
+    store: &S,
+    host: &H,
+) -> Result<state::CatalogState, GatewayError> {
+    let publication = host.publication().await?;
+    runtime
+        .load_public_state(store, &publication, host.now_ms())
+        .await
+}
+
+fn admin_catalog_response<H: CatalogHost>(
+    runtime: &CatalogRuntime,
+    loaded: &state::CatalogState,
+    host: &H,
+) -> Result<AdminCatalogResponse, SourceRequestError> {
+    let catalog = runtime
+        .catalog_document(&loaded.input, host)
+        .map_err(lift)?;
+    let whitelist = loaded
+        .input
+        .whitelist
+        .as_ref()
+        .map(json_source)
+        .unwrap_or_else(|| json_source(&json!({"model_ids":[],"updated_at_ms":0})));
+    let active = source::member(&whitelist, "model_ids")
+        .as_ref()
+        .and_then(source::array)
+        .is_some_and(|ids| !ids.is_empty());
+    Ok(AdminCatalogResponse::json(
+        object(vec![
+            ("ok", json_source(&true)),
+            (
+                "data",
+                object(vec![
+                    ("models", member(&catalog, "models")),
+                    ("sources", member(&catalog, "sources")),
+                    ("whitelist", whitelist),
+                    ("filter_active", json_source(&active)),
+                ]),
+            ),
+        ]),
+        true,
+    ))
 }
 
 async fn admin_save_models<S: QueryStore, H: CatalogHost>(
@@ -445,34 +492,13 @@ impl CatalogAdmin for CatalogRuntime {
                 let loaded = admin_catalog_view(runtime, store, host)
                     .await
                     .map_err(lift)?;
-                let catalog = runtime
-                    .catalog_document(&loaded.input, host)
+                admin_catalog_response(runtime, &loaded, host)
+            }
+            AdminCatalogOperation::CatalogCached => {
+                let loaded = cached_admin_catalog_view(runtime, store, host)
+                    .await
                     .map_err(lift)?;
-                let whitelist = loaded
-                    .input
-                    .whitelist
-                    .as_ref()
-                    .map(json_source)
-                    .unwrap_or_else(|| json_source(&json!({"model_ids":[],"updated_at_ms":0})));
-                let active = source::member(&whitelist, "model_ids")
-                    .as_ref()
-                    .and_then(source::array)
-                    .is_some_and(|ids| !ids.is_empty());
-                Ok(AdminCatalogResponse::json(
-                    object(vec![
-                        ("ok", json_source(&true)),
-                        (
-                            "data",
-                            object(vec![
-                                ("models", member(&catalog, "models")),
-                                ("sources", member(&catalog, "sources")),
-                                ("whitelist", whitelist),
-                                ("filter_active", json_source(&active)),
-                            ]),
-                        ),
-                    ]),
-                    true,
-                ))
+                admin_catalog_response(runtime, &loaded, host)
             }
             AdminCatalogOperation::Refresh => {
                 admin_refresh(runtime, store, host).await.map_err(lift)

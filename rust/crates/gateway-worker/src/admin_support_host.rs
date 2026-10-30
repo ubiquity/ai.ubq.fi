@@ -33,7 +33,7 @@ impl Binding {
             .admin_catalog(
                 &self.catalog.store,
                 &self.catalog,
-                AdminCatalogOperation::Catalog,
+                AdminCatalogOperation::CatalogCached,
             )
             .await
             .map_err(catalogue_error)?;
@@ -173,7 +173,7 @@ fn unavailable(message: &str) -> GatewayError {
     GatewayError::unavailable(message, "admin_support_unavailable")
 }
 
-// Only AdminCatalogOperation::Catalog reaches this helper. Its exact two errors
+// Only catalog operations reach this helper. Their exact two errors
 // are admin.rs213/216 map_err(lift), lift73 = SourceRequestError::from_gateway.
 // Clone therefore preserves the actual original error body/status, not a fallback diagnostic.
 fn catalogue_error(error: gateway_local_refusal::source_error::SourceRequestError) -> GatewayError {

@@ -197,6 +197,68 @@ fn aggregate_refresh_forces_fixed_providers_preserves_last_good_and_marks_stale_
 }
 
 #[test]
+fn cached_picker_read_uses_existing_catalog_without_discovery_while_refresh_stays_explicit() {
+    let runtime = CatalogRuntime::new();
+    let store = Store::default();
+    let host = Host::new();
+    for provider in [
+        CatalogProvider::Openlux,
+        CatalogProvider::Surplus,
+        CatalogProvider::Lithos,
+        CatalogProvider::ClaudeCode,
+    ] {
+        host.configure(provider, provider.id());
+    }
+    store.put(
+        state::selection_key(),
+        "codex-only",
+        json!({"provider_ids":["codex"],"updated_at_ms":1}),
+    );
+
+    let _cold = invoke(
+        &runtime,
+        &store,
+        &host,
+        AdminCatalogOperation::CatalogCached,
+    );
+    assert_eq!(host.warmed.get(), 0);
+    assert_eq!(host.requests.borrow().len(), 0);
+
+    host.queue(
+        CatalogProvider::Openrouter,
+        json!({"data":[{"id":"openrouter-cached","context_length":1000}]}),
+    );
+    host.queue(CatalogProvider::Openlux, json!({"data":[]}));
+    host.queue(CatalogProvider::Surplus, json!({"data":[]}));
+    host.queue(CatalogProvider::Lithos, json!({"data":[]}));
+    host.queue(
+        CatalogProvider::ClaudeCode,
+        json!({"data":[],"has_more":false}),
+    );
+
+    let refreshed = invoke(&runtime, &store, &host, AdminCatalogOperation::Refresh);
+    assert_eq!(host.requests.borrow().len(), 5);
+    assert_eq!(host.warmed.get(), 0);
+    assert_eq!(refreshed.body["data"]["openrouter"]["refreshed"], true);
+
+    let cached = invoke(
+        &runtime,
+        &store,
+        &host,
+        AdminCatalogOperation::CatalogCached,
+    );
+    assert_eq!(host.requests.borrow().len(), 5);
+    assert_eq!(host.warmed.get(), 0);
+    assert!(
+        cached.body["data"]["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == "openrouter-cached")
+    );
+}
+
+#[test]
 fn replacement_during_pending_refresh_cannot_return_old_identity_snapshot() {
     let runtime = CatalogRuntime::new();
     let store = Store::default();
