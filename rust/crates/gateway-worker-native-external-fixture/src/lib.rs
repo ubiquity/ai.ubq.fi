@@ -11,11 +11,11 @@ use gateway_auth_native_proof::native_auth::{NativeAuthenticator, NativeTranspor
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::{
     control::{NativeControlEnvelope, NativeControlRequest},
-    native_read::{NATIVE_CONTROL_PATH, NATIVE_PUBLICATION_PATH},
+    native_read::NATIVE_CONTROL_PATH,
 };
 use gateway_auth_passport_sessions::sessions::PassportSessions;
 use gateway_auth_primitives::crypto::base64url;
-use gateway_authority::store::Authority;
+use gateway_authority::{native_control::owners::RegisteredRenewalOwners, store::Authority};
 use gateway_authority_actor_currentness::app::ActorService;
 use gateway_authority_contracts::AuthorityClock;
 use gateway_authority_keys as keys;
@@ -546,13 +546,16 @@ pub async fn fetch(
     .map_err(|e| worker::Error::RustError(e.to_string()))?;
     let bindings =
         gateway_worker::native_host::NativeBindings::configured(env.service("ASSETS")?, id)
-            .with_renewal_owners(vec![
-                RegisteredRenewalOwner::configured(
-                    "fixture-external-owner".into(),
-                    "/tmp/worker-external-synthetic-owner".into(),
-                )
+            .with_renewal_owners(
+                RegisteredRenewalOwners::configured(vec![
+                    RegisteredRenewalOwner::configured(
+                        "fixture-external-owner".into(),
+                        "/tmp/worker-external-synthetic-owner".into(),
+                    )
+                    .map_err(|e| worker::Error::RustError(e.to_string()))?,
+                ])
                 .map_err(|e| worker::Error::RustError(e.to_string()))?,
-            ]);
+            );
     let published = if request.path()
         == gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH
     {

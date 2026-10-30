@@ -25,6 +25,7 @@ gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-authority = { path = "../gateway-authority" }
 gateway-authority-actor-currentness = { path = "../gateway-authority-actor-currentness" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-keys.workspace = true
 gateway-authority-native-records = { path = "../gateway-authority-native-records" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
 gateway-contracts = { path = "../gateway-contracts" }

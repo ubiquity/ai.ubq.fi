@@ -12,7 +12,7 @@ use gateway_auth_native_wire::{
     native_read::{NATIVE_CONTROL_PATH, NATIVE_PUBLICATION_PATH},
 };
 use gateway_auth_passport_sessions::sessions::{PassportSessions, session_key};
-use gateway_auth_primitives::crypto::{Secret, base64url, decode_base64url};
+use gateway_auth_primitives::crypto::{Secret, base64url};
 use gateway_authority::{native_control::actor::authenticate_client_actor, store::Authority};
 use gateway_authority_actor_currentness::app::ActorService;
 use gateway_authority_contracts::AuthorityClock;

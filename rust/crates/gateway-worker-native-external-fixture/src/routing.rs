@@ -4,7 +4,7 @@ use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_auth_credentials::provider_credentials::{
     codex_source_pool_key, read_codex_source_pool,
 };
-use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_contracts::AuthorityClock;
 use gateway_authority_paid_records::{PaidReservation, PaidUsage};
 use gateway_authority_routing_selection::{SelectionOperations, types::CohortProof};
 use gateway_contracts::{claude::ClaudeErrorEvidence, model::ModelId, provider::UpstreamProvider};
