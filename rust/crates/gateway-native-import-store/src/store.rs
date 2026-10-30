@@ -7,7 +7,6 @@ use gateway_authority::native_control::receiver::NativeRenewalAuthority;
 use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
 use gateway_authority_native_records::import_effects::NativeImportBinding;
 use gateway_core::state::AuthorityStore;
-use gateway_native_custody_io::protocol::unavailable;
 use gateway_source::error::GatewayError;
 use std::{fs::File, path::Path};
 /// Explicit registry construction, never an uploaded home or environment default.
