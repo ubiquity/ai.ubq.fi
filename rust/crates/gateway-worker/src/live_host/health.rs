@@ -34,10 +34,11 @@ pub(super) async fn response(
                 && let Ok(now) = gateway_worker_storage::store::now_ms()
             {
                 background
+                    .events()
                     .record_capacity_downtime("upstream_error", Some(status), now)
                     .await;
             }
-            let _ = background.trigger_capacity_sample().await;
+            let _ = background.capacity().trigger_capacity_sample().await;
         });
     }
     let request_id = ["x-request-id", "x-api-request-id", "x-oneapi-request-id"]
@@ -98,6 +99,7 @@ pub(super) async fn failure(
         context.wait_until(async move {
             if let Ok(now) = gateway_worker_storage::store::now_ms() {
                 runtime
+                    .events()
                     .record_capacity_downtime("unreachable", status, now)
                     .await;
             }

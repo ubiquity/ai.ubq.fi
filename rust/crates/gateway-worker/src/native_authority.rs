@@ -23,7 +23,7 @@ use worker::{Env, Method, Request, Response};
 
 pub fn is_path(path: &str) -> bool {
     path == NATIVE_RENEWAL_AUTHORITY_PATH
-        || path == gateway_auth_native_proof::native_live::NATIVE_LIVE_AUTHORITY_PATH
+        || path == gateway_auth_native_contracts::native_live::NATIVE_LIVE_AUTHORITY_PATH
 }
 fn body<T: Serialize>(value: &T) -> Result<Vec<u8>, GatewayError> {
     serde_json::to_vec(value).map_err(|_| invalid())
@@ -57,7 +57,7 @@ pub async fn handle(
         // The authenticator still applies each complete typed operation's old/new limit.
         gateway_auth_native_wire::native_read::NATIVE_MAX_BODY_BYTES
     } else {
-        gateway_auth_native_proof::native_live::NATIVE_LIVE_AUTHORITY_MAX_BYTES
+        gateway_auth_native_contracts::native_live::NATIVE_LIVE_AUTHORITY_MAX_BYTES
     };
     let bytes = request_bytes(&mut request, maximum).await?;
     let store = RemoteAuthorityStore::from_env(env)?;
@@ -65,7 +65,7 @@ pub async fn handle(
     let authority = Authority::with_clock(store.clone(), PlatformTokens, PlatformClock);
     let config = crate::host::auth_config(env);
     let now = now_ms()?;
-    if path == gateway_auth_native_proof::native_live::NATIVE_LIVE_AUTHORITY_PATH {
+    if path == gateway_auth_native_contracts::native_live::NATIVE_LIVE_AUTHORITY_PATH {
         let proof = gateway_auth_native_proof::native_live::NativeLiveAuthenticator::new(
             &transport.identity,
             &replay,

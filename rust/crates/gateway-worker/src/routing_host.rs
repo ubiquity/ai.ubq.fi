@@ -5,7 +5,7 @@ use gateway_auth_credentials::{
     provider_credentials::codex_source_pool_key, provider_credentials::read_codex_source_pool,
 };
 use gateway_auth_primitives::crypto::Secret;
-use gateway_authority_paid_records::{PaidReservation, PaidUsage};
+use gateway_authority_paid_records::{self as paid_records, PaidReservation, PaidUsage};
 use gateway_authority_routing_selection::types::CohortProof;
 use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
 use gateway_kv_codec::key::RecordKey;
@@ -489,9 +489,7 @@ async fn prepare_credential_catalog<
         provider,
         UpstreamProvider::Surplus | UpstreamProvider::Metered
     ) {
-        crate::catalog::service()
-            .publish_paid_routing(store, host)
-            .await?;
+        publish_paid_routing(&crate::catalog::service(), store, host).await?;
     }
     Ok(())
 }

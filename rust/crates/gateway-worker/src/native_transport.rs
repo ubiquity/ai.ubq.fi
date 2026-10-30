@@ -121,7 +121,7 @@ impl NativeTransport {
         action_ref: &str,
         platform: &PlatformHost,
     ) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
-        use gateway_auth_native_proof::{
+        use gateway_auth_native_contracts::{
             native_live::NATIVE_LIVE_ACTION_HEADER, native_live::NATIVE_LIVE_PATH,
         };
         let now = gateway_worker_storage::store::now_ms()?;
