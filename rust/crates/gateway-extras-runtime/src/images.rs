@@ -105,6 +105,10 @@ pub(crate) async fn images<H: ExtrasHost>(
         )));
     };
     let plan = extras::image::prepare_parsed_image(&parsed, &model, &request.context.request_id.0);
+    let plan = match plan {
+        Ok(plan) => plan,
+        Err(e) => return Ok(ExtrasResponse::source_error(e)),
+    };
     if plan.count > 1
         && serde_json::to_vec(&plan.responses)
             .map_err(|_| invalid_state())?
@@ -255,7 +259,7 @@ fn image_response(
             r.headers.extend(headers(&[result]));
             return Ok(r);
         }
-        let generated = extras::extract_source_images(&payload.source()?);
+        let generated = extras::extract_source_images(&payload.source()?)?;
         let Some(image) = generated.first() else {
             let mut r = ExtrasResponse::error(GatewayError::new(
                 502,
