@@ -44,15 +44,24 @@ impl PassportConfig {
                 .filter(|value| !value.is_empty())
         };
         let client_id = value("UOS_AI_PASSPORT_CLIENT_ID")?;
-        let audience = value("UOS_AI_PASSPORT_AUDIENCE").unwrap_or(PASSPORT_PRODUCTION_AUDIENCE);
         let origin = value("UOS_AI_PASSPORT_ORIGIN")?;
         let redirect_uri = value("UOS_AI_PASSPORT_REDIRECT_URI")?;
-        if !valid_https_origin(origin) || client_id.len() > 120 || audience.len() > 160 {
+        let local = valid_loopback_origin(origin);
+        let audience = if local {
+            value("UOS_AI_PASSPORT_AUDIENCE")?
+        } else {
+            value("UOS_AI_PASSPORT_AUDIENCE").unwrap_or(PASSPORT_PRODUCTION_AUDIENCE)
+        };
+        if (!valid_https_origin(origin) && !local) || client_id.len() > 120 || audience.len() > 160
+        {
             return None;
         }
         let redirect = Url::parse(redirect_uri).ok()?;
-        if redirect.scheme() != "https"
-            || redirect.origin().ascii_serialization() != origin.trim_end_matches('/')
+        if (if local {
+            redirect_uri != format!("{origin}/auth/callback")
+        } else {
+            redirect.scheme() != "https"
+        }) || redirect.origin().ascii_serialization() != origin.trim_end_matches('/')
             || redirect.query().is_some()
             || redirect.fragment().is_some()
         {
@@ -65,6 +74,38 @@ impl PassportConfig {
             redirect_uri: redirect_uri.into(),
         })
     }
+    pub fn validated(&self) -> Option<Self> {
+        Self::from_values(&BTreeMap::from([
+            ("UOS_AI_PASSPORT_CLIENT_ID".into(), self.client_id.clone()),
+            ("UOS_AI_PASSPORT_AUDIENCE".into(), self.audience.clone()),
+            ("UOS_AI_PASSPORT_ORIGIN".into(), self.origin.clone()),
+            (
+                "UOS_AI_PASSPORT_REDIRECT_URI".into(),
+                self.redirect_uri.clone(),
+            ),
+        ]))
+        .filter(|binding| binding == self)
+    }
+    pub fn http_loopback(&self) -> bool {
+        valid_loopback_origin(&self.origin)
+            && self.redirect_uri == format!("{}/auth/callback", self.origin)
+    }
+}
+
+fn valid_loopback_origin(value: &str) -> bool {
+    Url::parse(value).is_ok_and(|url| {
+        url.scheme() == "http"
+            && url.port().is_some_and(|port| port != 0)
+            && url.host_str().is_some_and(|host| {
+                host.trim_matches(['[', ']'])
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|address| address.is_loopback())
+            })
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && url.origin().ascii_serialization() == value
+    })
 }
 
 fn valid_https_origin(value: &str) -> bool {

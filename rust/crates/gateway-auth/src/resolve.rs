@@ -530,7 +530,7 @@ impl<'a, S: AuthorityStore, H: AuthHost + gateway_auth_passport_contracts::sessi
             store: self.store,
             host: self.host,
         })
-        .route(request)
+        .route_for(request, self.config)
         .await
         {
             return Ok(Some(response));
@@ -570,7 +570,23 @@ impl<'a, S: AuthorityStore, H: AuthHost + gateway_auth_passport_contracts::sessi
                 }
             }
             ("GET", "/uos/auth") => {
-                let mut auth = self.authenticate_client(request).await?;
+                let mut auth = match self.authenticate_client(request).await {
+                    Ok(auth) => auth,
+                    Err(error) => {
+                        if let Some(binding) = gateway_auth_passport::browser::binding_for_request(
+                            self.config,
+                            request,
+                        ) && binding.http_loopback()
+                        {
+                            return Ok(Some(
+                                gateway_auth_passport::browser::authentication_error_bound(
+                                    request, error, &binding,
+                                ),
+                            ));
+                        }
+                        return Err(error);
+                    }
+                };
                 if (local_bypass(request, self.config) || self.legacy_local(request))
                     && let Ok(admin) = self.authenticate_admin(request).await
                 {
@@ -595,7 +611,15 @@ impl<'a, S: AuthorityStore, H: AuthHost + gateway_auth_passport_contracts::sessi
                         shape,
                     )?,
                 );
-                gateway_auth_passport::browser::renew_report_cookie(request, &mut response);
+                if let Some(binding) =
+                    gateway_auth_passport::browser::binding_for_request(self.config, request)
+                {
+                    gateway_auth_passport::browser::renew_report_cookie_bound(
+                        request,
+                        &mut response,
+                        &binding,
+                    );
+                }
                 response
             }
             _ => return Ok(None),

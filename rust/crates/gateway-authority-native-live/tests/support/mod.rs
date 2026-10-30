@@ -171,7 +171,7 @@ impl AuthHost for Host {
         &self,
         request: AuthUpstreamRequest,
     ) -> Result<AuthUpstreamResponse, GatewayError> {
-        let AuthUpstreamRequest::PassportSession { app_session_token } = request else {
+        let AuthUpstreamRequest::PassportSession { app_session_token, .. } = request else {
             return Err(unavailable());
         };
         assert_eq!(

@@ -30,7 +30,7 @@ use std::{cell::RefCell, collections::BTreeMap};
 use url::Url;
 
 pub fn config_for_request(config: &AuthConfig, request: &AuthRequest) -> Option<PassportConfig> {
-    let explicit = config.passport.clone();
+    let explicit = config.passport.as_ref().and_then(PassportConfig::validated);
     let request_url = Url::parse(&request.url).ok()?;
     let host = request_url.host_str()?.trim_matches(['[', ']']);
     let loopback = host.eq_ignore_ascii_case("localhost")
@@ -39,7 +39,15 @@ pub fn config_for_request(config: &AuthConfig, request: &AuthRequest) -> Option<
             .is_ok_and(|address| address.is_loopback());
     if let Some(passport) = explicit {
         let request_origin = request_url.origin().ascii_serialization();
-        return (loopback || request_origin == passport.origin).then_some(passport);
+        let matching = if passport.http_loopback() {
+            request_origin == passport.origin
+        } else {
+            loopback || request_origin == passport.origin
+        };
+        return matching.then_some(passport);
+    }
+    if config.passport.is_some() {
+        return None;
     }
     (request_url.scheme() == "https" && host == "ai.ubq.fi").then(PassportConfig::production)
 }

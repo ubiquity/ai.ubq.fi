@@ -1,3 +1,4 @@
+use gateway_auth_passport_contracts::passport::PassportConfig;
 use gateway_auth_primitives::crypto::Secret;
 use gateway_source::error::GatewayError;
 #[derive(Clone, Debug)]
@@ -24,12 +25,15 @@ pub enum AuthUpstreamRequest {
     PassportPkceExchange {
         code: Secret,
         code_verifier: Secret,
+        binding: PassportConfig,
     },
     PassportSession {
         app_session_token: Secret,
+        binding: PassportConfig,
     },
     PassportRevoke {
         app_session_token: Secret,
+        binding: PassportConfig,
     },
     PassportExchange {
         code: Secret,
@@ -96,11 +100,13 @@ impl AuthUpstreamRequest {
     /// Fixed typed bodies only. A request-selected URL or body never exists.
     pub fn body(&self) -> Result<Vec<u8>, GatewayError> {
         match self {
-            Self::PassportPkceExchange { code, code_verifier } => Ok(serde_json::to_vec(&serde_json::json!({
+            Self::PassportPkceExchange { code, code_verifier, binding } => Ok(serde_json::to_vec(&serde_json::json!({
                 "code":code.expose(), "codeVerifier":code_verifier.expose(), "appSession":true,
-                "clientId":"ai", "audience":"ai", "origin":"https://ai.ubq.fi", "redirectUri":"https://ai.ubq.fi/auth/callback"
+                "clientId":binding.client_id, "audience":binding.audience, "origin":binding.origin, "redirectUri":binding.redirect_uri
             })).map_err(|_| GatewayError::unavailable("Passport body encoding failed", "passport_unavailable"))?),
-            Self::PassportSession { .. } | Self::PassportRevoke { .. } => Ok(br#"{"clientId":"ai","audience":"ai","origin":"https://ai.ubq.fi","redirectUri":"https://ai.ubq.fi/auth/callback"}"#.to_vec()),
+            Self::PassportSession { binding, .. } | Self::PassportRevoke { binding, .. }
+                if *binding == PassportConfig::production() => Ok(br#"{"clientId":"ai","audience":"ai","origin":"https://ai.ubq.fi","redirectUri":"https://ai.ubq.fi/auth/callback"}"#.to_vec()),
+            Self::PassportSession { binding, .. } | Self::PassportRevoke { binding, .. } => serde_json::to_vec(&serde_json::json!({"clientId":binding.client_id,"audience":binding.audience,"origin":binding.origin,"redirectUri":binding.redirect_uri})).map_err(|_| GatewayError::unavailable("Passport body encoding failed", "passport_unavailable")),
             Self::PassportExchange {
                 code,
                 client_id,
@@ -156,8 +162,12 @@ impl AuthUpstreamRequest {
                 ("accept".into(), "application/json".into()),
             ],
             Self::PassportJwks => vec![("accept".into(), "application/json".into())],
-            Self::PassportSession { app_session_token }
-            | Self::PassportRevoke { app_session_token } => vec![
+            Self::PassportSession {
+                app_session_token, ..
+            }
+            | Self::PassportRevoke {
+                app_session_token, ..
+            } => vec![
                 (
                     "authorization".into(),
                     format!("Bearer {}", app_session_token.expose()),

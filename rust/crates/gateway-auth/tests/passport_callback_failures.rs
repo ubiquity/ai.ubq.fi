@@ -97,6 +97,7 @@ impl AuthHost for Host {
         let AuthUpstreamRequest::PassportPkceExchange {
             code,
             code_verifier,
+            ..
         } = request
         else {
             return Err(denied());

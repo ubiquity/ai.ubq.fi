@@ -23,8 +23,11 @@ pub struct PassportAppSessionBinding {
 impl PassportAppSessionBinding {
     /// DATA shape only. Date.parse, row currentness and central authority are not inferred here.
     pub fn has_valid_shape(&self) -> bool {
-        let fixed = PassportConfig::production();
-        digest_shape(&self.session_digest)
+        self.has_valid_shape_for(&PassportConfig::production())
+    }
+    pub fn has_valid_shape_for(&self, fixed: &PassportConfig) -> bool {
+        fixed.validated().is_some()
+            && digest_shape(&self.session_digest)
             && digest_shape(&self.app_token_digest)
             && source_bound(&self.subject, 500, false)
             && source_bound(&self.created_at, 100, false)

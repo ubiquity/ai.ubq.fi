@@ -16,29 +16,33 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> AuthService<'_, S, H> {
     ) -> Result<Option<gateway_auth_contracts::types::AuthPrincipal>, GatewayError> {
         use gateway_auth_contracts::types::{AuthMethod, AuthPrincipal};
         use gateway_auth_passport::{
-            browser::{cookie, production_request},
-            passport::verify_source,
+            browser::{binding_for_request, cookie, cookie_names},
+            passport::verify_source_for_config,
         };
         use gateway_auth_passport_contracts::{
             actor_data::PassportSessionData, passport::PASSPORT_COOKIE,
         };
-        let Some(token) = cookie(request, PASSPORT_COOKIE) else {
+        let Some(config) = binding_for_request(self.config, request) else {
+            return if cookie(request, PASSPORT_COOKIE).is_some() {
+                Err(gateway_auth_primitives::error::unauthorized())
+            } else {
+                Ok(None)
+            };
+        };
+        let Some(token) = cookie(request, &cookie_names(&config)[0]) else {
             return Ok(None);
         };
-        if !production_request(request) {
-            return Err(gateway_auth_primitives::error::unauthorized());
-        }
         let identity = if gateway_auth_passport_sessions::sessions::token_shape(&token) {
             PassportSessionData::App(
                 PassportSessions {
                     store: self.store,
                     host: self.host,
                 }
-                .authenticate(&token)
+                .authenticate_for(&token, &config)
                 .await?,
             )
         } else {
-            PassportSessionData::Jwt(verify_source(self.host, &token).await?)
+            PassportSessionData::Jwt(verify_source_for_config(self.host, &config, &token).await?)
         };
         let is_admin = identity.is_admin();
         Ok(Some(AuthPrincipal {
@@ -54,11 +58,18 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> AuthService<'_, S, H> {
         &self,
         binding: &PassportAppSessionBinding,
     ) -> Result<PassportAppSessionData, GatewayError> {
+        let config = self
+            .config
+            .passport
+            .clone()
+            .unwrap_or_else(gateway_auth_passport_contracts::passport::PassportConfig::production)
+            .validated()
+            .ok_or_else(gateway_auth_primitives::error::unauthorized)?;
         PassportSessions {
             store: self.store,
             host: self.host,
         }
-        .check_bound(binding)
+        .check_bound_for(binding, &config)
         .await
     }
 }

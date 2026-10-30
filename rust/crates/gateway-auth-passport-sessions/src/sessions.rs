@@ -64,18 +64,9 @@ struct Binding {
     redirect_uri: String,
 }
 impl Binding {
-    fn fixed() -> Self {
-        let fixed = PassportConfig::production();
-        Self {
-            client_id: fixed.client_id,
-            audience: fixed.audience,
-            origin: fixed.origin,
-            redirect_uri: fixed.redirect_uri,
-        }
-    }
-    fn valid(&self) -> bool {
-        let fixed = Self::fixed();
-        self.client_id == fixed.client_id
+    fn valid(&self, fixed: &PassportConfig) -> bool {
+        fixed.validated().is_some()
+            && self.client_id == fixed.client_id
             && self.audience == fixed.audience
             && self.origin == fixed.origin
             && self.redirect_uri == fixed.redirect_uri
@@ -109,7 +100,7 @@ impl Record {
             redirect_uri: self.redirect_uri.clone(),
         }
     }
-    fn valid<H: PassportDate>(&self, host: &H) -> bool {
+    fn valid<H: PassportDate>(&self, host: &H, config: &PassportConfig) -> bool {
         self.version == 1.0
             && bounded(&self.subject, 500, false)
             && bounded(&self.created_at, 100, false)
@@ -121,7 +112,7 @@ impl Record {
                 origin: self.origin.clone(),
                 redirect_uri: self.redirect_uri.clone(),
             }
-            .valid()
+            .valid(config)
     }
 }
 #[derive(Deserialize)]
@@ -174,7 +165,11 @@ struct Introspection {
     user: CentralUser,
 }
 impl Introspection {
-    fn identity(self, record: &Record) -> Result<PassportSessionIdentity, GatewayError> {
+    fn identity(
+        self,
+        record: &Record,
+        config: &PassportConfig,
+    ) -> Result<PassportSessionIdentity, GatewayError> {
         let s = self.session;
         if !self.authenticated
             || s.subject != record.subject
@@ -185,7 +180,7 @@ impl Introspection {
                 origin: s.origin,
                 redirect_uri: s.redirect_uri,
             })
-            .valid()
+            .valid(config)
             || self.user.id != record.subject
             || !bounded(&self.user.handle, 500, true)
             || self.user.scopes.len() > 128
@@ -207,14 +202,14 @@ pub struct PassportSessions<'a, S, H> {
     pub host: &'a H,
 }
 impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
-    fn decode(&self, row: &StoredRecord) -> Result<Record, GatewayError> {
+    fn decode(&self, row: &StoredRecord, config: &PassportConfig) -> Result<Record, GatewayError> {
         if row.expires_at_ms.is_some() {
             return Err(unavailable());
         }
         let document =
             source_control::decode_source_control_record(row).map_err(|_| unavailable())?;
         let record: Record = document.deserialize().map_err(|_| unavailable())?;
-        if !record.valid(self.host) {
+        if !record.valid(self.host, config) {
             return Err(unavailable());
         }
         Ok(record)
@@ -223,15 +218,18 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
         &self,
         record: &Record,
         revoke: bool,
+        config: &PassportConfig,
     ) -> Result<gateway_auth_contracts::upstream::AuthUpstreamResponse, GatewayError> {
         self.host
             .fetch_auth(if revoke {
                 AuthUpstreamRequest::PassportRevoke {
                     app_session_token: Secret::new(record.app_session_token.clone()),
+                    binding: config.clone(),
                 }
             } else {
                 AuthUpstreamRequest::PassportSession {
                     app_session_token: Secret::new(record.app_session_token.clone()),
+                    binding: config.clone(),
                 }
             })
             .await
@@ -245,11 +243,21 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
         subject: &JsString16,
         previous: Option<&str>,
     ) -> Result<String, GatewayError> {
+        self.create_for(grant, subject, previous, &PassportConfig::production())
+            .await
+    }
+    pub async fn create_for(
+        &self,
+        grant: &SourceJson,
+        subject: &JsString16,
+        previous: Option<&str>,
+        config: &PassportConfig,
+    ) -> Result<String, GatewayError> {
         let record = gateway_source::source_serialization::canonical(grant)?
             .deserialize::<Grant>()
             .map_err(|_| unavailable())?
             .record();
-        if &record.subject != subject || !record.valid(self.host) {
+        if &record.subject != subject || !record.valid(self.host, config) {
             return Err(unavailable());
         }
         let bytes = self.host.random_bytes(32).map_err(|_| unavailable())?;
@@ -258,11 +266,18 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
         }
         let token = format!("uos_ai_passport_session_{}", base64url(&bytes));
         let key = session_key(&token);
-        let previous_key = previous.filter(|token| token_shape(token)).map(session_key);
+        let mut previous_key = previous.filter(|token| token_shape(token)).map(session_key);
         let previous_record = match &previous_key {
             Some(key) => self.store.read(key).await.map_err(|_| unavailable())?,
             None => None,
         };
+        if config.http_loopback()
+            && previous_record
+                .as_ref()
+                .is_some_and(|row| self.decode(row, config).is_err())
+        {
+            previous_key = None;
+        }
         let revision = sha256_hex(format!("passport-session-v1\0{token}").as_bytes());
         let document = SourceJson::from_serializable(&record).map_err(|_| unavailable())?;
         let stored = source_control::encode_source_control_record(revision, &document, None)
@@ -287,9 +302,9 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
         }
         if let Some(previous) = previous_record
             .as_ref()
-            .and_then(|row| self.decode(row).ok())
+            .and_then(|row| self.decode(row, config).ok())
         {
-            let _ = self.request(&previous, true).await;
+            let _ = self.request(&previous, true, config).await;
         }
         Ok(token)
     }
@@ -314,6 +329,14 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
     }
     /// Authenticates the actual cookie and returns identity plus its exact source binding DATA.
     pub async fn authenticate(&self, token: &str) -> Result<PassportAppSessionData, GatewayError> {
+        self.authenticate_for(token, &PassportConfig::production())
+            .await
+    }
+    pub async fn authenticate_for(
+        &self,
+        token: &str,
+        config: &PassportConfig,
+    ) -> Result<PassportAppSessionData, GatewayError> {
         if !token_shape(token) {
             return Err(unauthorized());
         }
@@ -325,9 +348,9 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
             .await
             .map_err(|_| unavailable())?
             .ok_or_else(unauthorized)?;
-        let record = self.decode(&row)?;
+        let record = self.decode(&row, config)?;
         let binding = record.binding(digest, &row.revision);
-        self.introspect(key, &binding, &record).await
+        self.introspect(key, &binding, &record, config).await
     }
     /// Concrete constructor-held preflight for Authority. Reads the stored app token;
     /// no caller verification callback or token reconstruction. Return value is DATA.
@@ -335,7 +358,15 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
         &self,
         binding: &PassportAppSessionBinding,
     ) -> Result<PassportAppSessionData, GatewayError> {
-        if !binding.has_valid_shape() {
+        self.check_bound_for(binding, &PassportConfig::production())
+            .await
+    }
+    pub async fn check_bound_for(
+        &self,
+        binding: &PassportAppSessionBinding,
+        config: &PassportConfig,
+    ) -> Result<PassportAppSessionData, GatewayError> {
+        if !binding.has_valid_shape_for(config) {
             return Err(unauthorized());
         }
         let key = digest_key(&binding.session_digest);
@@ -345,19 +376,20 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
             .await
             .map_err(|_| unavailable())?
             .ok_or_else(unauthorized)?;
-        let record = self.decode(&row)?;
+        let record = self.decode(&row, config)?;
         if record.binding(binding.session_digest.clone(), &row.revision) != *binding {
             return Err(unauthorized());
         }
-        self.introspect(key, binding, &record).await
+        self.introspect(key, binding, &record, config).await
     }
     async fn introspect(
         &self,
         key: RecordKey,
         binding: &PassportAppSessionBinding,
         record: &Record,
+        config: &PassportConfig,
     ) -> Result<PassportAppSessionData, GatewayError> {
-        let response = self.request(record, false).await?;
+        let response = self.request(record, false, config).await?;
         // Authoritative 401 remains authoritative even when body cancellation fails.
         if response.status == 401 {
             self.delete(key).await?;
@@ -371,14 +403,14 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
         let identity = document
             .deserialize::<Introspection>()
             .map_err(|_| unavailable())?
-            .identity(record)?;
+            .identity(record, config)?;
         let row = self
             .store
             .read(&key)
             .await
             .map_err(|_| unavailable())?
             .ok_or_else(unauthorized)?;
-        let current = self.decode(&row)?;
+        let current = self.decode(&row, config)?;
         if current.binding(binding.session_digest.clone(), &row.revision) != *binding {
             return Err(unauthorized());
         }
@@ -388,16 +420,30 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
         })
     }
     pub async fn revoke(&self, token: &str) -> Result<&'static str, GatewayError> {
+        self.revoke_for(token, &PassportConfig::production()).await
+    }
+    pub async fn revoke_for(
+        &self,
+        token: &str,
+        config: &PassportConfig,
+    ) -> Result<&'static str, GatewayError> {
         if !token_shape(token) {
             return Ok("not_applicable");
         }
         let key = session_key(token);
         let row = self.store.read(&key).await.map_err(|_| unavailable())?;
+        if config.http_loopback()
+            && row
+                .as_ref()
+                .is_some_and(|row| self.decode(row, config).is_err())
+        {
+            return Ok("not_applicable");
+        }
         self.delete(key).await?;
-        let Some(record) = row.as_ref().and_then(|row| self.decode(row).ok()) else {
+        let Some(record) = row.as_ref().and_then(|row| self.decode(row, config).ok()) else {
             return Ok("not_applicable");
         };
-        Ok(match self.request(&record, true).await {
+        Ok(match self.request(&record, true, config).await {
             Ok(response) if response.status == 204 => "revoked",
             _ => "unavailable",
         })
