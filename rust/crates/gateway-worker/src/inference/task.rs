@@ -1,6 +1,7 @@
 //! Closed actual request execution. A task is not admission or semantic proof.
 use super::{Inference, OwnedRequest, ResponseResult, late_failure};
 use futures_util::{Stream, future::poll_fn};
+use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_contracts::lifecycle::TransportObservation;
 use gateway_source::error::GatewayError;
 use gateway_worker_capture::capture::Capture;
@@ -300,9 +301,11 @@ impl Stream for PendingBody {
         Poll::Ready(None)
     }
 }
-pub(super) async fn drive(mut task: RequestTask) -> ResponseResult {
+pub(super) async fn drive(mut task: RequestTask, principal: &AuthPrincipal) -> ResponseResult {
     match poll_fn(|context| task.poll_start(context)).await {
-        StartDisposition::Complete(result) => result,
+        StartDisposition::Complete(result) => {
+            result.and_then(|response| crate::runtime::decorate_api_policy(response, principal))
+        }
         StartDisposition::AcceptedHead => task.into_provisional_response(),
     }
 }

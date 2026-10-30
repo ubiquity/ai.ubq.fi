@@ -538,8 +538,8 @@ async fn terminal_response(
         crate::admission::acquire(&principal, &request_id.0, label, host.cancellation.clone())
             .await?;
     let catalog = CatalogState::load(&store, env, host, context.clone()).await?;
-    let mut response = match target {
-        TerminalRoute::Extras(route) => {
+    match target {
+        TerminalRoute::Extras(route) => decorate_api_policy(
             crate::extras::run(
                 request,
                 crate::extras::Target { route, request_id },
@@ -549,23 +549,22 @@ async fn terminal_response(
                 catalog,
                 host,
             )
-            .await?
-        }
-        TerminalRoute::Inference(_) => {
-            inference::run(
-                request,
-                inference::RequestResources { context, permit },
-                &principal,
-                store,
-                catalog,
-                host,
-                request_id,
-            )
-            .await?
-        }
-    };
-    decorate_api_policy(&mut response, &principal)?;
-    Ok(response.into())
+            .await?,
+            &principal,
+        )
+        .map(Into::into),
+        TerminalRoute::Inference(_) => inference::run(
+            request,
+            inference::RequestResources { context, permit },
+            &principal,
+            store,
+            catalog,
+            host,
+            request_id,
+        )
+        .await
+        .map(Into::into),
+    }
 }
 
 fn json_response(value: SourceJson) -> Result<Response, GatewayError> {
@@ -586,26 +585,24 @@ fn catalog_response(response: CatalogResponse) -> Result<Response, GatewayError>
     Ok(wire)
 }
 
-fn decorate_api_policy(
-    response: &mut Response,
+pub(super) fn decorate_api_policy(
+    mut response: Response,
     principal: &AuthPrincipal,
-) -> Result<(), GatewayError> {
+) -> Result<Response, GatewayError> {
     if let gateway_auth_contracts::types::AuthMethod::KvApiKey { policy, .. } = &principal.method
         && policy.usage_limit_requests != -1
     {
+        let window_seconds = ((policy.window_ms + 999) / 1000).max(1);
+        let header = format!(
+            "\"api-key\";q={};w={window_seconds}",
+            policy.usage_limit_requests
+        );
         response
             .headers_mut()
-            .set(
-                "RateLimit-Policy",
-                &format!(
-                    "\"api-key\";q={};w={}",
-                    policy.usage_limit_requests,
-                    ((policy.window_ms + 999) / 1000).max(1)
-                ),
-            )
+            .set("RateLimit-Policy", &header)
             .map_err(|_| invalid_url())?;
     }
-    Ok(())
+    Ok(response)
 }
 
 fn invalid_url() -> GatewayError {

@@ -382,7 +382,7 @@ pub async fn run(
         build,
     );
     let capture = Capture::new(request, capture_request_id, capture_runtime, build);
-    task::drive(task::RequestTask::start(OwnedRequest {
+    let request_task = task::RequestTask::start(OwnedRequest {
         bytes,
         principal: principal.clone(),
         store,
@@ -396,8 +396,8 @@ pub async fn run(
         // Compaction requests use the selected provider, like ordinary inference.
         local_compaction: false,
         permit,
-    }))
-    .await
+    });
+    task::drive(request_task, principal).await
 }
 
 struct Inference<'a> {
