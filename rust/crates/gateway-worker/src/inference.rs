@@ -9,8 +9,8 @@ use crate::transport::outbound::{
 use crate::{inference_currentness::CurrentnessGuard, inference_local::Start};
 use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
 use gateway_contracts::{
-    claude::ClaudeErrorEvidence, identity::ApiKeyId, identity::PrincipalId,
-    identity::RequestContext, identity::RequestId, provider::UpstreamProvider,
+    claude::ClaudeErrorEvidence, identity::ApiKeyId, identity::RequestContext, identity::RequestId,
+    provider::UpstreamProvider,
 };
 use gateway_local_refusal::routing_error::RoutingError;
 use gateway_observability_replay_observation::replay_trace::{AttemptTrace, TraceTerminal};
@@ -432,7 +432,7 @@ impl Inference<'_> {
         };
         let original = RequestContext {
             request_id,
-            principal: PrincipalId(crate::lifecycle::principal_id(self.principal)),
+            principal: crate::lifecycle::principal_id(self.principal),
             key_id: match &self.principal.method {
                 AuthMethod::KvApiKey { key_id, .. } => Some(ApiKeyId(key_id.clone())),
                 _ => None,

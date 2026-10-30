@@ -28,8 +28,9 @@ pub async fn acquire(
     cancellation: Rc<Cancellation>,
 ) -> Result<Option<Permit>, GatewayError> {
     monotonic()?;
+    let principal = crate::lifecycle::principal_id(principal).to_source_json()?;
     let request = AdmissionRequest {
-        principal: Some(crate::lifecycle::principal_id(principal)),
+        principal: Some(principal.as_str().to_owned()),
         request_id: request_id.to_owned(),
         route: route.to_owned(),
         cancellation: cancellation.clone(),

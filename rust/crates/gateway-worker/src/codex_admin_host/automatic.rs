@@ -69,7 +69,7 @@ pub(crate) async fn check_client(
         _ => None,
     };
     let url = worker::Url::parse(&original.url).map_err(|_| unavailable())?;
-    if request.principal.0 != crate::lifecycle::principal_id(&principal)
+    if request.principal != crate::lifecycle::principal_id(&principal)
         || request.key_id.as_ref().map(|id| id.0.as_str()) != key
         || !original_route_matches(&original.method, url.path(), &request.route)
     {

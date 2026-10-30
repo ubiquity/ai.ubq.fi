@@ -1,5 +1,5 @@
 //! Existing source CORS policy, including trusted credential origins and Vary merging.
-use gateway_auth::origin::trusted_relay_origin;
+use gateway_auth_passkeys::origin::trusted_relay_origin;
 use gateway_worker_web::response::GatewayResponse;
 use worker::{Env, Request};
 
