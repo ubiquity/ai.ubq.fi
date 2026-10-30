@@ -5,6 +5,7 @@ use gateway_source::{
 };
 use gateway_worker_platform::random;
 use gateway_worker_storage::store::now_ms;
+use worker::Response;
 
 fn scalar(value: &serde_json::Value) -> Result<SourceJson, GatewayError> {
     SourceJson::from_serializable(value)
@@ -79,4 +80,59 @@ pub fn frames(error: &SourceJson, status: u16) -> Result<Vec<u8>, GatewayError> 
         failed.as_str()
     )
     .into_bytes())
+}
+
+const SAFE_HEADERS: &[&str] = &[
+    "cache-control",
+    "content-length",
+    "content-type",
+    "openai-processing-ms",
+    "retry-after",
+    "x-ratelimit-limit-requests",
+    "x-ratelimit-limit-tokens",
+    "x-ratelimit-remaining-requests",
+    "x-ratelimit-remaining-tokens",
+    "x-ratelimit-reset-requests",
+    "x-ratelimit-reset-tokens",
+];
+const HEADER_UNITS: usize = 512;
+pub fn safe_headers(response: &Response) -> Result<(SourceJson, bool), GatewayError> {
+    let mut values = Vec::new();
+    let mut truncated = false;
+    for name in SAFE_HEADERS {
+        if let Ok(Some(value)) = response.headers().get(name) {
+            let units = value.encode_utf16().collect::<Vec<_>>();
+            truncated |= units.len() > HEADER_UNITS;
+            values.push((
+                JsString16::from_utf8(name),
+                SourceJson::from_serializable(&JsString16::from_units(
+                    units.into_iter().take(HEADER_UNITS).collect(),
+                ))?,
+            ));
+        }
+    }
+    Ok((source::object_keys(values)?, truncated))
+}
+
+pub fn native_failure_record(
+    status: u16,
+    headers: SourceJson,
+    truncated: bool,
+    detail: &SourceJson,
+    complete: bool,
+) -> Result<SourceJson, GatewayError> {
+    object(vec![
+        ("status", scalar(&serde_json::json!(status))?),
+        ("headers", headers),
+        ("headers_truncated", scalar(&serde_json::json!(truncated))?),
+        (
+            "error",
+            if complete {
+                detail.clone()
+            } else {
+                scalar(&serde_json::Value::Null)?
+            },
+        ),
+        ("body_complete", scalar(&serde_json::json!(complete))?),
+    ])
 }

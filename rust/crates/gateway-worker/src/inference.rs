@@ -7,6 +7,7 @@ use crate::transport::outbound::{
     send_http,
 };
 use crate::{inference_currentness::CurrentnessGuard, inference_local::Start};
+use gateway_admission::handoff::Pending;
 use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
 use gateway_contracts::{
     claude::ClaudeErrorEvidence, identity::ApiKeyId, identity::RequestContext, identity::RequestId,
@@ -41,6 +42,11 @@ mod stream;
 mod task;
 use gateway_worker_stream::control::ATTEMPT_DEADLINE_MS;
 type ResponseResult = Result<Response, GatewayError>;
+
+enum Selection {
+    Selected(stream::Selected),
+    TerminalHttp(Response),
+}
 
 pub struct RequestResources {
     pub context: Rc<Context>,
@@ -259,8 +265,7 @@ impl Dispatch<'_> {
             };
             (capture, ClaudeErrorEvidence::from_prefix(None, false)?)
         };
-        let decision = self
-            .session
+        self.session
             .resolve_response(
                 attempt,
                 observed,
@@ -277,11 +282,7 @@ impl Dispatch<'_> {
                     cancelled: self.cancellation.signal().aborted(),
                 }),
             )
-            .await;
-        if !matches!(&decision, Ok(ResponseDecision::Return)) {
-            body::discard_response(response);
-        }
-        decision
+            .await
     }
 }
 async fn dispatch_attempts(
@@ -289,7 +290,8 @@ async fn dispatch_attempts(
     routing: &routing_host::Host,
     cancellation: Rc<Cancellation>,
     capture: Rc<Capture>,
-) -> Result<(Response, PreparedAttempt), RoutingError> {
+    retain_http: bool,
+) -> Result<Selection, RoutingError> {
     let dispatch = Dispatch {
         session: &session,
         routing,
@@ -297,6 +299,7 @@ async fn dispatch_attempts(
         capture: &capture,
     };
     let mut pending: Option<(WorkspaceContinuation, Vec<u8>)> = None;
+    let mut retained_http: Option<Pending<Response>> = None;
     loop {
         let (attempt, continuation, retained_wire) =
             if let Some((continuation, wire)) = pending.take() {
@@ -306,14 +309,22 @@ async fn dispatch_attempts(
                     Some(wire),
                 )
             } else {
-                let attempt = session.next_attempt().await?.ok_or_else(|| {
-                    GatewayError::unavailable(
-                        "No eligible provider remains for this request.",
-                        "provider_routing_unavailable",
-                    )
-                })?;
+                let Some(attempt) = session.next_attempt().await? else {
+                    return retained_http
+                        .as_mut()
+                        .and_then(Pending::take)
+                        .map(Selection::TerminalHttp)
+                        .ok_or_else(|| {
+                            GatewayError::unavailable(
+                                "No eligible provider remains for this request.",
+                                "provider_routing_unavailable",
+                            )
+                            .into()
+                        });
+                };
                 (attempt, None, None)
             };
+        drop(retained_http.take());
         let continuing = continuation.is_some();
         let target = PinnedDestination::new(attempt.request.url())?;
         let wire = match retained_wire {
@@ -326,16 +337,29 @@ async fn dispatch_attempts(
         else {
             continue;
         };
-        match dispatch
+        let decision = dispatch
             .resolve(&attempt, &mut response, observed_at_ms, continuing)
-            .await?
-        {
+            .await;
+        let keep_http = retain_http
+            && attempt.paid.is_none()
+            && matches!(&decision, Ok(ResponseDecision::Continue));
+        if !matches!(&decision, Ok(ResponseDecision::Return)) && !keep_http {
+            body::discard_response(&mut response);
+        }
+        match decision? {
             ResponseDecision::Return => {
-                return Ok((response, attempt));
+                return Ok(Selection::Selected(stream::Selected::new(
+                    response, attempt,
+                )));
+            }
+            ResponseDecision::Continue if keep_http => {
+                let mut retained = Pending::new(response);
+                retained.arm(|mut response| body::discard_response(&mut response));
+                retained_http = Some(retained);
             }
             ResponseDecision::Continue => {}
             ResponseDecision::WorkspaceContinuation(continuation) => {
-                pending = Some((*continuation, wire));
+                pending = Some((*continuation, wire))
             }
         }
     }
@@ -408,6 +432,7 @@ struct Inference<'a> {
     capture: &'a Rc<Capture>,
     responses: bool,
     head: Rc<HeadState>,
+    terminal_http: &'a mut Option<Pending<stream::PendingLifetime>>,
 }
 impl Inference<'_> {
     async fn execute(
@@ -572,33 +597,30 @@ impl Inference<'_> {
     ) -> ResponseResult {
         let deadline = self.host.cancellation.set_timeout_ms(ATTEMPT_DEADLINE_MS)?;
         let mut owner = gateway_admission::handoff::Pending::new(stream::PendingLifetime {
-            session,
+            session: session.clone(),
             currentness,
             permit,
             deadline: Some(deadline),
         });
         let selected = match self.select(&mut owner, &routing).await {
-            Ok(value) => value,
+            Ok(Selection::Selected(value)) => value,
+            Ok(Selection::TerminalHttp(response)) => {
+                *self.terminal_http = Some(owner);
+                return Ok(response);
+            }
             Err(error) => {
                 if owner.armed() {
                     return self.cleanup_pending(&mut owner, error).await;
                 }
-                let Some(lifetime) = owner.get() else {
-                    return crate::inference_source::error_response(
-                        crate::inference_local_lifecycle::wrapper_error(),
-                        self.capture,
-                    )
-                    .await;
-                };
-                lifetime
-                    .session
+                session
                     .finish(Default::default())
                     .await
                     .map_err(|error| *error.error)?;
                 return crate::inference_source::error_response(error, self.capture).await;
             }
         };
-        self.respond_selected(owner, selected, client_stream).await
+        self.respond_selected(owner, selected, client_stream, session)
+            .await
     }
 
     async fn respond_selected(
@@ -606,6 +628,7 @@ impl Inference<'_> {
         mut owner: gateway_admission::handoff::Pending<stream::PendingLifetime>,
         selected: stream::Selected,
         client_stream: bool,
+        session: Rc<Session>,
     ) -> ResponseResult {
         let stream::Selected {
             upstream,
@@ -620,15 +643,8 @@ impl Inference<'_> {
         let provider = attempt.request.decode().provider;
         let prepared = attempt.request.clone();
         self.capture.correlate(correlation(provider, &headers));
-        let Some(lifetime) = owner.get() else {
-            return crate::inference_source::error_response(
-                crate::inference_local_lifecycle::wrapper_error(),
-                self.capture,
-            )
-            .await;
-        };
         let pricing = match crate::inference_source::pricing_metadata(
-            lifetime.session.surplus_billing(),
+            session.surplus_billing(),
             prepared.url().ends_with("/messages"),
         ) {
             Ok(value) => value,

@@ -1,5 +1,5 @@
 //! Bind decoded streams to the original Worker request lifetime.
-use super::{ResponseResult, dispatch_attempts};
+use super::{ResponseResult, Selection, dispatch_attempts};
 use crate::inference_lifecycle::{Lifecycle, Usage, finish_hook};
 use crate::routing_host;
 use gateway_admission::handoff::{Pending, enqueue};
@@ -570,34 +570,33 @@ impl super::Inference<'_> {
         &self,
         owner: &mut Pending<PendingLifetime>,
         routing: &routing_host::Host,
-    ) -> Result<Selected, RoutingError> {
+    ) -> Result<Selection, RoutingError> {
         let mut last_failure = None;
         loop {
             let lifetime = owner
                 .get()
                 .ok_or_else(crate::inference_local_lifecycle::wrapper_error)?;
-            let dispatched = dispatch_attempts(
+            let mut selected = match dispatch_attempts(
                 lifetime.session.clone(),
                 routing,
                 self.host.cancellation.clone(),
                 self.capture.clone(),
+                self.head.seen(),
             )
-            .await;
-            let (upstream, attempt) = match dispatched {
-                Ok(value) => value,
-                Err(error) => {
+            .await
+            {
+                Ok(Selection::Selected(selected)) => selected,
+                Ok(terminal) => return Ok(terminal),
+                Err(error)
                     if error.error.envelope.error.code.as_deref()
-                        == Some("provider_routing_unavailable")
-                        && let Some(failure) = last_failure
-                    {
-                        return Err(failure);
-                    }
-                    return Err(error);
+                        == Some("provider_routing_unavailable") =>
+                {
+                    return Err(last_failure.unwrap_or(error));
                 }
+                Err(error) => return Err(error),
             };
-            let mut selected = Selected::new(upstream, attempt);
             if !selected.needs_preparation(&lifetime.session) {
-                return Ok(selected);
+                return Ok(Selection::Selected(selected));
             }
             self.arm_pending(owner);
             let source = selected
@@ -648,7 +647,7 @@ impl super::Inference<'_> {
             match disposition {
                 PrepareDisposition::Commit => {
                     selected.prepared = Some(prepared);
-                    return Ok(selected);
+                    return Ok(Selection::Selected(selected));
                 }
                 PrepareDisposition::PresemanticFailure(_) => {
                     let lifetime = owner

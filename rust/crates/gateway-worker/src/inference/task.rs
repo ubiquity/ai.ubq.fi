@@ -1,6 +1,7 @@
 //! Closed actual request execution. A task is not admission or semantic proof.
 use super::{Inference, OwnedRequest, ResponseResult, late_failure};
 use futures_util::{Stream, future::poll_fn};
+use gateway_admission::handoff::enqueue;
 use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_contracts::lifecycle::TransportObservation;
 use gateway_source::error::GatewayError;
@@ -60,14 +61,16 @@ impl RequestTask {
         let request_id = input.request_id.0.clone();
         let executing_head = head.clone();
         let execution = Box::pin(async move {
+            let mut terminal_http = None;
             let result = Inference {
                 principal: &input.principal,
                 store: &input.store,
                 host: &input.host,
-                context: input.context,
+                context: input.context.clone(),
                 capture: &input.capture,
                 responses: input.responses,
                 head: executing_head.clone(),
+                terminal_http: &mut terminal_http,
             }
             .execute(
                 &input.bytes,
@@ -78,40 +81,62 @@ impl RequestTask {
                 input.permit,
             )
             .await;
-            if let Err(error) = &result {
-                input
-                    .capture
-                    .failure(error, input.host.cancellation.client_aborted())
-                    .await;
-            }
-            if !executing_head.expects_stream() || executing_head.is_delivery_lost() {
-                return result.map(|response| TaskReply {
+            let normalize = async move {
+                if let Err(error) = &result {
+                    input
+                        .capture
+                        .failure(error, input.host.cancellation.client_aborted())
+                        .await;
+                }
+                let provisional =
+                    executing_head.expects_stream() && !executing_head.is_delivery_lost();
+                let response = match result {
+                    Ok(response) => response,
+                    Err(error) if provisional => late_failure::from_error(&error)?,
+                    Err(error) => return Err(error),
+                };
+                let late_failure = provisional
+                    && response.status_code() >= 400
+                    && !response
+                        .headers()
+                        .get("content-type")
+                        .ok()
+                        .flatten()
+                        .is_some_and(|value| {
+                            value.to_ascii_lowercase().starts_with("text/event-stream")
+                        });
+                let response = if late_failure {
+                    late_failure::convert(response, &input.capture, &input.host.cancellation)
+                        .await?
+                } else {
+                    response
+                };
+                Ok(TaskReply {
                     response,
-                    late_failure: false,
-                });
-            }
-            let response = match result {
-                Ok(response) => response,
-                Err(error) => late_failure::from_error(&error)?,
+                    late_failure,
+                })
             };
-            let is_sse = response
-                .headers()
-                .get("content-type")
-                .ok()
-                .flatten()
-                .is_some_and(|value| value.to_ascii_lowercase().starts_with("text/event-stream"));
-            if response.status_code() >= 400 && !is_sse {
-                return late_failure::convert(response, &input.capture, &input.host.cancellation)
+            match terminal_http {
+                None => normalize.await,
+                Some(mut owner) => {
+                    let lifetime = owner.take().ok_or_else(unavailable)?;
+                    enqueue(
+                        async move {
+                            let result = normalize.await;
+                            let cleanup = lifetime
+                                .session
+                                .finish(Default::default())
+                                .await
+                                .map_err(|error| *error.error);
+                            drop(lifetime);
+                            cleanup?;
+                            result
+                        },
+                        |task| input.context.wait_until(task),
+                    )
                     .await
-                    .map(|response| TaskReply {
-                        response,
-                        late_failure: true,
-                    });
+                }
             }
-            Ok(TaskReply {
-                response,
-                late_failure: false,
-            })
         });
         Self {
             execution: Some(execution),
