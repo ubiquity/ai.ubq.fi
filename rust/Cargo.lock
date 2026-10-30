@@ -3946,6 +3946,7 @@ dependencies = [
  "gateway-native-authority-request",
  "gateway-native-authority-wire",
  "gateway-native-confinement",
+ "gateway-native-connected-io",
  "gateway-native-connector",
  "gateway-native-custody-io",
  "gateway-native-custody-wire",
