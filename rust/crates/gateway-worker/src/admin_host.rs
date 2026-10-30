@@ -34,7 +34,7 @@ pub struct Capabilities {
     support: crate::admin_support_host::Binding,
     original: gateway_auth_contracts::types::AuthRequest,
     auth_config: gateway_auth_contracts::types::AuthConfig,
-    actor: std::rc::Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
+    actor: Option<std::rc::Rc<gateway_authority::native_control::actor::NativeRenewalActor>>,
 }
 
 impl Capabilities {
@@ -45,7 +45,7 @@ impl Capabilities {
         store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
         platform: &crate::host::PlatformHost,
         context: std::rc::Rc<worker::Context>,
-        actor: std::rc::Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
+        actor: Option<std::rc::Rc<gateway_authority::native_control::actor::NativeRenewalActor>>,
     ) -> Result<Self, GatewayError> {
         let observations = crate::observability_host::bind_admin(
             request_id,
@@ -164,7 +164,7 @@ impl RuntimeCapabilities for Capabilities {
             crate::codex_admin_host::OriginalAdmin {
                 request: &self.original,
                 config: &self.auth_config,
-                actor: &self.actor,
+                actor: self.actor.as_deref(),
             },
             request,
             context,

@@ -4,7 +4,10 @@ use crate::host::{PlatformHost, auth_config};
 use crate::inference;
 use gateway_admin::service::AdminService;
 use gateway_auth::resolve::AuthService;
-use gateway_auth_contracts::types::{AuthConfig, AuthPrincipal, AuthRequest, AuthResponse};
+use gateway_auth_contracts::types::{
+    AuthConfig, AuthMethod, AuthPrincipal, AuthRequest, AuthResponse,
+};
+use gateway_auth_passport_contracts::actor_data::PassportSessionData;
 use gateway_contracts::identity::RequestId;
 use gateway_core::state::AuthorityStore;
 use gateway_live_runtime::{
@@ -22,6 +25,7 @@ use gateway_worker_http_body::body;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::headers::{HeaderLimits, bounded_headers};
 use gateway_worker_storage::store::now_ms;
+use gateway_worker_web::response::{inference_not_found, public_not_found};
 use std::rc::Rc;
 use worker::{Context, Env, Method, Request, Response};
 
@@ -289,7 +293,7 @@ async fn administrative_route(
         request_id: request_id.clone(),
         principal: gateway_authority::native_control::actor::principal_id(&principal),
         key_id: match &principal.method {
-            gateway_auth_contracts::types::AuthMethod::KvApiKey { key_id, .. } => {
+            AuthMethod::KvApiKey { key_id, .. } => {
                 Some(gateway_contracts::identity::ApiKeyId(key_id.clone()))
             }
             _ => None,
@@ -302,16 +306,21 @@ async fn administrative_route(
         crate::host::PlatformTokens,
         crate::host::PlatformClock,
     );
-    let actor = Rc::new(
-        gateway_authority::native_control::actor::authenticate_admin_actor(
-            &authority,
-            host,
-            config,
-            auth_request,
-            &original_context,
-        )
-        .await?,
-    );
+    let actor = match &principal.method {
+        AuthMethod::PassportSession {
+            identity: PassportSessionData::App(_),
+        } => None,
+        _ => Some(Rc::new(
+            gateway_authority::native_control::actor::authenticate_admin_actor(
+                &authority,
+                host,
+                config,
+                auth_request,
+                &original_context,
+            )
+            .await?,
+        )),
+    };
     // Retain a measured receipt from this exact raw request before the
     // administrative service parses JSON into its finite operation DTO.
     let bindings = crate::admin_host::Capabilities::new(
@@ -613,19 +622,6 @@ fn invalid_url() -> GatewayError {
     )
 }
 
-fn inference_not_found() -> GatewayError {
-    GatewayError::new(404, "Not found", Some("not_found"))
-}
-
-fn public_not_found() -> GatewayError {
-    GatewayError::new(
-        404,
-        "Public resource not found. Read /openapi.json for API endpoints or /llms.txt for agent guidance.",
-        Some("not_found"),
-    )
-    .with_type("not_found")
-}
-
 fn is_terminal_inference_path(path: &str) -> bool {
     path.starts_with("/v1/")
         || path == "/uos/embeddings"
@@ -636,26 +632,6 @@ fn is_terminal_inference_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn terminal_and_public_not_found_envelopes_stay_distinct() {
-        let terminal = inference_not_found();
-        assert_eq!(terminal.status, 404);
-        assert_eq!(terminal.envelope.error.message, "Not found");
-        assert_eq!(terminal.envelope.error.error_type, "invalid_request_error");
-        assert_eq!(terminal.envelope.error.code.as_deref(), Some("not_found"));
-        assert!(terminal.envelope.error.param.is_none());
-
-        let public = public_not_found();
-        assert_eq!(public.status, 404);
-        assert_eq!(
-            public.envelope.error.message,
-            "Public resource not found. Read /openapi.json for API endpoints or /llms.txt for agent guidance."
-        );
-        assert_eq!(public.envelope.error.error_type, "not_found");
-        assert_eq!(public.envelope.error.code.as_deref(), Some("not_found"));
-        assert!(public.envelope.error.param.is_none());
-    }
 
     #[test]
     fn terminal_paths_match_the_source_dispatch_surface() {

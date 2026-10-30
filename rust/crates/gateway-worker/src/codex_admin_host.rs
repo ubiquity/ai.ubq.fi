@@ -13,7 +13,17 @@ mod source_inventory;
 pub struct OriginalAdmin<'a> {
     pub request: &'a AuthRequest,
     pub config: &'a AuthConfig,
-    pub actor: &'a NativeRenewalActor,
+    pub actor: Option<&'a NativeRenewalActor>,
+}
+impl OriginalAdmin<'_> {
+    fn native_actor(&self) -> Result<&NativeRenewalActor, GatewayError> {
+        self.actor.ok_or_else(|| {
+            GatewayError::unavailable(
+                "Original-request native actor authority is unavailable or changed.",
+                "native_actor_unavailable",
+            )
+        })
+    }
 }
 
 pub async fn execute(
@@ -24,29 +34,29 @@ pub async fn execute(
     context: Context,
     observations: &crate::observability_host::Runtime,
 ) -> Result<AuthResponse, GatewayError> {
-    let OriginalAdmin {
-        request: original,
-        config,
-        actor,
-    } = owner;
-    AuthService::new(store, platform, config)
-        .authenticate_admin(original)
+    AuthService::new(store, platform, owner.config)
+        .authenticate_admin(owner.request)
         .await?;
     match request {
         CodexRequest::ConsumeReset { account_id_hash } => {
-            manual::consume(store, platform, config, &account_id_hash, actor).await
+            let actor = owner.native_actor()?;
+            manual::consume(store, platform, owner.config, &account_id_hash, actor).await
         }
         CodexRequest::ImportCredentials { .. } => Err(GatewayError::unavailable(
             "The native credential import owner is not configured.",
             "codex_native_import_unavailable",
         )),
         CodexRequest::Recheck { slot } => {
+            let actor = owner.native_actor()?;
             let authority = gateway_authority::store::Authority::with_clock(
                 store.clone(),
                 crate::host::PlatformTokens,
                 crate::host::PlatformClock,
             );
-            if !authority.recheck_codex_slot(actor, config, slot).await? {
+            if !authority
+                .recheck_codex_slot(actor, owner.config, slot)
+                .await?
+            {
                 return Err(GatewayError::new(
                     404,
                     "Codex account slot is not configured",

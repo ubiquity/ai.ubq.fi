@@ -40,18 +40,19 @@ pub fn bind(
 ) -> Runtime {
     bind_request(request_id, original_body, store, platform, None)
 }
-/// Bind only the original authenticated actor; a normalized administrative Context cannot mint it.
+/// Ordinary admin reads carry no native effect authority; any supplied actor remains request-bound.
 pub fn bind_admin(
     request_id: &RequestId,
     original_body: &[u8],
     store: RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     _context: Rc<worker::Context>,
-    actor: Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
+    actor: Option<Rc<gateway_authority::native_control::actor::NativeRenewalActor>>,
 ) -> Result<Runtime, GatewayError> {
-    if actor.scope() != gateway_authority_actor_records::scope::NativeActorScope::Admin
-        || actor.context().request_id != *request_id
-    {
+    if actor.as_ref().is_some_and(|actor| {
+        actor.scope() != gateway_authority_actor_records::scope::NativeActorScope::Admin
+            || actor.context().request_id != *request_id
+    }) {
         return Err(admin::auth_required());
     }
     Ok(bind_request(
@@ -59,7 +60,7 @@ pub fn bind_admin(
         original_body,
         store,
         platform,
-        Some(actor),
+        actor,
     ))
 }
 fn bind_request(
