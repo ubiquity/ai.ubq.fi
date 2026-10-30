@@ -8270,6 +8270,7 @@ dependencies = [
  "gateway-authority-contracts",
  "gateway-core",
  "gateway-native-custody-io",
+ "gateway-native-custody-wire",
  "gateway-native-http-admission",
  "gateway-native-http-framing",
  "gateway-native-import-source",

@@ -40,14 +40,10 @@ impl<'a> LiveImportCustody<'a> {
         start: NativeImportStart<'a>,
         context: &NativeImportInputs<'_>,
     ) -> Result<Self, GatewayError> {
-        let proof = context.original_proof();
-        let original_body = context.original_body();
-        context.check_document(proof, proof.metadata(), original_body)?;
-        start.require_body(original_body, context.now_ms()?)?;
-        if start.binding().action_ref != proof.metadata().action_ref
-            || start.binding().operation_id != proof.metadata().operation_id
-            || channel.next_sequence != 1
-        {
+        context.check_original()?;
+        context.require_start(&start)?;
+        context.require_start_identity(&start)?;
+        if channel.next_sequence != 1 {
             return Err(unavailable());
         }
         let binding = start.custody_request()?;
@@ -67,13 +63,8 @@ impl<'a> LiveImportCustody<'a> {
             challenge: challenge.clone(),
             binding: data::copy_binding(&binding)?,
         };
-        wire::send(
-            &mut channel.socket,
-            &Frame::Quiesce(header),
-            deadline,
-            Some(context.context),
-        )?;
-        let response = wire::receive(&mut channel.socket, deadline, Some(context.context))?;
+        context.send_custody_frame(&mut channel.socket, &Frame::Quiesce(header), deadline)?;
+        let response = context.receive_custody_frame(&mut channel.socket, deadline)?;
         let Frame::Stopped(stopped) = response else {
             return Err(unavailable());
         };
@@ -84,7 +75,7 @@ impl<'a> LiveImportCustody<'a> {
             &challenge,
             1,
         )?;
-        context.check_document(proof, proof.metadata(), original_body)?;
+        context.check_original()?;
         channel.next_sequence = 2;
         Ok(Self {
             channel,
@@ -143,16 +134,11 @@ impl<'a> LiveImportCustody<'a> {
         {
             return Err(unavailable());
         }
-        context.check_document(
-            context.original_proof(),
-            context.original_proof().metadata(),
-            context.original_body(),
-        )?;
-        self.original_start
-            .require_body(context.original_body(), context.now_ms()?)?;
+        context.check_original()?;
+        context.require_start(&self.original_start)?;
         self.uncertain = true;
         let sequence = self.channel.next_sequence;
-        wire::send(
+        context.send_custody_frame(
             &mut self.channel.socket,
             &Frame::ReleaseAfterVerifiedTerminal(Release {
                 v: 1,
@@ -163,13 +149,8 @@ impl<'a> LiveImportCustody<'a> {
                 publication_revision: terminal.terminal().publication_revision.clone(),
             }),
             self.deadline,
-            Some(context.context),
         )?;
-        let response = wire::receive(
-            &mut self.channel.socket,
-            self.deadline,
-            Some(context.context),
-        )?;
+        let response = context.receive_custody_frame(&mut self.channel.socket, self.deadline)?;
         let Frame::Released(header) = response else {
             return Err(unavailable());
         };
@@ -181,11 +162,7 @@ impl<'a> LiveImportCustody<'a> {
         {
             return Err(unavailable());
         }
-        context.check_document(
-            context.original_proof(),
-            context.original_proof().metadata(),
-            context.original_body(),
-        )?;
+        context.check_original()?;
         self.channel.next_sequence = sequence.checked_add(1).ok_or_else(unavailable)?;
         self.released = true;
         self.uncertain = false;
@@ -199,15 +176,12 @@ impl<'a> LiveImportCustody<'a> {
         root: &NativeRootView<'_>,
         context: &NativeImportInputs<'_>,
     ) -> Result<(), GatewayError> {
-        let proof = context.original_proof();
-        let original_body = context.original_body();
         if self.uncertain || self.released || Instant::now() >= self.deadline {
             return Err(unavailable());
         }
         self.uncertain = true;
-        context.check_document(proof, proof.metadata(), original_body)?;
-        self.original_start
-            .require_body(original_body, context.now_ms()?)?;
+        context.check_original()?;
+        context.require_start(&self.original_start)?;
         root.recheck_live_root(
             self.original_start.binding(),
             (self.root_device, self.root_inode),
@@ -220,17 +194,12 @@ impl<'a> LiveImportCustody<'a> {
             challenge: self.challenge.clone(),
             binding: data::copy_binding(&self.binding)?,
         };
-        wire::send(
+        context.send_custody_frame(
             &mut self.channel.socket,
             &Frame::CheckStopped(header),
             self.deadline,
-            Some(context.context),
         )?;
-        let response = wire::receive(
-            &mut self.channel.socket,
-            self.deadline,
-            Some(context.context),
-        )?;
+        let response = context.receive_custody_frame(&mut self.channel.socket, self.deadline)?;
         let Frame::Stopped(stopped) = response else {
             return Err(unavailable());
         };
@@ -248,7 +217,7 @@ impl<'a> LiveImportCustody<'a> {
             return Err(unavailable());
         }
         self.channel.next_sequence = sequence.checked_add(1).ok_or_else(unavailable)?;
-        context.check_document(proof, proof.metadata(), original_body)?;
+        context.check_original()?;
         self.uncertain = false;
         Ok(())
     }

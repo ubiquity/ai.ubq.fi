@@ -18,6 +18,7 @@ gateway-authority.workspace = true
 gateway-authority-contracts.workspace = true
 gateway-core.workspace = true
 gateway-native-custody-io.workspace = true
+gateway-native-custody-wire.workspace = true
 gateway-native-http-admission.workspace = true
 gateway-native-http-framing.workspace = true
 gateway-native-import-source.workspace = true

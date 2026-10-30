@@ -210,3 +210,23 @@ impl<'a> NativeImportInputs<'a> {
         start.require_body(self.body, now_ms)
     }
 }
+
+impl NativeImportInputs<'_> {
+    /// Guarded custody framing retains the same private original context during I/O.
+    pub fn send_custody_frame(
+        &self,
+        stream: &mut std::net::TcpStream,
+        frame: &gateway_native_custody_wire::wire::Frame,
+        deadline: Instant,
+    ) -> Result<(), GatewayError> {
+        gateway_native_custody_io::protocol::send(stream, frame, deadline, Some(self.context))
+    }
+    /// The decoded frame is DATA; it cannot construct or renew live custody.
+    pub fn receive_custody_frame(
+        &self,
+        stream: &mut std::net::TcpStream,
+        deadline: Instant,
+    ) -> Result<gateway_native_custody_wire::wire::Frame, GatewayError> {
+        gateway_native_custody_io::protocol::receive(stream, deadline, Some(self.context))
+    }
+}

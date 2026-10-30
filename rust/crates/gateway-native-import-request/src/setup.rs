@@ -10,7 +10,7 @@ use gateway_authority::native_control::import::{
 use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_native_custody_io::protocol::unavailable;
-use gateway_native_daemon_config::config::NativeDaemonConfig;
+use gateway_native_daemon_config::config::{NativeDaemonConfig, PreparedNativeDaemonConfig};
 use gateway_native_http_framing::import_head::ImportHead;
 use gateway_native_import_context::context::NativeImportInputs;
 use gateway_native_import_context::document::{self, RemoteImportDocument};
@@ -35,9 +35,9 @@ pub struct StoreInputData {
     pub account_id_hash: String,
 }
 pub struct BeforeNativeStore {
-    publication_config: NativeDaemonConfig,
-    authority_config: NativeDaemonConfig,
-    config: NativeDaemonConfig,
+    publication_config: PreparedNativeDaemonConfig,
+    authority_config: PreparedNativeDaemonConfig,
+    config: PreparedNativeDaemonConfig,
     boot: ActorBootstrap,
 }
 pub struct ActorCancellation {
