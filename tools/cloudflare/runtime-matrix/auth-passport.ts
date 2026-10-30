@@ -88,7 +88,7 @@ async function login(context: AuthPassportHarness, code = "admin", previous?: st
   const cookies = callback.headers.getSetCookie();
   assert.equal(cookies.length, 3, "actual transport must append three separate Set-Cookie values");
   const local = cookies.find((value) => value.startsWith(`${sessionCookie}=`));
-  assert(local && local.includes("Max-Age=34560000"));
+  assert(local?.includes("Max-Age=34560000"));
   assert(cookies.some((value) => value.startsWith(`${stateCookie}=`) && value.includes("Max-Age=0")));
   assert(cookies.some((value) => value.startsWith(`${verifierCookie}=`) && value.includes("Max-Age=0")));
   const localPair = pair(local);
@@ -134,7 +134,7 @@ export async function runAuthPassportCases(context: AuthPassportHarness): Promis
   await context.mode("normal");
   const first = await login(context);
   const row = await context.readSource(key(first.token));
-  assert(row && row.revision && row.expires_at_ms === null);
+  assert(row?.revision && row.expires_at_ms === null);
   const saved = object(row.value);
   assert.equal(saved.version, 1);
   assert.equal(saved.subject, "fixture-admin");
