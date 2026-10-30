@@ -176,12 +176,15 @@ impl CatalogRuntime {
             public,
         )
         .await?;
+        let input = &state.input;
         state.refresh_due.retain(|provider| {
-            self.memo
-                .borrow()
-                .entries
-                .get(provider)
-                .is_none_or(|e| e.retry_ms <= now_ms && e.shared_request.is_none())
+            (public || input.enabled(provider.id()))
+                && self
+                    .memo
+                    .borrow()
+                    .entries
+                    .get(provider)
+                    .is_none_or(|e| e.retry_ms <= now_ms && e.shared_request.is_none())
         });
         Ok(state)
     }
