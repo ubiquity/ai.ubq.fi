@@ -102,7 +102,7 @@ async fn local_operator_adoption(
     };
     use worker::{js_sys::Uint8Array, wasm_bindgen::JsValue};
     let refused = || JsValue::from_str("private_local_bootstrap_refused");
-    if input.length() as usize > gateway_migration_protocol::operational::PRIVATE_WIRE_MAX_BYTES {
+    if input.length() as usize > gateway_migration_data::PRIVATE_WIRE_MAX_BYTES {
         return Err(refused());
     }
     // Decode original NativeCapture v2 bytes directly: the shared public
@@ -130,8 +130,9 @@ async fn local_operator_adoption(
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn local_operator_stage(env: worker::Env, input: js_sys::Uint8Array) -> js_sys::Promise {
     worker::wasm_bindgen_futures::future_to_promise(async move {
+        use worker::{js_sys::Uint8Array, wasm_bindgen::JsValue};
         let refused = || JsValue::from_str("private_local_staged_refused");
-        if input.length() as usize > gateway_migration_protocol::staged::STAGED_BATCH_MAX_BYTES {
+        if input.length() as usize > gateway_migration_data::staged::STAGED_BATCH_MAX_BYTES {
             return Err(refused());
         }
         let request = gateway_migration_protocol::staged::decode_stage_request(&input.to_vec())
