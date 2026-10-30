@@ -179,7 +179,11 @@ pub fn provider_correlation(
     if let Some(id) = id {
         set_header(response, "x-uos-provider-request-id", id)?;
     }
-    Ok(())
+    set_header(
+        response,
+        "x-uos-upstream",
+        gateway_provider_source::policy::direct_provider_label(provider),
+    )
 }
 
 pub fn interrupted() -> GatewayError {

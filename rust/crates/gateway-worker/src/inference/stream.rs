@@ -312,7 +312,6 @@ impl Reply<'_> {
             .into_parts();
         let mut response = Response::builder().with_status(self.status).body(raw_body);
         set_header(&mut response, "Content-Type", "application/json")?;
-        set_header(&mut response, "x-uos-upstream", "cerebras")?;
         if let Some(retry) = self
             .headers
             .iter()
@@ -401,11 +400,6 @@ impl Reply<'_> {
             .with_status(self.status);
         set_header(&mut response, "Content-Type", "text/event-stream")?;
         copy_headers(&mut response, &self.headers)?;
-        set_header(
-            &mut response,
-            "x-uos-upstream",
-            gateway_provider_source::policy::direct_provider_label(self.provider),
-        )?;
         provider_correlation(&mut response, self.provider, &self.headers)?;
         apply_warnings(&mut response, self.prepared.warnings())?;
         Ok(response)
