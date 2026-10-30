@@ -622,7 +622,7 @@ fn loopback_session_restart_preserves_no_expiry_and_currentness() -> Result {
     );
     let mut changed = run(reopened.read(&key))?.ok_or("reopened row")?;
     changed.revision.push_str("-replaced");
-    reopened.0.borrow_mut().insert(key, changed);
+    reopened.0.borrow_mut().insert(key.0, changed);
     assert!(
         run(AuthService::new(&reopened, &host, &cfg).check_passport_app_session(&app.binding))
             .is_err()
