@@ -14,7 +14,6 @@ use gateway_routing_runtime::types::PreparedWireRequest;
 use gateway_routing_runtime::{
     types::AttemptFailure, types::FailureOrigin, types::RefusalDecision, types::TransportState,
 };
-use gateway_source::error::GatewayError;
 use gateway_worker_capture::capture::Capture;
 use gateway_worker_http_body::body;
 use gateway_worker_http_body::protocol::{
@@ -29,6 +28,7 @@ use gateway_worker_stream::relay::PreparedRelay;
 use gateway_worker_stream::relay::TerminalObserver;
 use std::{cell::RefCell, rc::Rc};
 use worker::{Response, ResponseBody};
+use {gateway_source::error::GatewayError, serde_json::Value};
 
 pub(super) struct PendingLifetime {
     pub(super) session: Rc<crate::inference_lifecycle::Session>,
@@ -439,7 +439,7 @@ impl Reply<'_> {
         if let Some(terminal) = decoded.terminal {
             self.observation.semantic_terminal(terminal);
         }
-        if decoded.terminal == Some(SemanticTerminal::Completed)
+        let remembered = if decoded.terminal == Some(SemanticTerminal::Completed)
             && self.provider == UpstreamProvider::ClaudeCode
             && let Some(native) = decoded.native_replay.as_ref()
             && let Some(output) = serde_json::from_str::<serde_json::Value>(decoded.body.as_str())
@@ -448,16 +448,17 @@ impl Reply<'_> {
                     body.get("output")
                         .and_then(serde_json::Value::as_array)
                         .cloned()
-                })
-        {
-            let _ = crate::claude_host::remember_native(
+                }) {
+            crate::claude_host::remember_native(
                 self.principal,
                 &self.lifecycle.attempt,
                 &output,
                 native,
                 now_ms().unwrap_or(i64::MAX),
-            );
-        }
+            )
+        } else {
+            Ok(false)
+        };
         if self.finish.selected_armed() {
             *self.usage.borrow_mut() = decoded.usage.clone();
         }
@@ -467,7 +468,7 @@ impl Reply<'_> {
                 .await?;
         }
         *self.usage.borrow_mut() = decoded.usage;
-        let payload = if self.client_stream && !decoded.events.is_empty() {
+        let payload = if remembered.map(|_| self.client_stream && !decoded.events.is_empty())? {
             decoded
                 .events
                 .iter()
@@ -535,14 +536,14 @@ impl TerminalObserver for Lifecycle {
     ) -> impl std::future::Future<Output = Result<(), GatewayError>> {
         Lifecycle::observe_terminal(self, observation, usage)
     }
-    fn remember_native(&self, output: &[serde_json::Value], native: &serde_json::Value) {
-        let _ = crate::claude_host::remember_native(
+    fn remember_native(&self, output: &[Value], native: &Value) -> Result<bool, GatewayError> {
+        crate::claude_host::remember_native(
             &self.principal,
             &self.attempt,
             output,
             native,
             now_ms().unwrap_or(i64::MAX),
-        );
+        )
     }
 }
 

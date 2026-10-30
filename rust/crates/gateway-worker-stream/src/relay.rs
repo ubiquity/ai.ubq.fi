@@ -29,7 +29,7 @@ pub trait TerminalObserver: 'static {
         observation: TransportObservation,
         usage: Option<Value>,
     ) -> impl Future<Output = Result<(), GatewayError>>;
-    fn remember_native(&self, output: &[Value], native: &Value);
+    fn remember_native(&self, output: &[Value], native: &Value) -> Result<bool, GatewayError>;
 }
 
 pub enum PrepareDisposition {
@@ -304,18 +304,24 @@ impl<C: StreamControl, O: TerminalObserver> Relay<C, O> {
             drop(self.core.source.take());
             return Err(error);
         }
-        if self.core.observation.snapshot().semantic_terminal == Some(SemanticTerminal::Completed)
+        let remembered = if self.core.observation.snapshot().semantic_terminal
+            == Some(SemanticTerminal::Completed)
             && self.core.plan.provider == UpstreamProvider::ClaudeCode
             && let (Some(output), Some(native)) = (
                 self.core.terminal_output.take(),
                 self.core.native_replay.take(),
-            )
-        {
-            self.observer.remember_native(&output, &native);
-        }
+            ) {
+            self.observer.remember_native(&output, &native)
+        } else {
+            Ok(false)
+        };
         self.core.terminal_pending = false;
         drop(self.core.source.take());
-        Ok(())
+        if remembered.is_err() {
+            self.core.queue.clear();
+            self.core.done = true;
+        }
+        remembered.map(|_| ())
     }
 
     async fn failed(&mut self) -> Option<worker::Result<Vec<u8>>> {

@@ -135,7 +135,7 @@ impl Binding {
         if !access.policy.allows_scalar(key_id) {
             return Ok(ClaudeSelection::NotApplicable);
         }
-        let principal_id = crate::lifecycle::principal_id(principal);
+        let principal_id = crate::lifecycle::principal_id(principal).try_scalar()?;
         let existing = self.state.borrow().clone();
         let request = match existing {
             Some(request) => {
@@ -241,7 +241,7 @@ impl Binding {
         let AuthMethod::KvApiKey { key_id, .. } = &principal.method else {
             return Err(invalid("Claude principal changed before dispatch."));
         };
-        if request.principal != crate::lifecycle::principal_id(principal)
+        if request.principal != crate::lifecycle::principal_id(principal).try_scalar()?
             || request.key_id != *key_id
         {
             return Err(invalid("Claude principal changed before dispatch."));
@@ -371,9 +371,9 @@ pub(crate) fn remember_native(
     output: &[Value],
     native: &Value,
     now_ms: i64,
-) -> bool {
+) -> Result<bool, GatewayError> {
     let PreparedWireRequest::Claude(body) = &attempt.request else {
-        return false;
+        return Ok(false);
     };
     let CredentialFence::Claude {
         account_id,
@@ -381,18 +381,17 @@ pub(crate) fn remember_native(
         ..
     } = &attempt.credential
     else {
-        return false;
+        return Ok(false);
     };
+    let AuthMethod::KvApiKey { .. } = &principal.method else {
+        return Ok(false);
+    };
+    let principal_id = crate::lifecycle::principal_id(principal).try_scalar()?;
     let Ok(model) = body.decode().model.as_js_string().try_utf8() else {
-        return false;
+        return Ok(false);
     };
     let context = ReplayContext {
-        scope: format!(
-            "{}:{}:{}",
-            crate::lifecycle::principal_id(principal),
-            account_id,
-            cohort_id
-        ),
+        scope: format!("{}:{}:{}", principal_id, account_id, cohort_id),
         provider: "claude_code".into(),
         model,
     };
@@ -401,10 +400,10 @@ pub(crate) fn remember_native(
         .map(SourceJson::from_serializable)
         .collect::<Result<Vec<_>, _>>()
     else {
-        return false;
+        return Ok(false);
     };
     let Ok(native) = SourceJson::from_serializable(native) else {
-        return false;
+        return Ok(false);
     };
     CLAUDE_REPLAY.with(|store| {
         store.borrow_mut().remember_decoded_native(
