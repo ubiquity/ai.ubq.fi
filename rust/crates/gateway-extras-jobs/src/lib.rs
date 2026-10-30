@@ -19,7 +19,7 @@ use gateway_extras_state::cache::{
 use gateway_extras_voyage::{configured_error, fetch_chunk, result_body, retryable, usage};
 use gateway_kv_codec::key::RecordKey;
 use gateway_provider_services::extras::EmbeddingsProfile;
-use gateway_providers::extras;
+use gateway_provider_services::extras;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
