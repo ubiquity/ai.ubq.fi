@@ -9,7 +9,7 @@ use gateway_auth_passport_contracts::session::PassportDate;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_worker_platform::cancellation::Cancellation;
 use std::{cell::Cell, collections::BTreeMap, task::Poll};
-use worker::{Method, ResponseBody};
+use worker::Method;
 
 impl PassportDate for PlatformHost {
     fn parse_date_ms(&self, value: &JsString16) -> f64 {
@@ -87,14 +87,17 @@ async fn fetch_inner(
     .await
     .map_err(|failure| failure.error)?;
     let status = response.status_code();
-    if matches!(request, AuthUpstreamRequest::PassportPkceExchange { .. })
-        && matches!(response.body(), ResponseBody::Empty)
-    {
-        return Err(GatewayError::new(
-            502,
-            "Passport verification is unavailable.",
-            Some("passport_exchange_body_missing"),
-        ));
+    // Fetched service-binding responses can expose an empty stream instead of ResponseBody::Empty.
+    if matches!(request, AuthUpstreamRequest::PassportPkceExchange { .. }) {
+        let body = response_bytes(&mut response, limit).await?;
+        if body.is_empty() {
+            return Err(GatewayError::new(
+                502,
+                "Passport verification is unavailable.",
+                Some("passport_exchange_body_missing"),
+            ));
+        }
+        return Ok(AuthUpstreamResponse { status, body });
     }
     if request.status_only(status) {
         rejected
