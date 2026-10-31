@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { stringKey } from "./contracts.ts";
 
+/** workerd derives Request.url from the overridden Host on the plain-HTTP fixture. */
+const fixtureWorkerScheme = "http";
+const fixtureWorkerHost = "ai.ubq.fi";
+const fixtureWorkerOrigin = `${fixtureWorkerScheme}://${fixtureWorkerHost}`;
 const sessionCookie = "__Host-uos_ai_passport_session";
 const stateCookie = "__Host-uos_ai_passport_state";
 const verifierCookie = "__Host-uos_ai_passport_verifier";
@@ -25,8 +29,6 @@ type SourceRow = Readonly<{ revision: string; expires_at_ms: number | null; valu
  * actual common AuthorityStore and the same persisted namespace across restart.
  * No method here writes auth rows or manufactures an authentication result. */
 export type AuthPassportHarness = Readonly<{
-  /** Actual origin of the current fixture listener; changes across restart. */
-  readonly origin: string;
   request(path: string, init?: RequestInit): Promise<Response>;
   mode(value: Mode): Promise<void>;
   dateCase(value: string | null): Promise<void>;
@@ -125,7 +127,7 @@ async function ordinaryAdminReads(context: AuthPassportHarness, cookie: string):
 async function nativeEffectRefused(context: AuthPassportHarness, cookie: string): Promise<void> {
   const response = await context.request("/admin/providers/codex/1/recheck", {
     method: "POST",
-    headers: { cookie, origin: context.origin, "sec-fetch-site": "same-origin" },
+    headers: { cookie, origin: fixtureWorkerOrigin, "sec-fetch-site": "same-origin" },
   });
   assert.equal(response.status, 503);
   const error = object(object(await response.json()).error);
@@ -202,7 +204,7 @@ export async function runAuthPassportCases(context: AuthPassportHarness): Promis
   await context.waitForIntrospection();
   const logout = await context.request("/auth/logout", {
     method: "POST",
-    headers: { cookie: race.cookie, origin: "https://ai.ubq.fi", "sec-fetch-site": "same-origin" },
+    headers: { cookie: race.cookie, origin: fixtureWorkerOrigin, "sec-fetch-site": "same-origin" },
   });
   assert.equal(logout.status, 204);
   assert.equal(await context.readSource(key(race.token)), null);
@@ -220,7 +222,10 @@ export async function runAuthPassportCases(context: AuthPassportHarness): Promis
   assert(await context.readSource(key(replacement.token)));
   await context.mode("revoke_unavailable");
   await context.holdRevoke();
-  const revokePending = context.request("/auth/logout", { method: "POST", headers: { cookie: replacement.cookie } });
+  const revokePending = context.request("/auth/logout", {
+    method: "POST",
+    headers: { cookie: replacement.cookie, origin: fixtureWorkerOrigin, "sec-fetch-site": "same-origin" },
+  });
   await context.waitForRevoke();
   assert.equal(await context.readSource(key(replacement.token)), null, "local authority must be gone while upstream revoke is still held");
   await context.releaseRevoke();
