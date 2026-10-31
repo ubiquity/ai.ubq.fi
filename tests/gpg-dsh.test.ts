@@ -810,6 +810,30 @@ test("a seed left in the shared dsh-gnupg layout is discarded with its agent", a
   });
 });
 
+for (const kind of ["symlink", "missing"])
+  for (const suffix of [".lock", ".lock.break", ".new.AbC123", ".old.AbC123"])
+    test(`legacy cleanup leaves a ${kind} homedir alone when ${suffix} remains`, async () => {
+      await withFixture(async (fixture) => {
+        const legacyParent = join(fixture.tmp, "dsh-gnupg");
+        const legacySeed = join(legacyParent, String(UID));
+        const leftover = `${legacySeed}${suffix}`;
+        await mkdir(join(leftover, "private-keys-v1.d"), { recursive: true, mode: 0o700 });
+        await writeFile(join(leftover, "private-keys-v1.d", "OLD.key"), "secret-deleted-key", { mode: 0o600 });
+        if (kind === "symlink") await symlink(fixture.gnupg, legacySeed);
+        const realEntries = await readdir(fixture.gnupg);
+
+        await signed(fixture);
+        await assert.rejects(lstat(leftover), { code: "ENOENT" });
+        assert.deepEqual(await readdir(fixture.gnupg), realEntries, "legacy cleanup leaves the real homedir unchanged");
+        assert.equal(await readFile(join(fixture.gnupg, "private-keys-v1.d", "AAAA.key"), "utf8"), "secret-a-old-passphrase");
+        if (kind === "symlink") {
+          assert.ok((await lstat(legacySeed)).isSymbolicLink(), "the linked legacy seed is left alone");
+          assert.deepEqual(await readdir(legacyParent), [String(UID)], "only the legacy symlink remains");
+        } else await assert.rejects(lstat(legacyParent), { code: "ENOENT" });
+        assert.deepEqual(await gpgconfCalls(fixture), [], "legacy agent shutdown requires an owned, non-symlink directory");
+      });
+    });
+
 test("the sandboxed-signing decision records the helper and its private-key invalidation", async () => {
   const decisions = await readFile(DECISIONS, "utf8");
   const entry = decisions.split(/^## /m).find((section) => section.startsWith("Sandboxed commits sign through a GNUPGHOME inside writable roots"));
