@@ -25,6 +25,8 @@ type SourceRow = Readonly<{ revision: string; expires_at_ms: number | null; valu
  * actual common AuthorityStore and the same persisted namespace across restart.
  * No method here writes auth rows or manufactures an authentication result. */
 export type AuthPassportHarness = Readonly<{
+  /** Actual origin of the current fixture listener; changes across restart. */
+  readonly origin: string;
   request(path: string, init?: RequestInit): Promise<Response>;
   mode(value: Mode): Promise<void>;
   dateCase(value: string | null): Promise<void>;
@@ -88,7 +90,8 @@ async function login(context: AuthPassportHarness, code = "admin", previous?: st
   const cookies = callback.headers.getSetCookie();
   assert.equal(cookies.length, 3, "actual transport must append three separate Set-Cookie values");
   const local = cookies.find((value) => value.startsWith(`${sessionCookie}=`));
-  assert(local?.includes("Max-Age=34560000"));
+  assert(local);
+  assert(local.includes("Max-Age=34560000"));
   assert(cookies.some((value) => value.startsWith(`${stateCookie}=`) && value.includes("Max-Age=0")));
   assert(cookies.some((value) => value.startsWith(`${verifierCookie}=`) && value.includes("Max-Age=0")));
   const localPair = pair(local);
@@ -122,7 +125,7 @@ async function ordinaryAdminReads(context: AuthPassportHarness, cookie: string):
 async function nativeEffectRefused(context: AuthPassportHarness, cookie: string): Promise<void> {
   const response = await context.request("/admin/providers/codex/1/recheck", {
     method: "POST",
-    headers: { cookie, origin: "https://ai.ubq.fi", "sec-fetch-site": "same-origin" },
+    headers: { cookie, origin: context.origin, "sec-fetch-site": "same-origin" },
   });
   assert.equal(response.status, 503);
   const error = object(object(await response.json()).error);

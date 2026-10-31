@@ -163,6 +163,9 @@ async function execute(workspace: string): Promise<void> {
   };
   const context: AuthPassportHarness = {
     cases,
+    get origin() {
+      return running.origin;
+    },
     request(path, init = {}) {
       const headers = new Headers(init.headers);
       // Connect only to the namespace loopback; preserve Caddy's fixed production Host semantics.
