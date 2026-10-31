@@ -1,0 +1,106 @@
+diff --git a/ops/gpg-dsh.sh b/ops/gpg-dsh.sh
+--- a/ops/gpg-dsh.sh
++++ b/ops/gpg-dsh.sh
+@@ -129,25 +129,6 @@
+   return 1
+ }
+
+-# Earlier helpers kept the seed in a parent shared by every user, $TMPDIR/dsh-gnupg/<uid>, with their
+-# rebuild lock and any staging or set-aside copy (<uid>.lock, <uid>.new.*, <uid>.old.*) beside it.
+-# Remove those copies of the keys and the seed's agent; the parent is touched only when this user
+-# owns it.
+-legacy_base=$tmp_root/dsh-gnupg
+-legacy_seed=$legacy_base/$uid
+-if owned_dir "$legacy_base"; then
+-  if owned_dir "$legacy_seed"; then
+-    gpgconf --homedir "$legacy_seed" --kill gpg-agent >/dev/null 2>&1 || :
+-    rm -rf "$legacy_seed" || die "cannot discard the legacy seed $legacy_seed"
+-  fi
+-  for path in "$legacy_seed".lock "$legacy_seed".new.* "$legacy_seed".old.*; do
+-    if owned_dir "$path"; then
+-      rm -rf "$path" || die "cannot discard the legacy seed copy $path"
+-    fi
+-  done
+-  rmdir "$legacy_base" 2>/dev/null || :
+-fi
+-
+ # Read the inputs before copying them: a change made during the copy then leaves a manifest that
+ # no longer matches, and the next call rebuilds.
+ read_manifest() {
+@@ -174,9 +155,20 @@
+   wait_start=$(date +%s) || die "cannot read the clock"
+   blank_since=
+   while ! mkdir "$lock" 2>/dev/null; do
++    # Migration must not touch a foreign lock or one whose owner is still being recorded.
++    if [ "${1:-}" = legacy ] && ! owned_dir "$lock"; then return 1; fi
+     [ -L "$lock" ] && die "$lock is a symbolic link"
+     now=$(date +%s) || die "cannot read the clock"
+     owner=$(cat "$lock/owner" 2>/dev/null) || owner=
++    if [ "${1:-}" = legacy ]; then
++      legacy_pid=${owner%% *}
++      case $legacy_pid in
++        '' | *[!0-9]* | 0) return 1 ;;
++      esac
++      # A paused legacy rebuild is not abandoned, regardless of its lock's age. Sign from the
++      # new layout now, and leave migration to a later call after the legacy process exits.
++      if kill -0 "$legacy_pid" 2>/dev/null; then return 1; fi
++    fi
+     started=${owner#* }
+     case $owner in
+       *' '*) ;;
+@@ -191,7 +183,7 @@
+       *) blank_since= ;;
+     esac
+     held=$((now - started))
+-    if [ "$held" -lt 0 ] || [ "$held" -ge "$stale_lock_seconds" ]; then
++    if [ "${1:-}" = legacy ] || [ "$held" -lt 0 ] || [ "$held" -ge "$stale_lock_seconds" ]; then
+       printf 'gpg-dsh: breaking the stale rebuild lock %s (owner: %s)\n' "$lock" "${owner:-none}" >&2
+       if [ "$(cat "$lock/owner" 2>/dev/null)" = "$owner" ]; then
+         rm -rf "$lock" || die "cannot break the stale rebuild lock $lock"
+@@ -206,6 +198,30 @@
+   trap 'die "interrupted"' HUP INT TERM
+   printf '%s\n' "$lock_token" >"$lock/owner" || die "cannot record $lock/owner"
+ }
++
++# Earlier helpers kept the seed in a parent shared by every user, $TMPDIR/dsh-gnupg/<uid>, with their
++# rebuild lock and any staging or set-aside copy (<uid>.lock, <uid>.new.*, <uid>.old.*) beside it.
++# Use that same lock while removing abandoned copies. A live or unpublished owner defers migration
++# without preventing signing from the new layout; current-layout lock recovery is unchanged.
++legacy_base=$tmp_root/dsh-gnupg
++legacy_seed=$legacy_base/$uid
++if owned_dir "$legacy_base"; then
++  lock=$legacy_seed.lock
++  if take_lock legacy; then
++    if owned_dir "$legacy_seed"; then
++      gpgconf --homedir "$legacy_seed" --kill gpg-agent >/dev/null 2>&1 || :
++      rm -rf "$legacy_seed" || die "cannot discard the legacy seed $legacy_seed"
++    fi
++    for path in "$legacy_seed".new.* "$legacy_seed".old.*; do
++      if owned_dir "$path"; then
++        rm -rf "$path" || die "cannot discard the legacy seed copy $path"
++      fi
++    done
++    release_lock
++    rmdir "$legacy_base" 2>/dev/null || :
++  fi
++fi
++lock=$seed.lock
+
+ # Staging (.new.*) and set-aside (.old.*) copies exist only while the lock holder rebuilds; any other
+ # is left from a killed rebuild and may hold a key that has since been deleted.
+diff --git a/tests/gpg-dsh.test.ts b/tests/gpg-dsh.test.ts
+--- a/tests/gpg-dsh.test.ts
++++ b/tests/gpg-dsh.test.ts
+@@ -431,3 +431,12 @@
+   const header = (await readFile(HELPER, "utf8")).split("\n").slice(0, 6).join("\n");
+   assert.match(header, /diff ops\/gpg-dsh\.sh ~\/bin\/gpg-dsh/, "the helper's install note says to compare first");
+ });
++
++test("migration defers cleanup until a live legacy rebuild finishes", async () => {
++  const probe = fileURLToPath(new URL("./fixtures/gpg-dsh-migration.sh", import.meta.url));
++  const env: Record<string, string> = { PATH: HOST_PATH, TMPDIR: tmpdir() };
++  if (process.env.GIT_DIR) env.GIT_DIR = process.env.GIT_DIR;
++  const result = await runFixture("/bin/sh", { args: [probe, HELPER], env });
++  assert.equal(result.code, 0, decoder.decode(result.stderr));
++  assert.match(decoder.decode(result.stdout), /new=0 legacy=0 lock-and-stage-preserved=true/);
++}, 30_000);
