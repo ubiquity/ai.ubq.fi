@@ -220,11 +220,11 @@ fn cached_picker_read_uses_existing_catalog_without_discovery_while_refresh_stay
     assert_eq!(host.warmed.get(), 0);
     assert_eq!(host.requests.borrow().len(), 0);
 
+    host.queue(CatalogProvider::Openrouter, json!({"data":[]}));
     host.queue(
-        CatalogProvider::Openrouter,
-        json!({"data":[{"id":"openrouter-cached","context_length":1000}]}),
+        CatalogProvider::Openlux,
+        json!({"data":[{"id":"a","supported_endpoint_types":["openai"]}]}),
     );
-    host.queue(CatalogProvider::Openlux, json!({"data":[]}));
     host.queue(CatalogProvider::Surplus, json!({"data":[]}));
     host.queue(CatalogProvider::Lithos, json!({"data":[]}));
     host.queue(
@@ -250,7 +250,7 @@ fn cached_picker_read_uses_existing_catalog_without_discovery_while_refresh_stay
             .as_array()
             .unwrap()
             .iter()
-            .any(|row| row["id"] == "openrouter-cached")
+            .any(|row| row["id"] == "a")
     );
 }
 
