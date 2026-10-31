@@ -1,4 +1,5 @@
 use super::{Host, Outcome, Store, TestResult, catalog, loader_fixture, run};
+use gateway_catalog_inputs::state;
 use gateway_catalog_provider::{
     host::{CatalogFetch, CatalogFetchResponse, CatalogProvider, ProviderBinding},
     providers,
@@ -117,6 +118,48 @@ fn anonymous_surplus_is_public_data_without_an_inference_configuration() {
     );
     assert_eq!(host.requests.borrow().len(), 1);
 }
+#[test]
+fn ordinary_catalog_refresh_honors_active_provider_selection() {
+    let store = Store::new();
+    let host = Host::new(&store);
+    store.put(
+        state::selection_key(),
+        "claude-only",
+        json!({"provider_ids":["claude_code"],"updated_at_ms":store.now.get()}),
+    );
+    host.provider(CatalogProvider::ClaudeCode, "claude-owner");
+    host.provider(CatalogProvider::Lithos, "lithos-owner");
+    host.provider(CatalogProvider::Openrouter, "openrouter-owner");
+    let publication = host.published.borrow().clone();
+    let ordinary =
+        run(CatalogRuntime::new().load_state(&store, &publication, store.now.get())).unwrap();
+    assert_eq!(ordinary.refresh_due, vec![CatalogProvider::ClaudeCode]);
+
+    store.put(
+        state::selection_key(),
+        "empty-selection",
+        json!({"provider_ids":[],"updated_at_ms":store.now.get()}),
+    );
+    let unfiltered =
+        run(CatalogRuntime::new().load_state(&store, &publication, store.now.get())).unwrap();
+    assert_eq!(
+        unfiltered.refresh_due,
+        vec![
+            CatalogProvider::Lithos,
+            CatalogProvider::Openrouter,
+            CatalogProvider::ClaudeCode,
+        ]
+    );
+
+    let public =
+        run(CatalogRuntime::new().load_public_state(&store, &publication, store.now.get()))
+            .unwrap();
+    assert!(public.refresh_due.contains(&CatalogProvider::Surplus));
+    assert!(public.refresh_due.contains(&CatalogProvider::Lithos));
+    assert!(public.refresh_due.contains(&CatalogProvider::Openrouter));
+    assert!(public.refresh_due.contains(&CatalogProvider::ClaudeCode));
+}
+
 #[test]
 fn durable_provider_observations_hydrate_a_fresh_runtime_and_binding() {
     let store = Store::new();

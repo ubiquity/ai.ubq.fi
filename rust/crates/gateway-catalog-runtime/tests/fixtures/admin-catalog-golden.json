@@ -1,5 +1,5 @@
 {
-  "locale_order": ["a", "A", "ä", "claude-a", "ubiquity/deepseek-flash", "z"],
+  "locale_order": ["a", "A", "ä", "claude-a", "ubiquity/deepseek-flash", "z", "openrouter-cached", "deepseek-ai/DeepSeek-V4.1-Flash", "deepseek-ai/DeepSeek-V4.1-Flash-fast", "deepseek-ai/DeepSeek-V4.1-Flash-ultra", "deepseek-ai/DeepSeek-V4.1-Flash-ultra-chat", "moonshotai/Kimi-K3", "moonshotai/Kimi-K3-fast", "moonshotai/Kimi-K3-ultra", "moonshotai/Kimi-K3-ultra-chat", "deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro"],
   "operations": [
     {
       "name": "null",

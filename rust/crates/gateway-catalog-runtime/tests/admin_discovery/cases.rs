@@ -47,9 +47,7 @@ fn models_get_retains_raw_extensions_and_contains_only_optional_read_failures() 
         run(runtime.admin_catalog(&store, &host, AdminCatalogOperation::WhitelistGet))
             .unwrap_err()
             .body()
-            .deserialize::<Value>()
-            .unwrap()["error"]["code"]
-            .as_str(),
+            .code(),
         Some("fixture_read")
     );
 }
@@ -96,7 +94,7 @@ fn picker_is_unfiltered_uses_actual_host_order_and_keeps_runtime_when_optional_s
         .unwrap()
         .input;
     assert!(
-        ordinary_models(&input).unwrap()["data"]
+        ordinary_models(&input)["data"]
             .as_array()
             .unwrap()
             .is_empty()
@@ -112,9 +110,7 @@ fn picker_is_unfiltered_uses_actual_host_order_and_keeps_runtime_when_optional_s
         run(runtime.admin_catalog(&store, &host, AdminCatalogOperation::Catalog))
             .unwrap_err()
             .body()
-            .deserialize::<Value>()
-            .unwrap()["error"]["code"]
-            .as_str(),
+            .code(),
         Some("fixture_collation")
     );
 }
@@ -194,6 +190,68 @@ fn aggregate_refresh_forces_fixed_providers_preserves_last_good_and_marks_stale_
     assert_eq!(failed.body["data"]["claude_code"]["models"], 1);
     assert_eq!(failed.body["data"]["claude_code"]["stale"], true);
     assert_eq!(failed.body["data"]["claude_code"]["status"], "unavailable");
+}
+
+#[test]
+fn cached_picker_read_uses_existing_catalog_without_discovery_while_refresh_stays_explicit() {
+    let runtime = CatalogRuntime::new();
+    let store = Store::default();
+    let host = Host::new();
+    for provider in [
+        CatalogProvider::Openlux,
+        CatalogProvider::Surplus,
+        CatalogProvider::Lithos,
+        CatalogProvider::ClaudeCode,
+    ] {
+        host.configure(provider, provider.id());
+    }
+    store.put(
+        state::selection_key(),
+        "codex-only",
+        json!({"provider_ids":["codex"],"updated_at_ms":1}),
+    );
+
+    let _cold = invoke(
+        &runtime,
+        &store,
+        &host,
+        AdminCatalogOperation::CatalogCached,
+    );
+    assert_eq!(host.warmed.get(), 0);
+    assert_eq!(host.requests.borrow().len(), 0);
+
+    host.queue(CatalogProvider::Openrouter, json!({"data":[{"id":"a"}]}));
+    host.queue(
+        CatalogProvider::Openlux,
+        json!({"data":[{"id":"a","supported_endpoint_types":["openai"]}]}),
+    );
+    host.queue(CatalogProvider::Surplus, json!({"data":[]}));
+    host.queue(CatalogProvider::Lithos, json!({"data":[]}));
+    host.queue(
+        CatalogProvider::ClaudeCode,
+        json!({"data":[],"has_more":false}),
+    );
+
+    let refreshed = invoke(&runtime, &store, &host, AdminCatalogOperation::Refresh);
+    assert_eq!(host.requests.borrow().len(), 5);
+    assert_eq!(host.warmed.get(), 0);
+    assert_eq!(refreshed.body["data"]["openrouter"]["refreshed"], true);
+
+    let cached = invoke(
+        &runtime,
+        &store,
+        &host,
+        AdminCatalogOperation::CatalogCached,
+    );
+    assert_eq!(host.requests.borrow().len(), 5);
+    assert_eq!(host.warmed.get(), 0);
+    assert!(
+        cached.body["data"]["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == "a")
+    );
 }
 
 #[test]
@@ -314,7 +372,7 @@ fn anonymous_surplus_is_publicly_visible_without_enabling_ordinary_or_paid_routi
     let ordinary = run(runtime.load_state(&store, &publication, host.now.get())).unwrap();
     assert!(ordinary.input.rows("surplus").is_empty());
     assert!(
-        ordinary_models(&ordinary.input).unwrap()["data"]
+        ordinary_models(&ordinary.input)["data"]
             .as_array()
             .unwrap()
             .is_empty()
