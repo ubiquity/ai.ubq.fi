@@ -220,7 +220,7 @@ fn cached_picker_read_uses_existing_catalog_without_discovery_while_refresh_stay
     assert_eq!(host.warmed.get(), 0);
     assert_eq!(host.requests.borrow().len(), 0);
 
-    host.queue(CatalogProvider::Openrouter, json!({"data":[]}));
+    host.queue(CatalogProvider::Openrouter, json!({"data":[{"id":"a"}]}));
     host.queue(
         CatalogProvider::Openlux,
         json!({"data":[{"id":"a","supported_endpoint_types":["openai"]}]}),
