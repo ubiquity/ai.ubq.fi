@@ -6,6 +6,8 @@ import { stringKey } from "./contracts.ts";
 const fixtureWorkerScheme = "http";
 const fixtureWorkerHost = "ai.ubq.fi";
 const fixtureWorkerOrigin = `${fixtureWorkerScheme}://${fixtureWorkerHost}`;
+/** Passport browser routes validate the configured canonical binding origin. */
+export const passportBindingOrigin = "https://ai.ubq.fi";
 const sessionCookie = "__Host-uos_ai_passport_session";
 const stateCookie = "__Host-uos_ai_passport_state";
 const verifierCookie = "__Host-uos_ai_passport_verifier";
@@ -59,8 +61,8 @@ async function login(context: AuthPassportHarness, code = "admin", previous?: st
   for (const [name, value] of Object.entries({
     client_id: "ai",
     audience: "ai",
-    origin: "https://ai.ubq.fi",
-    redirect_uri: "https://ai.ubq.fi/auth/callback",
+    origin: passportBindingOrigin,
+    redirect_uri: `${passportBindingOrigin}/auth/callback`,
     code_challenge_method: "S256",
   }))
     assert.equal(url.searchParams.get(name), value);
@@ -204,7 +206,7 @@ export async function runAuthPassportCases(context: AuthPassportHarness): Promis
   await context.waitForIntrospection();
   const logout = await context.request("/auth/logout", {
     method: "POST",
-    headers: { cookie: race.cookie, origin: fixtureWorkerOrigin, "sec-fetch-site": "same-origin" },
+    headers: { cookie: race.cookie, origin: passportBindingOrigin, "sec-fetch-site": "same-origin" },
   });
   assert.equal(logout.status, 204);
   assert.equal(await context.readSource(key(race.token)), null);
@@ -224,7 +226,7 @@ export async function runAuthPassportCases(context: AuthPassportHarness): Promis
   await context.holdRevoke();
   const revokePending = context.request("/auth/logout", {
     method: "POST",
-    headers: { cookie: replacement.cookie, origin: fixtureWorkerOrigin, "sec-fetch-site": "same-origin" },
+    headers: { cookie: replacement.cookie, origin: passportBindingOrigin, "sec-fetch-site": "same-origin" },
   });
   await context.waitForRevoke();
   assert.equal(await context.readSource(key(replacement.token)), null, "local authority must be gone while upstream revoke is still held");

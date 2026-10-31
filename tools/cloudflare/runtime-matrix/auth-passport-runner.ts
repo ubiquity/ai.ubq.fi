@@ -7,7 +7,13 @@ import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises"
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { testNetworkArgv } from "../../../scripts/test-network.ts";
-import { runAuthPassportCases, runAuthPassportDateCases, runAuthPassportAdditionalCases, type AuthPassportHarness } from "./auth-passport.ts";
+import {
+  passportBindingOrigin,
+  runAuthPassportCases,
+  runAuthPassportDateCases,
+  runAuthPassportAdditionalCases,
+  type AuthPassportHarness,
+} from "./auth-passport.ts";
 import { observePassportDates } from "../fixtures/auth-passport-date-oracle.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -49,7 +55,7 @@ const config :Workerd.Config = (
       globalOutbound = "driver",
       bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "ASSETS", service = "assets"),
         (name = "UOS_AI_PASSPORT_CLIENT_ID", text = "ai"), (name = "UOS_AI_PASSPORT_AUDIENCE", text = "ai"),
-        (name = "UOS_AI_PASSPORT_ORIGIN", text = "https://ai.ubq.fi"), (name = "UOS_AI_PASSPORT_REDIRECT_URI", text = "https://ai.ubq.fi/auth/callback")],
+        (name = "UOS_AI_PASSPORT_ORIGIN", text = ${quoted(passportBindingOrigin)}), (name = "UOS_AI_PASSPORT_REDIRECT_URI", text = ${quoted(`${passportBindingOrigin}/auth/callback`)})],
       durableObjectNamespaces = [(className = "GatewayAuthority", uniqueKey = "uos-auth-passport-common-v2", enableSql = true)],
       durableObjectStorage = (localDisk = "state")
     )),
