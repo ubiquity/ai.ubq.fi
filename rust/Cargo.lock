@@ -972,8 +972,8 @@ dependencies = [
  "gateway-authority",
  "gateway-core",
  "gateway-native",
- "gateway-providers",
  "gateway-provider-catalog-cache",
+ "gateway-providers",
  "gateway-publication-policy",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
@@ -1135,8 +1135,8 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
- "gateway-native-supervisor-read",
  "gateway-native-runtime",
+ "gateway-native-supervisor-read",
  "gateway-publication",
  "gateway-publication-policy",
  "gateway-publication-transport",
@@ -1379,8 +1379,8 @@ dependencies = [
 name = "gateway-state-reverse"
 version = "0.1.0"
 dependencies = [
- "gateway-authority-provisioning",
  "gateway-auth",
+ "gateway-authority-provisioning",
  "gateway-core",
  "gateway-migration",
  "gateway-migration-test-support",
@@ -1446,10 +1446,10 @@ dependencies = [
 name = "gateway-worker-authority"
 version = "0.1.0"
 dependencies = [
- "gateway-authority",
  "futures-util",
  "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-authority",
  "gateway-authority-provisioning",
  "gateway-core",
  "serde",
@@ -1461,9 +1461,9 @@ dependencies = [
 name = "gateway-worker-fixture"
 version = "0.1.0"
 dependencies = [
- "gateway-authority-provisioning",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-provisioning",
  "gateway-core",
  "gateway-publication-policy",
  "gateway-publication-transport",
@@ -1479,15 +1479,15 @@ dependencies = [
 name = "gateway-worker-fixture-setup"
 version = "0.1.0"
 dependencies = [
- "gateway-state-transfer",
- "gateway-migration",
- "gateway-authority-provisioning",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-provisioning",
  "gateway-core",
+ "gateway-migration",
  "gateway-publication",
  "gateway-publication-policy",
  "gateway-publication-transport",
+ "gateway-state-transfer",
  "gateway-worker",
  "gateway-worker-authority",
  "gateway-worker-storage",
