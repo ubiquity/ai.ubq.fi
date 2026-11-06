@@ -1,5 +1,5 @@
 //! Dedicated SQL control tables. Their rows never enter the business tuple inventory.
-use gateway_authority_lifecycle::{model::*, policy};
+use gateway_authority_lifecycle::{maintenance, model::*, policy};
 use gateway_core::error::GatewayError;
 use worker::{SqlStorage, SqlStorageValue as Sql, Storage};
 pub type ReadRecord = fn(
