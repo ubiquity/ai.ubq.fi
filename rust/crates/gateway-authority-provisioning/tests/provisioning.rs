@@ -1,5 +1,5 @@
 use gateway_auth::crypto::sha256_hex;
-use gateway_authority_lifecycle::{model::*, policy};
+use gateway_authority_lifecycle::{maintenance, model::*, policy};
 use gateway_authority_provisioning::intent::{Intent, Scope, authorization_digest, token};
 use gateway_core::error::GatewayError;
 
@@ -68,12 +68,27 @@ fn configured_credential_never_opens_a_fresh_authority() -> Result<(), GatewayEr
 }
 
 #[test]
-fn full_import_stays_frozen_without_the_configured_ordinary_credential() -> Result<(), GatewayError>
-{
+fn full_import_stays_frozen_without_the_configured_ordinary_credential()
+-> Result<(), Box<dyn std::error::Error>> {
     let (mut gate, plan, facts) = imported()?;
     let reference = policy::finalize(&mut gate, &plan, &facts, &"1".repeat(64), &empty_counts())?;
     assert_eq!(gate.phase, Phase::Frozen);
-    assert!(policy::activate(&mut gate, &reference, &"2".repeat(64), false).is_err());
+    let frozen = serde_json::to_vec(&gate)?;
+    let refused = match policy::activate(&mut gate, &reference, &"2".repeat(64), false) {
+        Err(error) => error,
+        Ok(replayed) => {
+            return Err(format!(
+                "NEW activation unexpectedly succeeded without ingress: replayed={replayed}"
+            )
+            .into());
+        }
+    };
+    assert_eq!(refused.status, 409);
+    assert_eq!(
+        refused.envelope.error.message,
+        "Configured ordinary ingress credential is absent"
+    );
+    assert_eq!(serde_json::to_vec(&gate)?, frozen);
     assert_eq!(gate.phase, Phase::Frozen);
     assert!(!policy::activate(
         &mut gate,
@@ -83,13 +98,48 @@ fn full_import_stays_frozen_without_the_configured_ordinary_credential() -> Resu
     )?);
     assert_eq!(gate.phase, Phase::Running);
     assert_eq!(gate.serving_epoch, 1);
-    gate.phase = Phase::Draining;
+    assert_eq!(gate.frozen.as_ref(), Some(&reference));
+    let running = serde_json::to_vec(&gate)?;
     assert!(policy::activate(
         &mut gate,
         &reference,
         &"2".repeat(64),
         true
     )?);
+    assert_eq!(serde_json::to_vec(&gate)?, running);
+    assert!(policy::activate(&mut gate, &reference, &"2".repeat(64), false).is_err());
+    assert_eq!(serde_json::to_vec(&gate)?, running);
+    let drain = DrainPlan {
+        binding: Binding {
+            identity: gate.identity.clone(),
+            serving_epoch: gate.serving_epoch,
+        },
+        drain_revision: gate.drain_revision,
+    };
+    let mut outstanding = empty_counts();
+    outstanding.roots = 1;
+    maintenance::drain(&mut gate, &drain, &"3".repeat(64), &outstanding, true)?;
+    assert_eq!(gate.phase, Phase::Draining);
+    let draining = serde_json::to_vec(&gate)?;
+    let refused = match policy::activate(&mut gate, &reference, &"2".repeat(64), true) {
+        Err(error) => error,
+        Ok(replayed) => {
+            return Err(format!(
+                "Old activation unexpectedly succeeded from Draining: replayed={replayed}"
+            )
+            .into());
+        }
+    };
+    assert_eq!(refused.status, 409);
+    assert_eq!(
+        refused.envelope.error.code.as_deref(),
+        Some("state_transfer_control_refused")
+    );
+    assert_eq!(
+        refused.envelope.error.message,
+        "Activation requires its exact frozen epoch and configured ordinary ingress credential"
+    );
+    assert_eq!(serde_json::to_vec(&gate)?, draining);
     assert_eq!(
         gate.phase,
         Phase::Draining,
