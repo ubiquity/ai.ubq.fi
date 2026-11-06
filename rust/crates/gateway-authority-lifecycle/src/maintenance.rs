@@ -1,5 +1,8 @@
 //! Purpose-bound maintenance revisions never stand in for writer completion.
-use crate::{model::*, policy};
+use crate::{
+    model::{CancelDrainPlan, Counts, DrainCancellation, DrainPlan, FrozenRef, Gate, Phase},
+    policy,
+};
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::error::GatewayError;
 const MAX_REVISION: u64 = gateway_core::identity::MAX_SAFE_INTEGER as u64;
@@ -156,15 +159,14 @@ pub fn cancel(
     {
         return Err(policy::refused("Cancellation authorization is invalid"));
     }
-    if let Some(value) = &gate.last_cancellation {
-        if gate.phase == Phase::Running
-            && gate.drain_digest.is_none()
-            && &value.plan == plan
-            && value.cancel_digest == digest
-            && value.next_drain_revision == gate.drain_revision
-        {
-            return Ok((value.clone(), true));
-        }
+    if let Some(value) = &gate.last_cancellation
+        && gate.phase == Phase::Running
+        && gate.drain_digest.is_none()
+        && &value.plan == plan
+        && value.cancel_digest == digest
+        && value.next_drain_revision == gate.drain_revision
+    {
+        return Ok((value.clone(), true));
     }
     if gate.phase != Phase::Draining
         || plan.drain_revision != gate.drain_revision

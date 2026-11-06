@@ -130,15 +130,14 @@ pub fn finalize(
     digest: &str,
     counts: &Counts,
 ) -> Result<FrozenRef, GatewayError> {
-    if let Some(reference) = &gate.frozen {
-        if gate.phase == Phase::Frozen
-            && reference.finalization_digest == digest
-            && reference.capture_id == plan.capture_id
-            && reference.identity == plan.binding.identity
-            && reference.serving_epoch == plan.binding.serving_epoch
-        {
-            return Ok(reference.clone());
-        }
+    if let Some(reference) = &gate.frozen
+        && gate.phase == Phase::Frozen
+        && reference.finalization_digest == digest
+        && reference.capture_id == plan.capture_id
+        && reference.identity == plan.binding.identity
+        && reference.serving_epoch == plan.binding.serving_epoch
+    {
+        return Ok(reference.clone());
     }
     binding(gate, &plan.binding)?;
     let import = gate
