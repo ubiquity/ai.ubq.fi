@@ -434,5 +434,12 @@ export default tsEslint.config(
     // NEW 0700 run directory, verifies every input hash, and never reuses state.
     files: ["tools/cloudflare/state-migration-conformance.ts", "tools/cloudflare/state-migration-stage-driver.ts", "tests/state-migration-controller.test.ts"],
     rules: { "sonarjs/publicly-writable-directories": "off" },
+  },
+  {
+    // DIVERGENCE measured 2026-11-06: this one test-only literal is an OS
+    // network-denial probe inside the inherited unshared network namespace.
+    // A timeout fails; only an actual kernel denial passes. It carries no data.
+    files: ["tools/cloudflare/state-transfer-freeze-conformance.ts"],
+    rules: { "sonarjs/no-hardcoded-ip": "off" },
   }
 );
