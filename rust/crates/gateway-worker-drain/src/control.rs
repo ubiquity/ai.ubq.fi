@@ -1,5 +1,12 @@
 //! Dedicated SQL control tables. Their rows never enter the business tuple inventory.
-use gateway_authority_lifecycle::{maintenance, model::*, policy};
+use gateway_authority_lifecycle::{
+    maintenance,
+    model::{
+        Access, Acquire, Authorization, Blocker, FinalizeFacts, Gate, Identity, Lease, LeaseKind,
+        NativeSelector, Operation, OwnerBinding, Permit, Phase, Reply, Status,
+    },
+    policy,
+};
 use gateway_core::error::GatewayError;
 use worker::{SqlStorage, SqlStorageValue as Sql, Storage};
 pub type ReadRecord = fn(
@@ -591,6 +598,5 @@ pub async fn execute(
             .unwrap_or_else(failure));
     }
     storage.sync().await.map_err(|_| failure())?;
-    let value = result.borrow_mut().take().ok_or_else(failure)?;
-    value
+    result.borrow_mut().take().ok_or_else(failure)?
 }
