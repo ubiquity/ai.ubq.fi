@@ -147,23 +147,22 @@ pub fn normalize_model_list(payload: &SourceJson) -> Option<SourceJson> {
         ),
     ]))
 }
-fn field_equal(a: Option<SourceJson>, b: Option<SourceJson>) -> bool {
-    match (a, b) {
-        (None, None) => true,
-        (Some(a), Some(b)) => source::canonical(&a).ok() == source::canonical(&b).ok(),
-        _ => false,
-    }
-}
+/// Absent, canonical, or uncanonicalizable field; equal identities are duplicates.
+/// One set of the retained identities replaces a rescan of every retained row.
 pub fn append_unique(
     rows: &mut Vec<SourceJson>,
     new_rows: impl IntoIterator<Item = SourceJson>,
     key: &str,
 ) {
+    let identity = |row: &SourceJson| {
+        c::get(row, key).map(|v| source::canonical(&v).ok().map(|v| v.as_str().to_owned()))
+    };
+    let mut seen = rows
+        .iter()
+        .map(identity)
+        .collect::<std::collections::BTreeSet<_>>();
     for row in new_rows {
-        if !rows
-            .iter()
-            .any(|r| field_equal(c::get(r, key), c::get(&row, key)))
-        {
+        if seen.insert(identity(&row)) {
             rows.push(row);
         }
     }

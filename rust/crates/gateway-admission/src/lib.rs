@@ -102,6 +102,7 @@ pub fn requires_admission(route: &str) -> bool {
             | "embeddings.jobs.get"
             | "chat.completions"
             | "responses"
+            | "decisions"
             | "systemone"
             | "images.generations"
             | "images.edits"

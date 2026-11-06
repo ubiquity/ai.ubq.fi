@@ -17,24 +17,35 @@ use super::outbound::{Cancellation, Deadline};
 pub type FinishFuture = Pin<Box<dyn Future<Output = ()>>>;
 pub type FinishHook = Box<dyn FnOnce(TransportObservation) -> FinishFuture>;
 
-struct FinishSignal {
+/// The one terminal hand-off from an outgoing body to its `waitUntil` finisher.
+#[derive(Default)]
+pub struct FinishSignal {
     observation: RefCell<Option<TransportObservation>>,
     waker: AtomicWaker,
     completed: Cell<bool>,
 }
 
 impl FinishSignal {
-    fn complete(&self, observation: TransportObservation) {
+    /// Exactly one completion is published and woken; later completions are ignored.
+    pub fn complete(&self, observation: TransportObservation) {
         if self.completed.replace(true) {
             return;
         }
         *self.observation.borrow_mut() = Some(observation);
         self.waker.wake();
     }
+    pub fn completed(&self) -> bool {
+        self.completed.get()
+    }
+    pub fn poll_take(&self, waker: &std::task::Waker) -> Poll<TransportObservation> {
+        self.waker.register(waker);
+        let taken = self.observation.borrow_mut().take();
+        taken.map_or(Poll::Pending, Poll::Ready)
+    }
 }
 
 /// A failed wrapper constructor has abandoned its body, not observed native delivery.
-fn constructor_result<T, E>(
+pub fn constructor_result<T, E>(
     result: std::result::Result<T, E>,
     signal: &Option<Rc<FinishSignal>>,
     observation: &ObservationHandle,
@@ -42,13 +53,62 @@ fn constructor_result<T, E>(
     if result.is_err()
         && let Some(signal) = signal
     {
-        let mut observed = observation.snapshot();
-        observed.reader_termination = Some(ReaderTermination::Cancelled);
-        observed.body = Some(BodyOutcome::Interrupted);
-        observed.delivery = DeliveryOutcome::Unobserved;
-        signal.complete(observed);
+        signal.complete(piped(observation.snapshot(), true, false));
     }
     result
+}
+
+/// How the outgoing body's own source ended.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceEnd {
+    Eof,
+    ReadError,
+}
+
+/// Rust-side facts: a client abort outranks the gateway deadline, which outranks the source end.
+pub fn end_facts(end: SourceEnd, client: bool, deadline: bool) -> (ReaderTermination, BodyOutcome) {
+    match (client, deadline, end) {
+        (true, ..) => (ReaderTermination::Cancelled, BodyOutcome::Interrupted),
+        (false, true, _) => (ReaderTermination::Deadline, BodyOutcome::Interrupted),
+        (.., SourceEnd::Eof) => (ReaderTermination::Eof, BodyOutcome::Drained),
+        (.., SourceEnd::ReadError) => (ReaderTermination::ReadError, BodyOutcome::Failed),
+    }
+}
+
+/// Delivery is observed, never inferred: only the platform's client abort is evidence.
+pub fn observed_delivery(client: bool) -> DeliveryOutcome {
+    if client {
+        DeliveryOutcome::Interrupted
+    } else {
+        DeliveryOutcome::Unobserved
+    }
+}
+
+/// A native pipe result only fills a missing fact or downgrades a weaker one; it never
+/// replaces a recorded deadline, read error or client abort.
+pub fn piped(
+    mut observed: TransportObservation,
+    failed: bool,
+    client: bool,
+) -> TransportObservation {
+    if failed {
+        if matches!(
+            observed.reader_termination,
+            None | Some(ReaderTermination::Eof)
+        ) {
+            observed.reader_termination = Some(ReaderTermination::Cancelled);
+        }
+        if observed.body != Some(BodyOutcome::Failed) {
+            observed.body = Some(BodyOutcome::Interrupted);
+        }
+    } else {
+        observed
+            .reader_termination
+            .get_or_insert(ReaderTermination::Eof);
+        observed.body.get_or_insert(BodyOutcome::Drained);
+    }
+    observed.delivery = observed_delivery(client);
+    observed
 }
 
 #[derive(Clone, Default)]
@@ -76,6 +136,7 @@ pub struct ObservedStream<S> {
     _deadline: Option<Deadline>,
     finish: Option<Rc<FinishSignal>>,
     native_pipe: bool,
+    deadline_frame: bool,
 }
 
 impl<S> ObservedStream<S> {
@@ -87,24 +148,12 @@ impl<S> ObservedStream<S> {
         deadline: Option<Deadline>,
         finish: FinishHook,
     ) -> Self {
-        let signal = Rc::new(FinishSignal {
-            observation: RefCell::new(None),
-            waker: AtomicWaker::new(),
-            completed: Cell::new(false),
-        });
+        let signal = Rc::new(FinishSignal::default());
         let receiver = signal.clone();
         // Register while the invocation is alive. Registering only after a
         // disconnect can be too late to retain the durable terminal writer.
         context.wait_until(async move {
-            let observed = poll_fn(|context| {
-                receiver.waker.register(context.waker());
-                receiver
-                    .observation
-                    .borrow_mut()
-                    .take()
-                    .map_or(Poll::Pending, Poll::Ready)
-            })
-            .await;
+            let observed = poll_fn(|context| receiver.poll_take(context.waker())).await;
             finish(observed).await;
         });
         Self {
@@ -115,25 +164,29 @@ impl<S> ObservedStream<S> {
             _deadline: deadline,
             finish: Some(signal),
             native_pipe: false,
+            deadline_frame: false,
         }
+    }
+
+    /// Source `failStream`: after a gateway deadline the source still writes its declared
+    /// failure frame and ends; a client abort still tears the body down with no frame.
+    pub fn with_deadline_frame(mut self) -> Self {
+        self.deadline_frame = true;
+        self
     }
 
     fn finalize(&mut self, reader: ReaderTermination, body: BodyOutcome) {
         let Some(signal) = self.finish.take() else {
             return;
         };
-        if signal.completed.get() {
+        if signal.completed() {
             return;
         }
         let observed = {
             let mut state = self.observation.0.borrow_mut();
             state.reader_termination = Some(reader);
             state.body = Some(body);
-            state.delivery = if self.cancellation.client_aborted() {
-                DeliveryOutcome::Interrupted
-            } else {
-                DeliveryOutcome::Unobserved
-            };
+            state.delivery = observed_delivery(self.cancellation.client_aborted());
             *state
         };
         if !self.native_pipe {
@@ -175,23 +228,13 @@ where
         context.wait_until(async move {
             let failed = JsFuture::from(pipe).await.is_err();
             if let Some(signal) = signal
-                && !signal.completed.get()
+                && !signal.completed()
             {
-                let mut observed = observation.snapshot();
                 if failed {
                     cancellation.abort();
-                    observed.reader_termination = Some(ReaderTermination::Cancelled);
-                    observed.body = Some(BodyOutcome::Interrupted);
-                } else {
-                    observed.reader_termination = Some(ReaderTermination::Eof);
-                    observed.body = Some(BodyOutcome::Drained);
                 }
-                observed.delivery = if cancellation.client_aborted() {
-                    DeliveryOutcome::Interrupted
-                } else {
-                    DeliveryOutcome::Unobserved
-                };
-                signal.complete(observed);
+                let client = cancellation.client_aborted();
+                signal.complete(piped(observation.snapshot(), failed, client));
             }
         });
         Ok(builder.stream(bridge.readable()))
@@ -212,32 +255,27 @@ where
             return Poll::Ready(None);
         }
         self.cancellation.register_waker(context.waker());
-        if self.cancellation.signal().aborted() {
-            let reader = if self.cancellation.client_aborted() {
-                ReaderTermination::Cancelled
-            } else {
-                ReaderTermination::Deadline
-            };
-            self.finalize(reader, BodyOutcome::Interrupted);
+        let client = self.cancellation.client_aborted();
+        let deadline = !client && self.cancellation.signal().aborted();
+        if client || (deadline && !self.deadline_frame) {
+            let (reader, body) = end_facts(SourceEnd::Eof, client, deadline);
+            self.finalize(reader, body);
             return Poll::Ready(Some(Err(worker::Error::RustError(
                 "Upstream stream interrupted".to_owned(),
             ))));
         }
-        match Pin::new(&mut self.source).poll_next(context) {
-            Poll::Ready(None) => {
-                if self.cancellation.client_aborted() {
-                    self.finalize(ReaderTermination::Cancelled, BodyOutcome::Interrupted);
-                } else {
-                    self.finalize(ReaderTermination::Eof, BodyOutcome::Drained);
-                }
-                Poll::Ready(None)
-            }
+        let end = match Pin::new(&mut self.source).poll_next(context) {
+            Poll::Ready(None) => SourceEnd::Eof,
             Poll::Ready(Some(Err(error))) => {
-                self.finalize(ReaderTermination::ReadError, BodyOutcome::Failed);
-                Poll::Ready(Some(Err(error)))
+                let (reader, body) = end_facts(SourceEnd::ReadError, client, deadline);
+                self.finalize(reader, body);
+                return Poll::Ready(Some(Err(error)));
             }
-            result => result,
-        }
+            result => return result,
+        };
+        let (reader, body) = end_facts(end, client, deadline);
+        self.finalize(reader, body);
+        Poll::Ready(None)
     }
 }
 
@@ -247,76 +285,5 @@ impl<S> Drop for ObservedStream<S> {
             self.cancellation.abort();
             self.finalize(ReaderTermination::Cancelled, BodyOutcome::Interrupted);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
-    use std::task::{Wake, Waker};
-    #[derive(Default)]
-    struct WakeCount(AtomicUsize);
-    impl Wake for WakeCount {
-        fn wake(self: Arc<Self>) {
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-    fn failure_settles_once(error: &'static str) {
-        let signal = Rc::new(FinishSignal {
-            observation: RefCell::new(None),
-            waker: AtomicWaker::new(),
-            completed: Cell::new(false),
-        });
-        let count = Arc::new(WakeCount::default());
-        signal.waker.register(&Waker::from(count.clone()));
-        let facts = ObservationHandle::default();
-        facts.semantic_terminal(SemanticTerminal::Completed);
-        let result: std::result::Result<(), _> =
-            constructor_result(Err(error), &Some(signal.clone()), &facts);
-        assert_eq!(result, Err(error));
-        assert!(signal.completed.get());
-        assert_eq!(count.0.load(Ordering::SeqCst), 1);
-        let observed = signal.observation.borrow_mut().take().unwrap();
-        assert_eq!(
-            observed.semantic_terminal,
-            Some(SemanticTerminal::Completed)
-        );
-        assert_eq!(
-            observed.reader_termination,
-            Some(ReaderTermination::Cancelled)
-        );
-        assert_eq!(observed.body, Some(BodyOutcome::Interrupted));
-        assert_eq!(observed.delivery, DeliveryOutcome::Unobserved);
-        signal.complete(TransportObservation::default());
-        assert!(signal.observation.borrow().is_none());
-        assert_eq!(count.0.load(Ordering::SeqCst), 1);
-    }
-    #[test]
-    fn failed_response_constructor_settles_registered_signal_once() {
-        failure_settles_once("response constructor");
-    }
-    #[test]
-    fn failed_bridge_constructor_settles_registered_signal_once() {
-        failure_settles_once("bridge constructor");
-    }
-    #[test]
-    fn successful_constructor_keeps_existing_waiter_pending() {
-        let signal = Rc::new(FinishSignal {
-            observation: RefCell::new(None),
-            waker: AtomicWaker::new(),
-            completed: Cell::new(false),
-        });
-        let result = constructor_result::<_, ()>(
-            Ok(7),
-            &Some(signal.clone()),
-            &ObservationHandle::default(),
-        );
-        assert_eq!(result, Ok(7));
-        assert!(!signal.completed.get());
-        assert!(signal.observation.borrow().is_none());
     }
 }

@@ -87,16 +87,7 @@ fn discovered_capability(input: &CatalogInput, model: &SourceJson, provider: &st
     }
     c::set(&mut row, "reasoning_effort_wire_map", c::object(vec![]));
     apply_resolved_fields(&mut row, &resolved, false, true);
-    c::set(
-        &mut row,
-        "context_source",
-        c::json(&resolved.context_source),
-    );
-    c::set(
-        &mut row,
-        "reasoning_source",
-        c::json(&resolved.reasoning_source),
-    );
+    set_metadata_sources(&mut row, &resolved);
     row
 }
 fn claude_capability(model: &SourceJson) -> SourceJson {
@@ -238,30 +229,28 @@ fn public_entry(
     if let Some(default) = &resolved.default_reasoning_effort {
         c::set(&mut row, "default_reasoning_effort", c::json(default));
     }
-    c::set(
-        &mut row,
-        "context_source",
-        c::json(&resolved.context_source),
-    );
-    c::set(
-        &mut row,
-        "reasoning_source",
-        c::json(&resolved.reasoning_source),
-    );
+    set_metadata_sources(&mut row, resolved);
     row
 }
+/// Rows in insertion order plus each id's row position; a join never rescans earlier rows.
+#[derive(Default)]
+struct PublicRows(Vec<SourceJson>, std::collections::BTreeMap<ModelId, usize>);
+impl PublicRows {
+    fn find(&mut self, id: &ModelId) -> Option<&mut SourceJson> {
+        self.1.get(id).map(|index| &mut self.0[*index])
+    }
+}
 fn add_public(
-    rows: &mut Vec<SourceJson>,
+    rows: &mut PublicRows,
     id: &ModelId,
     provider: SourceJson,
     created: Option<i64>,
     resolved: &ResolvedMetadata,
 ) {
-    if let Some(existing) = rows.iter_mut().find(|r| row_id(r).as_ref() == Some(id)) {
-        let mut providers = c::get(existing, "providers")
-            .as_ref()
-            .and_then(c::array)
-            .expect("constructed providers");
+    if let Some(existing) = rows.find(id) {
+        // Every public row is constructed with a providers array.
+        let providers = c::get(existing, "providers").as_ref().and_then(c::array);
+        let mut providers = providers.unwrap_or_default();
         providers.push(provider);
         c::set(existing, "providers", c::json(&providers));
         if c::get(existing, "created").is_none()
@@ -270,11 +259,12 @@ fn add_public(
             c::set(existing, "created", c::json(&n));
         }
     } else {
-        rows.push(public_entry(id, provider, created, resolved));
+        rows.1.insert(id.clone(), rows.0.len());
+        rows.0.push(public_entry(id, provider, created, resolved));
     }
 }
-fn merge_provider_metadata(rows: &mut [SourceJson], id: &ModelId, hint: MetadataHint) {
-    let Some(entry) = rows.iter_mut().find(|row| row_id(row).as_ref() == Some(id)) else {
+fn merge_provider_metadata(rows: &mut PublicRows, id: &ModelId, hint: MetadataHint) {
+    let Some(entry) = rows.find(id) else {
         return;
     };
     let resolved = resolve_metadata(&MetadataSources {
@@ -293,11 +283,8 @@ fn merge_provider_metadata(rows: &mut [SourceJson], id: &ModelId, hint: Metadata
     }
     if resolved.supported_reasoning_levels.is_some() || resolved.default_reasoning_effort.is_some()
     {
-        c::set(
-            entry,
-            "reasoning_source",
-            c::json(&resolved.reasoning_source),
-        );
+        let source = c::json(&resolved.reasoning_source);
+        c::set(entry, "reasoning_source", source);
     }
 }
 fn sorted_models(
@@ -314,7 +301,7 @@ pub fn build_catalog_snapshot(
     input: &CatalogInput,
     collator: &dyn SourceStringCollator,
 ) -> Result<SourceJson, GatewayError> {
-    let mut rows = Vec::new();
+    let mut rows = PublicRows::default();
     let codex = snapshot_models(input, true);
     for model in &codex {
         if let Some(id) = row_id(model) {
@@ -338,58 +325,14 @@ pub fn build_catalog_snapshot(
             );
         }
     }
-    for provider in ["openlux", "surplus", "claude_code"] {
-        for model in input.rows(provider) {
-            if let Some(id) = row_id(model) {
-                let claude = provider == "claude_code";
-                let owner = if claude {
-                    c::json("anthropic")
-                } else {
-                    c::get(model, "owned_by").unwrap_or_else(|| c::json(&()))
-                };
-                let paths = if claude {
-                    vec!["/v1/responses".into(), "/v1/chat/completions".into()]
-                } else {
-                    endpoint_paths(model)
-                };
-                let hint = if claude {
-                    Some(MetadataHint {
-                        context_window_tokens: c::positive(
-                            c::get(model, "context_window_tokens").as_ref(),
-                        ),
-                        max_context_window_tokens: c::positive(
-                            c::get(model, "context_window_tokens").as_ref(),
-                        ),
-                        ..MetadataHint::default()
-                    })
-                } else {
-                    None
-                };
-                let existing = rows.iter().any(|row| row_id(row).as_ref() == Some(&id));
-                add_public(
-                    &mut rows,
-                    &id,
-                    c::object(vec![
-                        ("id", c::json(provider)),
-                        ("owned_by", owner),
-                        ("supported_endpoints", c::json(&paths)),
-                    ]),
-                    c::positive(c::get(model, "created").as_ref()),
-                    &input.metadata(&id, None, hint.clone(), false),
-                );
-                if existing && let Some(hint) = hint {
-                    merge_provider_metadata(&mut rows, &id, hint);
-                }
-            }
-        }
-    }
+    add_discovered_public(&mut rows, input);
     for provider in ["deepseek", "cerebras", "lithos"] {
         if !input.configured(provider) {
             continue;
         }
         for id in provider_ids(provider) {
             let id = ModelId::from_scalar(id);
-            let existing = rows.iter().any(|row| row_id(row).as_ref() == Some(&id));
+            let existing = rows.1.contains_key(&id);
             let endpoints = if provider == "cerebras" {
                 vec!["/v1/chat/completions"]
             } else {
@@ -413,7 +356,7 @@ pub fn build_catalog_snapshot(
     }
     if input.synthetic_configured() {
         let id = ModelId::from_scalar(SYNTHETIC_MODEL);
-        let existing = rows.iter().any(|row| row_id(row).as_ref() == Some(&id));
+        let existing = rows.1.contains_key(&id);
         let resolved = input.metadata(&id, None, Some(provider_hint("ubiquity", &id)), false);
         add_public(
             &mut rows,
@@ -445,120 +388,154 @@ pub fn build_catalog_snapshot(
             }
         }
     }
-    if input.configured("openrouter") {
-        for model in input.rows("openrouter") {
-            if let Some(id) = row_id(model) {
-                add_public(
-                    &mut rows,
-                    &id,
-                    c::object(vec![
-                        ("id", c::json("openrouter")),
-                        ("owned_by", c::json(&openrouter_owner(&id))),
-                        (
-                            "supported_endpoints",
-                            c::json(&["/v1/responses", "/v1/chat/completions"]),
-                        ),
-                    ]),
-                    None,
-                    &input.metadata(&id, None, None, false),
-                );
-            }
-        }
-        let id = ModelId::from_scalar("typesafe/jev-latest");
-        add_public(
-            &mut rows,
-            &id,
-            c::object(vec![
-                ("id", c::json("openrouter")),
-                ("owned_by", c::json("typesafe")),
-                ("supported_endpoints", c::json(&["/v1/systemone"])),
-            ]),
-            None,
-            &input.metadata(&id, None, None, false),
-        );
-    }
+    add_openrouter_public(&mut rows, input);
     // Both source public renderers use the same stable locale comparator, never
     // lexical ModelId ordering or a comparator-error substitute (catalog.ts482).
-    let rows = sorted_models(rows, collator)?;
+    let rows = sorted_models(rows.0, collator)?;
+    let codex_ready = input.codex().is_some_and(|s| !s.models.is_empty());
+    let codex_status = ["unavailable", "available"][usize::from(codex_ready)];
+    let codex_updated = input.codex().map(|s| s.updated_at_ms);
     let mut sources = vec![(
         "codex",
         c::object(vec![
-            (
-                "status",
-                c::json(if input.codex().is_some_and(|s| !s.models.is_empty()) {
-                    "available"
-                } else {
-                    "unavailable"
-                }),
-            ),
+            ("status", c::json(codex_status)),
             ("count", c::json(&codex.len())),
-            (
-                "updated_at_ms",
-                c::json(&input.codex().map(|s| s.updated_at_ms)),
-            ),
+            ("updated_at_ms", c::json(&codex_updated)),
         ]),
     )];
-    for provider in [
-        "claude_code",
-        "openlux",
-        "surplus",
-        "deepseek",
-        "cerebras",
-        "lithos",
-        "openrouter",
-    ] {
-        let snapshot = input.providers.get(provider);
-        let configured = input.configured(provider);
-        let gated = ["deepseek", "cerebras", "lithos", "openrouter"].contains(&provider);
-        let count = if gated {
-            if configured {
-                if provider == "openrouter" {
-                    input.rows(provider).len() + 1
-                } else {
-                    provider_ids(provider).len()
-                }
-            } else {
-                0
-            }
-        } else {
-            input.rows(provider).len()
-        };
-        let available = if gated {
-            configured
-        } else {
-            snapshot.is_some_and(|s| s.available && (provider != "claude_code" || !s.stale))
-        };
-        let mut source = c::object(vec![
-            (
-                "status",
-                c::json(if available {
-                    "available"
-                } else {
-                    "unavailable"
-                }),
-            ),
-            ("count", c::json(&count)),
-            (
-                "updated_at_ms",
-                c::json(&if gated && provider != "openrouter" {
-                    None
-                } else {
-                    snapshot.and_then(|p| p.updated_at_ms)
-                }),
-            ),
-        ]);
-        if gated || provider == "claude_code" {
-            c::set(&mut source, "configured", c::json(&configured));
-        }
-        if provider == "claude_code" && snapshot.is_some_and(|s| s.stale) {
-            c::set(&mut source, "stale", c::json(&true));
-        }
-        sources.push((provider, source));
+    for provider in SOURCE_PROVIDERS {
+        sources.push((provider, catalog_source(input, provider)));
     }
     Ok(c::object(vec![
         ("models", c::json(&rows)),
         ("sources", c::object(sources)),
     ]))
+}
+const SOURCE_PROVIDERS: [&str; 7] = [
+    "claude_code",
+    "openlux",
+    "surplus",
+    "deepseek",
+    "cerebras",
+    "lithos",
+    "openrouter",
+];
+fn add_discovered_public(rows: &mut PublicRows, input: &CatalogInput) {
+    for provider in ["openlux", "surplus", "claude_code"] {
+        for model in input.rows(provider) {
+            if let Some(id) = row_id(model) {
+                let claude = provider == "claude_code";
+                let owner = if claude {
+                    c::json("anthropic")
+                } else {
+                    c::get(model, "owned_by").unwrap_or_else(|| c::json(&()))
+                };
+                let paths = if claude {
+                    vec!["/v1/responses".into(), "/v1/chat/completions".into()]
+                } else {
+                    endpoint_paths(model)
+                };
+                let hint = if claude {
+                    Some(MetadataHint {
+                        context_window_tokens: c::positive(
+                            c::get(model, "context_window_tokens").as_ref(),
+                        ),
+                        max_context_window_tokens: c::positive(
+                            c::get(model, "context_window_tokens").as_ref(),
+                        ),
+                        ..MetadataHint::default()
+                    })
+                } else {
+                    None
+                };
+                let existing = rows.1.contains_key(&id);
+                add_public(
+                    rows,
+                    &id,
+                    c::object(vec![
+                        ("id", c::json(provider)),
+                        ("owned_by", owner),
+                        ("supported_endpoints", c::json(&paths)),
+                    ]),
+                    c::positive(c::get(model, "created").as_ref()),
+                    &input.metadata(&id, None, hint.clone(), false),
+                );
+                if existing && let Some(hint) = hint {
+                    merge_provider_metadata(rows, &id, hint);
+                }
+            }
+        }
+    }
+}
+/// OpenRouter text rows, decision rows on /v1/decisions, and the Jev alias row.
+fn add_openrouter_public(rows: &mut PublicRows, input: &CatalogInput) {
+    if !input.configured("openrouter") {
+        return;
+    }
+    for model in input.rows("openrouter") {
+        let endpoints = openrouter_endpoints(model);
+        if let Some(id) = row_id(model).filter(|_| !endpoints.is_empty()) {
+            let provider = c::object(vec![
+                ("id", c::json("openrouter")),
+                ("owned_by", c::json(&openrouter_owner(&id))),
+                ("supported_endpoints", c::json(&endpoints)),
+            ]);
+            let resolved = input.metadata(&id, None, None, false);
+            add_public(rows, &id, provider, None, &resolved);
+        }
+    }
+    let id = ModelId::from_scalar("typesafe/jev-latest");
+    let provider = c::object(vec![
+        ("id", c::json("openrouter")),
+        ("owned_by", c::json("typesafe")),
+        (
+            "supported_endpoints",
+            c::json(&["/v1/decisions", "/v1/systemone"]),
+        ),
+    ]);
+    let resolved = input.metadata(&id, None, None, false);
+    add_public(rows, &id, provider, None, &resolved);
+}
+fn catalog_source(input: &CatalogInput, provider: &str) -> SourceJson {
+    let snapshot = input.providers.get(provider);
+    let configured = input.configured(provider);
+    let gated = ["deepseek", "cerebras", "lithos", "openrouter"].contains(&provider);
+    let count = match (gated, configured, provider) {
+        (false, _, _) => input.rows(provider).len(),
+        (true, false, _) => 0,
+        (true, true, "openrouter") => {
+            let rows = input.rows(provider).iter();
+            rows.filter(|r| !openrouter_endpoints(r).is_empty()).count() + 1
+        }
+        (true, true, _) => provider_ids(provider).len(),
+    };
+    let available = if gated {
+        configured
+    } else {
+        snapshot.is_some_and(|s| s.available && (provider != "claude_code" || !s.stale))
+    };
+    let updated = if gated && provider != "openrouter" {
+        None
+    } else {
+        snapshot.and_then(|p| p.updated_at_ms)
+    };
+    let status = if available {
+        "available"
+    } else {
+        "unavailable"
+    };
+    let mut source = c::object(vec![
+        ("status", c::json(status)),
+        ("count", c::json(&count)),
+        ("updated_at_ms", c::json(&updated)),
+    ]);
+    if gated || provider == "claude_code" {
+        c::set(&mut source, "configured", c::json(&configured));
+    }
+    if provider == "claude_code" && snapshot.is_some_and(|s| s.stale) {
+        c::set(&mut source, "stale", c::json(&true));
+    }
+    source
 }
 pub fn public_catalog(
     input: &CatalogInput,

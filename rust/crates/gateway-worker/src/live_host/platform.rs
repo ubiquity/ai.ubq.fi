@@ -21,6 +21,7 @@ use gateway_live_runtime::{
     runtime::PreparedSideband,
     types::{LiveAccount, LiveCreateRequest, LiveDispatchFailure, LiveHost, LiveResponse},
 };
+use gateway_routing_runtime::classify::codex_retry_after_seconds;
 use std::collections::BTreeMap;
 
 impl WorkerLiveHost {
@@ -191,10 +192,8 @@ impl LiveHost for WorkerLiveHost {
                     Some("codex_quota_blocked"),
                 ));
                 if let Some(at) = retry_at_ms {
-                    let delay = at.saturating_sub(self.now_ms()).saturating_add(999) / 1000;
-                    response
-                        .headers
-                        .insert("retry-after".into(), delay.clamp(1, 60).to_string());
+                    let delay = codex_retry_after_seconds(at, self.now_ms()).to_string();
+                    response.headers.insert("retry-after".into(), delay);
                 }
                 Err(response)
             }

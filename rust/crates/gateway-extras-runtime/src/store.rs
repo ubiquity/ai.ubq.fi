@@ -22,6 +22,12 @@ pub(crate) fn invalid_state() -> GatewayError {
         "embeddings_state_invalid",
     )
 }
+pub(crate) fn unrouted() -> GatewayError {
+    GatewayError::unavailable(
+        "Decisions have their own runtime.",
+        "extras_route_unavailable",
+    )
+}
 pub(crate) fn invalid(message: impl Into<String>, param: Option<&str>) -> GatewayError {
     GatewayError::new(400, message, Some("invalid_request_error")).with_param(param)
 }

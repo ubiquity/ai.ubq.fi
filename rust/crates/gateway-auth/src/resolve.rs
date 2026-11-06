@@ -3,6 +3,7 @@ use crate::{
     crypto::{Secret, sha256_base64url, sha256_hex},
     origin::local_bypass,
     passkeys::{PasskeyService, SessionView},
+    passport::{PASSPORT_COOKIE, PassportConfig, PassportService},
     types::{
         AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest, AuthResponse, unauthorized,
     },
@@ -40,6 +41,20 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             host: self.host,
             config: self.config,
         }
+    }
+    fn passport<'b>(&'b self, config: &'b PassportConfig) -> PassportService<'b, S, H> {
+        PassportService {
+            store: self.store,
+            host: self.host,
+            config,
+        }
+    }
+    fn passport_config(
+        &self,
+        request: &AuthRequest,
+        missing: fn() -> GatewayError,
+    ) -> Result<PassportConfig, GatewayError> {
+        crate::passport::config_for_request(self.config, request).ok_or_else(missing)
     }
     fn allowlisted(tokens: &[Secret], token: &str) -> bool {
         tokens.iter().any(|value| value.expose() == token)
@@ -302,6 +317,49 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             true,
         ))
     }
+    async fn local_development(&self, token: Option<&str>) -> Result<AuthPrincipal, GatewayError> {
+        let disabled = Ok(Self::principal(token, AuthMethod::Disabled, false, false));
+        let Some(row) = self
+            .store
+            .read(&api_keys::id_key("local-development"))
+            .await?
+        else {
+            return disabled;
+        };
+        row.validate_version()?;
+        // This one named ID row can now hold source name/model
+        // metadata. Keep the original peer/origin gate and separate
+        // model-free hash policy read; data decoding grants no role.
+        let metadata = gateway_core::source_control::decode_source_control_record(&row)?;
+        let member = |key| gateway_core::source_serialization::member(&metadata, key);
+        let text = |key| member(key).and_then(|value| value.deserialize::<String>().ok());
+        let (true, Some(hash), Some(id)) = (
+            member("revoked_at_ms").is_some_and(|value| value.as_str() == "null"),
+            text("hash"),
+            text("id"),
+        ) else {
+            return disabled;
+        };
+        let Some(hash_row) = self.store.read(&api_keys::hash_key(&hash)).await? else {
+            return disabled;
+        };
+        hash_row.validate_version()?;
+        let record = serde_json::from_value(hash_row.json_value()?.clone()).map_err(|_| {
+            GatewayError::unavailable(
+                "Local API key quota migration is incomplete",
+                "server_error",
+            )
+        })?;
+        let policy = api_keys::policy_from_record(hash.to_owned(), record, self.host.now_ms())?;
+        if id != "local-development" {
+            return disabled;
+        }
+        let method = AuthMethod::KvApiKey {
+            key_id: id.to_owned(),
+            policy,
+        };
+        Ok(Self::principal(token, method, false, false))
+    }
     pub async fn authenticate_client(
         &self,
         request: &AuthRequest,
@@ -309,68 +367,18 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         let token = request.bearer();
         if local_bypass(request, self.config) {
             // Only the checked native listener can resolve the existing local-development principal.
-            let row = self
-                .store
-                .read(&api_keys::id_key("local-development"))
-                .await?;
-            if let Some(row) = row {
-                row.validate_version()?;
-                // This one named ID row can now hold source name/model
-                // metadata. Keep the original peer/origin gate and separate
-                // model-free hash policy read; data decoding grants no role.
-                let metadata = gateway_core::source_control::decode_source_control_record(&row)?;
-                if gateway_core::source_serialization::member(&metadata, "revoked_at_ms")
-                    .is_some_and(|value| value.as_str() == "null")
-                    && let (Some(hash), Some(id)) = (
-                        gateway_core::source_serialization::member(&metadata, "hash")
-                            .and_then(|value| value.deserialize::<String>().ok()),
-                        gateway_core::source_serialization::member(&metadata, "id")
-                            .and_then(|value| value.deserialize::<String>().ok()),
-                    )
-                {
-                    let hash_row = self.store.read(&api_keys::hash_key(&hash)).await?;
-                    if let Some(hash_row) = hash_row {
-                        hash_row.validate_version()?;
-                        let record = serde_json::from_value(hash_row.json_value()?.clone())
-                            .map_err(|_| {
-                                GatewayError::unavailable(
-                                    "Local API key quota migration is incomplete",
-                                    "server_error",
-                                )
-                            })?;
-                        let policy = api_keys::policy_from_record(
-                            hash.to_owned(),
-                            record,
-                            self.host.now_ms(),
-                        )?;
-                        if id == "local-development" {
-                            return Ok(Self::principal(
-                                token,
-                                AuthMethod::KvApiKey {
-                                    key_id: id.to_owned(),
-                                    policy,
-                                },
-                                false,
-                                false,
-                            ));
-                        }
-                    }
-                }
-            }
-            return Ok(Self::principal(token, AuthMethod::Disabled, false, false));
+            return self.local_development(token).await;
         }
         if self.legacy_local(request) {
             return Ok(Self::principal(token, AuthMethod::Disabled, false, false));
         }
-        if crate::passport::cookie(request, crate::passport::PASSPORT_COOKIE).is_some() {
-            let config = crate::passport::config_for_request(self.config, request)
-                .ok_or_else(unauthorized)?;
-            let passport = crate::passport::PassportService {
-                host: self.host,
-                config: &config,
-            };
-            let claims = passport.session(request).await?.ok_or_else(unauthorized)?;
-            return Ok(Self::passport_principal(claims, false));
+        if crate::passport::cookie(request, PASSPORT_COOKIE).is_some() {
+            let config = self.passport_config(request, unauthorized)?;
+            let claims = self.passport(&config).session(request).await?;
+            return Ok(Self::passport_principal(
+                claims.ok_or_else(unauthorized)?,
+                false,
+            ));
         }
         let Some(token) = token else {
             return self
@@ -427,13 +435,8 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         // A JWT-shaped credential is never an admin or opaque token. Invalid
         // Passport material fails closed instead of reaching the admin path.
         if crate::passport::jwt_shaped(token) {
-            let config = crate::passport::config_for_request(self.config, request)
-                .ok_or_else(unauthorized)?;
-            let passport = crate::passport::PassportService {
-                host: self.host,
-                config: &config,
-            };
-            let claims = passport.bearer(token).await?;
+            let config = self.passport_config(request, unauthorized)?;
+            let claims = self.passport(&config).bearer(token).await?;
             return Ok(Self::passport_principal(claims, true));
         }
         self.admin_token(token).await
@@ -455,19 +458,16 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         if request.bearer().is_some_and(crate::passport::jwt_shaped) {
             return Err(unauthorized());
         }
-        if crate::passport::cookie(request, crate::passport::PASSPORT_COOKIE).is_some() {
-            let config = crate::passport::config_for_request(self.config, request)
-                .ok_or_else(unauthorized)?;
-            let passport = crate::passport::PassportService {
-                host: self.host,
-                config: &config,
-            };
-            let claims = passport.session(request).await?.ok_or_else(unauthorized)?;
-            if !claims.is_admin {
-                return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
-            }
+        if crate::passport::cookie(request, PASSPORT_COOKIE).is_some() {
+            let config = self.passport_config(request, unauthorized)?;
+            let claims = self.passport(&config).session(request).await?;
+            let claims = claims.ok_or_else(unauthorized)?;
+            // Source order: an agent token is never an admin session (401).
             if claims.agent_token_id.is_some() {
                 return Err(unauthorized());
+            }
+            if !claims.is_admin {
+                return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
             }
             if !crate::origin::same_origin_mutation(request) {
                 return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
@@ -550,7 +550,17 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 }
             }
             ("GET", "/uos/auth") => {
-                let mut auth = self.authenticate_client(request).await?;
+                let mut auth = match self.authenticate_client(request).await {
+                    Ok(auth) => auth,
+                    Err(error) if crate::passport::revoked_session(request, &error) => {
+                        let mut response = AuthResponse::error(error);
+                        response
+                            .set_cookies
+                            .push(crate::passport::clear_session_cookie());
+                        return Ok(Some(response));
+                    }
+                    Err(error) => return Err(error),
+                };
                 if (local_bypass(request, self.config) || self.legacy_local(request))
                     && let Ok(admin) = self.authenticate_admin(request).await
                 {
@@ -560,39 +570,60 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 let token = auth.token.as_ref().map(Secret::expose);
                 let shape = token.map(token_shape);
                 let principal = auth.method.principal_id(token);
-                AuthResponse::json(
+                let renew = crate::passport::cookie(request, PASSPORT_COOKIE)
+                    .filter(|token| gateway_passport_session::binding::is_persistent_session(token))
+                    .filter(|_| matches!(auth.method, AuthMethod::PassportSession { .. }));
+                let mut response = AuthResponse::json(
                     200,
                     json!({"ok":true,"service":"ai.ubq.fi","auth":{"mode":if local_bypass(request,self.config)||self.legacy_local(request){"disabled"}else{"required"},"is_admin":auth.is_admin,"is_super_admin":auth.is_super_admin,"principal":principal,"method":method,"token":{"present":token.is_some(),"length":token.map(str::len),"shape":shape,"sha256_12":token.map(|token|sha256_hex(token.as_bytes())[..12].to_owned())}}}),
-                )
+                );
+                // Renew browser storage only after the auth report succeeds.
+                response
+                    .set_cookies
+                    .extend(renew.as_deref().map(crate::passport::session_cookie));
+                response
             }
             ("GET", "/auth/login") => {
-                let config = crate::passport::config_for_request(self.config, request)
-                    .ok_or_else(passport_not_configured)?;
-                crate::passport::PassportService {
-                    host: self.host,
-                    config: &config,
-                }
-                .login(request)
-                .await?
+                let config = self.passport_config(request, passport_not_configured)?;
+                self.passport(&config).login(request).await?
             }
             ("GET", "/auth/callback") => {
-                let config = crate::passport::config_for_request(self.config, request)
-                    .ok_or_else(passport_not_configured)?;
-                crate::passport::PassportService {
-                    host: self.host,
-                    config: &config,
-                }
-                .callback(request)
-                .await?
+                let config = self.passport_config(request, passport_not_configured)?;
+                self.passport(&config).callback(request).await?
             }
-            ("POST", "/auth/logout") => crate::passport::PassportService {
-                host: self.host,
-                config: &crate::passport::PassportConfig::production(),
+            ("POST", "/auth/logout") => {
+                let config = self.passport_config(request, passport_not_configured)?;
+                self.passport(&config).logout(request).await?
             }
-            .logout(),
             _ => return Ok(None),
         };
         Ok(Some(result))
+    }
+    async fn key_usage(
+        &self,
+        key_id: &str,
+        policy: &api_keys::ApiKeyPolicy,
+    ) -> Result<i64, GatewayError> {
+        let wk = crate::store::key(json!([
+            "uos_ai",
+            "api_key_usage",
+            "v3",
+            "window",
+            key_id,
+            policy.policy_version,
+            policy.window_start_ms
+        ]));
+        let Some(row) = self.store.read(&wk).await? else {
+            return Ok(0);
+        };
+        row.validate_version()?;
+        row.json_value()?
+            .get("committed_requests")
+            .and_then(Value::as_i64)
+            .filter(|n| *n >= 0)
+            .ok_or_else(|| {
+                GatewayError::unavailable("API key quota ledger is unavailable", "server_error")
+            })
     }
     async fn method_wire(&self, method: &AuthMethod) -> Result<Value, GatewayError> {
         Ok(match method {
@@ -619,31 +650,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 if let Some(row) = self.store.read(&api_keys::id_key(key_id)).await? {
                     row.validate_version()?;
                     let record = row.json_value()?.clone();
-                    let wk = crate::store::key(json!([
-                        "uos_ai",
-                        "api_key_usage",
-                        "v3",
-                        "window",
-                        key_id,
-                        policy.policy_version,
-                        policy.window_start_ms
-                    ]));
-                    let usage = match self.store.read(&wk).await? {
-                        None => 0,
-                        Some(row) => {
-                            row.validate_version()?;
-                            row.json_value()?
-                                .get("committed_requests")
-                                .and_then(Value::as_i64)
-                                .filter(|n| *n >= 0)
-                                .ok_or_else(|| {
-                                    GatewayError::unavailable(
-                                        "API key quota ledger is unavailable",
-                                        "server_error",
-                                    )
-                                })?
-                        }
-                    };
+                    let usage = self.key_usage(key_id, policy).await?;
                     key = json!({"id":key_id,"name":record.get("name"),"prefix":record.get("prefix"),"created_at_ms":record.get("created_at_ms"),"expires_at_ms":policy.expires_at_ms,"revoked_at_ms":record.get("revoked_at_ms"),"usage_limit_requests":policy.usage_limit_requests,"usage_requests":usage,"usage_reset_at_ms":policy.usage_reset_at_ms,"window_ms":policy.window_ms});
                 }
                 json!({"kind":"kv_api_key","key":key})

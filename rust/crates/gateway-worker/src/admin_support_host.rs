@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use worker::Method;
 
 mod picker;
-mod pricing;
+pub mod pricing;
 
 pub struct Binding {
     catalog: crate::catalog_host::Host,

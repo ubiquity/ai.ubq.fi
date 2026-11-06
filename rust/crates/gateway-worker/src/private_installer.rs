@@ -134,7 +134,8 @@ pub(crate) fn prepare(
     Ok(PreparedPrivateInstallation { adoption, owner })
 }
 
-fn decode_capture(exact_input: &[u8]) -> Result<NativeCapture, GatewayError> {
+/// Closed private envelope decoder only; it mints no owner or capability authority.
+pub fn decode_capture(exact_input: &[u8]) -> Result<NativeCapture, GatewayError> {
     if exact_input.len() > gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES {
         return Err(refused());
     }
@@ -151,64 +152,4 @@ fn refused() -> GatewayError {
         "The private initial control installation was refused",
         "initial_control_owner_refused",
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn envelope() -> serde_json::Value {
-        let capture = json!({
-            "v":2,"source_git_sha":"a".repeat(40),"captured_at_ms":1000,
-            "source_codec":"bun-jsc-v1","native_schema_version":3,
-            "data_revision":{"version":"7","sequence":"2"},
-            "queue_entries":0,"running_queue_entries":0,"entries":[]
-        });
-        json!({"operation":"install_initial_control_owner","v":1,"capture":serde_json::to_vec(&capture).unwrap()})
-    }
-
-    #[test]
-    fn closed_private_envelope_accepts_capture_data_without_minting_owner_authority() {
-        let capture = decode_capture(&serde_json::to_vec(&envelope()).unwrap()).unwrap();
-        assert_eq!(capture.source_git_sha, "a".repeat(40));
-        assert_eq!(capture.data_revision.version, "7");
-    }
-
-    #[test]
-    fn owner_records_capabilities_and_other_operations_are_not_request_fields() {
-        for forbidden in [
-            "owner",
-            "records",
-            "capabilities",
-            "namespace",
-            "physical_custody_verified",
-        ] {
-            let mut input = envelope();
-            input[forbidden] = json!(true);
-            assert!(decode_capture(&serde_json::to_vec(&input).unwrap()).is_err());
-        }
-        let mut input = envelope();
-        input["operation"] = json!("describe_target");
-        assert!(decode_capture(&serde_json::to_vec(&input).unwrap()).is_err());
-        input = envelope();
-        input["v"] = json!(2);
-        assert!(decode_capture(&serde_json::to_vec(&input).unwrap()).is_err());
-    }
-
-    #[test]
-    fn malformed_or_oversized_private_capture_refuses_before_effects() {
-        assert!(decode_capture(b"{}").is_err());
-        let mut input = envelope();
-        input["capture"] = json!([123]);
-        assert!(decode_capture(&serde_json::to_vec(&input).unwrap()).is_err());
-        assert!(
-            decode_capture(&vec![
-                0;
-                gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES
-                    + 1
-            ])
-            .is_err()
-        );
-    }
 }

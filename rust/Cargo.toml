@@ -5,25 +5,31 @@ members = [
   "crates/gateway-core",
   "crates/gateway-compaction",
   "crates/gateway-schema",
+  "crates/gateway-prompt-admission",
   "crates/gateway-providers",
   "crates/gateway-authority",
   "crates/gateway-admission",
   "crates/gateway-catalog-runtime",
+  "crates/gateway-provider-catalog-cache",
   "crates/gateway-auth",
+  "crates/gateway-passport-session",
   "crates/gateway-admin",
   "crates/gateway-admin-data",
   "crates/gateway-admin-runtime",
   "crates/gateway-migration",
   "crates/gateway-claude-runtime",
+  "crates/gateway-claude-usage",
   "crates/gateway-observability",
   "crates/gateway-routing-runtime",
   "crates/gateway-routing-runtime-test-support",
   "crates/gateway-extras-runtime",
+  "crates/gateway-decisions",
   "crates/gateway-publication",
   "crates/gateway-publication-policy",
   "crates/gateway-publication-transport",
   "crates/gateway-publication-test-support",
   "crates/gateway-native",
+  "crates/gateway-native-runtime",
   "crates/gateway-native-supervisor-read",
   "crates/gateway-live-runtime",
   "crates/gateway-worker",
@@ -35,6 +41,8 @@ members = [
   "crates/gateway-claude-runtime-test-support",
   "crates/gateway-extras-runtime-test-support",
   "crates/gateway-migration-test-support",
+  "crates/gateway-state-transfer",
+  "crates/gateway-state-reverse",
 ]
 exclude = ["vendor/webauthn-rs-core-0.6.1-dev"]
 resolver = "3"
@@ -53,26 +61,32 @@ wasm-bindgen = "=0.2.129"
 gateway-core = { path = "crates/gateway-core" }
 gateway-compaction = { path = "crates/gateway-compaction" }
 gateway-schema = { path = "crates/gateway-schema" }
+gateway-prompt-admission = { path = "crates/gateway-prompt-admission" }
 gateway-providers = { path = "crates/gateway-providers" }
 gateway-authority = { path = "crates/gateway-authority" }
 gateway-admission = { path = "crates/gateway-admission" }
 gateway-catalog-runtime = { path = "crates/gateway-catalog-runtime" }
+gateway-provider-catalog-cache = { path = "crates/gateway-provider-catalog-cache" }
 gateway-capacity-recovery = { path = "crates/gateway-capacity-recovery" }
 gateway-auth = { path = "crates/gateway-auth" }
+gateway-passport-session = { path = "crates/gateway-passport-session" }
 gateway-admin = { path = "crates/gateway-admin" }
 gateway-admin-data = { path = "crates/gateway-admin-data" }
 gateway-admin-runtime = { path = "crates/gateway-admin-runtime" }
 gateway-migration = { path = "crates/gateway-migration" }
 gateway-claude-runtime = { path = "crates/gateway-claude-runtime" }
+gateway-claude-usage = { path = "crates/gateway-claude-usage" }
 gateway-observability = { path = "crates/gateway-observability" }
 gateway-routing-runtime = { path = "crates/gateway-routing-runtime" }
 gateway-routing-runtime-test-support = { path = "crates/gateway-routing-runtime-test-support" }
 gateway-extras-runtime = { path = "crates/gateway-extras-runtime" }
+gateway-decisions = { path = "crates/gateway-decisions" }
 gateway-publication = { path = "crates/gateway-publication" }
 gateway-publication-policy = { path = "crates/gateway-publication-policy" }
 gateway-publication-transport = { path = "crates/gateway-publication-transport" }
 gateway-publication-test-support = { path = "crates/gateway-publication-test-support" }
 gateway-native = { path = "crates/gateway-native" }
+gateway-native-runtime = { path = "crates/gateway-native-runtime" }
 gateway-native-supervisor-read = { path = "crates/gateway-native-supervisor-read" }
 gateway-live-runtime = { path = "crates/gateway-live-runtime" }
 gateway-worker-fixture-setup = { path = "crates/gateway-worker-fixture-setup" }
@@ -81,6 +95,8 @@ gateway-admin-test-support = { path = "crates/gateway-admin-test-support" }
 gateway-claude-runtime-test-support = { path = "crates/gateway-claude-runtime-test-support" }
 gateway-extras-runtime-test-support = { path = "crates/gateway-extras-runtime-test-support" }
 gateway-migration-test-support = { path = "crates/gateway-migration-test-support" }
+gateway-state-transfer = { path = "crates/gateway-state-transfer" }
+gateway-state-reverse = { path = "crates/gateway-state-reverse" }
 
 [profile.dev]
 opt-level = 0

@@ -48,132 +48,8 @@ pub fn normalize_snapshot(
     let raw = c::array(value)
         .or_else(|| c::get(value, "models").as_ref().and_then(c::array))
         .or_else(|| c::get(value, "data").as_ref().and_then(c::array))?;
-    let mut models = Vec::new();
     let mut seen = Vec::new();
-    for item in &raw {
-        if !c::is_record(item) {
-            continue;
-        }
-        let hidden = c::get(item, "visibility")
-            .as_ref()
-            .and_then(c::string)
-            .is_some_and(|v| {
-                c::trim(&v)
-                    .as_units()
-                    .iter()
-                    .copied()
-                    .map(|u| if (65..=90).contains(&u) { u + 32 } else { u })
-                    .eq("hide".encode_utf16())
-            })
-            && c::get(item, "supported_in_api").is_none_or(|v| v.as_str() != "true");
-        if hidden {
-            continue;
-        }
-        let Some(slug) = c::identifier(item).filter(|s| !s.as_units().is_empty()) else {
-            continue;
-        };
-        if seen.contains(&slug) {
-            continue;
-        }
-        seen.push(slug.clone());
-        let mut model = c::object(vec![("slug", c::json(&slug))]);
-        if let Some(name) = ["display_name", "displayName", "name"]
-            .iter()
-            .find_map(|key| c::get(item, key).as_ref().and_then(c::string))
-            .filter(|s| !s.as_units().is_empty())
-        {
-            c::set(&mut model, "display_name", c::json(&name));
-        }
-        for key in ["description", "visibility"] {
-            if let Some(value) = c::get(item, key)
-                .as_ref()
-                .and_then(c::string)
-                .filter(|s| !s.as_units().is_empty())
-            {
-                c::set(&mut model, key, c::json(&value));
-            }
-        }
-        if let Some(value) =
-            c::get(item, "supported_in_api").filter(|v| matches!(v.as_str(), "true" | "false"))
-        {
-            c::set(&mut model, "supported_in_api", value);
-        }
-        for key in [
-            "context_window",
-            "max_context_window",
-            "auto_compact_token_limit",
-            "effective_context_window_percent",
-        ] {
-            if let Some(value) = c::get(item, key) {
-                if value.as_str() == "null" {
-                    c::set(&mut model, key, value);
-                } else if let Some(n) = gateway_core::source_serialization::number(&value)
-                    .filter(|n| n.is_finite() && *n >= 0.0)
-                {
-                    let n = n.trunc();
-                    c::set(
-                        &mut model,
-                        key,
-                        if n <= crate::util::MAX_SAFE_INTEGER {
-                            c::json(&(n as i64))
-                        } else {
-                            c::json(&n)
-                        },
-                    );
-                }
-            }
-        }
-        if let Some(v) = c::get(item, "default_reasoning_level") {
-            if v.as_str() == "null" {
-                c::set(&mut model, "default_reasoning_level", c::json("none"));
-            } else if let Some(level) = c::normalized(Some(&v)) {
-                c::set(&mut model, "default_reasoning_level", c::json(&level));
-            }
-        }
-        if let Some(raw_levels) = c::get(item, "supported_reasoning_levels")
-            .as_ref()
-            .and_then(c::array)
-        {
-            let levels = raw_levels
-                .iter()
-                .filter_map(advertised_effort)
-                .collect::<Vec<_>>();
-            if !levels.is_empty() {
-                c::set(&mut model, "supported_reasoning_levels", c::json(&levels));
-            }
-            let mut wire = Vec::new();
-            for level in raw_levels {
-                if let Some(effort) = advertised_effort(&level) {
-                    let upstream = if c::matches(&effort, "ultra") {
-                        Some("max".into())
-                    } else {
-                        c::normalized(c::get(&level, "wire_effort").as_ref())
-                    };
-                    if let Some(upstream) = upstream.filter(|s| s != &effort) {
-                        let value = c::json(&upstream);
-                        if let Some((_, old)) = wire.iter_mut().find(|(key, _)| key == &effort) {
-                            *old = value;
-                        } else {
-                            wire.push((effort, value));
-                        }
-                    }
-                }
-            }
-            if !wire.is_empty() {
-                c::set(
-                    &mut model,
-                    "reasoning_effort_wire_map",
-                    gateway_core::source_serialization::object_keys(wire).expect("source wire map"),
-                );
-            }
-        }
-        if let Some(cache) =
-            prompt_cache::normalize_capabilities_source(c::get(item, "prompt_cache").as_ref())
-        {
-            c::set(&mut model, "prompt_cache", cache);
-        }
-        models.push(model);
-    }
+    let models: Vec<_> = raw.iter().filter_map(|i| model_row(i, &mut seen)).collect();
     if models.is_empty() {
         return None;
     }
@@ -209,6 +85,120 @@ pub fn normalize_snapshot(
         updated_at_ms,
         client_version,
     })
+}
+fn is_hidden(item: &SourceJson) -> bool {
+    c::get(item, "visibility")
+        .as_ref()
+        .and_then(c::string)
+        .is_some_and(|v| {
+            c::trim(&v)
+                .as_units()
+                .iter()
+                .copied()
+                .map(|u| if (65..=90).contains(&u) { u + 32 } else { u })
+                .eq("hide".encode_utf16())
+        })
+        && c::get(item, "supported_in_api").is_none_or(|v| v.as_str() != "true")
+}
+fn model_row(item: &SourceJson, seen: &mut Vec<JsString16>) -> Option<SourceJson> {
+    if !c::is_record(item) || is_hidden(item) {
+        return None;
+    }
+    let slug = c::identifier(item).filter(|s| !s.as_units().is_empty() && !seen.contains(s))?;
+    seen.push(slug.clone());
+    let mut model = c::object(vec![("slug", c::json(&slug))]);
+    if let Some(name) = ["display_name", "displayName", "name"]
+        .iter()
+        .find_map(|key| c::get(item, key).as_ref().and_then(c::string))
+        .filter(|s| !s.as_units().is_empty())
+    {
+        c::set(&mut model, "display_name", c::json(&name));
+    }
+    for key in ["description", "visibility"] {
+        if let Some(value) = c::get(item, key)
+            .as_ref()
+            .and_then(c::string)
+            .filter(|s| !s.as_units().is_empty())
+        {
+            c::set(&mut model, key, c::json(&value));
+        }
+    }
+    if let Some(value) =
+        c::get(item, "supported_in_api").filter(|v| matches!(v.as_str(), "true" | "false"))
+    {
+        c::set(&mut model, "supported_in_api", value);
+    }
+    copy_limits(item, &mut model);
+    copy_reasoning(item, &mut model);
+    if let Some(cache) =
+        prompt_cache::normalize_capabilities_source(c::get(item, "prompt_cache").as_ref())
+    {
+        c::set(&mut model, "prompt_cache", cache);
+    }
+    Some(model)
+}
+fn copy_limits(item: &SourceJson, model: &mut SourceJson) {
+    for key in [
+        "context_window",
+        "max_context_window",
+        "auto_compact_token_limit",
+        "effective_context_window_percent",
+    ] {
+        let Some(value) = c::get(item, key) else {
+            continue;
+        };
+        if value.as_str() == "null" {
+            c::set(model, key, value);
+        } else if let Some(n) = gateway_core::source_serialization::number(&value)
+            .filter(|n| n.is_finite() && *n >= 0.0)
+        {
+            let n = n.trunc();
+            let n = if n <= crate::util::MAX_SAFE_INTEGER {
+                c::json(&(n as i64))
+            } else {
+                c::json(&n)
+            };
+            c::set(model, key, n);
+        }
+    }
+}
+fn copy_reasoning(item: &SourceJson, model: &mut SourceJson) {
+    if let Some(v) = c::get(item, "default_reasoning_level") {
+        if v.as_str() == "null" {
+            c::set(model, "default_reasoning_level", c::json("none"));
+        } else if let Some(level) = c::normalized(Some(&v)) {
+            c::set(model, "default_reasoning_level", c::json(&level));
+        }
+    }
+    let Some(raw_levels) = c::get(item, "supported_reasoning_levels")
+        .as_ref()
+        .and_then(c::array)
+    else {
+        return;
+    };
+    let levels: Vec<_> = raw_levels.iter().filter_map(advertised_effort).collect();
+    if !levels.is_empty() {
+        c::set(model, "supported_reasoning_levels", c::json(&levels));
+    }
+    let mut wire = Vec::new();
+    for level in raw_levels {
+        let Some(effort) = advertised_effort(&level) else {
+            continue;
+        };
+        let upstream = if c::matches(&effort, "ultra") {
+            Some("max".into())
+        } else {
+            c::normalized(c::get(&level, "wire_effort").as_ref())
+        };
+        if let Some(upstream) = upstream.filter(|s| s != &effort) {
+            c::upsert(&mut wire, effort, c::json(&upstream));
+        }
+    }
+    if !wire.is_empty()
+        && let Ok(map) = gateway_core::source_serialization::object_keys(wire)
+    {
+        c::set(model, "reasoning_effort_wire_map", map);
+    }
 }
 impl ModelSnapshot {
     pub fn default_model(&self) -> Option<ModelId> {

@@ -79,19 +79,15 @@ impl ModelReasoning {
                     continue;
                 }
                 if let Some(value) = control::normalized(Some(&value)) {
-                    let value = control::json(&value);
-                    if let Some((_, old)) = wire_efforts.iter_mut().find(|(old, _)| old == &key) {
-                        *old = value;
-                    } else {
-                        wire_efforts.push((key, value));
-                    }
+                    control::upsert(&mut wire_efforts, key, control::json(&value));
                 }
             }
         }
         Self {
             levels,
             default_level,
-            wire_efforts: source::object_keys(wire_efforts).expect("source effort-map object"),
+            wire_efforts: source::object_keys(wire_efforts)
+                .unwrap_or_else(|_| control::object(Vec::new())),
         }
     }
     pub fn wire_effort(&self, effort: &JsString16) -> Option<JsString16> {

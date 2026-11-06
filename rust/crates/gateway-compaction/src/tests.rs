@@ -166,6 +166,9 @@ impl Host {
         }
     }
 }
+fn host_err<E>(_: E) -> GatewayError {
+    GatewayError::new(500, "fixture host invariant", Some("fixture"))
+}
 impl CompactionHost for Host {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(1_700_000_000_000)
@@ -188,7 +191,7 @@ impl CompactionHost for Host {
                 ("state", state.clone()),
                 ("questions", questions.clone()),
             ])
-            .unwrap(),
+            .map_err(host_err)?,
         );
         if self.cancel_after_ask {
             self.cancel.set(true);
@@ -201,17 +204,17 @@ impl CompactionHost for Host {
             ));
         }
         let mut answers = Vec::new();
-        for (name, _) in text::entries(questions).unwrap() {
-            let name_text = name.try_utf8().unwrap();
+        for (name, _) in text::entries(questions).ok_or_else(|| host_err(()))? {
+            let name_text = name.try_utf8()?;
             if self.mode == "partial" && name_text.starts_with("result_") {
                 continue;
             }
             let id = name_text
                 .split("_t")
                 .nth(1)
-                .unwrap()
+                .ok_or_else(|| host_err(()))?
                 .parse::<usize>()
-                .unwrap();
+                .map_err(host_err)?;
             let mut value = 0.1;
             if self.mode == "mixed" {
                 value = if id == 3 || id == 2 && name_text.starts_with("call_") {
@@ -234,26 +237,23 @@ impl CompactionHost for Host {
                 };
             }
             if self.mode == "outside" {
-                value = if id == 1 {
-                    if name_text.starts_with("call_") {
-                        2.0
-                    } else {
-                        -1.0
-                    }
-                } else if id == 2 {
-                    2.0
-                } else {
-                    -1.0
+                value = match (id, name_text.starts_with("call_")) {
+                    (1, true) | (2, _) => 2.0,
+                    _ => -1.0,
                 };
             }
             let number = if self.mode == "nonfinite" && name_text == "result_t1" {
-                text::raw("\"0.1\"").unwrap()
+                text::raw("\"0.1\"").map_err(host_err)?
             } else {
-                state::json(&value).unwrap()
+                state::json(&value).map_err(host_err)?
             };
-            answers.push((name, text::object(vec![("noul", number)]).unwrap()));
+            answers.push((
+                name,
+                text::object(vec![("noul", number)]).map_err(host_err)?,
+            ));
         }
-        Ok(text::object(vec![("answers", text::object_keys(answers).unwrap())]).unwrap())
+        let answers = text::object_keys(answers).map_err(host_err)?;
+        text::object(vec![("answers", answers)]).map_err(host_err)
     }
     async fn rewrite_residue(
         &self,
@@ -318,14 +318,7 @@ fn source_codex_items_and_opaque_redaction_are_exact() {
     }
 }
 #[test]
-fn source_utf16_estimator_and_bounded_heads_match_including_split_surrogates() {
-    for case in cases("tokens") {
-        let text: Text = decode(&field(&case, "text"));
-        assert_eq!(
-            state::estimate_tokens(&text),
-            decode::<usize>(&field(&case, "expected"))
-        );
-    }
+fn source_utf16_bounded_heads_match_including_split_surrogates() {
     for case in cases("truncation") {
         let value: Text = decode(&field(&case, "text"));
         let expected: Text = decode(&field(&case, "expected"));

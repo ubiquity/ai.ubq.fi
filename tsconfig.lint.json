@@ -13,6 +13,11 @@
     "tools/cloudflare/runtime-conformance.ts",
     "tools/cloudflare/verify-build-identity.ts",
     "tools/cloudflare/state-migration-stage-driver.ts",
+    "tools/cloudflare/state-transfer.ts",
+    "tools/cloudflare/state-transfer-conformance.ts",
+    "tools/cloudflare/managed-native-adoption.ts",
+    "tools/cloudflare/managed-native-operator-io.ts",
+    "tools/cloudflare/managed-native-owner-observer.ts",
     "rust/crates/gateway-migration/examples/native-operator-capture.ts",
     "lib/jev_compaction/**/*.ts"
   ]

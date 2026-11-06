@@ -264,8 +264,15 @@ impl RoutingView {
             && slot < self.state.slots.len()
             && self.binding(slot) == admission.binding
             && self.active.as_ref().is_some_and(|active| {
+                // Source planOverageFallback: an overage serving admission names a blocked
+                // non-active account, fenced by its hard per-account setting instead.
                 active.generation == admission.active_generation
-                    && active.binding == admission.binding
+                    && (active.binding == admission.binding
+                        || self
+                            .overage
+                            .get(&admission.binding.account_id_hash.0)
+                            .copied()
+                            .unwrap_or(false))
             })
     }
 
@@ -340,24 +347,29 @@ pub(crate) fn evaluate(
         observed.filter(|(_, available)| *available == 0.0 && !newer_signal)
     {
         debug_assert_eq!(available, 0.0);
-        if !view
+        result.eligible = true;
+        // Source 0231b78: enabled overage is a serving path, not a single-flight probe.
+        if view
             .overage
             .get(&view.pool.accounts[slot].account_id_hash.0)
             .copied()
             .unwrap_or(false)
-            && let Some(reset) = observation
-                .windows
-                .primary
-                .as_ref()
-                .and_then(|window| window.reset_at_ms)
-                .filter(|reset| *reset > now)
         {
+            return result;
+        }
+        if let Some(reset) = observation
+            .windows
+            .primary
+            .as_ref()
+            .and_then(|window| window.reset_at_ms)
+            .filter(|reset| *reset > now)
+        {
+            result.eligible = false;
             result.reason = Some(ActiveTransitionReason::QuotaExhausted);
             result.retry = Some(reset);
             return result;
         }
         result.probe = true;
-        result.eligible = true;
         return result;
     }
     if row.probe_lease.as_ref().is_some_and(|lease| {

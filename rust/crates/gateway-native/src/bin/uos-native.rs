@@ -98,6 +98,7 @@ fn run() -> Result<(), GatewayError> {
         .map(|name| name.trim().to_owned())
         .filter(|name| !name.is_empty());
     let data = SupervisorData::configured(sources)?.with_metadata(hostname, Vec::new());
+    let mut recovery = None;
     let renewal = config
         .owner_renewal
         .map(|renewal| {
@@ -106,6 +107,7 @@ fn run() -> Result<(), GatewayError> {
                 &config.identity,
                 &mut readonly_paths,
                 &mut unix_sockets,
+                &mut recovery,
             )
         })
         .transpose()?;
@@ -124,7 +126,7 @@ fn run() -> Result<(), GatewayError> {
         Some(renewal) => service.with_owner_renewal(renewal),
         None => service,
     };
-    service.serve(listener)
+    service.serve_recoverable(listener, recovery)
 }
 
 #[cfg(unix)]
@@ -187,6 +189,7 @@ fn prepare_owner_renewal(
     identity: &gateway_auth::native_auth::NativeTransportIdentity,
     readonly_paths: &mut Vec<std::path::PathBuf>,
     unix_sockets: &mut Vec<std::path::PathBuf>,
+    recovery: &mut Option<gateway_native_runtime::lifecycle::Recovery>,
 ) -> Result<
     gateway_native::owner_renewal::NativeOwnerRenewalService<
         gateway_native::managed_publication_http::NativeAccessPublicationHttp,
@@ -202,6 +205,7 @@ fn prepare_owner_renewal(
         owner_renewal::NativeOwnerRenewalService, unix::NativeOwnerLocation,
     };
     let mut locations = Vec::new();
+    let mut auth_paths = Vec::new();
     for owner in config.owners() {
         let home = std::fs::canonicalize(owner.codex_home()).map_err(|_| renewal_unavailable())?;
         if !home.is_dir() {
@@ -209,11 +213,12 @@ fn prepare_owner_renewal(
         }
         let auth =
             std::fs::canonicalize(home.join("auth.json")).map_err(|_| renewal_unavailable())?;
-        let socket = std::fs::canonicalize(home.join("app-server-control/app-server-control.sock"))
+        let socket = gateway_native_runtime::owner_socket::resolve(&home)
             .map_err(|_| renewal_unavailable())?;
-        if !auth.starts_with(&home) || !socket.starts_with(&home) || !auth.is_file() {
+        if !auth.starts_with(&home) || !auth.is_file() {
             return Err(renewal_unavailable());
         }
+        auth_paths.push(auth.clone());
         readonly_paths.push(auth);
         unix_sockets.push(socket);
         locations.push(NativeOwnerLocation::configured(
@@ -232,17 +237,26 @@ fn prepare_owner_renewal(
     // exactly its existing FD and cannot use DNS, redirects or a replacement FD.
     let authority_socket = preconnect(&authority)?;
     let publication_socket = preconnect(&publication)?;
+    let lifetime = gateway_native_runtime::lifecycle::Recovery::prepare(
+        &auth_paths,
+        &[&authority_socket, &publication_socket],
+    )
+    .map_err(|_| renewal_unavailable())?;
+    let signal = lifetime.signal();
+    *recovery = Some(lifetime);
     NativeOwnerRenewalService::configured(
         NativeAuthorityHttp::from_connected(
             authority.as_str(),
             authority_socket,
             identity.clone(),
-        )?,
+        )?
+        .with_failure_signal(signal.clone()),
         NativeAccessPublicationHttp::from_connected(
             publication.as_str(),
             publication_socket,
             identity.clone(),
-        )?,
+        )?
+        .with_failure_signal(signal),
         locations,
     )
 }

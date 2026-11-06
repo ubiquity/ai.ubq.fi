@@ -68,49 +68,20 @@ pub(crate) fn bearer_headers(secret: &str, accept: &str) -> Headers {
     ])
 }
 pub(crate) fn codex_synthetic_id(id: &str) -> bool {
-    let (response, rest) = if let Some(rest) = id.strip_prefix("resp_") {
-        let Some((response, rest)) = rest.split_once('_') else {
-            return false;
-        };
-        (response, rest)
-    } else {
-        let Some((kind, rest)) = id.split_once('_') else {
-            return false;
-        };
-        if !["rs", "msg", "fc", "ctc"].contains(&kind) {
-            return false;
-        }
-        let Some(rest) = rest.strip_prefix("resp_") else {
-            return false;
-        };
-        let Some((response, rest)) = rest.split_once('_') else {
-            return false;
-        };
-        if response.is_empty()
-            || response.len() > 40
-            || !response.chars().all(|c| c.is_ascii_alphanumeric())
-        {
-            return false;
-        }
-        return rest.split('_').count() <= 2
-            && rest
-                .split('_')
-                .all(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()));
+    const KINDS: [&str; 4] = ["rs", "msg", "fc", "ctc"];
+    let response =
+        |s: &str| !s.is_empty() && s.len() <= 40 && s.chars().all(|c| c.is_ascii_alphanumeric());
+    let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    let indexes = |s: &str| s.split('_').count() <= 2 && s.split('_').all(digits);
+    // `resp_<response>_<kind>_<indexes>` or `<kind>_resp_<response>_<indexes>`.
+    let Some(rest) = id.strip_prefix("resp_") else {
+        let tail = id.split_once('_').filter(|(kind, _)| KINDS.contains(kind));
+        let tail = tail.and_then(|(_, rest)| rest.strip_prefix("resp_")?.split_once('_'));
+        return tail.is_some_and(|(id, rest)| response(id) && indexes(rest));
     };
-    if response.is_empty()
-        || response.len() > 40
-        || !response.chars().all(|c| c.is_ascii_alphanumeric())
-    {
-        return false;
-    }
-    let Some((kind, indexes)) = rest.split_once('_') else {
-        return false;
-    };
-    ["rs", "msg", "fc", "ctc"].contains(&kind)
-        && indexes.split('_').count() <= 2
-        && indexes
-            .split('_')
-            .all(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+    let parts = rest.split_once('_').filter(|(id, _)| response(id));
+    let parts = parts.and_then(|(_, rest)| rest.split_once('_'));
+    parts.is_some_and(|(kind, rest)| KINDS.contains(&kind) && indexes(rest))
 }
 pub fn codex_replay_input(input: &Value) -> SourceJson {
     crate::source_controls::replay(&crate::source::generated(input))

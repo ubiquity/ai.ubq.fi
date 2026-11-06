@@ -200,9 +200,53 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
     kernel: Option<KernelBefore>,
 ) -> Result<NativeRenewalActor, GatewayError> {
     let now = authority.fresh_time(0)?;
+    check_context(original, context, &principal, now)?;
+    let mut tx = authority.transaction(now)?;
+    let (source, transient) = source_actor(
+        authority, &mut tx, config, original, &principal, kernel, now,
+    )
+    .await?;
+    let owner_revision = observed(&mut tx, &keys::paid_control_owner()).await?;
+    let config_revision = observed(&mut tx, &keys::paid_control_config()).await?;
+    let runtime_revision = observed(&mut tx, &runtime_key()).await?;
+    let mut stored = StoredNativeActor {
+        v: 1,
+        principal: principal_id(&principal),
+        scope,
+        config_digest: config_digest(config)?,
+        owner_revision,
+        config_revision,
+        runtime_revision,
+        source_valid_until_ms: None,
+        source,
+    };
+    tx.now = authority.fresh_time(now)?;
+    read_current(&mut tx, &stored, config).await?;
+    bind_source_expiry(authority, &mut tx, &mut stored).await?;
+    let current = read_current(&mut tx, &stored, config).await?;
+    tx.now = authority.fresh_time(tx.now)?;
+    ensure_lifetime(&stored, tx.now)?;
+    if !tx.commit().await? {
+        return Err(fail());
+    }
+    validate_current_time(&stored, authority.fresh_time(now)?)?;
+    Ok(NativeRenewalActor {
+        context: context.clone(),
+        stored,
+        policy_digest: current.policy_digest,
+        transient,
+    })
+}
+
+fn check_context(
+    original: &AuthRequest,
+    context: &RequestContext,
+    principal: &AuthPrincipal,
+    now: i64,
+) -> Result<(), GatewayError> {
     crate::text(&context.request_id.0)?;
     crate::text(&context.route)?;
-    if context.principal.0 != principal_id(&principal)
+    if context.principal.0 != principal_id(principal)
         || context.started_at_ms < 0
         || context.started_at_ms > now
     {
@@ -224,72 +268,49 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
     if context.key_id.as_ref().map(|key| key.0.as_str()) != expected_key {
         return Err(fail());
     }
-    let mut tx = authority.transaction(now)?;
-    let mut transient = None;
+    Ok(())
+}
+async fn bind_source_expiry<S: AuthorityStore, I: TokenSource>(
+    authority: &Authority<S, I>,
+    tx: &mut Transaction<'_, S, I>,
+    stored: &mut StoredNativeActor,
+) -> Result<(), GatewayError> {
+    for key in source_keys(stored)? {
+        let record = authority.store().read(&key).await?;
+        if tx.revision(&key).as_deref() != record.as_ref().map(|row| row.revision.as_str()) {
+            return Err(fail());
+        }
+        if let Some(expiry) = record.and_then(|row| row.expires_at_ms) {
+            stored.source_valid_until_ms = Some(
+                stored
+                    .source_valid_until_ms
+                    .map_or(expiry, |prior| prior.min(expiry)),
+            );
+        }
+    }
+    Ok(())
+}
+async fn source_actor<S: AuthorityStore, I: TokenSource>(
+    authority: &Authority<S, I>,
+    tx: &mut Transaction<'_, S, I>,
+    config: &AuthConfig,
+    original: &AuthRequest,
+    principal: &AuthPrincipal,
+    kernel: Option<KernelBefore>,
+    now: i64,
+) -> Result<(SourceActor, Option<RevisionCheck>), GatewayError> {
     let token = principal.token.as_ref().map(|token| token.expose());
     let source = match &principal.method {
         AuthMethod::KvApiKey { key_id, policy } => {
-            let key = api_keys::hash_key(&policy.token_hash);
-            let record: api_keys::ApiKeyHashRecord = tx.read(&key).await?.ok_or_else(fail)?;
-            let current = api_keys::policy_from_record(policy.token_hash.clone(), record, now)?;
-            if current != *policy {
-                return Err(fail());
-            }
-            let source_record = authority.store().read(&key).await?.ok_or_else(fail)?;
-            if tx.revision(&key).as_deref() != Some(source_record.revision.as_str()) {
-                return Err(fail());
-            }
-            let mut expires_at_ms =
-                (policy.expires_at_ms != api_keys::NO_LIMIT).then_some(policy.expires_at_ms);
-            if let Some(source_expiry) = source_record.expires_at_ms {
-                expires_at_ms =
-                    Some(expires_at_ms.map_or(source_expiry, |expiry| expiry.min(source_expiry)));
-            }
-            let policy_key = keys::api_policy(key_id);
-            let _: Option<crate::quota::ApiKeyPolicy> = tx.read(&policy_key).await?;
-            SourceActor::ApiKey {
-                key_id: key_id.clone(),
-                token_hash: policy.token_hash.clone(),
-                hash_revision: tx.revision(&key).ok_or_else(fail)?,
-                policy_revision: tx.revision(&policy_key),
-                expires_at_ms,
-            }
+            api_key_source(authority, tx, key_id, policy, now).await?
         }
         AuthMethod::PasskeySession {
             user_id, is_admin, ..
         } => {
             let token = token.ok_or_else(fail)?;
-            let digest = session_index::digest(token);
-            let index = session_index::read_current(authority.store(), &digest, now)
-                .await?
-                .ok_or_else(fail)?;
-            let source_key = passkeys::key("sessions", token);
-            let session: PasskeySession = tx.read(&source_key).await?.ok_or_else(fail)?;
-            let user_key = passkeys::key("users", user_id);
-            let user: PasskeyUser = tx.read(&user_key).await?.ok_or_else(fail)?;
-            if session.token != token
-                || session.user_id != *user_id
-                || user.id != *user_id
-                || user.is_admin != *is_admin
-                || session.expires_at_ms <= now
-                || tx.revision(&source_key).as_deref()
-                    != Some(index.fence.session_revision.as_str())
-                || index.fence.user_id != *user_id
-            {
-                return Err(fail());
-            }
-            transient = Some(RevisionCheck {
-                key: source_key,
-                expected_revision: Some(index.fence.session_revision.clone()),
-            });
-            SourceActor::Session {
-                digest,
-                index_revision: index.revision,
-                session_revision: index.fence.session_revision,
-                user_id: user_id.clone(),
-                user_revision: tx.revision(&user_key).ok_or_else(fail)?,
-                expires_at_ms: index.fence.expires_at_ms,
-            }
+            let (source, check) =
+                session_source(authority, tx, token, user_id, *is_admin, now).await?;
+            return Ok((source, Some(check)));
         }
         AuthMethod::GithubToken {
             owner,
@@ -301,19 +322,7 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
             if &before.owner != owner || &before.repo != repo {
                 return Err(fail());
             }
-            let mut configured = config.clone();
-            let stored_keys: Option<Vec<Value>> =
-                tx.read(&upstream::kernel_public_keys_key()).await?;
-            for item in stored_keys.into_iter().flatten() {
-                if let Some(pem) = item.get("pem").and_then(Value::as_str)
-                    && !configured
-                        .kernel_public_keys_pem
-                        .iter()
-                        .any(|key| key == pem)
-                {
-                    configured.kernel_public_keys_pem.push(pem.into());
-                }
-            }
+            let configured = kernel_config(tx, config).await?;
             let claims =
                 upstream::verify_kernel(original, token.ok_or_else(fail)?, &configured, now)?;
             if claims.owner != *owner || claims.repo != *repo || claims.state_id != *state_id {
@@ -341,8 +350,11 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
         {
             SourceActor::Passport {
                 sub: claims.sub.clone(),
-                jti: claims.jti.clone(),
-                expires_at_ms: claims.exp.checked_mul(1000).ok_or_else(fail)?,
+                jti: claims.jti.clone().ok_or_else(fail)?,
+                expires_at_ms: claims
+                    .exp
+                    .and_then(|exp| exp.checked_mul(1000))
+                    .ok_or_else(fail)?,
             }
         }
         AuthMethod::PassportSession { .. } | AuthMethod::PassportBearer { .. } => {
@@ -365,48 +377,98 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
             }
         }
     };
-    let owner_revision = observed(&mut tx, &keys::paid_control_owner()).await?;
-    let config_revision = observed(&mut tx, &keys::paid_control_config()).await?;
-    let runtime_revision = observed(&mut tx, &runtime_key()).await?;
-    let mut stored = StoredNativeActor {
-        v: 1,
-        principal: principal_id(&principal),
-        scope,
-        config_digest: config_digest(config)?,
-        owner_revision,
-        config_revision,
-        runtime_revision,
-        source_valid_until_ms: None,
-        source,
-    };
-    tx.now = authority.fresh_time(now)?;
-    read_current(&mut tx, &stored, config).await?;
-    for key in source_keys(&stored)? {
-        let record = authority.store().read(&key).await?;
-        if tx.revision(&key).as_deref() != record.as_ref().map(|row| row.revision.as_str()) {
-            return Err(fail());
-        }
-        if let Some(expiry) = record.and_then(|row| row.expires_at_ms) {
-            stored.source_valid_until_ms = Some(
-                stored
-                    .source_valid_until_ms
-                    .map_or(expiry, |prior| prior.min(expiry)),
-            );
-        }
-    }
-    let current = read_current(&mut tx, &stored, config).await?;
-    tx.now = authority.fresh_time(tx.now)?;
-    ensure_lifetime(&stored, tx.now)?;
-    if !tx.commit().await? {
+    Ok((source, None))
+}
+async fn api_key_source<S: AuthorityStore, I: TokenSource>(
+    authority: &Authority<S, I>,
+    tx: &mut Transaction<'_, S, I>,
+    key_id: &str,
+    policy: &api_keys::ApiKeyPolicy,
+    now: i64,
+) -> Result<SourceActor, GatewayError> {
+    let key = api_keys::hash_key(&policy.token_hash);
+    let record: api_keys::ApiKeyHashRecord = tx.read(&key).await?.ok_or_else(fail)?;
+    let current = api_keys::policy_from_record(policy.token_hash.clone(), record, now)?;
+    if current != *policy {
         return Err(fail());
     }
-    validate_current_time(&stored, authority.fresh_time(now)?)?;
-    Ok(NativeRenewalActor {
-        context: context.clone(),
-        stored,
-        policy_digest: current.policy_digest,
-        transient,
+    let source_record = authority.store().read(&key).await?.ok_or_else(fail)?;
+    if tx.revision(&key).as_deref() != Some(source_record.revision.as_str()) {
+        return Err(fail());
+    }
+    let mut expires_at_ms =
+        (policy.expires_at_ms != api_keys::NO_LIMIT).then_some(policy.expires_at_ms);
+    if let Some(source_expiry) = source_record.expires_at_ms {
+        expires_at_ms =
+            Some(expires_at_ms.map_or(source_expiry, |expiry| expiry.min(source_expiry)));
+    }
+    let policy_key = keys::api_policy(key_id);
+    let _: Option<crate::quota::ApiKeyPolicy> = tx.read(&policy_key).await?;
+    Ok(SourceActor::ApiKey {
+        key_id: key_id.to_owned(),
+        token_hash: policy.token_hash.clone(),
+        hash_revision: tx.revision(&key).ok_or_else(fail)?,
+        policy_revision: tx.revision(&policy_key),
+        expires_at_ms,
     })
+}
+async fn session_source<S: AuthorityStore, I: TokenSource>(
+    authority: &Authority<S, I>,
+    tx: &mut Transaction<'_, S, I>,
+    token: &str,
+    user_id: &str,
+    is_admin: bool,
+    now: i64,
+) -> Result<(SourceActor, RevisionCheck), GatewayError> {
+    let digest = session_index::digest(token);
+    let index = session_index::read_current(authority.store(), &digest, now)
+        .await?
+        .ok_or_else(fail)?;
+    let source_key = passkeys::key("sessions", token);
+    let session: PasskeySession = tx.read(&source_key).await?.ok_or_else(fail)?;
+    let user_key = passkeys::key("users", user_id);
+    let user: PasskeyUser = tx.read(&user_key).await?.ok_or_else(fail)?;
+    if session.token != token
+        || session.user_id != user_id
+        || user.id != user_id
+        || user.is_admin != is_admin
+        || session.expires_at_ms <= now
+        || tx.revision(&source_key).as_deref() != Some(index.fence.session_revision.as_str())
+        || index.fence.user_id != user_id
+    {
+        return Err(fail());
+    }
+    let check = RevisionCheck {
+        key: source_key,
+        expected_revision: Some(index.fence.session_revision.clone()),
+    };
+    let source = SourceActor::Session {
+        digest,
+        index_revision: index.revision,
+        session_revision: index.fence.session_revision,
+        user_id: user_id.to_owned(),
+        user_revision: tx.revision(&user_key).ok_or_else(fail)?,
+        expires_at_ms: index.fence.expires_at_ms,
+    };
+    Ok((source, check))
+}
+async fn kernel_config<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    config: &AuthConfig,
+) -> Result<AuthConfig, GatewayError> {
+    let mut configured = config.clone();
+    let stored_keys: Option<Vec<Value>> = tx.read(&upstream::kernel_public_keys_key()).await?;
+    for item in stored_keys.into_iter().flatten() {
+        if let Some(pem) = item.get("pem").and_then(Value::as_str)
+            && !configured
+                .kernel_public_keys_pem
+                .iter()
+                .any(|key| key == pem)
+        {
+            configured.kernel_public_keys_pem.push(pem.into());
+        }
+    }
+    Ok(configured)
 }
 
 /// Import-only own-publication adaptation. The private pair is issued only
@@ -667,26 +729,13 @@ fn config_digest(config: &AuthConfig) -> Result<String, GatewayError> {
     )
 }
 /// Source-exact projection; only actual AuthService authentication can mint an actor.
+/// The single shared projection in `AuthMethod::principal_id`.
 pub fn principal_id(principal: &AuthPrincipal) -> String {
-    match &principal.method {
-        AuthMethod::KvApiKey { key_id, .. } => format!("api-key:{key_id}"),
-        AuthMethod::PasskeySession { user_id, .. } => format!("passkey-user:{user_id}"),
-        AuthMethod::PassportSession { claims } | AuthMethod::PassportBearer { claims } => {
-            format!("passport-user:{}", claims.sub)
-        }
-        AuthMethod::GithubToken { owner, repo, .. } => format!(
-            "github-repo:{}/{}",
-            owner.to_lowercase(),
-            repo.to_lowercase()
-        ),
-        AuthMethod::AuthTokensAllowlist => "auth-method:auth_tokens_allowlist".into(),
-        AuthMethod::AdminAllowlist => "auth-method:admin_allowlist".into(),
-        AuthMethod::DenoDeployToken => "auth-method:deno_deploy_token".into(),
-        AuthMethod::Disabled => principal.token.as_ref().map_or_else(
-            || "local-auth-disabled".into(),
-            |token| format!("bearer-sha256:{}", sha256_hex(token.expose().as_bytes())),
-        ),
-    }
+    let token = principal
+        .token
+        .as_ref()
+        .map(gateway_auth::crypto::Secret::expose);
+    principal.method.principal_id(token)
 }
 fn runtime_key() -> RecordKey {
     gateway_auth::store::key(json!(["uos_ai", "runtime_config", "v2"]))

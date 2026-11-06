@@ -1,5 +1,5 @@
 //! Finite compaction I/O inside the original request lifetime; never a child admission.
-mod protocol;
+pub mod protocol;
 
 use crate::{
     host::{PlatformHost, provider_secret},

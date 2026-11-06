@@ -10,6 +10,7 @@ gateway-core.workspace = true
 gateway-authority.workspace = true
 gateway-providers.workspace = true
 gateway-schema.workspace = true
+gateway-provider-catalog-cache.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

@@ -154,6 +154,9 @@ pub struct AcceptedObservation {
     pub response_status: Option<u16>,
     pub state: String,
     pub observation: QuotaObservation,
+    /// Source `observation_source`, set only by the ordinary response-header seam.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 impl AcceptedObservation {
     /// Source JSON number spelling also supports m19's integer timestamp DTO.
@@ -246,68 +249,4 @@ pub trait ClaudePoolHost: AuthHost {
 
 pub(crate) struct CommittedOutcome {
     pub state: QuotaState,
-}
-
-#[cfg(test)]
-mod producer_order_tests {
-    use super::*;
-    #[test]
-    fn accepted_standard_families_follow_actual_source_producer_order() {
-        let mut quota = QuotaObservation::empty(1_800_000_000_000);
-        for (index, family) in crate::quota::STANDARD_FAMILIES.into_iter().enumerate() {
-            quota.standard.insert(
-                family.into(),
-                crate::quota::StandardWindow {
-                    limit: Some((index + 1) as f64),
-                    remaining: None,
-                    reset_at_ms: None,
-                    observed_at_ms: quota.observed_at_ms,
-                },
-            );
-        }
-        let event = AcceptedObservation {
-            v: 1,
-            observation_id: "fixture-observation".into(),
-            account_id: "fixture-account".into(),
-            account_cohort_id: "fixture-cohort".into(),
-            credential_kind: "api_key".into(),
-            workspace_id: Some(JsString16::from_units(vec![119, 0xd800])),
-            source_observed_at_ms: Some(1_800_000_000_000),
-            sampled_at_ms: 1_800_000_000_000,
-            response_status: Some(200),
-            state: "available".into(),
-            observation: quota,
-        };
-        let document = event.source_value();
-        let observation = source::member(&document, "observation").unwrap();
-        let standard = source::member(&observation, "standard").unwrap();
-        let fields = source::entries(&standard).unwrap();
-        assert_eq!(
-            fields
-                .iter()
-                .map(|(name, _)| name.try_utf8().unwrap())
-                .collect::<Vec<_>>(),
-            crate::quota::STANDARD_FAMILIES
-        );
-        for (index, (_, value)) in fields.iter().enumerate() {
-            assert_eq!(
-                source::number(&source::member(value, "limit").unwrap()),
-                Some((index + 1) as f64)
-            );
-        }
-        assert_eq!(
-            source::string(&source::member(&document, "workspace_id").unwrap()),
-            event.workspace_id
-        );
-        // Serialization must not mutate the in-memory map or any consumer's source JSON.
-        assert_eq!(
-            event
-                .observation
-                .standard
-                .keys()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-            vec!["input-tokens", "output-tokens", "requests"]
-        );
-    }
 }

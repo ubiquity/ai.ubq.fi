@@ -37,11 +37,7 @@ pub(crate) async fn systemone<S: QueryStore, H: ExtrasHost>(
         )));
     }
     // Validation precedes provider control/credential checks in the source handler.
-    let preliminary = extras::prepare_source_systemone(
-        &request.body,
-        &gateway_providers::types::PrepareOptions::default(),
-    );
-    if let Err(e) = preliminary {
+    if let Err(e) = extras::prepare_source_systemone(&request.body, &Default::default()) {
         return Ok(ExtrasResponse::source_error(e));
     }
     let row = store
@@ -94,24 +90,18 @@ pub(crate) async fn systemone<S: QueryStore, H: ExtrasHost>(
         }
         Ok(result) => {
             if !(200..300).contains(&result.status) {
-                let status = if matches!(result.status, 400 | 429) {
-                    result.status
-                } else {
-                    502
-                };
-                let mut r = ExtrasResponse::error(GatewayError::new(
-                    status,
+                // The shared OpenRouter decision transport passes 400, 413 and 429.
+                let status = Some(result.status).filter(|s| matches!(s, 400 | 413 | 429));
+                let error = GatewayError::new(
+                    status.unwrap_or(502),
                     "System One upstream error",
                     Some("openrouter_upstream_error"),
-                ));
+                );
+                let mut r = ExtrasResponse::error(error.clone());
                 r.health.push(observed(result.status));
                 r.upstream_errors.push(DispatchFailure {
                     origin: DispatchFailureOrigin::Upstream,
-                    error: Box::new(GatewayError::new(
-                        status,
-                        "System One upstream error",
-                        Some("openrouter_upstream_error"),
-                    )),
+                    error: Box::new(error),
                     headers: result.headers,
                     quota_refusal: false,
                     upstream_status: Some(result.status),

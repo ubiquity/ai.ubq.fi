@@ -39,6 +39,8 @@
     "kv:incident-v2": "bun --no-env-file scripts/kv-migrate.ts incident-v2",
     "kv:validate-http": "bun --no-env-file scripts/kv-migrate.ts validate-http",
     "kv:convert": "bun --no-env-file src/kv-conversion/cli.ts",
+    "kv:restore-native": "bun --no-env-file --no-install scripts/kv-migrate.ts restore-native",
+    "state:transfer": "bun --no-env-file --no-install tools/cloudflare/state-transfer.ts",
     "benchmark:run": "bun --no-env-file benchmarks/runner.ts",
     "benchmark:summary": "bun --no-env-file benchmarks/summarize.ts",
     "benchmark:fixture-revision": "bun --no-env-file benchmarks/fixture-revision.ts",

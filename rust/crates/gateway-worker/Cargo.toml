@@ -28,12 +28,15 @@ gateway-claude-runtime.workspace = true
 gateway-admin-runtime.workspace = true
 gateway-routing-runtime.workspace = true
 gateway-extras-runtime.workspace = true
+gateway-decisions.workspace = true
 gateway-publication.workspace = true
 gateway-publication-policy.workspace = true
 gateway-publication-transport.workspace = true
 gateway-observability.workspace = true
+gateway-prompt-admission.workspace = true
 gateway-live-runtime.workspace = true
 gateway-migration.workspace = true
+gateway-state-transfer.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }

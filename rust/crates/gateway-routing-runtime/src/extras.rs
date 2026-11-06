@@ -277,7 +277,7 @@ impl<
                         account
                     }
                     CodexRecovery::Reselect => return Ok(None),
-                    CodexRecovery::Declined => {
+                    CodexRecovery::Declined | CodexRecovery::Unredeemed(_) => {
                         return Err(GatewayError::new(
                             429,
                             "Codex subscriptions have no applicable capacity for this image child.",

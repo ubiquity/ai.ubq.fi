@@ -68,7 +68,7 @@ const sameCredentials = (
   right: Pick<CodexAuthState, "access_token" | "refresh_token">
 ): boolean => left.access_token === right.access_token && left.refresh_token === right.refresh_token;
 
-type NativeDocument = { auth: CodexAuthState; email: string | null; refreshedAt: string | null; externalUserId?: string };
+export type NativeDocument = { auth: CodexAuthState; email: string | null; refreshedAt: string | null; externalUserId?: string };
 const readNativeDocument = async (home: string): Promise<NativeDocument> => {
   const raw: unknown = hooks?.readAuth ? await hooks.readAuth() : JSON.parse(await readFile(`${home}/auth.json`, "utf8"));
   const external = parseExternalNativeCodexDocument(raw);
@@ -140,7 +140,7 @@ const nativeRefreshTime = (value: string | null | undefined): bigint | null => {
   return BigInt(milliseconds) * 1_000_000n + BigInt(fractional.padEnd(9, "0").slice(3, 9));
 };
 
-const verifyNativeProgress = (previous: CodexAuthState, document: NativeDocument, requireUsableAccessToken = true): void => {
+export const verifyNativeProgress = (previous: CodexAuthState, document: NativeDocument, requireUsableAccessToken = true, nowMs = Date.now()): void => {
   const next = document.auth;
   verifyExternalNativeIdentity(previous, document);
   const previousExpiry = getJwtExpMs(previous.access_token);
@@ -152,7 +152,7 @@ const verifyNativeProgress = (previous: CodexAuthState, document: NativeDocument
     next.account_id !== previous.account_id ||
     !nextExpiry ||
     (!requireUsableAccessToken && previousExpiry === null && !advancedNativeTime) ||
-    (requireUsableAccessToken && nextExpiry <= Date.now() + 120_000) ||
+    (requireUsableAccessToken && nextExpiry <= nowMs + 120_000) ||
     (previousExpiry !== null && (nextExpiry < previousExpiry || (nextExpiry === previousExpiry && !advancedNativeTime)))
   ) {
     throw new CodexError("Native Codex credential generation did not advance; no stale credentials were adopted.", "codex_auth_refresh_failed", 503);

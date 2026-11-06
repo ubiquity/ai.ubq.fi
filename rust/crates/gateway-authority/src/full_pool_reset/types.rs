@@ -1,6 +1,7 @@
 use crate::{
     reset_types::{ResetCandidate, ResetConfig},
     routing_types::CohortProof,
+    routing_types::UnredeemedReset,
 };
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{AccountBinding, RequestContext};
@@ -67,6 +68,29 @@ pub enum FullPoolEvaluation {
     },
     Ready(Box<AutomaticResetPermit>),
 }
+impl FullPoolPreparation {
+    /// Source planOverageFallback input for every preparation that observes no inventory.
+    pub fn observe(self) -> Result<Box<FullPoolResetPlan>, UnredeemedReset> {
+        match self {
+            Self::Observe(plan) => Ok(plan),
+            Self::Declined { reason } => Err(UnredeemedReset::declined(reason)),
+            Self::Cached { decision } => Err(UnredeemedReset::cached(&decision)),
+        }
+    }
+}
+impl FullPoolEvaluation {
+    /// Source planOverageFallback input for every evaluation that mints no live permit.
+    pub fn ready(self) -> Result<Box<AutomaticResetPermit>, UnredeemedReset> {
+        match self {
+            Self::Ready(permit) => Ok(permit),
+            Self::Declined { reason } => Err(UnredeemedReset::declined(reason)),
+            Self::Shadow {
+                decision,
+                duplicate,
+            } => Err(UnredeemedReset::shadow(&decision, duplicate)),
+        }
+    }
+}
 #[derive(Clone)]
 pub(super) struct Member {
     pub candidate: ResetCandidate,
@@ -121,6 +145,14 @@ impl AutomaticResetPermit {
     }
     pub fn credit_id(&self) -> &JsString16 {
         &self.credit.credit_id
+    }
+    /// Only the pre-send day cap proves no reset was consumed; other failures stay declined.
+    pub fn unredeemed(&self, error: &GatewayError) -> Option<UnredeemedReset> {
+        let reason = error.envelope.error.code.as_deref()?;
+        (reason == "account_day_limit_reached").then(|| UnredeemedReset {
+            reason: reason.into(),
+            selected_account: self.decision.selected_account_id_hash.clone(),
+        })
     }
     pub fn episode_hash(&self) -> &str {
         &self.decision.episode_hash

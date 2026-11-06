@@ -11,29 +11,39 @@ use serde_json::{Value, json};
 pub(crate) fn key(name: &str) -> RecordKey {
     store::key(json!(["uos_ai", "provider_capacity", "v1", name]))
 }
+fn capacity_key(parts: Value) -> RecordKey {
+    store::prefixed(&["uos_ai", "provider_capacity", "v1"], parts)
+}
 fn history_key(point: &Value) -> RecordKey {
-    store::key(json!([
-        "uos_ai",
-        "provider_capacity",
-        "v1",
-        "history",
-        point["bucket_start_at_ms"]
-    ]))
+    capacity_key(json!(["history", point["bucket_start_at_ms"]]))
 }
 fn available_key(slot: u8) -> RecordKey {
-    store::key(json!([
-        "uos_ai",
-        "provider_capacity",
-        "v1",
-        "last_available",
-        slot
-    ]))
+    capacity_key(json!(["last_available", slot]))
 }
 fn observation(value: &Value) -> Option<Value> {
     let at = store::safe_i64(&value["sampled_at_ms"])?;
     let source = shape::read_codex(&value["source"], at)?;
     (source["state"] == "available")
         .then(|| json!({"sampled_at_ms":value["sampled_at_ms"],"source":source}))
+}
+fn retained_source(
+    retained: &[Value],
+    snapshot: &Value,
+    slot: u8,
+    current: &Value,
+) -> Option<Value> {
+    let usable = |s: &&Value| s["state"] != "unavailable" && capacity_math::same_cohort(s, current);
+    retained
+        .iter()
+        .filter(|p| {
+            store::safe_i64(&p["sampled_at_ms"]) < store::safe_i64(&snapshot["snapshot_at_ms"])
+        })
+        .filter_map(|p| {
+            shape::source(p, slot)
+                .filter(usable)
+                .map(|s| json!({"sampled_at_ms":p["sampled_at_ms"],"source":s}))
+        })
+        .max_by_key(|v| store::safe_i64(&v["sampled_at_ms"]))
 }
 pub(crate) fn valid_rollup(v: &Value) -> bool {
     if v["v"] != 1
@@ -196,6 +206,42 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         Ok(None)
     }
+    /// Restores the latest retained available source for a slot leaving an unavailable state.
+    async fn recover_last(
+        &self,
+        snapshot: &Value,
+        previous: Option<&Value>,
+        last: &mut Vec<Value>,
+        at: i64,
+    ) {
+        let recover: Vec<u8> = [1, 2]
+            .into_iter()
+            .filter(|slot| {
+                let now = shape::source(snapshot, *slot);
+                let before = previous.and_then(|p| shape::source(p, *slot));
+                now.zip(before).is_some_and(|(n, b)| {
+                    n["state"] != "unavailable"
+                        && b["state"] == "unavailable"
+                        && capacity_math::same_cohort(b, n)
+                        && !last.iter().any(|v| {
+                            v["source"]["slot"] == *slot
+                                && capacity_math::same_cohort(&v["source"], n)
+                        })
+                })
+            })
+            .collect();
+        if recover.is_empty() {
+            return;
+        }
+        let retained = self.capacity_history(at).await.unwrap_or_default();
+        for slot in recover {
+            if let Some(v) = shape::source(snapshot, slot)
+                .and_then(|current| retained_source(&retained, snapshot, slot, current))
+            {
+                last.push(v)
+            }
+        }
+    }
     pub(crate) async fn persist_capacity_snapshot(
         &self,
         lease: &StoredRecord,
@@ -216,64 +262,18 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         let previous = store::value(old_snapshot.as_ref(), at)?.and_then(shape::read_snapshot);
         let previous_history = store::value(old_point.as_ref(), at)?.and_then(shape::read_history);
-        let recover: Vec<u8> = [1, 2]
-            .into_iter()
-            .filter(|slot| {
-                let now = shape::source(snapshot, *slot);
-                let before = previous.as_ref().and_then(|p| shape::source(p, *slot));
-                now.zip(before).is_some_and(|(n, b)| {
-                    n["state"] != "unavailable"
-                        && b["state"] == "unavailable"
-                        && capacity_math::same_cohort(b, n)
-                        && !last.iter().any(|v| {
-                            v["source"]["slot"] == *slot
-                                && capacity_math::same_cohort(&v["source"], n)
-                        })
-                })
-            })
-            .collect();
-        if !recover.is_empty() {
-            let retained = self.capacity_history(at).await.unwrap_or_default();
-            for slot in recover {
-                let Some(current) = shape::source(snapshot, slot) else {
-                    continue;
-                };
-                let candidate = retained
-                    .iter()
-                    .filter(|p| {
-                        store::safe_i64(&p["sampled_at_ms"])
-                            < store::safe_i64(&snapshot["snapshot_at_ms"])
-                    })
-                    .filter_map(|p| {
-                        shape::source(p, slot)
-                            .filter(|s| {
-                                s["state"] != "unavailable"
-                                    && capacity_math::same_cohort(s, current)
-                            })
-                            .map(|s| json!({"sampled_at_ms":p["sampled_at_ms"],"source":s}))
-                    })
-                    .max_by_key(|v| store::safe_i64(&v["sampled_at_ms"]));
-                if let Some(v) = candidate {
-                    last.push(v)
-                }
-            }
-        }
+        self.recover_last(snapshot, previous.as_ref(), &mut last, at)
+            .await;
         let events = capacity_math::rate_limit_events(previous.as_ref(), snapshot, &last);
         let preserve = !events.is_empty()
             || previous_history
                 .as_ref()
                 .is_some_and(|p| capacity_math::preserve_transition(p, &point));
         let bucket = store::safe_i64(&point["bucket_start_at_ms"])
-            .expect("validated source bucket")
+            .ok_or_else(|| store::invalid("Capacity history bucket is invalid"))?
             / shape::HOUR_MS
             * shape::HOUR_MS;
-        let rollup_key = store::key(json!([
-            "uos_ai",
-            "provider_capacity",
-            "v1",
-            "rollup",
-            bucket
-        ]));
+        let rollup_key = capacity_key(json!(["rollup", bucket]));
         let rollup = self.store.read(&rollup_key).await.ok();
         let mut checks = vec![store::check(&key("lease"), Some(lease))];
         let expiry = Some(at + shape::RETENTION_MS);
@@ -284,15 +284,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             expiry,
         )?];
         for event in events {
-            writes.push(store::put(
-                self.host.as_ref(),
-                event_key(
-                    "rate_limit_reset_event",
-                    event["event_id"].as_str().expect("source event ID"),
-                ),
-                event,
-                expiry,
-            )?)
+            let id = event["event_id"]
+                .as_str()
+                .ok_or_else(|| store::invalid("Capacity event ID is invalid"))?;
+            let key = event_key("rate_limit_reset_event", id);
+            writes.push(store::put(self.host.as_ref(), key, event, expiry)?)
         }
         for slot in [1, 2] {
             if let Some(source) =
@@ -322,10 +318,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if preserve && let Some(old) = previous_history {
             writes.push(store::put(
                 self.host.as_ref(),
-                store::key(json!([
-                    "uos_ai",
-                    "provider_capacity",
-                    "v1",
+                capacity_key(json!([
                     "history",
                     point["bucket_start_at_ms"],
                     "transition",
@@ -439,20 +432,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let first = since.max(0) / shape::HOUR_MS * shape::HOUR_MS;
         let last = at.max(since) / shape::HOUR_MS * shape::HOUR_MS;
         let selector = QuerySelector::Range {
-            start: store::key(json!([
-                "uos_ai",
-                "provider_capacity",
-                "v1",
-                "rollup",
-                first
-            ])),
-            end: store::key(json!([
-                "uos_ai",
-                "provider_capacity",
-                "v1",
-                "rollup",
-                last + shape::HOUR_MS
-            ])),
+            start: capacity_key(json!(["rollup", first])),
+            end: capacity_key(json!(["rollup", last + shape::HOUR_MS])),
         };
         let mut rows = Vec::new();
         for entry in store::scan_selector(self.store.as_ref(), selector, false, at, 20000).await? {

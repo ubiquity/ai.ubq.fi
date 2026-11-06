@@ -13,10 +13,9 @@ fn failed(detail: &'static str) -> CompactionFailure {
 }
 pub fn check<H: CompactionHost>(host: &H) -> Result<(), CompactionFailure> {
     if host.cancelled() {
-        Err(CompactionFailure::new(FailureKind::Cancelled, "aborted"))
-    } else {
-        Ok(())
+        return Err(CompactionFailure::new(FailureKind::Cancelled, "aborted"));
     }
+    Ok(())
 }
 pub fn now<H: CompactionHost>(host: &H) -> Result<i64, CompactionFailure> {
     host.now_ms().map_err(|_| failed("clock-unavailable"))
@@ -272,6 +271,38 @@ pub fn plan_windows(messages: &[Message], calls: &[ToolCall], max: usize) -> Vec
     }
     windows
 }
+fn decide(
+    calls: &[ToolCall],
+    answers: &BTreeMap<Text, (f64, f64)>,
+    threshold: f64,
+) -> Result<Vec<Decision>, CompactionFailure> {
+    let mut decisions = Vec::new();
+    for call in calls {
+        let (keep_call, keep_result) = match answers.get(&call.id) {
+            _ if call.pinned => (1.0, 1.0),
+            Some(answer) => *answer,
+            None => return Err(failed("missing-decision")),
+        };
+        let (action, reason) = if call.pinned {
+            (Action::Keep, Reason::Pinned)
+        } else if keep_result >= threshold {
+            (Action::Keep, Reason::Kept)
+        } else if keep_call >= threshold {
+            (Action::DropResult, Reason::ResultDropped)
+        } else {
+            (Action::DropCall, Reason::CallDropped)
+        };
+        decisions.push(Decision {
+            id: call.id.clone(),
+            tool: call.tool.clone(),
+            keep_call,
+            keep_result,
+            action,
+            reason,
+        });
+    }
+    Ok(decisions)
+}
 pub async fn compact<H: CompactionHost>(
     messages: &[Message],
     host: &H,
@@ -281,11 +312,7 @@ pub async fn compact<H: CompactionHost>(
     let started = now(host)?;
     let options = options.resolve();
     let calls = state::collect_calls(messages, options.recent);
-    let candidates = calls
-        .iter()
-        .filter(|c| !c.pinned)
-        .cloned()
-        .collect::<Vec<_>>();
+    let candidates: Vec<_> = calls.iter().filter(|c| !c.pinned).cloned().collect();
     let chars_before = messages.iter().map(message_chars).sum();
     let mut answers = BTreeMap::new();
     let (mut tokens, mut stage, mut requests, mut windows) = (0, String::new(), 0, 0);
@@ -294,30 +321,23 @@ pub async fn compact<H: CompactionHost>(
         let plan = plan_windows(messages, &calls, 80_000);
         let degraded = fitted.stage != "full" && !fitted.stage.starts_with("inputs<=");
         if candidates.len() >= 40 && degraded && plan.len() > 1 {
-            let ids = candidates
-                .iter()
-                .map(|c| c.id.clone())
-                .collect::<BTreeSet<_>>();
+            let ids: BTreeSet<_> = candidates.iter().map(|c| c.id.clone()).collect();
             let tasks = plan
                 .into_iter()
                 .filter_map(|(start, end)| {
-                    let own = calls
+                    let ws = calls
                         .iter()
                         .filter(|c| {
                             c.call_index >= start && c.call_index < end && c.result_index < end
                         })
                         .cloned()
                         .collect::<Vec<_>>();
-                    let candidates = own
-                        .iter()
-                        .filter(|c| ids.contains(&c.id))
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    (!candidates.is_empty()).then_some((start, end, own, candidates))
+                    let due: Vec<_> = ws.iter().filter(|c| ids.contains(&c.id)).cloned().collect();
+                    (!due.is_empty()).then_some((start, end, ws, due))
                 })
                 .collect::<Vec<_>>();
             windows = tasks.len();
-            let results = stream::iter(tasks.iter().enumerate().map(
+            let mut results = stream::iter(tasks.iter().enumerate().map(
                 |(index, (start, end, own, candidates))| {
                     let options = &options;
                     async move {
@@ -330,11 +350,14 @@ pub async fn compact<H: CompactionHost>(
                             },
                         )?;
                         let wire = state::json(&local.state)?;
-                        let mut answers = Vec::new();
                         let groups = batches(candidates, local.tokens, options)?;
-                        for group in &groups {
-                            answers.extend(ask_batch(host, &wire, group).await?);
-                        }
+                        let answers = stream::iter(&groups)
+                            .then(|group| ask_batch(host, &wire, group))
+                            .try_collect::<Vec<_>>()
+                            .await?
+                            .into_iter()
+                            .flatten()
+                            .collect::<Vec<_>>();
                         Ok::<_, CompactionFailure>((
                             index,
                             local.stage,
@@ -348,7 +371,6 @@ pub async fn compact<H: CompactionHost>(
             .buffer_unordered(3)
             .try_collect::<Vec<_>>()
             .await?;
-            let mut results = results;
             results.sort_by_key(|r| r.0);
             let mut stages = Vec::new();
             for (_, s, t, r, a) in results {
@@ -373,33 +395,7 @@ pub async fn compact<H: CompactionHost>(
         }
     }
     // Pinned calls are the only defaults. Every candidate's two answers must exist.
-    let mut decisions = Vec::new();
-    for call in &calls {
-        let (keep_call, keep_result) = if call.pinned {
-            (1.0, 1.0)
-        } else {
-            *answers
-                .get(&call.id)
-                .ok_or_else(|| failed("missing-decision"))?
-        };
-        let (action, reason) = if call.pinned {
-            (Action::Keep, Reason::Pinned)
-        } else if keep_result >= options.threshold {
-            (Action::Keep, Reason::Kept)
-        } else if keep_call >= options.threshold {
-            (Action::DropResult, Reason::ResultDropped)
-        } else {
-            (Action::DropCall, Reason::CallDropped)
-        };
-        decisions.push(Decision {
-            id: call.id.clone(),
-            tool: call.tool.clone(),
-            keep_call,
-            keep_result,
-            action,
-            reason,
-        });
-    }
+    let decisions = decide(&calls, &answers, options.threshold)?;
     let kept = projected(messages, &calls, &decisions, options.head);
     let count = |r| decisions.iter().filter(|d| d.reason == r).count();
     let stats = CompactionStats {

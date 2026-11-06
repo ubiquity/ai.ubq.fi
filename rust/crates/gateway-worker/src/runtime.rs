@@ -64,6 +64,19 @@ pub async fn route(
     {
         return Ok(response);
     }
+    if let Some(operation) =
+        gateway_state_transfer::http::operation(request.method().as_ref(), &path)
+    {
+        return crate::migration_host::state_transfer(
+            &mut request,
+            &auth_request,
+            &auth,
+            &env,
+            operation,
+        )
+        .await
+        .map(Into::into);
+    }
     if path.starts_with("/admin/") {
         return administrative_route(
             &mut request,
@@ -485,7 +498,10 @@ async fn models_response(
             return catalog_response(response).map(Into::into);
         }
         let state = CatalogState::load(store, env, host, Rc::clone(context)).await?;
-        let response = state.native_models(store, request, version, now).await?;
+        let response = state
+            .service
+            .versioned_models(store, &state.host, version, conditional.as_deref())
+            .await?;
         return catalog_response(response).map(Into::into);
     }
     let state = CatalogState::load(store, env, host, Rc::clone(context)).await?;

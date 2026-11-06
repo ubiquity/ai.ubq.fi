@@ -459,6 +459,7 @@ impl ClaudePoolSession {
                 }
                 .into(),
                 observation: observation.clone(),
+                source: Some(quota::HEADER_SOURCE.into()),
             };
             let _ = host.accepted_observation(&event).await;
         }

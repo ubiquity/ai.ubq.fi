@@ -28,7 +28,7 @@ for binary_name in WASM_BINDGEN_BIN WASM_OPT_BIN ESBUILD_BIN; do
   [[ -x ${!binary_name:-} ]] || fail 'All pinned Worker build-tool binary overrides must be prepared.'
 done
 [[ -f bun.lock && -f tools/lint/bun.lock && -f rust/Cargo.lock ]] || fail 'Frozen dependency lockfiles are required.'
-[[ -z $(git status --porcelain --untracked-files=all -- rust static package.json bun.lock cloudflare.config.ts wrangler.config.ts ops/rust-worker-build.sh ops/rust-worker-deploy.sh) ]] || fail 'Build inputs must match their committed source.'
+[[ -z $(git status --porcelain --untracked-files=all -- rust static package.json bun.lock cloudflare.config.ts cloudflare-targets.ts wrangler.config.ts ops/rust-worker-build.sh ops/rust-worker-deploy.sh tools/cloudflare/worker-release.ts tools/cloudflare/generate-types.ts) ]] || fail 'Build inputs must match their committed source.'
 [[ -z $(git status --porcelain --untracked-files=all) ]] || fail 'Exact-source Worker builds require a clean immutable Git checkout.'
 build_sha=$(git rev-parse HEAD)
 build_tree=$(git rev-parse 'HEAD^{tree}')
@@ -39,6 +39,7 @@ mkdir -p -- "$CARGO_TARGET_DIR"
 
 bun_bin=$(command -v bun) || fail 'Prepared Bun 1.4.0 is required.'
 [[ $("$bun_bin" --version) == 1.4.0 ]] || fail 'Bun 1.4.0 is required.'
+worker_mode=$("$bun_bin" --no-env-file --no-install -e 'import {workerTargetArguments} from "./cloudflare-targets.ts"; console.log(workerTargetArguments(process.argv.slice(1)).mode);' -- "$@")
 worker_build_bin=$(command -v worker-build) || fail 'Prepared worker-build 0.8.7 is required.'
 if [[ $build_host == Darwin:arm64 ]]; then
   worker_build_bin=$("$bun_bin" --no-env-file --no-install -e 'import {rustToolPath,rustVerificationEnvironment} from "./scripts/rust-verify.ts"; process.stdout.write(rustToolPath("worker-build",rustVerificationEnvironment()));')
@@ -64,28 +65,6 @@ else
 fi
 [[ -s rust/crates/gateway-worker/build/index.js && -s rust/crates/gateway-worker/build/index_bg.wasm ]] || fail 'The prepared Rust Worker artifacts are missing.'
 "$bun_bin" --no-env-file --no-install tools/cloudflare/verify-build-identity.ts "$build_sha"
-"$bun_bin" --no-env-file --no-install run cf build
-"$bun_bin" --no-env-file --no-install run cf deploy --prebuilt --dry-run
-
-"$bun_bin" --no-env-file --no-install -e '
-import { readdir, lstat, mkdir, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
-const root = process.cwd();
-const git = (...args) => { const result = Bun.spawnSync(["git", ...args], { cwd: root }); if (result.exitCode !== 0) throw new Error("Git provenance unavailable"); return result.stdout.toString().trim(); };
-const sha = git("rev-parse", "HEAD");
-const tree = git("rev-parse", "HEAD^{tree}");
-const selected = Bun.spawnSync(["git", "ls-files", "-z", "--", "rust", "static", "package.json", "bun.lock", "cloudflare.config.ts", "wrangler.config.ts", "ops/rust-worker-build.sh", "ops/rust-worker-deploy.sh"], { cwd: root });
-if (selected.exitCode !== 0) throw new Error("Source manifest unavailable");
-const files = new Set(selected.stdout.toString().split("\0").filter(Boolean));
-async function visit(path) { for (const entry of await readdir(path, { withFileTypes: true })) { const file = join(path, entry.name); if (entry.isSymbolicLink()) throw new Error("Artifact links are forbidden"); if (entry.isDirectory()) await visit(file); else if (entry.isFile()) files.add(relative(root, file)); else throw new Error("Unsupported artifact entry"); } }
-await visit(join(root, ".cloudflare/output/v0"));
-files.add("rust/crates/gateway-worker/build/index.js");
-files.add("rust/crates/gateway-worker/build/index_bg.wasm");
-const entries = [];
-for (const path of [...files].sort()) { if (!(await lstat(path)).isFile()) throw new Error("Source inputs must be regular files"); entries.push({ path, sha256: new Bun.CryptoHasher("sha256").update(await Bun.file(path).arrayBuffer()).digest("hex") }); }
-const directory = join(root, ".data/rust-worker-build", sha);
-await mkdir(directory, { recursive: true });
-const receipt = join(directory, "receipt.json");
-await writeFile(receipt, JSON.stringify({ version: 1, gitSha: sha, gitTree: tree, worker: "uos-ai-rust-candidate", accountId: "5c0228bee348f4cf48829ffe21b61fe9", compatibilityDate: "2026-10-18", tools: { bun: "1.4.0", workerBuild: "0.8.7", wasmBindgen: "0.2.129", cf: "1.0.0-beta.12", wrangler: "4.151.1" }, files: entries }, null, 2) + "\n", { flag: "wx" });
-console.log(relative(root, receipt));
-'
+"$bun_bin" --no-env-file --no-install run cf build --mode "$worker_mode"
+"$bun_bin" --no-env-file --no-install run cf deploy --prebuilt --dry-run --mode "$worker_mode"
+"$bun_bin" --no-env-file --no-install -e 'import {publishWorkerRelease} from "./tools/cloudflare/worker-release.ts"; console.log(await publishWorkerRelease(process.cwd(), process.argv[1]));' -- "$worker_mode"

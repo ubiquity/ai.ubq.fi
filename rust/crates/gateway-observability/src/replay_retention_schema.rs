@@ -42,23 +42,16 @@ impl RetentionLimits {
     }
 }
 pub(crate) fn accounting_key(at: f64, id: &str) -> RecordKey {
-    store::key(json!([
-        "uos_ai",
-        "sentinel_replay",
-        "v1",
-        "accounting",
-        at,
-        id
-    ]))
+    store::prefixed(
+        &["uos_ai", "sentinel_replay", "v1", "accounting"],
+        json!([at, id]),
+    )
 }
 pub(crate) fn dedupe_key(fingerprint: &str) -> RecordKey {
-    store::key(json!([
-        "uos_ai",
-        "sentinel_replay",
-        "v1",
-        "dedupe",
-        fingerprint
-    ]))
+    store::prefixed(
+        &["uos_ai", "sentinel_replay", "v1", "dedupe"],
+        json!([fingerprint]),
+    )
 }
 pub(crate) fn charge(ciphertext: usize, metadata: usize) -> f64 {
     (ciphertext.div_ceil(3) * 4 + metadata) as f64 + OVERHEAD

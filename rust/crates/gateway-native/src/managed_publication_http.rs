@@ -3,7 +3,6 @@
 use crate::{
     owner_control::NativeControlContext,
     owner_renewal::{NativeAccessPublisher, PublishedAccess, require_current_fence},
-    private_https::PrivateHttps,
 };
 use gateway_auth::{
     crypto::base64url,
@@ -15,6 +14,7 @@ use gateway_auth::{
 };
 use gateway_authority::native_control::NativeRenewalFence;
 use gateway_core::error::GatewayError;
+use gateway_native_runtime::https::PrivateHttps;
 use gateway_publication::{sender, wire};
 use gateway_publication_transport::managed;
 use std::{net::TcpStream, time::Instant};
@@ -27,6 +27,13 @@ pub struct NativeAccessPublicationHttp {
     transport: PrivateHttps,
 }
 impl NativeAccessPublicationHttp {
+    pub fn with_failure_signal(
+        mut self,
+        signal: gateway_native_runtime::lifecycle::FailureSignal,
+    ) -> Self {
+        self.transport = self.transport.with_failure_signal(signal);
+        self
+    }
     pub fn from_connected(
         target: &str,
         socket: TcpStream,

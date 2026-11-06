@@ -22,6 +22,9 @@ impl PartialEq for SourceJson {
 }
 impl Eq for SourceJson {}
 impl SourceJson {
+    pub fn null() -> Self {
+        Self(RawValue::NULL.to_owned())
+    }
     pub fn parse(text: &str) -> Result<Self, GatewayError> {
         RawValue::from_string(text.into())
             .map(Self)

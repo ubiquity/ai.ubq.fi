@@ -29,10 +29,7 @@ use std::{
     collections::BTreeMap,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -89,14 +86,33 @@ impl NativeHttpService {
         self
     }
     pub fn serve(self, listener: TcpListener) -> Result<(), GatewayError> {
+        self.serve_recoverable(listener, None)
+    }
+    pub fn serve_recoverable(
+        self,
+        listener: TcpListener,
+        recovery: Option<gateway_native_runtime::lifecycle::Recovery>,
+    ) -> Result<(), GatewayError> {
         crate::require_production_artifact()?;
         let service = Arc::new(self);
-        let active = Arc::new(AtomicUsize::new(0));
-        for stream in listener.incoming() {
-            let stream = stream.map_err(|_| unavailable())?;
-            if active.fetch_add(1, Ordering::AcqRel) >= 64 {
-                active.fetch_sub(1, Ordering::AcqRel);
-                let mut stream = stream;
+        let active = gateway_native_runtime::lifecycle::ActiveRequests::default();
+        loop {
+            let stream = match &recovery {
+                Some(recovery) => recovery.accept(&listener).unwrap_or_else(|_| {
+                    recovery.signal().fail();
+                    None
+                }),
+                None => Some(listener.accept().map_err(|_| unavailable())?.0),
+            };
+            let Some(mut stream) = stream else {
+                drop(listener);
+                let _ = active.drain(Duration::from_millis(NATIVE_RENEWAL_MAX_MS as u64 + 5_000));
+                return Err(GatewayError::unavailable(
+                    "Native owner resources were lost; supervisor restart required",
+                    "native_owner_lifetime_lost",
+                ));
+            };
+            let Some(lease) = active.acquire(64) else {
                 let _ = write_error(
                     &mut stream,
                     GatewayError::unavailable(
@@ -105,18 +121,15 @@ impl NativeHttpService {
                     ),
                 );
                 continue;
-            }
+            };
             let service = service.clone();
-            let active = active.clone();
             std::thread::spawn(move || {
-                let mut stream = stream;
+                let _lease = lease;
                 if let Err(error) = service.handle(&mut stream) {
                     let _ = write_error(&mut stream, error);
                 }
-                active.fetch_sub(1, Ordering::AcqRel);
             });
         }
-        Ok(())
     }
     pub(crate) fn serve_connection(&self, stream: &mut TcpStream) -> Result<(), GatewayError> {
         crate::require_production_artifact()?;

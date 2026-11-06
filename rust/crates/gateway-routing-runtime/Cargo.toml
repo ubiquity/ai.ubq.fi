@@ -18,6 +18,7 @@ futures-util = { version = "=0.3.34", default-features = false, features = ["std
 
 [dev-dependencies]
 gateway-routing-runtime-test-support.workspace = true
+gateway-prompt-admission.workspace = true
 
 [lints]
 workspace = true

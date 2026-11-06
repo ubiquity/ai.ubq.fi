@@ -56,7 +56,7 @@ const PRESENTATION: &[(&str, &str, &str, &str, &str)] = &[
         "openrouter",
         "OpenRouter",
         "direct",
-        "OpenRouter's full served catalogue on both OpenAI wires, plus System One decisions (Typesafe Jev) for the selector-repair design step.",
+        "OpenRouter's served text catalogue on both OpenAI wires, plus typed decisions (noul, choice, score, and box) on the Decisions API.",
         "openrouter",
     ),
     (
@@ -87,24 +87,7 @@ pub(super) fn project(
         let provider_source = source::member(catalog, "sources")
             .as_ref()
             .and_then(|sources| source::member(sources, id));
-        let count = models
-            .iter()
-            .filter(|model| {
-                source::member(model, "providers")
-                    .as_ref()
-                    .and_then(source::array)
-                    .is_some_and(|rows| {
-                        rows.iter().any(|row| {
-                            source::member(row, "id")
-                                .as_ref()
-                                .and_then(source::string)
-                                .is_some_and(|value| {
-                                    value.as_units().iter().copied().eq(id.encode_utf16())
-                                })
-                        })
-                    })
-            })
-            .count();
+        let count = models.iter().filter(|model| served_by(model, id)).count();
         let gated = match *id {
             "openrouter" => Some(secrets.contains_key(*id)),
             "ubiquity" => Some(
@@ -134,7 +117,12 @@ pub(super) fn project(
         let endpoints = match *id {
             "cerebras" => json!(["/v1/chat/completions"]),
             "ubiquity" => json!(["/v1/responses"]),
-            "openrouter" => json!(["/v1/chat/completions", "/v1/responses", "/v1/systemone"]),
+            "openrouter" => json!([
+                "/v1/chat/completions",
+                "/v1/responses",
+                "/v1/decisions",
+                "/v1/systemone"
+            ]),
             _ => json!(["/v1/responses", "/v1/chat/completions"]),
         };
         let tier_label = match *tier {
@@ -154,6 +142,17 @@ pub(super) fn project(
     )
 }
 
+/// Whether a public catalog model lists this provider among its serving rows.
+fn served_by(model: &SourceJson, id: &str) -> bool {
+    let listed = |row: &SourceJson| {
+        let value = source::member(row, "id").as_ref().and_then(source::string);
+        value.is_some_and(|value| value.as_units().iter().copied().eq(id.encode_utf16()))
+    };
+    let rows = source::member(model, "providers")
+        .as_ref()
+        .and_then(source::array);
+    rows.is_some_and(|rows| rows.iter().any(listed))
+}
 pub(super) async fn subscriptions(store: &crate::authority::RemoteAuthorityStore) -> Vec<Value> {
     let Ok(at) = crate::storage::now_ms() else {
         return Vec::new();

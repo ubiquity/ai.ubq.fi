@@ -242,19 +242,7 @@ impl RequestHost {
                 super::Host,
                 super::shared_state(),
             );
-            let event = if status == 401
-                || (status == 403
-                    && codex::codex_access_expiry_ms(&account.access_token).is_some_and(|expiry| {
-                        crate::storage::now_ms().is_ok_and(|at| expiry <= at as f64)
-                    })) {
-                HealthEvent::AuthInvalid
-            } else if status == 429 {
-                HealthEvent::QuotaExhausted
-            } else if status >= 500 {
-                HealthEvent::UpstreamError
-            } else {
-                HealthEvent::Reachable
-            };
+            let event = codex_health_event(status, account);
             let _ = runtime
                 .observe_provider(
                     HealthTarget::codex(&account.account_id),
@@ -264,19 +252,7 @@ impl RequestHost {
                 )
                 .await;
             if accounts.len() == 1 {
-                return probe(
-                    ProbeProvider::ChatgptCodex,
-                    if (200..300).contains(&status) {
-                        200
-                    } else if status == 401 {
-                        401
-                    } else {
-                        503
-                    },
-                    content_type,
-                    (!(200..300).contains(&status))
-                        .then_some("Codex models probe returned an error status."),
-                );
+                return codex_status_probe(status, content_type);
             }
             if (200..300).contains(&status) {
                 let bytes = reply.response.bytes().await.ok();
@@ -284,19 +260,7 @@ impl RequestHost {
                     contributed = true;
                 }
             }
-            last = Some(probe(
-                ProbeProvider::ChatgptCodex,
-                if (200..300).contains(&status) {
-                    200
-                } else if status == 401 {
-                    401
-                } else {
-                    503
-                },
-                content_type,
-                (!(200..300).contains(&status))
-                    .then_some("Codex models probe returned an error status."),
-            ));
+            last = Some(codex_status_probe(status, content_type));
         }
         if timeout(self, deadline) {
             probe(
@@ -565,6 +529,36 @@ impl RequestHost {
     }
 }
 
+fn codex_health_event(status: u16, account: &CodexSourceAccount) -> HealthEvent {
+    if status == 401
+        || (status == 403
+            && codex::codex_access_expiry_ms(&account.access_token)
+                .is_some_and(|expiry| crate::storage::now_ms().is_ok_and(|at| expiry <= at as f64)))
+    {
+        HealthEvent::AuthInvalid
+    } else if status == 429 {
+        HealthEvent::QuotaExhausted
+    } else if status >= 500 {
+        HealthEvent::UpstreamError
+    } else {
+        HealthEvent::Reachable
+    }
+}
+fn codex_status_probe(status: u16, content_type: Option<String>) -> ActiveProbe {
+    let ok = (200..300).contains(&status);
+    probe(
+        ProbeProvider::ChatgptCodex,
+        if ok {
+            200
+        } else if status == 401 {
+            401
+        } else {
+            503
+        },
+        content_type,
+        (!ok).then_some("Codex models probe returned an error status."),
+    )
+}
 fn has_models_array(bytes: &[u8]) -> bool {
     SourceJson::parse_bytes(bytes)
         .ok()

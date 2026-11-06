@@ -1,6 +1,8 @@
 use gateway_core::error::GatewayError;
 use gateway_core::health::{HealthResponse, ReleaseIdentity};
-use gateway_core::identity::{MAX_SAFE_INTEGER, MicrocreditLimit, Microcredits};
+use gateway_core::identity::{
+    ActiveTransitionReason, MAX_SAFE_INTEGER, MicrocreditLimit, Microcredits,
+};
 use gateway_core::lifecycle::{
     BodyOutcome, DeliveryOutcome, ReaderTermination, TransportObservation,
 };
@@ -130,4 +132,12 @@ fn json_field_order_survives_source_compatible_parse_and_serialization() {
         serde_json::to_string(&value).unwrap(),
         r#"{"z":null,"a":1}"#
     );
+}
+
+#[test]
+fn manual_reset_transition_reason_roundtrips() -> Result<(), serde_json::Error> {
+    let reason: ActiveTransitionReason = serde_json::from_str(r#""manual_reset""#)?;
+    assert_eq!(reason, ActiveTransitionReason::ManualReset);
+    assert_eq!(serde_json::to_string(&reason)?, r#""manual_reset""#);
+    Ok(())
 }

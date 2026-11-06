@@ -352,7 +352,6 @@ pub fn should_signal(internal: &FailureObservation, client: &ClientFailureObserv
             Some("deadline" | "eof" | "error")
         )
 }
-
 fn settings(input: &ReplayInput, observation: &FailureObservation) -> serde_json::Value {
     let mut out = serde_json::json!({"source":"unavailable","provider_route":observation.provider_route,"model_requested":null,"reasoning_requested":null,"stream_requested":null,"stream_observed":observation.stream});
     let decoded = String::from_utf8_lossy(input.body.as_bytes());

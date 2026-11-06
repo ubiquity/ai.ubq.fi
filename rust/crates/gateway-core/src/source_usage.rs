@@ -159,5 +159,23 @@ fn source_number(value: &SourceJson) -> Value {
         .and_then(serde_json::Number::from_f64)
         .map_or(Value::Null, Value::Number)
 }
-#[cfg(test)]
-mod tests;
+/// Source `extractChatUsageTokens` field projection: Chat counters keep presence and exact values.
+pub fn chat_usage_fields(value: &Value) -> Option<Value> {
+    let object = value.as_object()?;
+    let mut fields = Map::new();
+    for (chat, responses) in [
+        ("prompt_tokens", "input_tokens"),
+        ("completion_tokens", "output_tokens"),
+        ("total_tokens", "total_tokens"),
+        ("prompt_tokens_details", "input_tokens_details"),
+        ("buyer_cost_micro", "buyer_cost_micro"),
+    ] {
+        if let Some(field) = object.get(chat) {
+            fields.insert(responses.into(), field.clone());
+        }
+    }
+    Some(Value::Object(fields))
+}
+pub fn extract_chat_usage_tokens(value: Option<&Value>) -> Option<UsageTokens> {
+    extract_usage_tokens(chat_usage_fields(value?).as_ref())
+}

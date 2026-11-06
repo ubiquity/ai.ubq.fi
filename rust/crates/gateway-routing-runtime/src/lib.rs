@@ -12,4 +12,4 @@ mod response_head;
 pub mod session;
 pub mod settlement;
 pub mod types;
-mod wire;
+pub mod wire;

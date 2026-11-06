@@ -203,6 +203,7 @@ pub(crate) async fn persist<S: AuthorityStore, H: ClaudePoolHost>(
             }),
             config_retry_ms: classification.retry_after_ms,
             served: classification.kind == ResponseKind::Ok,
+            source: Some(quota::HEADER_SOURCE),
         };
         let state = quota::merge(previous.as_ref(), binding, &input, now);
         if commit(
@@ -219,6 +220,26 @@ pub(crate) async fn persist<S: AuthorityStore, H: ClaudePoolHost>(
         }
     }
     Ok(None)
+}
+
+/// Passive readback for the retired refresh action: the current binding's
+/// response-header observation time. Never an upstream request or a write.
+pub async fn header_observed_at<S: AuthorityStore, H: AuthHost>(
+    store: &S,
+    host: &H,
+    binding: &AccountBinding,
+) -> Result<Option<f64>, GatewayError> {
+    let now = now(host)?;
+    if claude::current_binding(store, binding, now)
+        .await?
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let (state, _) = load_quota(store, binding, now).await?;
+    Ok(state
+        .and_then(|s| s.response_headers)
+        .map(|h| h.observation.observed_at_ms))
 }
 
 pub async fn clear_guards<S: AuthorityStore, H: ClaudePoolHost>(

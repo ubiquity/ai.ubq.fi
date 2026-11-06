@@ -1,14 +1,15 @@
-//! Exact-version cache values, real portable gzip and deterministic refresh decisions.
-use crate::{metadata::MetadataHint, model_control as c, util::sha256};
+//! Exact-version cache values, real portable gzip and served catalog projections.
+use crate::{
+    metadata::{MetadataHint, resolved_auto_compact},
+    model_control as c,
+    util::sha256,
+};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use gateway_core::{
     error::GatewayError, model::ModelId, source_json::SourceJson, source_serialization as source,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::VecDeque,
-    io::{Read, Write},
-};
+use std::io::{Read, Write};
 pub const FRESH_MS: i64 = 300_000;
 pub const RETENTION_MS: i64 = 86_400_000;
 pub const REFRESH_LEASE_MS: i64 = 15_000;
@@ -89,11 +90,8 @@ pub fn parse_catalog(body: &str) -> Option<SourceJson> {
     }
     Some(parsed)
 }
-fn source_stringify(value: &SourceJson) -> String {
-    source::canonical(value)
-        .expect("source catalog value")
-        .as_str()
-        .to_owned()
+pub(crate) fn source_stringify(value: &SourceJson) -> String {
+    source::canonical(value).map_or_else(|_| value.as_str().to_owned(), |v| v.as_str().to_owned())
 }
 pub fn gzip(body: &str) -> Result<Vec<u8>, GatewayError> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -169,10 +167,32 @@ pub fn widen_catalog_windows(
     }
     if changed {
         c::set(&mut parsed, "models", c::json(&models));
-        Some(source_stringify(&parsed))
-    } else {
-        None
     }
+    changed |= apply_compaction_limits(&mut parsed);
+    changed.then(|| source_stringify(&parsed))
+}
+/// Give every positive window the earlier of its source or policy compaction limit.
+pub fn apply_compaction_limits(parsed: &mut SourceJson) -> bool {
+    let Some(mut models) = c::get(parsed, "models").as_ref().and_then(c::array) else {
+        return false;
+    };
+    let mut changed = false;
+    for model in &mut models {
+        let Some(window) = c::positive(c::get(model, "context_window").as_ref()) else {
+            continue;
+        };
+        let current = c::get(model, "auto_compact_token_limit");
+        let limit = resolved_auto_compact(window, c::positive(current.as_ref()))
+            .min(resolved_auto_compact(window, None));
+        if current.as_ref().and_then(source::number) != Some(limit as f64) {
+            c::set(model, "auto_compact_token_limit", c::json(&limit));
+            changed = true;
+        }
+    }
+    if changed {
+        c::set(parsed, "models", c::json(&models));
+    }
+    changed
 }
 pub struct CatalogIdentity<'a> {
     pub client_version: &'a str,
@@ -287,76 +307,6 @@ impl CacheState {
         }
     }
 }
-#[derive(Clone, Debug, PartialEq)]
-pub enum CatalogAction {
-    Serve(CacheState),
-    AcquireLease,
-    WaitCold { until_ms: i64 },
-    Fetch { if_none_match: Option<String> },
-    RevalidateSource,
-    Publish,
-    UseCurrentGeneration,
-    Fallback { message: String },
-}
-pub fn initial_action(cached: Option<&LoadedCatalog>, now_ms: i64) -> CatalogAction {
-    if cached.is_some_and(|c| c.metadata.fresh(now_ms)) {
-        CatalogAction::Serve(CacheState::Hit)
-    } else {
-        CatalogAction::AcquireLease
-    }
-}
-pub fn lease_action(cached: Option<&LoadedCatalog>, acquired: bool, now_ms: i64) -> CatalogAction {
-    if acquired {
-        CatalogAction::Fetch {
-            if_none_match: cached
-                .filter(|c| c.source_body.is_some())
-                .and_then(|c| c.metadata.etag.clone()),
-        }
-    } else if cached.is_some() {
-        CatalogAction::Serve(CacheState::Stale)
-    } else {
-        CatalogAction::WaitCold {
-            until_ms: now_ms + COLD_WAIT_MS,
-        }
-    }
-}
-pub fn cold_wait_action(found: bool) -> CatalogAction {
-    if found {
-        CatalogAction::Serve(CacheState::Wait)
-    } else {
-        CatalogAction::Fallback {
-            message: "Codex model catalog refresh is already in progress".into(),
-        }
-    }
-}
-pub fn upstream_action(
-    status: u16,
-    valid_body: bool,
-    cached: Option<&LoadedCatalog>,
-    generation_current: bool,
-    lease_current: bool,
-) -> CatalogAction {
-    if !generation_current || !lease_current {
-        return CatalogAction::UseCurrentGeneration;
-    }
-    if status == 304 && cached.is_some() {
-        return if cached.is_some_and(|c| c.source_body.is_some()) {
-            CatalogAction::RevalidateSource
-        } else {
-            CatalogAction::Serve(CacheState::Stale)
-        };
-    }
-    if (200..300).contains(&status) && valid_body {
-        return CatalogAction::Publish;
-    }
-    if cached.is_some() {
-        CatalogAction::Serve(CacheState::Stale)
-    } else {
-        CatalogAction::Fallback {
-            message: "Codex upstream did not return a valid model catalog".into(),
-        }
-    }
-}
 pub fn prune_versions(catalogs: &[CatalogMetadata], current_version: &str) -> Vec<CatalogMetadata> {
     if catalogs.len() <= MAX_VERSIONS {
         return Vec::new();
@@ -376,35 +326,6 @@ pub fn prune_versions(catalogs: &[CatalogMetadata], current_version: &str) -> Ve
         })
         .collect()
 }
-#[derive(Default)]
-pub struct CatalogMemo {
-    entries: VecDeque<LoadedCatalog>,
-}
-impl CatalogMemo {
-    pub fn get(&mut self, metadata: &CatalogMetadata) -> Option<LoadedCatalog> {
-        let index = self.entries.iter().position(|c| {
-            c.metadata.client_version == metadata.client_version
-                && c.metadata.auth_generation == metadata.auth_generation
-                && c.metadata.body_generation == metadata.body_generation
-        })?;
-        let value = self.entries.remove(index)?;
-        self.entries.push_back(value.clone());
-        Some(value)
-    }
-    pub fn insert(&mut self, catalog: LoadedCatalog) {
-        self.entries
-            .retain(|c| c.metadata.client_version != catalog.metadata.client_version);
-        self.entries.push_back(catalog);
-        while self.entries.len() > MAX_VERSIONS {
-            self.entries.pop_front();
-        }
-    }
-    pub fn invalidate(&mut self, version: &str) {
-        self.entries
-            .retain(|c| c.metadata.client_version != version);
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct CatalogResponse {
     pub status: u16,
@@ -447,7 +368,10 @@ pub fn catalog_response(
     let not_modified = conditional_matches(conditional, &etag);
     let headers = [
         ("Content-Type".into(), catalog.metadata.content_type.clone()),
-        ("Cache-Control".into(), "private, max-age=300".into()),
+        (
+            "Cache-Control".into(),
+            "private, max-age=300, stale-while-revalidate=86400".into(),
+        ),
         ("x-uos-upstream".into(), "chatgpt_codex".into()),
         ("x-uos-cache".into(), cache_state.as_str().into()),
         ("ETag".into(), etag),

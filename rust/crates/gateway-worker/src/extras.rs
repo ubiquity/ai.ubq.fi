@@ -35,6 +35,7 @@ pub fn route(path: &str, method: Method) -> Result<Option<ExtrasRoute>, GatewayE
         "/uos/embeddings" => Some((Method::Post, ExtrasRoute::Embeddings)),
         "/uos/embedding-jobs" => Some((Method::Post, ExtrasRoute::JobCreate)),
         "/v1/systemone" => Some((Method::Post, ExtrasRoute::SystemOne)),
+        "/v1/decisions" => Some((Method::Post, ExtrasRoute::Decisions)),
         "/v1/images/generations" => {
             Some((Method::Post, ExtrasRoute::Images(ImageKind::Generations)))
         }
@@ -89,11 +90,12 @@ pub async fn run(
         ExtrasRoute::Embeddings => ExtrasFamily::Embeddings,
         ExtrasRoute::JobCreate => ExtrasFamily::EmbeddingJobCreate,
         ExtrasRoute::JobGet(_) => ExtrasFamily::EmbeddingJobPoll,
-        ExtrasRoute::SystemOne => ExtrasFamily::SystemOne,
+        ExtrasRoute::SystemOne | ExtrasRoute::Decisions => ExtrasFamily::SystemOne,
         ExtrasRoute::Images(ImageKind::Generations) => ExtrasFamily::ImageGenerations,
         ExtrasRoute::Images(ImageKind::Edits) => ExtrasFamily::ImageEdits,
     };
     let default_model = catalog_default_model(&catalog);
+    let openrouter = catalog.input.rows("openrouter").to_vec();
     let session = RoutingSession::begin_extras(
         RoutingInput {
             context: original.clone(),
@@ -127,20 +129,25 @@ pub async fn run(
     )
     .await?;
     let runtime = Rc::new(ExtrasRuntime::new(store, host));
-    let result = runtime
-        .handle(ExtrasRequest {
-            route,
-            body: raw,
-            multipart,
-            raw_body_bytes,
-            idempotency_key: request
-                .headers()
-                .get("idempotency-key")
-                .map_err(|_| invalid())?,
-            principal,
-            context: &original,
-        })
-        .await;
+    let extras = ExtrasRequest {
+        route,
+        body: raw,
+        multipart,
+        raw_body_bytes,
+        idempotency_key: request
+            .headers()
+            .get("idempotency-key")
+            .map_err(|_| invalid())?,
+        principal,
+        context: &original,
+    };
+    // Decisions share this original OpenRouter admission and settlement path.
+    let result = if extras.route == ExtrasRoute::Decisions {
+        let (store, host) = (runtime.store(), runtime.host());
+        gateway_decisions::handler::handle(store, host, &extras, &openrouter).await
+    } else {
+        runtime.handle(extras).await
+    };
     runtime.host().settle_child().await?;
     let result = completed_result(&runtime, result).await?;
     let (kernel, reason) = completion(result.kernel, result.semantic_terminal);

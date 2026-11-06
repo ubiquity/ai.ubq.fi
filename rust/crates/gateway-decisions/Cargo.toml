@@ -1,0 +1,20 @@
+[package]
+name = "gateway-decisions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core.workspace = true
+gateway-schema.workspace = true
+gateway-providers.workspace = true
+gateway-extras-runtime.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+gateway-auth.workspace = true
+gateway-extras-runtime-test-support.workspace = true
+
+[lints]
+workspace = true

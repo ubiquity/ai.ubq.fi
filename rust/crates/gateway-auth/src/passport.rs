@@ -5,7 +5,15 @@ use crate::{
     types::{AuthConfig, AuthHost, AuthRequest, AuthResponse, AuthResponseBody, unauthorized},
     upstream::AuthUpstreamRequest,
 };
-use gateway_core::error::GatewayError;
+use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_passport_session::{
+    binding::{
+        Binding, PASSPORT_COOKIE_MAX_AGE_SECONDS, is_persistent_session, is_random43,
+        pkce_challenge,
+    },
+    call::{SessionCall, SessionHost, SessionReply},
+    service::{Identity, PassportSessions},
+};
 use rsa::{
     BigUint, RsaPublicKey,
     pkcs1v15::{Signature, VerifyingKey},
@@ -28,6 +36,7 @@ pub const PASSPORT_PRODUCTION_ORIGIN: &str = "https://ai.ubq.fi";
 pub const PASSPORT_PRODUCTION_REDIRECT_URI: &str = "https://ai.ubq.fi/auth/callback";
 pub const PASSPORT_COOKIE: &str = "__Host-uos_ai_passport_session";
 pub const PASSPORT_STATE_COOKIE: &str = "__Host-uos_ai_passport_state";
+pub const PASSPORT_VERIFIER_COOKIE: &str = "__Host-uos_ai_passport_verifier";
 pub const PASSPORT_STATE_TTL_SECONDS: i64 = 600;
 pub const PASSPORT_JWKS_CACHE_MS: i64 = 300_000;
 pub const PASSPORT_JWKS_MAX_BYTES: usize = 262_144;
@@ -82,6 +91,15 @@ impl PassportConfig {
             redirect_uri: redirect_uri.into(),
         })
     }
+
+    fn binding(&self) -> Binding {
+        Binding {
+            client_id: self.client_id.clone(),
+            audience: self.audience.clone(),
+            origin: self.origin.clone(),
+            redirect_uri: self.redirect_uri.clone(),
+        }
+    }
 }
 
 fn valid_https_origin(value: &str) -> bool {
@@ -126,9 +144,11 @@ pub struct PassportClaims {
     #[serde(rename = "clientId")]
     pub client_id: String,
     pub auth: String,
-    pub iat: i64,
-    pub exp: i64,
-    pub jti: String,
+    /// Access-token lifetime and id. A persistent app session has neither:
+    /// its identity is Passport's current user, introspected on this request.
+    pub iat: Option<i64>,
+    pub exp: Option<i64>,
+    pub jti: Option<String>,
     #[serde(
         rename = "agentTokenId",
         default,
@@ -138,22 +158,42 @@ pub struct PassportClaims {
 }
 
 impl PassportClaims {
+    fn persistent(identity: Identity, config: &PassportConfig) -> Self {
+        Self {
+            iss: PASSPORT_ISSUER.into(),
+            sub: identity.subject,
+            handle: identity.handle,
+            is_admin: identity.is_admin,
+            scopes: identity.scopes,
+            aud: config.audience.clone(),
+            client_id: config.client_id.clone(),
+            auth: "sso".into(),
+            iat: None,
+            exp: None,
+            jti: None,
+            agent_token_id: None,
+        }
+    }
+
     fn valid(&self, config: &PassportConfig, now_seconds: i64) -> bool {
+        let (Some(iat), Some(exp), Some(jti)) = (self.iat, self.exp, self.jti.as_deref()) else {
+            return false;
+        };
         self.iss == PASSPORT_ISSUER
             && self.aud == config.audience
             && self.client_id == config.client_id
             && !self.sub.is_empty()
             && self.sub.len() <= 500
-            && !self.jti.is_empty()
-            && self.jti.len() <= 500
+            && !jti.is_empty()
+            && jti.len() <= 500
             && !self.auth.is_empty()
             && self.auth.len() <= 160
             && self.handle.len() <= 500
             && self.scopes.len() <= 128
             && self.scopes.iter().all(|scope| scope.len() <= 500)
-            && self.exp > now_seconds
-            && self.iat <= now_seconds.saturating_add(60)
-            && self.exp > self.iat
+            && exp > now_seconds
+            && iat <= now_seconds.saturating_add(60)
+            && exp > iat
             && self
                 .agent_token_id
                 .as_ref()
@@ -357,43 +397,82 @@ pub async fn verify<H: AuthHost>(
     verify_jwt(token, config, now_ms.div_euclid(1000), &keys)
 }
 
+/// Exactly one non-empty value; an ambiguous duplicate is no credential.
 pub fn cookie(request: &AuthRequest, name: &str) -> Option<String> {
-    for part in request.header("cookie")?.split(';') {
-        let Some((key, value)) = part.split_once('=') else {
-            continue;
-        };
-        if key.trim() == name {
-            let value = value.trim();
-            return (!value.is_empty()).then(|| value.to_owned());
-        }
+    let mut values = request
+        .header("cookie")?
+        .split(';')
+        .filter_map(|part| part.split_once('='))
+        .filter(|(key, _)| key.trim() == name)
+        .map(|(_, value)| value.trim());
+    let value = values.next()?;
+    (values.next().is_none() && !value.is_empty()).then(|| value.to_owned())
+}
+
+fn host_cookie(name: &str, value: &str, max_age: i64) -> String {
+    format!("{name}={value}; Path=/; Max-Age={max_age}; HttpOnly; Secure; SameSite=Lax")
+}
+/// The persistent session cookie, renewed on each successful auth report.
+pub fn session_cookie(token: &str) -> String {
+    host_cookie(PASSPORT_COOKIE, token, PASSPORT_COOKIE_MAX_AGE_SECONDS)
+}
+pub fn clear_session_cookie() -> String {
+    host_cookie(PASSPORT_COOKIE, "", 0)
+}
+fn transient_cookies(state: &str, verifier: &str, max_age: i64) -> [String; 2] {
+    [
+        host_cookie(PASSPORT_STATE_COOKIE, state, max_age),
+        host_cookie(PASSPORT_VERIFIER_COOKIE, verifier, max_age),
+    ]
+}
+/// A persistent session whose authority was authoritatively removed.
+pub fn revoked_session(request: &AuthRequest, error: &GatewayError) -> bool {
+    error.status == 401
+        && cookie(request, PASSPORT_COOKIE).is_some_and(|token| is_persistent_session(&token))
+}
+/// Source state: 32 random bytes bound to one fixed local destination.
+fn valid_state(state: &str) -> bool {
+    state
+        .split_once('.')
+        .is_some_and(|(random, target)| is_random43(random) && matches!(target, "admin" | "chat"))
+}
+
+struct SessionAdapter<'a, H>(&'a H);
+impl<H: AuthHost> SessionHost for SessionAdapter<'_, H> {
+    fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError> {
+        self.0.random_bytes(length)
     }
-    None
+    async fn fetch_session(&self, call: SessionCall) -> Result<SessionReply, GatewayError> {
+        let reply = self
+            .0
+            .fetch_auth(AuthUpstreamRequest::PassportSession(call))
+            .await?;
+        Ok(SessionReply {
+            status: reply.status,
+            body: reply.body,
+        })
+    }
 }
 
-fn session_cookie(token: &str, max_age: i64) -> String {
-    format!(
-        "{PASSPORT_COOKIE}={token}; Path=/; Max-Age={}; HttpOnly; Secure; SameSite=Lax",
-        max_age.max(0)
-    )
-}
-fn state_cookie(state: &str) -> String {
-    format!(
-        "{PASSPORT_STATE_COOKIE}={state}; Path=/; Max-Age={PASSPORT_STATE_TTL_SECONDS}; HttpOnly; Secure; SameSite=Lax"
-    )
-}
-fn clear_state_cookie() -> String {
-    format!("{PASSPORT_STATE_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax")
-}
-fn clear_session_cookie() -> String {
-    format!("{PASSPORT_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax")
-}
-
-pub struct PassportService<'a, H> {
+pub struct PassportService<'a, S, H> {
+    pub store: &'a S,
     pub host: &'a H,
     pub config: &'a PassportConfig,
 }
 
-impl<'a, H: AuthHost> PassportService<'a, H> {
+impl<'a, S: AuthorityStore, H: AuthHost> PassportService<'a, S, H> {
+    fn sessions<'b>(
+        &'b self,
+        binding: &'b Binding,
+        adapter: &'b SessionAdapter<'a, H>,
+    ) -> PassportSessions<'b, S, SessionAdapter<'a, H>> {
+        PassportSessions {
+            store: self.store,
+            host: adapter,
+            binding,
+        }
+    }
+
     pub async fn session(
         &self,
         request: &AuthRequest,
@@ -401,9 +480,25 @@ impl<'a, H: AuthHost> PassportService<'a, H> {
         let Some(token) = cookie(request, PASSPORT_COOKIE) else {
             return Ok(None);
         };
+        if is_persistent_session(&token) {
+            let (binding, adapter) = (self.config.binding(), SessionAdapter(self.host));
+            let identity = self.sessions(&binding, &adapter).get(&token).await?;
+            return Ok(Some(PassportClaims::persistent(identity, self.config)));
+        }
         verify(self.host, self.config, &token, self.host.now_ms())
             .await
             .map(Some)
+    }
+
+    fn random43(&self) -> Result<String, GatewayError> {
+        let random = self.host.random_bytes(32)?;
+        if random.len() != 32 {
+            return Err(GatewayError::unavailable(
+                "Random source returned the wrong length",
+                "auth_random_unavailable",
+            ));
+        }
+        Ok(base64url(&random))
     }
 
     pub async fn bearer(&self, token: &str) -> Result<PassportClaims, GatewayError> {
@@ -418,14 +513,17 @@ impl<'a, H: AuthHost> PassportService<'a, H> {
                 Some("method_not_allowed"),
             ));
         }
-        let random = self.host.random_bytes(32)?;
-        if random.len() != 32 {
-            return Err(GatewayError::unavailable(
-                "Random source returned the wrong length",
-                "auth_random_unavailable",
-            ));
-        }
-        let state = base64url(&random);
+        let url = Url::parse(&request.url).map_err(|_| unauthorized())?;
+        let admin = url
+            .query_pairs()
+            .find(|(name, _)| name == "return_to")
+            .is_some_and(|(_, value)| value == "/admin");
+        let state = format!(
+            "{}.{}",
+            self.random43()?,
+            if admin { "admin" } else { "chat" }
+        );
+        let verifier = self.random43()?;
         let mut target = Url::parse(PASSPORT_AUTHORIZE_URL).map_err(|_| passport_unavailable())?;
         target
             .query_pairs_mut()
@@ -433,12 +531,14 @@ impl<'a, H: AuthHost> PassportService<'a, H> {
             .append_pair("audience", &self.config.audience)
             .append_pair("origin", &self.config.origin)
             .append_pair("redirect_uri", &self.config.redirect_uri)
-            .append_pair("state", &state);
+            .append_pair("state", &state)
+            .append_pair("code_challenge", &pkce_challenge(&verifier))
+            .append_pair("code_challenge_method", "S256");
         let mut response = AuthResponse {
             status: 302,
             headers: BTreeMap::from([("location".into(), target.to_string())]),
             body: AuthResponseBody::Empty,
-            set_cookies: vec![state_cookie(&state)],
+            set_cookies: transient_cookies(&state, &verifier, PASSPORT_STATE_TTL_SECONDS).into(),
             stream: None,
         };
         response
@@ -455,9 +555,10 @@ impl<'a, H: AuthHost> PassportService<'a, H> {
                 Some("method_not_allowed"),
             ));
         }
+        // A failed callback clears only transient cookies, keeping any session.
         let fail = |error: GatewayError| {
             let mut response = AuthResponse::error(error);
-            response.set_cookies.push(clear_state_cookie());
+            response.set_cookies.extend(transient_cookies("", "", 0));
             Ok(response)
         };
         let url = match Url::parse(&request.url) {
@@ -474,9 +575,10 @@ impl<'a, H: AuthHost> PassportService<'a, H> {
                 _ => {}
             }
         }
-        let state = state.filter(|value| !value.is_empty() && value.len() <= 200);
+        let state = state.filter(|value| valid_state(value));
         let code = code.filter(|value| !value.is_empty() && value.len() <= 500);
-        let (Some(state), Some(code)) = (state, code) else {
+        let verifier = cookie(request, PASSPORT_VERIFIER_COOKIE).filter(|value| is_random43(value));
+        let (Some(state), Some(code), Some(verifier)) = (state, code, verifier) else {
             return fail(unauthorized());
         };
         if cookie(request, PASSPORT_STATE_COOKIE).as_deref() != Some(state.as_str()) {
@@ -490,6 +592,7 @@ impl<'a, H: AuthHost> PassportService<'a, H> {
                 audience: self.config.audience.clone(),
                 origin: self.config.origin.clone(),
                 redirect_uri: self.config.redirect_uri.clone(),
+                code_verifier: Secret::new(verifier),
             })
             .await
         {
@@ -511,32 +614,62 @@ impl<'a, H: AuthHost> PassportService<'a, H> {
             return fail(unauthorized());
         };
         let claims = match verify(self.host, self.config, token, self.host.now_ms()).await {
-            Ok(claims) => claims,
+            Ok(claims) if claims.agent_token_id.is_none() => claims,
+            Ok(_) => return fail(unauthorized()),
             Err(error) => return fail(error),
         };
-        let max_age = claims
-            .exp
-            .saturating_sub(self.host.now_ms().div_euclid(1000));
+        // Only a fresh code exchange creates a grant; a legacy JWT never does.
+        let (binding, adapter) = (self.config.binding(), SessionAdapter(self.host));
+        let previous = cookie(request, PASSPORT_COOKIE);
+        let token = match self
+            .sessions(&binding, &adapter)
+            .create(body.get("appSession"), &claims.sub, previous.as_deref())
+            .await
+        {
+            Ok(token) => token,
+            Err(error) => return fail(error),
+        };
+        let location = if state.ends_with(".admin") {
+            "/admin"
+        } else {
+            "/chat"
+        };
+        let mut set_cookies = vec![session_cookie(&token)];
+        set_cookies.extend(transient_cookies("", "", 0));
         Ok(AuthResponse {
             status: 302,
             headers: BTreeMap::from([
-                ("location".into(), "/chat".into()),
+                ("location".into(), location.into()),
                 ("cache-control".into(), "no-store".into()),
             ]),
             body: AuthResponseBody::Empty,
-            set_cookies: vec![session_cookie(token, max_age), clear_state_cookie()],
+            set_cookies,
             stream: None,
         })
     }
 
-    pub fn logout(&self) -> AuthResponse {
-        AuthResponse {
+    /// Local authority is deleted before best-effort upstream revocation; a
+    /// local store failure never claims a logout.
+    pub async fn logout(&self, request: &AuthRequest) -> Result<AuthResponse, GatewayError> {
+        if !crate::origin::same_origin_mutation(request) {
+            return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
+        }
+        let (binding, adapter) = (self.config.binding(), SessionAdapter(self.host));
+        let token = cookie(request, PASSPORT_COOKIE).unwrap_or_default();
+        let revoke = self.sessions(&binding, &adapter).revoke(&token).await?;
+        Ok(AuthResponse {
             status: 204,
-            headers: BTreeMap::from([("cache-control".into(), "no-store".into())]),
+            headers: BTreeMap::from([
+                ("cache-control".into(), "no-store".into()),
+                (
+                    "x-uos-passport-upstream-revoke".into(),
+                    revoke.as_str().into(),
+                ),
+            ]),
             body: AuthResponseBody::Empty,
             set_cookies: vec![clear_session_cookie()],
             stream: None,
-        }
+        })
     }
 }
 
@@ -555,49 +688,4 @@ pub fn method_json(claims: &PassportClaims, bearer: bool) -> Value {
             "agent_token_id": claims.agent_token_id,
         }
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn preview_config_never_defaults_to_the_production_client() {
-        assert_eq!(PassportConfig::from_values(&BTreeMap::new()), None);
-        let mut values = BTreeMap::from([
-            ("UOS_AI_PASSPORT_CLIENT_ID".to_owned(), "preview".to_owned()),
-            (
-                "UOS_AI_PASSPORT_ORIGIN".to_owned(),
-                "https://preview.example".to_owned(),
-            ),
-        ]);
-        assert_eq!(PassportConfig::from_values(&values), None);
-        values.insert(
-            "UOS_AI_PASSPORT_REDIRECT_URI".to_owned(),
-            "https://preview.example/auth/callback".to_owned(),
-        );
-        assert_eq!(
-            PassportConfig::from_values(&values),
-            Some(PassportConfig {
-                client_id: "preview".into(),
-                audience: "ai".into(),
-                origin: "https://preview.example".into(),
-                redirect_uri: "https://preview.example/auth/callback".into(),
-            })
-        );
-        values.insert(
-            "UOS_AI_PASSPORT_ORIGIN".to_owned(),
-            "http://preview.example".to_owned(),
-        );
-        assert_eq!(PassportConfig::from_values(&values), None);
-    }
-
-    #[test]
-    fn jwt_shape_requires_three_parts_and_an_algorithm_header() {
-        let header = base64url(br#"{"alg":"RS256"}"#);
-        assert!(jwt_shaped(&format!("{header}.payload.signature")));
-        assert!(!jwt_shaped("opaque"));
-        assert!(!jwt_shaped("a.b"));
-        assert!(!jwt_shaped(".."));
-    }
 }

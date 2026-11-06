@@ -206,3 +206,137 @@ fn capabilities_source_label_is_exact_utf16_with_only_missing_snapshot_default()
         "stored_codex_models".encode_utf16().collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn append_unique_matches_source_field_identity_across_retained_and_new_rows() {
+    use gateway_schema::catalog::append_unique;
+    let ids = |rows: &[SourceJson]| {
+        rows.iter()
+            .map(|r| r.as_str().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let mut rows = vec![
+        document(r#"{"id":"a"}"#),
+        document(r#"{"id":"a","dup":true}"#),
+        document(r#"{"name":"no id"}"#),
+    ];
+    append_unique(
+        &mut rows,
+        [
+            r#"{"id":"a"}"#,
+            r#"{"other":1}"#,
+            r#"{"id":"b"}"#,
+            r#"{"id":"b","again":true}"#,
+            r#"{"id":1.0}"#,
+            r#"{"id":1}"#,
+        ]
+        .map(document),
+        "id",
+    );
+    assert_eq!(
+        ids(&rows),
+        [
+            r#"{"id":"a"}"#,
+            r#"{"id":"a","dup":true}"#,
+            r#"{"name":"no id"}"#,
+            r#"{"id":"b"}"#,
+            r#"{"id":1.0}"#,
+        ]
+    );
+}
+struct Ordinal;
+impl SourceStringCollator for Ordinal {
+    fn compare(&self, a: &JsString16, b: &JsString16) -> Result<std::cmp::Ordering, GatewayError> {
+        Ok(a.as_units().cmp(b.as_units()))
+    }
+}
+#[test]
+fn public_snapshot_joins_each_repeated_id_into_its_first_row() -> Result<(), GatewayError> {
+    let mut input = CatalogInput {
+        snapshot: Some(snapshot(vec![document(r#"{"slug":"m"}"#)])),
+        ..Default::default()
+    };
+    let surplus = [
+        r#"{"id":"m","created":7}"#,
+        r#"{"id":"s"}"#,
+        r#"{"id":"s"}"#,
+    ];
+    input.providers.insert(
+        "surplus".into(),
+        ProviderCatalog {
+            models: surplus.map(document).to_vec(),
+            available: true,
+            ..Default::default()
+        },
+    );
+    let catalog = build_catalog_snapshot(&input, &Ordinal)?;
+    let models = rows(&catalog, "models");
+    let ids = models
+        .iter()
+        .map(|r| units(&member(r, "id")))
+        .collect::<Vec<_>>();
+    assert_eq!(ids, [vec![109], vec![115]]);
+    let providers = |row: &SourceJson| rows(row, "providers").len();
+    assert_eq!((providers(&models[0]), providers(&models[1])), (2, 2));
+    assert_eq!(member(&models[0], "created").as_str(), "1");
+    Ok(())
+}
+#[test]
+fn native_catalog_keeps_the_first_row_for_each_paid_and_trimmed_native_identifier() {
+    let endpoint = r#""supported_endpoint_types":["openai-response"]"#;
+    let paid = |ids: &[&str]| ProviderCatalog {
+        models: (ids.iter())
+            .map(|id| document(&format!(r#"{{"id":"{id}",{endpoint}}}"#)))
+            .collect(),
+        configured: true,
+        available: true,
+        ..Default::default()
+    };
+    let mut input = CatalogInput::default();
+    input.providers.insert("openlux".into(), paid(&["p", "q"]));
+    let mut surplus = paid(&["q", " p ", "r", "r"]);
+    surplus.models.push(document(r#"{"id":"s"}"#));
+    input.providers.insert("surplus".into(), surplus);
+    let models = rows(&native_catalog(None, &input), "models");
+    let slugs = models
+        .iter()
+        .map(|r| String::from_utf16_lossy(&units(&member(r, "slug"))));
+    let synthetic = "ubiquity/deepseek-flash";
+    assert_eq!(slugs.collect::<Vec<_>>(), ["p", "q", "r", synthetic]);
+}
+#[test]
+fn openrouter_capability_endpoints_come_from_the_first_discovered_row_per_id() {
+    let mut input = CatalogInput::default();
+    let models = [
+        r#"{"id":"a/m","output_modalities":["decisions"]}"#,
+        r#"{"id":"b/n"}"#,
+        r#"{"id":"a/m","output_modalities":["text"]}"#,
+    ];
+    input.providers.insert(
+        "openrouter".into(),
+        ProviderCatalog {
+            models: models.map(document).to_vec(),
+            configured: true,
+            available: true,
+            ..Default::default()
+        },
+    );
+    let data = rows(&capabilities(&input), "data");
+    let endpoints = |id: &str| {
+        let row = data
+            .iter()
+            .find(|r| member(r, "id").as_str() == format!("\"{id}\""));
+        row.map(|row| member(row, "supported_endpoints").as_str().to_owned())
+    };
+    let expected = [
+        ("a/m", r#"["/v1/decisions"]"#),
+        ("b/n", r#"["/v1/responses","/v1/chat/completions"]"#),
+        (
+            "typesafe/jev-latest",
+            r#"["/v1/decisions","/v1/systemone"]"#,
+        ),
+    ];
+    for (id, list) in expected {
+        assert_eq!(endpoints(id).as_deref(), Some(list), "{id}");
+    }
+}

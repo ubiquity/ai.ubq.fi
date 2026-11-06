@@ -1,5 +1,9 @@
 //! Source Claude quota truth. Health/history remain optional post-acceptance subscribers.
 use gateway_admin_runtime::claude::AccountBinding;
+use gateway_claude_usage::{
+    snapshot::read_snapshot,
+    state::{MessageLeaf, UsageState, json_message, parse_usage},
+};
 use gateway_core::{
     error::GatewayError,
     js_string::JsString16,
@@ -22,6 +26,8 @@ pub const MIN_BLOCK_MS: i64 = 300_000;
 pub const TRANSIENT_COOLDOWN_MS: i64 = 60_000;
 pub const CONFIG_COOLDOWN_MS: i64 = 600_000;
 pub const AUTH_INVALID_PROOF_TTL_MS: i64 = 300_000;
+/// Meter provenance set only at the ordinary inference response-header seam.
+pub const HEADER_SOURCE: &str = "response_headers";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct QuotaWindow {
@@ -72,19 +78,42 @@ pub struct PoolProof {
     pub expires_at_ms: f64,
     pub evidence_generation: String,
 }
+/// Header-only meter evidence; an unmarked canonical window is never relabeled into it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HeaderObservation {
+    pub source: String,
+    #[serde(flatten)]
+    pub observation: QuotaObservation,
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct QuotaState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_headers: Option<HeaderObservation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default, with = "proof_map")]
     pub pool_proofs: Option<BTreeMap<JsString16, PoolProof>>,
+    /// Validated source usage snapshot JSON; meters are recomputed on every read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_snapshot: Option<SourceJson>,
     pub windows: BTreeMap<String, QuotaWindow>,
     pub standard: BTreeMap<String, StandardWindow>,
+    /// Retired direct-read metadata, retained verbatim; never a routing guard.
+    #[serde(default)]
+    pub usage: Option<UsageState>,
     pub representative_claim: Option<String>,
     pub blocked_until_ms: Option<f64>,
     pub block_window: Option<String>,
     pub cooldown_until_ms: Option<f64>,
     pub last_error: Option<QuotaError>,
     pub updated_at_ms: f64,
+}
+impl QuotaState {
+    pub fn empty(now: i64) -> Self {
+        Self {
+            updated_at_ms: now as f64,
+            ..Self::default()
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Exhaustion {
@@ -101,6 +130,7 @@ pub(crate) struct Outcome<'a> {
     pub config_error: Option<QuotaError>,
     pub config_retry_ms: Option<i64>,
     pub served: bool,
+    pub source: Option<&'static str>,
 }
 
 fn number(value: Option<&Value>) -> Option<f64> {
@@ -236,17 +266,8 @@ mod proof_map {
             .map(Some)
     }
 }
-/// Malformed optional observations are skipped exactly as the source reader does.
-pub fn parse_state(value: &Value) -> Option<QuotaState> {
-    value.as_object()?;
-    Some(QuotaState {
-        pool_proofs: value.get("pool_proofs").map(|raw| {
-            raw.as_object()
-                .into_iter()
-                .flatten()
-                .filter_map(|(k, v)| proof(v).map(|v| (JsString16::from_utf8(k), v)))
-                .collect()
-        }),
+fn meters(value: &Value, observed_at_ms: f64) -> QuotaObservation {
+    QuotaObservation {
         windows: WINDOWS
             .into_iter()
             .filter_map(|id| window(&value["windows"][id]).map(|row| (id.into(), row)))
@@ -259,6 +280,42 @@ pub fn parse_state(value: &Value) -> Option<QuotaState> {
             .get("representative_claim")
             .and_then(Value::as_str)
             .map(str::to_owned),
+        observed_at_ms,
+    }
+}
+fn header_observation(value: &Value) -> Option<HeaderObservation> {
+    if value.get("source")?.as_str()? != HEADER_SOURCE || value.get("usage_snapshot").is_some() {
+        return None;
+    }
+    let at = number(value.get("observed_at_ms")).filter(|n| safe_integer(*n) && *n > 0.0)?;
+    Some(HeaderObservation {
+        source: HEADER_SOURCE.into(),
+        observation: meters(value, at),
+    })
+}
+/// Malformed optional observations are skipped exactly as the source reader does.
+pub fn parse_state(value: &Value) -> Option<QuotaState> {
+    value.as_object()?;
+    let meters = meters(value, 0.0);
+    Some(QuotaState {
+        response_headers: value.get("response_headers").and_then(header_observation),
+        pool_proofs: value.get("pool_proofs").map(|raw| {
+            raw.as_object()
+                .into_iter()
+                .flatten()
+                .filter_map(|(k, v)| proof(v).map(|v| (JsString16::from_utf8(k), v)))
+                .collect()
+        }),
+        usage_snapshot: value
+            .get("usage_snapshot")
+            .and_then(|v| SourceJson::from_serializable(v).ok())
+            .and_then(|v| read_snapshot(&v)),
+        windows: meters.windows,
+        standard: meters.standard,
+        usage: value
+            .get("usage")
+            .and_then(|u| parse_usage(u, json_message(u))),
+        representative_claim: meters.representative_claim,
         blocked_until_ms: number(value.get("blocked_until_ms")),
         block_window: value
             .get("block_window")
@@ -316,17 +373,15 @@ fn profile_fields(value: &PortableValue, names: &[&str]) -> Value {
             .collect(),
     )
 }
-fn parse_profile_state(value: &PortableValue) -> Option<QuotaState> {
-    let mut root = profile_fields(
-        value,
-        &[
-            "representative_claim",
-            "blocked_until_ms",
-            "block_window",
-            "cooldown_until_ms",
-            "updated_at_ms",
-        ],
-    );
+fn profile_message(value: Option<&PortableValue>) -> MessageLeaf {
+    match value? {
+        PortableValue::Null => Some(None),
+        PortableValue::String(message) => Some(Some(JsString16::from_utf8(message))),
+        PortableValue::StringUtf16(message) => Some(Some(message.clone())),
+        _ => None,
+    }
+}
+fn profile_meters(value: &PortableValue, root: &mut Value) {
     for (field, ids, columns) in [
         (
             "windows",
@@ -349,17 +404,54 @@ fn parse_profile_state(value: &PortableValue) -> Option<QuotaState> {
             .collect();
         root[field] = Value::Object(rows);
     }
+}
+fn parse_profile_state(value: &PortableValue) -> Option<QuotaState> {
+    let mut root = profile_fields(
+        value,
+        &[
+            "representative_claim",
+            "blocked_until_ms",
+            "block_window",
+            "cooldown_until_ms",
+            "updated_at_ms",
+        ],
+    );
+    profile_meters(value, &mut root);
+    if let Some(headers) = profile_member(value, "response_headers") {
+        let names = [
+            "source",
+            "representative_claim",
+            "observed_at_ms",
+            "usage_snapshot",
+        ];
+        let mut fields = profile_fields(headers, &names);
+        profile_meters(headers, &mut fields);
+        root["response_headers"] = fields;
+    }
     let error = profile_member(value, "last_error");
     let mut message = None;
     if let Some(error) = error {
         root["last_error"] = profile_fields(error, &["kind", "status", "at_ms"]);
-        message = match profile_member(error, "message") {
-            Some(PortableValue::StringUtf16(message)) => message.sanitize_js_whitespace_prefix(240),
-            Some(PortableValue::String(message)) => sanitize_error(Some(message)),
-            _ => None,
-        };
+        message = profile_message(profile_member(error, "message"))
+            .flatten()
+            .and_then(|message| message.sanitize_js_whitespace_prefix(240));
     }
     let mut state = parse_state(&root)?;
+    state.usage = profile_member(value, "usage").and_then(|usage| {
+        let names = [
+            "source",
+            "state",
+            "status",
+            "attempted_at_ms",
+            "observed_at_ms",
+            "retry_at_ms",
+        ];
+        let message = profile_message(profile_member(usage, "message"));
+        parse_usage(&profile_fields(usage, &names), message)
+    });
+    state.usage_snapshot = profile_member(value, "usage_snapshot")
+        .and_then(|v| SourceJson::from_portable_json(v).ok())
+        .and_then(|v| read_snapshot(&v));
     state.pool_proofs = profile_member(value, "pool_proofs").map(|proofs| {
         let rows: Vec<(JsString16, &PortableValue)> = match proofs {
             PortableValue::Object(rows) => rows
@@ -415,10 +507,7 @@ pub fn parse_record(record: &StoredRecord, now: i64) -> Result<Option<QuotaState
         )),
     }
 }
-pub(crate) fn stored_state(
-    state: &QuotaState,
-    revision: String,
-) -> Result<StoredRecord, GatewayError> {
+pub fn stored_state(state: &QuotaState, revision: String) -> Result<StoredRecord, GatewayError> {
     encode_source_control_record(revision, &SourceJson::from_serializable(state)?, None)
 }
 /// Source JSON adapter for the same quota schema, not a new authority constructor.
@@ -454,6 +543,26 @@ pub fn cooling_down(state: Option<&QuotaState>, now: i64) -> bool {
         .and_then(|s| s.cooldown_until_ms)
         .is_some_and(|at| at > now as f64)
 }
+/// Each window and family keeps its newer observation; an older one never resurrects.
+fn newer<T: Clone>(rows: &mut BTreeMap<String, T>, input: &BTreeMap<String, T>, at: fn(&T) -> f64) {
+    for (id, row) in input {
+        if rows.get(id).is_none_or(|old| at(old) <= at(row)) {
+            rows.insert(id.clone(), row.clone());
+        }
+    }
+}
+fn fold(
+    windows: &mut BTreeMap<String, QuotaWindow>,
+    standard: &mut BTreeMap<String, StandardWindow>,
+    claim: &mut Option<String>,
+    observation: &QuotaObservation,
+) {
+    newer(windows, &observation.windows, |w| w.observed_at_ms);
+    newer(standard, &observation.standard, |w| w.observed_at_ms);
+    if observation.representative_claim.is_some() {
+        claim.clone_from(&observation.representative_claim);
+    }
+}
 pub(crate) fn merge(
     previous: Option<&QuotaState>,
     binding: &AccountBinding,
@@ -462,37 +571,24 @@ pub(crate) fn merge(
 ) -> QuotaState {
     let empty = QuotaObservation::empty(now);
     let observation = input.observation.unwrap_or(&empty);
-    let mut next = previous.cloned().unwrap_or(QuotaState {
-        pool_proofs: None,
-        windows: BTreeMap::new(),
-        standard: BTreeMap::new(),
-        representative_claim: None,
-        blocked_until_ms: None,
-        block_window: None,
-        cooldown_until_ms: None,
-        last_error: None,
-        updated_at_ms: now as f64,
-    });
-    for (id, window) in &observation.windows {
-        if next
-            .windows
-            .get(id)
-            .is_none_or(|old| old.observed_at_ms <= window.observed_at_ms)
-        {
-            next.windows.insert(id.clone(), window.clone());
-        }
-    }
-    for (id, window) in &observation.standard {
-        if next
-            .standard
-            .get(id)
-            .is_none_or(|old| old.observed_at_ms <= window.observed_at_ms)
-        {
-            next.standard.insert(id.clone(), window.clone());
-        }
-    }
-    if observation.representative_claim.is_some() {
-        next.representative_claim = observation.representative_claim.clone();
+    let mut next = previous.cloned().unwrap_or_else(|| QuotaState::empty(now));
+    let claim = &mut next.representative_claim;
+    fold(&mut next.windows, &mut next.standard, claim, observation);
+    if input.source == Some(HEADER_SOURCE) && !observation.is_empty() {
+        let headers = next
+            .response_headers
+            .get_or_insert_with(|| HeaderObservation {
+                source: HEADER_SOURCE.into(),
+                observation: QuotaObservation::empty(0),
+            });
+        let h = &mut headers.observation;
+        fold(
+            &mut h.windows,
+            &mut h.standard,
+            &mut h.representative_claim,
+            observation,
+        );
+        h.observed_at_ms = h.observed_at_ms.max(observation.observed_at_ms);
     }
     if next.blocked_until_ms.is_some_and(|at| at <= now as f64) {
         next.blocked_until_ms = None;
@@ -582,17 +678,7 @@ pub(crate) fn merge(
     next
 }
 pub(crate) fn clear(previous: Option<&QuotaState>, now: i64) -> QuotaState {
-    let mut next = previous.cloned().unwrap_or(QuotaState {
-        pool_proofs: None,
-        windows: BTreeMap::new(),
-        standard: BTreeMap::new(),
-        representative_claim: None,
-        blocked_until_ms: None,
-        block_window: None,
-        cooldown_until_ms: None,
-        last_error: None,
-        updated_at_ms: now as f64,
-    });
+    let mut next = previous.cloned().unwrap_or_else(|| QuotaState::empty(now));
     next.pool_proofs = Some(BTreeMap::new());
     next.blocked_until_ms = None;
     next.block_window = None;
@@ -600,52 +686,4 @@ pub(crate) fn clear(previous: Option<&QuotaState>, now: i64) -> QuotaState {
     next.last_error = None;
     next.updated_at_ms = now as f64;
     next
-}
-
-#[cfg(test)]
-mod source_control_tests {
-    use super::*;
-    #[test]
-    fn real_quota_writer_and_reader_retain_model_keys_and_reject_escape_text_identity() {
-        let source = SourceJson::parse(r#"{"updated_at_ms":1000,"pool_proofs":{"model:\ud800":{"kind":"quota_exhausted","model_id":"\ud800","observed_at_ms":1000,"expires_at_ms":3000,"evidence_generation":"fixture-generation"}},"last_error":{"kind":"forbidden","message":"credit \udc00","status":403,"at_ms":1000}}"#).unwrap();
-        let state = parse_source_state(&source).unwrap();
-        let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
-        let (key, proof) = state
-            .pool_proofs
-            .as_ref()
-            .unwrap()
-            .first_key_value()
-            .unwrap();
-        assert_eq!(key.as_units(), &[109, 111, 100, 101, 108, 58, 0xd800]);
-        assert_eq!(proof.model_id.as_ref(), Some(&model));
-        assert_ne!(
-            proof.model_id.as_ref(),
-            Some(&ModelId::from_scalar(r"\ud800"))
-        );
-        let record = stored_state(&state, "writer-fixture-revision".into()).unwrap();
-        assert_eq!(record.value_encoding, ValueEncoding::ProfileV2);
-        assert_eq!(record.revision, "writer-fixture-revision");
-        assert_eq!(record.expires_at_ms, None);
-        assert_eq!(parse_record(&record, 1001).unwrap(), Some(state));
-        let encoded = gateway_core::source_control::decode_source_control_record(&record).unwrap();
-        assert!(encoded.as_str().contains(r"\ud800"));
-        assert!(encoded.as_str().contains(r"\udc00"));
-        assert!(encoded.deserialize::<Value>().is_err());
-        println!(
-            "M35_CLAUDE_WRITER_FIXTURE={}",
-            serde_json::to_string(&record).unwrap()
-        );
-        let mut expired = record.clone();
-        expired.expires_at_ms = Some(1001);
-        assert!(parse_record(&expired, 1001).unwrap().is_none());
-    }
-    #[test]
-    fn scalar_quota_writer_remains_json_and_malformed_optional_proofs_stay_absent() {
-        let source = SourceJson::parse(r#"{"updated_at_ms":1000,"pool_proofs":{"bad":{"kind":"quota_exhausted","model_id":null,"observed_at_ms":1000,"expires_at_ms":3000,"evidence_generation":"fixture"},"good":{"kind":"auth_invalid","model_id":null,"observed_at_ms":1000,"expires_at_ms":3000,"evidence_generation":"fixture"}}}"#).unwrap();
-        let state = parse_source_state(&source).unwrap();
-        assert_eq!(state.pool_proofs.as_ref().unwrap().len(), 1);
-        let record = stored_state(&state, "scalar-fixture".into()).unwrap();
-        assert_eq!(record.value_encoding, ValueEncoding::Json);
-        assert_eq!(parse_record(&record, 1000).unwrap(), Some(state));
-    }
 }

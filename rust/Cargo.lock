@@ -905,6 +905,7 @@ dependencies = [
  "base64 0.22.1",
  "ciborium",
  "gateway-core",
+ "gateway-passport-session",
  "getrandom 0.2.16",
  "getrandom 0.3.4",
  "hmac 0.12.1",
@@ -962,6 +963,7 @@ dependencies = [
  "gateway-core",
  "gateway-native",
  "gateway-providers",
+ "gateway-provider-catalog-cache",
  "gateway-publication-policy",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
@@ -978,6 +980,7 @@ dependencies = [
  "gateway-auth",
  "gateway-catalog-runtime",
  "gateway-claude-runtime-test-support",
+ "gateway-claude-usage",
  "gateway-core",
  "gateway-providers",
  "gateway-schema",
@@ -1002,6 +1005,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-claude-usage"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-compaction"
 version = "0.1.0"
 dependencies = [
@@ -1019,6 +1032,19 @@ version = "0.1.0"
 dependencies = [
  "ryu-js",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-decisions"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "gateway-extras-runtime",
+ "gateway-extras-runtime-test-support",
+ "gateway-providers",
+ "gateway-schema",
  "serde_json",
 ]
 
@@ -1100,6 +1126,7 @@ dependencies = [
  "gateway-authority",
  "gateway-core",
  "gateway-native-supervisor-read",
+ "gateway-native-runtime",
  "gateway-publication",
  "gateway-publication-policy",
  "gateway-publication-transport",
@@ -1119,6 +1146,18 @@ dependencies = [
  "ureq",
  "url",
  "webpki-roots",
+]
+
+[[package]]
+name = "gateway-native-runtime"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "rustix",
+ "rustls",
+ "ureq",
+ "url",
 ]
 
 [[package]]
@@ -1143,6 +1182,7 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
+ "gateway-claude-usage",
  "gateway-core",
  "gateway-observability-test-support",
  "gateway-schema",
@@ -1164,10 +1204,46 @@ dependencies = [
 ]
 
 [[package]]
-name = "gateway-providers"
+name = "gateway-passport-session"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "gateway-core",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "time",
+]
+
+[[package]]
+name = "gateway-prompt-admission"
+version = "0.1.0"
+dependencies = [
+ "gateway-compaction",
+ "gateway-core",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "gateway-provider-catalog-cache"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-providers"
+version = "0.1.0"
+dependencies = [
+ "gateway-compaction",
+ "gateway-core",
+ "gateway-prompt-admission",
  "gateway-schema",
  "serde",
  "serde_json",
@@ -1254,6 +1330,7 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
+ "gateway-prompt-admission",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
@@ -1289,6 +1366,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-state-reverse"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "gateway-migration",
+ "gateway-migration-test-support",
+ "gateway-state-transfer",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-state-transfer"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "gateway-migration",
+ "gateway-migration-test-support",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-worker"
 version = "0.1.0"
 dependencies = [
@@ -1304,11 +1406,13 @@ dependencies = [
  "gateway-claude-runtime",
  "gateway-compaction",
  "gateway-core",
+ "gateway-decisions",
  "gateway-extras-runtime",
  "gateway-live-runtime",
  "gateway-migration",
  "gateway-observability",
  "gateway-observability-test-support",
+ "gateway-prompt-admission",
  "gateway-providers",
  "gateway-publication",
  "gateway-publication-policy",
@@ -1316,6 +1420,7 @@ dependencies = [
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
+ "gateway-state-transfer",
  "serde",
  "serde_json",
  "wasm-bindgen",

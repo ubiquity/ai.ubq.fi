@@ -32,6 +32,7 @@ pub enum ExtrasRoute {
     JobGet(String),
     Images(ImageKind),
     SystemOne,
+    Decisions,
 }
 impl ExtrasRoute {
     pub fn label(&self) -> &'static str {
@@ -42,6 +43,7 @@ impl ExtrasRoute {
             Self::Images(ImageKind::Generations) => "images.generations",
             Self::Images(ImageKind::Edits) => "images.edits",
             Self::SystemOne => "systemone",
+            Self::Decisions => "decisions",
         }
     }
 }

@@ -27,11 +27,7 @@ impl Cors {
         let origin = raw_origin.and_then(|value| trusted_relay_origin(&value, &config));
         let credentials = origin.is_some();
         Ok(Self {
-            origin: if credentials {
-                origin.expect("A credential origin was validated")
-            } else {
-                "*".into()
-            },
+            origin: origin.unwrap_or_else(|| "*".into()),
             credentials,
             admin: url.path() == "/admin" || url.path().starts_with("/admin/"),
         })

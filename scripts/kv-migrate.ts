@@ -1,6 +1,7 @@
 import { openKv as openBunKv, type Kv, type KvKey } from "#kv";
 import { prepareNativeKvForDevelopment } from "../src/runtime/native-kv-bootstrap.ts";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream, writeFileSync } from "node:fs";
+import { restoreNativeCapture } from "../src/kv-conversion/native-restore.ts";
 import { mkdir } from "node:fs/promises";
 import { Writable } from "node:stream";
 import { exportEntries } from "../src/kv-conversion/profile-json.ts";
@@ -429,6 +430,18 @@ const validateHttpCommand = async (flags: Args): Promise<void> => {
   }
 };
 
+const restoreNativeCommand = (flags: Args): void => {
+  const required = (name: string): string => {
+    const value = getFlagString(flags, name);
+    if (!value) throw new Error(`--${name} is required`);
+    return value;
+  };
+  const receiptPath = required("receipt");
+  const receipt = restoreNativeCapture(required("capture"), required("capture-sha256"), required("destination"));
+  writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+  console.log(JSON.stringify(receipt, null, 2));
+};
+
 const usage = (): void => {
   console.log(`kv-migrate.ts
 
@@ -444,6 +457,11 @@ Usage:
   bun run kv:validate --target <remote-kv-url>
   bun run kv:incident-v2 --target <remote-kv-url>
   bun run kv:validate-http --base-url https://ai.ubq.fi --strict
+  bun run kv:restore-native --capture <private NativeCapture v2> --capture-sha256 <hex> --destination <NEW kv-bun.sqlite3> --receipt <NEW file>
+
+restore-native is the Worker rollback step: it writes a reverse NativeCapture into a NEW codec-marked
+Bun KV only, re-reads and validates every raw key, revision, absolute expiry and typed value, and
+never opens, converts or replaces an existing or live database.
 
 Direct remote Deno/V8 KV access is retired. Use the source Deno release to export profile NDJSON before conversion, or use the HTTP import API.
 HTTP imports require an admin bearer token; DENO_DEPLOY_TOKEN is used by default.
@@ -501,6 +519,10 @@ const main = async (): Promise<void> => {
   }
   if (command === "validate-http") {
     await validateHttpCommand(flags);
+    return;
+  }
+  if (command === "restore-native") {
+    restoreNativeCommand(flags);
     return;
   }
   usage();

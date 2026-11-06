@@ -12,6 +12,44 @@ use serde::{
 use serde_json::{Map, Value};
 use std::{collections::BTreeSet, fmt};
 
+/// Source CODEX_CLIENT_RETRY_AFTER_MAX_SECONDS: a weekly reset never becomes a multi-day sleep.
+pub const CODEX_CLIENT_RETRY_AFTER_MAX_SECONDS: i64 = 60;
+/// Source codexRetryAfterSeconds: ceil(remaining seconds), clamped to 1..=60.
+pub fn codex_retry_after_seconds(retry_at_ms: i64, now_ms: i64) -> i64 {
+    let remaining = retry_at_ms.saturating_sub(now_ms);
+    let seconds = remaining / 1000 + i64::from(remaining % 1000 > 0);
+    seconds.clamp(1, CODEX_CLIENT_RETRY_AFTER_MAX_SECONDS)
+}
+/// Source routingErrorResponse: a gateway-generated Codex 429/503 with a bounded Retry-After.
+pub fn codex_routing_error(
+    status: u16,
+    message: &str,
+    code: &str,
+    retry_at_ms: Option<i64>,
+    now_ms: i64,
+) -> crate::types::RoutingError {
+    let error_type = match status {
+        429 => "rate_limit_error",
+        500.. => "server_error",
+        _ => "invalid_request_error",
+    };
+    let error = gateway_core::error::GatewayError::new(status, message, Some(code))
+        .with_type(error_type)
+        .with_param(None);
+    let mut headers = Headers::new();
+    if let Some(at) = retry_at_ms.filter(|_| matches!(status, 429 | 503)) {
+        let seconds = codex_retry_after_seconds(at, now_ms);
+        headers.insert("Retry-After".into(), seconds.to_string());
+    }
+    crate::types::RoutingError {
+        source_body: SourceJson::from_serializable(&error.envelope)
+            .ok()
+            .map(crate::types::SourceRefusalBody::Json),
+        error: Box::new(error),
+        headers,
+    }
+}
+
 struct Unique(Value);
 impl<'de> Deserialize<'de> for Unique {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {

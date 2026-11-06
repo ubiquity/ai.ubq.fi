@@ -40,7 +40,9 @@ pub enum AuthUpstreamRequest {
         audience: String,
         origin: String,
         redirect_uri: String,
+        code_verifier: Secret,
     },
+    PassportSession(gateway_passport_session::call::SessionCall),
 }
 
 impl AuthUpstreamRequest {
@@ -70,12 +72,13 @@ impl AuthUpstreamRequest {
             ),
             Self::PassportJwks => crate::passport::PASSPORT_JWKS_URL.into(),
             Self::PassportExchange { .. } => crate::passport::PASSPORT_EXCHANGE_URL.into(),
+            Self::PassportSession(call) => call.url().into(),
         }
     }
 
     pub fn method(&self) -> &'static str {
         match self {
-            Self::PassportExchange { .. } => "POST",
+            Self::PassportExchange { .. } | Self::PassportSession(_) => "POST",
             _ => "GET",
         }
     }
@@ -89,12 +92,15 @@ impl AuthUpstreamRequest {
                 audience,
                 origin,
                 redirect_uri,
+                code_verifier,
             } => serde_json::to_vec(&serde_json::json!({
                 "code": code.expose(),
                 "clientId": client_id,
                 "audience": audience,
                 "origin": origin,
                 "redirectUri": redirect_uri,
+                "codeVerifier": code_verifier.expose(),
+                "appSession": true,
             }))
             .map_err(|_| {
                 GatewayError::unavailable(
@@ -102,6 +108,7 @@ impl AuthUpstreamRequest {
                     "passport_unavailable",
                 )
             }),
+            Self::PassportSession(call) => call.body(),
             _ => Ok(Vec::new()),
         }
     }
@@ -129,6 +136,7 @@ impl AuthUpstreamRequest {
                 ("accept".into(), "application/json".into()),
                 ("content-type".into(), "application/json".into()),
             ],
+            Self::PassportSession(call) => call.headers(),
         }
     }
 }

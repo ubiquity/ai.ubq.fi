@@ -1,6 +1,7 @@
 use super::*;
 use crate::live_bridge::NativeLiveOutcome;
 use gateway_auth::{crypto::base64url, native_live::AuthenticatedNativeLive};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{collections::BTreeSet, fs, net::Shutdown, path::PathBuf, sync::Mutex};
 
 #[derive(Default)]

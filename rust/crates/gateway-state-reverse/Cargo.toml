@@ -1,0 +1,28 @@
+[package]
+name = "gateway-state-reverse"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core.workspace = true
+gateway-auth.workspace = true
+gateway-migration.workspace = true
+gateway-state-transfer.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+gateway-migration-test-support.workspace = true
+
+[[example]]
+name = "state-transfer-reverse"
+path = "examples/state-transfer-reverse.rs"
+
+[[example]]
+name = "state-transfer-fixture-frames"
+path = "examples/state-transfer-fixture-frames.rs"
+
+[lints]
+workspace = true

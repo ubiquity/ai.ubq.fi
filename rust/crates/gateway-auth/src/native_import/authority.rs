@@ -365,7 +365,8 @@ impl ImportCustodyStartedReplyData {
         Ok(value)
     }
 }
-fn max_state() -> ImportAuthorityStateData {
+/// Largest valid state; it defines the derived request and reply bounds.
+pub fn max_state() -> ImportAuthorityStateData {
     let long = "\u{1}".repeat(4096);
     let hash = "a".repeat(64);
     ImportAuthorityStateData {
@@ -389,7 +390,7 @@ fn max_state() -> ImportAuthorityStateData {
         deadline_ms: MAX_SAFE_INTEGER,
     }
 }
-fn max_terminal() -> ImportAuthorityTerminalData {
+pub fn max_terminal() -> ImportAuthorityTerminalData {
     let long = "\u{1}".repeat(4096);
     let hash = "a".repeat(64);
     let reference = "r".repeat(256);
@@ -408,7 +409,7 @@ fn max_terminal() -> ImportAuthorityTerminalData {
         paid_control_config_revision: Some(long),
     }
 }
-fn max_custody() -> ImportCustodyStartedWire {
+pub fn max_custody() -> ImportCustodyStartedWire {
     let state = max_state();
     ImportCustodyStartedWire {
         v: 1,
@@ -551,7 +552,7 @@ pub fn import_custody_reply_max_bytes() -> usize {
 }
 /// None preserves the old operation's original cap. A marker is used only to
 /// refuse malformed new input; larger selection requires the COMPLETE typed body.
-pub(crate) fn new_request_limit(body: &[u8]) -> Result<Option<usize>, GatewayError> {
+pub fn new_request_limit(body: &[u8]) -> Result<Option<usize>, GatewayError> {
     if let Some(limit) = super::catalog_seed::request_limit(body)? {
         return Ok(Some(limit));
     }
@@ -603,6 +604,3 @@ pub(crate) fn new_response_limit(
     ImportCustodyStartedReplyData::parse_for(response, &request)?;
     Ok(Some(import_custody_reply_max_bytes()))
 }
-
-#[cfg(test)]
-mod tests;

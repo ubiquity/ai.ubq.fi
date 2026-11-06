@@ -12,6 +12,21 @@ use gateway_migration::{
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use serde_json::{Value, json};
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+/// Converts a missing value or a failed result into the test's error instead of a panic.
+trait Must<T> {
+    fn must(self) -> TestResult<T>;
+}
+impl<T> Must<T> for Option<T> {
+    fn must(self) -> TestResult<T> {
+        self.ok_or_else(|| "missing value".into())
+    }
+}
+impl<T, E: std::fmt::Debug> Must<T> for Result<T, E> {
+    fn must(self) -> TestResult<T> {
+        self.map_err(|error| format!("{error:?}").into())
+    }
+}
 
 const SOURCE: &str = "6d4d4790a7c06514b92938ff677dbfd52764461d";
 
@@ -326,6 +341,34 @@ fn current_core_excludes_histories_and_proves_the_free_write_budget() {
             .unwrap()
             .contains("request-history")
     );
+}
+
+#[test]
+fn retired_claude_usage_leases_are_excluded_not_refused() -> TestResult {
+    let mut entries = valid_core_entries();
+    let lease = json!([
+        "uos_ai",
+        "claude_code_usage",
+        "v1",
+        "lease",
+        "account",
+        "cohort"
+    ]);
+    entries.push(entry(lease, json!({"owner":"fixture"}), "49", -1));
+    let directory = Directory::new();
+    let spool = directory.file("spool");
+    std::fs::create_dir(&spool).must()?;
+    let core = Captured::owned(capture(entries), &spool)
+        .must()?
+        .core_capture()
+        .must()?;
+    assert!(
+        core.manifest
+            .excluded
+            .iter()
+            .any(|rule| rule.rule == "retired_claude_usage_lease" && rule.rows == 1)
+    );
+    Ok(())
 }
 
 #[test]

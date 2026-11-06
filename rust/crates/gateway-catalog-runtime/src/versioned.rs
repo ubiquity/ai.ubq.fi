@@ -2,7 +2,7 @@ use crate::{
     CatalogRuntime,
     host::{
         CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogMaintenance, CatalogObservation,
-        CatalogProvider, CodexAccount, CredentialPublication, unavailable,
+        CatalogProvider, CodexAccount, CredentialPublication, LeasedRefresh, unavailable,
     },
     state,
 };
@@ -20,11 +20,6 @@ use std::{
     future::{Future, poll_fn},
     task::Poll,
 };
-struct Lease<'a> {
-    version: &'a str,
-    owner: &'a str,
-    generation: &'a str,
-}
 struct Fetched {
     response: CatalogFetchResponse,
     evidence: Vec<(String, Vec<ModelId>)>,
@@ -244,7 +239,7 @@ async fn with_lease<
 >(
     store: &S,
     host: &H,
-    lease: &Lease<'_>,
+    lease: &LeasedRefresh,
     fetch: F,
 ) -> Result<Fetched, GatewayError> {
     enum Step<T> {
@@ -268,11 +263,11 @@ async fn with_lease<
             Step::Fetch(result) => return result,
             Step::Tick(tick) => {
                 tick?;
-                if !state::generation_current(store, lease.generation).await?
+                if !state::generation_current(store, &lease.generation).await?
                     || !catalog_store::renew_refresh_lease(
                         store,
-                        lease.version,
-                        lease.owner,
+                        &lease.version,
+                        &lease.owner,
                         host.now_ms(),
                     )
                     .await?
@@ -351,18 +346,18 @@ async fn recover<S: QueryStore, H: CatalogHost>(
     runtime: &CatalogRuntime,
     store: &S,
     host: &H,
-    lease: &Lease<'_>,
+    lease: &LeasedRefresh,
     cached: Option<&LoadedCatalog>,
     conditional: Option<&str>,
     strict_rotation: bool,
 ) -> Result<CatalogResponse, GatewayError> {
-    let current_generation = state::generation_current(store, lease.generation)
+    let current_generation = state::generation_current(store, &lease.generation)
         .await
         .unwrap_or(false);
     if current_generation && let Some(cached) = cached {
         return response(runtime, store, host, cached, conditional, CacheState::Stale).await;
     }
-    if let Some(replacement) = current(store, host, lease.version).await? {
+    if let Some(replacement) = current(store, host, &lease.version).await? {
         return response(
             runtime,
             store,
@@ -437,29 +432,13 @@ pub(crate) async fn serve<S: QueryStore, H: CatalogHost>(
     }
     let owner = host.unique_id();
     if !catalog_store::acquire_refresh_lease(store, &version, &owner, now).await? {
-        if let Some(cached) = cached {
-            return response(
-                runtime,
-                store,
-                host,
-                &cached,
-                conditional,
-                CacheState::Stale,
-            )
-            .await;
+        if let Some(stale) = cached {
+            return response(runtime, store, host, &stale, conditional, CacheState::Stale).await;
         }
         let deadline = now.saturating_add(catalog_cache::COLD_WAIT_MS);
         for _ in 0..51 {
-            if let Some(catalog) = current(store, host, &version).await? {
-                return response(
-                    runtime,
-                    store,
-                    host,
-                    &catalog,
-                    conditional,
-                    CacheState::Wait,
-                )
-                .await;
+            if let Some(found) = current(store, host, &version).await? {
+                return response(runtime, store, host, &found, conditional, CacheState::Wait).await;
             }
             if host.now_ms() >= deadline {
                 break;
@@ -474,35 +453,48 @@ pub(crate) async fn serve<S: QueryStore, H: CatalogHost>(
         )
         .await;
     }
-    let lease = Lease {
-        version: &version,
-        owner: &owner,
-        generation: &generation,
+    let mut job = LeasedRefresh {
+        version,
+        owner,
+        generation,
+        cached,
+        started: now,
     };
-    let result = refresh(
-        runtime,
-        store,
-        host,
-        &lease,
-        cached.as_ref(),
-        conditional,
-        now,
-    )
-    .await;
-    // A failed release never deletes a successor's lease; publication and response are already settled.
-    let released = catalog_store::release_refresh_lease(store, &version, &owner).await;
-    if let Err(error) = released
-        && result.is_err()
-    {
-        return Err(error);
+    // A verified stale catalog answers while one background refresh replaces it; a cold miss waits.
+    if let Some(stale) = job.cached.clone() {
+        let Some(unscheduled) = host.schedule_refresh(job) else {
+            return response(runtime, store, host, &stale, conditional, CacheState::Stale).await;
+        };
+        job = unscheduled;
     }
-    result
+    runtime.refresh_leased(store, host, &job, conditional).await
+}
+impl CatalogRuntime {
+    /// Refresh under the job's lease, then release only that lease.
+    pub async fn refresh_leased<S: QueryStore, H: CatalogHost>(
+        &self,
+        store: &S,
+        host: &H,
+        job: &LeasedRefresh,
+        conditional: Option<&str>,
+    ) -> Result<CatalogResponse, GatewayError> {
+        let cached = job.cached.as_ref();
+        let result = refresh(self, store, host, job, cached, conditional, job.started).await;
+        // A failed release never deletes a successor's lease; publication and response are already settled.
+        let released = catalog_store::release_refresh_lease(store, &job.version, &job.owner).await;
+        if let Err(error) = released
+            && result.is_err()
+        {
+            return Err(error);
+        }
+        result
+    }
 }
 async fn refresh<S: QueryStore, H: CatalogHost>(
     runtime: &CatalogRuntime,
     store: &S,
     host: &H,
-    lease: &Lease<'_>,
+    lease: &LeasedRefresh,
     cached: Option<&LoadedCatalog>,
     conditional: Option<&str>,
     started: i64,
@@ -518,14 +510,14 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
         store,
         host,
         lease,
-        fetch_codex(host, &publication, lease.version, etag),
+        fetch_codex(host, &publication, &lease.version, etag),
     )
     .await
     {
         Ok(fetched) => fetched,
         Err(error) => {
             if degraded(&error) {
-                observe_degradation(host, lease.version).await;
+                observe_degradation(host, &lease.version).await;
             }
             if error.status == 499 {
                 return Err(error);
@@ -534,16 +526,16 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
         }
     };
     if fetched.degraded {
-        observe_degradation(host, lease.version).await;
+        observe_degradation(host, &lease.version).await;
     }
-    if !state::generation_current(store, lease.generation).await?
+    if !state::generation_current(store, &lease.generation).await?
         || !state::checks_current(store, &fetched.publication.source_checks).await?
     {
         return recover(runtime, store, host, lease, None, conditional, true).await;
     }
     let context = state::PublicationContext {
-        version: lease.version,
-        generation: lease.generation,
+        version: &lease.version,
+        generation: &lease.generation,
         publication: &fetched.publication,
         revision: &host.unique_id(),
         now: host.now_ms(),
@@ -581,8 +573,8 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
     };
     let prepared = catalog_cache::prepare_catalog(
         catalog_cache::CatalogIdentity {
-            client_version: lease.version,
-            auth_generation: lease.generation,
+            client_version: &lease.version,
+            auth_generation: &lease.generation,
             body_generation: &revision,
         },
         &body,
@@ -594,7 +586,7 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
     if !state::publish_fenced(
         store,
         &prepared,
-        lease.owner,
+        &lease.owner,
         &fetched.publication.source_checks,
         host,
     )
@@ -603,8 +595,8 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
         return recover(runtime, store, host, lease, None, conditional, true).await;
     }
     let context = state::PublicationContext {
-        version: lease.version,
-        generation: lease.generation,
+        version: &lease.version,
+        generation: &lease.generation,
         publication: &fetched.publication,
         revision: &revision,
         now: started,
@@ -617,7 +609,7 @@ async fn finish_refresh<S: QueryStore, H: CatalogHost>(
     runtime: &CatalogRuntime,
     store: &S,
     host: &H,
-    lease: &Lease<'_>,
+    lease: &LeasedRefresh,
     conditional: Option<&str>,
     context: state::PublicationContext<'_>,
     body: Option<&str>,
@@ -635,16 +627,17 @@ async fn finish_refresh<S: QueryStore, H: CatalogHost>(
         }
     }
     if let Err(error) =
-        catalog_store::prune_stored_catalog_versions(store, lease.version, host.now_ms()).await
+        catalog_store::prune_stored_catalog_versions(store, &lease.version, host.now_ms()).await
     {
         maintenance(host, CatalogMaintenance::VersionPruning, error).await;
     }
-    if !state::generation_current(store, lease.generation).await? {
+    if !state::generation_current(store, &lease.generation).await? {
         return recover(runtime, store, host, lease, None, conditional, true).await;
     }
-    let catalog = state::load_exact_catalog(store, lease.version, lease.generation, host.now_ms())
-        .await?
-        .ok_or_else(|| unavailable("Codex model catalog could not be read after caching"))?;
+    let catalog =
+        state::load_exact_catalog(store, &lease.version, &lease.generation, host.now_ms())
+            .await?
+            .ok_or_else(|| unavailable("Codex model catalog could not be read after caching"))?;
     let cache = body.map_or(CacheState::Revalidated, |_| CacheState::Miss);
     response(runtime, store, host, &catalog, conditional, cache).await
 }
@@ -664,19 +657,4 @@ async fn maintenance<H: CatalogHost>(host: &H, operation: CatalogMaintenance, er
             code: error.envelope.error.code,
         })
         .await;
-}
-
-#[cfg(test)]
-mod source_evidence_tests {
-    use super::*;
-    #[test]
-    fn single_account_evidence_retains_trimmed_units_and_distinguishes_escape_text() {
-        let document = SourceJson::parse(r#"{"models":[{"slug":" \ud800 "},{"slug":"\ud800"},{"slug":"\\ud800"},{"id":"\udc00"},{"slug":" "}]}"#).unwrap();
-        let result = evidence("source-account", &document);
-        assert_eq!(result[0].0, "source-account");
-        assert_eq!(result[0].1.len(), 3);
-        assert_eq!(result[0].1[0].as_js_string().as_units(), &[0xd800]);
-        assert!(result[0].1[1].matches_scalar(r"\ud800"));
-        assert_eq!(result[0].1[2].as_js_string().as_units(), &[0xdc00]);
-    }
 }

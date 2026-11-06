@@ -20,7 +20,6 @@ pub struct CoreStateRuleCount {
     pub rule: String,
     pub rows: usize,
 }
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CoreStateManifest {
     pub v: u32,
@@ -41,9 +40,8 @@ pub struct CoreStateManifest {
     pub current_paid_unresolved: usize,
     pub current_paid_pending: usize,
 }
-
 impl CoreStateManifest {
-    fn validate(&self) -> Result<(), MigrationError> {
+    pub fn validate(&self) -> Result<(), MigrationError> {
         let included = self.included.iter().map(|entry| entry.rows).sum::<usize>();
         let excluded = self.excluded.iter().map(|entry| entry.rows).sum::<usize>();
         if included != self.selected_rows
@@ -82,19 +80,16 @@ impl CoreStateManifest {
         Ok(())
     }
 }
-
 #[derive(Clone, Debug)]
 pub struct CoreStateCapture {
     pub capture: NativeCapture,
     pub manifest: CoreStateManifest,
 }
-
 #[derive(Clone, Copy)]
 enum Decision {
     Include(&'static str),
     Exclude(&'static str),
 }
-
 fn rule_counts(counts: BTreeMap<&'static str, usize>) -> Vec<CoreStateRuleCount> {
     counts
         .into_iter()
@@ -104,7 +99,6 @@ fn rule_counts(counts: BTreeMap<&'static str, usize>) -> Vec<CoreStateRuleCount>
         })
         .collect()
 }
-
 fn key_parts(entry: &NativeEntry) -> Result<Vec<Value>, GatewayError> {
     let key = TupleKey::from_sort_bytes(entry.raw_key.clone())?.to_record_key();
     parts(&key)
@@ -177,6 +171,20 @@ fn paid_unresolved(entry: &NativeEntry) -> Result<bool, GatewayError> {
     ))
 }
 
+const UBQ_AI_OPERATIONAL: [&str; 12] = [
+    "api_keys",
+    "claude_code_auth",
+    "claude_code_quota",
+    "claude_code_workspace",
+    "codex_auth",
+    "codex_catalog",
+    "codex_catalog_auth_generation",
+    "codex_catalog_chunk",
+    "codex_catalog_refresh_lease",
+    "codex_catalog_source_chunk",
+    "codex_models",
+    "kernel_auth",
+];
 fn classify(
     entry: &NativeEntry,
     captured_at_ms: i64,
@@ -187,18 +195,9 @@ fn classify(
         return Ok(Decision::Include("default_operational_settings"));
     }
     if starts(&p, &["ubq_ai"]) {
-        if starts(&p, &["ubq_ai", "api_keys"])
-            || starts(&p, &["ubq_ai", "claude_code_auth"])
-            || starts(&p, &["ubq_ai", "claude_code_quota"])
-            || starts(&p, &["ubq_ai", "claude_code_workspace"])
-            || starts(&p, &["ubq_ai", "codex_auth"])
-            || starts(&p, &["ubq_ai", "codex_catalog"])
-            || starts(&p, &["ubq_ai", "codex_catalog_auth_generation"])
-            || starts(&p, &["ubq_ai", "codex_catalog_chunk"])
-            || starts(&p, &["ubq_ai", "codex_catalog_refresh_lease"])
-            || starts(&p, &["ubq_ai", "codex_catalog_source_chunk"])
-            || starts(&p, &["ubq_ai", "codex_models"])
-            || starts(&p, &["ubq_ai", "kernel_auth"])
+        if UBQ_AI_OPERATIONAL
+            .iter()
+            .any(|family| starts(&p, &["ubq_ai", family]))
         {
             return Ok(Decision::Include("ubq_ai_operational_state"));
         }
@@ -245,6 +244,10 @@ fn classify(
     }
     if starts(&p, &["uos_ai", "provider_capacity"]) {
         return Ok(Decision::Exclude("historical_provider_capacity"));
+    }
+    if starts(&p, &["uos_ai", "claude_code_usage"]) {
+        // Retired direct-usage leases (source Oct 25-27); never current operational state.
+        return Ok(Decision::Exclude("retired_claude_usage_lease"));
     }
     if starts(&p, &["uos_ai", "provider_health"]) {
         return Ok(Decision::Include("provider_health_current_state"));
@@ -439,56 +442,4 @@ pub(crate) fn select_spool(
     };
     manifest.validate()?;
     Ok(CoreStateCapture { capture, manifest })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn valid_manifest() -> CoreStateManifest {
-        CoreStateManifest {
-            v: 1,
-            source_git_sha: "a".repeat(40),
-            captured_at_ms: 1,
-            source_rows: 1,
-            selected_rows: 1,
-            excluded_rows: 0,
-            included: vec![CoreStateRuleCount {
-                rule: "fixture".into(),
-                rows: 1,
-            }],
-            excluded: vec![],
-            derived_rows: 0,
-            manifest_rows: 1,
-            do_row_writes: 3,
-            do_row_write_limit: CORE_STATE_DO_ROW_WRITE_LIMIT,
-            within_free_limit: true,
-            current_api_windows: 1,
-            current_paid_requests: 0,
-            current_paid_unresolved: 0,
-            current_paid_pending: 0,
-        }
-    }
-
-    #[test]
-    fn missing_current_quota_or_pending_evidence_is_refused() {
-        let mut missing_window = valid_manifest();
-        missing_window.current_api_windows = 0;
-        assert!(missing_window.validate().is_err());
-
-        let mut missing_pending = valid_manifest();
-        missing_pending.current_paid_unresolved = 1;
-        assert!(missing_pending.validate().is_err());
-    }
-
-    #[test]
-    fn write_budget_never_accepts_the_free_tier_boundary() {
-        let mut manifest = valid_manifest();
-        manifest.source_rows = 50_000;
-        manifest.selected_rows = 50_000;
-        manifest.included[0].rows = 50_000;
-        manifest.do_row_writes = 100_001;
-        manifest.within_free_limit = false;
-        assert!(manifest.validate().is_err());
-    }
 }

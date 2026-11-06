@@ -13,41 +13,7 @@ pub fn json<T: Serialize + ?Sized>(value: &T) -> Result<SourceJson, CompactionFa
         .map_err(|_| CompactionFailure::new(FailureKind::JevFailed, "state serialization failed"))
 }
 pub fn estimate_tokens(text: &Text) -> usize {
-    let units = text.as_units();
-    let mut at = 0;
-    let mut tokens = 0.0_f64;
-    while at < units.len() {
-        let u = units[at];
-        if text::whitespace(u) {
-            at += 1;
-            continue;
-        }
-        let letter = |v: u16| (65..=90).contains(&v) || (97..=122).contains(&v);
-        let digit = |v: u16| (48..=57).contains(&v);
-        if letter(u) || digit(u) {
-            let begin = at;
-            at += 1;
-            while at < units.len()
-                && if letter(u) {
-                    letter(units[at])
-                } else {
-                    digit(units[at])
-                }
-            {
-                at += 1;
-            }
-            let len = at - begin;
-            tokens += if digit(u) {
-                len as f64 / 2.0
-            } else {
-                (1 + (len - 1) / 6) as f64
-            };
-        } else {
-            tokens += 0.9;
-            at += 1;
-        }
-    }
-    tokens.ceil() as usize
+    crate::token_estimate::estimate_tokens(text)
 }
 pub fn truncate(text: &Text, limit: usize) -> Text {
     if text.len() <= limit {

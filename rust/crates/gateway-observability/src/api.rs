@@ -16,7 +16,6 @@ pub fn valid_usage_rollup(v: &Value) -> bool {
     gateway_core::source_json::SourceJson::from_serializable(v)
         .is_ok_and(|document| crate::records::valid_usage_rollup_source(&document))
 }
-
 pub fn valid_balance_sample(v: &Value) -> bool {
     v["v"] == 1
         && store::safe_i64(&v["bucket_start_at_ms"]).is_some()

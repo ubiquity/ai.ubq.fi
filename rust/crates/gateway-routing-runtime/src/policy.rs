@@ -9,6 +9,7 @@ use gateway_providers::policy::{self, DeepseekHop, PaidRoutingInput, PaidRouting
 use gateway_providers::types::ClientSurface;
 use gateway_schema::{
     aliases,
+    provider_catalog::openrouter_endpoints,
     request::{RequestExtensions, RequestSurface},
     source_request::{SourceModelRequest, SourceRequestDocument, error::SourceRequestError},
 };
@@ -68,6 +69,10 @@ fn ids(rows: &[SourceJson]) -> Vec<ModelId> {
         })
         .collect()
 }
+fn text_rows(rows: &[SourceJson]) -> Vec<SourceJson> {
+    let text = |row: &&SourceJson| openrouter_endpoints(row).contains(&"/v1/responses");
+    rows.iter().filter(text).cloned().collect()
+}
 pub fn provider_ids(input: &RoutingInput, provider: UpstreamProvider) -> Vec<ModelId> {
     if provider == UpstreamProvider::ChatgptCodex {
         return input
@@ -89,7 +94,8 @@ pub fn provider_ids(input: &RoutingInput, provider: UpstreamProvider) -> Vec<Mod
     ids(input.catalog.rows(match provider {
         UpstreamProvider::Metered => "openlux",
         UpstreamProvider::Surplus => "surplus",
-        UpstreamProvider::Openrouter => "openrouter",
+        // Decision-only rows are served on /v1/decisions, never the text wires.
+        UpstreamProvider::Openrouter => return ids(&text_rows(input.catalog.rows("openrouter"))),
         UpstreamProvider::ClaudeCode => "claude_code",
         UpstreamProvider::Deepseek => "deepseek",
         UpstreamProvider::Lithos => "lithos",

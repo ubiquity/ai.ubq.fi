@@ -44,6 +44,7 @@ pub enum AdminOperation {
     ClaudeAuthSet,
     ClaudeAuthDelete,
     ClaudeQuotaClear,
+    ClaudeQuotaRefresh,
     QuotaProjection,
     QuotaProjectionBackfill,
     PromptCacheAnalytics,
@@ -120,6 +121,7 @@ pub fn match_route(method: &str, path: &str) -> Option<AdminRoute> {
         ("POST", "/admin/providers/claude-code/auth") => ClaudeAuthSet,
         ("DELETE", "/admin/providers/claude-code/auth") => ClaudeAuthDelete,
         ("POST", "/admin/providers/claude-code/quota/clear") => ClaudeQuotaClear,
+        ("POST", "/admin/providers/claude-code/quota/refresh") => ClaudeQuotaRefresh,
         ("GET", "/admin/providers/quota-projection") => QuotaProjection,
         ("POST", "/admin/providers/quota-projection/backfill") => QuotaProjectionBackfill,
         ("GET", "/admin/prompt-cache-analytics") => PromptCacheAnalytics,
@@ -186,7 +188,9 @@ impl AdminOperation {
             | ModelsWhitelistGet | ModelsWhitelistSet | ModelsCatalog | ModelsRefresh
             | ProviderSelectionGet | ProviderSelectionSet => "model_catalog",
             ClaudeAccessGet | ClaudeAccessSet | ClaudeAccountSelect | ClaudeAuthGet
-            | ClaudeAuthSet | ClaudeAuthDelete | ClaudeQuotaClear => "claude_account_authority",
+            | ClaudeAuthSet | ClaudeAuthDelete | ClaudeQuotaClear | ClaudeQuotaRefresh => {
+                "claude_account_authority"
+            }
             SupervisorSessions | SupervisorOutput | SupervisorBrief => "native_supervisor",
             KvMigrationImport | KvMigrationValidate => "portable_state_migration",
             ReplayCaptures | SentinelIncidents => "encrypted_failure_capture",

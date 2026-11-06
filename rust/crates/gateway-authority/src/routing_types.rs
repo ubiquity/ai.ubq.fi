@@ -1,4 +1,5 @@
 //! Source-shaped serial routing records and proof capabilities.
+use crate::full_pool_reset::types::FullPoolShadowDecision;
 use gateway_core::identity::{
     AccountBinding, CredentialVersion, PoolVersionstamp, RoutingAccountHash,
     SubscriptionSelectionHash,
@@ -185,12 +186,58 @@ pub struct AdmittedAccount {
     pub probe: Option<ProbeLease>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ScopedOverageProbe {
-    pub binding: AccountBinding,
-    pub requested_model: ModelId,
-    pub quota_class: CodexQuotaClass,
-    pub probe: ProbeLease,
+/// Source planOverageFallback input: why this episode redeemed no reset, and the evaluator's pick.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnredeemedReset {
+    pub reason: String,
+    /// Administrative hash of the evaluator-selected account, preferred over the active one.
+    pub selected_account: Option<String>,
+}
+impl UnredeemedReset {
+    pub fn declined(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            selected_account: None,
+        }
+    }
+    /// Source banked-reset-pool shadow outcome; shadow mode never consumes its credit.
+    pub fn shadow(decision: &FullPoolShadowDecision, duplicate: bool) -> Self {
+        let selected_account = decision.selected_account_id_hash.clone();
+        let reason = match (duplicate, &selected_account) {
+            (true, _) => "already_would_spend_once",
+            (false, Some(_)) => "shadow_selected",
+            (false, None) => decision.decision_reason.as_str(),
+        };
+        Self {
+            reason: reason.into(),
+            selected_account,
+        }
+    }
+    /// Source duplicate path: only a recorded would-spend selection is a duplicate spend.
+    pub fn cached(decision: &FullPoolShadowDecision) -> Self {
+        if decision.decision_reason == "selected"
+            && decision.selected_account_id_hash.is_some()
+            && decision.selected_credit_id_hash.is_some()
+        {
+            return Self::shadow(decision, true);
+        }
+        Self::declined(decision.decision_reason.clone())
+    }
+    /// Source OVERAGE_FALLBACK_REASONS: a completed spend or fence/config failure never qualifies.
+    pub fn allows_overage(&self) -> bool {
+        matches!(
+            self.reason.as_str(),
+            "no_eligible_credit"
+                | "inventory_empty"
+                | "inventory_no_eligible_codex_credit"
+                | "inventory_response_invalid_or_expired"
+                | "inventory_unavailable"
+                | "account_day_limit_reached"
+                | "shadow_selected"
+                | "already_would_spend_once"
+                | "unsubmitted_transaction"
+        )
+    }
 }
 
 /// Constructed only by a successful strong selection. Never deserialize an external proof.

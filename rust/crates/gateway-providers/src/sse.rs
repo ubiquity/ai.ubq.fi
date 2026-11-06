@@ -126,9 +126,12 @@ pub struct StreamDecoder {
     precommit_events: usize,
     precommit_chars: usize,
     native_started: bool,
+    codex_context: Option<gateway_prompt_admission::codex_context::CodexContextCompat>,
 }
 impl StreamDecoder {
     pub fn new(plan: DecodePlan) -> Self {
+        let codex = plan.provider == UpstreamProvider::ChatgptCodex
+            && plan.decode == ResponseDecode::Responses;
         let chat = ChatCollector::new(plan.clone());
         let limit = if matches!(
             plan.decode,
@@ -156,6 +159,7 @@ impl StreamDecoder {
             precommit_events: 0,
             precommit_chars: 0,
             native_started: false,
+            codex_context: codex.then(Default::default),
         }
     }
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<ProviderEvent>, GatewayError> {
@@ -181,6 +185,18 @@ impl StreamDecoder {
     }
     pub fn native_replay(&self) -> Option<&Value> {
         self.native_replay.as_ref()
+    }
+    /// The Codex subscription stream's client-visible frame; callers keep the original event.
+    pub fn client_visible(&mut self, event: ProviderEvent) -> ProviderEvent {
+        let Some(compat) = self.codex_context.as_mut() else {
+            return event;
+        };
+        let value = event.data.deserialize::<Value>().ok();
+        let visible = value.and_then(|value| compat.visible(&value));
+        visible.map_or(event, ProviderEvent::responses)
+    }
+    pub fn visible_sse(&mut self, event: ProviderEvent) -> Vec<u8> {
+        self.client_visible(event).encode_sse().into_bytes()
     }
     fn frames(&mut self, frames: Vec<SseFrame>) -> Result<Vec<ProviderEvent>, GatewayError> {
         let mut events = vec![];

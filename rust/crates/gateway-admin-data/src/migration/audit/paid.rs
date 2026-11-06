@@ -10,6 +10,14 @@ use gateway_core::{
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
+const REQUEST_FACTS: [&str; 6] = [
+    "key_id",
+    "request_id",
+    "window_reset_at_ms",
+    "reserved_microcredits",
+    "billing_state",
+    "spend_microcredits",
+];
 /// Validate the existing source paid-request shape without a model/effort Value transcript.
 pub fn valid_source_paid_request(v: &SourceJson) -> bool {
     source::equals(v, "v", &serde_json::json!(3))
@@ -154,143 +162,134 @@ impl PaidAudit {
             {
                 continue;
             }
-            let a = &mut self.groups[index].0;
-            let result = (|| -> Result<(), GatewayError> {
-                a.count(count_name);
-                let p = &row.parts;
-                let id = p.get(4).and_then(Value::as_str).unwrap_or("");
-                if segment == "request" {
-                    let value = decode_source_control_record(&row.record)?;
-                    if p.len() != 6
-                        || !api_id(p.get(4))
-                        || !api_id(p.get(5))
-                        || !valid_source_paid_request(&value)
-                        || !source::equals(&value, "key_id", &p[4])
-                        || !source::equals(&value, "request_id", &p[5])
-                    {
-                        a.errors.push(
-                            format!("paid fallback V3 request is malformed: {}", reference(p))
-                                .as_str()
-                                .into(),
-                        );
-                        return Ok(());
-                    }
-                    self.orphans[index].push((
-                        a.errors.len(),
-                        id.to_owned(),
-                        format!(
-                            "paid fallback V3 request is orphaned: {id}/{}",
-                            p[5].as_str().unwrap_or("")
-                        )
-                        .as_str()
-                        .into(),
-                    ));
-                    // Full request validation above precedes this exact scalar projection.
-                    self.requests.insert(
-                        reference(&p[4..]),
-                        gateway_core::source_serialization::object(
-                            [
-                                "key_id",
-                                "request_id",
-                                "window_reset_at_ms",
-                                "reserved_microcredits",
-                                "billing_state",
-                                "spend_microcredits",
-                            ]
-                            .into_iter()
-                            .map(|field| {
-                                (
-                                    field,
-                                    source::member(&value, field).expect("validated request fact"),
-                                )
-                            })
-                            .collect(),
-                        )?,
-                    );
-                    return Ok(());
-                }
-                let v = row.value()?;
-                let diagnostic = match segment {
-                    "window" => "window",
-                    "request" => "request",
-                    "pending" => "pending marker",
-                    "reconciliation_lease" => "reconciliation lease",
-                    _ => "deletion guard",
-                };
-                let valid = match segment {
-                    "window" => {
-                        p.len() == 6
-                            && api_id(p.get(4))
-                            && positive(p.get(5))
-                            && valid_window(v)
-                            && v["key_id"] == p[4]
-                            && v["window_reset_at_ms"] == p[5]
-                    }
-                    "pending" => {
-                        p.len() == 6
-                            && api_id(p.get(4))
-                            && api_id(p.get(5))
-                            && v.is_object()
-                            && positive(v.get("created_at_ms"))
-                            && positive(v.get("next_reconciliation_at_ms"))
-                            && number(v, "next_reconciliation_at_ms") >= number(v, "created_at_ms")
-                            && v.get("key_id").is_none_or(|v| *v == p[4])
-                            && v.get("request_id").is_none_or(|v| *v == p[5])
-                    }
-                    "reconciliation_lease" => {
-                        p.len() == 5
-                            && api_id(p.get(4))
-                            && v.is_object()
-                            && text(v, "token").is_some_and(|s| !s.is_empty())
-                            && positive(v.get("expires_at_ms"))
-                    }
-                    _ => {
-                        p.len() == 5
-                            && api_id(p.get(4))
-                            && v.is_object()
-                            && positive(v.get("created_at_ms"))
-                    }
-                };
-                if !valid {
-                    a.errors.push(
-                        format!(
-                            "paid fallback V3 {diagnostic} is malformed: {}",
-                            reference(p)
-                        )
-                        .as_str()
-                        .into(),
-                    );
-                    return Ok(());
-                }
-                if ["window", "request", "reconciliation_lease"].contains(&segment) {
-                    self.orphans[index].push((
-                        a.errors.len(),
-                        id.to_owned(),
-                        format!(
-                            "paid fallback V3 {diagnostic} is orphaned: {}",
-                            if segment == "request" {
-                                format!("{id}/{}", p[5].as_str().unwrap_or(""))
-                            } else {
-                                id.to_owned()
-                            }
-                        )
-                        .as_str()
-                        .into(),
-                    ));
-                }
-                match segment {
-                    "window" => {
-                        self.windows.insert(reference(&p[4..]), serde_json::json!({"key_id":v["key_id"],"window_reset_at_ms":v["window_reset_at_ms"],"pending_count":v["pending_count"],"reserved_microcredits":v["reserved_microcredits"],"settled_microcredits":v["settled_microcredits"]}));
-                    }
-                    "pending" => {
-                        self.pending.insert(reference(&p[4..]));
-                    }
-                    _ => {}
-                }
-                Ok(())
-            })();
-            self.groups[index].1 = result.err();
+            self.groups[index].1 = self.accept_one(index, segment, count_name, row).err();
         }
+    }
+    fn accept_one(
+        &mut self,
+        index: usize,
+        segment: &str,
+        count_name: &str,
+        row: &ObservedRow,
+    ) -> Result<(), GatewayError> {
+        let a = &mut self.groups[index].0;
+        a.count(count_name);
+        let p = &row.parts;
+        let id = p.get(4).and_then(Value::as_str).unwrap_or("");
+        if segment == "request" {
+            return self.accept_request(index, row);
+        }
+        let v = row.value()?;
+        let diagnostic = match segment {
+            "window" => "window",
+            "request" => "request",
+            "pending" => "pending marker",
+            "reconciliation_lease" => "reconciliation lease",
+            _ => "deletion guard",
+        };
+        let valid = match segment {
+            "window" => {
+                p.len() == 6
+                    && api_id(p.get(4))
+                    && positive(p.get(5))
+                    && valid_window(v)
+                    && v["key_id"] == p[4]
+                    && v["window_reset_at_ms"] == p[5]
+            }
+            "pending" => {
+                p.len() == 6
+                    && api_id(p.get(4))
+                    && api_id(p.get(5))
+                    && v.is_object()
+                    && positive(v.get("created_at_ms"))
+                    && positive(v.get("next_reconciliation_at_ms"))
+                    && number(v, "next_reconciliation_at_ms") >= number(v, "created_at_ms")
+                    && v.get("key_id").is_none_or(|v| *v == p[4])
+                    && v.get("request_id").is_none_or(|v| *v == p[5])
+            }
+            "reconciliation_lease" => {
+                p.len() == 5
+                    && api_id(p.get(4))
+                    && v.is_object()
+                    && text(v, "token").is_some_and(|s| !s.is_empty())
+                    && positive(v.get("expires_at_ms"))
+            }
+            _ => {
+                p.len() == 5
+                    && api_id(p.get(4))
+                    && v.is_object()
+                    && positive(v.get("created_at_ms"))
+            }
+        };
+        if !valid {
+            a.errors.push(
+                format!(
+                    "paid fallback V3 {diagnostic} is malformed: {}",
+                    reference(p)
+                )
+                .as_str()
+                .into(),
+            );
+            return Ok(());
+        }
+        if ["window", "request", "reconciliation_lease"].contains(&segment) {
+            self.orphans[index].push((
+                a.errors.len(),
+                id.to_owned(),
+                format!(
+                    "paid fallback V3 {diagnostic} is orphaned: {}",
+                    if segment == "request" {
+                        format!("{id}/{}", p[5].as_str().unwrap_or(""))
+                    } else {
+                        id.to_owned()
+                    }
+                )
+                .as_str()
+                .into(),
+            ));
+        }
+        match segment {
+            "window" => {
+                self.windows.insert(reference(&p[4..]), serde_json::json!({"key_id":v["key_id"],"window_reset_at_ms":v["window_reset_at_ms"],"pending_count":v["pending_count"],"reserved_microcredits":v["reserved_microcredits"],"settled_microcredits":v["settled_microcredits"]}));
+            }
+            "pending" => {
+                self.pending.insert(reference(&p[4..]));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    fn accept_request(&mut self, index: usize, row: &ObservedRow) -> Result<(), GatewayError> {
+        let (a, p) = (&mut self.groups[index].0, &row.parts);
+        let id = p.get(4).and_then(Value::as_str).unwrap_or("");
+        let value = decode_source_control_record(&row.record)?;
+        let facts = (p.len() == 6
+            && api_id(p.get(4))
+            && api_id(p.get(5))
+            && valid_source_paid_request(&value)
+            && source::equals(&value, "key_id", &p[4])
+            && source::equals(&value, "request_id", &p[5]))
+        .then(|| {
+            REQUEST_FACTS
+                .into_iter()
+                .map(|field| source::member(&value, field).map(|fact| (field, fact)))
+                .collect::<Option<Vec<_>>>()
+        })
+        .flatten();
+        let Some(facts) = facts else {
+            let message = format!("paid fallback V3 request is malformed: {}", reference(p));
+            a.errors.push(message.as_str().into());
+            return Ok(());
+        };
+        let orphan = format!(
+            "paid fallback V3 request is orphaned: {id}/{}",
+            p[5].as_str().unwrap_or("")
+        );
+        self.orphans[index].push((a.errors.len(), id.to_owned(), orphan.as_str().into()));
+        // Full request validation above precedes this exact scalar projection.
+        let projection = gateway_core::source_serialization::object(facts)?;
+        self.requests.insert(reference(&p[4..]), projection);
+        Ok(())
     }
     pub(super) fn finish(
         mut self,

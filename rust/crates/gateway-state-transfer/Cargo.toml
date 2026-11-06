@@ -1,0 +1,19 @@
+[package]
+name = "gateway-state-transfer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core.workspace = true
+gateway-auth.workspace = true
+gateway-migration.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+gateway-migration-test-support.workspace = true
+
+[lints]
+workspace = true

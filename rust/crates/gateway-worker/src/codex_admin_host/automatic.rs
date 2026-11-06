@@ -16,11 +16,11 @@ use gateway_authority::full_pool_reset::types::{
     AutomaticResetPermit, FullPoolEvaluation, FullPoolPreparation, SourceResetInventory,
 };
 use gateway_authority::reset_types::{FullPoolResetReconciliation, ResetClaim, ResetState};
-use gateway_authority::routing_types::{AdmittedAccount, CohortProof};
+use gateway_authority::routing_types::{AdmittedAccount, CohortProof, UnredeemedReset};
 use gateway_authority::store::Authority;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{AccountBinding, RequestContext};
-use gateway_routing_runtime::types::CodexRecovery;
+use gateway_routing_runtime::types::CodexRecovery::{self, Declined, Unredeemed};
 use std::cell::RefCell;
 use worker::Method;
 type RuntimeAuthority = Authority<RemoteAuthorityStore, PlatformTokens>;
@@ -90,6 +90,9 @@ async fn account(
     Ok(account)
 }
 
+fn unredeemed(reason: String) -> CodexRecovery {
+    Unredeemed(UnredeemedReset::declined(reason))
+}
 /// Does not reserve another request, create inference, refresh credentials or choose paid fallback.
 pub async fn recover_full_pool(
     store: &RemoteAuthorityStore,
@@ -110,15 +113,14 @@ pub async fn recover_full_pool(
             return Ok(CodexRecovery::Recovered(admission));
         }
         Ok(FullPoolResetReconciliation::NoExisting) => {}
-        Ok(FullPoolResetReconciliation::Blocked { .. }) | Err(_) => {
-            return Ok(CodexRecovery::Declined);
-        }
+        Ok(FullPoolResetReconciliation::Blocked { reason }) => return Ok(unredeemed(reason)),
+        Err(_) => return Ok(CodexRecovery::Declined),
     }
-    let plan = match authority.prepare_full_pool_reset(proof, request).await {
-        Ok(FullPoolPreparation::Observe(plan)) => *plan,
-        Ok(FullPoolPreparation::Declined { .. } | FullPoolPreparation::Cached { .. }) | Err(_) => {
-            return Ok(CodexRecovery::Declined);
-        }
+    let preparation = authority.prepare_full_pool_reset(proof, request).await;
+    let plan = match preparation.map(FullPoolPreparation::observe) {
+        Ok(Ok(plan)) => *plan,
+        Ok(Err(unredeemed)) => return Ok(CodexRecovery::Unredeemed(unredeemed)),
+        Err(_) => return Ok(CodexRecovery::Declined),
     };
     let bindings: Vec<_> = plan.bindings().cloned().collect();
     let observations = futures_util::future::join_all(bindings.iter().map(|binding| {
@@ -147,21 +149,18 @@ pub async fn recover_full_pool(
     {
         Ok(inventories) => inventories,
         Err(error) if matches!(error.status, 401 | 403) => return Err(error),
-        Err(_) => return Ok(CodexRecovery::Declined),
+        Err(_) => return Ok(unredeemed("inventory_unavailable".into())),
     };
-    let permit = match authority
-        .finish_full_pool_reset(plan, &inventories, &SourceRuntime)
-        .await
-    {
-        Ok(FullPoolEvaluation::Ready(permit)) => permit,
-        Ok(FullPoolEvaluation::Declined { .. } | FullPoolEvaluation::Shadow { .. }) | Err(_) => {
-            return Ok(CodexRecovery::Declined);
-        }
+    let evaluation = authority.finish_full_pool_reset(plan, &inventories, &SourceRuntime);
+    let permit = match evaluation.await.map(FullPoolEvaluation::ready) {
+        Ok(Ok(permit)) => permit,
+        Ok(Err(unredeemed)) => return Ok(CodexRecovery::Unredeemed(unredeemed)),
+        Err(_) => return Ok(CodexRecovery::Declined),
     };
     let recovered = match submit(&authority, store, platform, original, config, &permit).await {
         Ok(recovered) => recovered,
         Err(error) if matches!(error.status, 401 | 403) => return Err(error),
-        Err(_) => return Ok(CodexRecovery::Declined),
+        Err(error) => return Ok(permit.unredeemed(&error).map_or(Declined, Unredeemed)),
     };
     Ok(recovered.map_or(CodexRecovery::Declined, CodexRecovery::Recovered))
 }

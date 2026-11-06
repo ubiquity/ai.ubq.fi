@@ -107,42 +107,8 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 self.capabilities.provider(request, context).await
             }
             ClaudeAuthGet | ClaudeAuthSet | ClaudeAuthDelete | ClaudeAccountSelect
-            | ClaudeQuotaClear => {
-                let request = match operation {
-                    ClaudeAuthGet => ClaudeRequest::State,
-                    ClaudeAuthSet => {
-                        ClaudeRequest::SetCredential(parse::claude_source(&input.body)?)
-                    }
-                    ClaudeAuthDelete => ClaudeRequest::DeleteAccount {
-                        account_id: parse::first(&input.query, "account_id")
-                            .map(gateway_core::js_string::JsString16::from_utf8),
-                    },
-                    ClaudeAccountSelect => {
-                        let id = source_body::member(&input.body, "account_id")
-                            .as_ref()
-                            .and_then(source_body::text)
-                            .ok_or_else(|| invalid("account_id is required"))?;
-                        ClaudeRequest::SelectAccount { account_id: id }
-                    }
-                    ClaudeQuotaClear => {
-                        let account_value = source_body::member(&input.body, "account_id");
-                        if account_value
-                            .as_ref()
-                            .is_some_and(|value| source_body::text(value).is_none())
-                        {
-                            return Err(invalid("account_id must be a string"));
-                        }
-                        let account_id = account_value.as_ref().and_then(source_body::text);
-                        let cohort_id = source_body::member(&input.body, "account_cohort_id");
-                        // Account lookup and the targeted-cohort check belong to the
-                        // actual owner in this source order; no early UUID/scalar gate.
-                        ClaudeRequest::ClearQuota {
-                            account_id,
-                            cohort_id,
-                        }
-                    }
-                    _ => return Err(gateway_admin::operations::missing_capability(operation)),
-                };
+            | ClaudeQuotaClear | ClaudeQuotaRefresh => {
+                let request = claude_request(operation, &input)?;
                 self.capabilities.claude(request, context).await
             }
             ReplayCaptures
@@ -632,4 +598,62 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         }
         Ok(AuthResponse::json(200, json!({"deleted":deleted})))
     }
+}
+fn claude_request(
+    operation: AdminOperation,
+    input: &AdminInput,
+) -> Result<ClaudeRequest, GatewayError> {
+    use AdminOperation::*;
+    Ok(match operation {
+        ClaudeAuthGet => ClaudeRequest::State,
+        ClaudeAuthSet => ClaudeRequest::SetCredential(parse::claude_source(&input.body)?),
+        ClaudeAuthDelete => ClaudeRequest::DeleteAccount {
+            account_id: parse::first(&input.query, "account_id")
+                .map(gateway_core::js_string::JsString16::from_utf8),
+        },
+        ClaudeAccountSelect => {
+            let id = source_body::member(&input.body, "account_id")
+                .as_ref()
+                .and_then(source_body::text)
+                .ok_or_else(|| invalid("account_id is required"))?;
+            ClaudeRequest::SelectAccount { account_id: id }
+        }
+        ClaudeQuotaClear => {
+            let account_value = source_body::member(&input.body, "account_id");
+            if account_value
+                .as_ref()
+                .is_some_and(|value| source_body::text(value).is_none())
+            {
+                return Err(invalid("account_id must be a string"));
+            }
+            let account_id = account_value.as_ref().and_then(source_body::text);
+            let cohort_id = source_body::member(&input.body, "account_cohort_id");
+            // Account lookup and the targeted-cohort check belong to the
+            // actual owner in this source order; no early UUID/scalar gate.
+            ClaudeRequest::ClearQuota {
+                account_id,
+                cohort_id,
+            }
+        }
+        // Passive compatibility read: meters come only from response headers.
+        ClaudeQuotaRefresh => {
+            let leaf = |name| source_body::member(&input.body, name);
+            let account_id = leaf("account_id")
+                .as_ref()
+                .and_then(source_body::text)
+                .ok_or_else(|| invalid("account_id is required"))?;
+            let cohort_id = match leaf("account_cohort_id") {
+                None => None,
+                Some(value) => Some(
+                    source_body::text(&value)
+                        .ok_or_else(|| invalid("account_cohort_id must be a string"))?,
+                ),
+            };
+            ClaudeRequest::RefreshQuota {
+                account_id,
+                cohort_id,
+            }
+        }
+        _ => return Err(gateway_admin::operations::missing_capability(operation)),
+    })
 }

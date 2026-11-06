@@ -51,11 +51,11 @@ pub mod native_import;
 pub mod native_request_process;
 #[cfg(unix)]
 pub mod nonce_sqlite;
+#[cfg(all(test, target_os = "linux"))]
+mod owned_case;
 pub mod owner_control;
 #[cfg(unix)]
 pub mod owner_renewal;
-#[cfg(unix)]
-mod private_https;
 #[cfg(unix)]
 pub mod publication_http;
 pub mod supervisor;

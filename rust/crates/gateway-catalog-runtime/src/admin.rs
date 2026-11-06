@@ -84,12 +84,13 @@ fn object(fields: Vec<(&str, SourceJson)>) -> SourceJson {
 fn member(value: &SourceJson, key: &str) -> SourceJson {
     source::member(value, key).unwrap_or_else(|| json_source(&()))
 }
-fn runtime_error(error: SourceRequestError) -> SourceRequestError {
+/// Runtime-config refusal status: size limits are 413, other conflicts are 409.
+pub fn runtime_error(error: SourceRequestError) -> SourceRequestError {
     let message = source::member(error.body(), "error")
         .and_then(|v| source::member(&v, "message"))
         .as_ref()
         .and_then(source::string)
-        .expect("source error message");
+        .unwrap_or_default();
     let includes = |text: &str| {
         let pattern = text.encode_utf16().collect::<Vec<_>>();
         message
@@ -477,41 +478,5 @@ impl CatalogRuntime {
             }
         })
         .await
-    }
-}
-#[cfg(test)]
-mod source_error_tests {
-    use super::*;
-    #[test]
-    fn runtime_error_keeps_opaque_model_units_and_original_status_mapping() {
-        let message = gateway_core::js_string::JsString16::from_units(
-            "runtime config default model is absent from the catalog: "
-                .encode_utf16()
-                .chain([0xd800])
-                .collect(),
-        );
-        let error = runtime_error(SourceRequestError::new(
-            503,
-            message.clone(),
-            "server_error",
-            Some("runtime_config_invalid"),
-            None,
-        ));
-        assert_eq!(error.status, 409);
-        assert_eq!(
-            source::string(&member(&member(error.body(), "error"), "message")),
-            Some(message)
-        );
-        assert_eq!(
-            member(&member(error.body(), "error"), "code"),
-            json_source("runtime_config_invalid")
-        );
-        assert!(error.body().deserialize::<Value>().is_err());
-        let large = runtime_error(lift(GatewayError::new(
-            503,
-            "runtime config is too large",
-            Some("runtime_config_invalid"),
-        )));
-        assert_eq!(large.status, 413);
     }
 }

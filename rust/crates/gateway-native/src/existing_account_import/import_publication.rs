@@ -169,8 +169,8 @@ impl AuthenticatedImportPublicationReply {
     }
 }
 
-use crate::private_https::PrivateHttps;
 use gateway_auth::{crypto::base64url, native::*, native_auth::NativeTransportIdentity};
+use gateway_native_runtime::https::PrivateHttps;
 use std::{net::TcpStream, time::Instant};
 /// One actual constructor-selected TLS transport; no raw-response/callback issuer.
 pub(super) struct ImportPublicationHttp {

@@ -1,8 +1,11 @@
 //! Existing stream polling, decoding and terminal observation, without routing decisions.
 use super::{
-    ATTEMPT_DEADLINE_MS, CEREBRAS_RATE_LIMIT_HEADERS, ResponseResult, apply_warnings,
-    cerebras_error_body, copy_headers, invalid, observe_event, provider_correlation, set_header,
+    ATTEMPT_DEADLINE_MS, CEREBRAS_RATE_LIMIT_HEADERS, ResponseResult, apply_warnings, copy_headers,
+    invalid, observe_event, provider_correlation, set_header,
 };
+use crate::inference_source::{abort_frame, stream_failure};
+use crate::inference_wire::chat_wire_terminal;
+use crate::provider_error::cerebras_error_body;
 use crate::storage::now_ms;
 use crate::transport::stream::FinishHook;
 use crate::transport::{body, stream::ObservedStream};
@@ -15,15 +18,16 @@ use crate::{
     },
 };
 use futures_util::StreamExt;
+use futures_util::future::{Either, select};
 use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal, provider::UpstreamProvider};
+use gateway_prompt_admission::native_http_failure::{SelectedAnswer, reencodes};
 use gateway_providers::response::decode_response;
 use gateway_providers::types::Headers;
 use gateway_providers::{
     sse::StreamDecoder,
-    types::{ClientSurface, DecodePlan, ProviderEvent},
+    types::{ClientSurface, DecodePlan, ProviderEvent, ResponseDecode},
 };
 use gateway_routing_runtime::types::PreparedWireRequest;
-use serde_json::json;
 use std::{collections::VecDeque, rc::Rc};
 use worker::{Response, ResponseBody};
 pub(super) struct Relay {
@@ -39,23 +43,33 @@ pub(super) struct Relay {
     pub(super) lifecycle: Rc<Lifecycle>,
     pub(super) next_sequence: u64,
     pub(super) heartbeat: RelayDelay<worker::Delay>,
+    /// The Chat wire's finish-chunk terminal, published only at `[DONE]`.
+    pub(super) chat_finish: Option<SemanticTerminal>,
 }
 
 impl Relay {
     fn failure_event(&self) -> ProviderEvent {
-        let code = match self.plan.provider {
-            UpstreamProvider::Deepseek => "deepseek_upstream_stream_error",
-            UpstreamProvider::Lithos => "lithos_upstream_stream_error",
-            _ => "upstream_stream_error",
-        };
-        let error = json!({"code":code,"message":"Upstream Chat Completions stream failed."});
-        if self.plan.surface == ClientSurface::Chat {
-            ProviderEvent::chat(json!({"error":error}))
-        } else {
-            ProviderEvent::responses(
-                json!({"type":"response.failed","sequence_number":self.next_sequence,"response":{"id":self.plan.response_id,"object":"response","status":"failed","error":error}}),
-            )
-        }
+        stream_failure(
+            self.plan.provider,
+            self.plan.surface,
+            &self.plan.response_id,
+            self.next_sequence,
+        )
+    }
+
+    /// An aborted relay is not a provider semantic terminal; see `abort_frame`.
+    fn aborted(&mut self) -> Option<worker::Result<Vec<u8>>> {
+        self.done = true;
+        let plan = &self.plan;
+        let client = self.cancellation.client_aborted();
+        abort_frame(
+            client,
+            plan.provider,
+            plan.surface,
+            &plan.response_id,
+            self.next_sequence,
+        )
+        .map(|event| Ok(event.encode_sse().into_bytes()))
     }
 
     async fn events(&mut self, events: Vec<ProviderEvent>) -> Result<(), GatewayError> {
@@ -96,8 +110,12 @@ impl Relay {
                 .field("sequence_number")
                 .and_then(|value| value.deserialize::<u64>().ok())
                 .map_or(self.next_sequence + 1, |number| number + 1);
-            observe_event(&self.observation, &event);
-            self.queue.push_back(event.encode_sse().into_bytes());
+            if self.plan.decode != ResponseDecode::Chat {
+                observe_event(&self.observation, &event);
+            } else if let Some(terminal) = chat_wire_terminal(&mut self.chat_finish, &event) {
+                self.observation.semantic_terminal(terminal);
+            }
+            self.queue.push_back(self.decoder.visible_sse(event));
         }
         let terminal_usage = self.usage.borrow().clone();
         let terminal = self.observation.snapshot().semantic_terminal;
@@ -163,18 +181,28 @@ impl Relay {
             if self.done {
                 return None;
             }
-            let incoming = {
-                match futures_util::future::select(
-                    Box::pin(self.source.next()),
-                    std::pin::Pin::new(&mut self.heartbeat),
-                )
-                .await
-                {
-                    futures_util::future::Either::Left((incoming, _remaining)) => Some(incoming),
-                    futures_util::future::Either::Right(((), remaining)) => {
-                        drop(remaining);
-                        None
-                    }
+            if self.cancellation.signal().aborted() {
+                return self.aborted();
+            }
+            let cancellation = self.cancellation.clone();
+            let abort = std::future::poll_fn(move |context| {
+                cancellation.register_waker(context.waker());
+                if cancellation.signal().aborted() {
+                    std::task::Poll::Ready(())
+                } else {
+                    std::task::Poll::Pending
+                }
+            });
+            let read = select(
+                Box::pin(self.source.next()),
+                std::pin::Pin::new(&mut self.heartbeat),
+            );
+            let incoming = match select(abort, read).await {
+                Either::Left(((), _)) => continue,
+                Either::Right((Either::Left((incoming, _)), _)) => Some(incoming),
+                Either::Right((Either::Right(((), remaining)), _)) => {
+                    drop(remaining);
+                    None
                 }
             };
             let Some(incoming) = incoming else {
@@ -222,6 +250,8 @@ pub(super) struct Reply<'a> {
     pub(super) event_stream: bool,
     pub(super) status: u16,
     pub(super) provider: UpstreamProvider,
+    /// Admitted native SSE headers were already committed for this request.
+    pub(super) early: bool,
 }
 impl Reply<'_> {
     pub(super) async fn send(self) -> ResponseResult {
@@ -237,6 +267,10 @@ impl Reply<'_> {
             }
             if self.provider == UpstreamProvider::Cerebras {
                 return self.cerebras_refusal().await;
+            }
+            let content_type = self.headers.get("content-type").map(String::as_str);
+            if self.early && reencodes(self.status, content_type) {
+                return self.late_refusal().await;
             }
             return self.refusal();
         }
@@ -334,6 +368,43 @@ impl Reply<'_> {
         provider_correlation(&mut response, self.provider, &self.headers)?;
         Ok(response)
     }
+    /// Source `nativeFailureAfterEarlyHeaders`: the selected HTTP error body is read with the
+    /// existing 64 KiB/one-second bound and only its code/message reach the open stream.
+    async fn late_refusal(mut self) -> ResponseResult {
+        let probe = body::refusal_probe(
+            &mut self.upstream,
+            &self.host.cancellation,
+            body::REFUSAL_PROBE_TIMEOUT_MS,
+        )
+        .await;
+        body::discard_response(&mut self.upstream);
+        let answer = SelectedAnswer {
+            status: self.status,
+            headers: &self.headers,
+            body: &probe.bytes,
+            complete: probe.complete,
+        };
+        let frames = match crate::inference_source::late_frames(self.capture, &answer) {
+            Ok(frames) => frames,
+            Err(error) => {
+                self.lifecycle.finish(Default::default(), None).await?;
+                return Err(error);
+            }
+        };
+        self.capture
+            .configure(200, true, self.responses, self.provider);
+        let stream = ObservedStream::new(
+            self.capture
+                .client(futures_util::stream::iter(vec![Ok(frames)])),
+            ObservationHandle::default(),
+            self.context,
+            self.host.cancellation.clone(),
+            Some(self.deadline),
+            self.finish,
+        );
+        let unavailable = |_| invalid("The downstream refusal body is unavailable.");
+        crate::inference_early::sse(stream.into_response().map_err(unavailable)?)
+    }
     fn refusal(self) -> ResponseResult {
         let observation = ObservationHandle::default();
         let (builder, raw_body) = self.upstream.into_parts();
@@ -382,6 +453,7 @@ impl Reply<'_> {
             heartbeat: RelayDelay::new(worker::Delay::from(std::time::Duration::from_millis(
                 gateway_providers::sse::KEEPALIVE_INTERVAL_MS,
             ))),
+            chat_finish: None,
         };
         let source = Box::pin(futures_util::stream::unfold(
             relay,
@@ -397,7 +469,8 @@ impl Reply<'_> {
             self.host.cancellation.clone(),
             None,
             self.finish,
-        );
+        )
+        .with_deadline_frame();
         let mut response = stream
             .into_response()
             .map_err(|_| invalid("The downstream stream is unavailable."))?
@@ -434,6 +507,9 @@ impl Reply<'_> {
                 return Err(error);
             }
         };
+        let body_id = (decoded.status < 400).then(|| {
+            super::completion_correlation(&self.lifecycle, self.capture, &self.decode_plan, &bytes)
+        });
         if let Some(terminal) = decoded.terminal {
             self.observation.semantic_terminal(terminal);
         }
@@ -497,6 +573,9 @@ impl Reply<'_> {
             set_header(&mut response, &name, &value)?;
         }
         provider_correlation(&mut response, self.provider, &self.headers)?;
+        if let Some(id) = body_id.flatten() {
+            set_header(&mut response, "x-uos-provider-request-id", &id)?;
+        }
         apply_warnings(&mut response, self.prepared.warnings())?;
         Ok(response)
     }

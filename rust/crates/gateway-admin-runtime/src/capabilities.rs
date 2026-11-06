@@ -90,6 +90,11 @@ pub enum ClaudeRequest {
         /// None is absent only; every present source leaf retains its type/value.
         cohort_id: Option<SourceJson>,
     },
+    /// Never an upstream read; returns the current header-meter observation time.
+    RefreshQuota {
+        account_id: gateway_core::js_string::JsString16,
+        cohort_id: Option<gateway_core::js_string::JsString16>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

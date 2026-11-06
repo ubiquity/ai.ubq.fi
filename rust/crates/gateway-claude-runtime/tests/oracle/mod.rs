@@ -137,11 +137,15 @@ fn exact_bun_source_outcomes_match_real_same_store_publication() -> crate::suppo
         run(session.after_outcome(&store, &host, head, evidence(case)?))?;
         let expected: quota::QuotaState =
             serde_json::from_str(crate::support::required(case["expected_raw"].as_str())?)?;
+        let mut actual = crate::support::required(store.quota(&account))?;
+        // This oracle predates fc42445's header provenance; quota_state.rs owns that sub-state.
+        let headers = actual.response_headers.take();
         assert_eq!(
-            crate::support::required(store.quota(&account))?,
-            expected,
-            "persisted outcome {index}"
+            headers.is_some(),
+            !actual.windows.is_empty() || !actual.standard.is_empty(),
+            "header provenance {index}"
         );
+        assert_eq!(actual, expected, "persisted outcome {index}");
     }
     Ok(())
 }

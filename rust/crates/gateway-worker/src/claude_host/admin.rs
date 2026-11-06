@@ -12,15 +12,14 @@ use gateway_admin_runtime::{
     claude::{self, AccountBinding, AccountUpdate, Credential, Workspace},
 };
 use gateway_auth::types::{AuthHost, AuthResponse, AuthResponseBody};
+use gateway_claude_runtime::persistence::header_observed_at;
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source, state::AuthorityStore,
 };
 use gateway_observability::{ObservabilityRuntime, types::ObservabilityHost};
 use serde::Serialize;
-use serde_json::Value;
-#[cfg(test)]
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 const UNVALIDATED: &str = "Stored unvalidated: the models listing could not be read.";
@@ -47,12 +46,12 @@ pub async fn admin<H: ObservabilityHost>(
     context: Context,
 ) -> Result<AuthResponse, GatewayError> {
     match request {
-        ClaudeRequest::State => response(observations, context).await,
+        ClaudeRequest::State => respond(observations, context, json!({})).await,
         ClaudeRequest::SelectAccount { account_id } => {
             if !select_source_account(store, platform, &account_id).await? {
                 return Err(not_found());
             }
-            response(observations, context).await
+            respond(observations, context, json!({})).await
         }
         ClaudeRequest::DeleteAccount { account_id } => {
             let account = target(store, platform, account_id.as_ref()).await?;
@@ -63,7 +62,7 @@ pub async fn admin<H: ObservabilityHost>(
                 {
                     Err(not_found())
                 } else {
-                    response(observations, context).await
+                    respond(observations, context, json!({})).await
                 };
             };
             let _removed = claude::remove_account(
@@ -74,7 +73,7 @@ pub async fn admin<H: ObservabilityHost>(
             )
             .await?;
             // This source endpoint directly removes an account; it is not the legacy clear wrapper.
-            response(observations, context).await
+            respond(observations, context, json!({})).await
         }
         ClaudeRequest::ClearQuota {
             account_id,
@@ -88,7 +87,7 @@ pub async fn admin<H: ObservabilityHost>(
                 {
                     return Err(not_found());
                 }
-                return cleared_response(observations, context, false).await;
+                return respond(observations, context, json!({"guards_cleared": false})).await;
             };
             check_target_cohort(
                 account_id
@@ -107,7 +106,23 @@ pub async fn admin<H: ObservabilityHost>(
             {
                 return Err(changed("Claude guards changed during clear"));
             }
-            cleared_response(observations, context, true).await
+            respond(observations, context, json!({"guards_cleared": true})).await
+        }
+        ClaudeRequest::RefreshQuota {
+            account_id,
+            cohort_id,
+        } => {
+            let Some(account) = target(store, platform, Some(&account_id)).await? else {
+                return Err(not_found());
+            };
+            if cohort_id.is_some_and(|id| !selector_matches(&id, &account.account_cohort_id)) {
+                return Err(changed("Claude account generation changed"));
+            }
+            let observed = header_observed_at(store, platform, &account).await?;
+            let message = "Quota updates from response headers on ordinary Claude requests.";
+            let body = json!({"refreshed": false, "reason": "response_headers",
+                "observed_at_ms": observed.map(|at| at as i64), "usage": null, "message": message});
+            respond(observations, context, body).await
         }
         ClaudeRequest::SetCredential(input) => {
             submit(store, platform, observations, input, context).await
@@ -442,38 +457,18 @@ fn submitted_workspace(
         last_error: None,
     }
 }
-async fn response<H: ObservabilityHost>(
+/// `{data, ...extra}`: the subscription block first, then the operation's scalar fields.
+async fn respond<H: ObservabilityHost>(
     observations: &ObservabilityRuntime<RemoteAuthorityStore, H>,
     context: Context,
+    extra: Value,
 ) -> Result<AuthResponse, GatewayError> {
-    #[derive(Serialize)]
-    struct Body {
-        data: SourceJson,
-    }
-    Ok(AuthResponse::source_json(
-        200,
-        SourceJson::from_serializable(&Body {
-            data: block(observations, context).await?,
-        })?,
-    ))
-}
-async fn cleared_response<H: ObservabilityHost>(
-    observations: &ObservabilityRuntime<RemoteAuthorityStore, H>,
-    context: Context,
-    cleared: bool,
-) -> Result<AuthResponse, GatewayError> {
-    #[derive(Serialize)]
-    struct Body {
-        data: SourceJson,
-        guards_cleared: bool,
-    }
-    Ok(AuthResponse::source_json(
-        200,
-        SourceJson::from_serializable(&Body {
-            data: block(observations, context).await?,
-            guards_cleared: cleared,
-        })?,
-    ))
+    let mut fields = vec![(
+        JsString16::from_utf8("data"),
+        block(observations, context).await?,
+    )];
+    fields.extend(source::entries(&SourceJson::from_serializable(&extra)?).unwrap_or_default());
+    Ok(AuthResponse::source_json(200, source::object_keys(fields)?))
 }
 fn not_found() -> GatewayError {
     GatewayError::new(404, "Claude account was not found", Some("not_found"))

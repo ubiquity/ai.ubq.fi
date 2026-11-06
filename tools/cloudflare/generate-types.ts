@@ -17,8 +17,13 @@ for (const [name, version] of [
 const stateRoot = join(root, ".data/cloudflare-typegen");
 await mkdir(stateRoot, { recursive: true });
 const isolated = await mkdtemp(join(stateRoot, "source-"));
-const config = await readFile(join(root, "cloudflare.config.ts"));
-await copyFile(join(root, "cloudflare.config.ts"), join(isolated, "cloudflare.config.ts"));
+const configurationInputs = ["cloudflare.config.ts", "cloudflare-targets.ts"];
+const configurationHash = createHash("sha256");
+for (const path of configurationInputs) {
+  configurationHash.update(path).update(await readFile(join(root, path)));
+  await copyFile(join(root, path), join(isolated, path));
+}
+const identity = configurationHash.digest("hex");
 
 // cf types has no source-directory option. A fresh task-owned cwd prevents
 // automatic cwd dotenv discovery without changing the real repository .env.
@@ -36,12 +41,12 @@ const child = Bun.spawn(["node", join(root, "node_modules/cf/bin/cf"), "workers"
 const [exitCode, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
 await Promise.all([writeFile(join(isolated, "stdout.log"), stdout), writeFile(join(isolated, "stderr.log"), stderr)]);
 if (exitCode !== 0) throw new Error(`Pinned cf type generation failed with exit ${exitCode}; see ${isolated}.`);
-const sourceAfter = await readFile(join(root, "cloudflare.config.ts"));
-if (!sourceAfter.equals(config)) throw new Error("Cloudflare configuration changed during type generation.");
+const sourceAfter = createHash("sha256");
+for (const path of configurationInputs) sourceAfter.update(path).update(await readFile(join(root, path)));
+if (sourceAfter.digest("hex") !== identity) throw new Error("Cloudflare configuration changed during type generation.");
 const generated = await readFile(join(isolated, ".cloudflare/types/index.d.ts"), "utf8");
 if (!generated.includes("// Begin runtime types") || !generated.includes("interface Env extends Cloudflare.Env")) {
   throw new Error("Pinned cf did not produce complete binding and runtime declarations.");
 }
-const identity = createHash("sha256").update(config).digest("hex");
 await writeFile(join(root, "tools/cloudflare/runtime.generated.d.ts"), `// Configuration SHA-256: ${identity}\n${generated}`);
 console.log("Generated isolated Cloudflare configuration types.");

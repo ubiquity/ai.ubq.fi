@@ -1,27 +1,31 @@
 //! Provider-owned Responses-to-Chat phases over immutable source fragments.
 use crate::{
-    chat::{FORWARD_LIMIT, FORWARD_VERSION, bound_source},
     source as s,
     source_tools::{self, ToolMap},
-    types::{ChatProfile, Elision},
+    types::ChatProfile,
 };
 use gateway_core::{
     js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as json,
+};
+use gateway_prompt_admission::{
+    admission::{self as admit, AdmissionProfile, PromptAdmission},
+    forwarding::{self as fw, Elision, FORWARD_LIMIT, FORWARD_VERSION, bound_source},
+    summary::{Exemption, inspect_compaction_summary_input},
 };
 
 pub(crate) struct Projection {
     pub body: SourceJson,
     pub names: ToolMap,
     pub elisions: Vec<Elision>,
+    pub exemptions: Vec<Exemption>,
+    pub admission: Option<PromptAdmission>,
     pub warnings: Vec<String>,
 }
 fn error(message: &str, param: &str) -> gateway_schema::source_request::error::SourceRequestError {
     s::invalid(JsString16::from_utf8(message), param)
 }
 fn bytes(text: &JsString16) -> usize {
-    char::decode_utf16(text.as_units().iter().copied())
-        .map(|v| v.unwrap_or(char::REPLACEMENT_CHARACTER).len_utf8())
-        .sum()
+    fw::forwarded_bytes(text.as_units())
 }
 fn bound(
     text: &JsString16,
@@ -37,7 +41,7 @@ fn content(
     value: &SourceJson,
     role: &str,
     path: &str,
-    reject: bool,
+    (reject, exempt): (bool, bool),
     elisions: &mut Vec<Elision>,
 ) -> s::Result<SourceJson> {
     if let Some(text) = s::string(value) {
@@ -83,13 +87,13 @@ fn content(
             let size = bytes(&url);
             if size > FORWARD_LIMIT {
                 if reject {
-                    return Err(crate::chat::oversized(
-                        &format!("{path}[{index}]"),
-                        size,
-                        None,
-                    ));
+                    return Err(fw::oversized(&format!("{path}[{index}]"), size, None));
                 }
-                omit_image(&url, &format!("{path}[{index}]"), &mut texts, elisions);
+                texts.push(fw::omitted_image(
+                    &url,
+                    &format!("{path}[{index}]"),
+                    elisions,
+                ));
             } else {
                 let mut reference = s::object(vec![("url", s::quoted(&url))]);
                 if let Some(detail) = s::present(part, "detail").filter(|value| {
@@ -115,7 +119,9 @@ fn content(
         }
     }
     let text = s::join(&texts, "");
-    if images.is_empty() {
+    if images.is_empty() && exempt {
+        return Ok(s::quoted(&text));
+    } else if images.is_empty() {
         return bound(&text, path, None, "message", reject, elisions);
     }
     if !texts.is_empty() {
@@ -147,7 +153,7 @@ fn bounded_parts(
         return Ok(s::array(&parts));
     }
     if reject {
-        return Err(crate::chat::oversized(path, original, None));
+        return Err(fw::oversized(path, original, None));
     }
     while parts.iter().map(part_bytes).sum::<usize>() > FORWARD_LIMIT {
         let Some(index) = parts
@@ -157,11 +163,10 @@ fn bounded_parts(
             break;
         };
         let url = s::string(&s::path(&parts[index], &["image_url", "url"])).unwrap_or_default();
-        let mut marker = vec![];
-        omit_image(&url, &format!("{path}[{index}]"), &mut marker, elisions);
+        let marker = fw::omitted_image(&url, &format!("{path}[{index}]"), elisions);
         parts[index] = s::object(vec![
             ("type", s::text("text")),
-            ("text", s::quoted(&marker[0])),
+            ("text", s::quoted(&marker)),
         ]);
     }
     let total = parts.iter().map(part_bytes).sum::<usize>();
@@ -172,9 +177,8 @@ fn bounded_parts(
     {
         let text = s::string(&s::get(&parts[index], "text")).unwrap_or_default();
         let available = (FORWARD_LIMIT + bytes(&text)).saturating_sub(total);
-        let text = crate::chat::bound_source_limit(
-            &text, path, None, "message", false, elisions, available,
-        )?;
+        let text =
+            fw::bound_source_limit(&text, path, None, "message", false, elisions, available)?;
         parts[index] = s::object(vec![("type", s::text("text")), ("text", s::quoted(&text))]);
     }
     if parts.iter().map(part_bytes).sum::<usize>() > FORWARD_LIMIT {
@@ -193,27 +197,6 @@ fn bounded_parts(
     }
     Ok(s::array(&parts))
 }
-
-fn omit_image(
-    url: &JsString16,
-    path: &str,
-    text: &mut Vec<JsString16>,
-    elisions: &mut Vec<Elision>,
-) {
-    let original = bytes(url);
-    let marker = format!(
-        "[gateway: {FORWARD_VERSION} image omitted ({original} bytes); the model did not receive this image; this route forwards at most {FORWARD_LIMIT} bytes per message because the provider counts forwarded payloads as text tokens]"
-    );
-    elisions.push(Elision {
-        path: path.into(),
-        kind: "image".into(),
-        original_bytes: original,
-        forwarded_bytes: marker.len(),
-        omitted_bytes: original,
-        call_id: None,
-    });
-    text.push(JsString16::from_utf8(&marker));
-}
 fn reasoning(item: &SourceJson) -> JsString16 {
     let mut parts = vec![];
     for key in ["summary", "content"] {
@@ -228,50 +211,40 @@ fn reasoning(item: &SourceJson) -> JsString16 {
     }
     s::join(&parts, "")
 }
-pub(crate) fn messages(raw: &SourceJson) -> s::Result<(Vec<SourceJson>, Vec<Elision>)> {
-    let truncation = s::get(raw, "truncation");
-    let reject = s::is(&truncation, "disabled");
-    if !s::is_null(&truncation) && !reject && !s::is(&truncation, "auto") {
-        let value = s::string(&truncation).unwrap_or_else(|| {
-            JsString16::from_utf8(if json::number(&truncation).is_some() {
-                "number"
-            } else if s::boolean(&truncation).is_some() {
-                "boolean"
-            } else {
-                "object"
-            })
-        });
-        return Err(s::invalid(
-            s::concat(&[
-                &JsString16::from_utf8("truncation '"),
-                &value,
-                &JsString16::from_utf8("' is not supported; expected 'auto' or 'disabled'"),
-            ]),
-            "truncation",
-        ));
-    }
-    let mut messages = vec![];
-    let mut elisions = vec![];
-    let mut pending = JsString16::default();
+type Messages = (Vec<SourceJson>, Vec<Elision>, Vec<Exemption>);
+/// One Responses input projection's accumulated Chat messages and policy records.
+struct Input {
+    messages: Vec<SourceJson>,
+    elisions: Vec<Elision>,
+    exemptions: Vec<Exemption>,
+    pending: JsString16,
+    reject: bool,
+}
+pub(crate) fn messages(raw: &SourceJson) -> s::Result<Messages> {
+    let reject = fw::rejects_reduction(&s::get(raw, "truncation"))?;
+    let mut state = Input {
+        messages: vec![],
+        elisions: vec![],
+        exemptions: vec![],
+        pending: JsString16::default(),
+        reject,
+    };
     if let Some(instructions) =
         s::string(&s::get(raw, "instructions")).filter(|text| !s::trim(text).as_units().is_empty())
     {
-        messages.push(s::object(vec![
-            ("role", s::text("system")),
-            (
-                "content",
-                bound(
-                    &instructions,
-                    "instructions",
-                    None,
-                    "message",
-                    reject,
-                    &mut elisions,
-                )?,
-            ),
-        ]));
+        let elisions = &mut state.elisions;
+        let content = bound(
+            &instructions,
+            "instructions",
+            None,
+            "message",
+            reject,
+            elisions,
+        )?;
+        state.push("system", content);
     }
     let input = s::get(raw, "input");
+    let summary = inspect_compaction_summary_input(&input)?;
     let items = if s::string(&input).is_some() {
         vec![s::object(vec![
             ("role", s::text("user")),
@@ -281,223 +254,236 @@ pub(crate) fn messages(raw: &SourceJson) -> s::Result<(Vec<SourceJson>, Vec<Elis
         json::array(&input).ok_or_else(|| error("input must be a string or an array", "input"))?
     };
     for (index, item) in items.iter().enumerate() {
-        let path = format!("input[{index}]");
+        state.item(item, &format!("input[{index}]"), summary == Some(index))?;
+    }
+    Ok((state.messages, state.elisions, state.exemptions))
+}
+impl Input {
+    fn push(&mut self, role: &str, content: SourceJson) {
+        let message = s::object(vec![("role", s::text(role)), ("content", content)]);
+        self.messages.push(message);
+    }
+    fn item(&mut self, item: &SourceJson, path: &str, summary: bool) -> s::Result<()> {
+        let reject = self.reject;
         if let Some(text) = s::string(item) {
-            pending = JsString16::default();
-            messages.push(s::object(vec![
-                ("role", s::text("user")),
-                (
-                    "content",
-                    bound(&text, &path, None, "message", reject, &mut elisions)?,
-                ),
-            ]));
-            continue;
+            self.pending = JsString16::default();
+            let content = bound(&text, path, None, "message", reject, &mut self.elisions)?;
+            self.push("user", content);
+            return Ok(());
         }
         let kind = s::present(item, "type")
             .filter(|value| s::string(value).is_some())
             .unwrap_or_else(|| s::text("message"));
         if s::is(&kind, "reasoning") {
-            pending = s::concat(&[&pending, &reasoning(item)]);
+            let elisions = &mut self.elisions;
+            let text = bound_source(&reasoning(item), path, None, "reasoning", reject, elisions)?;
+            self.pending = s::concat(&[&self.pending, &text]);
+            Ok(())
         } else if s::is(&kind, "message") {
-            let role_source =
-                s::string(&s::get(item, "role")).unwrap_or_else(|| JsString16::from_utf8("user"));
-            let role = role_source
-                .try_utf8()
-                .ok()
-                .filter(|value| {
-                    ["user", "assistant", "developer", "system"].contains(&value.as_str())
-                })
-                .ok_or_else(|| {
-                    s::invalid(
-                        s::concat(&[
-                            &JsString16::from_utf8("input role '"),
-                            &role_source,
-                            &JsString16::from_utf8("' is not supported"),
-                        ]),
-                        "input.role",
-                    )
-                })?;
-            if role == "user" {
-                pending = JsString16::default();
-            }
-            let role = if role == "developer" { "system" } else { &role };
-            let mut message = s::object(vec![
-                ("role", s::text(role)),
-                (
-                    "content",
-                    content(
-                        &s::get(item, "content"),
-                        role,
-                        &format!("{path}.content"),
-                        reject,
-                        &mut elisions,
-                    )?,
-                ),
-            ]);
-            if role == "assistant" && !pending.as_units().is_empty() {
-                s::set(
-                    &mut message,
-                    "reasoning_content",
-                    s::quoted(&std::mem::take(&mut pending)),
-                );
-            }
-            messages.push(message);
+            self.message(item, path, summary)
         } else if s::is(&kind, "function_call") || s::is(&kind, "custom_tool_call") {
-            let label = if s::is(&kind, "custom_tool_call") {
-                "custom_tool_call"
-            } else {
-                "function_call"
-            };
-            let call_id = s::present(item, "call_id")
-                .filter(|value| s::string(value).is_some())
-                .or_else(|| s::present(item, "id").filter(|value| s::string(value).is_some()))
-                .ok_or_else(|| {
-                    error(&format!("{label} items require call_id and name"), "input")
-                })?;
-            let name = s::present(item, "name")
-                .filter(|value| s::string(value).is_some_and(|value| !value.as_units().is_empty()))
-                .ok_or_else(|| {
-                    error(&format!("{label} items require call_id and name"), "input")
-                })?;
-            let arguments = if label == "custom_tool_call" {
-                let input = s::present(item, "input")
-                    .filter(|value| s::string(value).is_some())
-                    .unwrap_or_else(|| s::text(""));
-                let object = s::canonical(&s::object(vec![("input", input)]))?;
-                s::text(object.as_str())
-            } else {
-                s::present(item, "arguments")
-                    .filter(|value| s::string(value).is_some())
-                    .unwrap_or_else(|| s::text("{}"))
-            };
-            let call = s::object(vec![
-                ("id", call_id),
-                ("type", s::text("function")),
-                (
-                    "function",
-                    s::object(vec![("name", name), ("arguments", arguments)]),
-                ),
-            ]);
-            if let Some(previous) = messages.last_mut().filter(|message| {
-                s::is(&s::get(message, "role"), "assistant")
-                    && s::is_null(&s::get(message, "content"))
-                    && json::array(&s::get(message, "tool_calls")).is_some()
-            }) {
-                let mut calls = json::array(&s::get(previous, "tool_calls")).unwrap_or_default();
-                calls.push(call);
-                s::set(previous, "tool_calls", s::array(&calls));
-                if !pending.as_units().is_empty() {
-                    let old = s::string(&s::get(previous, "reasoning_content")).unwrap_or_default();
-                    s::set(
-                        previous,
-                        "reasoning_content",
-                        s::quoted(&s::concat(&[&old, &std::mem::take(&mut pending)])),
-                    );
-                }
-            } else {
-                let mut message = s::object(vec![
-                    ("role", s::text("assistant")),
-                    ("content", s::null()),
-                    ("tool_calls", s::array(&[call])),
-                ]);
-                if !pending.as_units().is_empty() {
-                    s::set(
-                        &mut message,
-                        "reasoning_content",
-                        s::quoted(&std::mem::take(&mut pending)),
-                    );
-                }
-                messages.push(message);
-            }
+            self.call(item, s::is(&kind, "custom_tool_call"), path)
         } else if s::is(&kind, "function_call_output") || s::is(&kind, "custom_tool_call_output") {
-            let Some(call_id) =
-                s::string(&s::get(item, "call_id")).filter(|value| !value.as_units().is_empty())
-            else {
-                continue;
-            };
-            let output = s::get(item, "output");
-            let output = if s::is_null(&output) {
-                s::text("")
-            } else {
-                output
-            };
-            let text = match s::string(&output) {
-                Some(text) => text,
-                None => JsString16::from_utf8(s::canonical(&output)?.as_str()),
-            };
-            messages.push(s::object(vec![
-                ("role", s::text("tool")),
-                ("tool_call_id", s::quoted(&call_id)),
-                (
-                    "content",
-                    bound(
-                        &text,
-                        &format!("{path}.output"),
-                        Some(&call_id),
-                        "tool_output",
-                        reject,
-                        &mut elisions,
-                    )?,
-                ),
-            ]));
+            self.output(item, path)
         } else if s::is(&kind, "agent_message") {
-            pending = JsString16::default();
-            let author = s::string(&s::get(item, "author"))
-                .unwrap_or_else(|| JsString16::from_utf8("agent"));
-            let recipient = s::string(&s::get(item, "recipient"))
-                .unwrap_or_else(|| JsString16::from_utf8("root"));
-            let mut texts = vec![];
-            let mut omitted = 0;
-            for part in json::array(&s::get(item, "content")).into_iter().flatten() {
-                if let Some(text) = s::string(&s::get(&part, "text")) {
-                    texts.push(text);
-                } else if let Some(text) = s::string(&s::get(&part, "encrypted_content")) {
-                    if text
-                        .as_units()
-                        .starts_with(&"gAAAAA".encode_utf16().collect::<Vec<_>>())
-                        && text.as_units().len() >= 100
-                    {
-                        omitted += 1;
-                    } else {
-                        texts.push(text);
-                    }
-                }
-            }
-            let notice = if omitted > 0 {
-                format!(
-                    "\n[gateway: {omitted} sealed agent-message part(s) were not readable and omitted]"
-                )
-            } else {
-                String::new()
-            };
-            let text = s::concat(&[
-                &JsString16::from_utf8("[agent message] "),
-                &author,
-                &JsString16::from_utf8(" -> "),
-                &recipient,
-                &JsString16::from_utf8(":\n"),
-                &s::join(&texts, "\n"),
-                &JsString16::from_utf8(&notice),
-            ]);
-            messages.push(s::object(vec![
-                ("role", s::text("user")),
-                (
-                    "content",
-                    bound(&text, &path, None, "agent_message", reject, &mut elisions)?,
-                ),
-            ]));
+            self.agent(item, path)
         } else {
-            return Err(s::invalid(
+            Err(s::invalid(
                 s::concat(&[
                     &JsString16::from_utf8("input item type '"),
                     &s::string(&kind).unwrap_or_default(),
                     &JsString16::from_utf8("' is not supported"),
                 ]),
                 "input.type",
-            ));
+            ))
         }
     }
-    Ok((messages, elisions))
+    fn message(&mut self, item: &SourceJson, path: &str, summary: bool) -> s::Result<()> {
+        let role_source =
+            s::string(&s::get(item, "role")).unwrap_or_else(|| JsString16::from_utf8("user"));
+        let role = role_source
+            .try_utf8()
+            .ok()
+            .filter(|value| ["user", "assistant", "developer", "system"].contains(&value.as_str()))
+            .ok_or_else(|| {
+                s::invalid(
+                    s::concat(&[
+                        &JsString16::from_utf8("input role '"),
+                        &role_source,
+                        &JsString16::from_utf8("' is not supported"),
+                    ]),
+                    "input.role",
+                )
+            })?;
+        if role == "user" {
+            self.pending = JsString16::default();
+        }
+        let role = if role == "developer" { "system" } else { &role };
+        let path = format!("{path}.content");
+        let policy = (self.reject, summary);
+        let value = content(
+            &s::get(item, "content"),
+            role,
+            &path,
+            policy,
+            &mut self.elisions,
+        )?;
+        // The one exact summary envelope is admitted whole; aggregate admission still bounds it.
+        let size = s::string(&value).map_or(0, |text| fw::forwarded_bytes(text.as_units()));
+        if summary && size > FORWARD_LIMIT {
+            self.exemptions
+                .push(Exemption::compaction_summary(path, size));
+        }
+        let mut message = s::object(vec![("role", s::text(role)), ("content", value)]);
+        if role == "assistant" && !self.pending.as_units().is_empty() {
+            s::set(
+                &mut message,
+                "reasoning_content",
+                s::quoted(&std::mem::take(&mut self.pending)),
+            );
+        }
+        self.messages.push(message);
+        Ok(())
+    }
+    fn call(&mut self, item: &SourceJson, custom: bool, path: &str) -> s::Result<()> {
+        let label = if custom {
+            "custom_tool_call"
+        } else {
+            "function_call"
+        };
+        let call_id = s::present(item, "call_id")
+            .filter(|value| s::string(value).is_some())
+            .or_else(|| s::present(item, "id").filter(|value| s::string(value).is_some()))
+            .ok_or_else(|| error(&format!("{label} items require call_id and name"), "input"))?;
+        let name = s::present(item, "name")
+            .filter(|value| s::string(value).is_some_and(|value| !value.as_units().is_empty()))
+            .ok_or_else(|| error(&format!("{label} items require call_id and name"), "input"))?;
+        let arguments = if custom {
+            let input = s::present(item, "input")
+                .filter(|value| s::string(value).is_some())
+                .unwrap_or_else(|| s::text(""));
+            JsString16::from_utf8(s::canonical(&s::object(vec![("input", input)]))?.as_str())
+        } else {
+            s::present(item, "arguments")
+                .and_then(|value| s::string(&value))
+                .unwrap_or_else(|| JsString16::from_utf8("{}"))
+        };
+        let (id, path) = (
+            s::string(&call_id).unwrap_or_default(),
+            format!("{path}.arguments"),
+        );
+        let bounded =
+            fw::bound_tool_arguments(&arguments, &path, &id, self.reject, &mut self.elisions);
+        let function = s::object(vec![("name", name), ("arguments", s::quoted(&bounded?))]);
+        let call = s::object(vec![
+            ("id", call_id),
+            ("type", s::text("function")),
+            ("function", function),
+        ]);
+        let pending = std::mem::take(&mut self.pending);
+        if let Some(previous) = self.messages.last_mut().filter(|message| {
+            s::is(&s::get(message, "role"), "assistant")
+                && s::is_null(&s::get(message, "content"))
+                && json::array(&s::get(message, "tool_calls")).is_some()
+        }) {
+            let mut calls = json::array(&s::get(previous, "tool_calls")).unwrap_or_default();
+            calls.push(call);
+            s::set(previous, "tool_calls", s::array(&calls));
+            if !pending.as_units().is_empty() {
+                let old = s::string(&s::get(previous, "reasoning_content")).unwrap_or_default();
+                let joined = s::concat(&[&old, &pending]);
+                s::set(previous, "reasoning_content", s::quoted(&joined));
+            }
+            return Ok(());
+        }
+        let mut message = s::object(vec![
+            ("role", s::text("assistant")),
+            ("content", s::null()),
+            ("tool_calls", s::array(&[call])),
+        ]);
+        if !pending.as_units().is_empty() {
+            s::set(&mut message, "reasoning_content", s::quoted(&pending));
+        }
+        self.messages.push(message);
+        Ok(())
+    }
+    fn output(&mut self, item: &SourceJson, path: &str) -> s::Result<()> {
+        let Some(call_id) =
+            s::string(&s::get(item, "call_id")).filter(|value| !value.as_units().is_empty())
+        else {
+            return Ok(());
+        };
+        let output = s::get(item, "output");
+        let output = if s::is_null(&output) {
+            s::text("")
+        } else {
+            output
+        };
+        let text = match s::string(&output) {
+            Some(text) => text,
+            None => JsString16::from_utf8(s::canonical(&output)?.as_str()),
+        };
+        let path = format!("{path}.output");
+        let (reject, elisions) = (self.reject, &mut self.elisions);
+        let content = bound(
+            &text,
+            &path,
+            Some(&call_id),
+            "tool_output",
+            reject,
+            elisions,
+        )?;
+        self.messages.push(s::object(vec![
+            ("role", s::text("tool")),
+            ("tool_call_id", s::quoted(&call_id)),
+            ("content", content),
+        ]));
+        Ok(())
+    }
+    fn agent(&mut self, item: &SourceJson, path: &str) -> s::Result<()> {
+        self.pending = JsString16::default();
+        let author =
+            s::string(&s::get(item, "author")).unwrap_or_else(|| JsString16::from_utf8("agent"));
+        let recipient =
+            s::string(&s::get(item, "recipient")).unwrap_or_else(|| JsString16::from_utf8("root"));
+        let sealed = "gAAAAA".encode_utf16().collect::<Vec<_>>();
+        let mut texts = vec![];
+        let mut omitted = 0;
+        for part in json::array(&s::get(item, "content")).into_iter().flatten() {
+            let text = s::string(&s::get(&part, "text"));
+            let encrypted = s::string(&s::get(&part, "encrypted_content"));
+            match (text, encrypted) {
+                (Some(text), _) => texts.push(text),
+                (None, Some(text))
+                    if text.as_units().starts_with(&sealed) && text.as_units().len() >= 100 =>
+                {
+                    omitted += 1;
+                }
+                (None, Some(text)) => texts.push(text),
+                (None, None) => {}
+            }
+        }
+        let notice = if omitted > 0 {
+            format!(
+                "\n[gateway: {omitted} sealed agent-message part(s) were not readable and omitted]"
+            )
+        } else {
+            String::new()
+        };
+        let text = s::concat(&[
+            &JsString16::from_utf8("[agent message] "),
+            &author,
+            &JsString16::from_utf8(" -> "),
+            &recipient,
+            &JsString16::from_utf8(":\n"),
+            &s::join(&texts, "\n"),
+            &JsString16::from_utf8(&notice),
+        ]);
+        let (reject, elisions) = (self.reject, &mut self.elisions);
+        let content = bound(&text, path, None, "agent_message", reject, elisions)?;
+        self.push("user", content);
+        Ok(())
+    }
 }
 
 pub(crate) fn thinking(raw: &SourceJson, effort: Option<&str>) -> bool {
@@ -579,7 +565,7 @@ pub(crate) fn project(
     stream: bool,
     profile: ChatProfile,
 ) -> s::Result<Projection> {
-    let (mut messages, mut elisions) = messages(raw)?;
+    let (mut messages, mut elisions, exemptions) = messages(raw)?;
     if messages.is_empty() {
         return Err(error("input must contain at least one message", "input"));
     }
@@ -651,6 +637,27 @@ pub(crate) fn project(
     {
         s::set(&mut body, "parallel_tool_calls", parallel);
     }
+    text_format(raw, &mut body)?;
+    if profile == ChatProfile::Deepseek {
+        validate_thinking(&body, "reasoning.effort")?;
+    }
+    if !tools.is_empty() {
+        executable_tools(raw, &mut messages, &mut elisions)?;
+        s::set(&mut body, "tools", s::array(&tools));
+    }
+    s::set(&mut body, "messages", s::array(&messages));
+    let admission = Some(admit_prompt(&body, profile)?);
+    Ok(Projection {
+        body,
+        names,
+        elisions,
+        exemptions,
+        admission,
+        warnings,
+    })
+}
+/// Source `applyTextFormat`: only `text` and `json_object` formats exist on this Chat wire.
+fn text_format(raw: &SourceJson, body: &mut SourceJson) -> s::Result<()> {
     if let Some(text) = s::present(raw, "text").filter(|value| !s::is_null(value)) {
         if json::entries(&text).is_none() {
             return Err(error("text must be an object", "text"));
@@ -664,7 +671,7 @@ pub(crate) fn project(
                 .unwrap_or_else(|| s::text("text"));
             if s::is(&kind, "json_object") {
                 s::set(
-                    &mut body,
+                    body,
                     "response_format",
                     s::generated(&serde_json::json!({"type":"json_object"})),
                 );
@@ -680,57 +687,77 @@ pub(crate) fn project(
             }
         }
     }
-    if profile == ChatProfile::Deepseek {
-        validate_thinking(&body, "reasoning.effort")?;
-    }
-    if !tools.is_empty() {
-        if !s::is(&s::get(raw, "tool_choice"), "none") {
-            let continuation = JsString16::from_utf8(crate::chat::CONTINUATION);
-            if let Some(index) = messages.iter().position(|m| {
-                s::is(&s::get(m, "role"), "system") && s::string(&s::get(m, "content")).is_some()
-            }) {
-                let old = s::string(&s::get(&messages[index], "content")).unwrap_or_default();
-                let text = s::concat(&[&old, &JsString16::from_utf8("\n\n"), &continuation]);
-                s::set(
-                    &mut messages[index],
-                    "content",
-                    bound(
-                        &text,
-                        "instructions",
-                        None,
-                        "message",
-                        s::is(&s::get(raw, "truncation"), "disabled"),
-                        &mut elisions,
-                    )?,
-                );
-            } else {
-                messages.insert(
-                    0,
-                    s::object(vec![
-                        ("role", s::text("system")),
-                        ("content", s::quoted(&continuation)),
-                    ]),
-                );
-            }
+    Ok(())
+}
+/// Source `prepareExecutableToolMessages`: continuation instruction and replayed reasoning.
+fn executable_tools(
+    raw: &SourceJson,
+    messages: &mut Vec<SourceJson>,
+    elisions: &mut Vec<Elision>,
+) -> s::Result<()> {
+    if !s::is(&s::get(raw, "tool_choice"), "none") {
+        let continuation = JsString16::from_utf8(crate::chat::CONTINUATION);
+        if let Some(index) = messages.iter().position(|m| {
+            s::is(&s::get(m, "role"), "system") && s::string(&s::get(m, "content")).is_some()
+        }) {
+            let old = s::string(&s::get(&messages[index], "content")).unwrap_or_default();
+            let text = s::concat(&[&old, &JsString16::from_utf8("\n\n"), &continuation]);
+            s::set(
+                &mut messages[index],
+                "content",
+                bound(
+                    &text,
+                    "instructions",
+                    None,
+                    "message",
+                    s::is(&s::get(raw, "truncation"), "disabled"),
+                    elisions,
+                )?,
+            );
+        } else {
+            messages.insert(
+                0,
+                s::object(vec![
+                    ("role", s::text("system")),
+                    ("content", s::quoted(&continuation)),
+                ]),
+            );
         }
-        let start = messages
-            .iter()
-            .rposition(|m| s::is(&s::get(m, "role"), "user"))
-            .map_or(0, |i| i + 1);
-        for message in messages.iter_mut().skip(start) {
-            if s::is(&s::get(message, "role"), "assistant")
-                && s::string(&s::get(message, "reasoning_content")).is_none()
-            {
-                s::set(message, "reasoning_content", s::text(""));
-            }
-        }
-        s::set(&mut body, "tools", s::array(&tools));
     }
-    s::set(&mut body, "messages", s::array(&messages));
-    Ok(Projection {
-        body,
-        names,
-        elisions,
-        warnings,
-    })
+    let start = messages
+        .iter()
+        .rposition(|m| s::is(&s::get(m, "role"), "user"))
+        .map_or(0, |i| i + 1);
+    for message in messages.iter_mut().skip(start) {
+        if s::is(&s::get(message, "role"), "assistant")
+            && s::string(&s::get(message, "reasoning_content")).is_none()
+        {
+            s::set(message, "reasoning_content", s::text(""));
+        }
+    }
+    Ok(())
+}
+/// `chat-prompt-admission/v3` after every field is projected. Cerebras is measured after its
+/// own transport projection so reasoning that provider drops is not counted.
+fn admit_prompt(body: &SourceJson, profile: ChatProfile) -> s::Result<PromptAdmission> {
+    let selected = match profile {
+        ChatProfile::Deepseek => Some(AdmissionProfile::Deepseek),
+        ChatProfile::Lithos => Some(AdmissionProfile::Lithos),
+        ChatProfile::Cerebras => Some(AdmissionProfile::Cerebras),
+        ChatProfile::Claude => None,
+    };
+    let label = selected.map_or("Claude", AdmissionProfile::label);
+    let window = selected.and_then(AdmissionProfile::window_tokens);
+    let window = window.ok_or_else(|| admit::missing_window(label))?;
+    let mut measured = body.clone();
+    if profile == ChatProfile::Cerebras && crate::source_controls::cerebras(&mut measured).is_err()
+    {
+        measured = body.clone();
+    }
+    let admission = admit::estimate_prompt_admission(&measured, window)
+        .map_err(gateway_schema::source_request::error::SourceRequestError::from_gateway)?;
+    if !admission.admitted {
+        return Err(admit::aggregate_context_overflow(&admission, label));
+    }
+    Ok(admission)
 }

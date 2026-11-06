@@ -1,14 +1,14 @@
-//! Bounded routing and scoped overage probe transitions.
+//! Bounded routing probe transitions and the overage serving admission.
 use crate::{
     PROBE_LEASE_MS, add, invalid, keys,
     native_control::actor::{self, NativeActorScope, NativeRenewalActor},
-    next_generation, nonnegative,
+    next_generation,
     routing::{class_name, read_view, validate_cohort},
-    routing_types::{AdmittedAccount, CohortProof, ProbeLease, QuotaBlock, ScopedOverageProbe},
+    routing_types::{AdmittedAccount, CohortProof, ProbeLease, UnredeemedReset},
     store::{Authority, TokenSource},
     text, unavailable,
 };
-use gateway_core::{error::GatewayError, identity::RoutingAccountHash, state::AuthorityStore};
+use gateway_core::{error::GatewayError, state::AuthorityStore};
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Administrative R-only half-open transition, not provider reset proof or an election.
@@ -74,13 +74,17 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         Ok(false)
     }
 
-    /// Called only by the bounded probe/overage route; permission is strongly checked here.
+    /// Called only by the bounded probe route; permission is strongly checked here.
     pub async fn claim_probe(
         &self,
         admission: &AdmittedAccount,
         overage_reason: Option<&str>,
         now: i64,
     ) -> Result<Option<AdmittedAccount>, GatewayError> {
+        // Source 0231b78: overage is a serving admission (admit_overage_fallback), never a lease.
+        if overage_reason.is_some() {
+            return Ok(None);
+        }
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
             let mut view = read_view(&mut tx).await?;
@@ -92,20 +96,6 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 .get(&admission.binding.account_id_hash.0)
                 .copied()
                 .unwrap_or(false);
-            if let Some(reason) = overage_reason
-                && (!allowed
-                    || !matches!(
-                        reason,
-                        "no_eligible_credit"
-                            | "inventory_empty"
-                            | "inventory_no_eligible_codex_credit"
-                            | "inventory_response_invalid_or_expired"
-                            | "inventory_unavailable"
-                            | "account_day_limit_reached"
-                    ))
-            {
-                return Ok(None);
-            }
             let slot = &mut view.state.slots[admission.binding.slot as usize];
             if slot
                 .probe_lease
@@ -114,11 +104,10 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             {
                 return Ok(None);
             }
-            if overage_reason.is_none()
-                && slot
-                    .quota_blocks
-                    .get(class_name(admission.quota_class))
-                    .is_some_and(|block| block.blocked_until_ms > now)
+            if slot
+                .quota_blocks
+                .get(class_name(admission.quota_class))
+                .is_some_and(|block| block.blocked_until_ms > now)
                 && !allowed
             {
                 return Ok(None);
@@ -192,23 +181,16 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         ))
     }
 
-    /// An explicitly permitted overage probe has a narrow lease, not a new global election.
-    pub async fn claim_overage_probe(
+    /// Source planOverageFallback after 0231b78: enabled overage is a serving path, not a
+    /// single-flight probe, so concurrent requests never contend for a lease. Only a reason that
+    /// proves no reset was redeemed qualifies, and the per-account setting stays a hard gate.
+    pub async fn admit_overage_fallback(
         &self,
         proof: &CohortProof,
-        preferred: Option<&RoutingAccountHash>,
-        reason: &str,
+        unredeemed: &UnredeemedReset,
         now: i64,
-    ) -> Result<Option<ScopedOverageProbe>, GatewayError> {
-        if !matches!(
-            reason,
-            "no_eligible_credit"
-                | "inventory_empty"
-                | "inventory_no_eligible_codex_credit"
-                | "inventory_response_invalid_or_expired"
-                | "inventory_unavailable"
-                | "account_day_limit_reached"
-        ) {
+    ) -> Result<Option<AdmittedAccount>, GatewayError> {
+        if !unredeemed.allows_overage() {
             return Ok(None);
         }
         for _ in 0..3 {
@@ -216,167 +198,49 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             if !validate_cohort(&mut tx, proof, true).await? {
                 return Ok(None);
             }
-            let mut view = read_view(&mut tx).await?;
-            let selected = preferred
-                .and_then(|hash| {
-                    view.pool
-                        .accounts
-                        .iter()
-                        .position(|account| account.enabled && &account.account_id_hash == hash)
-                })
+            let view = read_view(&mut tx).await?;
+            let accounts = &view.pool.accounts;
+            let find = |wanted: &dyn Fn(usize) -> bool| {
+                (0..accounts.len()).find(|slot| accounts[*slot].enabled && wanted(*slot))
+            };
+            let selected = unredeemed
+                .selected_account
+                .as_deref()
+                .and_then(|hash| find(&|slot| accounts[slot].admin_account_hash.0 == hash))
                 .or_else(|| {
                     let active = view.active.as_ref()?;
-                    view.pool.accounts.iter().position(|account| {
-                        account.enabled && account.account_id_hash == active.binding.account_id_hash
+                    find(&|slot| {
+                        active.binding.slot == slot as u64
+                            && active.binding.account_id_hash == accounts[slot].account_id_hash
                     })
                 })
-                .or_else(|| {
-                    view.pool
-                        .accounts
-                        .iter()
-                        .position(|account| account.enabled)
-                });
-            let Some(slot_index) = selected else {
+                .or_else(|| find(&|_| true));
+            let Some(slot) = selected else {
                 return Ok(None);
             };
-            let account = &view.pool.accounts[slot_index];
-            if !view
-                .overage
-                .get(&account.account_id_hash.0)
-                .copied()
-                .unwrap_or(false)
-            {
+            let Some(active) = view.active.as_ref() else {
                 return Ok(None);
-            }
-            let slot = &mut view.state.slots[slot_index];
-            if slot
-                .probe_lease
-                .as_ref()
-                .is_some_and(|lease| lease.expires_at_ms > now)
-            {
-                return Ok(None);
-            }
-            slot.generation = next_generation(slot.generation)?;
-            let lease = ProbeLease {
-                token: self.tokens.next_token()?,
-                generation: slot.generation as i64,
-                circuit: crate::routing_types::ProbeCircuit::Quota,
-                quota_class: Some(proof.quota_class),
-                expires_at_ms: add(now, PROBE_LEASE_MS)?,
             };
-            text(&lease.token)?;
-            slot.probe_lease = Some(lease.clone());
-            let probe = ScopedOverageProbe {
-                binding: view.binding(slot_index),
+            let admitted = AdmittedAccount {
+                binding: view.binding(slot),
+                active_generation: active.generation,
                 requested_model: proof.model.clone(),
                 quota_class: proof.quota_class,
-                probe: lease,
+                probe_required: false,
+                probe: None,
             };
-            tx.put(&keys::routing(), &view.state, None)?;
+            // The per-account setting is a hard gate even for the active account.
+            let allowed = view.overage.get(&accounts[slot].account_id_hash.0).copied();
+            if allowed != Some(true) || !view.matches(&admitted) {
+                return Ok(None);
+            }
             if tx.commit().await? {
-                return Ok(Some(probe));
+                return Ok(Some(admitted));
             }
         }
         Err(unavailable(
             "codex_routing_unavailable",
-            "Overage probe changed concurrently.",
-        ))
-    }
-
-    pub async fn ensure_overage_probe_current(
-        &self,
-        probe: &ScopedOverageProbe,
-        now: i64,
-    ) -> Result<(), GatewayError> {
-        for _ in 0..3 {
-            let mut tx = self.transaction(now)?;
-            let view = read_view(&mut tx).await?;
-            let slot = probe.binding.slot as usize;
-            if slot >= view.state.slots.len()
-                || view.binding(slot) != probe.binding
-                || view.state.slots[slot].probe_lease.as_ref() != Some(&probe.probe)
-                || probe.probe.expires_at_ms <= now
-            {
-                return Err(unavailable(
-                    "codex_routing_unavailable",
-                    "Overage lease is no longer current.",
-                ));
-            }
-            if tx.commit().await? {
-                return Ok(());
-            }
-        }
-        Err(unavailable(
-            "codex_routing_unavailable",
-            "Overage dispatch changed concurrently.",
-        ))
-    }
-
-    pub async fn finish_overage_probe(
-        &self,
-        probe: &ScopedOverageProbe,
-        recovered: bool,
-        now: i64,
-    ) -> Result<bool, GatewayError> {
-        for _ in 0..3 {
-            let mut tx = self.transaction(now)?;
-            let mut view = read_view(&mut tx).await?;
-            let slot = probe.binding.slot as usize;
-            if slot >= view.state.slots.len()
-                || view.binding(slot) != probe.binding
-                || view.state.slots[slot].probe_lease.as_ref() != Some(&probe.probe)
-            {
-                return Ok(false);
-            }
-            view.state.slots[slot].probe_lease = None;
-            if recovered {
-                view.state.slots[slot]
-                    .quota_blocks
-                    .remove(class_name(probe.quota_class));
-            }
-            tx.put(&keys::routing(), &view.state, None)?;
-            if tx.commit().await? {
-                return Ok(true);
-            }
-        }
-        Err(unavailable(
-            "codex_routing_unavailable",
-            "Overage completion changed concurrently.",
-        ))
-    }
-
-    pub async fn record_overage_quota_block(
-        &self,
-        probe: &ScopedOverageProbe,
-        block: QuotaBlock,
-        now: i64,
-    ) -> Result<bool, GatewayError> {
-        nonnegative(block.blocked_until_ms)?;
-        if let Some(at) = block.observed_at_ms {
-            nonnegative(at)?;
-        }
-        for _ in 0..3 {
-            let mut tx = self.transaction(now)?;
-            let mut view = read_view(&mut tx).await?;
-            let slot = probe.binding.slot as usize;
-            if !view.current_binding(&probe.binding)
-                || view.state.slots[slot].probe_lease.as_ref() != Some(&probe.probe)
-            {
-                return Ok(false);
-            }
-            let row = &mut view.state.slots[slot];
-            row.insert_quota_block(probe.quota_class, block.clone());
-            row.probe_lease = None;
-            row.generation = next_generation(row.generation)?;
-            view.state.updated_at_ms = now;
-            tx.put(&keys::routing(), &view.state, None)?;
-            if tx.commit().await? {
-                return Ok(true);
-            }
-        }
-        Err(unavailable(
-            "codex_routing_unavailable",
-            "Overage quota evidence changed concurrently.",
+            "Overage admission changed concurrently.",
         ))
     }
 }

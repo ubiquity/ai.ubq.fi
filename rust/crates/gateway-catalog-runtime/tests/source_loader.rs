@@ -77,12 +77,54 @@ fn metadata_join_uses_the_shared_contextual_lowercase_and_preserves_opaque_exact
     let id = ModelId::from_source(JsString16::from_units(
         "vendor/ος".encode_utf16().chain([0xd800]).collect(),
     ));
-    assert_eq!(providers::match_openrouter(&rows, &id), Some(&rows[0]));
-    assert!(providers::match_openrouter(&rows, &r"vendor/ος\ud800".into()).is_none());
-    let ambiguous = vec![parse(r#"{"id":"a/model"}"#), parse(r#"{"id":"b/model"}"#)];
-    assert!(providers::match_openrouter(&ambiguous, &"model".into()).is_none());
     assert_eq!(
-        providers::match_openrouter(&ambiguous, &"a/model".into()),
+        providers::OpenrouterIndex::new(&rows).find(&id),
+        Some(&rows[0])
+    );
+    assert!(
+        providers::OpenrouterIndex::new(&rows)
+            .find(&r"vendor/ος\ud800".into())
+            .is_none()
+    );
+    let ambiguous = vec![parse(r#"{"id":"a/model"}"#), parse(r#"{"id":"b/model"}"#)];
+    assert!(
+        providers::OpenrouterIndex::new(&ambiguous)
+            .find(&"model".into())
+            .is_none()
+    );
+    assert_eq!(
+        providers::OpenrouterIndex::new(&ambiguous).find(&"a/model".into()),
         Some(&ambiguous[0])
     );
+}
+
+#[test]
+fn one_openrouter_index_answers_every_tier_like_a_fresh_index_per_lookup() {
+    let rows = [
+        r#"{"id":"z-ai/glm-5.3"}"#,
+        r#"{"id":"~deepseek/deepseek-flash-latest"}"#,
+        r#"{"id":"tencent/hy3"}"#,
+        r#"{"id":"vendor/m:free"}"#,
+        r#"{"id":"a/dup"}"#,
+        r#"{"id":"b/dup"}"#,
+    ]
+    .map(parse);
+    let shared = providers::OpenrouterIndex::new(&rows);
+    let expected = [
+        ("Z-AI/GLM-5.3", Some(0)),
+        ("glm-5.3", Some(0)),
+        ("z-ai-glm-5-3", Some(0)),
+        ("deepseek-flash", Some(1)),
+        ("hy3-free", Some(2)),
+        ("m", Some(3)),
+        ("dup", None),
+        ("  ", None),
+        ("unknown/model", None),
+    ];
+    for (id, index) in expected {
+        let id = id.into();
+        let fresh = providers::OpenrouterIndex::new(&rows).find(&id);
+        assert_eq!(shared.find(&id), fresh);
+        assert_eq!(shared.find(&id), index.map(|i| &rows[i]), "{id:?}");
+    }
 }

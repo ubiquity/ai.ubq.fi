@@ -42,7 +42,7 @@ fn view(
     out
 }
 pub fn unavailable_claude(at: i64) -> Value {
-    json!({"source":"claude_code","label":"Claude subscription","state":"unavailable","source_observed_at_ms":null,"snapshot_at_ms":at,"failure_kind":"not_configured","failure_status":null,"credential_kind":null,"workspace_id":null,"windows":{"five_hour":null,"seven_day":null},"standard":[],"blocked_until_ms":null,"cooldown_until_ms":null,"last_error":null})
+    json!({"source":"claude_code","label":"Claude subscription","state":"unavailable","source_observed_at_ms":null,"snapshot_at_ms":at,"failure_kind":"not_configured","failure_status":null,"credential_kind":null,"workspace_id":null,"windows":{"five_hour":null,"seven_day":null},"standard":[],"usage":null,"blocked_until_ms":null,"cooldown_until_ms":null,"last_error":null})
 }
 pub fn claude_source(
     account: &ClaudeAccountReadback,
@@ -66,8 +66,13 @@ pub fn claude_source(
         None
     };
     let failing = blocked || cooling || error_fields.is_some();
-    let windows = field("windows");
-    let standard = field("standard");
+    // Meter evidence comes only from response headers; unmarked windows are not relabeled.
+    let headers = Some(field("response_headers"))
+        .filter(|h| h.as_str().trim_start().starts_with('{'))
+        .unwrap_or_else(|| empty.clone());
+    let headers = SourceObject::parse(&headers)?;
+    let header = |name: &str| headers.get(name).cloned().unwrap_or_else(|| null.clone());
+    let (windows, standard) = (header("windows"), header("standard"));
     let mut observed = Vec::new();
     for document in [&windows, &standard] {
         if document.as_str().trim_start().starts_with('{') {
@@ -158,6 +163,7 @@ pub fn claude_source(
         ])?,
     )?;
     document.set("standard", &standard_rows)?;
+    document.set("usage", &null)?;
     document.set("blocked_until_ms", &field("blocked_until_ms"))?;
     document.set("cooldown_until_ms", &field("cooldown_until_ms"))?;
     document.set("last_error", &error)?;
@@ -548,6 +554,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         ] {
             document.set(output, &claude.get(input))?;
         }
+        let usage = self.claude_usage_rollups((at - window).max(0), at).await;
+        document.set("claude_usage_rollups", &usage)?;
         Ok(AuthResponse::source_json(200, document.source_json()?))
     }
 }

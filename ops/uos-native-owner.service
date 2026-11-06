@@ -1,0 +1,31 @@
+[Unit]
+Description=Native Codex owner for the Rust Worker
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=12
+
+[Service]
+Type=simple
+User=codex
+Group=codex
+WorkingDirectory=/home/codex/repos/ubiquity/ai.ubq.fi
+ExecStart=/bin/sh /home/codex/repos/ubiquity/ai.ubq.fi/ops/launch-native-owner.sh
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60s
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=false
+PrivateNetwork=false
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/codex/repos/ubiquity/ai.ubq.fi/.data/native-owner/replay
+ReadOnlyPaths=/home/codex/repos/ubiquity/ai.ubq.fi/.data/releases
+ReadOnlyPaths=/home/codex/repos/ubiquity/ai.ubq.fi/.data/runtimes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

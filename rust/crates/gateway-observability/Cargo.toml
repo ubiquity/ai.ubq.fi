@@ -12,6 +12,7 @@ gateway-auth = { path = "../gateway-auth" }
 gateway-admin-data = { path = "../gateway-admin-data" }
 gateway-admin-runtime = { path = "../gateway-admin-runtime" }
 gateway-authority = { path = "../gateway-authority" }
+gateway-claude-usage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 base64 = "=0.22.1"

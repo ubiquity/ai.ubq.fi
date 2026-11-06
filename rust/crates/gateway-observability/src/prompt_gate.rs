@@ -16,16 +16,8 @@ fn counter_key(
     route: &str,
     counter: &str,
 ) -> RecordKey {
-    store::key(json!([
-        "uos_ai",
-        "prompt_cache_telemetry_gate",
-        "v1",
-        release,
-        provider,
-        model,
-        route,
-        counter
-    ]))
+    let parts = json!([release, provider, model, route, counter]);
+    store::prefixed(&["uos_ai", "prompt_cache_telemetry_gate", "v1"], parts)
 }
 fn result(
     status: &str,

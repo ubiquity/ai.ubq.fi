@@ -226,9 +226,7 @@ impl AccountModelsStore {
                 !c.slugs.contains(&target)
                     && current_accounts.iter().any(|other| {
                         other != account
-                            && self.accounts.get(other).is_some_and(|s| {
-                                s.client_version == c.client_version && s.slugs.contains(&target)
-                            })
+                            && self.lists_for_version(other, &c.client_version, &target)
                     })
             });
             if learned || absent {
@@ -236,6 +234,11 @@ impl AccountModelsStore {
             }
         }
         result
+    }
+    fn lists_for_version(&self, account: &str, version: &str, target: &ModelId) -> bool {
+        self.accounts
+            .get(account)
+            .is_some_and(|s| s.client_version == version && s.slugs.contains(target))
     }
     pub fn parse(value: &SourceJson) -> Option<Self> {
         use crate::model_control as c;
@@ -293,12 +296,9 @@ impl AccountModelsStore {
                 };
                 let entries: IndexMap<_, _> = models
                     .into_iter()
+                    .filter(|(model, _)| !c::trim(model).as_units().is_empty())
                     .filter_map(|(model, value)| {
-                        if c::trim(&model).as_units().is_empty() {
-                            None
-                        } else {
-                            c::positive(Some(&value)).map(|n| (ModelId::from_source(model), n))
-                        }
+                        c::positive(Some(&value)).map(|n| (ModelId::from_source(model), n))
                     })
                     .collect();
                 if !entries.is_empty() {

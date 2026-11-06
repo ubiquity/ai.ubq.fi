@@ -112,6 +112,8 @@ fn safe_quota(
 ) -> Result<gateway_core::source_json::SourceJson, GatewayError> {
     crate::replay_values::SourceObject::parse(quota)?.select(&[
         "windows",
+        "usage",
+        "usage_snapshot",
         "standard",
         "representative_claim",
         "blocked_until_ms",

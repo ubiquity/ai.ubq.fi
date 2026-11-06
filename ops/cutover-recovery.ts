@@ -1,3 +1,4 @@
+import { assertBunStoreFile } from "./assert-serving-authority.ts";
 import { lstat, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { convertKvDatabase } from "../src/kv-conversion/convert.ts";
@@ -129,6 +130,7 @@ export async function preserveUnstartedCutover(legacy: string, bun: string, work
 
 /** May run in the original supervisor or its pinned ExecStopPost recovery process. */
 export async function recoverCutoverLatest(input: CutoverRecovery, startupAttempted: boolean): Promise<void> {
+  if (await exists(join(input.root, ".data/kv-bun.sqlite3"))) await assertBunStoreFile(input.root);
   const data = join(input.root, ".data"),
     legacy = join(data, "kv.sqlite3"),
     bun = join(data, "kv-bun.sqlite3");

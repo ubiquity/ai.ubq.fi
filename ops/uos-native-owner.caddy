@@ -1,0 +1,9 @@
+# Import INSIDE the existing origin.ubq.fi site, before app-host selectors.
+# No flush_interval override: preserve Caddy backend cancellation.
+@uos_native_owner {
+	method POST
+	path /v1/native/rpc /v1/native/follow /v1/native/control
+}
+handle @uos_native_owner {
+	reverse_proxy 127.0.0.1:7990
+}

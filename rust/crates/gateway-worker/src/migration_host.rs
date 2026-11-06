@@ -4,8 +4,6 @@ use gateway_migration::{
     error::MigrationError,
     operational::{NativeMigrationRequest, NativeMigrationResponse},
 };
-#[cfg(target_arch = "wasm32")]
-use worker::js_sys;
 
 pub async fn execute_profile<S: QueryStore>(
     store: &S,
@@ -71,70 +69,52 @@ pub async fn execute_native<S: QueryStore>(
     gateway_migration::operational::execute_native(store, request).await
 }
 
-/// Private host startup export, NOT an HTTP route. The trusted local operator
-/// owns the AUTHORITY namespace capability and withholds public traffic until
-/// this empty-target adoption settles. Ordinary fetch never calls this export.
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn local_operator_adopt(env: worker::Env, input: js_sys::Uint8Array) -> js_sys::Promise {
-    worker::wasm_bindgen_futures::future_to_promise(async move {
-        local_operator_adoption(env, input)
-            .await
-            .map(worker::wasm_bindgen::JsValue::from)
-    })
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn local_operator_adoption(
-    env: worker::Env,
-    input: js_sys::Uint8Array,
-) -> Result<js_sys::Uint8Array, worker::wasm_bindgen::JsValue> {
-    use gateway_migration::operational::{
-        NativeMigrationRequest, NativeOperation, encode_native_response,
-    };
-    use worker::{js_sys::Uint8Array, wasm_bindgen::JsValue};
-    let refused = || JsValue::from_str("private_local_bootstrap_refused");
-    if input.length() as usize > gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES {
-        return Err(refused());
+/// Authenticated operator state transfer (DECISIONS 2026-11-05). Only the
+/// configured admin token reaches it, and only while the one-time operator
+/// intent digest is configured; every write is one existing staged frame.
+pub async fn state_transfer(
+    request: &mut worker::Request,
+    auth_request: &gateway_auth::types::AuthRequest,
+    auth: &gateway_auth::resolve::AuthService<
+        '_,
+        crate::authority::RemoteAuthorityStore,
+        crate::host::PlatformHost,
+    >,
+    env: &worker::Env,
+    operation: gateway_state_transfer::http::Operation,
+) -> Result<worker::Response, GatewayError> {
+    use gateway_state_transfer::{http, intent};
+    let principal = auth.authenticate_admin(auth_request).await?;
+    if !matches!(
+        principal.method,
+        gateway_auth::types::AuthMethod::AdminAllowlist
+    ) {
+        return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
     }
-    // Decode original NativeCapture v2 bytes directly: the shared public
-    // request decoder remains unchanged and cannot mint this private setup.
-    let capture: gateway_migration::native_capture::NativeCapture =
-        serde_json::from_slice(&input.to_vec()).map_err(|_| refused())?;
-    if capture.v != 2 {
-        return Err(refused());
-    }
-    let request = NativeMigrationRequest {
-        v: 1,
-        request: NativeOperation::AdoptNative { capture },
+    let body = match operation {
+        http::Operation::ImportStatus => Vec::new(),
+        _ => crate::transport::body::request_bytes(request, http::REQUEST_MAX_BYTES).await?,
     };
-    let store = crate::authority::RemoteAuthorityStore::from_env(&env).map_err(|_| refused())?;
-    let result = execute_native(&store, request)
-        .await
-        .map_err(|_| refused())?;
-    let receipt = encode_native_response(&result).map_err(|_| refused())?;
-    Ok(Uint8Array::from(receipt.as_slice()))
-}
-
-/// PRIVATE trusted local setup only. No ordinary/public fetch dispatches here.
-/// The operator keeps this common target unpublished throughout begin/append/seal.
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn local_operator_stage(env: worker::Env, input: js_sys::Uint8Array) -> js_sys::Promise {
-    worker::wasm_bindgen_futures::future_to_promise(async move {
-        use worker::{js_sys::Uint8Array, wasm_bindgen::JsValue};
-        let refused = || JsValue::from_str("private_local_staged_refused");
-        if input.length() as usize > gateway_migration::staged::STAGED_BATCH_MAX_BYTES {
-            return Err(refused());
-        }
-        let request = gateway_migration::staged::decode_stage_request(&input.to_vec())
-            .map_err(|_| refused())?;
-        let store =
-            crate::authority::RemoteAuthorityStore::from_env(&env).map_err(|_| refused())?;
-        let result = gateway_migration::staged::execute_staged(&store, request)
-            .await
-            .map_err(|_| refused())?;
-        let bytes = serde_json::to_vec(&result).map_err(|_| refused())?;
-        Ok(Uint8Array::from(bytes.as_slice()).into())
-    })
+    let presented = request.headers().get(intent::INTENT_HEADER).ok().flatten();
+    let configured = crate::host::setting(env, intent::INTENT_SETTING);
+    let reply = http::handle(
+        auth.store,
+        operation,
+        configured.as_deref(),
+        presented.as_deref(),
+        &body,
+    )
+    .await?;
+    let failed =
+        || GatewayError::unavailable("State-transfer reply failed", "state_transfer_reply_failed");
+    let mut response = worker::Response::from_bytes(reply.body)
+        .map_err(|_| failed())?
+        .with_status(reply.status);
+    for (name, value) in reply.headers {
+        response
+            .headers_mut()
+            .set(name, &value)
+            .map_err(|_| failed())?;
+    }
+    Ok(response)
 }

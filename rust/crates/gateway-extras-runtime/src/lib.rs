@@ -46,6 +46,8 @@ impl<S: QueryStore, H: ExtrasHost> ExtrasRuntime<S, H> {
             ExtrasRoute::SystemOne => {
                 systemone::systemone(&self.store, &self.host, &request).await?
             }
+            // gateway-decisions serves this route over the same original admission.
+            ExtrasRoute::Decisions => return Err(store::unrouted()),
         };
         result.kernel = match request.route {
             ExtrasRoute::Embeddings => {
@@ -73,7 +75,7 @@ impl<S: QueryStore, H: ExtrasHost> ExtrasRuntime<S, H> {
             ExtrasRoute::JobGet(_) => {
                 KernelDisposition::Incomplete("embedding_job_read_not_counted")
             }
-            ExtrasRoute::SystemOne => {
+            ExtrasRoute::SystemOne | ExtrasRoute::Decisions => {
                 if (200..300).contains(&result.status) {
                     KernelDisposition::Completed
                 } else {

@@ -449,7 +449,8 @@ fn decode_stream_response(
             .terminal_observed()
             .then_some(SemanticTerminal::Completed)
     });
-    let usage = crate::source_collector::usage(&s::get(&body, "usage"));
+    let usage =
+        crate::source_collector::accounting_usage(plan.surface == ClientSurface::Chat, &body);
     Ok(DecodedResponse {
         status,
         headers: output_headers,
@@ -552,7 +553,8 @@ fn decode_buffered_response(
         )
         .then_some(SemanticTerminal::Completed)
     });
-    let usage = crate::source_collector::usage(&s::get(&body, "usage"));
+    let usage =
+        crate::source_collector::accounting_usage(plan.surface == ClientSurface::Chat, &body);
     Ok(DecodedResponse {
         status,
         headers: output_headers,
@@ -643,6 +645,18 @@ pub fn translated_response_id(id: &str) -> String {
     format!("resp_{clean}")
 }
 
+/// Source buffered DeepSeek/Cerebras `providerRequestId ??= normalize(completion.id)`.
+/// Callers apply it only when no response header carried an identity.
+pub fn completion_provider_request_id(plan: &DecodePlan, bytes: &[u8]) -> Option<String> {
+    use {ResponseDecode as D, UpstreamProvider as P};
+    let direct = matches!(plan.provider, P::Deepseek | P::Cerebras);
+    let eligible = direct && matches!(plan.decode, D::Chat | D::ChatToResponses(_));
+    let value: Value = serde_json::from_slice(bytes).ok().filter(|_| eligible)?;
+    let id = value["id"]
+        .as_str()
+        .filter(|id| valid_provider_request_id(id));
+    id.map(str::to_owned)
+}
 fn valid_provider_request_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 256 && id.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
 }

@@ -1,7 +1,7 @@
 //! Mandatory OS policy before serving. Unsupported enforcement fails closed;
 //! portable business logic never substitutes for filesystem/network/process denial.
 use gateway_core::error::GatewayError;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct NativeConfinement {
     pub readonly_paths: Vec<PathBuf>,
@@ -12,15 +12,6 @@ pub struct NativeConfinement {
 
 #[cfg(target_os = "linux")]
 pub fn enforce(policy: &NativeConfinement) -> Result<(), GatewayError> {
-    use landlock::{
-        ABI, Access, AccessFs, AccessNet, CompatLevel, Compatible, PathBeneath, PathFd, Ruleset,
-        RulesetAttr, RulesetCreatedAttr, RulesetStatus, Scope,
-    };
-    use seccompiler::{
-        BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
-        SeccompRule,
-    };
-    use std::collections::BTreeMap;
     if !policy.replay_directory.is_absolute()
         || policy
             .readonly_paths
@@ -30,6 +21,38 @@ pub fn enforce(policy: &NativeConfinement) -> Result<(), GatewayError> {
     {
         return Err(unavailable());
     }
+    restrict_filesystem(
+        &policy.readonly_paths,
+        &policy.list_directories,
+        Some(&policy.replay_directory),
+        &policy.unix_sockets,
+    )?;
+    deny_new_processes()
+}
+/// One-shot passive probe: no file read/write grant, only the configured Unix endpoint.
+#[cfg(target_os = "linux")]
+pub fn enforce_readonly_socket(socket: &Path) -> Result<(), GatewayError> {
+    if !socket.is_absolute() {
+        return Err(unavailable());
+    }
+    restrict_filesystem(&[], &[], None, &[socket.to_owned()])?;
+    deny_new_processes()
+}
+#[cfg(not(target_os = "linux"))]
+pub fn enforce_readonly_socket(_: &Path) -> Result<(), GatewayError> {
+    Err(unavailable())
+}
+#[cfg(target_os = "linux")]
+fn restrict_filesystem(
+    readonly_paths: &[PathBuf],
+    list_directories: &[PathBuf],
+    replay_directory: Option<&Path>,
+    unix_sockets: &[PathBuf],
+) -> Result<(), GatewayError> {
+    use landlock::{
+        ABI, Access, AccessFs, AccessNet, CompatLevel, Compatible, PathBeneath, PathFd, Ruleset,
+        RulesetAttr, RulesetCreatedAttr, RulesetStatus, Scope,
+    };
     let abi = ABI::V9;
     let mut rules = Ruleset::default()
         .set_compatibility(CompatLevel::HardRequirement)
@@ -41,7 +64,7 @@ pub fn enforce(policy: &NativeConfinement) -> Result<(), GatewayError> {
         .map_err(|_| unavailable())?
         .create()
         .map_err(|_| unavailable())?;
-    for directory in &policy.list_directories {
+    for directory in list_directories {
         if directory.exists() {
             rules = rules
                 .add_rule(PathBeneath::new(
@@ -51,7 +74,7 @@ pub fn enforce(policy: &NativeConfinement) -> Result<(), GatewayError> {
                 .map_err(|_| unavailable())?;
         }
     }
-    for path in &policy.readonly_paths {
+    for path in readonly_paths {
         let canonical = std::fs::canonicalize(path).map_err(|_| unavailable())?;
         let metadata = std::fs::metadata(&canonical).map_err(|_| unavailable())?;
         let access = if metadata.is_dir() {
@@ -66,7 +89,7 @@ pub fn enforce(policy: &NativeConfinement) -> Result<(), GatewayError> {
             ))
             .map_err(|_| unavailable())?;
     }
-    for socket in &policy.unix_sockets {
+    for socket in unix_sockets {
         if socket.exists() {
             rules = rules
                 .add_rule(PathBeneath::new(
@@ -82,16 +105,27 @@ pub fn enforce(policy: &NativeConfinement) -> Result<(), GatewayError> {
         | AccessFs::MakeReg
         | AccessFs::RemoveFile
         | AccessFs::Truncate;
-    rules = rules
-        .add_rule(PathBeneath::new(
-            PathFd::new(&policy.replay_directory).map_err(|_| unavailable())?,
-            writable,
-        ))
-        .map_err(|_| unavailable())?;
+    if let Some(directory) = replay_directory {
+        rules = rules
+            .add_rule(PathBeneath::new(
+                PathFd::new(directory).map_err(|_| unavailable())?,
+                writable,
+            ))
+            .map_err(|_| unavailable())?;
+    }
     let status = rules.restrict_self().map_err(|_| unavailable())?;
     if status.ruleset != RulesetStatus::FullyEnforced || !status.no_new_privs {
         return Err(unavailable());
     }
+    Ok(())
+}
+#[cfg(target_os = "linux")]
+fn deny_new_processes() -> Result<(), GatewayError> {
+    use seccompiler::{
+        BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
+        SeccompRule,
+    };
+    use std::collections::BTreeMap;
     let mut denied = BTreeMap::new();
     for syscall in [
         libc::SYS_execve,

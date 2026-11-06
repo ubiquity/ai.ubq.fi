@@ -13,6 +13,7 @@ gateway-admin-data = { path = "../gateway-admin-data" }
 gateway-catalog-runtime = { path = "../gateway-catalog-runtime" }
 gateway-providers = { path = "../gateway-providers" }
 gateway-schema = { path = "../gateway-schema" }
+gateway-claude-usage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

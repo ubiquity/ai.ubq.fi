@@ -88,8 +88,9 @@ impl Socket {
             .connect_timeout(&address, remaining)
             .map_err(|_| owner_unavailable())?;
         let owned_fd: std::os::fd::OwnedFd = socket.into();
+        let stream = UnixStream::from(owned_fd);
         let stream = DeadlineStream {
-            stream: UnixStream::from(owned_fd),
+            stream,
             deadline: handshake_deadline,
         };
         let mut request = "ws://localhost/"
@@ -305,6 +306,9 @@ impl NativeOwnerTransport for UnixOwnerTransport {
                 Duration::from_secs(12),
                 self.deadline,
             )?;
+            #[cfg(target_os = "linux")]
+            gateway_native_runtime::owner_socket::verify_peer(&socket.socket.get_ref().stream)
+                .map_err(|_| owner_unavailable())?;
             sockets.insert(owner.0.clone(), socket);
         }
         let socket = sockets.get_mut(&owner.0).ok_or_else(owner_unavailable)?;
@@ -339,6 +343,86 @@ impl NativeOwnerTransport for UnixOwnerTransport {
         }
         Ok(())
     }
+}
+
+/// Safe metadata only; account identity still belongs to independently fenced native files.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PassiveAccountKind {
+    Chatgpt,
+    Masked,
+}
+#[derive(Debug, serde::Serialize)]
+pub struct PassiveOwnerObservation {
+    pub v: u8,
+    pub codex_home: String,
+    pub peer_uid: u32,
+    pub peer_pid: i32,
+    pub account_kind: PassiveAccountKind,
+    pub requires_openai_auth: bool,
+}
+/// The caller supplies a validated canonical home/socket and installs the readonly OS profile.
+/// There is exactly one connection and no credential-file or refresh operation.
+#[cfg(target_os = "linux")]
+pub fn observe_owner(
+    home: &Path,
+    path: &Path,
+    expected_uid: u32,
+) -> Result<PassiveOwnerObservation, GatewayError> {
+    let invalid = || {
+        GatewayError::unavailable(
+            "Passive native owner proof is unavailable",
+            "native_owner_probe_unavailable",
+        )
+    };
+    if expected_uid != rustix::process::geteuid().as_raw() {
+        return Err(invalid());
+    }
+    let mut socket = Socket::open_until(
+        path,
+        RENEWAL_FRAME_LIMIT,
+        Duration::from_secs(12),
+        Some(Instant::now() + Duration::from_secs(15)),
+    )?;
+    let result = (|| {
+        let peer = rustix::net::sockopt::socket_peercred(&socket.socket.get_ref().stream)
+            .map_err(|_| invalid())?;
+        if peer.uid.as_raw() != expected_uid || peer.pid.as_raw_pid() <= 0 {
+            return Err(invalid());
+        }
+        let (method, params) = RenewalStep::Initialize.wire();
+        let initialized = socket.call(method, params)?;
+        let configured = home.to_str().ok_or_else(invalid)?;
+        if initialized.get("codexHome").and_then(Value::as_str) != Some(configured) {
+            return Err(invalid());
+        }
+        socket.notify_initialized()?;
+        let (method, params) = RenewalStep::IdentityRead.wire();
+        let reply = socket.call(method, params)?;
+        let requires = reply
+            .get("requiresOpenaiAuth")
+            .and_then(Value::as_bool)
+            .ok_or_else(invalid)?;
+        let account_kind = match reply.get("account") {
+            Some(Value::Null) if !requires => PassiveAccountKind::Masked,
+            Some(Value::Object(account))
+                if account.get("type").and_then(Value::as_str) == Some("chatgpt") =>
+            {
+                PassiveAccountKind::Chatgpt
+            }
+            _ => return Err(invalid()),
+        };
+        Ok(PassiveOwnerObservation {
+            v: 1,
+            codex_home: configured.into(),
+            peer_uid: peer.uid.as_raw(),
+            peer_pid: peer.pid.as_raw_pid(),
+            account_kind,
+            requires_openai_auth: requires,
+        })
+    })();
+    socket.close();
+    result
 }
 
 pub struct UnixSupervisor {

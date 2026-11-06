@@ -3,9 +3,9 @@ use crate::{
     replay::{ReplayEntry, ReplayTransport},
     source as s,
     source_tools::{self, ToolMap},
-    types::{ClaudeBodyOptions, PrepareOptions},
+    types::{ClaudeBodyOptions, PrepareOptions, ToolIdentity},
 };
-use gateway_core::{source_json::SourceJson, source_serialization as json};
+use gateway_core::{js_string::JsString16, source_json::SourceJson, source_serialization as json};
 fn eq(value: &SourceJson, literal: &str) -> bool {
     s::canonical(value).is_ok_and(|value| value.as_str() == literal)
 }
@@ -183,6 +183,7 @@ struct NativeBodyOptions<'a> {
     supports_disabled_thinking: bool,
     native_reasoning_efforts: Option<&'a Vec<gateway_core::js_string::JsString16>>,
     catalog_max_output_tokens: Option<u64>,
+    omit_hosted_web_search: bool,
 }
 impl<'a> From<&'a PrepareOptions> for NativeBodyOptions<'a> {
     fn from(options: &'a PrepareOptions) -> Self {
@@ -192,12 +193,14 @@ impl<'a> From<&'a PrepareOptions> for NativeBodyOptions<'a> {
             supports_disabled_thinking: options.supports_disabled_thinking,
             native_reasoning_efforts: options.native_reasoning_efforts.as_ref(),
             catalog_max_output_tokens: options.catalog_max_output_tokens,
+            omit_hosted_web_search: false,
         }
     }
 }
 fn native_messages(
     raw: &SourceJson,
     system: &mut Vec<SourceJson>,
+    names: &ToolMap,
     options: &NativeBodyOptions<'_>,
 ) -> Option<Vec<SourceJson>> {
     if let Some(restored) = &options.restored_native_messages {
@@ -212,7 +215,7 @@ fn native_messages(
     }
     let mut messages = vec![];
     for item in json::array(&input)? {
-        append_native_item(&item, system, &mut messages)?;
+        append_native_item(&item, system, &mut messages, names)?;
     }
     (!messages.is_empty()).then_some(messages)
 }
@@ -236,6 +239,7 @@ fn append_native_item(
     item: &SourceJson,
     system: &mut Vec<SourceJson>,
     messages: &mut Vec<SourceJson>,
+    names: &ToolMap,
 ) -> Option<()> {
     let kind = s::control(&s::get(item, "type")).unwrap_or_else(|| "message".into());
     match kind.as_str() {
@@ -257,11 +261,7 @@ fn append_native_item(
             }
         }
         "function_call" => {
-            if s::present(item, "namespace").is_some_and(|v| !s::is_null(&v))
-                || !valid_name(&s::get(item, "name"))
-            {
-                return None;
-            }
+            let name = projected_name(item, names)?;
             // This is the existing native protocol's JSON.parse operation, not an opaque Chat argument rewrite.
             let arguments = s::control(&s::get(item, "arguments"))?;
             let input = SourceJson::parse(&arguments).ok()?;
@@ -274,7 +274,7 @@ fn append_native_item(
                 vec![s::object(vec![
                     ("type", s::text("tool_use")),
                     ("id", id),
-                    ("name", s::get(item, "name")),
+                    ("name", s::quoted(&name)),
                     ("input", input),
                 ])],
             );
@@ -299,37 +299,92 @@ fn append_native_item(
     }
     Some(())
 }
-fn native_tools(raw: &SourceJson) -> Option<Vec<SourceJson>> {
-    let Some(value) = s::present(raw, "tools") else {
-        return Some(vec![]);
-    };
-    let mut tools = vec![];
-    for tool in json::array(&value)? {
-        if !s::is(&s::get(&tool, "type"), "function")
-            || s::present(&tool, "namespace").is_some()
-            || !valid_name(&s::get(&tool, "name"))
-        {
-            return None;
+/// TS `nativeTools`: namespace members always become `<namespace>_<tool>`, a
+/// collision or strict function fails closed, and the reverse map restores output.
+fn native_tools(raw: &SourceJson, omit_web_search: bool) -> Option<(Vec<SourceJson>, ToolMap)> {
+    let (mut tools, mut names) = (vec![], ToolMap::new());
+    for tool in s::present(raw, "tools").map_or(Some(vec![]), |v| json::array(&v))? {
+        let disabled = s::boolean(&s::get(&tool, "external_web_access")) == Some(false);
+        match s::control(&s::get(&tool, "type")).as_deref() {
+            // Native Messages has no hosted search; only the direct lane omits an enabled one.
+            Some("web_search") if omit_web_search || disabled => {}
+            Some("function") => native_function(&tool, None, &mut tools, &mut names)?,
+            Some("namespace") if valid_name(&s::get(&tool, "name")) => {
+                let namespace = s::string(&s::get(&tool, "name"))?;
+                let nested = json::array(&s::get(&tool, "tools")).filter(|v| !v.is_empty())?;
+                for item in nested {
+                    s::is(&s::get(&item, "type"), "function").then_some(())?;
+                    native_function(&item, Some(&namespace), &mut tools, &mut names)?;
+                }
+            }
+            _ => return None,
         }
-        let mut result = s::object(vec![
-            ("name", s::get(&tool, "name")),
-            (
-                "input_schema",
-                s::present(&tool, "parameters")
-                    .unwrap_or_else(|| s::generated(&serde_json::json!({"type":"object"}))),
-            ),
-        ]);
-        if let Some(value) = s::present(&tool, "description") {
-            s::set(&mut result, "description", value);
-        }
-        tools.push(block(result, &tool)?);
     }
-    Some(tools)
+    Some((tools, names))
 }
-fn valid_reasoning(reasoning: &SourceJson) -> bool {
+fn optional_name(value: Option<SourceJson>) -> Option<Option<JsString16>> {
+    match value.filter(|v| !s::is_null(v)) {
+        Some(v) => Some(Some(s::string(&v).filter(|_| valid_name(&v))?)),
+        None => Some(None),
+    }
+}
+fn native_function(
+    tool: &SourceJson,
+    namespace: Option<&JsString16>,
+    tools: &mut Vec<SourceJson>,
+    names: &mut ToolMap,
+) -> Option<()> {
+    let name = optional_name(Some(s::get(tool, "name")))??;
+    let description = s::present(tool, "description");
+    let parameters = s::present(tool, "parameters");
+    if s::boolean(&s::get(tool, "strict")) == Some(true)
+        || description.as_ref().is_some_and(|v| s::string(v).is_none())
+        || parameters
+            .as_ref()
+            .is_some_and(|v| json::entries(v).is_none())
+    {
+        return None;
+    }
+    let namespace = match namespace {
+        Some(namespace) => Some(namespace.clone()),
+        None => optional_name(s::present(tool, "namespace"))?,
+    };
+    let wire = namespace.as_ref().map_or_else(
+        || name.clone(),
+        |ns| s::concat(&[ns, &JsString16::from_utf8("_"), &name]),
+    );
+    if !valid_name(&s::quoted(&wire)) || names.get_source(&wire).is_some() {
+        return None;
+    }
+    let mut result = vec![("name", s::quoted(&wire))];
+    result.extend(description.map(|v| ("description", v)));
+    let object = s::generated(&serde_json::json!({"type":"object"}));
+    result.push(("input_schema", parameters.unwrap_or(object)));
+    tools.push(block(s::object(result), tool)?);
+    let identity = ToolIdentity {
+        name,
+        namespace,
+        custom: false,
+    };
+    names.insert_source(wire, identity);
+    Some(())
+}
+/// TS `projectedToolName`: history and forced choices use the projected wire name.
+fn projected_name(item: &SourceJson, names: &ToolMap) -> Option<JsString16> {
+    let name = optional_name(Some(s::get(item, "name")))??;
+    let namespace = optional_name(s::present(item, "namespace"))?;
+    let mut known = names.iter();
+    let known = known.find(|(_, id)| id.name == name && id.namespace == namespace);
+    known
+        .map(|(wire, _)| wire.clone())
+        .or_else(|| namespace.is_none().then_some(name))
+}
+fn valid_reasoning(reasoning: &SourceJson, native: bool) -> bool {
+    // Only the native Messages lane accepts Codex's `concise` summary preference.
+    let concise = if native { "concise" } else { "none" };
     only(reasoning, &["effort", "summary"])
         && s::present(reasoning, "summary").is_none_or(|v| {
-            ["auto", "detailed", "none"]
+            ["auto", "detailed", "none", concise]
                 .iter()
                 .any(|value| s::is(&v, value))
         })
@@ -338,7 +393,7 @@ fn native_reasoning(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Option
     let Some(reasoning) = s::present(raw, "reasoning").filter(|v| !s::is_null(v)) else {
         return Some(s::object(vec![]));
     };
-    if !valid_reasoning(&reasoning) {
+    if !valid_reasoning(&reasoning, true) {
         return None;
     }
     let Some(effort) = s::present(&reasoning, "effort") else {
@@ -382,7 +437,7 @@ fn native_reasoning(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Option
     })
 }
 
-fn native_choice(raw: &SourceJson) -> Option<SourceJson> {
+fn native_choice(raw: &SourceJson, names: &ToolMap) -> Option<SourceJson> {
     let mut choice = match s::present(raw, "tool_choice") {
         None => s::object(vec![]),
         Some(value) if s::is(&value, "auto") || s::is(&value, "none") => {
@@ -391,13 +446,10 @@ fn native_choice(raw: &SourceJson) -> Option<SourceJson> {
         Some(value) if s::is(&value, "required") => s::object(vec![("type", s::text("any"))]),
         Some(value)
             if s::is(&s::get(&value, "type"), "function")
-                && s::present(&value, "namespace").is_none()
-                && valid_name(&s::get(&value, "name")) =>
+                || s::is(&s::get(&value, "type"), "custom") =>
         {
-            s::object(vec![
-                ("type", s::text("tool")),
-                ("name", s::get(&value, "name")),
-            ])
+            let name = projected_name(&value, names)?;
+            s::object(vec![("type", s::text("tool")), ("name", s::quoted(&name))])
         }
         _ => return None,
     };
@@ -447,10 +499,13 @@ fn add_cache(body: &mut SourceJson, raw: &SourceJson, native: bool) -> Option<()
     }
     Some(())
 }
-pub(crate) fn native(raw: &SourceJson, options: &PrepareOptions) -> Option<SourceJson> {
+pub(crate) fn native(raw: &SourceJson, options: &PrepareOptions) -> Option<(SourceJson, ToolMap)> {
     native_body(raw, &NativeBodyOptions::from(options))
 }
-pub(crate) fn native_claude(raw: &SourceJson, options: &ClaudeBodyOptions) -> Option<SourceJson> {
+pub(crate) fn native_claude(
+    raw: &SourceJson,
+    options: &ClaudeBodyOptions,
+) -> Option<(SourceJson, ToolMap)> {
     native_body(
         raw,
         &NativeBodyOptions {
@@ -462,19 +517,23 @@ pub(crate) fn native_claude(raw: &SourceJson, options: &ClaudeBodyOptions) -> Op
             supports_disabled_thinking: options.supports_disabled_thinking,
             native_reasoning_efforts: options.native_reasoning_efforts.as_ref(),
             catalog_max_output_tokens: Some(32_000),
+            omit_hosted_web_search: options.omit_hosted_web_search,
         },
     )
 }
-fn native_body(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Option<SourceJson> {
+fn native_body(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Option<(SourceJson, ToolMap)> {
     if !base(raw) || !policy(raw) {
         return None;
     }
-    if let Some(text) = s::present(raw, "text")
-        && (!only(&text, &["format"])
-            || s::present(&text, "format").is_some_and(|value| !eq(&value, r#"{"type":"text"}"#)))
-    {
-        return None;
-    }
+    // TS `structuredOutputFormat`: `{"type":"text"}` is no format; else only JSON schema (`strict`/`name` typed, dropped).
+    let format = match s::present(raw, "text") {
+        Some(text) if !only(&text, &["format"]) => return None,
+        Some(text) => match s::present(&text, "format") {
+            Some(format) if !eq(&format, r#"{"type":"text"}"#) => Some(structured_format(&format)?),
+            _ => None,
+        },
+        None => None,
+    };
     let max = s::present(raw, "max_output_tokens")
         .and_then(|value| json::number(&value))
         .filter(|v| *v >= 0.0 && v.fract() == 0.0)
@@ -494,10 +553,10 @@ fn native_body(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Option<Sour
     {
         return None;
     }
-    let messages = native_messages(raw, &mut system, options)?;
-    let tools = native_tools(raw)?;
-    let choice = native_choice(raw)?;
+    let (tools, names) = native_tools(raw, options.omit_hosted_web_search)?;
+    let messages = native_messages(raw, &mut system, &names, options)?;
     let reasoning = native_reasoning(raw, options)?;
+    let choice = native_choice(raw, &names)?;
     let mut body = s::object(vec![
         ("model", s::get(raw, "model")),
         ("max_tokens", s::generated(&max)),
@@ -519,13 +578,25 @@ fn native_body(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Option<Sour
     for (key, value) in json::entries(&reasoning)? {
         s::set(&mut body, &key.try_utf8().ok()?, value);
     }
+    if let Some(format) = format {
+        let mut config = s::present(&body, "output_config").unwrap_or_else(|| s::object(vec![]));
+        s::set(&mut config, "format", format);
+        s::set(&mut body, "output_config", config);
+    }
     for key in ["temperature", "top_p", "prompt_cache_key"] {
         if let Some(value) = s::present(raw, key) {
             s::set(&mut body, key, value);
         }
     }
     add_cache(&mut body, raw, true)?;
-    Some(body)
+    Some((body, names))
+}
+fn structured_format(format: &SourceJson) -> Option<SourceJson> {
+    let schema = s::present(format, "schema").filter(|v| json::entries(v).is_some())?;
+    (s::is(&s::get(format, "type"), "json_schema")
+        && s::present(format, "strict").is_none_or(|v| s::boolean(&v).is_some())
+        && s::present(format, "name").is_none_or(|v| s::string(&v).is_some()))
+    .then(|| s::object(vec![("type", s::text("json_schema")), ("schema", schema)]))
 }
 fn chat_tool(tool: &SourceJson) -> bool {
     let valid = valid_name(&s::get(tool, "name"));
@@ -607,7 +678,7 @@ pub(crate) fn chat(
         s::set(&mut body, "max_tokens", s::generated(&max));
     }
     if let Some(reasoning) = s::present(raw, "reasoning").filter(|v| !s::is_null(v)) {
-        if !valid_reasoning(&reasoning) {
+        if !valid_reasoning(&reasoning, false) {
             return None;
         }
         if let Some(effort) = s::present(&reasoning, "effort") {
@@ -660,6 +731,8 @@ pub(crate) fn chat(
         body,
         names,
         elisions: vec![],
+        exemptions: vec![],
+        admission: None,
         warnings: vec![],
     })
 }
@@ -753,21 +826,17 @@ pub(crate) fn replay_messages(
     transport: ReplayTransport,
     entries: &[ReplayEntry],
 ) -> Option<Vec<SourceJson>> {
-    let (_, names) = source_tools::flatten(s::present(raw, "tools").as_ref(), 64).ok()?;
     let mut messages = vec![];
     match transport {
         ReplayTransport::Messages => {
+            // Native history uses the native projection; its names do not depend on omission.
+            let (_, names) = native_tools(raw, true)?;
             let mut system = vec![];
             for entry in entries {
                 match entry {
+                    // Messages has one system channel, so late developer text is retained there.
                     ReplayEntry::Original(item) => {
-                        let item = item.clone();
-                        let role = s::control(&s::get(&item, "role")).unwrap_or_default();
-                        if ["system", "developer"].contains(&role.as_str()) && !messages.is_empty()
-                        {
-                            return None;
-                        }
-                        append_native_item(&item, &mut system, &mut messages)?;
+                        append_native_item(item, &mut system, &mut messages, &names)?;
                     }
                     ReplayEntry::NativeAssistant {
                         transport: ReplayTransport::Messages,
@@ -796,6 +865,7 @@ pub(crate) fn replay_messages(
             }
         }
         ReplayTransport::Chat => {
+            let (_, names) = source_tools::flatten(s::present(raw, "tools").as_ref(), 64).ok()?;
             for entry in entries {
                 match entry {
                     ReplayEntry::Original(item) => {

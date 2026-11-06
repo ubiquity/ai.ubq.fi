@@ -1,3 +1,4 @@
+import { assertBunServingAuthority } from "./assert-serving-authority.ts";
 import { command } from "./io.ts";
 import { mkdir } from "node:fs/promises";
 import { ensureCaddyIngressReady, healthServesRelease, reloadCaddyIngress } from "./vps-ingress.ts";
@@ -72,14 +73,28 @@ export class VpsDeploymentDriver {
   private readonly _store: ImmutableVpsReleaseStore;
   private readonly _journal: VpsOperationJournal;
   constructor(private readonly _deps: VpsDriverDependencies) {
-    this._store = new ImmutableVpsReleaseStore(this._deps.root, this._deps.run, this._deps.preparePayload);
+    this._store = new ImmutableVpsReleaseStore(this._deps.root, (program, args, cwd) => this._guardedRun(program, args, cwd), this._deps.preparePayload);
     this._journal = new VpsOperationJournal(this._deps.root);
   }
   private _lock<T>(work: () => Promise<T>): Promise<T> {
     return withVpsDeployLock(this._deps.root, work);
   }
+  private async _guardedRun(program: string, args: string[], cwd: string): Promise<string> {
+    if (program === "sudo") await assertBunServingAuthority(this._deps.root, this._deps.run);
+    return this._deps.run(program, args, cwd);
+  }
   private _command(program: string, args: string[]): Promise<string> {
-    return this._deps.run(program, args, this._deps.root);
+    return this._guardedRun(program, args, this._deps.root);
+  }
+  private _mutationLock<T>(work: () => Promise<T>): Promise<T> {
+    return this._lock(async () => {
+      await assertBunServingAuthority(this._deps.root, this._deps.run);
+      return work();
+    });
+  }
+  private async _select(target: string): Promise<void> {
+    await assertBunServingAuthority(this._deps.root, this._deps.run);
+    await this._store.selectRelease(target);
   }
   private async _checkout(binding: VpsBinding): Promise<void> {
     await this._store.assertDirectories();
@@ -146,7 +161,7 @@ export class VpsDeploymentDriver {
       expectedPrior = parseVpsSelector(input.expectedPrior);
     if (input.expectedDriverSha256 !== this._deps.driverSha256) return refusal("driver_mismatch");
     const operationId = await vpsOperationId(binding);
-    return this._lock(async () => {
+    return this._mutationLock(async () => {
       await this._checkout(binding);
       const existing = await this._journal.read(operationId);
       if (existing) {
@@ -227,7 +242,7 @@ export class VpsDeploymentDriver {
     return this._lock(() => this._bound(operation));
   }
   activate(operation: VpsMutation): Promise<VpsReceipt> {
-    return this._lock(async () => {
+    return this._mutationLock(async () => {
       let receipt = await this._mutation(operation);
       if (["accepted", "failed", "rolled_back", "rollback_pending"].includes(receipt.phase)) return refusal("terminal_or_rollback");
       await this._checkout(receipt.binding);
@@ -240,7 +255,7 @@ export class VpsDeploymentDriver {
         if (selected !== receipt.prior.target) return refusal("ambiguous_prepared_selector");
         await this._proof(receipt.prior.identity, receipt.prior.listenerPort);
         receipt = await this._write(receipt, { intent: { action: "promote", persistedAt: this._deps.now() } });
-        await this._store.selectRelease(`releases/${receipt.candidate.gitSha}`);
+        await this._select(`releases/${receipt.candidate.gitSha}`);
         receipt = await this._write(receipt, { phase: "selected" });
       }
       let restartAttempted = false;
@@ -273,7 +288,7 @@ export class VpsDeploymentDriver {
     if (selected !== receipt.prior.target && selected !== `releases/${receipt.candidate.gitSha}`) return refusal("unrelated_current");
     const prior = await this._store.checkedPreviousRelease(receipt.prior.identity.gitSha, receipt.prior.target);
     if (restart) await this._store.assertRollbackAllowed(prior, receipt.candidate.gitSha);
-    if (selected !== receipt.prior.target) await this._store.selectRelease(receipt.prior.target);
+    if (selected !== receipt.prior.target) await this._select(receipt.prior.target);
     const priorReady = await this.sampleHealth(receipt.prior.identity, "loopback", receipt.prior.listenerPort)
       .then(isHealthyVps)
       .catch(() => false);
@@ -283,7 +298,7 @@ export class VpsDeploymentDriver {
     return this._write(receipt, { phase: "rolled_back", restoration });
   }
   restore(operation: VpsMutation): Promise<VpsReceipt> {
-    return this._lock(async () => {
+    return this._mutationLock(async () => {
       let receipt = await this._mutation(operation);
       if (["accepted", "failed"].includes(receipt.phase)) return refusal("terminal_receipt");
       if (receipt.phase === "rolled_back") return receipt;

@@ -196,105 +196,92 @@ impl KernelAudit {
         }
     }
     pub(super) fn accept(&mut self, row: &ObservedRow) {
-        for (scope_i, scope) in ["repo", "org"].into_iter().enumerate() {
-            for (kind_i, kind) in ["policy", "window", "reservation"].into_iter().enumerate() {
-                let index = scope_i * 3 + kind_i;
-                let segment = format!("{scope}_{kind}");
-                let count_name = format!("kernel_v2_{scope}_{kind}s");
-                if !under(&row.parts, &["uos_ai", "kernel_quota", "v2", &segment])
-                    || self.groups[index].1.is_some()
-                {
-                    continue;
-                }
-                let a = &mut self.groups[index].0;
-                let result = (|| -> Result<(), GatewayError> {
-                    a.count(&count_name);
-                    let p = &row.parts;
-                    let value = row.value()?;
-                    let Some((_, owner, repo)) = kernel::identity(p, kind) else {
-                        a.errors.push(
-                            format!("kernel quota V2 {kind} is malformed: {}", reference(p))
-                                .as_str()
-                                .into(),
-                        );
-                        return Ok(());
-                    };
-                    if kind == "policy" {
-                        if !valid_kernel_policy(value, scope, &owner, repo.as_deref()) {
-                            a.errors.push(
-                                format!("kernel quota V2 policy is malformed: {}", reference(p))
-                                    .as_str()
-                                    .into(),
-                            );
-                        }
-                        return Ok(());
-                    }
-                    let mut reference_parts = vec![json!(scope), json!(owner)];
-                    if let Some(repo) = &repo {
-                        reference_parts.push(json!(repo));
-                    }
-                    if kind == "window" {
-                        let Some(window) =
-                            kernel::normalize_window(value, scope, &owner, repo.as_deref())
-                        else {
-                            a.errors.push(
-                                format!("kernel quota V2 window is malformed: {}", reference(p))
-                                    .as_str()
-                                    .into(),
-                            );
-                            return Ok(());
-                        };
-                        reference_parts.push(window["created_at_ms"].clone());
-                        self.windows.insert(
+        for index in 0..6 {
+            let (scope, kind) = (
+                ["repo", "org"][index / 3],
+                ["policy", "window", "reservation"][index % 3],
+            );
+            let segment = format!("{scope}_{kind}");
+            if !under(&row.parts, &["uos_ai", "kernel_quota", "v2", &segment])
+                || self.groups[index].1.is_some()
+            {
+                continue;
+            }
+            self.groups[index].1 = self.accept_one(index, scope, kind, row).err();
+        }
+    }
+    fn accept_one(
+        &mut self,
+        index: usize,
+        scope: &str,
+        kind: &str,
+        row: &ObservedRow,
+    ) -> Result<(), GatewayError> {
+        let a = &mut self.groups[index].0;
+        a.count(&format!("kernel_v2_{scope}_{kind}s"));
+        let p = &row.parts;
+        let value = row.value()?;
+        let Some((_, owner, repo)) = kernel::identity(p, kind) else {
+            let message = format!("kernel quota V2 {kind} is malformed: {}", reference(p));
+            a.errors.push(message.as_str().into());
+            return Ok(());
+        };
+        if kind == "policy" {
+            if !valid_kernel_policy(value, scope, &owner, repo.as_deref()) {
+                let message = format!("kernel quota V2 policy is malformed: {}", reference(p));
+                a.errors.push(message.as_str().into());
+            }
+            return Ok(());
+        }
+        let mut reference_parts = vec![json!(scope), json!(owner)];
+        if let Some(repo) = &repo {
+            reference_parts.push(json!(repo));
+        }
+        if kind == "window" {
+            let Some(window) = kernel::normalize_window(value, scope, &owner, repo.as_deref())
+            else {
+                let message = format!("kernel quota V2 window is malformed: {}", reference(p));
+                a.errors.push(message.as_str().into());
+                return Ok(());
+            };
+            reference_parts.push(window["created_at_ms"].clone());
+            self.windows.insert(
                         reference(&reference_parts),
                         (json!({"usage_reset_at_ms":window["usage_reset_at_ms"],"reserved_requests":window["reserved_requests"]}), value.get("reserved_requests").is_some()),
                     );
-                        return Ok(());
-                    }
-                    let offset = if scope == "repo" { 6 } else { 5 };
-                    let valid_key = p.len() == offset + 2
-                        && safe(p.get(offset))
-                        && p.get(offset + 1)
-                            .and_then(Value::as_str)
-                            .is_some_and(|s| !s.is_empty());
-                    let reservation =
-                        kernel::normalize_reservation(value, scope, &owner, repo.as_deref());
-                    if !valid_key
-                        || reservation.as_ref().is_none_or(|v| {
-                            v["window_created_at_ms"] != p[offset]
-                                || v["request_id"] != p[offset + 1]
-                        })
-                    {
-                        a.errors.push(
-                            format!("kernel quota V2 reservation is malformed: {}", reference(p))
-                                .as_str()
-                                .into(),
-                        );
-                        return Ok(());
-                    }
-                    let reservation = reservation.unwrap_or(Value::Null);
-                    reference_parts.push(reservation["window_created_at_ms"].clone());
-                    let r = reference(&reference_parts);
-                    let reset = reservation["window_reset_at_ms"].clone();
-                    if self.resets.get(&r).is_some_and(|known| *known != reset) {
-                        a.errors.push(
-                            format!(
-                                "kernel quota V2 reservation window identity is inconsistent: {r}"
-                            )
-                            .as_str()
-                            .into(),
-                        );
-                    } else {
-                        self.resets.insert(r.clone(), reset);
-                    }
-                    if reservation["state"] == "reserved" {
-                        *self.reserved.entry(r).or_default() += 1;
-                    }
-                    Ok(())
-                })();
-                self.groups[index].1 = result.err();
-            }
+            return Ok(());
         }
+        let offset = if scope == "repo" { 6 } else { 5 };
+        let valid_key = p.len() == offset + 2
+            && safe(p.get(offset))
+            && p.get(offset + 1)
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.is_empty());
+        let reservation = kernel::normalize_reservation(value, scope, &owner, repo.as_deref());
+        if !valid_key
+            || reservation.as_ref().is_none_or(|v| {
+                v["window_created_at_ms"] != p[offset] || v["request_id"] != p[offset + 1]
+            })
+        {
+            let message = format!("kernel quota V2 reservation is malformed: {}", reference(p));
+            a.errors.push(message.as_str().into());
+            return Ok(());
+        }
+        let reservation = reservation.unwrap_or(Value::Null);
+        reference_parts.push(reservation["window_created_at_ms"].clone());
+        let r = reference(&reference_parts);
+        let reset = reservation["window_reset_at_ms"].clone();
+        if self.resets.get(&r).is_some_and(|known| *known != reset) {
+            let message =
+                format!("kernel quota V2 reservation window identity is inconsistent: {r}");
+            a.errors.push(message.as_str().into());
+        } else {
+            self.resets.insert(r.clone(), reset);
+        }
+        if reservation["state"] == "reserved" {
+            *self.reserved.entry(r).or_default() += 1;
+        }
+        Ok(())
     }
     pub(super) fn finish(self) -> Result<Audit, GatewayError> {
         let mut a = Audit::default();

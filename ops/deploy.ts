@@ -12,7 +12,10 @@ import { readVpsPins } from "./vps-release-journal.ts";
 import { assertPublicRelease, ensureCaddyIngressReady, healthServesRelease, PUBLIC_HEALTH_URL, reloadCaddyIngress } from "./vps-ingress.ts";
 const canonicalRoot = "/home/codex/repos/ubiquity/ai.ubq.fi";
 
-const command = runCommand;
+const command: typeof runCommand = async (program, args, options) => {
+  if (program === "sudo") await assertBunConvertedStore(canonicalRoot);
+  return runCommand(program, args, options);
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -152,7 +155,10 @@ async function saveRecovery(receipt: Recovery): Promise<void> {
   }
 }
 
-const selectRelease = (target: string | null): Promise<void> => releaseStore.selectRelease(target);
+const selectRelease = async (target: string | null): Promise<void> => {
+  await assertBunConvertedStore(canonicalRoot);
+  await releaseStore.selectRelease(target);
+};
 
 async function ready(sha: string, port: number, attempts = 30): Promise<boolean> {
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -283,7 +289,7 @@ async function restorePrevious(receipt: Recovery, restartAttempted: boolean): Pr
 async function verifySelectedOnly(candidate: Release, selected: boolean): Promise<void> {
   if (!selected) throw new Error("Existing unselected release has no deployment-owned recovery receipt");
   if (!(await ready(candidate.sha, 7999, 1))) throw new Error("Selected immutable release is not ready; refusing a guessed restart or rollback");
-  await reloadCaddyIngress();
+  await reloadCaddyIngress(command);
   await assertPublicRelease(candidate.sha);
 }
 
@@ -315,7 +321,7 @@ async function activate(candidate: Release, selected: string | null, receipt: Re
   const state = { restartAttempted: candidateSelected, ingressApplied: receipt.phase === "ingress_applied" };
   try {
     if (!candidateServes) await startCandidate(candidate, receipt, state);
-    await reloadCaddyIngress();
+    await reloadCaddyIngress(command);
     state.ingressApplied = true;
     receipt.phase = "ingress_applied";
     await saveRecovery(receipt);
@@ -377,6 +383,7 @@ export async function deploy(preparePayload?: VpsPayloadPreparation): Promise<vo
     await assertDataDirectories();
     await mkdir(".data/releases", { recursive: true, mode: 0o700 });
     releaseLock = await acquireDeployLock();
+    await assertBunConvertedStore(root);
     // Capture the candidate only after the lock: a deployment that waited for it
     // must not release a revision from before the wait.
     const sha = await assertDeployableCheckout();

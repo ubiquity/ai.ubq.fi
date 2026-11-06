@@ -94,7 +94,6 @@ pub(crate) fn model_hash(value: Option<&JsString16>, domain: &str) -> Option<Str
     bytes.extend_from_slice(String::from_utf16_lossy(model.as_units()).as_bytes());
     Some(sha256_hex(&bytes))
 }
-
 pub(crate) fn prefix(name: &str) -> RecordKey {
     store::key(json!(["uos_ai", "prompt_cache_analytics", "v2", name]))
 }

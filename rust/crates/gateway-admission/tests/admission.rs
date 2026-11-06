@@ -480,6 +480,7 @@ fn only_exact_source_routes_consume_resources() {
         "embeddings.jobs.get",
         "chat.completions",
         "responses",
+        "decisions",
         "systemone",
         "images.generations",
         "images.edits",
@@ -495,6 +496,7 @@ fn only_exact_source_routes_consume_resources() {
         "live",
         "/v1/live",
         "responses.extra",
+        "decisions.extra",
         "health",
     ] {
         assert!(!requires_admission(route));

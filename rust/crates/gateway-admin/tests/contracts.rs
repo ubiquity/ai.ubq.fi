@@ -25,12 +25,12 @@ use std::{
 fn source(value: &Value) -> SourceJson {
     SourceJson::from_serializable(value).unwrap()
 }
+use gateway_admin_test_support::must::{Must, TestResult};
 use serde_json::{Value, json};
 
 fn wire_json(body: &AuthResponseBody) -> Value {
     serde_json::from_slice(&body.to_bytes().unwrap()).unwrap()
 }
-
 fn run<F: Future>(future: F) -> F::Output {
     let mut context = Context::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);
@@ -118,7 +118,14 @@ fn actor() -> AuthPrincipal {
         is_super_admin: true,
     }
 }
-
+fn key_service<'a, S, A>(store: &'a S, host: &'a Host, caps: &'a A) -> KeyService<'a, S, Host, A> {
+    KeyService {
+        store,
+        host,
+        capabilities: caps,
+        release: "fixture",
+    }
+}
 fn kernel_source_policy(scope: &str, repo: Option<&str>) -> Value {
     let mut value = json!({"v":2,"scope":scope,"owner":"owner","usage_limit_requests":"25.9","window_ms":"60000.9","expires_at_ms":0,"created_at_ms":1,"updated_at_ms":2});
     if let Some(repo) = repo {
@@ -126,7 +133,6 @@ fn kernel_source_policy(scope: &str, repo: Option<&str>) -> Value {
     }
     value
 }
-
 #[test]
 fn kernel_auth_validates_both_source_policies_before_repo_precedence() {
     run(async {
@@ -191,7 +197,6 @@ fn kernel_auth_validates_both_source_policies_before_repo_precedence() {
         );
     });
 }
-
 #[test]
 fn kernel_missing_policy_queue_retries_cas_without_double_counting_and_keeps_200() {
     run(async {
@@ -223,7 +228,6 @@ fn kernel_missing_policy_queue_retries_cas_without_double_counting_and_keeps_200
         );
     });
 }
-
 struct AlwaysConflict<'a> {
     store: &'a Store,
     attempts: Cell<usize>,
@@ -237,7 +241,6 @@ impl AuthorityStore for AlwaysConflict<'_> {
         Ok(CommitOutcome::Conflict)
     }
 }
-
 #[test]
 fn kernel_queue_failure_is_bounded_and_does_not_invent_a_policy() {
     run(async {
@@ -262,7 +265,6 @@ fn kernel_queue_failure_is_bounded_and_does_not_invent_a_policy() {
         assert!(store.rows.borrow().is_empty());
     });
 }
-
 struct CaptureBody {
     seen: RefCell<Vec<(AdminOperation, Value)>>,
 }
@@ -285,7 +287,6 @@ impl AdminHost for CaptureBody {
         Err(missing_capability(AdminOperation::ApiKeysUpdate))
     }
 }
-
 #[test]
 fn actual_admin_dispatch_preserves_ndjson_empty_experiment_and_source_text_decoding() {
     run(async {
@@ -408,7 +409,6 @@ fn actual_admin_dispatch_preserves_ndjson_empty_experiment_and_source_text_decod
         assert_eq!(caps.seen.borrow().len(), calls);
     });
 }
-
 struct Pricing {
     inputs: RefCell<Vec<Value>>,
 }
@@ -442,21 +442,16 @@ impl AdminHost for Pricing {
         })
     }
 }
-
 #[test]
-fn paid_limit_updates_and_disabling_preserve_source_pricing_without_provider_reinitialization() {
+fn paid_limit_updates_and_disabling_preserve_source_pricing_without_provider_reinitialization()
+-> TestResult {
     run(async {
         let store = Store::default();
         let host = Host::default();
         let caps = Pricing {
             inputs: RefCell::new(Vec::new()),
         };
-        let service = KeyService {
-            store: &store,
-            host: &host,
-            capabilities: &caps,
-            release: "fixture",
-        };
+        let service = key_service(&store, &host, &caps);
         let created = service
             .create(
                 &source(&json!({"name":"Pricing","paid_fallback_limit_credits":1})),
@@ -464,9 +459,9 @@ fn paid_limit_updates_and_disabling_preserve_source_pricing_without_provider_rei
                 "create",
             )
             .await
-            .unwrap();
+            .must()?;
         let created_body = wire_json(&created.body);
-        let id = created_body["id"].as_str().unwrap();
+        let id = created_body["id"].as_str().must()?;
         assert!(caps.inputs.borrow().is_empty());
         service
             .mutate(
@@ -476,7 +471,7 @@ fn paid_limit_updates_and_disabling_preserve_source_pricing_without_provider_rei
                 "enable",
             )
             .await
-            .unwrap();
+            .must()?;
         assert_eq!(caps.inputs.borrow().len(), 1);
         assert_eq!(caps.inputs.borrow()[0]["paid_fallback_limit_credits"], 1.0);
         for patch in [
@@ -493,14 +488,14 @@ fn paid_limit_updates_and_disabling_preserve_source_pricing_without_provider_rei
                     "patch",
                 )
                 .await
-                .unwrap();
+                .must()?;
             assert_eq!(caps.inputs.borrow().len(), 1);
             let row = store
                 .read(&gateway_auth::api_keys::id_key(id))
                 .await
-                .unwrap()
-                .unwrap();
-            let record: ApiKeyRecord = decode_record(&row).unwrap();
+                .must()?
+                .must()?;
+            let record: ApiKeyRecord = decode_record(&row).must()?;
             assert_eq!(
                 record.paid_fallback_model_ids,
                 [gateway_core::model::ModelId::from_scalar("paid-model")]
@@ -521,12 +516,12 @@ fn paid_limit_updates_and_disabling_preserve_source_pricing_without_provider_rei
                 "reenable",
             )
             .await
-            .unwrap();
+            .must()?;
         assert_eq!(caps.inputs.borrow().len(), 2);
         assert_eq!(caps.inputs.borrow()[1]["paid_fallback_limit_credits"], 3.0);
-    });
+        TestResult::Ok(())
+    })
 }
-
 struct ClaimedDeletion<'a> {
     store: &'a Store,
     host: &'a Host,
@@ -622,7 +617,6 @@ impl AdminHost for ClaimedDeletion<'_> {
         Ok(())
     }
 }
-
 struct DeletionHooks<'a> {
     inner: ClaimedDeletion<'a>,
     fail_finish: Cell<bool>,
@@ -675,9 +669,8 @@ impl AdminHost for DeletionHooks<'_> {
         self.inner.abort_key_deletion(id, checks).await
     }
 }
-
 #[test]
-fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() {
+fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() -> TestResult {
     run(async {
         for (fail_finish, conflict) in [(false, false), (true, false), (false, true)] {
             let store = Store::default();
@@ -692,18 +685,13 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
                 finishes: Cell::new(0),
                 aborts: Cell::new(0),
             };
-            let service = KeyService {
-                store: &store,
-                host: &host,
-                capabilities: &caps,
-                release: "fixture",
-            };
+            let service = key_service(&store, &host, &caps);
             let created = service
                 .create(&source(&json!({"name":"Cleanup"})), &actor(), "create")
                 .await
-                .unwrap();
+                .must()?;
             let created_body = wire_json(&created.body);
-            let id = created_body["id"].as_str().unwrap();
+            let id = created_body["id"].as_str().must()?;
             service
                 .mutate(
                     AdminOperation::ApiKeysRevoke,
@@ -712,7 +700,7 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
                     "revoke",
                 )
                 .await
-                .unwrap();
+                .must()?;
             let legacy = gateway_auth::store::key(json!(["ubq_ai", "api_keys", "usage", id]));
             let daily = gateway_auth::store::key(json!(["ubq_ai", "api_keys", "usage_daily", id]));
             let history = gateway_auth::store::key(json!([
@@ -737,39 +725,39 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
                     "delete",
                 )
                 .await;
-            let guard = store.read(&deletion_key(id)).await.unwrap().unwrap();
+            let guard = store.read(&deletion_key(id)).await.must()?.must()?;
             assert_eq!(guard.expires_at_ms, None);
             if conflict {
-                assert_eq!(result.unwrap_err().status, 409);
+                assert_eq!(result.err().must()?.status, 409);
                 assert_eq!(caps.aborts.get(), 1);
                 assert_eq!(caps.finishes.get(), 0);
                 assert!(
                     store
                         .read(&gateway_auth::api_keys::id_key(id))
                         .await
-                        .unwrap()
+                        .must()?
                         .is_some()
                 );
-                assert!(store.read(&legacy).await.unwrap().is_some());
-                assert!(store.read(&history).await.unwrap().is_some());
+                assert!(store.read(&legacy).await.must()?.is_some());
+                assert!(store.read(&history).await.must()?.is_some());
                 continue;
             }
             assert!(
                 store
                     .read(&gateway_auth::api_keys::id_key(id))
                     .await
-                    .unwrap()
+                    .must()?
                     .is_none()
             );
             assert!(
-                store.read(&legacy).await.unwrap().is_none()
-                    && store.read(&daily).await.unwrap().is_none()
+                store.read(&legacy).await.must()?.is_none()
+                    && store.read(&daily).await.must()?.is_none()
             );
             assert_eq!(caps.aborts.get(), 0);
             assert_eq!(caps.finishes.get(), 1);
             if fail_finish {
-                assert_eq!(result.unwrap_err().status, 500);
-                assert!(store.read(&history).await.unwrap().is_some());
+                assert_eq!(result.err().must()?.status, 500);
+                assert!(store.read(&history).await.must()?.is_some());
                 assert_eq!(
                     service
                         .mutate(
@@ -779,39 +767,38 @@ fn deletion_cleanup_is_guarded_idempotent_and_preserves_source_error_ordering() 
                             "retry"
                         )
                         .await
-                        .unwrap_err()
+                        .err()
+                        .must()?
                         .status,
                     404
                 );
             } else {
-                assert_eq!(wire_json(&result.unwrap().body), json!({"id":id}));
+                assert_eq!(wire_json(&result.must()?.body), json!({"id":id}));
             }
             let checks = vec![RevisionCheck {
                 key: deletion_key(id),
                 expected_revision: Some(guard.revision.clone()),
             }];
-            caps.finish_key_deletion(id, &checks).await.unwrap();
-            caps.finish_key_deletion(id, &checks).await.unwrap();
-            assert!(store.read(&history).await.unwrap().is_none());
-            assert_eq!(store.read(&deletion_key(id)).await.unwrap().unwrap(), guard);
+            caps.finish_key_deletion(id, &checks).await.must()?;
+            caps.finish_key_deletion(id, &checks).await.must()?;
+            assert!(store.read(&history).await.must()?.is_none());
+            assert_eq!(store.read(&deletion_key(id)).await.must()?.must()?, guard);
         }
-    });
+        TestResult::Ok(())
+    })
 }
-
 struct PaidRaceStore<'a> {
     store: &'a Store,
     host: &'a Host,
     key_id: String,
     armed: Cell<bool>,
 }
-
 struct PaidFixtureClock;
 impl gateway_authority::store::AuthorityClock for PaidFixtureClock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(1_000_000)
     }
 }
-
 async fn paid_fixture_owner_proof(
     store: &Store,
     host: &Host,
@@ -955,12 +942,7 @@ impl AuthorityStore for PaidRaceStore<'_> {
                 store: self.store,
                 host: self.host,
             };
-            let service = KeyService {
-                store: self.store,
-                host: self.host,
-                capabilities: &caps,
-                release: "fixture",
-            };
+            let service = key_service(self.store, self.host, &caps);
             service
                 .mutate(
                     AdminOperation::ApiKeysRevoke,
@@ -1003,12 +985,7 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
         let pricing = Pricing {
             inputs: RefCell::new(Vec::new()),
         };
-        let key = KeyService {
-            store: &store,
-            host: &host,
-            capabilities: &pricing,
-            release: "fixture",
-        }
+        let key = key_service(&store, &host, &pricing)
         .create(
             &source(&json!({"name":"Race","paid_fallback_enabled":true,"paid_fallback_limit_credits":1})),
             &actor(),
@@ -1179,12 +1156,12 @@ fn every_source_admin_endpoint_is_accounted_for() {
 }
 
 #[test]
-fn audit_never_persists_credential_material() {
+fn audit_never_persists_credential_material() -> TestResult {
     let raw = json!({"name":"key","usage_limit_requests":50,"token":"private-token","hash":"private-hash","authorization":"Bearer private","prompt":"private"});
     let sanitized = audit::safe_changed(&raw)
-        .unwrap()
+        .must()?
         .deserialize::<Value>()
-        .unwrap();
+        .must()?;
     assert_eq!(sanitized, json!({"name":"key","usage_limit_requests":50}));
     let shared = audit::actor(&actor());
     assert_eq!(shared.kind, "shared_admin_credential");
@@ -1202,9 +1179,9 @@ fn audit_never_persists_credential_material() {
                 aud: "ai".into(),
                 client_id: "ai".into(),
                 auth: "sso".into(),
-                iat: 1_800_000_000,
-                exp: 1_900_000_000,
-                jti: "passport-jti".into(),
+                iat: Some(1_800_000_000),
+                exp: Some(1_900_000_000),
+                jti: Some("passport-jti".into()),
                 agent_token_id: None,
             },
         },
@@ -1214,20 +1191,22 @@ fn audit_never_persists_credential_material() {
     let identified = audit::actor(&passport);
     assert_eq!(identified.kind, "passkey_user");
     assert_eq!(identified.principal_id.as_deref(), Some("passport-subject"));
-    assert_eq!(identified.principal_label.as_deref(), Some("passport-handle"));
+    assert_eq!(
+        identified.principal_label.as_deref(),
+        Some("passport-handle")
+    );
+    Ok(())
 }
 
 #[test]
-fn key_creation_commits_identity_policy_window_and_audit_together() {
+fn key_creation_commits_identity_policy_window_and_audit_together() -> TestResult {
     run(async {
         let store = Store::default();
         let host = Host::default();
         let caps = Capabilities { pending: false };
         let service = KeyService {
-            store: &store,
-            host: &host,
-            capabilities: &caps,
             release: "fixture-release",
+            ..key_service(&store, &host, &caps)
         };
         let result = service
             .create(
@@ -1236,24 +1215,24 @@ fn key_creation_commits_identity_policy_window_and_audit_together() {
                 "request",
             )
             .await
-            .unwrap();
+            .must()?;
         assert_eq!(result.status, 200);
         let result_body = wire_json(&result.body);
-        let id = result_body["id"].as_str().unwrap();
-        let token = result_body["token"].as_str().unwrap();
+        let id = result_body["id"].as_str().must()?;
+        let token = result_body["token"].as_str().must()?;
         assert!(gateway_auth::api_keys::api_key_shape(token));
         assert!(
             store
                 .read(&gateway_auth::api_keys::id_key(id))
                 .await
-                .unwrap()
+                .must()?
                 .is_some()
         );
         assert!(
             store
                 .read(&authority_policy_key(id))
                 .await
-                .unwrap()
+                .must()?
                 .is_some()
         );
         assert!(
@@ -1264,7 +1243,7 @@ fn key_creation_commits_identity_policy_window_and_audit_together() {
                     1_000_000
                 ))
                 .await
-                .unwrap()
+                .must()?
                 .is_some()
         );
         let audit = store
@@ -1272,50 +1251,43 @@ fn key_creation_commits_identity_policy_window_and_audit_together() {
             .borrow()
             .values()
             .find_map(|row| audit::decode_event(row).ok())
-            .unwrap();
+            .must()?;
         assert_eq!(audit.action, "create");
-        assert!(!serde_json::to_string(&audit).unwrap().contains(token));
+        assert!(!serde_json::to_string(&audit).must()?.contains(token));
         assert!(result_body.get("hash").is_none());
-    });
+        TestResult::Ok(())
+    })
 }
 
 #[test]
-fn conflicting_creation_writes_nothing() {
+fn conflicting_creation_writes_nothing() -> TestResult {
     run(async {
         let store = Store::default();
         store.conflict.set(true);
         let host = Host::default();
         let caps = Capabilities { pending: false };
-        let service = KeyService {
-            store: &store,
-            host: &host,
-            capabilities: &caps,
-            release: "fixture",
-        };
+        let service = key_service(&store, &host, &caps);
         assert_eq!(
             service
                 .create(&source(&json!({"name":"Fixture"})), &actor(), "request")
                 .await
-                .unwrap_err()
+                .err()
+                .must()?
                 .status,
             409
         );
         assert!(store.rows.borrow().is_empty());
-    });
+        TestResult::Ok(())
+    })
 }
 
 #[test]
-fn malformed_or_unpriced_paid_key_never_writes_state() {
+fn malformed_or_unpriced_paid_key_never_writes_state() -> TestResult {
     run(async {
         let store = Store::default();
         let host = Host::default();
         let caps = Capabilities { pending: false };
-        let service = KeyService {
-            store: &store,
-            host: &host,
-            capabilities: &caps,
-            release: "fixture",
-        };
+        let service = key_service(&store, &host, &caps);
         for body in [
             json!({"name":"bad\nkey"}),
             json!({"name":"key","paid_fallback_enabled":true}),
@@ -1326,35 +1298,32 @@ fn malformed_or_unpriced_paid_key_never_writes_state() {
                 service
                     .create(&source(&body), &actor(), "request")
                     .await
-                    .unwrap_err()
+                    .err()
+                    .must()?
                     .status,
                 400
             );
             assert!(store.rows.borrow().is_empty());
         }
-        assert_eq!(service.create(&source(&json!({"name":"key","paid_fallback_enabled":true,"paid_fallback_limit_credits":1})),&actor(),"request").await.unwrap_err().status,503);
+        assert_eq!(service.create(&source(&json!({"name":"key","paid_fallback_enabled":true,"paid_fallback_limit_credits":1})),&actor(),"request").await.err().must()?.status,503);
         assert!(store.rows.borrow().is_empty());
-    });
+        TestResult::Ok(())
+    })
 }
 
 #[test]
-fn revoked_deletion_never_discards_pending_billing() {
+fn revoked_deletion_never_discards_pending_billing() -> TestResult {
     run(async {
         let store = Store::default();
         let host = Host::default();
         let caps = Capabilities { pending: true };
-        let service = KeyService {
-            store: &store,
-            host: &host,
-            capabilities: &caps,
-            release: "fixture",
-        };
+        let service = key_service(&store, &host, &caps);
         let created = service
             .create(&source(&json!({"name":"Fixture"})), &actor(), "create")
             .await
-            .unwrap();
+            .must()?;
         let created_body = wire_json(&created.body);
-        let id = created_body["id"].as_str().unwrap();
+        let id = created_body["id"].as_str().must()?;
         assert_eq!(
             service
                 .mutate(
@@ -1364,7 +1333,8 @@ fn revoked_deletion_never_discards_pending_billing() {
                     "delete"
                 )
                 .await
-                .unwrap_err()
+                .err()
+                .must()?
                 .status,
             400
         );
@@ -1376,7 +1346,7 @@ fn revoked_deletion_never_discards_pending_billing() {
                 "revoke",
             )
             .await
-            .unwrap();
+            .must()?;
         let before = store.rows.borrow().clone();
         assert_eq!(
             service
@@ -1387,21 +1357,19 @@ fn revoked_deletion_never_discards_pending_billing() {
                     "delete"
                 )
                 .await
-                .unwrap_err()
+                .err()
+                .must()?
                 .status,
             409
         );
         assert_eq!(*store.rows.borrow(), before);
-        let policy = store
-            .read(&authority_policy_key(id))
-            .await
-            .unwrap()
-            .unwrap();
+        let policy = store.read(&authority_policy_key(id)).await.must()?.must()?;
         assert_eq!(
-            policy.json_value().unwrap()["expires_at_ms"],
+            policy.json_value().must()?["expires_at_ms"],
             json!(1_000_000)
         );
-    });
+        TestResult::Ok(())
+    })
 }
 
 impl gateway_auth::webauthn::WebAuthnCrypto for Host {

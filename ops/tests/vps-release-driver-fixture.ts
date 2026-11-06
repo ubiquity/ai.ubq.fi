@@ -1,3 +1,4 @@
+import { seedStore } from "./fixture-release.ts";
 import { runFixture } from "./fixture-process.ts";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readlink, realpath, rm, writeFile } from "node:fs/promises";
 import { createFetchMock } from "../../tests/helpers/fetch-mock.ts";
@@ -124,6 +125,7 @@ export async function makeVpsDriverFixture(): Promise<VpsDriverFixture> {
     const store = new ImmutableVpsReleaseStore(root, fixtureCommand);
     await store.checkedRelease(priorSha, true);
     await store.selectRelease(`releases/${priorSha}`);
+    await seedStore(root);
     const system = new FakeVpsSystem(root);
     system.serviceSha = priorSha;
     const driverDigest = await vpsBytesDigest(await readFile(new URL("../vps-release-driver.ts", import.meta.url)));

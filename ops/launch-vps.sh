@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 uos_root=$(pwd -P)
+uos_store="$uos_root/.data/kv-bun.sqlite3"
+if { test -e "$uos_store" || test -L "$uos_store"; } && { ! test -f "$uos_store" || test -L "$uos_store"; }; then
+  echo "Local Bun authority unavailable; verified latest inverse is required" >&2
+  exit 1
+fi
 uos_release=$(cd -P .data/current && pwd)
 case "$uos_release" in "$uos_root"/.data/releases/*) ;; *) echo "Invalid immutable release selector" >&2; exit 1 ;; esac
 uos_schema=$(/usr/bin/jq -r '.schema // 1' "$uos_release/.uos-release.json")

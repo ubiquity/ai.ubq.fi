@@ -295,6 +295,3 @@ fn refused() -> GatewayError {
         "initial_control_owner_refused",
     )
 }
-
-#[cfg(test)]
-mod tests;

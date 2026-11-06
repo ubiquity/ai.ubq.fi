@@ -69,6 +69,30 @@ pub fn provider_ids(provider: &str) -> &'static [&'static str] {
         _ => &[],
     }
 }
+/// openRouterModelEndpointPaths: a row without declared output modalities keeps
+/// the historical text default; decision rows are served only on /v1/decisions.
+pub fn openrouter_endpoints(row: &SourceJson) -> Vec<&'static str> {
+    let listed = c::get(row, "output_modalities").as_ref().and_then(c::array);
+    let has = |name| {
+        listed
+            .iter()
+            .flatten()
+            .any(|m| c::string(m).is_some_and(|m| c::matches(&m, name)))
+    };
+    let mut endpoints = if listed.is_none() || has("text") {
+        vec!["/v1/responses", "/v1/chat/completions"]
+    } else {
+        Vec::new()
+    };
+    if has("decisions") {
+        endpoints.push("/v1/decisions");
+    }
+    endpoints
+}
+pub(crate) fn set_metadata_sources(row: &mut SourceJson, resolved: &ResolvedMetadata) {
+    c::set(row, "context_source", c::json(&resolved.context_source));
+    c::set(row, "reasoning_source", c::json(&resolved.reasoning_source));
+}
 pub(crate) fn openrouter_owner(id: &ModelId) -> JsString16 {
     let units = id.as_js_string().as_units();
     let prefix = units.split(|unit| *unit == 47).next().unwrap_or_default();
@@ -212,6 +236,7 @@ pub fn openrouter_models(input: &CatalogInput) -> Vec<SourceJson> {
     let mut rows: Vec<_> = input
         .rows("openrouter")
         .iter()
+        .filter(|r| !openrouter_endpoints(r).is_empty())
         .filter_map(|r| c::get(r, "id").as_ref().and_then(c::string))
         .map(|id| {
             let id = ModelId::from_source(id);
@@ -236,20 +261,18 @@ pub fn openrouter_models(input: &CatalogInput) -> Vec<SourceJson> {
     rows
 }
 pub fn openrouter_capabilities(input: &CatalogInput) -> Vec<SourceJson> {
+    // The first discovered row per exact id, indexed once instead of rescanned per model.
+    let rows = input.rows("openrouter").iter().rev();
+    let by_id = rows
+        .filter_map(|r| Some((c::get(r, "id").as_ref().and_then(c::string)?, r)))
+        .collect::<std::collections::BTreeMap<_, _>>();
     openrouter_models(input)
         .iter()
-        .map(|model| {
-            let id = ModelId::from_source(
-                c::get(model, "id")
-                    .as_ref()
-                    .and_then(c::string)
-                    .expect("constructed model id"),
-            );
+        .filter_map(|model| {
+            let id = ModelId::from_source(c::get(model, "id").as_ref().and_then(c::string)?);
             let jev = id.matches_scalar("typesafe/jev-latest");
             let resolved = input.metadata(&id, None, None, false);
-            let discovered = input.rows("openrouter").iter().any(|r| {
-                c::get(r, "id").as_ref().and_then(c::string).as_ref() == Some(id.as_js_string())
-            });
+            let discovered = by_id.get(id.as_js_string()).copied();
             let levels = if jev {
                 vec!["none".into()]
             } else {
@@ -276,11 +299,10 @@ pub fn openrouter_capabilities(input: &CatalogInput) -> Vec<SourceJson> {
                 ("upstream_provider", c::json("openrouter")),
                 (
                     "supported_endpoints",
-                    c::json(&if jev && !discovered {
-                        vec!["/v1/systemone"]
-                    } else {
-                        vec!["/v1/responses", "/v1/chat/completions"]
-                    }),
+                    c::json(&discovered.map_or_else(
+                        || vec!["/v1/decisions", "/v1/systemone"],
+                        openrouter_endpoints,
+                    )),
                 ),
                 ("supported_reasoning_levels", c::json(&levels)),
                 ("reasoning_effort_wire_map", c::object(vec![])),
@@ -303,18 +325,9 @@ pub fn openrouter_capabilities(input: &CatalogInput) -> Vec<SourceJson> {
                     c::set(&mut row, "default_reasoning_effort", c::json("none"));
                 }
                 apply_resolved_fields(&mut row, &resolved, false, true);
-                c::set(
-                    &mut row,
-                    "context_source",
-                    c::json(&resolved.context_source),
-                );
-                c::set(
-                    &mut row,
-                    "reasoning_source",
-                    c::json(&resolved.reasoning_source),
-                );
+                set_metadata_sources(&mut row, &resolved);
             }
-            row
+            Some(row)
         })
         .collect()
 }
@@ -353,16 +366,7 @@ pub fn normalized_codex_capability(
         ("reasoning_effort_wire_map", reasoning.wire_efforts),
     ]);
     apply_resolved_fields(&mut row, &resolved, false, true);
-    c::set(
-        &mut row,
-        "context_source",
-        c::json(&resolved.context_source),
-    );
-    c::set(
-        &mut row,
-        "reasoning_source",
-        c::json(&resolved.reasoning_source),
-    );
+    set_metadata_sources(&mut row, &resolved);
     if let Some(cache) =
         crate::prompt_cache::normalize_capabilities_source(c::get(record, "prompt_cache").as_ref())
     {

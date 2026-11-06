@@ -268,31 +268,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn https_origin_rejects_alternate_authorities_and_nonroot_input() {
-        for origin in [
-            "http://native.example",
-            "https:native.example",
-            "https:///native.example",
-            "https://native.example:8443",
-            "https://user@native.example",
-            "https://@native.example",
-            "https://user:password@native.example",
-            "https://native.example/path",
-            "https://native.example/../",
-            "https://native.example/%2e/",
-            "https://native.example//",
-            "https://native.example?target=elsewhere",
-            "https://native.example?",
-            "https://native.example#fragment",
-            "https://native.example#",
-            "https://native.example\\elsewhere",
-            "https://native.example\n",
-            " https://native.example",
-            "",
-        ] {
-            assert!(NativeOrigin::new(origin).is_err(), "accepted {origin:?}");
-        }
-    }
 }

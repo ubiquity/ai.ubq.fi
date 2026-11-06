@@ -1,3 +1,4 @@
+use crate::classify::codex_routing_error;
 use crate::{
     journal::{self, AttemptRecord, Journal, Phase, unavailable},
     policy::RouteHop,
@@ -11,7 +12,7 @@ use crate::{
 use gateway_authority::paid_types::{
     PaidAdmission, PaidAuthorization, PaidRequest, PaidReservation,
 };
-use gateway_authority::routing_types::RouteSelection;
+use gateway_authority::routing_types::{AdmittedAccount, CohortProof, RouteSelection};
 use gateway_authority::store::{AuthorityClock, TokenSource};
 use gateway_core::error::GatewayError;
 use gateway_core::provider::UpstreamProvider::{ChatgptCodex, ClaudeCode};
@@ -229,47 +230,11 @@ impl<
             .await?
         {
             RouteSelection::Eligible(account) => account,
-            RouteSelection::QuotaBlocked { proof, .. } => {
-                let recovery = if proof.full_cohort_exhausted() && !row.recovery_attempted {
-                    self.change(|journal| {
-                        journal.recovery_attempted = true;
-                        Ok(())
-                    })
-                    .await?;
-                    self.host.recover_codex(&proof, &self.plan.model).await?
-                } else {
-                    CodexRecovery::Declined
+            RouteSelection::QuotaBlocked { proof, retry_at_ms } => {
+                let Some(account) = self.codex_recovery(row, &proof, retry_at_ms).await? else {
+                    return Ok(None);
                 };
-                match recovery {
-                    CodexRecovery::Recovered(account)
-                        if account.requested_model != self.plan.model
-                            || account.quota_class != self.plan.quota_class
-                            || account.probe_required
-                            || account.probe.is_none() =>
-                    {
-                        return Err(unavailable(
-                            "The elected recovery admission does not match this request.",
-                        )
-                        .into());
-                    }
-                    CodexRecovery::Recovered(account) => {
-                        self.authority()
-                            .ensure_admission_current(&account, self.now()?)
-                            .await?;
-                        account
-                    }
-                    CodexRecovery::Reselect => return Ok(None),
-                    CodexRecovery::Declined if !proof.full_cohort_unavailable() => {
-                        return Err(unavailable(
-                            "Subscription pool is not authoritatively unavailable.",
-                        )
-                        .into());
-                    }
-                    CodexRecovery::Declined => {
-                        self.cursor(row.cursor + 1).await?;
-                        return Ok(None);
-                    }
-                }
+                account
             }
             RouteSelection::CredentialsInvalid { proof } => {
                 if !proof.full_cohort_unavailable() {
@@ -313,6 +278,89 @@ impl<
             .credential(ChatgptCodex, &self.plan.model, Some(account))
             .await?;
         Ok(Some(credential))
+    }
+    /// Source recoverBlockedReset: a verified reset, else at most one overage serving attempt.
+    async fn codex_recovery(
+        &self,
+        row: &Journal,
+        proof: &CohortProof,
+        retry_at_ms: Option<i64>,
+    ) -> RoutingResult<Option<AdmittedAccount>> {
+        let recovery = if proof.full_cohort_exhausted() && !row.recovery_attempted {
+            self.change(|journal| {
+                journal.recovery_attempted = true;
+                Ok(())
+            })
+            .await?;
+            self.host.recover_codex(proof, &self.plan.model).await?
+        } else {
+            CodexRecovery::Declined
+        };
+        match recovery {
+            CodexRecovery::Recovered(account)
+                if account.requested_model != self.plan.model
+                    || account.quota_class != self.plan.quota_class
+                    || account.probe_required
+                    || account.probe.is_none() =>
+            {
+                Err(
+                    unavailable("The elected recovery admission does not match this request.")
+                        .into(),
+                )
+            }
+            CodexRecovery::Recovered(account) => {
+                self.authority()
+                    .ensure_admission_current(&account, self.now()?)
+                    .await?;
+                Ok(Some(account))
+            }
+            CodexRecovery::Reselect => Ok(None),
+            CodexRecovery::Unredeemed(unredeemed) => {
+                let admitted = self
+                    .authority()
+                    .admit_overage_fallback(proof, &unredeemed, self.now()?)
+                    .await?;
+                match admitted {
+                    Some(account) => Ok(Some(account)),
+                    None => self.codex_declined(row, proof, retry_at_ms).await,
+                }
+            }
+            CodexRecovery::Declined => self.codex_declined(row, proof, retry_at_ms).await,
+        }
+    }
+    /// Source quotaBlockedOrRetryableResponse when no later hop can serve the request.
+    async fn codex_declined(
+        &self,
+        row: &Journal,
+        proof: &CohortProof,
+        retry_at_ms: Option<i64>,
+    ) -> RoutingResult<Option<AdmittedAccount>> {
+        if !proof.full_cohort_unavailable() {
+            return Err(
+                unavailable("Subscription pool is not authoritatively unavailable.").into(),
+            );
+        }
+        if row.cursor + 1 < self.plan.hops.len() {
+            self.cursor(row.cursor + 1).await?;
+            return Ok(None);
+        }
+        Err(if proof.full_cohort_exhausted() {
+            codex_routing_error(
+                429,
+                "All configured Codex accounts are quota-blocked; retry after their next reset.",
+                "codex_quota_blocked",
+                retry_at_ms,
+                self.now()?,
+            )
+        } else {
+            codex_routing_error(
+                503,
+                "No Codex subscription can serve the requested model: quota is exhausted or current credentials are invalid.",
+                "codex_subscriptions_unavailable",
+                None,
+                self.now()?,
+            )
+        })
     }
     async fn select_paid(
         &self,

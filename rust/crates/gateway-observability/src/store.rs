@@ -33,6 +33,12 @@ pub(crate) fn key(parts: Value) -> RecordKey {
         .expect("source scalar tuple")
         .to_record_key()
 }
+/// `[...prefix, ...parts]`: one spelling of a shared source namespace.
+pub(crate) fn prefixed(prefix: &[&str], parts: Value) -> RecordKey {
+    let mut all: Vec<Value> = prefix.iter().map(|p| Value::from(*p)).collect();
+    all.extend(parts.as_array().into_iter().flatten().cloned());
+    key(Value::Array(all))
+}
 pub(crate) fn parts(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
     TupleKey::from_record_key(key)?
         .decoded_parts()?

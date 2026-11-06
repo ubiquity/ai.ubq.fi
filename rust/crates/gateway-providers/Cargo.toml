@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 gateway-core = { path = "../gateway-core" }
+gateway-prompt-admission.workspace = true
 gateway-schema = { path = "../gateway-schema" }
 serde.workspace = true
 serde_json.workspace = true
@@ -14,3 +15,6 @@ url = "=2.5.8"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+gateway-compaction.workspace = true

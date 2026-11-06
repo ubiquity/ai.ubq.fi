@@ -11,13 +11,13 @@ use crate::{
 use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
 use gateway_catalog_runtime::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CodexAccount,
-    CredentialPublication, ProviderBinding,
+    CredentialPublication, LeasedRefresh, ProviderBinding,
 };
 use gateway_core::{
     error::GatewayError,
     state::{AuthorityStore, RevisionCheck},
 };
-use std::{collections::BTreeMap, rc::Rc};
+use std::{collections::BTreeMap, future::Future, rc::Rc};
 use worker::{Env, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Url};
 
 #[derive(Clone)]
@@ -75,33 +75,43 @@ fn binding(provider: &str, secret: &str) -> ProviderBinding {
     }
 }
 
+impl Host {
+    /// Run catalog work on the request lifetime under its own background cancellation,
+    /// so a source refresh keeps its fixed deadline after the downstream caller leaves.
+    pub(crate) fn background<W: Future<Output = Result<(), GatewayError>> + 'static>(
+        &self,
+        label: &'static str,
+        work: impl FnOnce(Self) -> W,
+    ) -> bool {
+        let report = move |error: &GatewayError| {
+            worker::console_error!(
+                "{label} remains unavailable: {}",
+                error.envelope.error.message
+            )
+        };
+        let cancellation = crate::transport::outbound::Cancellation::background();
+        let Ok(cancellation) = cancellation.inspect_err(report) else {
+            return false;
+        };
+        let mut host = self.clone();
+        host.platform.cancellation = Rc::new(cancellation);
+        let work = work(host);
+        self.context.wait_until(async move {
+            if let Err(error) = work.await {
+                report(&error);
+            }
+        });
+        true
+    }
+}
+
 impl gateway_catalog_runtime::admin::AdminCatalogHost for Host {
     fn warm_openrouter(&self) {
         let service = crate::catalog::service();
-        let mut host = self.clone();
-        self.context.wait_until(async move {
-            let cancellation = match crate::transport::outbound::Cancellation::background() {
-                Ok(cancellation) => cancellation,
-                Err(error) => {
-                    worker::console_error!(
-                        "OpenRouter catalog warm remains unavailable: {}",
-                        error.envelope.error.message
-                    );
-                    return;
-                }
-            };
-            // The source warm has its own fixed discovery deadline and does
-            // not inherit the downstream caller's disconnect signal.
-            host.platform.cancellation = Rc::new(cancellation);
-            if let Err(error) = service
-                .refresh_provider(&host.store, &host, CatalogProvider::Openrouter, false)
-                .await
-            {
-                worker::console_error!(
-                    "OpenRouter catalog warm remains unavailable: {}",
-                    error.envelope.error.message
-                );
-            }
+        self.background("OpenRouter catalog warm", |host| async move {
+            let refresh =
+                service.refresh_provider(&host.store, &host, CatalogProvider::Openrouter, false);
+            refresh.await.map(drop)
         });
     }
 }
@@ -121,13 +131,23 @@ impl CatalogHost for Host {
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
         if self.platform.cancellation.signal().aborted() {
-            return Err(unavailable("Catalog request was cancelled."));
+            return Err(GatewayError::new(499, "Cancelled", Some("cancelled")));
         }
         worker::Delay::from(std::time::Duration::from_millis(u64::from(milliseconds))).await;
         if self.platform.cancellation.signal().aborted() {
-            return Err(unavailable("Catalog request was cancelled."));
+            return Err(GatewayError::new(499, "Cancelled", Some("cancelled")));
         }
         Ok(())
+    }
+    fn schedule_refresh(&self, job: LeasedRefresh) -> Option<LeasedRefresh> {
+        // The stale answer returns now; the leased refresh settles on the request lifetime.
+        let (job, service) = (Rc::new(job), crate::catalog::service());
+        let scheduled = job.clone();
+        let started = self.background("Catalog background refresh", |host| async move {
+            let refresh = service.refresh_leased(&host.store, &host, &scheduled, None);
+            refresh.await.map(drop)
+        });
+        (!started).then(|| Rc::into_inner(job)).flatten()
     }
     async fn publication(&self) -> Result<CredentialPublication, GatewayError> {
         let snapshot = read_codex_source_pool(&self.store, now_ms()?).await?;

@@ -1,5 +1,6 @@
 //! Source-observed discovery only; no guessed model capabilities or reasoning tiers.
 use crate::host::{CatalogProvider, unavailable};
+use gateway_core::js_string_case::lowercase_source;
 use gateway_core::{
     error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
     source_serialization as source,
@@ -258,11 +259,7 @@ fn openrouter(raw: &SourceJson) -> Option<SourceJson> {
     let reasoning = get(raw, "reasoning")
         .filter(|v| source::entries(v).is_some())
         .and_then(|v| {
-            let mut seen = BTreeSet::new();
-            let efforts = strings(get(&v, "supported_efforts"))
-                .into_iter()
-                .filter(|e| seen.insert(e.clone()))
-                .collect::<Vec<_>>();
+            let efforts = unique(strings(get(&v, "supported_efforts")));
             let default = text(get(&v, "default_effort"));
             (!efforts.is_empty() || default.is_some()).then(|| {
                 object(vec![
@@ -275,12 +272,25 @@ fn openrouter(raw: &SourceJson) -> Option<SourceJson> {
                 ])
             })
         });
-    Some(object(vec![
+    let mut row = object(vec![
         ("id", json(&id)),
         ("context_window_tokens", json(&context)),
         ("max_context_window_tokens", json(&widest)),
         ("reasoning", json(&reasoning)),
-    ]))
+    ]);
+    // Declared output modalities decide text versus /v1/decisions serving.
+    let modalities = unique(strings(path(raw, "/architecture/output_modalities")));
+    if !modalities.is_empty() {
+        set(&mut row, "output_modalities", json(&modalities));
+    }
+    Some(row)
+}
+fn unique(values: Vec<JsString16>) -> Vec<JsString16> {
+    let mut seen = BTreeSet::new();
+    values
+        .into_iter()
+        .filter(|v| seen.insert(v.clone()))
+        .collect()
 }
 fn observed_flag(raw: &SourceJson, p: &str) -> Option<bool> {
     flag(path(raw, p).as_ref().and_then(|v| get(v, "supported")))
@@ -516,81 +526,77 @@ fn billing_base(raw: &JsString16) -> Option<JsString16> {
         .iter()
         .find_map(|s| strip_suffix(raw, s))
 }
+/// The source buildMatchIndex: six claim tiers built once per catalog, not once per lookup.
 /// Ambiguous joins degrade to unknown. Source tier precedence and exact UTF16 identity are preserved.
-pub fn match_openrouter<'a>(
+pub struct OpenrouterIndex<'a> {
     models: &'a [SourceJson],
-    model_id: &ModelId,
-) -> Option<&'a SourceJson> {
-    use gateway_core::js_string_case::lowercase_source;
-    let target = js_trim_source(model_id.as_js_string());
-    if target.as_units().is_empty() {
-        return None;
+    tiers: Vec<BTreeMap<JsString16, Option<usize>>>,
+}
+impl<'a> OpenrouterIndex<'a> {
+    pub fn new(models: &'a [SourceJson]) -> Self {
+        let mut tiers: Vec<BTreeMap<JsString16, Option<usize>>> =
+            (0..6).map(|_| BTreeMap::new()).collect();
+        for (index, model) in models.iter().enumerate() {
+            let Some(id) = get(model, "id").as_ref().and_then(source::string) else {
+                continue;
+            };
+            let model_slug = slug(&id);
+            let alias = id
+                .as_units()
+                .strip_prefix(&[126])
+                .map(|units| slug(&JsString16::from_units(units.to_vec())))
+                .map(|s| {
+                    strip_suffix(&s, "-latest")
+                        .or_else(|| strip_suffix(&s, ":latest"))
+                        .unwrap_or(s)
+                })
+                .map(|s| normalize_key(&s));
+            let keys = [
+                Some(lowercase_source(&id)),
+                Some(lowercase_source(&model_slug)),
+                Some(normalize_key(&id)),
+                Some(normalize_key(&model_slug)),
+                alias,
+                billing_base(&model_slug).map(|s| normalize_key(&s)),
+            ];
+            let id_of = |old: usize| get(&models[old], "id").as_ref().and_then(source::string);
+            for (tier, key) in tiers.iter_mut().zip(keys) {
+                let Some(key) = key.filter(|s| !s.as_units().is_empty()) else {
+                    continue;
+                };
+                // A key claimed by two upstream models cannot identify either of them.
+                let slot = tier.entry(key).or_insert(Some(index));
+                *slot = slot.filter(|old| *old == index || id_of(*old).as_ref() == Some(&id));
+            }
+        }
+        Self { models, tiers }
     }
-    let target_slug = slug(&target);
-    let mut tiers: Vec<BTreeMap<JsString16, Option<usize>>> =
-        (0..6).map(|_| BTreeMap::new()).collect();
-    for (index, model) in models.iter().enumerate() {
-        let Some(id) = get(model, "id").as_ref().and_then(source::string) else {
-            continue;
-        };
-        let model_slug = slug(&id);
-        let alias = id
-            .as_units()
-            .strip_prefix(&[126])
-            .map(|units| slug(&JsString16::from_units(units.to_vec())))
-            .map(|s| {
-                strip_suffix(&s, "-latest")
-                    .or_else(|| strip_suffix(&s, ":latest"))
-                    .unwrap_or(s)
-            })
-            .map(|s| normalize_key(&s));
+    pub fn find(&self, model_id: &ModelId) -> Option<&'a SourceJson> {
+        let target = js_trim_source(model_id.as_js_string());
+        if target.as_units().is_empty() {
+            return None;
+        }
+        let target_slug = slug(&target);
         let keys = [
-            Some(lowercase_source(&id)),
-            Some(lowercase_source(&model_slug)),
-            Some(normalize_key(&id)),
-            Some(normalize_key(&model_slug)),
-            alias,
-            billing_base(&model_slug).map(|s| normalize_key(&s)),
+            lowercase_source(&target),
+            lowercase_source(&target_slug),
+            normalize_key(&target),
+            normalize_key(&target_slug),
+            normalize_key(&target_slug),
+            normalize_key(&target_slug),
         ];
-        for (tier, key) in tiers.iter_mut().zip(keys) {
-            if let Some(key) = key.filter(|s| !s.as_units().is_empty()) {
-                match tier.get(&key) {
-                    None => {
-                        tier.insert(key, Some(index));
-                    }
-                    Some(Some(old))
-                        if get(&models[*old], "id").as_ref().and_then(source::string)
-                            != Some(id.clone()) =>
-                    {
-                        tier.insert(key, None);
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-    let keys = [
-        lowercase_source(&target),
-        lowercase_source(&target_slug),
-        normalize_key(&target),
-        normalize_key(&target_slug),
-        normalize_key(&target_slug),
-        normalize_key(&target_slug),
-    ];
-    for (tier, key) in tiers.iter().zip(keys) {
-        if let Some(Some(index)) = tier.get(&key) {
-            return models.get(*index);
-        }
-    }
-    if let Some(stripped) = billing_base(&target_slug) {
-        for (tier, key) in [
-            (&tiers[1], lowercase_source(&stripped)),
-            (&tiers[3], normalize_key(&stripped)),
-        ] {
+        for (tier, key) in self.tiers.iter().zip(keys) {
             if let Some(Some(index)) = tier.get(&key) {
-                return models.get(*index);
+                return self.models.get(*index);
             }
         }
+        let stripped = billing_base(&target_slug)?;
+        [
+            (&self.tiers[1], lowercase_source(&stripped)),
+            (&self.tiers[3], normalize_key(&stripped)),
+        ]
+        .into_iter()
+        .find_map(|(tier, key)| tier.get(&key).copied().flatten())
+        .and_then(|index| self.models.get(index))
     }
-    None
 }

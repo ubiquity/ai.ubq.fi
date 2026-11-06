@@ -22,7 +22,7 @@ pub(crate) struct Lifecycle {
     pub(crate) currentness: crate::inference_currentness::CurrentnessGuard,
     pub(crate) attempt: PreparedAttempt,
     pub(crate) principal: gateway_auth::types::AuthPrincipal,
-    pub(crate) provider_request_id: Option<String>,
+    pub(crate) provider_request_id: RefCell<Option<String>>,
     pub(crate) status: u16,
     pub(crate) store: RemoteAuthorityStore,
     pub(crate) pricing: Option<gateway_core::source_json::SourceJson>,
@@ -47,13 +47,14 @@ impl Lifecycle {
             }
             None => None,
         };
+        let provider_request_id = self.provider_request_id.borrow().clone();
         self.session
             .observe_terminal(
                 &self.attempt,
                 observation,
                 AttemptUsage {
                     usage,
-                    provider_request_id: self.provider_request_id.clone(),
+                    provider_request_id,
                     status: Some(self.status),
                     paid,
                 },

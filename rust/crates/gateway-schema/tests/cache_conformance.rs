@@ -255,46 +255,6 @@ fn client_conditionals_bind_served_bytes_including_enrichment() -> TestResult {
     Ok(())
 }
 #[test]
-fn cache_decisions_never_revalidate_enriched_legacy_as_source() -> TestResult {
-    let store = Store::default();
-    store.seed_generation("auth");
-    run(publish_catalog(&store, &prepared("auth", "one", 1000)?))?;
-    let mut loaded =
-        run(load_catalog(&store, "0.163.0", "auth", 1001))?.ok_or("missing fixture value")?;
-    assert_eq!(
-        initial_action(Some(&loaded), 1001),
-        CatalogAction::Serve(CacheState::Hit)
-    );
-    assert_eq!(
-        lease_action(Some(&loaded), false, 1001),
-        CatalogAction::Serve(CacheState::Stale)
-    );
-    assert_eq!(
-        upstream_action(304, true, Some(&loaded), true, true),
-        CatalogAction::RevalidateSource
-    );
-    loaded.source_body = None;
-    assert_eq!(
-        lease_action(Some(&loaded), true, 1001),
-        CatalogAction::Fetch {
-            if_none_match: None
-        }
-    );
-    assert_eq!(
-        upstream_action(304, true, Some(&loaded), true, true),
-        CatalogAction::Serve(CacheState::Stale)
-    );
-    assert_eq!(
-        upstream_action(200, true, Some(&loaded), false, true),
-        CatalogAction::UseCurrentGeneration
-    );
-    assert!(matches!(
-        lease_action(None, false, 1000),
-        CatalogAction::WaitCold { until_ms: 6000 }
-    ));
-    Ok(())
-}
-#[test]
 fn exact_query_and_version_bound_keep_caches_separate() -> TestResult {
     assert_eq!(requested_client_version(&[]), None);
     assert_eq!(requested_client_version(&["0.163.0", "0.163.0"]), Some(""));
@@ -569,4 +529,117 @@ fn normalized_source_publication_retains_model_effort_codecs_and_generation_fenc
         )
         .unwrap()
     );
+}
+fn gpt_rows(row: impl Fn(&str) -> Value) -> String {
+    let models = ["gpt-6-astra", "gpt-6.1-sol"].map(row);
+    json!({ "models": models }).to_string()
+}
+fn limits(body: &str) -> Vec<Value> {
+    let parsed: Value = serde_json::from_str(body).unwrap_or_default();
+    parsed["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|m| m["auto_compact_token_limit"].clone())
+        .collect()
+}
+fn gpt_catalog(
+    body: &str,
+    enrichment: &BTreeMap<gateway_core::model::ModelId, MetadataHint>,
+) -> Result<PreparedCatalog, GatewayError> {
+    let identity = CatalogIdentity {
+        client_version: "0.163.0",
+        auth_generation: "auth",
+        body_generation: "gpt",
+    };
+    prepare_catalog(identity, body, Some("\"original\""), None, 1000, enrichment)
+}
+#[test]
+fn stored_widened_rows_carry_the_earliest_source_or_policy_compaction_limit() -> TestResult {
+    let hint = MetadataHint {
+        context_window_tokens: Some(1_050_000),
+        ..MetadataHint::default()
+    };
+    let enrichment = BTreeMap::from([
+        ("gpt-6-astra".into(), hint.clone()),
+        ("gpt-6.1-sol".into(), hint),
+    ]);
+    for source_limit in [None, Some(200_000), Some(990_000)] {
+        let source_body = gpt_rows(|slug| {
+            let mut row =
+                json!({"slug": slug, "context_window": 272_000, "max_context_window": 872_000});
+            if let Some(limit) = source_limit {
+                row["auto_compact_token_limit"] = json!(limit);
+            }
+            row
+        });
+        let store = Store::default();
+        store.seed_generation("auth");
+        assert!(run(publish_catalog(
+            &store,
+            &gpt_catalog(&source_body, &enrichment)?
+        ))?);
+        let loaded =
+            run(load_catalog(&store, "0.163.0", "auth", 1001))?.ok_or("missing catalog")?;
+        let expected = if source_limit == Some(200_000) {
+            200_000
+        } else {
+            892_500
+        };
+        assert_eq!(limits(&loaded.body), [json!(expected), json!(expected)]);
+        assert!(loaded.body.contains("\"context_window\":1050000"));
+        assert_eq!(loaded.source_body.as_deref(), Some(source_body.as_str()));
+        assert_eq!(loaded.metadata.etag.as_deref(), Some("\"original\""));
+    }
+    Ok(())
+}
+#[test]
+fn existing_cached_widened_rows_acquire_policy_limits_before_client_validation() -> TestResult {
+    let source_body = gpt_rows(
+        |slug| json!({"slug": slug, "context_window": 272_000, "max_context_window": 872_000}),
+    );
+    let legacy = gpt_rows(
+        |slug| json!({"slug": slug, "context_window": 1_050_000, "max_context_window": 1_050_000}),
+    );
+    // Persist the exact old serving shape, retaining the publisher's original source chunks.
+    let mut prepared = gpt_catalog(&source_body, &BTreeMap::new())?;
+    prepared.chunks = vec![gzip(&legacy)?];
+    prepared.metadata.chunk_count = 1;
+    prepared.metadata.compressed_bytes = prepared.chunks[0].len();
+    prepared.metadata.body_bytes = legacy.len();
+    prepared.metadata.sha256 = gateway_schema::util::sha256(legacy.as_bytes());
+    let store = Store::default();
+    store.seed_generation("auth");
+    assert!(run(publish_catalog(&store, &prepared))?);
+    let loaded = run(load_catalog(&store, "0.163.0", "auth", 1001))?.ok_or("missing catalog")?;
+    assert_eq!(limits(&loaded.body), [json!(892_500), json!(892_500)]);
+    assert_eq!(loaded.parsed.as_str(), loaded.body);
+    assert_eq!(
+        loaded.metadata.sha256,
+        gateway_schema::util::sha256(legacy.as_bytes())
+    );
+    assert_eq!(loaded.source_body.as_deref(), Some(source_body.as_str()));
+    assert_eq!(loaded.metadata.etag.as_deref(), Some("\"original\""));
+    let input = CatalogInput {
+        selection: Some(ProviderSelection {
+            provider_ids: vec!["codex".into()],
+            updated_at_ms: 1,
+        }),
+        ..CatalogInput::default()
+    };
+    let old_tag = client_etag(&legacy);
+    let response = catalog_response(&loaded, Some(&old_tag), CacheState::Hit, &input);
+    assert_eq!(response.status, 200);
+    let new_tag = client_etag(response.body.as_deref().ok_or("missing body")?);
+    assert_eq!(response.headers["ETag"], new_tag);
+    assert_ne!(new_tag, old_tag);
+    assert_eq!(
+        response.headers["Cache-Control"],
+        "private, max-age=300, stale-while-revalidate=86400"
+    );
+    assert_eq!(
+        catalog_response(&loaded, Some(&new_tag), CacheState::Hit, &input).status,
+        304
+    );
+    Ok(())
 }

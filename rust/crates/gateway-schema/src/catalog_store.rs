@@ -145,8 +145,14 @@ pub async fn load_catalog<S: AuthorityStore>(
     ) else {
         return Ok(None);
     };
-    let Some(parsed) = parse_catalog(&body) else {
+    let Some(mut parsed) = parse_catalog(&body) else {
         return Ok(None);
+    };
+    // Verified old caches gain policy limits before client ETag validation; source and integrity stay.
+    let body = if apply_compaction_limits(&mut parsed) {
+        source_stringify(&parsed)
+    } else {
+        body
     };
     let source_body = if let Some(count) = metadata.source_chunk_count {
         if let Some(chunks) = chunks(store, &metadata, true, count).await? {

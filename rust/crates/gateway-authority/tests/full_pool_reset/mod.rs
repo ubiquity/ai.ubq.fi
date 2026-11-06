@@ -3,8 +3,7 @@ use crate::{TestResult, fixture_row};
 use gateway_authority::{
     full_pool_reset::types::*,
     keys,
-    reset::utc_day,
-    reset_types::{ResetConfig, ResetMode, reset_invocation},
+    reset_types::{ResetConfig, ResetMode},
     routing_types::RouteSelection,
 };
 use gateway_core::error::GatewayError;
@@ -134,42 +133,25 @@ fn observations(plan: &FullPoolResetPlan, credit: Option<JsString16>) -> Vec<Sou
 }
 
 #[test]
-fn absent_reset_config_uses_fail_closed_default_and_spends_nothing() -> TestResult {
-    let default = ResetConfig::default();
-    assert!(default.enabled);
-    assert_eq!(default.mode, ResetMode::Live);
-    assert_eq!(default.max_per_account_per_day, 0);
-    assert_eq!(default.max_per_account_per_window, 1);
+fn absent_reset_config_uses_production_default_and_mints_live_permit() -> TestResult {
+    // Owner decision 2026-11-05: the default matches TypeScript production.
+    assert_eq!(ResetConfig::default(), config(ResetMode::Live));
 
     let (store, authority, proof) = setup_without_reset_config()?;
-    assert!(matches!(
-        run(authority.prepare_full_pool_reset(&proof, &original()))?,
-        FullPoolPreparation::Declined { reason } if reason == "per_account_day_limit_invalid"
-    ));
-    let day = utc_day(NOW)?;
-    let reset = block()
-        .reset_at_ms
-        .ok_or("missing fixture reset deadline")?;
-    for account in pool().accounts {
-        let invocation = reset_invocation(
-            &account.admin_account_hash.0,
-            &account.credential_version.0,
-            reset,
-        )?;
-        assert!(
-            store
-                .row(&keys::reset_redemption(
-                    &invocation.identity.account_id_hash,
-                    &invocation.identity.quota_generation
-                ))
-                .is_none()
-        );
-        assert!(
-            store
-                .row(&keys::reset_day(&invocation.identity.account_id_hash, &day))
-                .is_none()
-        );
-    }
+    assert!(store.row(&keys::reset_config()).is_none());
+    let initial = plan(&authority, &proof)?;
+    let rows = observations(&initial, Some(JsString16::from_utf8("default-credit")));
+    let FullPoolEvaluation::Ready(permit) =
+        run(authority.finish_full_pool_reset(initial, &rows, &Collation))?
+    else {
+        panic!("an absent record must yield the live production default")
+    };
+    assert_eq!(permit.credit_id(), &JsString16::from_utf8("default-credit"));
+    assert!(
+        store
+            .row(&keys::reset_shadow(permit.episode_hash()))
+            .is_none()
+    );
     Ok(())
 }
 

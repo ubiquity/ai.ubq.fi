@@ -2,7 +2,6 @@
 //! Parsed references are observations until the same-store receiver verifies
 //! the original actor/action. This client cannot mint a local action or claim.
 use crate::owner_control::NativeControlContext;
-use crate::private_https::PrivateHttps;
 use gateway_auth::crypto::base64url;
 use gateway_auth::native::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
@@ -18,6 +17,7 @@ use gateway_authority::native_control::{
     wire::{NativeRenewalAuthorityRequest as Request, NativeRenewalAuthorityResponse as Response},
 };
 use gateway_core::error::GatewayError;
+use gateway_native_runtime::https::PrivateHttps;
 use std::{net::TcpStream, time::Instant};
 
 pub struct NativeAuthorityHttp {
@@ -25,6 +25,13 @@ pub struct NativeAuthorityHttp {
     transport: PrivateHttps,
 }
 impl NativeAuthorityHttp {
+    pub fn with_failure_signal(
+        mut self,
+        signal: gateway_native_runtime::lifecycle::FailureSignal,
+    ) -> Self {
+        self.transport = self.transport.with_failure_signal(signal);
+        self
+    }
     pub fn from_connected(
         target: &str,
         socket: TcpStream,

@@ -66,7 +66,6 @@ impl Drop for HealthCompletion {
         }
     }
 }
-
 pub fn normalize_provider_request_id(value: Option<&str>) -> Option<String> {
     value
         .map(store::trim)
@@ -78,14 +77,8 @@ pub fn normalize_provider_request_id(value: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 pub fn health_key(target: &HealthTarget, record: &str) -> RecordKey {
-    store::key(json!([
-        "uos_ai",
-        "provider_health",
-        "v1",
-        target.provider.id(),
-        target.identity,
-        record
-    ]))
+    let parts = json!([target.provider.id(), target.identity, record]);
+    store::prefixed(&["uos_ai", "provider_health", "v1"], parts)
 }
 pub fn parse_observation(value: &Value) -> Option<HealthObservation> {
     if !store::is_record(value)

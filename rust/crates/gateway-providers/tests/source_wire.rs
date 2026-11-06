@@ -9,6 +9,22 @@ use gateway_providers::{
     source_tools::ToolMap,
     types::{AuthMaterial, ClientSurface, PrepareOptions, ProviderEvent},
 };
+
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+/// Converts a missing value or a failed result into the test's error instead of a panic.
+trait Must<T> {
+    fn must(self) -> TestResult<T>;
+}
+impl<T> Must<T> for Option<T> {
+    fn must(self) -> TestResult<T> {
+        self.ok_or_else(|| "missing value".into())
+    }
+}
+impl<T, E: std::error::Error + 'static> Must<T> for Result<T, E> {
+    fn must(self) -> TestResult<T> {
+        self.map_err(Into::into)
+    }
+}
 fn parse(raw: &str) -> SourceJson {
     SourceJson::parse(raw).unwrap()
 }
@@ -317,7 +333,7 @@ fn source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units() -> 
         parse(r#""input[0].output""#)
     );
     let expected = format!(
-        "input item input[0].output (tool call c{} carries 65537 bytes; this route forwards at most 65536 bytes per message under deepseek-forwarded-payload/v1, and the request set truncation 'disabled', so the gateway will not reduce it. Reduce the payload or send truncation 'auto' to allow the declared reduction.",
+        "input item input[0].output (tool call c{} carries 65537 bytes; this route forwards at most 65536 bytes per message under deepseek-forwarded-payload/v2, and the request set truncation 'disabled', so the gateway will not reduce it. Reduce the payload or send truncation 'auto' to allow the declared reduction.",
         ")"
     );
     let mut units = expected.encode_utf16().collect::<Vec<_>>();
@@ -559,12 +575,12 @@ fn reasoning_refusal_and_agent_message_envelopes_preserve_literal_units() {
 }
 
 #[test]
-fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_boundary() {
+fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_boundary() -> TestResult {
     let url = "https://x/".to_owned() + &"a".repeat(40_000);
     let raw = parse(&format!(
         r#"{{"model":"deepseek-flash","input":[{{"role":"user","content":[{{"type":"input_text","text":"\ud800{}"}},{{"type":"input_image","image_url":{}}}]}}]}}"#,
         "a".repeat(40_000),
-        serde_json::to_string(&url).unwrap()
+        serde_json::to_string(&url).must()?
     ));
     let prepared = prepare_source_request(
         UpstreamProvider::Deepseek,
@@ -573,7 +589,8 @@ fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_bounda
         &"deepseek-flash".into(),
         &options(),
     )
-    .unwrap();
+    .ok()
+    .must()?;
     let messages = rows(&get(&prepared.body, "messages"));
     let parts = rows(&get(&messages[0], "content"));
     assert_eq!(parts.len(), 2);
@@ -582,13 +599,13 @@ fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_bounda
     assert_eq!(
         text(&get(&parts[1], "text")),
         JsString16::from_utf8(&format!(
-            "[gateway: deepseek-forwarded-payload/v1 image omitted ({} bytes); the model did not receive this image; this route forwards at most 65536 bytes per message because the provider counts forwarded payloads as text tokens]",
+            "[gateway: deepseek-forwarded-payload/v2 image omitted ({} bytes); the model did not receive this image; this route forwards at most 65536 bytes per message because the provider counts forwarded payloads as text tokens]",
             url.len()
         ))
     );
-    let mut fields = json::entries(&raw).unwrap();
+    let mut fields = json::entries(&raw).must()?;
     fields.push((JsString16::from_utf8("truncation"), parse(r#""disabled""#)));
-    let disabled = json::object_keys(fields).unwrap();
+    let disabled = json::object_keys(fields).must()?;
     let error = prepare_source_request(
         UpstreamProvider::Deepseek,
         ClientSurface::Responses,
@@ -596,7 +613,8 @@ fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_bounda
         &"deepseek-flash".into(),
         &options(),
     )
-    .unwrap_err();
+    .err()
+    .must()?;
     assert_eq!(
         path(error.body(), &["error", "param"]),
         parse(r#""input[0].content""#)
@@ -608,9 +626,10 @@ fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_bounda
     assert!(
         text(&path(error.body(), &["error", "message"]))
             .try_utf8()
-            .unwrap()
+            .must()?
             .contains(&format!("carries {} bytes", 40_003 + url.len()))
     );
+    Ok(())
 }
 
 #[test]

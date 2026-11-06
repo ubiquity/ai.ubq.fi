@@ -9,7 +9,9 @@ use crate::{
         outbound::{self, DispatchAttempt, PinnedDestination},
     },
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore, tuple_key::TupleKey};
+use gateway_core::{
+    error::GatewayError, source_json::SourceJson, state::AuthorityStore, tuple_key::TupleKey,
+};
 use gateway_extras_runtime::types::{
     DispatchFailure, DispatchFailureOrigin, ExtrasDispatch, ExtrasHost, ExtrasProvider, ImageKind,
     PreparedCall, UpstreamResponse,
@@ -98,16 +100,23 @@ impl Host {
     }
     async fn http(&self, call: PreparedCall) -> Result<UpstreamResponse, DispatchFailure> {
         let prepared = call.prepared();
-        let target = PinnedDestination::new(&prepared.url)
-            .map_err(|error| DispatchFailure::gateway(error, true))?;
-        let bytes = prepared.body.as_bytes().to_vec();
+        let wire = (prepared.url.as_str(), &prepared.headers, &prepared.body);
+        self.send(wire, call.deadline_ms()).await
+    }
+    async fn send(
+        &self,
+        (url, headers, body): (&str, &gateway_providers::types::Headers, &SourceJson),
+        deadline_ms: i64,
+    ) -> Result<UpstreamResponse, DispatchFailure> {
+        let target =
+            PinnedDestination::new(url).map_err(|error| DispatchFailure::gateway(error, true))?;
+        let bytes = body.as_bytes().to_vec();
         let cancellation = self
             .platform
             .cancellation
             .child()
             .map_err(|error| DispatchFailure::gateway(error, true))?;
-        let remaining = call
-            .deadline_ms()
+        let remaining = deadline_ms
             .saturating_sub(now_ms().map_err(|error| DispatchFailure::gateway(error, true))?);
         let remaining = i32::try_from(remaining.max(0))
             .map_err(|_| DispatchFailure::gateway(invalid(), true))?;
@@ -118,7 +127,7 @@ impl Host {
         let result = outbound::send_http(
             &target,
             Method::Post,
-            &prepared.headers,
+            headers,
             &bytes,
             &cancellation,
             || async {
@@ -315,6 +324,16 @@ impl ExtrasHost for Host {
         ciphertext_and_tag: &[u8],
     ) -> Result<Vec<u8>, GatewayError> {
         aead::decrypt(key, iv, ciphertext_and_tag).await
+    }
+}
+
+impl gateway_decisions::host::DecisionsHost for Host {
+    async fn dispatch_decisions(
+        &self,
+        call: gateway_decisions::host::DecisionsCall,
+    ) -> Result<UpstreamResponse, DispatchFailure> {
+        let wire = (call.url(), call.headers(), call.body());
+        self.send(wire, call.deadline_ms()).await
     }
 }
 

@@ -8,12 +8,12 @@ const JEV_MODEL: &str = "~typesafe/jev-latest";
 const RESIDUE_URL: &str = "https://api.cerebras.ai/v1/chat/completions";
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(super) enum Call {
+pub enum Call {
     Jev,
     Residue,
 }
 
-pub(super) struct RequestPlan {
+pub struct RequestPlan {
     pub url: &'static str,
     pub headers: BTreeMap<String, String>,
     pub body: Vec<u8>,
@@ -28,7 +28,7 @@ fn headers(key: &str, accept: bool) -> BTreeMap<String, String> {
     }
     headers
 }
-pub(super) fn jev_request(
+pub fn jev_request(
     state: &SourceJson,
     questions: &SourceJson,
     key: &str,
@@ -50,7 +50,7 @@ pub(super) fn jev_request(
         body: body.into_bytes(),
     })
 }
-fn member(value: &SourceJson, name: &str) -> Option<SourceJson> {
+pub fn member(value: &SourceJson, name: &str) -> Option<SourceJson> {
     let key = JsString16::from_utf8(name);
     value
         .object_entries()
@@ -65,7 +65,7 @@ fn is_text(value: Option<SourceJson>, text: &str) -> bool {
         .and_then(|value| value.deserialize::<JsString16>().ok())
         .is_some_and(|value| value == JsString16::from_utf8(text))
 }
-pub(super) fn residue_request(body: &SourceJson, key: &str) -> Result<RequestPlan, GatewayError> {
+pub fn residue_request(body: &SourceJson, key: &str) -> Result<RequestPlan, GatewayError> {
     let fields = body.object_entries().map_err(|_| invalid_request())?;
     let allowed = [
         "model",
@@ -101,16 +101,16 @@ pub(super) fn residue_request(body: &SourceJson, key: &str) -> Result<RequestPla
 fn error(message: impl Into<String>, code: &'static str) -> GatewayError {
     GatewayError::new(502, message, Some(code)).with_type("server_error")
 }
-pub(super) fn invalid_request() -> GatewayError {
+pub fn invalid_request() -> GatewayError {
     error(
         "The compaction provider request is invalid.",
         "compaction_request_invalid",
     )
 }
-pub(super) fn cancelled() -> GatewayError {
+pub fn cancelled() -> GatewayError {
     gateway_admission::cancellation_error()
 }
-pub(super) fn interruption(
+pub fn interruption(
     original: bool,
     child: bool,
     call: Call,
@@ -133,7 +133,7 @@ pub(super) fn interruption(
         None
     }
 }
-pub(super) fn transport_error(call: Call) -> GatewayError {
+pub fn transport_error(call: Call) -> GatewayError {
     match call {
         Call::Jev => error("Jev transport error", "compaction_jev_transport"),
         Call::Residue => error(
@@ -142,7 +142,7 @@ pub(super) fn transport_error(call: Call) -> GatewayError {
         ),
     }
 }
-pub(super) fn body_error(call: Call) -> GatewayError {
+pub fn body_error(call: Call) -> GatewayError {
     match call {
         Call::Jev => error("Jev response body could not be read", "compaction_jev_body"),
         Call::Residue => error(
@@ -151,7 +151,7 @@ pub(super) fn body_error(call: Call) -> GatewayError {
         ),
     }
 }
-pub(super) fn http_error(call: Call, status: u16) -> GatewayError {
+pub fn http_error(call: Call, status: u16) -> GatewayError {
     match call {
         Call::Jev => error(
             format!("Jev request failed ({status})"),
@@ -163,11 +163,7 @@ pub(super) fn http_error(call: Call, status: u16) -> GatewayError {
         ),
     }
 }
-pub(super) fn parse_response(
-    call: Call,
-    status: u16,
-    bytes: &[u8],
-) -> Result<SourceJson, GatewayError> {
+pub fn parse_response(call: Call, status: u16, bytes: &[u8]) -> Result<SourceJson, GatewayError> {
     if !(200..300).contains(&status) {
         return Err(http_error(call, status));
     }
@@ -195,6 +191,3 @@ pub(super) fn parse_response(
     }
     Ok(value)
 }
-
-#[cfg(test)]
-mod tests;

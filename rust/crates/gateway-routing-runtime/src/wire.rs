@@ -17,11 +17,7 @@ use gateway_providers::{
 };
 use gateway_schema::source_request::error::SourceRequestError;
 /// A derived per-hop object, never a mutation of the authoritative original request.
-pub(crate) fn set(
-    raw: &mut SourceJson,
-    key: &str,
-    value: SourceJson,
-) -> Result<(), SourceRequestError> {
+pub fn set(raw: &mut SourceJson, key: &str, value: SourceJson) -> Result<(), SourceRequestError> {
     let mut fields = source::entries(raw)
         .ok_or_else(|| SourceRequestError::invalid("Inference request must be an object.", None))?;
     if let Some((_, old)) = fields
@@ -35,7 +31,7 @@ pub(crate) fn set(
     *raw = source::object_keys(fields).map_err(SourceRequestError::from_gateway)?;
     Ok(())
 }
-pub(crate) fn prepare(
+pub fn prepare(
     input: &RoutingInput,
     conversation_id: &str,
     now: i64,
@@ -111,7 +107,7 @@ fn ordinary_context(
     ))
 }
 
-pub(crate) fn claude_ordinary(
+pub fn claude_ordinary(
     input: &RoutingInput,
     model: &ModelId,
     now: i64,
@@ -128,7 +124,7 @@ pub(crate) fn claude_ordinary(
     .map_err(Into::into)
 }
 
-pub(crate) fn finalize_claude(
+pub fn finalize_claude(
     input: &RoutingInput,
     publication: &PublishedCredential,
     phase: &PreparedClaudeOrdinary,
@@ -165,6 +161,3 @@ pub(crate) fn finalize_claude(
     }
     Ok(PreparedWireRequest::Claude(body))
 }
-
-#[cfg(test)]
-mod response_id_tests;

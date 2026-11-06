@@ -8,6 +8,10 @@ use crate::{
     types::ObservabilityHost,
 };
 use gateway_auth::crypto::sha256_hex;
+use gateway_claude_usage::{
+    rollup::read_usage_rollup,
+    snapshot::{observed_at_ms, read_snapshot},
+};
 use gateway_core::error::GatewayError;
 use gateway_core::js_string::JsString16;
 use gateway_core::query::{QuerySelector, QueryStore};
@@ -19,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 const WINDOWS: [&str; 2] = ["five_hour", "seven_day"];
+const HEADER_SOURCE: &str = "response_headers";
 const LIMIT: usize = 20_000;
 fn safe(n: f64) -> bool {
     n.is_finite() && n.fract() == 0.0 && (0.0..=9_007_199_254_740_991.0).contains(&n)
@@ -102,8 +107,24 @@ struct Point {
     workspace_id: Option<JsString16>,
     state: ClaudeObservationState,
     response_status: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    source: Option<SourceJson>,
     windows: Windows,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    usage_snapshot: Option<SourceJson>,
     standard: Vec<Standard>,
+}
+/// A present member is validated even when null; only absence is "no value".
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<SourceJson>, D::Error> {
+    <SourceJson as Deserialize>::deserialize(d).map(Some)
 }
 impl Point {
     fn clock(&self) -> f64 {
@@ -133,6 +154,14 @@ impl Point {
             && self
                 .response_status
                 .is_none_or(|n| safe(n) && (100.0..=599.0).contains(&n))
+            && self.source.as_ref().is_none_or(|s| {
+                source::string(s).is_some_and(|s| s == JsString16::from_utf8(HEADER_SOURCE))
+            })
+            && self.usage_snapshot.as_ref().is_none_or(|s| {
+                read_snapshot(s)
+                    .and_then(|s| observed_at_ms(&s))
+                    .is_some_and(|t| t <= self.sampled_at_ms)
+            })
     }
     fn history_key(&self) -> RecordKey {
         history_key(
@@ -161,24 +190,16 @@ impl Point {
         )
     }
 }
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 struct Flags {
     normal: f64,
     unavailable: bool,
     recovery: bool,
     five_hour: bool,
     seven_day: bool,
-}
-impl Default for Flags {
-    fn default() -> Self {
-        Self {
-            normal: 0.0,
-            unavailable: false,
-            recovery: false,
-            five_hour: false,
-            seven_day: false,
-        }
-    }
+    /// Direct-meter transition flag written by the retired usage reader; retained.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    usage: Option<bool>,
 }
 #[derive(Deserialize, Serialize)]
 struct Bucket {
@@ -307,17 +328,14 @@ impl Rollup {
                 .is_none_or(|v| min.zip(max).is_some_and(|(a, b)| v >= a && v <= b))
     }
 }
+fn claude_key(family: &str, parts: Value) -> RecordKey {
+    store::prefixed(
+        &["uos_ai", "provider_capacity", "claude", "v1", family],
+        parts,
+    )
+}
 fn history_key(bucket: f64, account: &str, cohort: &str) -> RecordKey {
-    store::key(json!([
-        "uos_ai",
-        "provider_capacity",
-        "claude",
-        "v1",
-        "history",
-        bucket,
-        account,
-        cohort
-    ]))
+    claude_key("history", json!([bucket, account, cohort]))
 }
 fn rollup_key_parts(
     bucket: f64,
@@ -326,18 +344,8 @@ fn rollup_key_parts(
     window: &str,
     reset: Option<f64>,
 ) -> RecordKey {
-    store::key(json!([
-        "uos_ai",
-        "provider_capacity",
-        "claude",
-        "v1",
-        "rollup",
-        bucket,
-        account,
-        cohort,
-        window,
-        reset.map_or_else(|| json!("unknown"), |n| json!(n))
-    ]))
+    let reset = reset.map_or_else(|| json!("unknown"), |n| json!(n));
+    claude_key("rollup", json!([bucket, account, cohort, window, reset]))
 }
 pub fn valid_history_point_source(v: &SourceJson) -> bool {
     v.deserialize::<Point>().is_ok_and(|p| p.valid())
@@ -453,7 +461,7 @@ pub fn point_for_observation(
     .into_iter()
     .map(|(name, _)| name.try_utf8())
     .collect::<Result<Vec<_>, _>>()?;
-    let digest = source::object(vec![
+    let mut digest = vec![
         ("account", SourceJson::from_serializable(&event.account_id)?),
         (
             "cohort",
@@ -473,7 +481,16 @@ pub fn point_for_observation(
             SourceJson::from_serializable(&event.response_status)?,
         ),
         ("observation", observation),
-    ])?;
+    ];
+    let point_source = event
+        .source
+        .as_ref()
+        .map(SourceJson::from_serializable)
+        .transpose()?;
+    if let Some(value) = &point_source {
+        digest.push(("source", value.clone()));
+    }
+    let digest = source::object(digest)?;
     let window = |name: &str| {
         parsed.windows.get(name).map(|w| Window {
             status: w.status.clone(),
@@ -500,10 +517,12 @@ pub fn point_for_observation(
         workspace_id: event.workspace_id.clone(),
         state: event.state,
         response_status: event.response_status.map(f64::from),
+        source: point_source,
         windows: Windows {
             five_hour: window("5h"),
             seven_day: window("7d"),
         },
+        usage_snapshot: None,
         standard: standard_order
             .iter()
             .map(String::as_str)
@@ -749,87 +768,92 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         ))
     }
     pub async fn claude_capacity_history(&self, at: i64) -> SourceJson {
-        let base=source::canonical(&SourceJson::from_serializable(&json!({"v":1,"scan":"unavailable","truncated":false,"bucket_ms":BUCKET_MS,"retention_ms":RETENTION_MS,"stale_after_ms":STALE_MS,"points":[]})).expect("finite history base")).expect("finite history base");
-        let read: Result<SourceJson, GatewayError> = async {
-            let cutoff = (at - RETENTION_MS).max(0);
-            let first = cutoff / BUCKET_MS * BUCKET_MS;
-            let end = at / BUCKET_MS * BUCKET_MS + BUCKET_MS;
-            let selector = QuerySelector::Range {
-                start: store::key(json!([
-                    "uos_ai",
-                    "provider_capacity",
-                    "claude",
-                    "v1",
-                    "history",
-                    first
-                ])),
-                end: store::key(json!([
-                    "uos_ai",
-                    "provider_capacity",
-                    "claude",
-                    "v1",
-                    "history",
-                    end
-                ])),
-            };
-            let rows =
-                store::scan_selector(self.store.as_ref(), selector, true, at, LIMIT + 1).await?;
-            let mut points = Vec::new();
-            let mut truncated = rows.len() > LIMIT;
-            for entry in rows.into_iter().take(LIMIT) {
-                let value = claude_history_bucket_record_source(&entry.key, &entry.record)?;
-                let bucket: Bucket = value.deserialize()?;
-                for point in bucket.points.into_iter().rev() {
-                    let p: Point = point.deserialize()?;
-                    if p.sampled_at_ms > at as f64 || p.clock() < cutoff as f64 {
-                        continue;
-                    }
-                    if points.len() >= LIMIT {
-                        truncated = true;
-                        break;
-                    }
-                    points.push((point, p.clock() as i64));
+        let base=SourceJson::from_serializable(&json!({"v":1,"scan":"unavailable","truncated":false,"bucket_ms":BUCKET_MS,"retention_ms":RETENTION_MS,"stale_after_ms":STALE_MS,"points":[]})).and_then(|v| source::canonical(&v)).unwrap_or_else(|_| SourceJson::null());
+        self.read_claude_history(at, &base).await.unwrap_or(base)
+    }
+    async fn read_claude_history(
+        &self,
+        at: i64,
+        base: &SourceJson,
+    ) -> Result<SourceJson, GatewayError> {
+        let cutoff = (at - RETENTION_MS).max(0);
+        let first = cutoff / BUCKET_MS * BUCKET_MS;
+        let end = at / BUCKET_MS * BUCKET_MS + BUCKET_MS;
+        let selector = QuerySelector::Range {
+            start: claude_key("history", json!([first])),
+            end: claude_key("history", json!([end])),
+        };
+        let rows = store::scan_selector(self.store.as_ref(), selector, true, at, LIMIT + 1).await?;
+        let mut points = Vec::new();
+        let mut truncated = rows.len() > LIMIT;
+        for entry in rows.into_iter().take(LIMIT) {
+            let value = claude_history_bucket_record_source(&entry.key, &entry.record)?;
+            let bucket: Bucket = value.deserialize()?;
+            for point in bucket.points.into_iter().rev() {
+                let p: Point = point.deserialize()?;
+                if p.sampled_at_ms > at as f64 || p.clock() < cutoff as f64 {
+                    continue;
                 }
-                if points.len() >= LIMIT && truncated {
+                if points.len() >= LIMIT {
+                    truncated = true;
                     break;
                 }
+                points.push((point, p.clock() as i64));
             }
-            points.sort_by_key(|(_, at)| *at);
+            if points.len() >= LIMIT && truncated {
+                break;
+            }
+        }
+        points.sort_by_key(|(_, at)| *at);
+        let mut out = SourceObject::parse(base)?;
+        out.set("scan", "ok")?;
+        out.set("truncated", &truncated)?;
+        let points: Vec<_> = points.into_iter().map(|(p, _)| p).collect();
+        out.set("points", &points)?;
+        out.source_json()
+    }
+    /// Source `listClaudeUsageRollups`: the separate direct-meter namespace, read only.
+    pub async fn claude_usage_rollups(&self, since: i64, at: i64) -> SourceJson {
+        let base = unavailable_rollups();
+        let read: Result<SourceJson, GatewayError> = async {
+            let (first, last) = (since / HOUR_MS * HOUR_MS, at / HOUR_MS * HOUR_MS);
+            let selector = QuerySelector::Range {
+                start: claude_key("usage_rollup", json!([first])),
+                end: claude_key("usage_rollup", json!([last + HOUR_MS])),
+            };
+            let rows =
+                store::scan_selector(self.store.as_ref(), selector, false, at, LIMIT + 1).await?;
+            let mut points = Vec::new();
+            for entry in rows.iter().take(LIMIT) {
+                let value = decode_source_control_record(&entry.record)?;
+                let corrupt = || store::error("Claude usage rollup evidence is corrupt");
+                let p = read_usage_rollup(&value)
+                    .filter(|p| p.last_observed_at_ms <= at as f64)
+                    .ok_or_else(corrupt)?;
+                let anchor = sha256_hex(p.meter.anchor.as_bytes());
+                let parts = json!([p.key_bucket(), p.account_id, p.account_cohort_id, anchor]);
+                if entry.key != claude_key("usage_rollup", parts) {
+                    return Err(corrupt());
+                }
+                points.push(value);
+            }
             let mut out = SourceObject::parse(&base)?;
             out.set("scan", "ok")?;
-            out.set("truncated", &truncated)?;
-            out.set(
-                "points",
-                &points.into_iter().map(|(p, _)| p).collect::<Vec<_>>(),
-            )?;
+            out.set("truncated", &(rows.len() > LIMIT))?;
+            out.set("points", &points)?;
             out.source_json()
         }
         .await;
         read.unwrap_or(base)
     }
     pub async fn claude_capacity_rollups(&self, since: i64, at: i64) -> SourceJson {
-        let base = SourceJson::parse(r#"{"scan":"unavailable","truncated":false,"points":[]}"#)
-            .expect("finite rollup base");
+        let base = unavailable_rollups();
         let read: Result<SourceJson, GatewayError> = async {
             let first = since / HOUR_MS * HOUR_MS;
             let last = at / HOUR_MS * HOUR_MS;
             let selector = QuerySelector::Range {
-                start: store::key(json!([
-                    "uos_ai",
-                    "provider_capacity",
-                    "claude",
-                    "v1",
-                    "rollup",
-                    first
-                ])),
-                end: store::key(json!([
-                    "uos_ai",
-                    "provider_capacity",
-                    "claude",
-                    "v1",
-                    "rollup",
-                    last + HOUR_MS
-                ])),
+                start: claude_key("rollup", json!([first])),
+                end: claude_key("rollup", json!([last + HOUR_MS])),
             };
             let rows =
                 store::scan_selector(self.store.as_ref(), selector, true, at, LIMIT + 1).await?;
@@ -847,13 +871,15 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             let mut out = SourceObject::parse(&base)?;
             out.set("scan", "ok")?;
             out.set("truncated", &truncated)?;
-            out.set(
-                "points",
-                &points.into_iter().map(|(p, _)| p).collect::<Vec<_>>(),
-            )?;
+            let points: Vec<_> = points.into_iter().map(|(p, _)| p).collect();
+            out.set("points", &points)?;
             out.source_json()
         }
         .await;
         read.unwrap_or(base)
     }
+}
+fn unavailable_rollups() -> SourceJson {
+    SourceJson::parse(r#"{"scan":"unavailable","truncated":false,"points":[]}"#)
+        .unwrap_or_else(|_| SourceJson::null())
 }

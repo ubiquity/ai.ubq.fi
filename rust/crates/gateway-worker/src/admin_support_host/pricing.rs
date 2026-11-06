@@ -45,7 +45,7 @@ pub(super) async fn fetch(host: &Binding, endpoint: Metadata) -> Result<SourceJs
         .map_err(|_| unavailable("Administrator response could not be read."))?;
     parse_metadata(&bytes)
 }
-fn parse_metadata(bytes: &[u8]) -> Result<SourceJson, GatewayError> {
+pub fn parse_metadata(bytes: &[u8]) -> Result<SourceJson, GatewayError> {
     let text = String::from_utf8_lossy(bytes);
     SourceJson::parse(text.strip_prefix('\u{feff}').unwrap_or(&text))
         .map_err(|_| unavailable("Administrator response is invalid JSON."))
@@ -87,7 +87,7 @@ fn trim(value: &JsString16) -> JsString16 {
     let end = units.len() - units[start..].iter().rev().take_while(whitespace).count();
     JsString16::from_units(units[start..end].to_vec())
 }
-pub(super) fn project(
+pub fn project(
     models: &[ModelId],
     pricing: &SourceJson,
     status: &SourceJson,
@@ -153,74 +153,4 @@ pub(super) fn project(
         model_quota_coefficients: coefficients,
         checked_at_ms: at,
     })
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn json(text: &str) -> SourceJson {
-        SourceJson::parse(text).unwrap()
-    }
-    #[test]
-    fn source_fixed_prices_override_ratios_without_advertising_unknown_models() {
-        let snapshot = project(&["a".into(), "a".into(), "absent".into()], &json(r#"{"success":true,"data":{"model_ratio":{"a":2},"model_price":{"a":7,"other":1},"completion_ratio":{"a":3}}}"#), &json(r#"{"success":true,"data":{"setup":true,"quota_per_unit":500000}}"#), 10).unwrap();
-        assert_eq!(snapshot.eligible_model_ids, vec![ModelId::from_scalar("a")]);
-        assert_eq!(
-            snapshot.model_quota_coefficients[&ModelId::from_scalar("a")],
-            7.0
-        );
-    }
-    #[test]
-    fn invalid_quota_and_metadata_fail_before_any_key_policy_write() {
-        assert!(project(&[], &json(r#"{"success":false}"#), &json("null"), 1).is_err());
-        assert!(
-            project(
-                &[],
-                &json(r#"{"success":true,"data":{}}"#),
-                &json(r#"{"success":true,"data":{"setup":true,"quota_per_unit":0}}"#),
-                1
-            )
-            .is_err()
-        );
-    }
-    #[test]
-    fn source_number_integer_accepts_decimal_json_notation() {
-        let snapshot = project(
-            &[],
-            &json(r#"{"success":true,"data":{"model_ratio":{},"model_price":{}}}"#),
-            &json(r#"{"success":true,"data":{"setup":true,"quota_per_unit":500000.0}}"#),
-            10,
-        )
-        .unwrap();
-        assert_eq!(snapshot.quota_per_credit, 500000);
-    }
-    #[test]
-    fn metadata_and_projection_retain_exact_units_and_duplicate_key_last_value() {
-        let mut bytes = b"\xef\xbb\xbf".to_vec();
-        bytes.extend_from_slice(br#"{"success":true,"data":{"model_ratio":{"m-\ud800":2,"m-\udc00":3,"m-\ufffd":5,"duplicate":2,"duplicate":0},"model_price":{"m-\ud800":7},"completion_ratio":{"m-\udc00":2}}}"#);
-        let pricing = parse_metadata(&bytes).unwrap();
-        let high = ModelId::from_source(JsString16::from_units(vec![109, 45, 0xd800]));
-        let low = ModelId::from_source(JsString16::from_units(vec![109, 45, 0xdc00]));
-        let replacement = ModelId::from_scalar("m-\u{fffd}");
-        let snapshot = project(
-            &[
-                ModelId::from_source(JsString16::from_units(vec![0xfeff, 109, 45, 0xd800, 0x20])),
-                high.clone(),
-                low.clone(),
-                replacement.clone(),
-                "duplicate".into(),
-            ],
-            &pricing,
-            &json(r#"{"success":true,"data":{"setup":true,"quota_per_unit":500000}}"#),
-            10,
-        )
-        .unwrap();
-        assert_eq!(
-            snapshot.eligible_model_ids,
-            vec![high.clone(), low.clone(), replacement.clone()]
-        );
-        assert_eq!(snapshot.model_quota_coefficients[&high], 7.0);
-        assert_eq!(snapshot.model_quota_coefficients[&low], 9.0);
-        assert_eq!(snapshot.model_quota_coefficients[&replacement], 10.0);
-        assert_eq!(snapshot.model_quota_coefficients.len(), 3);
-    }
 }

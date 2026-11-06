@@ -1,6 +1,7 @@
 //! Fixed native import validation. Candidates are DATA, never mutation or publication authority.
 use gateway_auth::native_credentials::NativeCredentials;
 use gateway_core::source_json::SourceJson;
+use gateway_native_runtime::https::{PrivateHttps, PrivateResponse};
 
 pub(super) enum CatalogValidation {
     Normalized {
@@ -26,11 +27,7 @@ pub(super) struct ValidatedNativeImport<'a> {
 use super::{
     ExistingAccountImportStore, import_documents as document, live_custody::LiveImportCustody,
 };
-use crate::{
-    import_custody_protocol::unavailable,
-    native_import::NativeImportContext,
-    private_https::{PrivateHttps, PrivateResponse},
-};
+use crate::{import_custody_protocol::unavailable, native_import::NativeImportContext};
 use gateway_authority::native_control::import::AuthenticatedNativeImport;
 use gateway_core::{error::GatewayError, js_string::JsString16};
 use std::{

@@ -32,8 +32,8 @@ impl Default for ResetConfig {
         Self {
             enabled: true,
             mode: ResetMode::Live,
-            // An absent configuration must never authorize an external spend.
-            max_per_account_per_day: 0,
+            // Owner decision 2026-11-05: absent config matches TS production (src/codex/banked-reset.ts).
+            max_per_account_per_day: 1,
             max_per_account_per_window: 1,
             provider_approved: true,
             supports_idempotent_lookup: false,

@@ -173,6 +173,8 @@ pub struct ClaudeBodyOptions {
     pub reasoning_summary: Option<JsString16>,
     pub restored_native_messages: Option<Vec<SourceJson>>,
     pub ordinary_preparation: Option<OrdinaryPreparationContext>,
+    /// TS `omitHostedWebSearch`: the direct lane drops Codex's unsupported hosted search.
+    pub omit_hosted_web_search: bool,
 }
 impl ClaudeBodyOptions {
     pub fn new(kind: ClaudeCredentialKind) -> Self {
@@ -186,6 +188,7 @@ impl ClaudeBodyOptions {
             reasoning_summary: None,
             restored_native_messages: None,
             ordinary_preparation: None,
+            omit_hosted_web_search: true,
         }
     }
     pub(crate) fn from_scalar(options: &PrepareOptions) -> Self {
@@ -203,6 +206,7 @@ impl ClaudeBodyOptions {
             reasoning_summary: options.reasoning_summary.clone(),
             restored_native_messages: options.restored_native_messages.clone(),
             ordinary_preparation: options.ordinary_preparation.clone(),
+            omit_hosted_web_search: true,
         }
     }
 }
@@ -320,14 +324,11 @@ impl ProviderEvent {
     }
     /// Only the isolated numeric/accounting fragment crosses the scalar decoder boundary.
     pub fn observed_usage(&self) -> Option<Value> {
-        self.field("usage")
-            .as_ref()
-            .and_then(crate::source_collector::usage)
-            .or_else(|| {
-                self.field("response").and_then(|response| {
-                    crate::source_collector::usage(&crate::source::get(&response, "usage"))
-                })
+        crate::source_collector::accounting_usage(true, &self.data).or_else(|| {
+            self.field("response").and_then(|response| {
+                crate::source_collector::usage(&crate::source::get(&response, "usage"))
             })
+        })
     }
     pub fn terminal(&self) -> Option<gateway_core::lifecycle::SemanticTerminal> {
         use gateway_core::lifecycle::SemanticTerminal;
@@ -377,15 +378,6 @@ pub struct DecodedResponse {
     pub usage: Option<Value>,
     pub native_replay: Option<Value>,
     pub raw_body: Option<Vec<u8>>,
-}
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct Elision {
-    pub path: String,
-    pub call_id: Option<JsString16>,
-    pub kind: String,
-    pub original_bytes: usize,
-    pub forwarded_bytes: usize,
-    pub omitted_bytes: usize,
 }
 pub(crate) fn invalid(message: impl Into<String>, param: &str) -> GatewayError {
     GatewayError::new(400, message, Some("invalid_request_error")).with_param(Some(param))

@@ -97,7 +97,6 @@ fn optional_text(values: &BTreeMap<String, SourceJson>, name: &str) -> Option<Js
     let v = text(values, name, 120, "");
     (!v.as_units().is_empty()).then_some(v)
 }
-
 #[derive(Clone, Debug, Serialize)]
 pub struct RequestLogRecord {
     pub id: JsString16,
@@ -200,7 +199,6 @@ impl RequestLogRecord {
 pub fn record_source_json(row: &StoredRecord) -> Result<SourceJson, GatewayError> {
     decode_source_control_record(row)
 }
-
 pub fn merge_request_fields(
     existing: Option<&RequestLogRecord>,
     patch: &Value,
@@ -260,7 +258,6 @@ pub fn put_record<H: ObservabilityHost>(
     let record = encode_source_control_record(store::uuid(host)?, &document, Some(expiry))?;
     Ok(RecordMutation::Put { key, record })
 }
-
 pub fn error_document(input: &ErrorObservation) -> Result<SourceJson, GatewayError> {
     #[derive(Serialize)]
     struct ErrorRecord<'a> {
@@ -315,7 +312,6 @@ pub fn error_document(input: &ErrorObservation) -> Result<SourceJson, GatewayErr
         version: 1,
     })
 }
-
 /// Complete source v1 error-log shape validation; preserve original extra fields.
 /// This named reader grants neither key custody nor a live operation.
 pub fn admin_error_record_source(row: &StoredRecord) -> Result<SourceJson, GatewayError> {
@@ -348,7 +344,6 @@ pub fn admin_error_record_source(row: &StoredRecord) -> Result<SourceJson, Gatew
     field("delivery_outcome")?.deserialize::<gateway_core::lifecycle::DeliveryOutcome>()?;
     Ok(document)
 }
-
 /// Exact source isPaidFallbackUsageRollup predicate over real UTF16 strings.
 /// Data validation only; model/provider membership and accounting authority are external.
 pub fn valid_usage_rollup_source(document: &SourceJson) -> bool {

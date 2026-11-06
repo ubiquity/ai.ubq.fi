@@ -8,6 +8,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 mod text;
+pub mod token_estimate;
 mod transcript;
 pub mod types;
 use gateway_core::{js_string::JsString16, source_json::SourceJson};

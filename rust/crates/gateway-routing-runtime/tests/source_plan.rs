@@ -114,3 +114,17 @@ fn opaque_model_retains_source_availability_branch_without_a_scalar_fallback() {
         ModelId::from_source(JsString16::from_units(vec![0xd800]))
     );
 }
+#[test]
+fn decision_only_openrouter_rows_never_join_the_text_wires() {
+    let mut request = input("decision-rows", "gpt-test", &["openrouter"]);
+    if let Some(catalog) = request.catalog.providers.get_mut("openrouter") {
+        catalog.models = vec![
+            raw(r#"{"id":"vendor/text","output_modalities":["text"]}"#),
+            raw(r#"{"id":"baseten/elephant-1:free","output_modalities":["decisions"]}"#),
+            raw(r#"{"id":"legacy/text"}"#),
+        ];
+    }
+    let ids = policy::provider_ids(&request, UpstreamProvider::Openrouter);
+    let expected = ["vendor/text", "legacy/text"].map(ModelId::from_scalar);
+    assert_eq!(ids, expected);
+}

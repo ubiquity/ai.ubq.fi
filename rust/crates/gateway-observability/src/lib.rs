@@ -46,7 +46,6 @@ pub struct ObservabilityState {
     sampled_bucket: Rc<std::cell::Cell<i64>>,
     replay_bootstrap: Rc<std::cell::RefCell<replay_bootstrap::OwnerIndex>>,
 }
-
 pub struct ObservabilityRuntime<S, H> {
     pub(crate) store: Rc<S>,
     pub(crate) host: Rc<H>,

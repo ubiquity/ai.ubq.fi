@@ -15,6 +15,7 @@ gateway-auth = { path = "../gateway-auth" }
 gateway-authority = { path = "../gateway-authority" }
 gateway-publication = { path = "../gateway-publication" }
 gateway-native-supervisor-read.workspace = true
+gateway-native-runtime.workspace = true
 gateway-publication-policy.workspace = true
 gateway-publication-transport.workspace = true
 serde.workspace = true
@@ -70,3 +71,7 @@ path = "src/bin/uos-native-import.rs"
 name = "uos-native-import-fixture"
 path = "tests/support/import_fixture.rs"
 required-features = ["native-import-fixture"]
+
+[[bin]]
+name = "uos-native-owner-probe"
+path = "src/bin/uos-native-owner-probe.rs"

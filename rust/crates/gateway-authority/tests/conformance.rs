@@ -608,48 +608,6 @@ fn account_day_budget_and_stale_cohort_stop_submission_without_changing_claim() 
 }
 
 #[test]
-fn overage_off_is_a_hard_gate_and_enabled_probe_blocks_other_requests() {
-    let store = MemoryStore::default();
-    seed_pool(&store, &pool());
-    let authority = authority(&store);
-    let first = admitted(&authority);
-    run(authority.record_quota_block(&first, block(), NOW)).unwrap();
-    let second = admitted(&authority);
-    run(authority.record_quota_block(&second, block(), NOW)).unwrap();
-    let RouteSelection::QuotaBlocked { proof, .. } =
-        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap()
-    else {
-        panic!("quota proof missing")
-    };
-    assert!(
-        run(authority.claim_overage_probe(&proof, None, "inventory_unavailable", NOW))
-            .unwrap()
-            .is_none()
-    );
-    store.seed(
-        keys::overage(&admin_hash("a").0),
-        &serde_json::json!({"allow":true}),
-    );
-    let RouteSelection::QuotaBlocked { proof, .. } =
-        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap()
-    else {
-        panic!("quota proof missing")
-    };
-    let active_before = store.row(&keys::active()).unwrap().value;
-    let claimed = run(authority.claim_overage_probe(
-        &proof,
-        Some(&first.binding.account_id_hash),
-        "inventory_unavailable",
-        NOW,
-    ))
-    .unwrap()
-    .unwrap();
-    assert_eq!(store.row(&keys::active()).unwrap().value, active_before);
-    run(authority.ensure_overage_probe_current(&claimed, NOW)).unwrap();
-    assert!(run(authority.finish_overage_probe(&claimed, true, NOW)).unwrap());
-}
-
-#[test]
 fn reset_identity_deduplicates_refresh_and_utc_days_and_expiry_remain_absolute() {
     let old = reset_invocation("account-hash", "old-credential", NOW + 60_000).unwrap();
     let fresh = reset_invocation("account-hash", "new-credential", NOW + 60_000).unwrap();
