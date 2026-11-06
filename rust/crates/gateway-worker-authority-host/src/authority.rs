@@ -122,7 +122,9 @@ impl<H: Host> Authority<H> {
                 )
                 .await?;
                 self.notify(&reply);
-                Ok(StoreResponse::Coordination { reply })
+                Ok(StoreResponse::Coordination {
+                    reply: Box::new(reply),
+                })
             }
             StoreRequest::ProfileMigration {
                 request,
@@ -365,8 +367,10 @@ impl<H: Host> Authority<H> {
                     Self::terminal(&status, &plan, &id).unwrap_or(Reply::DrainTimeout { status })
                 }
             };
-            serde_json::to_vec(&StoreResponse::Coordination { reply })
-                .map_err(|error| worker::Error::RustError(error.to_string()))
+            serde_json::to_vec(&StoreResponse::Coordination {
+                reply: Box::new(reply),
+            })
+            .map_err(|error| worker::Error::RustError(error.to_string()))
         });
         let mut response = Response::from_stream(stream)?;
         response.headers_mut().set("Cache-Control", "no-store")?;

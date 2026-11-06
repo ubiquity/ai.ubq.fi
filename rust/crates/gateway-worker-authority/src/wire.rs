@@ -180,7 +180,7 @@ pub enum WireMutation {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StoreResponse {
     Coordination {
-        reply: gateway_authority_lifecycle::model::Reply,
+        reply: Box<gateway_authority_lifecycle::model::Reply>,
     },
     ProfileMigration {
         status: u16,

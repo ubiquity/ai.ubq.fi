@@ -1,5 +1,8 @@
 //! Request-scoped access to the one durable authority through its private binding.
-use crate::wire::*;
+use crate::wire::{
+    AUTHORITY_OBJECT, Envelope, StoreRequest, StoreResponse, WIRE_MAX_BYTES, WIRE_URL,
+    WIRE_VERSION, WIRE_VERSION_HEADER, WireCheck, WireMutation,
+};
 use futures_util::StreamExt;
 use gateway_core::{
     error::GatewayError,
@@ -80,7 +83,7 @@ impl RemoteAuthorityStore {
             .exchange(StoreRequest::Coordination { request })
             .await?
         {
-            StoreResponse::Coordination { reply } => Ok(reply),
+            StoreResponse::Coordination { reply } => Ok(*reply),
             _ => Err(unavailable("authority_wire_invalid")),
         }
     }
@@ -275,10 +278,10 @@ impl AuthorityStore for RemoteAuthorityStore {
         let result = self
             .exchange(StoreRequest::Commit { checks, mutations })
             .await;
-        if result.is_err() {
-            if let Some(group) = &self.writers {
-                group.block(gateway_authority_lifecycle::model::Blocker::UncertainCommit);
-            }
+        if result.is_err()
+            && let Some(group) = &self.writers
+        {
+            group.block(gateway_authority_lifecycle::model::Blocker::UncertainCommit);
         }
         match result? {
             StoreResponse::Commit { committed } => Ok(if committed {
