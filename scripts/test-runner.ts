@@ -317,6 +317,7 @@ const runFile = async (
     await settleGroup(child.pid);
   }
 };
+/** Execute the same per-file relay lifecycle for every validated group. */
 export const runGroups = async (
   groups: ReturnType<typeof validatedGroups>,
   run: (path: string, selected: Parameters<typeof runFile>[1]) => Promise<number>

@@ -178,11 +178,15 @@ accumulates.
 - Byte/count baseline: instrumented as of 2026-09-22 (`ledger_stats` counters exposed as `ledger_growth`); read the
   production rows-per-day, bytes-per-row, rollup and projection-read numbers from the Provider analytics card and record
   them here before re-tuning the raw-row horizon.
-- Oldest-first hard cap: not implemented. The previously cited 2026-10-16 owner decline has no supporting owner record
-  in #139; owner confirmation and disposition remain [pending under #1176](DECISIONS.md#owner-only-follow-ups-from-1132-remain-pending---2026-10-18-1176).
-  The 365-day TTL bounds the raw rows, and the 5 GiB `budget_bytes` figure only sets the growth alert; nothing is evicted
-  when it is reached. If a byte budget ever becomes necessary, it would need timestamp-ordered keys or a global age
-  index — note the legacy analytics key shape `[keyId, createdAtMs, requestId]` as a precedent.
+- Oldest-first hard cap: not implemented. PR #1156 reported an owner decline on 2026-10-16, citing issue #139, but
+  neither #139 nor `docs/DECISIONS.md` records that decision at `0d726874`. Owner confirmation and a durable decision
+  record remain [pending](handoff/owner-only-follow-ups-1176.md#retention-hard-cap-1073-item-2-139), as tracked in the
+  [decision log](DECISIONS.md#owner-only-follow-ups-from-1132-remain-pending---2026-10-18-1176); #139's completed close
+  reason is not evidence of eviction. The reported rationale was that the KV lives on the VPS with ample disk,
+  so the per-GiB billing that motivated a hard cap no longer applies. The 365-day TTL bounds the raw rows, and the
+  5 GiB `budget_bytes` figure only sets the growth alert; nothing is evicted when it is reached. If a byte budget ever
+  becomes necessary, it would need timestamp-ordered keys or a global age index — note the legacy analytics key shape
+  `[keyId, createdAtMs, requestId]` as a precedent.
 - Imported raw rows have no expiry until the backfill rewrites them. The 2026-09-10 Deno export carries no expiry
   (`ops/README.md`), so the generic import wrote those rows without one (`src/cache/kv-migration-base.ts`), and the
   365-day TTL above does not bound them yet. The growth alert does not count them either, because its counters start
