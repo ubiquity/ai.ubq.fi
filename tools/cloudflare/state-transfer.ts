@@ -31,7 +31,7 @@ export const sha256 = (bytes: string | Uint8Array): string => createHash("sha256
 
 // Locale-independent UTF-16 code-unit order, so a receipt signs identically everywhere.
 const byCodeUnit = (left: string, right: string): number => Number(left > right) - Number(left < right);
-const canonical = (value: unknown): string => {
+export const canonical = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (isObject(value))
     return `{${Object.keys(value)
@@ -198,18 +198,40 @@ export const importFrames = async (transport: Transport, frames: readonly Frame[
   return { applied, replayed, resumed_at: resumedAt, status };
 };
 
-export type ExportResult = Readonly<{ archive: Uint8Array; records: number; pages: { sha256: string; count: number }[]; sha256: string }>;
+export type ExportResult = Readonly<{
+  archive: Uint8Array;
+  records: number;
+  pages: { sha256: string; count: number }[];
+  sha256: string;
+  frozen_ref: ObjectValue;
+}>;
 export const exportPages = async (transport: Transport, limit = 256): Promise<ExportResult> => {
   const chunks: Uint8Array[] = [];
   const pages: { sha256: string; count: number }[] = [];
+  const control = await request(transport, "POST", "/admin/state-transfer/control", JSON.stringify({ v: 2, request: { operation: "status" } }));
+  const status: unknown = await control.json();
+  const state = isObject(status) && isObject(status.status) && isObject(status.status.gate) ? status.status.gate : undefined;
+  const frozen = state?.frozen;
+  if (state?.phase !== "frozen" || !isObject(frozen) || !hex(frozen.freeze_id, 64) || !hex(frozen.freeze_revision, 64))
+    throw new Error("A durable Frozen receipt is required before export");
   let cursor: string | null = null;
   let records = 0;
   do {
-    const response = await request(transport, "POST", EXPORT_PATH, JSON.stringify({ v: 1, cursor, limit }));
+    const response = await request(
+      transport,
+      "POST",
+      EXPORT_PATH,
+      JSON.stringify({ v: 2, freeze_id: frozen.freeze_id, freeze_revision: frozen.freeze_revision, cursor, limit })
+    );
     const body = new Uint8Array(await response.arrayBuffer());
     const digest = response.headers.get("x-uos-state-export-sha256");
     const count = Number(response.headers.get("x-uos-state-export-count"));
     const rows: unknown = JSON.parse(Buffer.from(body).toString("utf8"));
+    if (
+      response.headers.get("x-uos-state-export-freeze-id") !== frozen.freeze_id ||
+      response.headers.get("x-uos-state-export-freeze-revision") !== frozen.freeze_revision
+    )
+      throw new Error("Export page changed frozen epoch");
     if (digest !== sha256(body) || !Array.isArray(rows) || rows.length !== count) throw new Error("Worker export page hash or count differs");
     pages.push({ sha256: digest, count });
     records += count;
@@ -218,7 +240,7 @@ export const exportPages = async (transport: Transport, limit = 256): Promise<Ex
     if (pages.length > 100_000) throw new Error("Worker export did not terminate");
   } while (cursor !== null);
   const archive = Buffer.concat(chunks);
-  return { archive, records, pages, sha256: sha256(archive) };
+  return { archive, records, pages, sha256: sha256(archive), frozen_ref: frozen };
 };
 
 const flags = (args: readonly string[]): Map<string, string> => {
@@ -304,13 +326,14 @@ const exportCommand = async (values: Map<string, string>, environment: Environme
   if (!Number.isSafeInteger(passes) || passes < 1 || passes > 5) throw new Error("--passes must be 1..5");
   const startedAt = now();
   const first = await exportPages(transport);
-  // Paged reads are not one snapshot: equal repeated passes prove the target was quiescent.
+  // The authority's synced Frozen epoch is the quiescence proof; repeated passes additionally check consistency.
   for (let pass = 1; pass < passes; pass++)
     if ((await exportPages(transport)).sha256 !== first.sha256) throw new Error("Worker state changed between export passes; quiesce the target");
   writeNewPrivate(required(values, "archive"), first.archive);
   const receipt = signReceipt(transport.intent, {
-    v: 1,
+    v: 2,
     kind: "state_transfer_export",
+    frozen_ref: first.frozen_ref,
     origin: transport.origin,
     archive_sha256: first.sha256,
     archive_bytes: first.archive.length,
@@ -402,6 +425,18 @@ const verifyCommand = (values: Map<string, string>, privateInput: string | undef
   const exported = json(required(values, "export-receipt"));
   if (!verifyReceipt(intents.import_intent, imported) || !verifyReceipt(intents.export_intent, exported)) throw new Error("Receipt signature differs");
   const origin = exactOrigin(required(values, "origin"));
+  const frozen = exported.frozen_ref;
+  if (
+    !isObject(frozen) ||
+    !hex(frozen.freeze_id, 64) ||
+    !hex(frozen.freeze_revision, 64) ||
+    frozen.roots !== 0 ||
+    frozen.native_operations !== 0 ||
+    frozen.native_joins !== 0 ||
+    frozen.import_frames !== 0 ||
+    frozen.blocked !== 0
+  )
+    throw new Error("Export does not carry a zero-writer Frozen receipt");
   if (imported.origin !== origin || exported.origin !== origin) throw new Error("Receipt origin differs from the expected target");
   const summary = isObject(stage.summary) ? stage.summary : {};
   if (stage.kind !== "m20_stage_frames" || !Number.isSafeInteger(stage.frames) || !Number.isSafeInteger(summary.records) || Number(summary.records) < 0)
@@ -420,7 +455,7 @@ const verifyCommand = (values: Map<string, string>, privateInput: string | undef
   if (
     imported.v !== 1 ||
     imported.kind !== "state_transfer_import" ||
-    exported.v !== 1 ||
+    exported.v !== 2 ||
     exported.kind !== "state_transfer_export" ||
     imported.activation_authorized !== false ||
     exported.activation_authorized !== false

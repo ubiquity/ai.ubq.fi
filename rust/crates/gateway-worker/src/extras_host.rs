@@ -1,9 +1,7 @@
 //! Fixed M15 HTTP/AEAD capabilities over the original M14 dispatch reservation.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformHost, PlatformTokens},
     routing_host,
-    storage::now_ms,
     transport::{
         aead, body,
         outbound::{self, DispatchAttempt, PinnedDestination},
@@ -21,6 +19,8 @@ use gateway_routing_runtime::{
     extras::{AdmissionHandle, ChildScope, DispatchTicket},
     types::TransportState,
 };
+use gateway_worker_authority::client::RemoteAuthorityStore;
+use gateway_worker_storage::sqlite::now_ms;
 use serde_json::json;
 use std::{
     cell::{Cell, RefCell},

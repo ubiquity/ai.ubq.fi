@@ -26,3 +26,6 @@ path = "examples/state-transfer-fixture-frames.rs"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+gateway-authority-provisioning.workspace = true

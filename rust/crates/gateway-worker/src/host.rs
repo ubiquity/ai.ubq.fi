@@ -64,7 +64,7 @@ pub fn auth_config(env: &Env) -> AuthConfig {
 #[derive(Clone)]
 pub struct PlatformHost {
     pub cancellation: Rc<Cancellation>,
-    pub store: crate::authority::RemoteAuthorityStore,
+    pub store: gateway_worker_authority::client::RemoteAuthorityStore,
     pub env: Env,
     pub native: crate::native_host::NativeBindings,
     pub original: gateway_auth::types::AuthRequest,
@@ -88,7 +88,7 @@ impl TokenSource for PlatformTokens {
 pub struct PlatformClock;
 impl AuthorityClock for PlatformClock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
-        crate::storage::now_ms()
+        gateway_worker_storage::sqlite::now_ms()
     }
 }
 
@@ -136,7 +136,7 @@ impl AuthHost for PlatformHost {
     fn now_ms(&self) -> i64 {
         // The request checks this fallible clock first. If the platform clock
         // subsequently fails, the sentinel expires credentials rather than reusing old time.
-        crate::storage::now_ms().unwrap_or(i64::MAX)
+        gateway_worker_storage::sqlite::now_ms().unwrap_or(i64::MAX)
     }
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError> {
         random::random_bytes(length)

@@ -1,10 +1,11 @@
 //! Fixed reverse native protocols, authenticated against the common durable nonce authority.
+use gateway_worker_authority::client::RemoteAuthorityStore;
+use gateway_worker_storage::sqlite::now_ms;
+pub(crate) mod callback;
 pub(crate) mod import_dispatch;
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformTokens},
     native_host::NativeBindings,
-    storage::now_ms,
     transport::{HeaderLimits, body::request_bytes, bounded_headers, outbound::Cancellation},
 };
 use gateway_auth::{
@@ -124,6 +125,7 @@ pub async fn handle(
     mut request: Request,
     env: &Env,
     native: &NativeBindings,
+    store: &RemoteAuthorityStore,
 ) -> Result<Response, GatewayError> {
     if request.method() != Method::Post {
         return Err(GatewayError::new(
@@ -132,7 +134,7 @@ pub async fn handle(
             Some("method_not_allowed"),
         ));
     }
-    let transport = native.transport()?;
+    native.transport()?;
     let headers = Headers::read(&request)?;
     let incoming = Incoming(Cancellation::from_request(&request)?);
     let path = request.path();
@@ -143,25 +145,51 @@ pub async fn handle(
         gateway_auth::native_live::NATIVE_LIVE_AUTHORITY_MAX_BYTES
     };
     let bytes = request_bytes(&mut request, maximum).await?;
-    let store = RemoteAuthorityStore::from_env(env)?;
-    let replay = StoreNonceAuthority::new(&store);
+    let scoped = callback::join(store, native, &bytes).await?;
+    let frame = NativeFrame {
+        headers,
+        incoming,
+        path,
+        bytes,
+    };
+    let result = execute_frame(env, native, &scoped, &frame).await;
+    gateway_worker_authority::callbacks::finish(&scoped, result).await
+}
+struct NativeFrame {
+    headers: Headers,
+    incoming: Incoming,
+    path: String,
+    bytes: Vec<u8>,
+}
+async fn execute_frame(
+    env: &Env,
+    native: &NativeBindings,
+    store: &RemoteAuthorityStore,
+    frame: &NativeFrame,
+) -> Result<Response, GatewayError> {
+    let headers = &frame.headers;
+    let incoming = &frame.incoming;
+    let path = frame.path.as_str();
+    let bytes = frame.bytes.as_slice();
+    let transport = native.transport()?;
+    let replay = StoreNonceAuthority::new(store);
     let authority = Authority::with_clock(store.clone(), PlatformTokens, PlatformClock);
     let config = crate::host::auth_config(env);
     let now = now_ms()?;
     if path == gateway_auth::native_live::NATIVE_LIVE_AUTHORITY_PATH {
         let proof =
             gateway_auth::native_live::NativeLiveAuthenticator::new(&transport.identity, &replay)
-                .authenticate_authority(headers.borrowed(), &bytes, now)
+                .authenticate_authority(headers.borrowed(), bytes, now)
                 .await?;
         let receiver = gateway_authority::native_live::NativeLiveAuthority::configured(
             &authority,
             &transport.identity,
             &config,
         );
-        let (status, output) = result(receiver.execute(&proof, &bytes).await)?;
+        let (status, output) = result(receiver.execute(&proof, bytes).await)?;
         let mac = transport.identity.sign_live_authority_response(
             &headers.nonce,
-            &bytes,
+            bytes,
             status,
             &output,
         )?;
@@ -171,7 +199,7 @@ pub async fn handle(
             .authenticate(
                 NATIVE_RENEWAL_AUTHORITY_PATH,
                 headers.borrowed(),
-                &bytes,
+                bytes,
                 now,
             )
             .await?;
@@ -180,8 +208,9 @@ pub async fn handle(
             &proof,
             native,
             &config,
-            &incoming,
-            (&headers.nonce, &bytes),
+            incoming,
+            (&headers.nonce, bytes),
+            store,
         )
         .await?
         {
@@ -190,10 +219,10 @@ pub async fn handle(
         proof.require_request(
             NativeCapability::OwnerRenewal,
             NATIVE_RENEWAL_AUTHORITY_PATH,
-            &bytes,
+            bytes,
             now,
         )?;
-        let parsed = RenewalRequest::parse(&bytes)?;
+        let parsed = RenewalRequest::parse(bytes)?;
         let owners = native.renewal_owners()?;
         let owner = match &parsed {
             RenewalRequest::Claim { .. } => {
@@ -235,14 +264,14 @@ pub async fn handle(
             &transport.identity,
             owner,
             &config,
-            &incoming,
+            incoming,
         );
-        let output = execute_renewal(&receiver, &transport.identity, &replay, &bytes).await;
+        let output = execute_renewal(&receiver, &transport.identity, &replay, bytes, store).await;
         let (status, output) = result(output)?;
         let mac =
             transport
                 .identity
-                .sign_authority_response(&headers.nonce, &bytes, status, &output)?;
+                .sign_authority_response(&headers.nonce, bytes, status, &output)?;
         response(status, output, mac)
     }
 }
@@ -252,6 +281,7 @@ async fn execute_renewal<C: NativeRenewalCancellation>(
     identity: &gateway_auth::native_auth::NativeTransportIdentity,
     replay: &StoreNonceAuthority<'_, RemoteAuthorityStore>,
     bytes: &[u8],
+    store: &RemoteAuthorityStore,
 ) -> Result<RenewalResponse, GatewayError> {
     let request = RenewalRequest::parse(bytes)?;
     match request {
@@ -323,6 +353,18 @@ async fn execute_renewal<C: NativeRenewalCancellation>(
                 .resolve_claim(&operation_id, &claim_ref, None)
                 .await?;
             let receipt = receiver.published(&claim, &publication_revision).await?;
+            if matches!(
+                store.access(),
+                gateway_authority_provisioning::model::Access::Permit(_)
+            ) {
+                store
+                    .coordination(
+                        gateway_authority_provisioning::model::Operation::NativePublished {
+                            join: store.permit()?,
+                        },
+                    )
+                    .await?;
+            }
             Ok(RenewalResponse::Published {
                 v: 1,
                 publication_revision: receipt.publication_revision().into(),

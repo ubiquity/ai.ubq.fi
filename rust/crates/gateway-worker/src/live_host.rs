@@ -1,13 +1,11 @@
 //! Fixed live HTTP/stream adapter. Account and owner capabilities are request-owned.
+use gateway_worker_storage::sqlite::now_ms;
 mod account;
 pub(crate) mod body;
 mod health;
 mod platform;
 
-use crate::{
-    host::{PlatformClock, PlatformHost, PlatformTokens},
-    storage::now_ms,
-};
+use crate::host::{PlatformClock, PlatformHost, PlatformTokens};
 use gateway_auth::types::{AuthConfig, AuthMethod, AuthPrincipal, AuthRequest};
 use gateway_authority::{
     native_control::actor::{NativeRenewalActor, authenticate_client_actor},

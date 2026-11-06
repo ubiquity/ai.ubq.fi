@@ -2,6 +2,7 @@
 //! real staged protocol and a real SQLite authority store. Synthetic data only.
 #![cfg(all(unix, not(target_arch = "wasm32")))]
 use gateway_auth::crypto::sha256_hex;
+use gateway_authority_provisioning::intent::{Scope, token};
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, RecordKey, RecordMutation, RevisionCheck, StoredRecord,
 };
@@ -19,7 +20,6 @@ use gateway_state_reverse::reverse::{NoCustody, reverse};
 use gateway_state_transfer::http::{
     EXPORT_COUNT_HEADER, EXPORT_CURSOR_HEADER, EXPORT_SHA256_HEADER, Operation, Reply, handle,
 };
-use gateway_state_transfer::intent::{Scope, token};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fmt::Debug;

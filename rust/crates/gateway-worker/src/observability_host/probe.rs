@@ -40,7 +40,7 @@ fn probe(
     }
 }
 fn timeout(host: &RequestHost, deadline: i64) -> bool {
-    crate::storage::now_ms().map_or(true, |at| at >= deadline)
+    gateway_worker_storage::sqlite::now_ms().map_or(true, |at| at >= deadline)
         || host.platform.cancellation.signal().aborted()
 }
 fn codex_headers(account: &CodexSourceAccount) -> BTreeMap<String, String> {
@@ -65,7 +65,7 @@ impl RequestHost {
         headers: &BTreeMap<String, String>,
         deadline: i64,
     ) -> Result<Reply, GatewayError> {
-        let remaining = deadline.saturating_sub(crate::storage::now_ms()?);
+        let remaining = deadline.saturating_sub(gateway_worker_storage::sqlite::now_ms()?);
         if remaining <= 0 {
             return Err(unavailable("Observational GET deadline expired."));
         }
@@ -112,7 +112,7 @@ impl RequestHost {
         deadline: i64,
     ) -> Result<Reply, GatewayError> {
         // Same bounded observational phase as fixed_get; no account/credential refetch.
-        let remaining = deadline.saturating_sub(crate::storage::now_ms()?);
+        let remaining = deadline.saturating_sub(gateway_worker_storage::sqlite::now_ms()?);
         if remaining <= 0 {
             return Err(unavailable("Observational GET deadline expired."));
         }
@@ -185,7 +185,10 @@ impl RequestHost {
             .map_err(|_| unavailable("Metered account API returned an unreadable body."))?;
         let value = serde_json::from_slice(&bytes)
             .map_err(|_| unavailable("Metered account API returned invalid JSON."))?;
-        gateway_observability::metered::token_usage_state(&value, crate::storage::now_ms()?)?;
+        gateway_observability::metered::token_usage_state(
+            &value,
+            gateway_worker_storage::sqlite::now_ms()?,
+        )?;
         Ok(value)
     }
     async fn codex_probe(&self, accounts: &[CodexSourceAccount], deadline: i64) -> ActiveProbe {
@@ -312,7 +315,7 @@ impl RequestHost {
         &self,
         deadline: i64,
     ) -> Result<(Option<ActiveProbe>, Option<SourceJson>), GatewayError> {
-        let at = crate::storage::now_ms()?;
+        let at = gateway_worker_storage::sqlite::now_ms()?;
         let Some(roster) = claude::read_roster(&self.store, at).await? else {
             return Ok((None, None));
         };
@@ -380,9 +383,13 @@ impl RequestHost {
                 }),
             )
         });
-        if claude::current_binding(&self.store, &account, crate::storage::now_ms()?)
-            .await?
-            .is_none()
+        if claude::current_binding(
+            &self.store,
+            &account,
+            gateway_worker_storage::sqlite::now_ms()?,
+        )
+        .await?
+        .is_none()
         {
             return Ok((
                 Some(probe(
@@ -480,9 +487,10 @@ impl RequestHost {
             .fetch_bindings()
             .find(|b| b.source_slot() == account.slot && b.account_id() == account.account_id)
             .ok_or_else(|| unavailable("Capacity GET is outside its original source fence."))?;
-        let current = codex::read_codex_source_pool(&self.store, crate::storage::now_ms()?)
-            .await?
-            .ok_or_else(|| unavailable("Capacity source pool is unavailable."))?;
+        let current =
+            codex::read_codex_source_pool(&self.store, gateway_worker_storage::sqlite::now_ms()?)
+                .await?
+                .ok_or_else(|| unavailable("Capacity source pool is unavailable."))?;
         let current = current
             .pool
             .accounts
@@ -532,8 +540,9 @@ impl RequestHost {
 fn codex_health_event(status: u16, account: &CodexSourceAccount) -> HealthEvent {
     if status == 401
         || (status == 403
-            && codex::codex_access_expiry_ms(&account.access_token)
-                .is_some_and(|expiry| crate::storage::now_ms().is_ok_and(|at| expiry <= at as f64)))
+            && codex::codex_access_expiry_ms(&account.access_token).is_some_and(|expiry| {
+                gateway_worker_storage::sqlite::now_ms().is_ok_and(|at| expiry <= at as f64)
+            }))
     {
         HealthEvent::AuthInvalid
     } else if status == 429 {

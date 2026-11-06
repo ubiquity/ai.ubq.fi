@@ -153,8 +153,10 @@ fn served_by(model: &SourceJson, id: &str) -> bool {
         .and_then(source::array);
     rows.is_some_and(|rows| rows.iter().any(listed))
 }
-pub(super) async fn subscriptions(store: &crate::authority::RemoteAuthorityStore) -> Vec<Value> {
-    let Ok(at) = crate::storage::now_ms() else {
+pub(super) async fn subscriptions(
+    store: &gateway_worker_authority::client::RemoteAuthorityStore,
+) -> Vec<Value> {
+    let Ok(at) = gateway_worker_storage::sqlite::now_ms() else {
         return Vec::new();
     };
     let Ok(Some(pool)) =

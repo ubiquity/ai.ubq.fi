@@ -13,6 +13,9 @@ default = []
 entrypoint = []
 
 [dependencies]
+gateway-authority-provisioning.workspace = true
+gateway-worker-storage.workspace = true
+gateway-worker-authority.workspace = true
 gateway-worker = { path = "../gateway-worker", default-features = false }
 gateway-worker-fixture-setup.workspace = true
 gateway-core.workspace = true

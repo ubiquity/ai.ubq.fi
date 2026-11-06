@@ -36,12 +36,12 @@ pub struct NativeBindings {
 }
 
 type PlatformAuthority = gateway_authority::store::Authority<
-    crate::authority::RemoteAuthorityStore,
+    gateway_worker_authority::client::RemoteAuthorityStore,
     crate::host::PlatformTokens,
 >;
 type PlatformReceiver<'a> = NativeRenewalAuthority<
     'a,
-    crate::authority::RemoteAuthorityStore,
+    gateway_worker_authority::client::RemoteAuthorityStore,
     crate::host::PlatformTokens,
     PlatformHost,
 >;
@@ -133,9 +133,38 @@ impl NativeBindings {
         action: &gateway_authority::native_live::NativeLiveAction,
         platform: &PlatformHost,
     ) -> Result<crate::response::GatewayResponse, GatewayError> {
-        self.transport()?
-            .live_upgrade(action.action_ref(), platform)
-            .await
+        let transport = self.transport()?;
+        let capability =
+            gateway_auth::crypto::sha256_hex(crate::transport::random::opaque_token()?.as_bytes());
+        let child = platform
+            .store
+            .acquire(
+                gateway_authority_provisioning::model::Acquire {
+                    id: gateway_auth::crypto::sha256_hex(action.action_ref().as_bytes()),
+                    capability_sha256: gateway_auth::crypto::sha256_hex(capability.as_bytes()),
+                    kind: gateway_authority_provisioning::model::LeaseKind::NativeOperation(
+                        gateway_authority_provisioning::model::NativeBinding {
+                            operation_id: action.action_ref().into(),
+                            action_ref: action.action_ref().into(),
+                            owner_id: transport.identity.owner_id().into(),
+                            owner_epoch: transport.identity.owner_epoch().into(),
+                            key_fingerprint: transport.identity.key_fingerprint().into(),
+                        },
+                    ),
+                    parent: Some(platform.store.permit()?),
+                },
+                capability,
+            )
+            .await?;
+        let result = transport.live_upgrade(action.action_ref(), platform).await;
+        // The configured v2 carrier has no live capability. If enabled separately,
+        // post101 reverse writes lack a positive final acknowledgement and must block drain.
+        child
+            .finish_scope(Some(
+                gateway_authority_provisioning::model::Blocker::NativeEffectUnknown,
+            ))
+            .await?;
+        result
     }
 
     pub(crate) async fn refresh_routing(
@@ -263,7 +292,40 @@ impl NativeBindings {
                 action_ref: action.action_ref().to_owned(),
             },
         };
-        let response = self.renew(&envelope, platform).await?;
+        let capability =
+            gateway_auth::crypto::sha256_hex(crate::transport::random::opaque_token()?.as_bytes());
+        let native = self.transport_identity()?;
+        let child = platform
+            .store
+            .acquire(
+                gateway_authority_provisioning::model::Acquire {
+                    id: gateway_auth::crypto::sha256_hex(envelope.operation_id.as_bytes()),
+                    capability_sha256: gateway_auth::crypto::sha256_hex(capability.as_bytes()),
+                    kind: gateway_authority_provisioning::model::LeaseKind::NativeOperation(
+                        gateway_authority_provisioning::model::NativeBinding {
+                            operation_id: envelope.operation_id.clone(),
+                            action_ref: action.action_ref().into(),
+                            owner_id: native.owner_id().into(),
+                            owner_epoch: native.owner_epoch().into(),
+                            key_fingerprint: native.key_fingerprint().into(),
+                        },
+                    ),
+                    parent: Some(platform.store.permit()?),
+                },
+                capability,
+            )
+            .await?;
+        let response = match self.renew(&envelope, platform).await {
+            Ok(response) => response,
+            Err(error) => {
+                let _unconfirmed = child
+                    .finish_scope(Some(
+                        gateway_authority_provisioning::model::Blocker::NativeEffectUnknown,
+                    ))
+                    .await;
+                return Err(error);
+            }
+        };
         if !matches!(
             response.disposition,
             NativeControlDisposition::Published | NativeControlDisposition::AlreadyCurrent
@@ -277,9 +339,11 @@ impl NativeBindings {
             .publication_revision
             .as_deref()
             .ok_or_else(unverified)?;
-        receiver
+        let verified = receiver
             .verify_action_publication(action, &envelope.operation_id, publication)
-            .await
+            .await?;
+        child.finish_scope(None).await?;
+        Ok(verified)
     }
 
     pub async fn rpc(

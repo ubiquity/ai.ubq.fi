@@ -1,9 +1,7 @@
 //! Passive request-owned replay evidence. It never authorizes dispatch or settlement.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::PlatformHost,
     observability_host::{self, CaptureInput},
-    storage::now_ms,
     transport::outbound::Cancellation,
 };
 use futures_util::Stream;
@@ -27,6 +25,8 @@ use gateway_prompt_admission::{
 use gateway_providers::sse::{
     MAX_CHAT_EVENT_BYTES, MAX_RESPONSES_EVENT_BYTES, SseFrame, SseParser,
 };
+use gateway_worker_authority::client::RemoteAuthorityStore;
+use gateway_worker_storage::sqlite::now_ms;
 use std::{
     cell::{Cell, RefCell},
     pin::Pin,

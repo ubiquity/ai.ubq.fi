@@ -1,215 +1,29 @@
-//! Private Worker-binding protocol for the single coordination authority.
-//! The public router must never forward client requests to these store routes.
-
-use crate::{storage::SqliteAuthorityStore, transport::body::request_bytes};
-use futures_util::StreamExt;
+//! Private Durable Object composition. Public requests never forward this protocol.
+use crate::transport::body::request_bytes;
 use gateway_core::{
     error::GatewayError,
-    query::{QueryEntry, QueryPage, QueryRequest, QuerySelector, QueryStore},
+    query::{QueryRequest, QueryStore},
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
     },
 };
-use serde::{Deserialize, Serialize};
-use std::rc::Rc;
-use worker::{
-    DurableObject, Env, Headers, Method, Request, RequestInit, Response, State, Stub,
-    durable_object, js_sys::Uint8Array,
-};
-
-const WIRE_VERSION_HEADER: &str = "x-uos-authority-wire-version";
-const WIRE_VERSION: &str = "1";
-const WIRE_URL: &str = "https://authority.internal/v1/store";
-const WIRE_MAX_BYTES: usize = 32 * 1024 * 1024;
-const AUTHORITY_OBJECT: &str = "gateway-authority-v1";
-
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
-enum StoreRequest {
-    ProfileMigration {
-        request: ProfileMigration,
-        request_id: String,
-        now_ms: i64,
-    },
-    Read {
-        key: String,
-    },
-    Commit {
-        checks: Vec<WireCheck>,
-        mutations: Vec<WireMutation>,
-    },
-    Query {
-        selector: WireSelector,
-        reverse: bool,
-        limit: u32,
-        cursor: Option<String>,
-        now_ms: i64,
-    },
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum ProfileMigration {
-    Import {
-        ndjson: String,
-        profile: ProfileKind,
-        include_cache: bool,
-        include_legacy: bool,
-        overwrite: bool,
-        dry_run: bool,
-    },
-    Validate,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ProfileKind {
-    Local,
-    Prod,
-}
-impl From<gateway_admin_runtime::capabilities::MigrationRequest> for ProfileMigration {
-    fn from(request: gateway_admin_runtime::capabilities::MigrationRequest) -> Self {
-        use gateway_admin_runtime::capabilities::{MigrationProfile, MigrationRequest};
-        match request {
-            MigrationRequest::Validate => Self::Validate,
-            MigrationRequest::Import(value) => Self::Import {
-                ndjson: value.ndjson,
-                profile: match value.profile {
-                    MigrationProfile::Local => ProfileKind::Local,
-                    MigrationProfile::Prod => ProfileKind::Prod,
-                },
-                include_cache: value.include_cache,
-                include_legacy: value.include_legacy,
-                overwrite: value.overwrite,
-                dry_run: value.dry_run,
-            },
-        }
-    }
-}
-impl From<ProfileMigration> for gateway_admin_runtime::capabilities::MigrationRequest {
-    fn from(request: ProfileMigration) -> Self {
-        use gateway_admin_runtime::capabilities::{
-            MigrationImport, MigrationProfile, MigrationRequest,
-        };
-        match request {
-            ProfileMigration::Validate => MigrationRequest::Validate,
-            ProfileMigration::Import {
-                ndjson,
-                profile,
-                include_cache,
-                include_legacy,
-                overwrite,
-                dry_run,
-            } => MigrationRequest::Import(MigrationImport {
-                ndjson,
-                profile: match profile {
-                    ProfileKind::Local => MigrationProfile::Local,
-                    ProfileKind::Prod => MigrationProfile::Prod,
-                },
-                include_cache,
-                include_legacy,
-                overwrite,
-                dry_run,
-            }),
-        }
-    }
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum WireSelector {
-    Prefix {
-        prefix: String,
-        start: Option<String>,
-        end: Option<String>,
-    },
-    Range {
-        start: String,
-        end: String,
-    },
-}
-
-impl From<QuerySelector> for WireSelector {
-    fn from(value: QuerySelector) -> Self {
-        match value {
-            QuerySelector::Prefix { prefix, start, end } => Self::Prefix {
-                prefix: prefix.0,
-                start: start.map(|key| key.0),
-                end: end.map(|key| key.0),
-            },
-            QuerySelector::Range { start, end } => Self::Range {
-                start: start.0,
-                end: end.0,
-            },
-        }
-    }
-}
-
-impl From<WireSelector> for QuerySelector {
-    fn from(value: WireSelector) -> Self {
-        match value {
-            WireSelector::Prefix { prefix, start, end } => Self::Prefix {
-                prefix: RecordKey(prefix),
-                start: start.map(RecordKey),
-                end: end.map(RecordKey),
-            },
-            WireSelector::Range { start, end } => Self::Range {
-                start: RecordKey(start),
-                end: RecordKey(end),
-            },
-        }
-    }
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct WireEntry {
-    key: String,
-    record: StoredRecord,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct WireCheck {
-    key: String,
-    expected_revision: Option<String>,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
-enum WireMutation {
-    Put { key: String, record: StoredRecord },
-    Delete { key: String },
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
-enum StoreResponse {
-    ProfileMigration {
-        status: u16,
-        headers: std::collections::BTreeMap<String, String>,
-        body: gateway_core::source_json::SourceJson,
-    },
-    Read {
-        record: Option<StoredRecord>,
-    },
-    Commit {
-        committed: bool,
-    },
-    Query {
-        entries: Vec<WireEntry>,
-        next_cursor: Option<String>,
-    },
-}
-
+use gateway_worker_authority::wire::*;
+use gateway_worker_storage::sqlite::SqliteAuthorityStore;
+use worker::{DurableObject, Env, Method, Request, Response, State, durable_object};
 #[durable_object]
 pub struct GatewayAuthority {
     state: State,
+    ingress: bool,
+    waiters: std::rc::Rc<std::cell::RefCell<Vec<std::rc::Weak<DrainWaiter>>>>,
 }
 
 impl DurableObject for GatewayAuthority {
-    fn new(state: State, _env: Env) -> Self {
-        Self { state }
+    fn new(state: State, env: Env) -> Self {
+        Self {
+            state,
+            ingress: !crate::host::auth_config(&env).auth_tokens.is_empty(),
+            waiters: Default::default(),
+        }
     }
 
     async fn fetch(&self, mut request: Request) -> worker::Result<Response> {
@@ -219,18 +33,63 @@ impl DurableObject for GatewayAuthority {
         if request.method() != Method::Post {
             return Response::error("Method not allowed", 405);
         }
-        if request.headers().get(WIRE_VERSION_HEADER)?.as_deref() != Some(WIRE_VERSION) {
+        let version = request.headers().get(WIRE_VERSION_HEADER)?;
+        if !matches!(version.as_deref(), Some("1" | "2")) {
             return error_response(&GatewayError::unavailable(
                 "The authority protocol version is unsupported.",
                 "authority_wire_version_unsupported",
             ));
         }
+        let bytes = match request_bytes(&mut request, WIRE_MAX_BYTES).await {
+            Ok(bytes) => bytes,
+            Err(error) => return error_response(&error),
+        };
+        if version.as_deref() == Some("2") {
+            if let Ok(Envelope {
+                access: _,
+                request:
+                    StoreRequest::Coordination {
+                        request:
+                            gateway_authority_provisioning::model::Operation::AwaitFrozen {
+                                reference_id,
+                            },
+                    },
+            }) = serde_json::from_slice(&bytes)
+            {
+                return self.await_response(reference_id).await;
+            }
+        }
         let result = async {
-            let bytes = request_bytes(&mut request, WIRE_MAX_BYTES).await?;
-            let message: StoreRequest = serde_json::from_slice(&bytes)
-                .map_err(|_| unavailable("authority_wire_invalid"))?;
-            let store = SqliteAuthorityStore::open(self.state.storage()).await?;
+            let (access, message) = if version.as_deref() == Some("1") {
+                (
+                    gateway_authority_provisioning::model::Access::Legacy,
+                    serde_json::from_slice(&bytes)
+                        .map_err(|_| unavailable("authority_wire_invalid"))?,
+                )
+            } else {
+                let envelope: Envelope = serde_json::from_slice(&bytes)
+                    .map_err(|_| unavailable("authority_wire_invalid"))?;
+                (envelope.access, envelope.request)
+            };
+            let identity = gateway_authority_provisioning::model::Identity {
+                object_id: self.state.id().to_string(),
+                source_sha: env!("UOS_RUST_BUILD_GIT_SHA").into(),
+                source_tree: env!("UOS_RUST_BUILD_GIT_TREE").into(),
+            };
+            let store =
+                SqliteAuthorityStore::open(self.state.storage(), identity, access, self.ingress)
+                    .await?;
             match message {
+                StoreRequest::Coordination { request } => {
+                    let reply = gateway_worker_storage::drain::execute(
+                        self.state.storage(),
+                        request,
+                        self.ingress,
+                    )
+                    .await?;
+                    self.notify(&reply);
+                    Ok(StoreResponse::Coordination { reply })
+                }
                 StoreRequest::ProfileMigration {
                     request,
                     request_id,
@@ -327,224 +186,128 @@ impl DurableObject for GatewayAuthority {
     }
 }
 
-#[derive(Clone)]
-pub struct RemoteAuthorityStore {
-    stub: Rc<Stub>,
-}
-
-impl RemoteAuthorityStore {
-    pub fn from_env(env: &Env) -> Result<Self, GatewayError> {
-        let namespace = env
-            .durable_object("AUTHORITY")
-            .map_err(|_| unavailable("authority_binding_unavailable"))?;
-        let stub = namespace
-            .id_from_name(AUTHORITY_OBJECT)
-            .and_then(|id| id.get_stub())
-            .map_err(|_| unavailable("authority_binding_unavailable"))?;
-        Ok(Self {
-            stub: Rc::new(stub),
-        })
-    }
-
-    pub(crate) async fn profile_migration(
-        &self,
-        request: gateway_admin_runtime::capabilities::MigrationRequest,
-        context: gateway_admin_runtime::capabilities::Context,
-    ) -> Result<gateway_auth::types::AuthResponse, GatewayError> {
-        match self
-            .exchange(StoreRequest::ProfileMigration {
-                request: request.into(),
-                request_id: context.request_id,
-                now_ms: context.now_ms,
-            })
-            .await?
-        {
-            StoreResponse::ProfileMigration {
-                status,
-                headers,
-                body,
-            } => {
-                let mut response = gateway_auth::types::AuthResponse::source_json(status, body);
-                response.headers = headers;
-                Ok(response)
-            }
-            _ => Err(unavailable("authority_wire_invalid")),
-        }
-    }
-
-    async fn exchange(&self, message: StoreRequest) -> Result<StoreResponse, GatewayError> {
-        let bytes =
-            serde_json::to_vec(&message).map_err(|_| unavailable("authority_wire_invalid"))?;
-        if bytes.len() > WIRE_MAX_BYTES {
-            return Err(unavailable("authority_wire_too_large"));
-        }
-        let headers = Headers::new();
-        headers
-            .set("Content-Type", "application/json")
-            .map_err(|_| unavailable("authority_wire_invalid"))?;
-        headers
-            .set(WIRE_VERSION_HEADER, WIRE_VERSION)
-            .map_err(|_| unavailable("authority_wire_invalid"))?;
-        let mut init = RequestInit::new();
-        init.with_method(Method::Post)
-            .with_headers(headers)
-            .with_body(Some(Uint8Array::from(bytes.as_slice()).into()));
-        let request = Request::new_with_init(WIRE_URL, &init)
-            .map_err(|_| unavailable("authority_wire_invalid"))?;
-        let mut response = self
-            .stub
-            .fetch_with_request(request)
-            .await
-            .map_err(|_| unavailable("authority_storage_unavailable"))?;
-        if response.status_code() != 200
-            || response
-                .headers()
-                .get(WIRE_VERSION_HEADER)
-                .map_err(|_| unavailable("authority_wire_invalid"))?
-                .as_deref()
-                != Some(WIRE_VERSION)
-        {
-            return Err(unavailable("authority_storage_unavailable"));
-        }
-        let mut stream = response
-            .stream()
-            .map_err(|_| unavailable("authority_wire_invalid"))?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|_| unavailable("authority_storage_unavailable"))?;
-            if bytes
-                .len()
-                .checked_add(chunk.len())
-                .is_none_or(|size| size > WIRE_MAX_BYTES)
-            {
-                return Err(unavailable("authority_wire_too_large"));
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice(&bytes).map_err(|_| unavailable("authority_wire_invalid"))
-    }
-}
-
-impl AuthorityStore for RemoteAuthorityStore {
-    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
-        match self
-            .exchange(StoreRequest::Read { key: key.0.clone() })
-            .await?
-        {
-            StoreResponse::Read { record } => {
-                if let Some(record) = &record {
-                    record.validate_version()?;
-                }
-                Ok(record)
-            }
-            _ => Err(unavailable("authority_wire_invalid")),
-        }
-    }
-
-    async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
-        let checks = transition
-            .checks
-            .into_iter()
-            .map(|check| WireCheck {
-                key: check.key.0,
-                expected_revision: check.expected_revision,
-            })
-            .collect();
-        let mutations = transition
-            .mutations
-            .into_iter()
-            .map(|mutation| match mutation {
-                RecordMutation::Put { key, record } => WireMutation::Put { key: key.0, record },
-                RecordMutation::Delete { key } => WireMutation::Delete { key: key.0 },
-            })
-            .collect();
-        match self
-            .exchange(StoreRequest::Commit { checks, mutations })
-            .await?
-        {
-            StoreResponse::Commit { committed } => Ok(if committed {
-                CommitOutcome::Committed
-            } else {
-                CommitOutcome::Conflict
-            }),
-            _ => Err(unavailable("authority_wire_invalid")),
-        }
-    }
-}
-
-impl QueryStore for RemoteAuthorityStore {
-    async fn query(&self, request: QueryRequest) -> Result<QueryPage, GatewayError> {
-        let validated = request.validate()?;
-        let QueryRequest {
-            selector,
-            reverse,
-            limit,
-            cursor,
-            now_ms,
-        } = request;
-        match self
-            .exchange(StoreRequest::Query {
-                selector: selector.into(),
-                reverse,
-                limit,
-                cursor,
-                now_ms,
-            })
-            .await?
-        {
-            StoreResponse::Query {
-                entries,
-                next_cursor,
-            } => {
-                if entries.len() > limit as usize {
-                    return Err(unavailable("authority_wire_invalid"));
-                }
-                let entries = entries
-                    .into_iter()
-                    .map(|entry| QueryEntry {
-                        key: RecordKey(entry.key),
-                        record: entry.record,
-                    })
-                    .collect::<Vec<_>>();
-                let mut previous = None;
-                for entry in &entries {
-                    if !validated.accepts_record(&entry.key, &entry.record)? {
-                        return Err(unavailable("authority_wire_invalid"));
-                    }
-                    let tuple = gateway_core::tuple_key::TupleKey::from_record_key(&entry.key)?;
-                    if previous.as_ref().is_some_and(|old| {
-                        if reverse {
-                            tuple >= *old
-                        } else {
-                            tuple <= *old
-                        }
-                    }) {
-                        return Err(unavailable("authority_wire_invalid"));
-                    }
-                    previous = Some(tuple);
-                }
-                if let Some(cursor) = &next_cursor {
-                    let last = entries
-                        .last()
-                        .ok_or_else(|| unavailable("authority_wire_invalid"))?;
-                    if validated.cursor_after(&last.key)? != *cursor {
-                        return Err(unavailable("authority_wire_invalid"));
-                    }
-                }
-                Ok(QueryPage {
-                    entries,
-                    next_cursor,
-                })
-            }
-            _ => Err(unavailable("authority_wire_invalid")),
-        }
-    }
-}
-
 fn error_response(error: &GatewayError) -> worker::Result<Response> {
     Ok(Response::from_json(&error.envelope)?.with_status(error.status))
 }
-
 fn unavailable(code: &str) -> GatewayError {
     GatewayError::unavailable("The shared coordination authority is unavailable.", code)
+}
+
+struct DrainWaiter {
+    id: String,
+    reply: std::cell::RefCell<Option<gateway_authority_provisioning::model::Reply>>,
+    waker: futures_util::task::AtomicWaker,
+}
+impl GatewayAuthority {
+    fn notify(&self, reply: &gateway_authority_provisioning::model::Reply) {
+        use gateway_authority_provisioning::model::{Phase, Reply};
+        let reference = match reply {
+            Reply::Frozen { reference } => Some(reference),
+            Reply::Status { status } | Reply::Finished { status, .. }
+                if status.gate.phase == Phase::Frozen =>
+            {
+                status.gate.frozen.as_ref()
+            }
+            _ => None,
+        };
+        let Some(reference) = reference else {
+            return;
+        };
+        self.waiters.borrow_mut().retain(|weak| {
+            let Some(waiter) = weak.upgrade() else {
+                return false;
+            };
+            if waiter.id != reference.freeze_id {
+                return true;
+            }
+            *waiter.reply.borrow_mut() = Some(Reply::Frozen {
+                reference: reference.clone(),
+            });
+            waiter.waker.wake();
+            false
+        });
+    }
+    async fn await_response(&self, id: String) -> worker::Result<Response> {
+        use gateway_authority_provisioning::model::{Operation, Phase, Reply};
+        let waiter = std::rc::Rc::new(DrainWaiter {
+            id: id.clone(),
+            reply: Default::default(),
+            waker: Default::default(),
+        });
+        {
+            let mut waiters = self.waiters.borrow_mut();
+            waiters.retain(|value| value.strong_count() != 0);
+            if waiters.len() >= 64 {
+                return Response::error("Drain waiter capacity is full", 503);
+            }
+            waiters.push(std::rc::Rc::downgrade(&waiter));
+        }
+        let status = gateway_worker_storage::drain::execute(
+            self.state.storage(),
+            Operation::Status,
+            self.ingress,
+        )
+        .await
+        .map_err(|error| worker::Error::RustError(error.envelope.error.message))?;
+        let Reply::Status { status } = status else {
+            return Response::error("Drain status is invalid", 503);
+        };
+        if status.gate.phase == Phase::Frozen
+            && status
+                .gate
+                .frozen
+                .as_ref()
+                .is_some_and(|value| value.freeze_id == id)
+        {
+            *waiter.reply.borrow_mut() = Some(Reply::Frozen {
+                reference: status
+                    .gate
+                    .frozen
+                    .clone()
+                    .ok_or_else(|| worker::Error::RustError("Frozen receipt absent".into()))?,
+            });
+        } else if status.gate.phase != Phase::Draining
+            || status.gate.drain_digest.as_deref() != Some(id.as_str())
+        {
+            return Response::error("Drain identity is stale", 409);
+        }
+        let storage = self.state.storage();
+        let ingress = self.ingress;
+        let stream = futures_util::stream::once(async move {
+            let notified = std::future::poll_fn(|cx| {
+                waiter.waker.register(cx.waker());
+                waiter
+                    .reply
+                    .borrow_mut()
+                    .take()
+                    .map_or(std::task::Poll::Pending, std::task::Poll::Ready)
+            });
+            let deadline = worker::Delay::from(std::time::Duration::from_millis(300_000));
+            let reply = match futures_util::future::select(Box::pin(notified), Box::pin(deadline))
+                .await
+            {
+                futures_util::future::Either::Left((reply, _)) => reply,
+                futures_util::future::Either::Right(_) => {
+                    let latest =
+                        gateway_worker_storage::drain::execute(storage, Operation::Status, ingress)
+                            .await
+                            .map_err(|error| {
+                                worker::Error::RustError(error.envelope.error.message)
+                            })?;
+                    let Reply::Status { status } = latest else {
+                        return Err(worker::Error::RustError("Drain status unavailable".into()));
+                    };
+                    Reply::DrainTimeout { status }
+                }
+            };
+            serde_json::to_vec(&StoreResponse::Coordination { reply })
+                .map_err(|error| worker::Error::RustError(error.to_string()))
+        });
+        let mut response = Response::from_stream(stream)?;
+        response.headers_mut().set("Cache-Control", "no-store")?;
+        response
+            .headers_mut()
+            .set(WIRE_VERSION_HEADER, WIRE_VERSION)?;
+        Ok(response)
+    }
 }

@@ -1,8 +1,6 @@
 //! Fixed catalog reads bound to credential-owner publications and source revisions.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformHost, provider_secret, response_bytes},
-    storage::now_ms,
     transport::{
         outbound::{PinnedDestination, send_http},
         random,
@@ -17,6 +15,8 @@ use gateway_core::{
     error::GatewayError,
     state::{AuthorityStore, RevisionCheck},
 };
+use gateway_worker_authority::client::RemoteAuthorityStore;
+use gateway_worker_storage::sqlite::now_ms;
 use std::{collections::BTreeMap, future::Future, rc::Rc};
 use worker::{Env, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Url};
 
@@ -96,9 +96,16 @@ impl Host {
         let mut host = self.clone();
         host.platform.cancellation = Rc::new(cancellation);
         let work = work(host);
+        let Ok(writer) = self.store.writer() else {
+            self.store.required_failure();
+            return false;
+        };
         self.context.wait_until(async move {
             if let Err(error) = work.await {
                 report(&error);
+            }
+            if let Some(writer) = writer {
+                writer.complete();
             }
         });
         true

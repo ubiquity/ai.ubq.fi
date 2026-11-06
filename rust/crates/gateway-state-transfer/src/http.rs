@@ -2,8 +2,8 @@
 //! token first, bounds the body, then passes the raw intent header and setting.
 use crate::export::{ExportRequest, export_page};
 use crate::import::{import, status};
-use crate::intent::Intent;
 use crate::refused;
+use gateway_authority_provisioning::intent::Intent;
 use gateway_core::error::GatewayError;
 use gateway_core::query::QueryStore;
 use gateway_migration::staged::{STAGED_BATCH_MAX_BYTES, decode_stage_request};
@@ -21,6 +21,7 @@ pub enum Operation {
     ImportStatus,
     ImportFrame,
     ExportPage,
+    Control,
 }
 
 pub fn operation(method: &str, path: &str) -> Option<Operation> {
@@ -28,6 +29,7 @@ pub fn operation(method: &str, path: &str) -> Option<Operation> {
         ("GET", IMPORT_PATH) => Some(Operation::ImportStatus),
         ("POST", IMPORT_PATH) => Some(Operation::ImportFrame),
         ("POST", EXPORT_PATH) => Some(Operation::ExportPage),
+        ("POST", "/admin/state-transfer/control") => Some(Operation::Control),
         _ => None,
     }
 }
@@ -63,6 +65,7 @@ pub async fn handle<S: QueryStore>(
         ));
     }
     match operation {
+        Operation::Control => Err(refused("Control requires its trusted host composition")),
         Operation::ImportStatus => {
             intent.import_capture()?;
             json(&status(store).await?)
@@ -75,11 +78,15 @@ pub async fn handle<S: QueryStore>(
             intent.require_export()?;
             let request: ExportRequest = serde_json::from_slice(body)
                 .map_err(|_| refused("Export page request is invalid"))?;
+            let freeze_id = request.freeze_id.clone();
+            let freeze_revision = request.freeze_revision.clone();
             let page = export_page(store, request).await?;
             let mut headers = vec![
                 ("content-type", "application/json".to_owned()),
                 (EXPORT_SHA256_HEADER, page.sha256),
                 (EXPORT_COUNT_HEADER, page.count.to_string()),
+                ("x-uos-state-export-freeze-id", freeze_id),
+                ("x-uos-state-export-freeze-revision", freeze_revision),
             ];
             if let Some(cursor) = page.next_cursor {
                 headers.push((EXPORT_CURSOR_HEADER, cursor));

@@ -13,6 +13,8 @@ pub const EXPORT_PAGE_MAX_BYTES: usize = 8 * 1024 * 1024;
 #[serde(deny_unknown_fields)]
 pub struct ExportRequest {
     pub v: u32,
+    pub freeze_id: String,
+    pub freeze_revision: String,
     pub cursor: Option<String>,
     pub limit: u32,
 }
@@ -35,7 +37,11 @@ pub async fn export_page<S: QueryStore>(
     store: &S,
     request: ExportRequest,
 ) -> Result<ExportPage, GatewayError> {
-    if request.v != 1 || !(1..=EXPORT_PAGE_LIMIT).contains(&request.limit) {
+    if request.v != 2
+        || !gateway_authority_provisioning::policy::hex(&request.freeze_id, 64)
+        || !gateway_authority_provisioning::policy::hex(&request.freeze_revision, 64)
+        || !(1..=EXPORT_PAGE_LIMIT).contains(&request.limit)
+    {
         return Err(refused("Export page request is invalid"));
     }
     if store.read(&progress_key()).await?.is_some() {

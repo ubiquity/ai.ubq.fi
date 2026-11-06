@@ -11,7 +11,6 @@
 pub mod export;
 pub mod http;
 pub mod import;
-pub mod intent;
 
 use gateway_core::error::GatewayError;
 use gateway_core::state::RecordKey;

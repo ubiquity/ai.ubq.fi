@@ -1,6 +1,5 @@
 //! Actual local builder, earlier response selection and original-admission fallback.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformHost, PlatformTokens},
     inference_capture::Capture,
     inference_lifecycle::Session,
@@ -20,6 +19,7 @@ use gateway_routing_runtime::{
     types::RoutingError,
 };
 use gateway_schema::source_request::SourceRequestDocument;
+use gateway_worker_authority::client::RemoteAuthorityStore;
 use std::{
     cell::{Cell, RefCell},
     future::{Future, poll_fn},
@@ -66,6 +66,8 @@ pub(crate) async fn start(
     });
     let receiver = Receiver(slot.clone());
     let tasks = context.clone();
+    let writer = store.writer()?;
+    let observer = store.clone();
     context.wait_until(async move {
         let result = start_inner(
             metadata,
@@ -79,12 +81,20 @@ pub(crate) async fn start(
         .await;
         if !slot.waiting.get() {
             if let Ok(Start::Ordinary(session)) = result {
-                let _cleanup = session.finish(Default::default()).await;
+                if session.finish(Default::default()).await.is_err() {
+                    observer.required_failure();
+                }
+            }
+            if let Some(writer) = writer {
+                writer.complete();
             }
             return;
         }
         *slot.value.borrow_mut() = Some(result.map(|route| Started { route, permit }));
         slot.waker.wake();
+        if let Some(writer) = writer {
+            writer.complete();
+        }
     });
     poll_fn(|cx| {
         receiver.0.waker.register(cx.waker());
@@ -245,10 +255,11 @@ async fn finish(
     permit: Option<gateway_admission::Permit>,
 ) -> Result<Response, RoutingError> {
     if selected.take_early_accounting_error().is_some() {
+        host.store.required_failure();
         worker::console_error!("Source unused quota release cleanup remains unresolved.");
     }
     let decision = selected.take_wire_decision();
-    let lifecycle = LocalLifecycle::new(selected, permit);
+    let lifecycle = LocalLifecycle::new(selected, permit, host.store.clone());
     let Some(decision) = decision else {
         lifecycle.wrapper_failed(&context);
         return Err(wrapper_error());

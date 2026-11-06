@@ -32,6 +32,9 @@ members = [
   "crates/gateway-native-runtime",
   "crates/gateway-native-supervisor-read",
   "crates/gateway-live-runtime",
+  "crates/gateway-authority-provisioning",
+  "crates/gateway-worker-authority",
+  "crates/gateway-worker-storage",
   "crates/gateway-worker",
   "crates/gateway-capacity-recovery",
   "crates/gateway-worker-fixture",
@@ -97,6 +100,10 @@ gateway-extras-runtime-test-support = { path = "crates/gateway-extras-runtime-te
 gateway-migration-test-support = { path = "crates/gateway-migration-test-support" }
 gateway-state-transfer = { path = "crates/gateway-state-transfer" }
 gateway-state-reverse = { path = "crates/gateway-state-reverse" }
+
+gateway-authority-provisioning = { path = "crates/gateway-authority-provisioning" }
+gateway-worker-authority = { path = "crates/gateway-worker-authority" }
+gateway-worker-storage = { path = "crates/gateway-worker-storage" }
 
 [profile.dev]
 opt-level = 0

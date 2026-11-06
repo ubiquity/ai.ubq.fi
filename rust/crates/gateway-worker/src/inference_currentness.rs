@@ -1,7 +1,6 @@
 //! Invocation-owned observation and renewal of one original ordinary admission.
 use crate::{
     inference_lifecycle::Session,
-    storage::now_ms,
     transport::outbound::{Cancellation, Deadline},
 };
 use futures_util::{
@@ -14,6 +13,7 @@ use gateway_routing_runtime::{
     local_work::KERNEL_RENEWAL_INTERVAL_MS,
     types::RoutingError,
 };
+use gateway_worker_storage::sqlite::now_ms;
 use std::{
     cell::{Cell, RefCell},
     future::poll_fn,
@@ -127,6 +127,7 @@ impl CurrentnessGuard {
         session: Rc<Session>,
         cancellation: Rc<Cancellation>,
         context: Rc<Context>,
+        store: gateway_worker_authority::client::RemoteAuthorityStore,
     ) -> Result<Self, RoutingError> {
         let lease = session.currentness().checkpoint().await?;
         if lease.state() != RoutingLeaseState::Live {
@@ -145,6 +146,7 @@ impl CurrentnessGuard {
         let mut next = now_ms()?
             .checked_add(KERNEL_RENEWAL_INTERVAL_MS)
             .ok_or_else(unavailable)?;
+        let writer = store.writer()?;
         context.wait_until(async move {
             while !state.stopped.get() {
                 let delay = match now_ms().and_then(|now| timer_delay(next, now)) {
@@ -197,6 +199,9 @@ impl CurrentnessGuard {
                         next.saturating_add(KERNEL_RENEWAL_INTERVAL_MS)
                     }
                 };
+            }
+            if let Some(writer) = writer {
+                writer.complete();
             }
         });
         Ok(guard)

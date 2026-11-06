@@ -6,7 +6,6 @@ use super::{
 use crate::inference_source::{abort_frame, stream_failure};
 use crate::inference_wire::chat_wire_terminal;
 use crate::provider_error::cerebras_error_body;
-use crate::storage::now_ms;
 use crate::transport::stream::FinishHook;
 use crate::transport::{body, stream::ObservedStream};
 use crate::{
@@ -28,6 +27,7 @@ use gateway_providers::{
     types::{ClientSurface, DecodePlan, ProviderEvent, ResponseDecode},
 };
 use gateway_routing_runtime::types::PreparedWireRequest;
+use gateway_worker_storage::sqlite::now_ms;
 use std::{collections::VecDeque, rc::Rc};
 use worker::{Response, ResponseBody};
 pub(super) struct Relay {
@@ -138,7 +138,7 @@ impl Relay {
                 &self.lifecycle.attempt,
                 &output,
                 &native,
-                crate::storage::now_ms().unwrap_or(i64::MAX),
+                gateway_worker_storage::sqlite::now_ms().unwrap_or(i64::MAX),
             );
         }
         if terminal.is_some() {

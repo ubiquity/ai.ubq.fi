@@ -31,7 +31,9 @@ fn oversized_pages_trim_and_resume_after_the_last_returned_key() -> Result<(), S
     let mut keys = Vec::new();
     loop {
         let request = ExportRequest {
-            v: 1,
+            v: 2,
+            freeze_id: "1".repeat(64),
+            freeze_revision: "2".repeat(64),
             cursor: cursor.take(),
             limit: 256,
         };
@@ -54,7 +56,9 @@ fn oversized_pages_trim_and_resume_after_the_last_returned_key() -> Result<(), S
     unique.dedup();
     assert_eq!(unique.len(), 5);
     let bad = ExportRequest {
-        v: 1,
+        v: 2,
+        freeze_id: "1".repeat(64),
+        freeze_revision: "2".repeat(64),
         cursor: None,
         limit: 0,
     };

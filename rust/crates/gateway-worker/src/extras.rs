@@ -1,12 +1,10 @@
 //! Actual fixed embeddings/jobs/SystemOne routes; M15 owns their source behavior.
 use crate::{
-    authority::RemoteAuthorityStore,
     catalog::CatalogState,
     extras_host::Host,
     host::{PlatformClock, PlatformHost, PlatformTokens},
     inference::RequestResources,
     routing_host,
-    storage::now_ms,
     transport::{
         body,
         stream::{FinishHook, ObservationHandle, ObservedStream},
@@ -27,6 +25,8 @@ use gateway_extras_runtime::{
 };
 use gateway_providers::types::ClientSurface;
 use gateway_routing_runtime::{extras::ExtrasFamily, session::RoutingSession, types::RoutingInput};
+use gateway_worker_authority::client::RemoteAuthorityStore;
+use gateway_worker_storage::sqlite::now_ms;
 use std::rc::Rc;
 use worker::{Method, Request, Response};
 
@@ -155,6 +155,8 @@ pub async fn run(
     if let Some(terminal) = result.semantic_terminal {
         observation.semantic_terminal(terminal);
     }
+    let writer = platform.store.writer()?;
+    let tracking = platform.store.clone();
     let finish: FinishHook = Box::new(move |observation| {
         Box::pin(async move {
             if let Err(error) = runtime
@@ -163,12 +165,16 @@ pub async fn run(
                 .finish(observation, kernel, reason)
                 .await
             {
+                tracking.required_failure();
                 worker::console_error!(
                     "Durable extras settlement remains pending: {}",
                     error.error.envelope.error.message
                 );
             }
             drop(permit);
+            if let Some(writer) = writer {
+                writer.complete();
+            }
         })
     });
     render_response(

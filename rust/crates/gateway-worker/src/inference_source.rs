@@ -64,7 +64,7 @@ fn mint() -> Result<(String, i64), GatewayError> {
     let id = crate::transport::random::random_uuid()?.replace('-', "");
     Ok((
         format!("resp_{id}"),
-        crate::storage::now_ms()?.div_euclid(1000),
+        gateway_worker_storage::sqlite::now_ms()?.div_euclid(1000),
     ))
 }
 pub(crate) async fn error_response(

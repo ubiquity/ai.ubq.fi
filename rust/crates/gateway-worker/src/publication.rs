@@ -1,12 +1,10 @@
 //! Raw adapter for the fixed private route; all publication policy is shared.
-use crate::{
-    authority::RemoteAuthorityStore,
-    transport::{HeaderLimits, body::request_bytes, bounded_headers},
-};
+use crate::transport::{HeaderLimits, body::request_bytes, bounded_headers};
 use gateway_auth::native::NATIVE_MAX_BODY_BYTES;
 use gateway_core::error::GatewayError;
 use gateway_publication_policy::protocol::{OwnedNativeAuthHeaders, PublicationRequest};
 use gateway_publication_transport::transport::PublicationReceiver;
+use gateway_worker_authority::client::RemoteAuthorityStore;
 use worker::{Env, Request, Response};
 
 pub async fn handle(
@@ -14,6 +12,7 @@ pub async fn handle(
     env: &Env,
     receiver: Option<&PublicationReceiver>,
     native: &crate::native_host::NativeBindings,
+    store: &RemoteAuthorityStore,
 ) -> Result<Response, GatewayError> {
     bounded_headers(
         &request,
@@ -23,11 +22,55 @@ pub async fn handle(
             fields: 2000,
         },
     )?;
+    let raw_body = request_bytes(&mut request, NATIVE_MAX_BODY_BYTES).await?;
+    let operation: serde_json::Value =
+        serde_json::from_slice(&raw_body).map_err(|_| unavailable())?;
+    let callback = matches!(
+        operation
+            .get("operation")
+            .and_then(serde_json::Value::as_str),
+        Some("managed_access_publish" | "codex_auth_import_publish")
+    );
+    let scoped = if callback {
+        crate::native_authority::callback::join(store, native, &raw_body).await?
+    } else if matches!(
+        store.access(),
+        gateway_authority_provisioning::model::Access::Legacy
+    ) {
+        store.clone()
+    } else {
+        let capability =
+            gateway_auth::crypto::sha256_hex(crate::transport::random::opaque_token()?.as_bytes());
+        let id =
+            gateway_auth::crypto::sha256_hex(crate::transport::random::opaque_token()?.as_bytes());
+        store
+            .acquire(
+                gateway_authority_provisioning::model::Acquire {
+                    id,
+                    capability_sha256: gateway_auth::crypto::sha256_hex(capability.as_bytes()),
+                    kind: gateway_authority_provisioning::model::LeaseKind::Root {
+                        request_id: "native-configuration-publication".into(),
+                    },
+                    parent: None,
+                },
+                capability,
+            )
+            .await?
+    };
+    let result = dispatch(&request, env, receiver, native, &scoped, &raw_body).await;
+    gateway_worker_authority::callbacks::finish(&scoped, result).await
+}
+async fn dispatch(
+    request: &Request,
+    env: &Env,
+    receiver: Option<&PublicationReceiver>,
+    native: &crate::native_host::NativeBindings,
+    store: &RemoteAuthorityStore,
+    raw_body: &[u8],
+) -> Result<Response, GatewayError> {
     let headers = OwnedNativeAuthHeaders::from_pairs(request.headers().entries())?;
     let method = request.method().to_string();
     let path = request.path();
-    let raw_body = request_bytes(&mut request, NATIVE_MAX_BODY_BYTES).await?;
-    let store = RemoteAuthorityStore::from_env(env)?;
     #[derive(serde::Deserialize)]
     struct Operation {
         operation: String,
@@ -37,7 +80,7 @@ pub async fn handle(
         .is_some_and(|value| value.operation == "managed_access_publish")
     {
         return crate::native_authority::managed_publication(
-            &request, env, native, &store, &raw_body,
+            &request, env, native, store, &raw_body,
         )
         .await;
     }
@@ -46,7 +89,7 @@ pub async fn handle(
         .is_some_and(|value| value.operation == "codex_auth_import_publish")
     {
         return crate::native_authority::import_dispatch::publication(
-            &request, env, native, &store, receiver, &raw_body,
+            &request, env, native, store, receiver, &raw_body,
         )
         .await;
     }
@@ -58,11 +101,11 @@ pub async fn handle(
     })?;
     let response = receiver
         .handle(
-            &store,
+            store,
             PublicationRequest {
                 method,
                 path,
-                raw_body,
+                raw_body: raw_body.to_vec(),
                 headers,
             },
         )

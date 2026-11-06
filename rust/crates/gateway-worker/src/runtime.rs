@@ -1,10 +1,8 @@
 //! Public routing. Private authority protocol paths are never forwarded here.
 use crate::{
-    authority::RemoteAuthorityStore,
     catalog::CatalogState,
     host::{PlatformHost, auth_config},
     inference,
-    storage::now_ms,
     transport::{HeaderLimits, body, bounded_headers, outbound::Cancellation},
 };
 use gateway_admin::service::AdminService;
@@ -23,6 +21,8 @@ use gateway_schema::{
     catalog_cache::{CacheState, CatalogResponse, LoadedCatalog},
     catalog_store,
 };
+use gateway_worker_authority::client::RemoteAuthorityStore;
+use gateway_worker_storage::sqlite::now_ms;
 use std::rc::Rc;
 use worker::{Context, Env, Method, Request, Response};
 
@@ -33,6 +33,7 @@ pub async fn route(
     release: &str,
     request_id: RequestId,
     native: crate::native_host::NativeBindings,
+    store: RemoteAuthorityStore,
 ) -> Result<crate::response::GatewayResponse, GatewayError> {
     let started_at_ms = now_ms()?;
     let path = crate::normalized_path(&request.path()).to_owned();
@@ -46,7 +47,6 @@ pub async fn route(
             Some("method_not_allowed"),
         ));
     }
-    let store = RemoteAuthorityStore::from_env(&env)?;
     let cancellation = Rc::new(Cancellation::from_request(&request)?);
     let config = auth_config(&env);
     let (_auth_url, mut auth_request) = original_auth_request(&request, &path)?;

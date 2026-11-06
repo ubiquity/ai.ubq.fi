@@ -941,6 +941,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-provisioning"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-capacity-recovery"
 version = "0.1.0"
 dependencies = [
@@ -1369,6 +1379,7 @@ dependencies = [
 name = "gateway-state-reverse"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-provisioning",
  "gateway-auth",
  "gateway-core",
  "gateway-migration",
@@ -1383,6 +1394,7 @@ name = "gateway-state-transfer"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-authority-provisioning",
  "gateway-core",
  "gateway-migration",
  "gateway-migration-test-support",
@@ -1401,6 +1413,7 @@ dependencies = [
  "gateway-admission",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-provisioning",
  "gateway-capacity-recovery",
  "gateway-catalog-runtime",
  "gateway-claude-runtime",
@@ -1421,6 +1434,8 @@ dependencies = [
  "gateway-routing-runtime-test-support",
  "gateway-schema",
  "gateway-state-transfer",
+ "gateway-worker-authority",
+ "gateway-worker-storage",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -1428,16 +1443,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-worker-authority"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority",
+ "futures-util",
+ "gateway-admin-runtime",
+ "gateway-auth",
+ "gateway-authority-provisioning",
+ "gateway-core",
+ "serde",
+ "serde_json",
+ "worker",
+]
+
+[[package]]
 name = "gateway-worker-fixture"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-provisioning",
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
  "gateway-publication-policy",
  "gateway-publication-transport",
  "gateway-worker",
+ "gateway-worker-authority",
  "gateway-worker-fixture-setup",
+ "gateway-worker-storage",
  "serde_json",
  "worker",
 ]
@@ -1446,6 +1479,9 @@ dependencies = [
 name = "gateway-worker-fixture-setup"
 version = "0.1.0"
 dependencies = [
+ "gateway-state-transfer",
+ "gateway-migration",
+ "gateway-authority-provisioning",
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
@@ -1453,7 +1489,23 @@ dependencies = [
  "gateway-publication-policy",
  "gateway-publication-transport",
  "gateway-worker",
+ "gateway-worker-authority",
+ "gateway-worker-storage",
  "serde_json",
+]
+
+[[package]]
+name = "gateway-worker-storage"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-authority-provisioning",
+ "gateway-core",
+ "gateway-worker-authority",
+ "serde",
+ "serde_json",
+ "worker",
 ]
 
 [[package]]

@@ -1,8 +1,6 @@
 //! Fixed OpenLux billing transport over the shared source-derived lookup plan.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::provider_secret,
-    storage::now_ms,
     transport::outbound::{Cancellation, PinnedDestination, send_http},
 };
 use gateway_authority::paid_types::{PaidAttempt, PaidCorrelation, PaidReservation, PaidUsage};
@@ -10,6 +8,8 @@ use gateway_core::{error::GatewayError, provider::PaidProvider, state::Authority
 use gateway_providers::paid_lookup::{
     LookupPlan, LookupStep, OVERALL_TIMEOUT_MS, TokenLog, plan_lookup,
 };
+use gateway_worker_authority::client::RemoteAuthorityStore;
+use gateway_worker_storage::sqlite::now_ms;
 use serde_json::Value;
 use worker::Method;
 

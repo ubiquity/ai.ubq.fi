@@ -63,6 +63,7 @@ pub(super) async fn authority<C: NativeRenewalCancellation>(
     config: &AuthConfig,
     cancellation: &C,
     wire: (&str, &[u8]),
+    store: &RemoteAuthorityStore,
 ) -> Result<Option<Response>, GatewayError> {
     let (nonce, bytes) = wire;
     let identity = &native.transport()?.identity;
@@ -81,11 +82,27 @@ pub(super) async fn authority<C: NativeRenewalCancellation>(
         .await?;
     let receiver =
         NativeRenewalAuthority::configured(authority, identity, owner, config, cancellation);
+    let terminal = matches!(&request,ImportRequest::Authority(value) if matches!(&value.command,ImportAuthorityCommand::Terminal {..}));
     let output = match request {
         ImportRequest::Authority(_) => receiver.handle_import_authority(proof, bytes).await,
         ImportRequest::Started(_) => receiver.handle_import_started(proof, bytes).await,
         ImportRequest::Seed(_) => receiver.handle_import_catalog_seed(proof, bytes).await,
     };
+    if terminal
+        && output.is_ok()
+        && matches!(
+            store.access(),
+            gateway_authority_provisioning::model::Access::Permit(_)
+        )
+    {
+        store
+            .coordination(
+                gateway_authority_provisioning::model::Operation::NativePublished {
+                    join: store.permit()?,
+                },
+            )
+            .await?;
+    }
     let (status, output) = match output {
         Ok(bytes) => (200, bytes),
         Err(error) => (error.status, body(&error.envelope)?),

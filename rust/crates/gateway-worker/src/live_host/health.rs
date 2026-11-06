@@ -11,13 +11,14 @@ use worker::Context;
 use super::{account::CurrentLiveAccount, body::Body};
 
 pub(super) async fn response(
-    store: crate::authority::RemoteAuthorityStore,
+    store: gateway_worker_authority::client::RemoteAuthorityStore,
     account: &CurrentLiveAccount,
     response: &LiveResponse<Body>,
     context: Rc<Context>,
 ) {
-    let expired = codex_access_expiry_ms(&account.source.access_token)
-        .is_some_and(|expiry| expiry <= crate::storage::now_ms().unwrap_or(i64::MAX) as f64);
+    let expired = codex_access_expiry_ms(&account.source.access_token).is_some_and(|expiry| {
+        expiry <= gateway_worker_storage::sqlite::now_ms().unwrap_or(i64::MAX) as f64
+    });
     let event = match response.status {
         401 => HealthEvent::AuthInvalid,
         403 if expired => HealthEvent::AuthInvalid,
@@ -26,19 +27,30 @@ pub(super) async fn response(
         200..=299 => HealthEvent::Success,
         _ => HealthEvent::Reachable,
     };
+    let tracking = store.clone();
     let runtime = runtime(store);
     if response.status == 429 || (200..300).contains(&response.status) || response.status >= 500 {
         let background = runtime.clone();
         let status = response.status;
+        let writer = match tracking.writer() {
+            Ok(value) => value,
+            Err(_) => {
+                tracking.required_failure();
+                return;
+            }
+        };
         context.wait_until(async move {
             if status >= 500
-                && let Ok(now) = crate::storage::now_ms()
+                && let Ok(now) = gateway_worker_storage::sqlite::now_ms()
             {
                 background
                     .record_capacity_downtime("upstream_error", Some(status), now)
                     .await;
             }
             let _ = background.trigger_capacity_sample().await;
+            if let Some(writer) = writer {
+                writer.complete();
+            }
         });
     }
     let request_id = ["x-request-id", "x-api-request-id", "x-oneapi-request-id"]
@@ -55,7 +67,7 @@ pub(super) async fn response(
 }
 
 pub(super) async fn failure(
-    store: crate::authority::RemoteAuthorityStore,
+    store: gateway_worker_authority::client::RemoteAuthorityStore,
     account: &CurrentLiveAccount,
     failure: &LiveDispatchFailure<Body>,
     context: Rc<Context>,
@@ -78,6 +90,7 @@ pub(super) async fn failure(
     ) {
         return;
     }
+    let tracking = store.clone();
     let runtime = runtime(store);
     let _ = runtime
         .observe_provider(
@@ -94,20 +107,33 @@ pub(super) async fn failure(
         let status = (500..600)
             .contains(&failure.response.status)
             .then_some(failure.response.status);
+        let writer = match tracking.writer() {
+            Ok(value) => value,
+            Err(_) => {
+                tracking.required_failure();
+                return;
+            }
+        };
         context.wait_until(async move {
-            if let Ok(now) = crate::storage::now_ms() {
+            if let Ok(now) = gateway_worker_storage::sqlite::now_ms() {
                 runtime
                     .record_capacity_downtime("unreachable", status, now)
                     .await;
             }
             let _ = runtime.trigger_capacity_sample().await;
+            if let Some(writer) = writer {
+                writer.complete();
+            }
         });
     }
 }
 
 fn runtime(
-    store: crate::authority::RemoteAuthorityStore,
-) -> ObservabilityRuntime<crate::authority::RemoteAuthorityStore, crate::observability_host::Host> {
+    store: gateway_worker_authority::client::RemoteAuthorityStore,
+) -> ObservabilityRuntime<
+    gateway_worker_authority::client::RemoteAuthorityStore,
+    crate::observability_host::Host,
+> {
     ObservabilityRuntime::with_state(
         store,
         crate::observability_host::Host,

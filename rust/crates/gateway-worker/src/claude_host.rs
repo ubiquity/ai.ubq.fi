@@ -1,9 +1,10 @@
 //! Request-owned Claude selection and actual response receipts over the source runtime.
+use gateway_worker_authority::client::RemoteAuthorityStore;
 pub(crate) mod admin;
 pub(crate) mod catalog;
 mod platform;
 
-use crate::{authority::RemoteAuthorityStore, host::PlatformHost};
+use crate::host::PlatformHost;
 use gateway_admin_runtime::claude_generation::StateGeneration;
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
 use gateway_claude_runtime::{
@@ -340,7 +341,7 @@ fn credential(selected: &SelectedAccount) -> PublishedCredential {
     let kind = platform::credential_kind(&selected.binding().credential);
     let mut options = selected.prepare_options(Default::default());
     if let Some(context) = replay_context(selected) {
-        let now = crate::storage::now_ms().unwrap_or(i64::MAX);
+        let now = gateway_worker_storage::sqlite::now_ms().unwrap_or(i64::MAX);
         CLAUDE_REPLAY.with(|store| {
             store.borrow_mut().restore_prepare_options(
                 &context,

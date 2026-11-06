@@ -30,7 +30,7 @@ use gateway_core::{
         StoredRecord,
     },
 };
-use gateway_worker::authority::RemoteAuthorityStore;
+use gateway_worker_authority::client::RemoteAuthorityStore;
 use gateway_worker_fixture_setup::invalid;
 use std::collections::BTreeMap;
 const HOME: &str = "/tmp/worker-import-synthetic-owner";
@@ -40,7 +40,7 @@ const SESSION: &str = "uos_ai_session_SYNTHETIC_WORKER_IMPORT_TOKEN";
 struct Clock;
 impl AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
-        gateway_worker::storage::now_ms()
+        gateway_worker_storage::sqlite::now_ms()
     }
 }
 struct Tokens;
@@ -137,12 +137,23 @@ pub(super) async fn initialize(
     id: &NativeTransportIdentity,
     inputs: &ConfiguredPaidInputs,
 ) -> Result<Option<String>, GatewayError> {
-    let store = RemoteAuthorityStore::from_env(env)?;
+    let raw = RemoteAuthorityStore::from_env(env)?;
+    gateway_worker_fixture_setup::initialize(&raw, id, inputs, receiver, "direct").await?;
+    let Some(store) = gateway_worker_fixture_setup::provisioning::begin(&raw).await? else {
+        return Ok(None);
+    };
+    let result = initialize_scoped(&store, id).await;
+    gateway_worker_fixture_setup::provisioning::finish(&store, result.is_err()).await?;
+    result
+}
+async fn initialize_scoped(
+    store: &RemoteAuthorityStore,
+    id: &NativeTransportIdentity,
+) -> Result<Option<String>, GatewayError> {
     let user_key = passkeys::key("users", USER);
     if store.read(&user_key).await?.is_some() {
         return Ok(None);
     }
-    gateway_worker_fixture_setup::initialize(&store, id, inputs, receiver, "direct").await?;
     let time = now();
     let source_key = codex_source_pool_key();
     let source_rev = "fixture-import-source-v1";
@@ -294,6 +305,26 @@ pub(super) async fn initialize(
             gateway_auth::native_import::NativeImportTarget::ExistingAccount {
                 account_id_hash: credential.routing_account_hash.0,
             },
+        )
+        .await?;
+    let capability = sha256_hex(gateway_worker::transport::random::opaque_token()?.as_bytes());
+    store
+        .acquire(
+            gateway_authority_provisioning::model::Acquire {
+                id: sha256_hex(prepared.metadata().operation_id.as_bytes()),
+                capability_sha256: sha256_hex(capability.as_bytes()),
+                kind: gateway_authority_provisioning::model::LeaseKind::NativeOperation(
+                    gateway_authority_provisioning::model::NativeBinding {
+                        operation_id: prepared.metadata().operation_id.clone(),
+                        action_ref: prepared.metadata().action_ref.clone(),
+                        owner_id: id.owner_id().into(),
+                        owner_epoch: id.owner_epoch().into(),
+                        key_fingerprint: id.key_fingerprint().into(),
+                    },
+                ),
+                parent: Some(store.permit()?),
+            },
+            capability,
         )
         .await?;
     let next = codex_credential_identity(

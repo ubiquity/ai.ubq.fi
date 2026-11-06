@@ -1,10 +1,10 @@
 //! Source catalog runtime over one strong authority and credential-owner publication.
-use crate::{
-    authority::RemoteAuthorityStore, catalog_host::Host, host::PlatformHost, storage::now_ms,
-};
+use crate::{catalog_host::Host, host::PlatformHost};
 use gateway_catalog_runtime::{CatalogRuntime, admin::AdminCatalogResponse, host::CatalogHost};
 use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson};
 use gateway_schema::{catalog::CatalogInput, source_request::error::SourceRequestError};
+use gateway_worker_authority::client::RemoteAuthorityStore;
+use gateway_worker_storage::sqlite::now_ms;
 use std::rc::Rc;
 use worker::{Context, Env};
 

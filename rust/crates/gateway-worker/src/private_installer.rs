@@ -61,16 +61,16 @@ impl RustInitialControlInstaller {
                 &deployment,
                 &input.to_vec(),
                 env!("UOS_RUST_BUILD_GIT_TREE"),
-                crate::storage::now_ms().map_err(|_| rejected())?,
+                gateway_worker_storage::sqlite::now_ms().map_err(|_| rejected())?,
             )
             .map_err(|_| rejected())?;
-            let store =
-                crate::authority::RemoteAuthorityStore::from_env(&env).map_err(|_| rejected())?;
+            let store = gateway_worker_authority::client::RemoteAuthorityStore::from_env(&env)
+                .map_err(|_| rejected())?;
             let receipt = gateway_migration::engine::adopt_empty_with_initial_control_owner(
                 &store,
                 &prepared.adoption,
                 &prepared.owner,
-                crate::storage::now_ms().map_err(|_| rejected())?,
+                gateway_worker_storage::sqlite::now_ms().map_err(|_| rejected())?,
             )
             .await
             .map_err(|_| rejected())?;

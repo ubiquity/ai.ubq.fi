@@ -1,6 +1,5 @@
 //! One durable request lifetime and source-derived terminal billing; telemetry never mints authority.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformTokens},
     routing_host,
     transport::stream::FinishHook,
@@ -10,6 +9,7 @@ use gateway_routing_runtime::{
     session::RoutingSession,
     types::{AttemptUsage, PreparedAttempt},
 };
+use gateway_worker_authority::client::RemoteAuthorityStore;
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
 pub(crate) type Usage = Rc<RefCell<Option<Value>>>;
@@ -82,11 +82,13 @@ pub(crate) fn finish_hook(
     usage: Usage,
     permit: Option<gateway_admission::Permit>,
     capture: Rc<crate::inference_capture::Capture>,
-) -> FinishHook {
-    Box::new(move |observation| {
+) -> Result<FinishHook, GatewayError> {
+    let writer = lifecycle.store.writer()?;
+    Ok(Box::new(move |observation| {
         Box::pin(async move {
             let usage = usage.borrow().clone();
             if let Err(error) = lifecycle.finish(observation, usage.clone()).await {
+                lifecycle.store.required_failure();
                 worker::console_error!(
                     "Durable request settlement remains pending: {}",
                     error.envelope.error.message
@@ -111,6 +113,9 @@ pub(crate) fn finish_hook(
                 .finish(observation, usage.as_ref(), paid.as_ref())
                 .await;
             drop(permit);
+            if let Some(writer) = writer {
+                writer.complete();
+            }
         })
-    })
+    }))
 }

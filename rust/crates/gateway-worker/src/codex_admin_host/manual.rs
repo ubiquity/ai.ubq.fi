@@ -1,8 +1,6 @@
 //! One explicit manual reset. Shared authority owns every intent, budget and promotion.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformHost, PlatformTokens},
-    storage::now_ms,
     transport::outbound::{PinnedDestination, send_http},
 };
 use gateway_auth::{
@@ -20,6 +18,8 @@ use gateway_authority::{
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson, state::AuthorityStore,
 };
+use gateway_worker_authority::client::RemoteAuthorityStore;
+use gateway_worker_storage::sqlite::now_ms;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
 use worker::{Method, Url};

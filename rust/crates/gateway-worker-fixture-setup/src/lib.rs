@@ -33,13 +33,15 @@ use gateway_publication_policy::protocol::{
     PublicationCarrier, PublicationRequest, PublicationResponse,
 };
 use gateway_publication_transport::transport::PublicationReceiver;
-use gateway_worker::authority::RemoteAuthorityStore;
+use gateway_worker_authority::client::RemoteAuthorityStore;
 
 fn nonce() -> Result<[u8; 32], GatewayError> {
     gateway_worker::transport::random::random_bytes(32)?
         .try_into()
         .map_err(|_| invalid())
 }
+
+pub mod provisioning;
 
 pub async fn initialize(
     store: &RemoteAuthorityStore,
@@ -48,9 +50,24 @@ pub async fn initialize(
     receiver: &PublicationReceiver,
     scenario: &str,
 ) -> Result<(), GatewayError> {
+    let Some(scoped) = provisioning::begin(store).await? else {
+        return Ok(());
+    };
+    let result = initialize_ready(&scoped, identity, inputs, receiver, scenario).await;
+    provisioning::finish(&scoped, result.is_err()).await?;
+    result
+}
+
+async fn initialize_ready(
+    store: &RemoteAuthorityStore,
+    identity: &NativeTransportIdentity,
+    inputs: &ConfiguredPaidInputs,
+    receiver: &PublicationReceiver,
+    scenario: &str,
+) -> Result<(), GatewayError> {
     if initialized(store, identity, inputs).await? {
         if scenario == "paid" {
-            let now = gateway_worker::storage::now_ms()?;
+            let now = gateway_worker_storage::sqlite::now_ms()?;
             if let Some(prepared) = after_runtime_bootstrap(store, identity, inputs, now).await? {
                 send_configuration(
                     store,
@@ -69,7 +86,7 @@ pub async fn initialize(
     if matches!(scenario, "codex" | "paid") {
         seed_pool(store).await?;
     }
-    let now = gateway_worker::storage::now_ms()?;
+    let now = gateway_worker_storage::sqlite::now_ms()?;
     let body = fixture_owner_statement(identity)?;
     let nonce = base64url(&nonce()?);
     let time = now.to_string();
@@ -271,7 +288,7 @@ async fn seed_pool(store: &RemoteAuthorityStore) -> Result<(), GatewayError> {
         }
         return Ok(());
     }
-    let now = gateway_worker::storage::now_ms()?;
+    let now = gateway_worker_storage::sqlite::now_ms()?;
     let pool = fixture_pool(now);
     let raw = pool.private_source_value();
     let parsed = parse_codex_source_pool(&raw)?.ok_or_else(invalid)?;

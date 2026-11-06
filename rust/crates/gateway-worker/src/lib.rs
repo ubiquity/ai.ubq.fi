@@ -52,7 +52,6 @@ pub mod response;
 mod routing_host;
 mod runtime;
 mod source_collator;
-pub mod storage;
 pub mod transport;
 
 fn error_response(error: GatewayError) -> Result<Response> {
@@ -115,15 +114,93 @@ pub async fn fetch_with_bindings(
         Ok(id) => id,
         Err(error) => return error_response(error).map(Into::into),
     };
+    let context = Rc::new(context);
+    let raw = gateway_worker_authority::client::RemoteAuthorityStore::from_env(&env)
+        .map_err(|error| worker::Error::RustError(error.envelope.error.message))?;
+    let path = normalized_path(&request.path()).to_owned();
+    let pure = request.method() == Method::Options
+        || (path == "/health" && matches!(request.method(), Method::Get | Method::Head));
+    let operator = gateway_state_transfer::http::operation(request.method().as_ref(), &path)
+        .is_some()
+        || path == "/admin/state-transfer/control";
+    let callback = native_authority::is_path(&request.path())
+        || request.path() == gateway_auth::native::NATIVE_PUBLICATION_PATH;
+    let (store, writer) = if callback {
+        let status = match raw
+            .coordination(gateway_authority_provisioning::model::Operation::Status)
+            .await
+        {
+            Ok(gateway_authority_provisioning::model::Reply::Status { status }) => status,
+            Ok(_) => {
+                return error_response(gateway_authority_provisioning::policy::closed())
+                    .map(Into::into);
+            }
+            Err(error) => return error_response(error).map(Into::into),
+        };
+        use gateway_authority_provisioning::model::Phase;
+        match status.gate.phase {
+            Phase::LegacyRunning => (raw, None),
+            Phase::Running | Phase::Draining => (raw.operator_read(), None),
+            _ => {
+                return error_response(gateway_authority_provisioning::policy::closed())
+                    .map(Into::into);
+            }
+        }
+    } else if pure || operator {
+        (raw.operator_read(), None)
+    } else {
+        let capability = gateway_auth::crypto::sha256_hex(
+            transport::random::opaque_token()
+                .map_err(|error| worker::Error::RustError(error.envelope.error.message))?
+                .as_bytes(),
+        );
+        let acquire = gateway_authority_provisioning::model::Acquire {
+            id: gateway_auth::crypto::sha256_hex(request_id.as_bytes()),
+            capability_sha256: gateway_auth::crypto::sha256_hex(capability.as_bytes()),
+            kind: gateway_authority_provisioning::model::LeaseKind::Root {
+                request_id: request_id.clone(),
+            },
+            parent: None,
+        };
+        let scoped = match raw.acquire(acquire, capability).await {
+            Ok(value) => value,
+            Err(error) => return error_response(error).map(Into::into),
+        };
+        let (scoped, writer) = scoped
+            .track_root(&context)
+            .map_err(|error| worker::Error::RustError(error.envelope.error.message))?;
+        (scoped, Some(writer))
+    };
+    let result = dispatch_with_store(
+        request, env, context, receiver, native, &identity, request_id, store,
+    )
+    .await;
+    if let Some(writer) = writer {
+        writer.complete();
+    }
+    result
+}
+
+async fn dispatch_with_store(
+    request: Request,
+    env: Env,
+    context: Rc<Context>,
+    receiver: Option<&gateway_publication_transport::transport::PublicationReceiver>,
+    native: NativeBindings,
+    identity: &ReleaseIdentity,
+    request_id: String,
+    store: gateway_worker_authority::client::RemoteAuthorityStore,
+) -> Result<GatewayResponse> {
     if native_authority::is_path(&request.path()) {
-        let response = match native_authority::handle(request, &env, &native).await {
+        let response = match native_authority::handle(request, &env, &native, &store).await {
             Ok(response) => response,
             Err(error) => error_response(error)?,
         };
         return Ok(response.into());
     }
     if request.path() == gateway_auth::native::NATIVE_PUBLICATION_PATH {
-        let mut response = match publication::handle(request, &env, receiver, &native).await {
+        let mut response = match publication::handle(request, &env, receiver, &native, &store).await
+        {
             Ok(response) => response,
             Err(error) => error_response(error)?,
         };
@@ -157,10 +234,11 @@ pub async fn fetch_with_bindings(
         match runtime::route(
             request,
             env,
-            Rc::new(context),
+            context.clone(),
             identity.git_sha(),
             gateway_core::identity::RequestId(request_id.clone()),
             native,
+            store,
         )
         .await
         {

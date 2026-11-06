@@ -1,26 +1,27 @@
 //! SQLite-backed coordination storage. Transactions never contain external I/O.
 
+use gateway_authority_provisioning::model::{Access, Identity};
 use gateway_core::{
     error::GatewayError,
     identity::MAX_SAFE_INTEGER,
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, PORTABLE_STATE_VERSION, RecordKey,
-        RecordMutation, StoredRecord,
+        StoredRecord,
     },
     tuple_key::TupleKey,
+};
+use gateway_worker_authority::transition::{
+    PreparedMutation, PreparedTransition, prepare_transition, validate_key, validate_record,
 };
 use serde::Deserialize;
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, BTreeSet},
     rc::Rc,
 };
 use worker::{SqlStorage, SqlStorageValue, Storage};
 
-const MAX_REVISION_BYTES: usize = 4096;
 // The platform limits one SQL row to 2 MB; this is not a history retention limit.
-const MAX_SQL_ROW_BYTES: usize = 2_000_000;
 const RECORD_COLUMNS: &str =
     "record_key, sort_key, schema_version, value_encoding, revision, payload, expires_at_ms";
 // A page may end before its row limit, with a continuation, to bound wire memory.
@@ -28,7 +29,9 @@ const QUERY_PAGE_BYTE_BUDGET: usize = 8 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct SqliteAuthorityStore {
-    storage: Rc<Storage>,
+    pub(crate) storage: Rc<Storage>,
+    access: Access,
+    ingress: bool,
 }
 
 #[derive(Deserialize)]
@@ -43,26 +46,13 @@ struct FormatVersion {
     value_codec: String,
 }
 
-enum PreparedMutation {
-    Put {
-        key: String,
-        sort_key: Vec<u8>,
-        record: StoredRecord,
-        payload: String,
-        encoding: String,
-    },
-    Delete {
-        key: String,
-    },
-}
-
-struct PreparedTransition {
-    checks: BTreeMap<String, Option<String>>,
-    mutations: Vec<PreparedMutation>,
-}
-
 impl SqliteAuthorityStore {
-    pub async fn open(storage: Storage) -> Result<Self, GatewayError> {
+    pub async fn open(
+        storage: Storage,
+        identity: Identity,
+        access: Access,
+        ingress: bool,
+    ) -> Result<Self, GatewayError> {
         let storage = Rc::new(storage);
         let transaction_storage = Rc::clone(&storage);
         storage.transaction(move |_| async move {
@@ -94,13 +84,30 @@ impl SqliteAuthorityStore {
             .sync()
             .await
             .map_err(|_| unavailable("authority_storage_unavailable"))?;
-        Ok(Self { storage })
+        let gate_storage = Rc::clone(&storage);
+        storage
+            .transaction(move |_| async move {
+                crate::drain::initialize(&gate_storage.sql(), &identity)
+                    .map_err(|error| worker::Error::RustError(error.envelope.error.message))
+            })
+            .await
+            .map_err(|_| unavailable("authority_control_schema_unavailable"))?;
+        storage
+            .sync()
+            .await
+            .map_err(|_| unavailable("authority_storage_unavailable"))?;
+        Ok(Self {
+            storage,
+            access,
+            ingress,
+        })
     }
 }
 
 impl AuthorityStore for SqliteAuthorityStore {
     async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
         validate_key(key)?;
+        crate::drain::authorize(&self.storage.sql(), &self.access, false, self.ingress)?;
         read_record(&self.storage.sql(), key, now_ms()?)
     }
 
@@ -111,9 +118,12 @@ impl AuthorityStore for SqliteAuthorityStore {
         let failure = Rc::new(RefCell::new(None));
         let transaction_failure = Rc::clone(&failure);
         let transaction_storage = Rc::clone(&self.storage);
+        let access = self.access.clone();
+        let ingress = self.ingress;
         let result = self.storage.transaction(move |_| async move {
             let apply = || -> Result<CommitOutcome, GatewayError> {
                 let sql = transaction_storage.sql();
+                crate::drain::authorize(&sql, &access, true, ingress)?;
                 let now = now_ms()?;
                 for (key, expected_revision) in &checks {
                     let current = read_record(&sql, &RecordKey(key.clone()), now)?;
@@ -163,77 +173,6 @@ impl AuthorityStore for SqliteAuthorityStore {
     }
 }
 
-fn prepare_transition(transition: AtomicTransition) -> Result<PreparedTransition, GatewayError> {
-    let mut checks = BTreeMap::new();
-    for check in transition.checks {
-        validate_key(&check.key)?;
-        if let Some(revision) = &check.expected_revision {
-            validate_revision(revision)?;
-        }
-        if checks
-            .insert(check.key.0, check.expected_revision)
-            .is_some()
-        {
-            return Err(invalid(
-                "An authority transition contains duplicate checks.",
-            ));
-        }
-    }
-    let mut keys = BTreeSet::new();
-    let mut prepared = Vec::with_capacity(transition.mutations.len());
-    for mutation in transition.mutations {
-        let key = match &mutation {
-            RecordMutation::Put { key, .. } | RecordMutation::Delete { key } => key,
-        };
-        validate_key(key)?;
-        if !keys.insert(key.0.clone()) {
-            return Err(invalid(
-                "An authority transition contains duplicate mutation keys.",
-            ));
-        }
-        match mutation {
-            RecordMutation::Put { key, record } => {
-                validate_record(&record)?;
-                let sort_key = TupleKey::from_record_key(&key)?.sort_bytes().to_vec();
-                let payload = serde_json::to_string(&record.value)
-                    .map_err(|_| invalid("Authority data cannot be encoded."))?;
-                let encoding = serde_json::to_value(record.value_encoding)
-                    .map_err(|_| invalid("Authority value encoding is invalid."))?
-                    .as_str()
-                    .ok_or_else(|| invalid("Authority value encoding is invalid."))?
-                    .to_owned();
-                let bytes = key
-                    .0
-                    .len()
-                    .checked_add(sort_key.len())
-                    .and_then(|size| size.checked_add(record.revision.len()))
-                    .and_then(|size| size.checked_add(payload.len()))
-                    .and_then(|size| size.checked_add(encoding.len()))
-                    .and_then(|size| size.checked_add(48));
-                if bytes.is_none_or(|size| size > MAX_SQL_ROW_BYTES) {
-                    return Err(invalid(
-                        "Authority data exceeds the platform's SQL row limit.",
-                    ));
-                }
-                prepared.push(PreparedMutation::Put {
-                    key: key.0,
-                    sort_key,
-                    record,
-                    payload,
-                    encoding,
-                });
-            }
-            RecordMutation::Delete { key } => {
-                prepared.push(PreparedMutation::Delete { key: key.0 })
-            }
-        }
-    }
-    Ok(PreparedTransition {
-        checks,
-        mutations: prepared,
-    })
-}
-
 fn read_record(
     sql: &SqlStorage,
     key: &RecordKey,
@@ -263,18 +202,9 @@ fn read_record(
     )
 }
 
-pub fn validate_key(key: &RecordKey) -> Result<(), GatewayError> {
-    TupleKey::from_record_key(key)?.validate_stored_key()?;
-    if key.0.len() > MAX_SQL_ROW_BYTES {
-        return Err(invalid(
-            "The authority key exceeds the platform's SQL row limit.",
-        ));
-    }
-    Ok(())
-}
-
 impl QueryStore for SqliteAuthorityStore {
     async fn query(&self, request: QueryRequest) -> Result<QueryPage, GatewayError> {
+        crate::drain::authorize(&self.storage.sql(), &self.access, false, self.ingress)?;
         let query = request.validate()?;
         let mut parameters = vec![
             SqlStorageValue::Blob(query.lower_inclusive.clone()),
@@ -387,25 +317,6 @@ fn decode_row(row: &[SqlStorageValue]) -> Result<(QueryEntry, usize), GatewayErr
     Ok((QueryEntry { key, record }, encoded_bytes))
 }
 
-fn validate_revision(revision: &str) -> Result<(), GatewayError> {
-    if revision.is_empty() || revision.len() > MAX_REVISION_BYTES {
-        return Err(invalid("The authority revision is invalid."));
-    }
-    Ok(())
-}
-
-fn validate_record(record: &StoredRecord) -> Result<(), GatewayError> {
-    record.validate_version()?;
-    validate_revision(&record.revision)?;
-    if record
-        .expires_at_ms
-        .is_some_and(|expiry| !(0..=MAX_SAFE_INTEGER).contains(&expiry))
-    {
-        return Err(invalid("The authority absolute expiry is invalid."));
-    }
-    Ok(())
-}
-
 pub fn now_ms() -> Result<i64, GatewayError> {
     let now = worker::js_sys::Date::now();
     if !now.is_finite() || now.fract() != 0.0 || !(0.0..=MAX_SAFE_INTEGER as f64).contains(&now) {
@@ -420,4 +331,11 @@ fn invalid(message: &str) -> GatewayError {
 
 fn unavailable(code: &str) -> GatewayError {
     GatewayError::unavailable("The authority storage is unavailable.", code)
+}
+
+pub(crate) fn read_control_record(
+    sql: &SqlStorage,
+    key: &RecordKey,
+) -> Result<Option<StoredRecord>, GatewayError> {
+    read_record(sql, key, 0)
 }

@@ -1,7 +1,8 @@
 //! Resumable, idempotent import over the existing private staged protocol.
 //! Every write is one `execute_staged` call, so the empty-target, ordered-key,
 //! absent-key, digest-chain and one-transition-per-chunk rules are unchanged.
-use crate::{decode, intent::Intent, manifest_key, progress_key, refused, root, validate_record};
+use crate::{decode, manifest_key, progress_key, refused, root, validate_record};
+use gateway_authority_provisioning::intent::Intent;
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
 use gateway_migration::staged::{StageBatch, StageReceipt, StageRequest, execute_staged};
@@ -69,7 +70,7 @@ fn header_facts(header: &Value) -> Result<Header, GatewayError> {
     let capture_id = header
         .pointer("/manifest/capture_id")
         .and_then(Value::as_str)
-        .filter(|id| crate::intent::hex(id, 64))
+        .filter(|id| gateway_authority_provisioning::intent::hex(id, 64))
         .ok_or_else(|| refused("Staged header has no capture identity"))?;
     let records = header
         .get("records")
@@ -243,7 +244,7 @@ fn replay(observed: &Observed, request: &StageRequest) -> Result<bool, GatewayEr
 
 /// Every record is checked before the one atomic transition is attempted.
 fn validate_batch(batch: &StageBatch) -> Result<(), GatewayError> {
-    if batch.records.is_empty() || !crate::intent::hex(&batch.digest, 64) {
+    if batch.records.is_empty() || !gateway_authority_provisioning::intent::hex(&batch.digest, 64) {
         return Err(refused("Append chunk is empty or has no digest"));
     }
     for item in &batch.records {

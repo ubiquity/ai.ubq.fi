@@ -1,9 +1,9 @@
 //! Request-owned fixed Codex control experiment. No generic inference or paid fallback.
+use gateway_worker_authority::client::RemoteAuthorityStore;
+use gateway_worker_storage::sqlite::now_ms;
 mod sample;
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformHost, PlatformTokens},
-    storage::now_ms,
     transport::{
         outbound::{Cancellation, Deadline, PinnedDestination, send_http},
         random,

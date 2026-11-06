@@ -15,7 +15,7 @@ pub const OPENLUX_DISCOVERY_SECRET: &str = "fixture-matrix-openlux-discovery";
 pub const OPENLUX_SPEND_SECRET: &str = "fixture-matrix-openlux-spend";
 
 fn now() -> i64 {
-    gateway_worker::storage::now_ms().unwrap_or(i64::MAX)
+    gateway_worker_storage::sqlite::now_ms().unwrap_or(i64::MAX)
 }
 fn identity() -> Result<NativeTransportIdentity, GatewayError> {
     NativeTransportIdentity::new(
@@ -70,7 +70,7 @@ pub async fn fetch(
         let inputs = inputs()?;
         let receiver =
             PublicationReceiver::configured(identity.clone(), inputs.clone(), Vec::new(), now)?;
-        let store = gateway_worker::authority::RemoteAuthorityStore::from_env(&env)?;
+        let store = gateway_worker_authority::client::RemoteAuthorityStore::from_env(&env)?;
         initialize(&store, &identity, &inputs, &receiver, &scenario).await?;
         Ok(receiver)
     }

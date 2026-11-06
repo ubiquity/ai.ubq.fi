@@ -1,6 +1,5 @@
 //! One real local selected owner; wire availability is independent of accounting.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformTokens},
     routing_host,
 };
@@ -9,6 +8,7 @@ use gateway_core::{error::GatewayError, lifecycle::TransportObservation};
 use gateway_routing_runtime::local_work::completion::response::{
     LocalAccountingProgress, LocalObservationSink, LocalSelectedResponse,
 };
+use gateway_worker_authority::client::RemoteAuthorityStore;
 use std::{
     cell::{Cell, RefCell},
     future::poll_fn,
@@ -21,6 +21,7 @@ pub(crate) type Selected =
     LocalSelectedResponse<RemoteAuthorityStore, PlatformTokens, PlatformClock, routing_host::Host>;
 pub(crate) struct LocalLifecycle {
     owner: RefCell<Option<Selected>>,
+    store: RemoteAuthorityStore,
     sink: LocalObservationSink,
     running: Cell<bool>,
     again: Cell<bool>,
@@ -28,9 +29,14 @@ pub(crate) struct LocalLifecycle {
     permit: RefCell<Option<gateway_admission::Permit>>,
 }
 impl LocalLifecycle {
-    pub(crate) fn new(owner: Selected, permit: Option<gateway_admission::Permit>) -> Rc<Self> {
+    pub(crate) fn new(
+        owner: Selected,
+        permit: Option<gateway_admission::Permit>,
+        store: RemoteAuthorityStore,
+    ) -> Rc<Self> {
         Rc::new(Self {
             sink: owner.observation_sink(),
+            store,
             owner: RefCell::new(Some(owner)),
             running: Cell::new(false),
             again: Cell::new(false),
@@ -74,9 +80,13 @@ impl LocalLifecycle {
             let Some(mut owner) = self.owner.borrow_mut().take() else {
                 break;
             };
+            let mut confirmed = false;
             for _ in 0..3 {
                 match owner.attempt_terminal().await {
-                    LocalAccountingProgress::Confirmed(_) => break,
+                    LocalAccountingProgress::Confirmed(_) => {
+                        confirmed = true;
+                        break;
+                    }
                     LocalAccountingProgress::Unconfirmed(_) => worker::console_error!(
                         "Local terminal accounting acknowledgement remains unknown."
                     ),
@@ -87,6 +97,9 @@ impl LocalLifecycle {
                         worker::console_error!("Local terminal accounting remains unresolved.")
                     }
                 }
+            }
+            if !confirmed {
+                self.store.required_failure();
             }
             *self.owner.borrow_mut() = Some(owner);
             if !self.again.get() {
@@ -100,11 +113,18 @@ impl LocalLifecycle {
         let done = Rc::new((Cell::new(false), AtomicWaker::new()));
         let signal = done.clone();
         let this = self.clone();
-        context.wait_until(async move {
-            this.chain().await;
-            signal.0.set(true);
-            signal.1.wake();
-        });
+        if self
+            .store
+            .spawn_writer(context, async move {
+                this.chain().await;
+                signal.0.set(true);
+                signal.1.wake();
+            })
+            .is_err()
+        {
+            self.store.required_failure();
+            return;
+        }
         poll_fn(|cx| {
             done.1.register(cx.waker());
             if done.0.get() {
@@ -117,9 +137,15 @@ impl LocalLifecycle {
     }
     pub(crate) fn spawn_chain(self: &Rc<Self>, context: &Rc<Context>) {
         let this = self.clone();
-        context.wait_until(async move {
-            this.chain().await;
-        });
+        if self
+            .store
+            .spawn_writer(context, async move {
+                this.chain().await;
+            })
+            .is_err()
+        {
+            self.store.required_failure();
+        }
     }
     pub(crate) fn wrapper_failed(self: &Rc<Self>, context: &Rc<Context>) {
         // Mark synchronously before a failed constructor's registered hook can run.

@@ -1,11 +1,9 @@
 //! Actual schema -> admission -> provider -> terminal transport path.
 use crate::{
-    authority::RemoteAuthorityStore,
     catalog::CatalogState,
     host::{PlatformClock, PlatformHost, PlatformTokens},
     inference_lifecycle::{Lifecycle, Session, finish_hook},
     routing_host,
-    storage::now_ms,
     transport::{
         body,
         outbound::{
@@ -45,6 +43,8 @@ use gateway_schema::{
     request::RequestSurface,
     source_request::{SourceRequestDocument, parse_http_body},
 };
+use gateway_worker_authority::client::RemoteAuthorityStore;
+use gateway_worker_storage::sqlite::now_ms;
 use std::{cell::RefCell, rc::Rc};
 use worker::{Context, Method, Request, Response};
 
@@ -383,6 +383,7 @@ pub async fn run(
     let (principal, host, owner) = (principal.clone(), host.clone(), context.clone());
     let committed = early.clone();
     // Owned so that, after admitted native headers, `waitUntil` can finish this same pipeline.
+    let early_store = store.clone();
     let pipeline = async move {
         let turn = NativeTurn {
             stream: None,
@@ -415,7 +416,7 @@ pub async fn run(
         }
     };
     match early {
-        Some(gate) => crate::inference_early::respond(gate, pipeline, &owner).await,
+        Some(gate) => crate::inference_early::respond(gate, pipeline, &owner, &early_store).await,
         None => pipeline.await,
     }
 }
@@ -508,6 +509,7 @@ impl Inference<'_> {
             session.clone(),
             self.host.cancellation.clone(),
             self.context.clone(),
+            self.store.clone(),
         )
         .await
         {
@@ -631,7 +633,7 @@ impl Inference<'_> {
             usage.clone(),
             permit,
             self.capture.clone(),
-        );
+        )?;
 
         stream::Reply {
             finish,

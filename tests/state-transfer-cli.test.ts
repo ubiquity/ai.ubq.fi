@@ -34,6 +34,20 @@ const framesText = (appends: number, owner = false): string => {
   return `${lines.join("\n")}\n`;
 };
 
+const FROZEN = {
+  identity: { object_id: "a".repeat(64), source_sha: "b".repeat(40), source_tree: "d".repeat(40) },
+  serving_epoch: 0,
+  freeze_id: sha256("fixture-freeze"),
+  freeze_revision: sha256("fixture-freeze-revision"),
+  capture_id: CAPTURE,
+  finalization_digest: sha256("fixture-finalization"),
+  roots: 0,
+  native_operations: 0,
+  native_joins: 0,
+  import_frames: 0,
+  blocked: 0,
+};
+
 /** A small model of the Worker routes with the Rust replay rules; it can lose replies. */
 class FakeWorker {
   state: ImportStatus["state"] = "empty";
@@ -93,6 +107,7 @@ class FakeWorker {
     const headers = init.headers as Record<string, string>;
     if (headers.authorization !== "Bearer admin" || headers[INTENT_HEADER] !== this.token) return new Response("{}", { status: 403 });
     const path = new URL(url).pathname;
+    if (path === "/admin/state-transfer/control") return Response.json({ operation: "status", status: { gate: { phase: "frozen", frozen: FROZEN } } });
     if (path === IMPORT_PATH && init.method === "GET") return Response.json(this.status());
     if (path === IMPORT_PATH) {
       const body = JSON.parse(init.body as string) as Record<string, unknown>;
@@ -107,11 +122,18 @@ class FakeWorker {
       return Response.json({ v: 1, stage: body.stage, ...reply, status: this.status() });
     }
     if (path === EXPORT_PATH) {
-      const request = JSON.parse(init.body as string) as { cursor: string | null; limit: number };
+      const request = JSON.parse(init.body as string) as { v: number; freeze_id: string; freeze_revision: string; cursor: string | null; limit: number };
+      if (request.v !== 2 || request.freeze_id !== FROZEN.freeze_id || request.freeze_revision !== FROZEN.freeze_revision)
+        return new Response("{}", { status: 409 });
       const start = request.cursor === null ? 0 : Number(request.cursor);
       const page = this.rows.slice(start, start + 2);
       const body = JSON.stringify(page);
-      const headers: Record<string, string> = { "x-uos-state-export-sha256": sha256(body), "x-uos-state-export-count": String(page.length) };
+      const headers: Record<string, string> = {
+        "x-uos-state-export-sha256": sha256(body),
+        "x-uos-state-export-count": String(page.length),
+        "x-uos-state-export-freeze-id": FROZEN.freeze_id,
+        "x-uos-state-export-freeze-revision": FROZEN.freeze_revision,
+      };
       if (start + 2 < this.rows.length) headers["x-uos-state-export-next-cursor"] = String(start + 2);
       return new Response(body, { headers });
     }
@@ -194,6 +216,7 @@ test("export pages verify every page hash and count, and receipts are intent-sig
   const original = tampering.fetch;
   tampering.fetch = async (url, init) => {
     const response = await original(url, init);
+    if (new URL(url).pathname !== EXPORT_PATH) return response;
     return new Response(`${await response.text()} `, { headers: response.headers });
   };
   await assert.rejects(exportPages(transport(tampering)), /hash or count differs/);

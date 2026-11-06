@@ -8,6 +8,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { INTENT_HEADER, IMPORT_PATH, main, mintIntent, sha256, verifyReceipt } from "./state-transfer.ts";
+import { activate, finalizeImport, mintControlIntent, readStatus, type FinalizePlan } from "./state-transfer-control.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const ADMIN = "fixture-admin";
@@ -111,6 +112,24 @@ const run = async (): Promise<ObjectValue> => {
   const environment = { UOS_STATE_TRANSFER_ADMIN_TOKEN: ADMIN, UOS_STATE_TRANSFER_INTENT: importIntent.token };
   const importArgs = ["--frames", framesPath, "--frames-sha256", sha256(frames), "--frames-receipt", stageReceipt];
   const imported = await main(["import", ...common(worker.origin), ...importArgs, "--receipt", join(directory, "import.json")], environment);
+  const status = await readStatus({ origin: worker.origin, adminToken: ADMIN, intent: importIntent.token, fetch });
+  assert(isObject(status) && isObject(status.status) && isObject(status.status.gate));
+  const gate = status.status.gate;
+  assert(isObject(gate.identity) && typeof gate.serving_epoch === "number");
+  assert(typeof gate.identity.object_id === "string" && typeof gate.identity.source_sha === "string" && typeof gate.identity.source_tree === "string");
+  const plan: FinalizePlan = {
+    binding: {
+      identity: { object_id: gate.identity.object_id, source_sha: gate.identity.source_sha, source_tree: gate.identity.source_tree },
+      serving_epoch: gate.serving_epoch,
+    },
+    capture_id: captureId,
+    staged_records: begin.data.records,
+    final_chain_digest: String(begin.data.digest),
+    manifest_revision: `capture:${captureId}`,
+    expected_owner: { kind: "absent" },
+  };
+  const ordinary = await fetch(`${worker.origin}/v1/models`, { headers: { authorization: `Bearer ${ADMIN}` } });
+  assert.equal(ordinary.status, 503, "Sealed import must not open ordinary ingress");
   // A second complete run is an exact replay: the sealed target accepts nothing new.
   const replay = await main(["import", ...common(worker.origin), ...importArgs, "--receipt", join(directory, "import-replay.json")], environment);
   await worker.stop();
@@ -118,6 +137,20 @@ const run = async (): Promise<ObjectValue> => {
   assert.deepEqual(noIntent, { status: 403, code: "state_transfer_intent_refused" });
   assert.ok(verifyReceipt(importIntent.token, imported));
   assert.equal(replay.applied, 0);
+
+  const finalization = mintControlIntent({ purpose: "finalize_import", data: plan });
+  worker = await start(directory, "finalize", config(workerJs, workerWasm, state, finalization.sha256), port);
+  const frozen = await finalizeImport({ origin: worker.origin, adminToken: ADMIN, intent: finalization.token, fetch }, plan);
+  await worker.stop();
+  const activation = mintControlIntent({ purpose: "activate", data: frozen });
+  worker = await start(directory, "activation-denied", config(workerJs, workerWasm, state, activation.sha256), port);
+  await assert.rejects(activate({ origin: worker.origin, adminToken: ADMIN, intent: activation.token, fetch }, frozen), /HTTP/);
+  assert.equal(
+    (await fetch(`${worker.origin}/v1/models`, { headers: { authorization: `Bearer ${ADMIN}` } })).status,
+    503,
+    "Rehearsal must remain closed despite imported credentials"
+  );
+  await worker.stop();
 
   // Restart on the same Durable Object state with a separate export intent.
   const exportIntent = mintIntent({ kind: "export" });

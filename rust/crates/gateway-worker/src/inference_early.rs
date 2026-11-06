@@ -50,6 +50,7 @@ pub(crate) async fn respond(
     gate: Rc<Gate>,
     pipeline: impl Future<Output = Result<Response, GatewayError>> + 'static,
     context: &worker::Context,
+    store: &gateway_worker_authority::client::RemoteAuthorityStore,
 ) -> Result<Response, GatewayError> {
     let pipeline = match drive(&gate, Box::pin(pipeline)).await {
         Ok(result) => return result,
@@ -57,6 +58,7 @@ pub(crate) async fn respond(
     };
     let bridge = web_sys::TransformStream::new().map_err(|_| unavailable())?;
     let writable = bridge.writable();
+    let writer = store.writer()?;
     context.wait_until(async move {
         let body = pipeline
             .await
@@ -67,6 +69,9 @@ pub(crate) async fn respond(
             Ok(None) => JsFuture::from(writable.close()).await,
             Err(_) => JsFuture::from(writable.abort()).await,
         };
+        if let Some(writer) = writer {
+            writer.complete();
+        }
     });
     let response = Response::builder().with_status(200);
     sse(response.stream(bridge.readable()))
