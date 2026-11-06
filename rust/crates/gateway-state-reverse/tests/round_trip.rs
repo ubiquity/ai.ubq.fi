@@ -1,8 +1,10 @@
-//! Import -> Worker write -> export -> archive -> native latest inverse, over the
-//! real staged protocol and a real SQLite authority store. Synthetic data only.
+//! Import -> canonical write -> paged export -> archive -> native latest inverse,
+//! over the real staged protocol and a real SQLite fixture. These host-agnostic
+//! codec tests do not establish the Worker's separately enforced Frozen authority.
 #![cfg(all(unix, not(target_arch = "wasm32")))]
 use gateway_auth::crypto::sha256_hex;
 use gateway_authority_provisioning::intent::{Scope, token};
+use gateway_core::error::GatewayError;
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, RecordKey, RecordMutation, RevisionCheck, StoredRecord,
 };
@@ -104,7 +106,12 @@ impl Operator {
             token,
         })
     }
-    fn send(&self, store: &SqliteStore, operation: Operation, body: &[u8]) -> Result<Reply, u16> {
+    fn request(
+        &self,
+        store: &SqliteStore,
+        operation: Operation,
+        body: &[u8],
+    ) -> Result<Reply, GatewayError> {
         run(handle(
             store,
             operation,
@@ -112,7 +119,10 @@ impl Operator {
             Some(&self.token),
             body,
         ))
-        .map_err(|error| error.status)
+    }
+    fn send(&self, store: &SqliteStore, operation: Operation, body: &[u8]) -> Result<Reply, u16> {
+        self.request(store, operation, body)
+            .map_err(|error| error.status)
     }
     fn json(
         &self,
@@ -120,9 +130,37 @@ impl Operator {
         operation: Operation,
         body: &[u8],
     ) -> Result<Value, String> {
-        let reply = self.send(store, operation, body).check("reply")?;
+        let reply = self.request(store, operation, body).check("reply")?;
         serde_json::from_slice(&reply.body).check("reply json")
     }
+}
+
+/// Opaque v2 page fields match the bounded-page unit fixture. They test wire
+/// validation/echoing only: no Gate, FrozenRef, lease or drain proof is minted.
+/// The actual Worker supplies a Frozen-scoped store before calling this layer.
+fn export_request(cursor: Option<String>, limit: u32) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(&json!({
+        "v":2,
+        "freeze_id":"1".repeat(64),
+        "freeze_revision":"2".repeat(64),
+        "cursor":cursor,
+        "limit":limit,
+    }))
+    .check("export request")
+}
+
+fn export_refused(operator: &Operator, store: &SqliteStore, body: &[u8], message: &str) -> Outcome {
+    let error = operator
+        .request(store, Operation::ExportPage, body)
+        .err()
+        .check("export must refuse")?;
+    assert_eq!(error.status, 409);
+    assert_eq!(
+        error.envelope.error.code.as_deref(),
+        Some("state_transfer_refused")
+    );
+    assert_eq!(error.envelope.error.message, message);
+    Ok(())
 }
 
 fn header<'a>(reply: &'a Reply, name: &str) -> Option<&'a str> {
@@ -140,10 +178,18 @@ fn export_archive(store: &SqliteStore) -> Result<(Vec<u8>, usize), String> {
     let mut records = 0usize;
     let mut cursor: Option<String> = None;
     loop {
-        let body = serde_json::to_vec(&json!({"v":1,"cursor":cursor,"limit":3})).check("body")?;
+        let body = export_request(cursor.take(), 3)?;
         let reply = operator
-            .send(store, Operation::ExportPage, &body)
+            .request(store, Operation::ExportPage, &body)
             .check("export")?;
+        assert_eq!(
+            header(&reply, "x-uos-state-export-freeze-id"),
+            Some("1".repeat(64).as_str())
+        );
+        assert_eq!(
+            header(&reply, "x-uos-state-export-freeze-revision"),
+            Some("2".repeat(64).as_str())
+        );
         assert_eq!(
             header(&reply, EXPORT_SHA256_HEADER),
             Some(sha256_hex(&reply.body).as_str())
@@ -311,6 +357,20 @@ fn refusals_happen_before_any_write() -> Outcome {
     ));
     assert_eq!(closed.err().map(|e| e.status), Some(404));
     let export = Operator::new(&Scope::Export)?;
+    // A retired v1 body is a schema refusal, not evidence of partial-state
+    // protection. Retain its full error so the two guards cannot be confused.
+    export_refused(
+        &export,
+        &target,
+        br#"{"v":1,"cursor":null,"limit":3}"#,
+        "Export page request is invalid",
+    )?;
+    export_refused(
+        &export,
+        &target,
+        &export_request(None, 3)?,
+        "Target has no sealed capture manifest",
+    )?;
     assert_eq!(
         export.send(&target, Operation::ImportFrame, begin).err(),
         Some(403)
@@ -352,11 +412,13 @@ fn refusals_happen_before_any_write() -> Outcome {
         Some(409)
     );
     // A partial target cannot export as an accepted inverse.
-    let page = serde_json::to_vec(&json!({"v":1,"cursor":null,"limit":3})).check("page")?;
-    assert_eq!(
-        export.send(&target, Operation::ExportPage, &page).err(),
-        Some(409)
-    );
+    let page = export_request(None, 3)?;
+    export_refused(
+        &export,
+        &target,
+        &page,
+        "A partially staged target cannot be exported",
+    )?;
     let status = operator.json(&target, Operation::ImportStatus, b"")?;
     assert_eq!(status["state"], "staging");
     assert_eq!(status["next_sequence"], 0);
