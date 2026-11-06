@@ -142,13 +142,14 @@ pub(super) async fn initialize(
     let Some(store) = gateway_worker_fixture_setup::provisioning::begin(&raw).await? else {
         return Ok(None);
     };
-    let result = initialize_scoped(&store, id).await;
+    let result = initialize_scoped(&store, id, env).await;
     gateway_worker_fixture_setup::provisioning::finish(&store, result.is_err()).await?;
     result
 }
 async fn initialize_scoped(
     store: &RemoteAuthorityStore,
     id: &NativeTransportIdentity,
+    env: &Env,
 ) -> Result<Option<String>, GatewayError> {
     let user_key = passkeys::key("users", USER);
     if store.read(&user_key).await?.is_some() {

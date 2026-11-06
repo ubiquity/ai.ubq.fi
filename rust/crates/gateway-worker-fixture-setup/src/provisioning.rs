@@ -4,7 +4,6 @@ use gateway_auth::crypto::sha256_hex;
 use gateway_authority_provisioning::{
     intent::{Intent, Scope, authorization_digest, token},
     model::*,
-    policy,
 };
 use gateway_core::error::GatewayError;
 use gateway_migration::{
