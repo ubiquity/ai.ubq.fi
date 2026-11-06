@@ -80,10 +80,10 @@ pub(crate) async fn start(
         )
         .await;
         if !slot.waiting.get() {
-            if let Ok(Start::Ordinary(session)) = result {
-                if session.finish(Default::default()).await.is_err() {
-                    observer.required_failure();
-                }
+            if let Ok(Start::Ordinary(session)) = result
+                && session.finish(Default::default()).await.is_err()
+            {
+                observer.required_failure();
             }
             if let Some(writer) = writer {
                 writer.complete();

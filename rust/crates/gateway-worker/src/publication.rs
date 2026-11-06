@@ -75,21 +75,19 @@ async fn dispatch(
     struct Operation {
         operation: String,
     }
-    if serde_json::from_slice::<Operation>(&raw_body)
+    if serde_json::from_slice::<Operation>(raw_body)
         .ok()
         .is_some_and(|value| value.operation == "managed_access_publish")
     {
-        return crate::native_authority::managed_publication(
-            &request, env, native, store, &raw_body,
-        )
-        .await;
+        return crate::native_authority::managed_publication(request, env, native, store, raw_body)
+            .await;
     }
-    if serde_json::from_slice::<Operation>(&raw_body)
+    if serde_json::from_slice::<Operation>(raw_body)
         .ok()
         .is_some_and(|value| value.operation == "codex_auth_import_publish")
     {
         return crate::native_authority::import_dispatch::publication(
-            &request, env, native, store, receiver, &raw_body,
+            request, env, native, store, receiver, raw_body,
         )
         .await;
     }

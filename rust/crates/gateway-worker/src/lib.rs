@@ -172,7 +172,13 @@ pub async fn fetch_with_bindings(
         (scoped, Some(writer))
     };
     let result = dispatch_with_store(
-        request, env, context, receiver, native, &identity, request_id, store,
+        request,
+        env,
+        context,
+        receiver,
+        native,
+        (&identity, request_id),
+        store,
     )
     .await;
     if let Some(writer) = writer {
@@ -187,10 +193,10 @@ async fn dispatch_with_store(
     context: Rc<Context>,
     receiver: Option<&gateway_publication_transport::transport::PublicationReceiver>,
     native: NativeBindings,
-    identity: &ReleaseIdentity,
-    request_id: String,
+    request_identity: (&ReleaseIdentity, String),
     store: gateway_worker_authority::client::RemoteAuthorityStore,
 ) -> Result<GatewayResponse> {
+    let (identity, request_id) = request_identity;
     if native_authority::is_path(&request.path()) {
         let response = match native_authority::handle(request, &env, &native, &store).await {
             Ok(response) => response,

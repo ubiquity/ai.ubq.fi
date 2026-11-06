@@ -1,4 +1,11 @@
 //! Bounded migration bindings; full native capture is private, never a public admin body.
+use gateway_authority_lifecycle::{
+    model::{
+        Access, Acquire, Authorization, Blocker, ControlEnvelope, ControlRequest, ImportState,
+        LeaseKind, Operation, Phase, Reply, Status,
+    },
+    policy,
+};
 use gateway_core::{error::GatewayError, query::QueryStore};
 use gateway_migration::{
     error::MigrationError,
@@ -142,15 +149,10 @@ pub async fn state_transfer(
 
 async fn authority_status(
     store: &gateway_worker_authority::client::RemoteAuthorityStore,
-) -> Result<gateway_authority_lifecycle::model::Status, GatewayError> {
-    match store
-        .coordination(gateway_authority_lifecycle::model::Operation::Status)
-        .await?
-    {
-        gateway_authority_lifecycle::model::Reply::Status { status } => Ok(status),
-        _ => Err(gateway_authority_lifecycle::policy::refused(
-            "Authority status is invalid",
-        )),
+) -> Result<Status, GatewayError> {
+    match store.coordination(Operation::Status).await? {
+        Reply::Status { status } => Ok(status),
+        _ => Err(policy::refused("Authority status is invalid")),
     }
 }
 async fn import_store(
@@ -159,7 +161,6 @@ async fn import_store(
     body: &[u8],
     presented: &str,
 ) -> Result<gateway_worker_authority::client::RemoteAuthorityStore, GatewayError> {
-    use gateway_authority_lifecycle::{model::*, policy};
     let frame = gateway_migration::staged::decode_stage_request(body)?;
     let capture = intent.import_capture()?;
     let value =
@@ -223,7 +224,6 @@ async fn export_store(
     store: &gateway_worker_authority::client::RemoteAuthorityStore,
     body: &[u8],
 ) -> Result<gateway_worker_authority::client::RemoteAuthorityStore, GatewayError> {
-    use gateway_authority_lifecycle::{model::*, policy};
     let request: gateway_state_transfer::export::ExportRequest = serde_json::from_slice(body)
         .map_err(|_| policy::refused("Export requires its frozen epoch"))?;
     let status = authority_status(store).await?;
@@ -243,7 +243,6 @@ async fn control_response(
     intent: &gateway_authority_provisioning::intent::Intent,
     body: &[u8],
 ) -> Result<worker::Response, GatewayError> {
-    use gateway_authority_lifecycle::{model::*, policy};
     if body.len() > 65_536 {
         return Err(policy::refused("Control body exceeds its bound"));
     }
@@ -304,17 +303,15 @@ async fn control_response(
         }
     };
     let reply = store.coordination(operation).await?;
-    if let gateway_authority_provisioning::intent::Scope::Import { capture_id } = intent.scope() {
-        if let Reply::Status { status } = &reply {
-            if status
-                .gate
-                .import
-                .as_ref()
-                .is_some_and(|value| &value.capture_id != capture_id)
-            {
-                return Err(policy::refused("Status names another import capture"));
-            }
-        }
+    if let gateway_authority_provisioning::intent::Scope::Import { capture_id } = intent.scope()
+        && let Reply::Status { status } = &reply
+        && status
+            .gate
+            .import
+            .as_ref()
+            .is_some_and(|value| &value.capture_id != capture_id)
+    {
+        return Err(policy::refused("Status names another import capture"));
     }
     let status = if matches!(reply, Reply::DrainTimeout { .. }) {
         504
@@ -343,7 +340,6 @@ async fn import_reply(
     presented: Option<&str>,
     body: &[u8],
 ) -> Result<gateway_state_transfer::http::Reply, GatewayError> {
-    use gateway_authority_lifecycle::{model::*, policy};
     use gateway_state_transfer::http::{Operation::ImportFrame, handle};
     let presented = presented.ok_or_else(|| policy::refused("Import intent missing"))?;
     let status = authority_status(store).await?;
@@ -376,8 +372,8 @@ async fn import_reply(
                 .code
                 .as_deref()
                 .is_some_and(|code| code.starts_with("authority_"));
-            if uncertain {
-                if let Ok(proof) = handle(
+            if uncertain
+                && let Ok(proof) = handle(
                     &store.operator_read(),
                     ImportFrame,
                     configured,
@@ -385,10 +381,9 @@ async fn import_reply(
                     body,
                 )
                 .await
-                {
-                    scoped.finish_scope(None).await?;
-                    return Ok(proof);
-                }
+            {
+                scoped.finish_scope(None).await?;
+                return Ok(proof);
             }
             scoped
                 .finish_scope(uncertain.then_some(Blocker::UncertainCommit))
