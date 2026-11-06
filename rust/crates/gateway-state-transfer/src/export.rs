@@ -38,8 +38,8 @@ pub async fn export_page<S: QueryStore>(
     request: ExportRequest,
 ) -> Result<ExportPage, GatewayError> {
     if request.v != 2
-        || !gateway_authority_provisioning::policy::hex(&request.freeze_id, 64)
-        || !gateway_authority_provisioning::policy::hex(&request.freeze_revision, 64)
+        || !gateway_authority_lifecycle::policy::hex(&request.freeze_id, 64)
+        || !gateway_authority_lifecycle::policy::hex(&request.freeze_revision, 64)
         || !(1..=EXPORT_PAGE_LIMIT).contains(&request.limit)
     {
         return Err(refused("Export page request is invalid"));

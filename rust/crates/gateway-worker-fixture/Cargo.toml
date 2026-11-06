@@ -13,6 +13,7 @@ default = []
 entrypoint = []
 
 [dependencies]
+gateway-authority-lifecycle.workspace = true
 gateway-authority-provisioning.workspace = true
 gateway-worker-storage.workspace = true
 gateway-worker-authority.workspace = true

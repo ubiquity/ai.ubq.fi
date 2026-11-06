@@ -1,7 +1,7 @@
 //! One-time operator intent. The Worker holds only the SHA-256 of a token the
 //! operator minted for exactly one scope; the token itself travels in one
 //! request header of one operator command and is never stored by the Worker.
-use crate::model::{Authorization, Purpose};
+use gateway_authority_lifecycle::model::{Authorization, Purpose};
 use gateway_core::error::GatewayError;
 
 pub const INTENT_HEADER: &str = "x-uos-state-transfer-intent";
@@ -136,6 +136,7 @@ pub fn purpose_name(value: Purpose) -> &'static str {
     match value {
         Purpose::FinalizeImport => "finalize_import",
         Purpose::Drain => "drain",
+        Purpose::CancelDrain => "cancel_drain",
         Purpose::Activate => "activate",
     }
 }
@@ -143,6 +144,7 @@ fn parse_purpose(value: &str) -> Result<Purpose, GatewayError> {
     match value {
         "finalize_import" => Ok(Purpose::FinalizeImport),
         "drain" => Ok(Purpose::Drain),
+        "cancel_drain" => Ok(Purpose::CancelDrain),
         "activate" => Ok(Purpose::Activate),
         _ => Err(refused()),
     }
@@ -193,6 +195,7 @@ impl Intent {
         let expected = match value {
             Authorization::FinalizeImport(_) => Purpose::FinalizeImport,
             Authorization::Drain(_) => Purpose::Drain,
+            Authorization::CancelDrain(_) => Purpose::CancelDrain,
             Authorization::Activate(_) => Purpose::Activate,
         };
         match &self.scope {

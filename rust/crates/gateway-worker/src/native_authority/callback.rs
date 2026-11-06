@@ -9,7 +9,7 @@ pub async fn join(
 ) -> Result<RemoteAuthorityStore, GatewayError> {
     if matches!(
         store.access(),
-        gateway_authority_provisioning::model::Access::Legacy
+        gateway_authority_lifecycle::model::Access::Legacy
     ) {
         return Ok(store.clone());
     }

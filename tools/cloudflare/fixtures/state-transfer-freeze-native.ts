@@ -3,7 +3,8 @@
 // never permission to manufacture ActionRows or bypass the signed receiver.
 import assert from "node:assert/strict";
 import { createHmac, randomBytes } from "node:crypto";
-import { awaitFrozen, beginDrain } from "../state-transfer-control.ts";
+import { awaitFrozen, beginDrain, cancelDrain } from "../state-transfer-control.ts";
+import { prepareCancellation } from "./state-transfer-freeze-maintenance.ts";
 import { sha256 } from "../state-transfer.ts";
 import { ARTIFACT_SHA, ARTIFACT_TREE, jsonRecord, object, pending, tuple, type Fixture, type Json, type Permit } from "./state-transfer-freeze-support.ts";
 import { invokePrepared, preparedTool } from "./state-transfer-freeze-prepared.ts";
@@ -48,9 +49,10 @@ async function join(fixture: Fixture, selector: Json): Promise<Permit> {
   return { id, capability, serving_epoch: Number(reply.serving_epoch) };
 }
 
-export async function positiveNativeReceiver(fixture: Fixture): Promise<void> {
+export async function positiveNativeReceiver(fixture: Fixture, raceCancellation = false): Promise<void> {
   const tool = await preparedTool(fixture, "native_fixture");
   await fixture.running();
+  const cancellation = raceCancellation ? await prepareCancellation(fixture) : undefined;
   const now = Date.now();
   const prepared = await invokePrepared(fixture, tool, "native_constructor_fixture", {
     v: 1,
@@ -77,21 +79,7 @@ export async function positiveNativeReceiver(fixture: Fixture): Promise<void> {
   assert.equal(publication.operation_id, operation.operation_id);
   assert.equal(publication.action_ref, operation.action_ref);
   assert.equal(publication.publication_revision, operation.publication_revision);
-  const root = await fixture.root("typed-native-fixture-origin");
-  const seed = await fixture.rpc(
-    {
-      operation: "commit",
-      checks: [],
-      mutations: prepared.rows.map((entry) => {
-        const row = object(entry);
-        assert(typeof row.key === "string");
-        return { operation: "put", key: row.key, record: object(row.record) };
-      }),
-    },
-    { kind: "permit", value: root }
-  );
-  assert.equal(seed.status, 200, await seed.clone().text());
-  assert.equal(object(await seed.json()).committed, true);
+  const root = await seedNativeRows(fixture, prepared.rows);
   const binding = {
     operation_id: operation.operation_id,
     action_ref: operation.action_ref,
@@ -109,8 +97,8 @@ export async function positiveNativeReceiver(fixture: Fixture): Promise<void> {
   await fixture.finish(native, "native_effect_unknown");
   await fixture.finish(root);
   const current = fixture.current();
-  await beginDrain(current.transport, current.binding);
-  const frozen = pending(awaitFrozen(current.transport, current.binding));
+  await beginDrain(current.transport, current.plan);
+  const frozen = pending(awaitFrozen(current.transport, current.plan));
   for (const stale of [
     { ...publication, source_revision: "wrong-source" },
     { ...publication, owner_revision: "wrong-owner" },
@@ -124,7 +112,7 @@ export async function positiveNativeReceiver(fixture: Fixture): Promise<void> {
   assert.equal(published.status, 200, JSON.stringify(published.body));
   assert.equal((await fixture.status()).counts.native_operations, 2, "Publication HTTP success alone retired the orphan");
   const raceKey = tuple("uos_ai", "freeze_fixture", "positive-native-race");
-  const [race, terminal] = await Promise.all([
+  const [race, terminal, cancelled] = await Promise.all([
     fixture.commit(heldJoin, raceKey, jsonRecord("positive-racing-write", { admitted: true })),
     signed(fixture, "/uos/native/renewal-authority", {
       v: 1,
@@ -133,6 +121,7 @@ export async function positiveNativeReceiver(fixture: Fixture): Promise<void> {
       claim_ref: operation.claim_ref,
       publication_revision: operation.publication_revision,
     }),
+    cancellation ? cancelDrain(fixture.operatorTransport("cancel", cancellation.intent.token), cancellation.plan) : Promise.resolve(null),
   ]);
   assert.equal(terminal.status, 200, JSON.stringify(terminal.body));
   assert.equal(terminal.body.operation, "published");
@@ -148,11 +137,12 @@ export async function positiveNativeReceiver(fixture: Fixture): Promise<void> {
   assert.equal(remaining.counts.native_operations, 1);
   assert.equal(remaining.counts.native_joins, 1);
   assert.equal(remaining.counts.blocked, 1);
-  assert.equal(frozen.settled, false);
+  if (!cancellation) assert.equal(frozen.settled, false);
   await fixture.finish(siblingJoin);
   await fixture.finish(sibling);
   await fixture.finish(accounting);
-  const reference = await frozen.promise;
+  if (cancellation) await assert.rejects(frozen.promise, /drain_cancelled/u);
+  const reference = cancellation ? await freezeAfterCancelledNative(fixture, cancellation) : await frozen.promise;
   fixture.facts.push({
     operation: "signed_native_receiver_terminal_retires_exact_orphan",
     positive_published_proof: true,
@@ -162,5 +152,34 @@ export async function positiveNativeReceiver(fixture: Fixture): Promise<void> {
     unrelated_blockers_retained: true,
     racing_commit_preceded: committed,
     frozen_ref: reference,
+    raced_cancellation: raceCancellation,
+    cancellation: cancelled?.cancellation ?? null,
   });
+}
+
+async function freezeAfterCancelledNative(fixture: Fixture, prepared: Awaited<ReturnType<typeof prepareCancellation>>) {
+  const status = await fixture.status();
+  assert.equal(status.gate.phase, "running", "Native completion after cancellation minted Frozen");
+  const transport = fixture.operatorTransport("next", prepared.nextIntent.token);
+  await beginDrain(transport, prepared.next);
+  return awaitFrozen(transport, prepared.next);
+}
+
+async function seedNativeRows(fixture: Fixture, rows: unknown[]): Promise<Permit> {
+  const root = await fixture.root("typed-native-fixture-origin");
+  const seed = await fixture.rpc(
+    {
+      operation: "commit",
+      checks: [],
+      mutations: rows.map((entry) => {
+        const row = object(entry);
+        assert(typeof row.key === "string");
+        return { operation: "put", key: row.key, record: object(row.record) };
+      }),
+    },
+    { kind: "permit", value: root }
+  );
+  assert.equal(seed.status, 200, await seed.clone().text());
+  assert.equal(object(await seed.json()).committed, true);
+  return root;
 }

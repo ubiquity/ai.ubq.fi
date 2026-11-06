@@ -1,7 +1,7 @@
 //! Actual completion events close writer groups; abandonment persists a blocker.
 use crate::client::RemoteAuthorityStore;
 use futures_util::task::AtomicWaker;
-use gateway_authority_provisioning::{
+use gateway_authority_lifecycle::{
     model::{Blocker, Operation, Permit},
     policy,
 };

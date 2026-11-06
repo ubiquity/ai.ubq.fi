@@ -11,6 +11,7 @@ import { ARTIFACT_SHA, ARTIFACT_TREE, Fixture, ROOT, bytesHash, object, type Inp
 import { FixturePrerequisite, preparedPath } from "./fixtures/state-transfer-freeze-prepared.ts";
 import { positiveNativeReceiver } from "./fixtures/state-transfer-freeze-native.ts";
 import { frozenInverse } from "./fixtures/state-transfer-freeze-inverse.ts";
+import { cancellationFinishRace, cancelHeldBackground, cancelHeldRequest, repeatedMaintenance } from "./fixtures/state-transfer-freeze-maintenance.ts";
 import { actualProtocolTimeout, actualWriter } from "./fixtures/state-transfer-freeze-lifecycle.ts";
 import {
   backgroundWriter,
@@ -33,6 +34,12 @@ export const caseMatrix = [
   { name: "eof", run: eofWithoutTerminal },
   { name: "writer-complete", run: (fixture: Fixture) => actualWriter(fixture, false) },
   { name: "writer-drop", run: (fixture: Fixture) => actualWriter(fixture, true) },
+  { name: "cancel-held-stream", run: (fixture: Fixture) => cancelHeldRequest(fixture, true) },
+  { name: "cancel-held-buffer", run: (fixture: Fixture) => cancelHeldRequest(fixture, false) },
+  { name: "cancel-held-background", run: cancelHeldBackground },
+  { name: "repeated-maintenance", run: repeatedMaintenance },
+  { name: "cancel-finish-race", run: cancellationFinishRace },
+  { name: "cancel-native-race", run: (fixture: Fixture) => positiveNativeReceiver(fixture, true) },
   { name: "real-protocol-timeout", run: actualProtocolTimeout },
 ] as const;
 
@@ -45,6 +52,7 @@ const sourceFiles = [
   "tools/cloudflare/fixtures/state-transfer-freeze-native.ts",
   "tools/cloudflare/fixtures/state-transfer-freeze-inverse.ts",
   "tools/cloudflare/fixtures/state-transfer-freeze-lifecycle.ts",
+  "tools/cloudflare/fixtures/state-transfer-freeze-maintenance.ts",
   "tools/cloudflare/fixtures/state-transfer-freeze-writers.mjs",
   "tools/cloudflare/state-transfer.ts",
   "tools/cloudflare/state-transfer-control.ts",

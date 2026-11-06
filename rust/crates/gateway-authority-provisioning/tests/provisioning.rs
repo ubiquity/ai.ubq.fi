@@ -1,9 +1,6 @@
 use gateway_auth::crypto::sha256_hex;
-use gateway_authority_provisioning::{
-    intent::{Intent, Scope, authorization_digest, token},
-    model::*,
-    policy,
-};
+use gateway_authority_lifecycle::{model::*, policy};
+use gateway_authority_provisioning::intent::{Intent, Scope, authorization_digest, token};
 use gateway_core::error::GatewayError;
 
 fn identity() -> Identity {
@@ -65,8 +62,8 @@ fn configured_credential_never_opens_a_fresh_authority() -> Result<(), GatewayEr
         parent: None,
     };
     assert_eq!(gate.phase, Phase::Provisioning);
-    assert!(policy::acquire(&gate, &acquire, None, true).is_err());
-    assert!(policy::acquire(&gate, &acquire, None, false).is_err());
+    assert!(gateway_authority_provisioning::policy::acquire(&gate, &acquire, None, true).is_err());
+    assert!(gateway_authority_provisioning::policy::acquire(&gate, &acquire, None, false).is_err());
     Ok(())
 }
 
@@ -150,14 +147,17 @@ fn legacy_history_never_supplies_a_drain_binding() -> Result<(), GatewayError> {
 #[test]
 fn v2_purposes_bind_the_complete_authorization_and_v1_remains_read_only() -> Result<(), GatewayError>
 {
-    let authorization = Authorization::Drain(Binding {
-        identity: identity(),
-        serving_epoch: 0,
+    let authorization = Authorization::Drain(DrainPlan {
+        binding: Binding {
+            identity: identity(),
+            serving_epoch: 0,
+        },
+        drain_revision: 0,
     });
     let digest = authorization_digest(&authorization)?;
     assert_eq!(
         digest,
-        "a70516e05accc27487fad3f41a0ef4696e64e30bc1a5d0f77e6b057273754e82"
+        "947df3937807c80ca75bed9d3b59cf50d4043b01da6149cfb7bf81c71501945c"
     );
     let presented = token(
         &Scope::Control {
@@ -169,9 +169,12 @@ fn v2_purposes_bind_the_complete_authorization_and_v1_remains_read_only() -> Res
     let configured = sha256_hex(presented.as_bytes());
     let intent = Intent::verify(Some(&presented), Some(&configured))?;
     assert!(intent.require_control(&authorization).is_ok());
-    let substituted = Authorization::Drain(Binding {
-        identity: identity(),
-        serving_epoch: 1,
+    let substituted = Authorization::Drain(DrainPlan {
+        binding: Binding {
+            identity: identity(),
+            serving_epoch: 1,
+        },
+        drain_revision: 0,
     });
     assert!(intent.require_control(&substituted).is_err());
     assert!(intent.require_export().is_err());

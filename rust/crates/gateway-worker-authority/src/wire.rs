@@ -12,14 +12,14 @@ pub const AUTHORITY_OBJECT: &str = "gateway-authority-v1";
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Envelope {
-    pub access: gateway_authority_provisioning::model::Access,
+    pub access: gateway_authority_lifecycle::model::Access,
     pub request: StoreRequest,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StoreRequest {
     Coordination {
-        request: gateway_authority_provisioning::model::Operation,
+        request: gateway_authority_lifecycle::model::Operation,
     },
     ProfileMigration {
         request: ProfileMigration,
@@ -180,7 +180,7 @@ pub enum WireMutation {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StoreResponse {
     Coordination {
-        reply: gateway_authority_provisioning::model::Reply,
+        reply: gateway_authority_lifecycle::model::Reply,
     },
     ProfileMigration {
         status: u16,

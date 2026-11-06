@@ -127,22 +127,22 @@ pub async fn fetch_with_bindings(
         || request.path() == gateway_auth::native::NATIVE_PUBLICATION_PATH;
     let (store, writer) = if callback {
         let status = match raw
-            .coordination(gateway_authority_provisioning::model::Operation::Status)
+            .coordination(gateway_authority_lifecycle::model::Operation::Status)
             .await
         {
-            Ok(gateway_authority_provisioning::model::Reply::Status { status }) => status,
+            Ok(gateway_authority_lifecycle::model::Reply::Status { status }) => status,
             Ok(_) => {
-                return error_response(gateway_authority_provisioning::policy::closed())
+                return error_response(gateway_authority_lifecycle::policy::closed())
                     .map(Into::into);
             }
             Err(error) => return error_response(error).map(Into::into),
         };
-        use gateway_authority_provisioning::model::Phase;
+        use gateway_authority_lifecycle::model::Phase;
         match status.gate.phase {
             Phase::LegacyRunning => (raw, None),
             Phase::Running | Phase::Draining => (raw.operator_read(), None),
             _ => {
-                return error_response(gateway_authority_provisioning::policy::closed())
+                return error_response(gateway_authority_lifecycle::policy::closed())
                     .map(Into::into);
             }
         }
@@ -154,10 +154,10 @@ pub async fn fetch_with_bindings(
                 .map_err(|error| worker::Error::RustError(error.envelope.error.message))?
                 .as_bytes(),
         );
-        let acquire = gateway_authority_provisioning::model::Acquire {
+        let acquire = gateway_authority_lifecycle::model::Acquire {
             id: gateway_auth::crypto::sha256_hex(request_id.as_bytes()),
             capability_sha256: gateway_auth::crypto::sha256_hex(capability.as_bytes()),
-            kind: gateway_authority_provisioning::model::LeaseKind::Root {
+            kind: gateway_authority_lifecycle::model::LeaseKind::Root {
                 request_id: request_id.clone(),
             },
             parent: None,

@@ -941,10 +941,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority-provisioning"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-authority-lifecycle",
  "gateway-core",
  "serde",
  "serde_json",
@@ -1394,6 +1405,7 @@ name = "gateway-state-transfer"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-authority-lifecycle",
  "gateway-authority-provisioning",
  "gateway-core",
  "gateway-migration",
@@ -1413,6 +1425,7 @@ dependencies = [
  "gateway-admission",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-lifecycle",
  "gateway-authority-provisioning",
  "gateway-capacity-recovery",
  "gateway-catalog-runtime",
@@ -1435,6 +1448,8 @@ dependencies = [
  "gateway-schema",
  "gateway-state-transfer",
  "gateway-worker-authority",
+ "gateway-worker-authority-host",
+ "gateway-worker-drain",
  "gateway-worker-storage",
  "serde",
  "serde_json",
@@ -1450,6 +1465,36 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-lifecycle",
+ "gateway-authority-provisioning",
+ "gateway-core",
+ "serde",
+ "serde_json",
+ "worker",
+]
+
+[[package]]
+name = "gateway-worker-authority-host"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "gateway-authority-lifecycle",
+ "gateway-core",
+ "gateway-worker-authority",
+ "gateway-worker-drain",
+ "gateway-worker-storage",
+ "serde",
+ "serde_json",
+ "worker",
+]
+
+[[package]]
+name = "gateway-worker-drain"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-authority-lifecycle",
  "gateway-authority-provisioning",
  "gateway-core",
  "serde",
@@ -1463,6 +1508,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-lifecycle",
  "gateway-authority-provisioning",
  "gateway-core",
  "gateway-publication-policy",
@@ -1481,6 +1527,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-lifecycle",
  "gateway-authority-provisioning",
  "gateway-core",
  "gateway-migration",
@@ -1500,9 +1547,11 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-lifecycle",
  "gateway-authority-provisioning",
  "gateway-core",
  "gateway-worker-authority",
+ "gateway-worker-drain",
  "serde",
  "serde_json",
  "worker",

@@ -59,6 +59,30 @@ pub struct Binding {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct DrainPlan {
+    pub binding: Binding,
+    pub drain_revision: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CancelDrainPlan {
+    pub binding: Binding,
+    pub drain_revision: u64,
+    pub drain_digest: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DrainCancellation {
+    pub plan: CancelDrainPlan,
+    pub next_drain_revision: u64,
+    pub cancel_digest: String,
+    pub cancellation_revision: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FinalizePlan {
     pub binding: Binding,
     pub capture_id: String,
@@ -93,7 +117,8 @@ pub struct FrozenRef {
 )]
 pub enum Authorization {
     FinalizeImport(FinalizePlan),
-    Drain(Binding),
+    Drain(DrainPlan),
+    CancelDrain(CancelDrainPlan),
     Activate(FrozenRef),
 }
 
@@ -102,6 +127,7 @@ pub enum Authorization {
 pub enum Purpose {
     FinalizeImport,
     Drain,
+    CancelDrain,
     Activate,
 }
 
@@ -116,6 +142,10 @@ pub struct Gate {
     pub frozen: Option<FrozenRef>,
     pub activation_digest: Option<String>,
     pub drain_digest: Option<String>,
+    #[serde(default)]
+    pub drain_revision: u64,
+    #[serde(default)]
+    pub last_cancellation: Option<DrainCancellation>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -280,6 +310,7 @@ pub enum Operation {
     Status,
     AwaitFrozen {
         reference_id: String,
+        plan: DrainPlan,
     },
 }
 
@@ -302,6 +333,18 @@ pub enum Reply {
     DrainTimeout {
         status: Status,
     },
+    Cancelled {
+        cancellation: DrainCancellation,
+        replayed: bool,
+        status: Status,
+    },
+    DrainCancelled {
+        cancellation: DrainCancellation,
+        status: Status,
+    },
+    DrainStale {
+        status: Status,
+    },
     Activated {
         serving_epoch: u64,
         replayed: bool,
@@ -321,9 +364,10 @@ pub struct FinalizeFacts {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlRequest {
     FinalizeImport { plan: FinalizePlan },
-    Drain { binding: Binding },
+    Drain { plan: DrainPlan },
+    CancelDrain { plan: CancelDrainPlan },
     Activate { reference: FrozenRef },
-    AwaitFrozen { binding: Binding },
+    AwaitFrozen { plan: DrainPlan },
     Status,
 }
 

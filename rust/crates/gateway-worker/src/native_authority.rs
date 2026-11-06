@@ -355,11 +355,11 @@ async fn execute_renewal<C: NativeRenewalCancellation>(
             let receipt = receiver.published(&claim, &publication_revision).await?;
             if matches!(
                 store.access(),
-                gateway_authority_provisioning::model::Access::Permit(_)
+                gateway_authority_lifecycle::model::Access::Permit(_)
             ) {
                 store
                     .coordination(
-                        gateway_authority_provisioning::model::Operation::NativePublished {
+                        gateway_authority_lifecycle::model::Operation::NativePublished {
                             join: store.permit()?,
                         },
                     )

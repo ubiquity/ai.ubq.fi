@@ -38,8 +38,8 @@ export async function heldRequest(fixture: Fixture, stream: boolean): Promise<vo
   const streamResponse = stream ? await response.promise : undefined;
   if (streamResponse) assert.equal(streamResponse.status, 200, "Held stream must return successful headers before provider release");
   const current = fixture.current();
-  await beginDrain(current.transport, current.binding);
-  const frozen = pending(awaitFrozen(current.transport, current.binding));
+  await beginDrain(current.transport, current.plan);
+  const frozen = pending(awaitFrozen(current.transport, current.plan));
   await progressWhileWaiting(fixture, finisher);
   const held = await fixture.status();
   assert.equal(held.gate.phase, "draining");
@@ -57,7 +57,7 @@ export async function heldRequest(fixture: Fixture, stream: boolean): Promise<vo
   await refused(await fixture.commit(finisher, tuple("uos_ai", "freeze_fixture", "late"), jsonRecord("late", {})));
   assert(fixture.drain);
   await fixture.restart(fixture.drain.sha256);
-  assert.equal(canonical(await awaitFrozen(fixture.current().transport, current.binding)), canonical(reference), "Lost acknowledgement/restart changed Frozen");
+  assert.equal(canonical(await awaitFrozen(fixture.current().transport, current.plan)), canonical(reference), "Lost acknowledgement/restart changed Frozen");
   await fixture.exportFrozen(reference);
   fixture.facts.push({
     operation: "held_request",
@@ -68,15 +68,15 @@ export async function heldRequest(fixture: Fixture, stream: boolean): Promise<vo
   });
 }
 
-async function reopen(fixture: Fixture): Promise<void> {
+export async function reopen(fixture: Fixture): Promise<void> {
   const current = fixture.current();
-  await beginDrain(current.transport, current.binding);
-  const reference = await awaitFrozen(current.transport, current.binding);
+  await beginDrain(current.transport, current.plan);
+  const reference = await awaitFrozen(current.transport, current.plan);
   const intent = mintControlIntent({ purpose: "activate", data: reference });
   await fixture.restart(intent.sha256);
   await activate(fixture.transport(intent.token), reference);
   fixture.binding = { identity: reference.identity, serving_epoch: reference.serving_epoch + 1 };
-  fixture.drain = mintControlIntent({ purpose: "drain", data: fixture.binding });
+  fixture.drain = mintControlIntent({ purpose: "drain", data: { binding: fixture.binding, drain_revision: fixture.drainRevision } });
   await fixture.restart(fixture.drain.sha256);
 }
 
@@ -101,8 +101,8 @@ export async function backgroundWriter(fixture: Fixture): Promise<void> {
   await stale.arrayBuffer();
   await fixture.event("held", "background");
   const current = fixture.current();
-  await beginDrain(current.transport, current.binding);
-  const frozen = pending(awaitFrozen(current.transport, current.binding));
+  await beginDrain(current.transport, current.plan);
+  const frozen = pending(awaitFrozen(current.transport, current.plan));
   const state = await fixture.status();
   assert(state.counts.roots > 0, "Response return abandoned its held background writer");
   assert.equal(frozen.settled, false);
@@ -154,8 +154,8 @@ export async function nativeOrdering(fixture: Fixture): Promise<void> {
   await fixture.finish(operationA, "native_effect_unknown");
   await fixture.finish(root);
   const current = fixture.current();
-  await beginDrain(current.transport, current.binding);
-  const frozen = pending(awaitFrozen(current.transport, current.binding));
+  await beginDrain(current.transport, current.plan);
+  const frozen = pending(awaitFrozen(current.transport, current.plan));
   const key = tuple("uos_ai", "freeze_fixture", "native-race");
   const [commit, publication] = await Promise.all([
     fixture.commit(second, key, jsonRecord("before-retirement", { write: "racing" })),
@@ -194,11 +194,9 @@ export async function orphanAndCancellation(fixture: Fixture): Promise<void> {
   const root = await fixture.root("lost-root-ack");
   await write(fixture, root, "persist-before-lost-ack");
   const current = fixture.current();
-  await beginDrain(current.transport, current.binding);
+  await beginDrain(current.transport, current.plan);
   const cancellation = new AbortController();
-  const waiting = pending(
-    awaitFrozen({ ...current.transport, fetch: (input, init) => fetch(input, { ...init, signal: cancellation.signal }) }, current.binding)
-  );
+  const waiting = pending(awaitFrozen({ ...current.transport, fetch: (input, init) => fetch(input, { ...init, signal: cancellation.signal }) }, current.plan));
   const before = await fixture.status();
   assert.equal(before.counts.roots, 1);
   assert.equal(waiting.settled, false);
@@ -209,7 +207,7 @@ export async function orphanAndCancellation(fixture: Fixture): Promise<void> {
   const after = await fixture.status();
   assert.equal(after.gate.phase, "draining", "Client cancellation or restart fabricated Frozen");
   assert.equal(after.counts.roots, 1, "Unconfirmed writer disappeared on restart");
-  const resumed = pending(awaitFrozen(fixture.current().transport, current.binding));
+  const resumed = pending(awaitFrozen(fixture.current().transport, current.plan));
   await write(fixture, root, "finish-after-restart");
   assert.equal(resumed.settled, false);
   const lostAck = await fixture.rpc({ operation: "coordination", request: { operation: "finish", permit: root, blocker: null } });
@@ -217,7 +215,7 @@ export async function orphanAndCancellation(fixture: Fixture): Promise<void> {
   await lostAck.body?.cancel();
   const reference = await resumed.promise;
   await fixture.finish(root);
-  assert.equal(canonical(await awaitFrozen(fixture.current().transport, current.binding)), canonical(reference));
+  assert.equal(canonical(await awaitFrozen(fixture.current().transport, current.plan)), canonical(reference));
   fixture.facts.push({
     operation: "orphan_lost_ack_restart",
     cancellation_is_completion: false,
@@ -234,7 +232,7 @@ export async function signedUnprovedCallback(fixture: Fixture): Promise<void> {
   const operation = await fixture.acquire({ kind: "native_operation", binding }, root);
   await fixture.finish(root);
   const current = fixture.current();
-  await beginDrain(current.transport, current.binding);
+  await beginDrain(current.transport, current.plan);
   const path = "/uos/native/renewal-authority";
   const body = JSON.stringify({
     v: 1,
@@ -287,8 +285,8 @@ export async function eofWithoutTerminal(fixture: Fixture): Promise<void> {
   );
   await fixture.event("held", "eof");
   const current = fixture.current();
-  await beginDrain(current.transport, current.binding);
-  const frozen = pending(awaitFrozen(current.transport, current.binding));
+  await beginDrain(current.transport, current.plan);
+  const frozen = pending(awaitFrozen(current.transport, current.plan));
   assert.equal((await fixture.control("/release?name=eof")).status, 204);
   const stream = await response.promise;
   assert(stream.body);

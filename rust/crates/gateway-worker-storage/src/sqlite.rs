@@ -1,6 +1,6 @@
 //! SQLite-backed coordination storage. Transactions never contain external I/O.
 
-use gateway_authority_provisioning::model::{Access, Identity};
+use gateway_authority_lifecycle::model::{Access, Identity};
 use gateway_core::{
     error::GatewayError,
     identity::MAX_SAFE_INTEGER,
@@ -87,7 +87,7 @@ impl SqliteAuthorityStore {
         let gate_storage = Rc::clone(&storage);
         storage
             .transaction(move |_| async move {
-                crate::drain::initialize(&gate_storage.sql(), &identity)
+                gateway_worker_drain::control::initialize(&gate_storage.sql(), &identity)
                     .map_err(|error| worker::Error::RustError(error.envelope.error.message))
             })
             .await
@@ -107,7 +107,12 @@ impl SqliteAuthorityStore {
 impl AuthorityStore for SqliteAuthorityStore {
     async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
         validate_key(key)?;
-        crate::drain::authorize(&self.storage.sql(), &self.access, false, self.ingress)?;
+        gateway_worker_drain::control::authorize(
+            &self.storage.sql(),
+            &self.access,
+            false,
+            self.ingress,
+        )?;
         read_record(&self.storage.sql(), key, now_ms()?)
     }
 
@@ -123,7 +128,7 @@ impl AuthorityStore for SqliteAuthorityStore {
         let result = self.storage.transaction(move |_| async move {
             let apply = || -> Result<CommitOutcome, GatewayError> {
                 let sql = transaction_storage.sql();
-                crate::drain::authorize(&sql, &access, true, ingress)?;
+                gateway_worker_drain::control::authorize(&sql, &access, true, ingress)?;
                 let now = now_ms()?;
                 for (key, expected_revision) in &checks {
                     let current = read_record(&sql, &RecordKey(key.clone()), now)?;
@@ -204,7 +209,12 @@ fn read_record(
 
 impl QueryStore for SqliteAuthorityStore {
     async fn query(&self, request: QueryRequest) -> Result<QueryPage, GatewayError> {
-        crate::drain::authorize(&self.storage.sql(), &self.access, false, self.ingress)?;
+        gateway_worker_drain::control::authorize(
+            &self.storage.sql(),
+            &self.access,
+            false,
+            self.ingress,
+        )?;
         let query = request.validate()?;
         let mut parameters = vec![
             SqlStorageValue::Blob(query.lower_inclusive.clone()),
@@ -333,7 +343,7 @@ fn unavailable(code: &str) -> GatewayError {
     GatewayError::unavailable("The authority storage is unavailable.", code)
 }
 
-pub(crate) fn read_control_record(
+pub fn read_control_record(
     sql: &SqlStorage,
     key: &RecordKey,
 ) -> Result<Option<StoredRecord>, GatewayError> {

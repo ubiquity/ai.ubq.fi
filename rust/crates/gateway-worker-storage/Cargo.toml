@@ -6,6 +6,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-worker-drain.workspace = true
+gateway-authority-lifecycle.workspace = true
 gateway-authority.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true

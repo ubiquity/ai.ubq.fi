@@ -1,7 +1,11 @@
 //! Dedicated SQL control tables. Their rows never enter the business tuple inventory.
-use gateway_authority_provisioning::{model::*, policy};
+use gateway_authority_lifecycle::{model::*, policy};
 use gateway_core::error::GatewayError;
 use worker::{SqlStorage, SqlStorageValue as Sql, Storage};
+pub type ReadRecord = fn(
+    &SqlStorage,
+    &gateway_core::state::RecordKey,
+) -> Result<Option<gateway_core::state::StoredRecord>, GatewayError>;
 
 fn failure() -> GatewayError {
     policy::refused("Durable writer control is invalid or unavailable")
@@ -27,7 +31,7 @@ pub fn gate(sql: &SqlStorage) -> Result<Gate, GatewayError> {
     if value.v != 1 || rows.next().is_some() {
         return Err(failure());
     }
-    policy::identity(&value.identity)?;
+    maintenance::validate(&value)?;
     Ok(value)
 }
 
@@ -158,8 +162,8 @@ pub fn authorize(
         }
         Access::Permit(permit) => {
             let owner = lease(sql, &permit.id)?.ok_or_else(failure)?;
-            policy::valid_permit(&current, permit, &owner)?;
-            policy::authorize(&current, &owner)
+            gateway_authority_provisioning::policy::valid_permit(&current, permit, &owner)?;
+            gateway_authority_provisioning::policy::authorize(&current, &owner)
         }
         _ => Err(policy::closed()),
     }
@@ -221,7 +225,7 @@ fn acquire(sql: &SqlStorage, request: Acquire, ingress: bool) -> Result<Reply, G
         .map(|value| lease(sql, &value.id))
         .transpose()?
         .flatten();
-    policy::acquire(&current, &request, parent.as_ref(), ingress)?;
+    gateway_authority_provisioning::policy::acquire(&current, &request, parent.as_ref(), ingress)?;
     put_lease(
         sql,
         &Lease {
@@ -297,8 +301,8 @@ fn join_native(
 fn native_published(sql: &SqlStorage, join: Permit) -> Result<Reply, GatewayError> {
     let current = gate(sql)?;
     let joined = lease(sql, &join.id)?.ok_or_else(failure)?;
-    policy::valid_permit(&current, &join, &joined)?;
-    policy::authorize(&current, &joined)?;
+    gateway_authority_provisioning::policy::valid_permit(&current, &join, &joined)?;
+    gateway_authority_provisioning::policy::authorize(&current, &joined)?;
     let LeaseKind::NativeJoin(binding) = &joined.kind else {
         return Err(failure());
     };
@@ -383,7 +387,7 @@ fn finish(
     };
     let mut validation = owner.clone();
     validation.terminal = false;
-    policy::valid_permit(&current, &permit, &validation)?;
+    gateway_authority_provisioning::policy::valid_permit(&current, &permit, &validation)?;
     if owner.terminal {
         collect_terminal(sql)?;
         return Ok(Reply::Finished {
@@ -414,22 +418,27 @@ fn finish(
 }
 
 fn json_record(
+    read_record: ReadRecord,
     sql: &SqlStorage,
     key: &gateway_core::state::RecordKey,
 ) -> Result<Option<gateway_core::state::StoredRecord>, GatewayError> {
-    crate::sqlite::read_control_record(sql, key)
+    read_record(sql, key)
 }
 
-fn finalization_facts(sql: &SqlStorage) -> Result<FinalizeFacts, GatewayError> {
+fn finalization_facts(
+    sql: &SqlStorage,
+    read_record: ReadRecord,
+) -> Result<FinalizeFacts, GatewayError> {
     let key = |parts: serde_json::Value| gateway_auth::store::key(parts);
     let manifest = json_record(
+        read_record,
         sql,
         &key(serde_json::json!(["uos_ai", "migration", "v3", "manifest"])),
     )?
     .ok_or_else(failure)?;
     let value = manifest.json_value()?;
     let owner_key = gateway_authority::keys::paid_control_owner();
-    let owner = json_record(sql, &owner_key)?
+    let owner = json_record(read_record, sql, &owner_key)?
         .map(|record| {
             let value = record.json_value()?;
             let text = |field: &str| {
@@ -455,6 +464,7 @@ fn finalization_facts(sql: &SqlStorage) -> Result<FinalizeFacts, GatewayError> {
         .transpose()?;
     Ok(FinalizeFacts {
         progress_present: json_record(
+            read_record,
             sql,
             &key(serde_json::json!(["uos_ai", "migration", "v3", "staged"])),
         )?
@@ -475,6 +485,7 @@ fn control(
     authorization: Authorization,
     digest: String,
     ingress: bool,
+    read_record: ReadRecord,
 ) -> Result<Reply, GatewayError> {
     let mut current = gate(sql)?;
     match authorization {
@@ -482,7 +493,7 @@ fn control(
             let reference = policy::finalize(
                 &mut current,
                 &plan,
-                &finalization_facts(sql)?,
+                &finalization_facts(sql, read_record)?,
                 &digest,
                 &policy::counts(&leases(sql)?),
             )?;
@@ -498,41 +509,28 @@ fn control(
                 status: status(sql)?,
             })
         }
-        Authorization::Drain(binding) => {
-            if current.phase == Phase::Frozen
-                && current
-                    .frozen
-                    .as_ref()
-                    .is_some_and(|value| value.freeze_id == digest)
-            {
-                return Ok(Reply::Frozen {
-                    reference: current.frozen.ok_or_else(failure)?,
-                });
-            }
-            policy::binding(&current, &binding)?;
-            if !matches!(current.phase, Phase::Running | Phase::Draining) {
-                return Err(policy::closed());
-            }
-            if current
-                .drain_digest
-                .as_ref()
-                .is_some_and(|old| old != &digest)
-            {
-                return Err(failure());
-            }
-            current.phase = Phase::Draining;
-            current.drain_digest = Some(digest.clone());
-            if policy::counts(&leases(sql)?).empty() {
-                let previous = current.frozen.clone().ok_or_else(failure)?;
-                policy::freeze(
-                    &mut current,
-                    &digest,
-                    previous.capture_id,
-                    previous.finalization_digest,
-                )?;
+        Authorization::Drain(plan) => {
+            if let Some(reference) = maintenance::drain(
+                &mut current,
+                &plan,
+                &digest,
+                &policy::counts(&leases(sql)?),
+                ingress,
+            )? {
+                return Ok(Reply::Frozen { reference });
             }
             put_gate(sql, &current)?;
             Ok(Reply::Status {
+                status: status(sql)?,
+            })
+        }
+        Authorization::CancelDrain(plan) => {
+            let (cancellation, replayed) =
+                maintenance::cancel(&mut current, &plan, &digest, ingress)?;
+            put_gate(sql, &current)?;
+            Ok(Reply::Cancelled {
+                cancellation,
+                replayed,
                 status: status(sql)?,
             })
         }
@@ -543,6 +541,7 @@ pub async fn execute(
     storage: Storage,
     operation: Operation,
     ingress: bool,
+    read_record: ReadRecord,
 ) -> Result<Reply, GatewayError> {
     let storage = std::rc::Rc::new(storage);
     let result = std::rc::Rc::new(std::cell::RefCell::new(None));
@@ -564,7 +563,7 @@ pub async fn execute(
                     Operation::Control {
                         authorization,
                         intent_digest,
-                    } => control(&sql, authorization, intent_digest, ingress)?,
+                    } => control(&sql, authorization, intent_digest, ingress, read_record)?,
                     Operation::Status => Reply::Status {
                         status: status(&sql)?,
                     },

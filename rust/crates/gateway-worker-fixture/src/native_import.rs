@@ -311,11 +311,11 @@ async fn initialize_scoped(
     let capability = sha256_hex(gateway_worker::transport::random::opaque_token()?.as_bytes());
     store
         .acquire(
-            gateway_authority_provisioning::model::Acquire {
+            gateway_authority_lifecycle::model::Acquire {
                 id: sha256_hex(prepared.metadata().operation_id.as_bytes()),
                 capability_sha256: sha256_hex(capability.as_bytes()),
-                kind: gateway_authority_provisioning::model::LeaseKind::NativeOperation(
-                    gateway_authority_provisioning::model::NativeBinding {
+                kind: gateway_authority_lifecycle::model::LeaseKind::NativeOperation(
+                    gateway_authority_lifecycle::model::NativeBinding {
                         operation_id: prepared.metadata().operation_id.clone(),
                         action_ref: prepared.metadata().action_ref.clone(),
                         owner_id: id.owner_id().into(),

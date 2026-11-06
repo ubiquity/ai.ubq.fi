@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { canonical, main, mintIntent, sha256, type Transport } from "../state-transfer.ts";
-import { activate, finalizeImport, mintControlIntent, type Binding, type FinalizePlan, type FrozenRef } from "../state-transfer-control.ts";
+import { activate, finalizeImport, mintControlIntent, type Binding, type DrainPlan, type FinalizePlan, type FrozenRef } from "../state-transfer-control.ts";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 export const ARTIFACT_SHA = "bf9c949686d14a193564be507d4048c4b3709244";
@@ -66,9 +66,29 @@ export const pending = <T>(promise: Promise<T>): Pending<T> => {
   return result;
 };
 
+export type OperatorName = "cancel" | "next" | "prior" | "activate" | "read";
+function operatorConfiguration(inputs: Inputs, operators: Partial<Record<OperatorName, string>>): Readonly<{ bindings: string; services: string }> {
+  const q = JSON.stringify;
+  const bindings: string[] = [];
+  const services: string[] = [];
+  for (const [name, digest] of Object.entries(operators)) {
+    assert(["cancel", "next", "prior", "activate", "read"].includes(name) && /^[a-f0-9]{64}$/u.test(digest));
+    bindings.push(`, (name = ${q("OPERATOR_" + name.toUpperCase())}, service = ${q("operator-" + name)})`);
+    services.push(`, (name = ${q("operator-" + name)}, worker = (
+      modules = [(name = "index.js", esModule = embed ${q(inputs.workerJs)}), (name = "index_bg.wasm", wasm = embed ${q(inputs.workerWasm)})],
+      compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal","request_signal_passthrough"], globalOutbound = "driver",
+      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority", serviceName = "gateway")),
+        (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"),
+        (name = "UOS_STATE_TRANSFER_INTENT_SHA256", text = ${q(digest)})]))`);
+  }
+  return { bindings: bindings.join(""), services: services.join("") };
+}
+
 export class Fixture {
   origin = "";
   binding?: Binding;
+  drainRevision = 0;
+  operators: Partial<Record<OperatorName, string>> = {};
   drain?: ReturnType<typeof mintControlIntent>;
   writer?: WriterFixture;
   private _child?: Bun.Subprocess;
@@ -114,6 +134,7 @@ export class Fixture {
     assert.equal(version.stdout.toString().trim(), "workerd 2026-10-12");
     const q = JSON.stringify;
     const writer = await writerConfiguration(this.writer);
+    const operators = operatorConfiguration(this.inputs, this.operators);
     const access = ingress ? ', (name = "UOS_AI_TOKEN", text = "fixture-access")' : "";
     const native = JSON.stringify({
       origin: "https://fixture-native.invalid",
@@ -141,8 +162,8 @@ const config :Workerd.Config = ( services = [
   modules = [(name = "driver.mjs", esModule = embed ${q(join(ROOT, "tools/cloudflare/fixtures/state-transfer-freeze-driver.mjs"))})],
   compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal","request_signal_passthrough"], globalOutbound = "internet",
   bindings = [(name = "GATEWAY", service = "gateway"), (name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority", serviceName = "gateway")),
-   (name = "CONTROL", durableObjectNamespace = (className = "FreezeFixtureControl"))${writer.binding}],
-  durableObjectNamespaces = [(className = "FreezeFixtureControl", uniqueKey = "uos-freeze-fixture-control-v1", enableSql = true)], durableObjectStorage = (localDisk = "state")))${writer.service}
+   (name = "CONTROL", durableObjectNamespace = (className = "FreezeFixtureControl"))${writer.binding}${operators.bindings}],
+  durableObjectNamespaces = [(className = "FreezeFixtureControl", uniqueKey = "uos-freeze-fixture-control-v1", enableSql = true)], durableObjectStorage = (localDisk = "state")))${writer.service}${operators.services}
  ], sockets = [(name = "main", http = (), service = "driver")]);`;
     const stem = `workerd-${++this._sequence}`;
     const config = join(this.directory, `${stem}.capnp`);
@@ -160,7 +181,14 @@ const config :Workerd.Config = ( services = [
     });
     this._child = child;
     this.origin = `http://127.0.0.1:${port}`;
-    this.facts.push({ operation: "start", argv, config_sha256: sha256(text), workerd_sha256: await bytesHash(workerd), writer_fixture: this.writer ?? null });
+    this.facts.push({
+      operation: "start",
+      argv,
+      config_sha256: sha256(text),
+      workerd_sha256: await bytesHash(workerd),
+      writer_fixture: this.writer ?? null,
+      operator_intents: this.operators,
+    });
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
       assert.equal(child.exitCode, null, `workerd exited: ${this.directory}/${stem}.stderr.log`);
@@ -180,6 +208,9 @@ const config :Workerd.Config = ( services = [
 
   public(path: string, init?: RequestInit): Promise<Response> {
     return boundedFetch(`${this.origin}/public${path}`, init ?? {});
+  }
+  operatorTransport(name: OperatorName, intent: string): Transport {
+    return { origin: `${this.origin}/operators/${name}`, adminToken: ADMIN, intent, fetch: boundedFetch };
   }
   transport(intent: string): Transport {
     return { origin: this.origin, adminToken: ADMIN, intent, fetch: boundedFetch };
@@ -309,13 +340,13 @@ const config :Workerd.Config = ( services = [
     await this.restart(activation.sha256);
     await activate(this.transport(activation.token), frozen);
     this.binding = { identity: frozen.identity, serving_epoch: frozen.serving_epoch + 1 };
-    this.drain = mintControlIntent({ purpose: "drain", data: this.binding });
+    this.drain = mintControlIntent({ purpose: "drain", data: { binding: this.binding, drain_revision: this.drainRevision } });
     await this.restart(this.drain.sha256);
     this.facts.push({ operation: "provisioned", binding: this.binding, canonical_records: (await this.inventory()).length });
   }
-  current(): Readonly<{ binding: Binding; transport: Transport }> {
+  current(): Readonly<{ binding: Binding; plan: DrainPlan; transport: Transport }> {
     assert(this.binding && this.drain);
-    return { binding: this.binding, transport: this.transport(this.drain.token) };
+    return { binding: this.binding, plan: { binding: this.binding, drain_revision: this.drainRevision }, transport: this.transport(this.drain.token) };
   }
   async exportFrozen(reference: FrozenRef): Promise<Readonly<{ path: string; sha256: string; records: number }>> {
     const before = await this.inventory();

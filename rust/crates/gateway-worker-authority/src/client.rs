@@ -13,7 +13,7 @@ use worker::{Env, Headers, Method, Request, RequestInit, Stub, js_sys::Uint8Arra
 #[derive(Clone)]
 pub struct RemoteAuthorityStore {
     stub: Rc<Stub>,
-    access: gateway_authority_provisioning::model::Access,
+    access: gateway_authority_lifecycle::model::Access,
     writers: Option<Rc<crate::writers::WriterGroup>>,
 }
 
@@ -28,7 +28,7 @@ impl RemoteAuthorityStore {
             .map_err(|_| unavailable("authority_binding_unavailable"))?;
         Ok(Self {
             stub: Rc::new(stub),
-            access: gateway_authority_provisioning::model::Access::Legacy,
+            access: gateway_authority_lifecycle::model::Access::Legacy,
             writers: None,
         })
     }
@@ -59,23 +59,23 @@ impl RemoteAuthorityStore {
         }
     }
 
-    pub fn scoped(&self, access: gateway_authority_provisioning::model::Access) -> Self {
+    pub fn scoped(&self, access: gateway_authority_lifecycle::model::Access) -> Self {
         Self {
             stub: self.stub.clone(),
             access,
             writers: self.writers.clone(),
         }
     }
-    pub fn access(&self) -> &gateway_authority_provisioning::model::Access {
+    pub fn access(&self) -> &gateway_authority_lifecycle::model::Access {
         &self.access
     }
     pub fn operator_read(&self) -> Self {
-        self.scoped(gateway_authority_provisioning::model::Access::OperatorRead)
+        self.scoped(gateway_authority_lifecycle::model::Access::OperatorRead)
     }
     pub async fn coordination(
         &self,
-        request: gateway_authority_provisioning::model::Operation,
-    ) -> Result<gateway_authority_provisioning::model::Reply, GatewayError> {
+        request: gateway_authority_lifecycle::model::Operation,
+    ) -> Result<gateway_authority_lifecycle::model::Reply, GatewayError> {
         match self
             .exchange(StoreRequest::Coordination { request })
             .await?
@@ -86,17 +86,17 @@ impl RemoteAuthorityStore {
     }
     pub async fn acquire(
         &self,
-        request: gateway_authority_provisioning::model::Acquire,
+        request: gateway_authority_lifecycle::model::Acquire,
         capability: String,
     ) -> Result<Self, GatewayError> {
         let id = request.id.clone();
         match self
-            .coordination(gateway_authority_provisioning::model::Operation::Acquire { request })
+            .coordination(gateway_authority_lifecycle::model::Operation::Acquire { request })
             .await?
         {
-            gateway_authority_provisioning::model::Reply::Acquired { serving_epoch } => Ok(self
-                .scoped(gateway_authority_provisioning::model::Access::Permit(
-                    gateway_authority_provisioning::model::Permit {
+            gateway_authority_lifecycle::model::Reply::Acquired { serving_epoch } => Ok(self
+                .scoped(gateway_authority_lifecycle::model::Access::Permit(
+                    gateway_authority_lifecycle::model::Permit {
                         id,
                         serving_epoch,
                         capability,
@@ -107,24 +107,22 @@ impl RemoteAuthorityStore {
     }
     pub async fn join_native(
         &self,
-        selector: gateway_authority_provisioning::model::NativeSelector,
+        selector: gateway_authority_lifecycle::model::NativeSelector,
         id: String,
         capability: String,
     ) -> Result<Self, GatewayError> {
         let digest = gateway_auth::crypto::sha256_hex(capability.as_bytes());
         match self
-            .coordination(
-                gateway_authority_provisioning::model::Operation::JoinNative {
-                    selector,
-                    id: id.clone(),
-                    capability_sha256: digest,
-                },
-            )
+            .coordination(gateway_authority_lifecycle::model::Operation::JoinNative {
+                selector,
+                id: id.clone(),
+                capability_sha256: digest,
+            })
             .await?
         {
-            gateway_authority_provisioning::model::Reply::Acquired { serving_epoch } => Ok(self
-                .scoped(gateway_authority_provisioning::model::Access::Permit(
-                    gateway_authority_provisioning::model::Permit {
+            gateway_authority_lifecycle::model::Reply::Acquired { serving_epoch } => Ok(self
+                .scoped(gateway_authority_lifecycle::model::Access::Permit(
+                    gateway_authority_lifecycle::model::Permit {
                         id,
                         serving_epoch,
                         capability,
@@ -133,9 +131,9 @@ impl RemoteAuthorityStore {
             _ => Err(unavailable("authority_wire_invalid")),
         }
     }
-    pub fn permit(&self) -> Result<gateway_authority_provisioning::model::Permit, GatewayError> {
+    pub fn permit(&self) -> Result<gateway_authority_lifecycle::model::Permit, GatewayError> {
         match &self.access {
-            gateway_authority_provisioning::model::Access::Permit(value) => Ok(value.clone()),
+            gateway_authority_lifecycle::model::Access::Permit(value) => Ok(value.clone()),
             _ => Err(unavailable("authority_permit_unavailable")),
         }
     }
@@ -157,7 +155,7 @@ impl RemoteAuthorityStore {
     }
     pub fn required_failure(&self) {
         if let Some(group) = &self.writers {
-            group.block(gateway_authority_provisioning::model::Blocker::RequiredSettlement);
+            group.block(gateway_authority_lifecycle::model::Blocker::RequiredSettlement);
         }
     }
     pub fn spawn_writer<F: std::future::Future<Output = ()> + 'static>(
@@ -176,9 +174,9 @@ impl RemoteAuthorityStore {
     }
     pub async fn finish_scope(
         &self,
-        blocker: Option<gateway_authority_provisioning::model::Blocker>,
+        blocker: Option<gateway_authority_lifecycle::model::Blocker>,
     ) -> Result<(), GatewayError> {
-        self.coordination(gateway_authority_provisioning::model::Operation::Finish {
+        self.coordination(gateway_authority_lifecycle::model::Operation::Finish {
             permit: self.permit()?,
             blocker,
         })
@@ -279,7 +277,7 @@ impl AuthorityStore for RemoteAuthorityStore {
             .await;
         if result.is_err() {
             if let Some(group) = &self.writers {
-                group.block(gateway_authority_provisioning::model::Blocker::UncertainCommit);
+                group.block(gateway_authority_lifecycle::model::Blocker::UncertainCommit);
             }
         }
         match result? {

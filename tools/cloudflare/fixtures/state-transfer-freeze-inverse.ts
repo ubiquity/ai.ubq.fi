@@ -22,8 +22,8 @@ export async function frozenInverse(fixture: Fixture): Promise<void> {
   assert.equal(object(await response.json()).committed, true);
   await fixture.finish(root);
   const current = fixture.current();
-  await beginDrain(current.transport, current.binding);
-  const reference = await awaitFrozen(current.transport, current.binding);
+  await beginDrain(current.transport, current.plan);
+  const reference = await awaitFrozen(current.transport, current.plan);
   const archive = await fixture.exportFrozen(reference);
   await fixture.stop();
   const receipt = await invokePrepared(fixture, tool, "native_reverse", {
@@ -100,8 +100,10 @@ export async function frozenInverse(fixture: Fixture): Promise<void> {
   assert.equal(restored.kind, "frozen_inverse_new_bun_recapture");
   assert.equal(restored.status, "matched");
   assert.equal(restored.rows, actual.size);
-  assert.equal(restored.artifact_source_sha, ARTIFACT_SHA);
-  assert.equal(restored.artifact_source_tree, ARTIFACT_TREE);
+  // The unchanged Bun codec helper pins its own clean production-code source,
+  // independently from the newly built Rust lifecycle artifact above.
+  assert.equal(restored.artifact_source_sha, "bf9c949686d14a193564be507d4048c4b3709244");
+  assert.equal(restored.artifact_source_tree, "31f3fc58424ceaaecfbe0d32796ad3271e99b3a8");
   assert.equal(restored.native_backend_loaded, false);
   assert.equal(restored.live_state, false);
   fixture.facts.push({ operation: "new_bun_restore_and_independent_recapture", verified: true, receipt: restored });

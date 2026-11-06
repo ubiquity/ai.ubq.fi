@@ -13,6 +13,9 @@ default = ["entrypoint"]
 entrypoint = []
 
 [dependencies]
+gateway-worker-authority-host.workspace = true
+gateway-worker-drain.workspace = true
+gateway-authority-lifecycle.workspace = true
 gateway-authority-provisioning.workspace = true
 gateway-worker-authority.workspace = true
 gateway-worker-storage.workspace = true

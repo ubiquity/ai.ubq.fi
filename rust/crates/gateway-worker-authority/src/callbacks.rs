@@ -1,7 +1,7 @@
 //! Untrusted selectors join only an already registered operation; normal native proofs still run.
 use crate::client::RemoteAuthorityStore;
 use gateway_auth::native_auth::NativeTransportIdentity;
-use gateway_authority_provisioning::{
+use gateway_authority_lifecycle::{
     model::{Access, Blocker, NativeSelector},
     policy,
 };

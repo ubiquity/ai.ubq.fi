@@ -35,7 +35,7 @@ pub async fn handle(
         crate::native_authority::callback::join(store, native, &raw_body).await?
     } else if matches!(
         store.access(),
-        gateway_authority_provisioning::model::Access::Legacy
+        gateway_authority_lifecycle::model::Access::Legacy
     ) {
         store.clone()
     } else {
@@ -45,10 +45,10 @@ pub async fn handle(
             gateway_auth::crypto::sha256_hex(crate::transport::random::opaque_token()?.as_bytes());
         store
             .acquire(
-                gateway_authority_provisioning::model::Acquire {
+                gateway_authority_lifecycle::model::Acquire {
                     id,
                     capability_sha256: gateway_auth::crypto::sha256_hex(capability.as_bytes()),
-                    kind: gateway_authority_provisioning::model::LeaseKind::Root {
+                    kind: gateway_authority_lifecycle::model::LeaseKind::Root {
                         request_id: "native-configuration-publication".into(),
                     },
                     parent: None,

@@ -153,6 +153,13 @@ export default {
     if (!local && url.pathname.endsWith("/models")) return control(env, "/catalog?name=background");
     if (!local) return new Response("Unconfigured fixture destination", { status: 502 });
     if (url.pathname.startsWith("/control/")) return control(env, url.pathname.slice(8) + url.search, request);
+    if (url.pathname.startsWith("/operators/")) {
+      const [name, ...path] = url.pathname.slice(11).split("/");
+      if (!["cancel", "next", "prior", "activate", "read"].includes(name)) return new Response(null, { status: 404 });
+      const target = env["OPERATOR_" + name.toUpperCase()];
+      if (!target) return new Response(null, { status: 503 });
+      return target.fetch(new Request(`https://gateway.internal/${path.join("/")}${url.search}`, request));
+    }
     if (url.pathname.startsWith("/writers/")) {
       if (!env.WRITER_FIXTURE) return new Response("Writer fixture is not configured", { status: 503 });
       return env.WRITER_FIXTURE.fetch(new Request(`https://writer-fixture.internal/${url.pathname.slice(9)}`, request));

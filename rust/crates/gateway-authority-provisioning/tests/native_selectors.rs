@@ -1,5 +1,5 @@
 use gateway_auth::crypto::sha256_hex;
-use gateway_authority_provisioning::{model::*, policy};
+use gateway_authority_lifecycle::{model::*, policy};
 use gateway_core::error::GatewayError;
 
 fn binding() -> NativeBinding {
@@ -69,7 +69,9 @@ fn old_admitted_request_can_register_renewal_after_drain_but_new_root_cannot()
         kind: LeaseKind::NativeOperation(binding()),
         parent: Some(permit.clone()),
     };
-    assert!(policy::acquire(&gate, &child, Some(&root), false).is_ok());
+    assert!(
+        gateway_authority_provisioning::policy::acquire(&gate, &child, Some(&root), false).is_ok()
+    );
     let fresh = Acquire {
         id: "1".repeat(64),
         capability_sha256: "2".repeat(64),
@@ -78,13 +80,15 @@ fn old_admitted_request_can_register_renewal_after_drain_but_new_root_cannot()
         },
         parent: None,
     };
-    assert!(policy::acquire(&gate, &fresh, None, true).is_err());
+    assert!(gateway_authority_provisioning::policy::acquire(&gate, &fresh, None, true).is_err());
     let mut substituted = permit;
     substituted.capability = "3".repeat(64);
     let forged = Acquire {
         parent: Some(substituted),
         ..child
     };
-    assert!(policy::acquire(&gate, &forged, Some(&root), true).is_err());
+    assert!(
+        gateway_authority_provisioning::policy::acquire(&gate, &forged, Some(&root), true).is_err()
+    );
     Ok(())
 }

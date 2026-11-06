@@ -2,20 +2,22 @@ import assert from "node:assert/strict";
 import { Database } from "bun:sqlite";
 import { cp, open, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { awaitFrozen, beginDrain } from "../state-transfer-control.ts";
+import { awaitFrozen, beginDrain, cancelDrain } from "../state-transfer-control.ts";
 import { canonical, INTENT_HEADER, mintIntent } from "../state-transfer.ts";
 import { ADMIN, bytesHash, object, type Fixture, type Json } from "./state-transfer-freeze-support.ts";
+import { prepareCancellation } from "./state-transfer-freeze-maintenance.ts";
 import { preparedWriter } from "./state-transfer-freeze-prepared.ts";
 
 const counts = (roots: number, blocked: number): Json => ({ roots, native_operations: 0, native_joins: 0, import_frames: 0, blocked });
 
-async function stoppedDropLease(fixture: Fixture, writer: Json): Promise<void> {
+async function stoppedDropLease(fixture: Fixture, writer: Json, label: string): Promise<Json> {
   const state = join(fixture.directory, "state");
-  const copy = join(fixture.directory, "stopped-sqlite-cohort");
+  const copy = join(fixture.directory, `stopped-sqlite-cohort-${label}`);
   await cp(state, copy, { recursive: true, errorOnExist: true, force: false });
   const files = await readdir(copy, { recursive: true, withFileTypes: true });
   const cohort: Json[] = [];
   let matches = 0;
+  let observed: Json | undefined;
   for (const file of files) {
     if (!file.isFile()) continue;
     const path = join(file.parentPath, file.name);
@@ -42,6 +44,7 @@ async function stoppedDropLease(fixture: Fixture, writer: Json): Promise<void> {
         assert.equal(lease.capability_sha256, writer.capability_sha256);
         assert.equal(lease.blocker, "task_abandoned");
         assert.equal(lease.terminal, false);
+        observed = lease;
         matches++;
       }
     } finally {
@@ -49,13 +52,16 @@ async function stoppedDropLease(fixture: Fixture, writer: Json): Promise<void> {
     }
   }
   assert.equal(matches, 1, "Exactly one stopped production lease must confirm the real Rust abandonment");
-  await writeFile(join(fixture.directory, "stopped-sqlite-cohort.json"), JSON.stringify(cohort, null, 2) + "\n", { flag: "wx", mode: 0o600 });
-  fixture.facts.push({ operation: "stopped_actual_drop_lease", writer_id: writer.writer_id, blocker: "task_abandoned", matches, cohort });
+  await writeFile(join(fixture.directory, `stopped-sqlite-cohort-${label}.json`), JSON.stringify(cohort, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+  assert(observed);
+  fixture.facts.push({ operation: "stopped_actual_drop_lease", label, writer_id: writer.writer_id, blocker: "task_abandoned", matches, cohort });
+  return observed;
 }
 
 export async function actualWriter(fixture: Fixture, abandon: boolean): Promise<void> {
   fixture.writer = await preparedWriter(fixture);
   await fixture.running();
+  const cancellation = abandon ? await prepareCancellation(fixture) : undefined;
   const response = await fetch(`${fixture.origin}/writers/${abandon ? "drop" : "complete"}`, { method: "POST", signal: AbortSignal.timeout(20_000) });
   assert.equal(response.status, 200, await response.clone().text());
   assert.equal(response.headers.get("x-uos-fixture-retained-promises"), "1");
@@ -67,12 +73,12 @@ export async function actualWriter(fixture: Fixture, abandon: boolean): Promise<
   assert.equal(state.gate.phase, "running");
   assert.equal(canonical(state.counts), canonical(expected), "Joined real retain promise did not establish expected durable state");
   const current = fixture.current();
-  await beginDrain(current.transport, current.binding);
+  await beginDrain(current.transport, current.plan);
   if (!abandon) {
-    const frozen = await awaitFrozen(current.transport, current.binding);
+    const frozen = await awaitFrozen(current.transport, current.plan);
     assert(fixture.drain);
     await fixture.restart(fixture.drain.sha256);
-    assert.equal(canonical(await awaitFrozen(fixture.current().transport, current.binding)), canonical(frozen));
+    assert.equal(canonical(await awaitFrozen(fixture.current().transport, current.plan)), canonical(frozen));
     fixture.facts.push({ operation: "actual_writer_complete", retention_joined: true, frozen_ref: frozen });
     return;
   }
@@ -83,13 +89,40 @@ export async function actualWriter(fixture: Fixture, abandon: boolean): Promise<
   assert.equal(ordinary.status, 503);
   await ordinary.arrayBuffer();
   await fixture.stop();
-  await stoppedDropLease(fixture, writer);
+  const unknown = await stoppedDropLease(fixture, writer, "before-cancel");
   assert(fixture.drain);
   await fixture.restart(fixture.drain.sha256);
   const restarted = await fixture.status();
   assert.equal(restarted.gate.phase, "draining");
   assert.equal(canonical(restarted.counts), canonical(expected));
   fixture.facts.push({ operation: "actual_writer_drop", retention_joined: true, restart_persisted: true, counts: restarted.counts });
+  assert(cancellation);
+  const resumed = await cancelDrain(fixture.operatorTransport("cancel", cancellation.intent.token), cancellation.plan);
+  assert.equal(canonical(object(resumed.status).counts), canonical(expected));
+  const replay = await cancelDrain(fixture.operatorTransport("cancel", cancellation.intent.token), cancellation.plan);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.cancellation.next_drain_revision, resumed.cancellation.next_drain_revision);
+  await fixture.stop();
+  const retained = await stoppedDropLease(fixture, writer, "after-cancel");
+  assert.equal(canonical(retained), canonical(unknown), "Cancellation changed the actual abandoned lease row");
+  await fixture.restart(fixture.drain.sha256);
+  await assert.rejects(beginDrain(fixture.transport(fixture.drain.token), cancellation.current.plan));
+  await assert.rejects(awaitFrozen(fixture.transport(fixture.drain.token), cancellation.current.plan), /drain_cancelled/u);
+  const persistedReplay = await cancelDrain(fixture.operatorTransport("cancel", cancellation.intent.token), cancellation.plan);
+  assert.equal(persistedReplay.replayed, true);
+  assert.equal(persistedReplay.cancellation.next_drain_revision, resumed.cancellation.next_drain_revision);
+  const admitted = await fixture.public("/v5-admission-probe", { headers: { authorization: "Bearer fixture-access" } });
+  assert.equal(admitted.status, 404);
+  await admitted.arrayBuffer();
+  await beginDrain(fixture.operatorTransport("next", cancellation.nextIntent.token), cancellation.next);
+  fixture.facts.push({
+    operation: "cancel_actual_drop_same_authority",
+    same_epoch: true,
+    exact_lease_preserved: true,
+    replay_no_second_increment: true,
+    old_drain_rejected: true,
+  });
+
   const status = object((await fixture.coordinate({ operation: "status" })).status);
   const historical = object(object(status.gate).frozen);
   const exportIntent = mintIntent({ kind: "export" });
@@ -111,13 +144,13 @@ export async function actualProtocolTimeout(fixture: Fixture): Promise<void> {
   await fixture.running();
   const root = await fixture.root("actual-five-minute-timeout");
   const current = fixture.current();
-  await beginDrain(current.transport, current.binding);
+  await beginDrain(current.transport, current.plan);
   const started = performance.now();
   const response = await fetch(`${fixture.origin}/admin/state-transfer/control`, {
     method: "POST",
     signal: AbortSignal.timeout(345_000),
     headers: { authorization: `Bearer ${ADMIN}`, [INTENT_HEADER]: current.transport.intent, "content-type": "application/json" },
-    body: JSON.stringify({ v: 2, request: { operation: "await_frozen", binding: current.binding } }),
+    body: JSON.stringify({ v: 2, request: { operation: "await_frozen", plan: current.plan } }),
   });
   const body = object(await response.json());
   const elapsed = performance.now() - started;
@@ -139,6 +172,12 @@ export async function actualProtocolTimeout(fixture: Fixture): Promise<void> {
   const restarted = await fixture.status();
   assert.equal(restarted.gate.phase, "draining");
   assert.equal(canonical(restarted.counts), canonical(counts(1, 0)));
+  const cancellation = await prepareCancellation(fixture);
+  const resumed = await cancelDrain(fixture.operatorTransport("cancel", cancellation.intent.token), cancellation.plan);
+  assert.equal(canonical(object(resumed.status).counts), canonical(counts(1, 0)));
+  assert.equal(object(object(resumed.status).gate).serving_epoch, root.serving_epoch);
+  await assert.rejects(beginDrain(fixture.transport(fixture.drain.token), cancellation.current.plan));
+  fixture.facts.push({ operation: "cancel_after_actual_timeout_same_authority", cancellation: resumed.cancellation, root_unresolved: true });
   fixture.facts.push({
     operation: "actual_five_minute_protocol_timeout",
     status: response.status,

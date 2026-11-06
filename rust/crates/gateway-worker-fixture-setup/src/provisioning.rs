@@ -1,10 +1,8 @@
 //! Synthetic fixture composition through the real staged and provisioning reducers.
 //! Not a shipping entrypoint, native custody claim, or public import capability.
 use gateway_auth::crypto::sha256_hex;
-use gateway_authority_provisioning::{
-    intent::{Intent, Scope, authorization_digest, token},
-    model::*,
-};
+use gateway_authority_lifecycle::model::*;
+use gateway_authority_provisioning::intent::{Intent, Scope, authorization_digest, token};
 use gateway_core::error::GatewayError;
 use gateway_migration::{
     native_capture::{NativeCapture, NativeRevision, prepare_native},
@@ -31,6 +29,7 @@ async fn authorized(
         Authorization::FinalizeImport(_) => Purpose::FinalizeImport,
         Authorization::Activate(_) => Purpose::Activate,
         Authorization::Drain(_) => Purpose::Drain,
+        Authorization::CancelDrain(_) => Purpose::CancelDrain,
     };
     let value = token(
         &Scope::Control {

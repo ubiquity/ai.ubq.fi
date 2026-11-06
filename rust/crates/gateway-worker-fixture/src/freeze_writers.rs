@@ -1,7 +1,7 @@
 //! Explicit test-only injection of the real Rust Writer destructor/complete path.
 //! Durable Finish is owned exclusively by unmodified WriterGroup::retain.
 use gateway_auth::crypto::sha256_hex;
-use gateway_authority_provisioning::model::{Acquire, LeaseKind};
+use gateway_authority_lifecycle::model::{Acquire, LeaseKind};
 use gateway_core::error::GatewayError;
 use gateway_worker_authority::client::RemoteAuthorityStore;
 use worker::{Context, Env, Method, Request, Response};

@@ -1,4 +1,3 @@
-//! Closed provisioning and durable writer-lifetime policy; no runtime or account authority.
+//! Purpose-bound operator intents and writer permit verification.
 pub mod intent;
-pub mod model;
 pub mod policy;

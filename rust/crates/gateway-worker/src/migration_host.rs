@@ -142,13 +142,13 @@ pub async fn state_transfer(
 
 async fn authority_status(
     store: &gateway_worker_authority::client::RemoteAuthorityStore,
-) -> Result<gateway_authority_provisioning::model::Status, GatewayError> {
+) -> Result<gateway_authority_lifecycle::model::Status, GatewayError> {
     match store
-        .coordination(gateway_authority_provisioning::model::Operation::Status)
+        .coordination(gateway_authority_lifecycle::model::Operation::Status)
         .await?
     {
-        gateway_authority_provisioning::model::Reply::Status { status } => Ok(status),
-        _ => Err(gateway_authority_provisioning::policy::refused(
+        gateway_authority_lifecycle::model::Reply::Status { status } => Ok(status),
+        _ => Err(gateway_authority_lifecycle::policy::refused(
             "Authority status is invalid",
         )),
     }
@@ -159,7 +159,7 @@ async fn import_store(
     body: &[u8],
     presented: &str,
 ) -> Result<gateway_worker_authority::client::RemoteAuthorityStore, GatewayError> {
-    use gateway_authority_provisioning::{model::*, policy};
+    use gateway_authority_lifecycle::{model::*, policy};
     let frame = gateway_migration::staged::decode_stage_request(body)?;
     let capture = intent.import_capture()?;
     let value =
@@ -223,7 +223,7 @@ async fn export_store(
     store: &gateway_worker_authority::client::RemoteAuthorityStore,
     body: &[u8],
 ) -> Result<gateway_worker_authority::client::RemoteAuthorityStore, GatewayError> {
-    use gateway_authority_provisioning::{model::*, policy};
+    use gateway_authority_lifecycle::{model::*, policy};
     let request: gateway_state_transfer::export::ExportRequest = serde_json::from_slice(body)
         .map_err(|_| policy::refused("Export requires its frozen epoch"))?;
     let status = authority_status(store).await?;
@@ -243,7 +243,7 @@ async fn control_response(
     intent: &gateway_authority_provisioning::intent::Intent,
     body: &[u8],
 ) -> Result<worker::Response, GatewayError> {
-    use gateway_authority_provisioning::{model::*, policy};
+    use gateway_authority_lifecycle::{model::*, policy};
     if body.len() > 65_536 {
         return Err(policy::refused("Control body exceeds its bound"));
     }
@@ -271,8 +271,16 @@ async fn control_response(
                 intent_digest: digest,
             }
         }
-        ControlRequest::Drain { binding } => {
-            let authorization = Authorization::Drain(binding);
+        ControlRequest::Drain { plan } => {
+            let authorization = Authorization::Drain(plan);
+            let digest = intent.require_control(&authorization)?.into();
+            Operation::Control {
+                authorization,
+                intent_digest: digest,
+            }
+        }
+        ControlRequest::CancelDrain { plan } => {
+            let authorization = Authorization::CancelDrain(plan);
             let digest = intent.require_control(&authorization)?.into();
             Operation::Control {
                 authorization,
@@ -287,10 +295,11 @@ async fn control_response(
                 intent_digest: digest,
             }
         }
-        ControlRequest::AwaitFrozen { binding } => {
-            let authorization = Authorization::Drain(binding);
+        ControlRequest::AwaitFrozen { plan } => {
+            let authorization = Authorization::Drain(plan.clone());
             Operation::AwaitFrozen {
                 reference_id: intent.require_control(&authorization)?.into(),
+                plan,
             }
         }
     };
@@ -309,6 +318,11 @@ async fn control_response(
     }
     let status = if matches!(reply, Reply::DrainTimeout { .. }) {
         504
+    } else if matches!(
+        reply,
+        Reply::DrainCancelled { .. } | Reply::DrainStale { .. }
+    ) {
+        409
     } else {
         200
     };
@@ -329,7 +343,7 @@ async fn import_reply(
     presented: Option<&str>,
     body: &[u8],
 ) -> Result<gateway_state_transfer::http::Reply, GatewayError> {
-    use gateway_authority_provisioning::{model::*, policy};
+    use gateway_authority_lifecycle::{model::*, policy};
     use gateway_state_transfer::http::{Operation::ImportFrame, handle};
     let presented = presented.ok_or_else(|| policy::refused("Import intent missing"))?;
     let status = authority_status(store).await?;

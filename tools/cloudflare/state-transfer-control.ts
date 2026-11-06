@@ -4,6 +4,10 @@ import { canonical, INTENT_HEADER, sha256, type Transport } from "./state-transf
 
 export type Identity = Readonly<{ object_id: string; source_sha: string; source_tree: string }>;
 export type Binding = Readonly<{ identity: Identity; serving_epoch: number }>;
+export type DrainPlan = Readonly<{ binding: Binding; drain_revision: number }>;
+export type CancelDrainPlan = Readonly<DrainPlan & { drain_digest: string }>;
+export type DrainCancellation = Readonly<{ plan: CancelDrainPlan; next_drain_revision: number; cancel_digest: string; cancellation_revision: string }>;
+
 export type Owner = Readonly<{ owner_id: string; owner_epoch: string; key_fingerprint: string; owner_revision: string }>;
 export type FinalizePlan = Readonly<{
   binding: Binding;
@@ -27,7 +31,10 @@ export type FrozenRef = Readonly<{
   blocked: 0;
 }>;
 export type Authorization = Readonly<
-  { purpose: "finalize_import"; data: FinalizePlan } | { purpose: "drain"; data: Binding } | { purpose: "activate"; data: FrozenRef }
+  | { purpose: "finalize_import"; data: FinalizePlan }
+  | { purpose: "drain"; data: DrainPlan }
+  | { purpose: "cancel_drain"; data: CancelDrainPlan }
+  | { purpose: "activate"; data: FrozenRef }
 >;
 
 export const authorizationDigest = (authorization: Authorization): string => sha256(`uos-state-transfer-authorization-v2\0${canonical(authorization)}`);
@@ -46,7 +53,7 @@ const control = async (transport: Transport, request: object): Promise<unknown> 
     body,
     redirect: "error",
   });
-  if (response.status !== 200) throw new Error(`Control did not establish its requested result (HTTP ${response.status})`);
+  if (response.status !== 200 && response.status !== 409) throw new Error(`Control did not establish its requested result (HTTP ${response.status})`);
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Control reply body is absent");
   const chunks: Uint8Array[] = [];
@@ -60,6 +67,8 @@ const control = async (transport: Transport, request: object): Promise<unknown> 
       chunks.push(item.value);
     }
     const reply: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (response.status === 409 && !tagged(reply, "drain_cancelled") && !tagged(reply, "drain_stale"))
+      throw new Error("Control refused the operation (HTTP409)");
     return reply;
   } finally {
     await reader.cancel();
@@ -119,12 +128,14 @@ export const finalizeImport = async (transport: Transport, plan: FinalizePlan): 
   return reference;
 };
 
-export const beginDrain = (transport: Transport, binding: Binding): Promise<unknown> => control(transport, { operation: "drain", binding });
+export const beginDrain = (transport: Transport, plan: DrainPlan): Promise<unknown> => control(transport, { operation: "drain", plan });
 
-export const awaitFrozen = async (transport: Transport, binding: Binding): Promise<FrozenRef> => {
-  const reply = await control(transport, { operation: "await_frozen", binding });
+export const awaitFrozen = async (transport: Transport, plan: DrainPlan): Promise<FrozenRef> => {
+  const reply = await control(transport, { operation: "await_frozen", plan });
+  if (tagged(reply, "drain_cancelled") || tagged(reply, "drain_stale"))
+    throw new Error(`Drain did not freeze: ${String(record(reply) ? reply.operation : "invalid")}`);
   const reference = frozenReference(reply);
-  checkBinding(reference, binding, transport);
+  checkBinding(reference, plan.binding, transport);
   return reference;
 };
 
@@ -140,4 +151,62 @@ export const activate = async (transport: Transport, reference: FrozenRef): Prom
   )
     throw new Error("Activation did not establish its recorded running epoch");
   return reply;
+};
+
+export const cancellationRevision = (value: Omit<DrainCancellation, "cancellation_revision">): string =>
+  sha256(
+    JSON.stringify([
+      "uos-drain-cancellation-v1",
+      value.plan.binding.identity.object_id,
+      value.plan.binding.identity.source_sha,
+      value.plan.binding.identity.source_tree,
+      value.plan.binding.serving_epoch,
+      value.plan.drain_revision,
+      value.next_drain_revision,
+      value.plan.drain_digest,
+      value.cancel_digest,
+    ])
+  );
+
+export const cancelDrain = async (
+  transport: Transport,
+  plan: CancelDrainPlan
+): Promise<Readonly<{ cancellation: DrainCancellation; replayed: boolean; status: unknown }>> => {
+  const reply = await control(transport, { operation: "cancel_drain", plan });
+  if (
+    !record(reply) ||
+    !tagged(reply, "cancelled") ||
+    !record(reply.cancellation) ||
+    typeof reply.replayed !== "boolean" ||
+    !record(reply.status) ||
+    !record(reply.status.gate)
+  )
+    throw new Error("Control did not establish cancellation");
+  const raw = reply.cancellation;
+  if (
+    canonical(raw.plan) !== canonical(plan) ||
+    raw.cancel_digest !== sha256(transport.intent) ||
+    !Number.isSafeInteger(raw.next_drain_revision) ||
+    raw.next_drain_revision !== plan.drain_revision + 1 ||
+    raw.next_drain_revision < 0
+  )
+    throw new Error("Cancellation names another drain or revision");
+  const cancellation: DrainCancellation = {
+    plan,
+    next_drain_revision: raw.next_drain_revision,
+    cancel_digest: hexField(raw, "cancel_digest", 64),
+    cancellation_revision: hexField(raw, "cancellation_revision", 64),
+  };
+  if (cancellation.cancellation_revision !== cancellationRevision(cancellation)) throw new Error("Cancellation receipt digest differs");
+  const gate = reply.status.gate;
+  if (
+    gate.phase !== "running" ||
+    canonical(gate.identity) !== canonical(plan.binding.identity) ||
+    gate.serving_epoch !== plan.binding.serving_epoch ||
+    gate.drain_revision !== cancellation.next_drain_revision ||
+    gate.drain_digest !== null ||
+    canonical(gate.last_cancellation) !== canonical(cancellation)
+  )
+    throw new Error("Cancellation did not establish the same Running authority");
+  return { cancellation, replayed: reply.replayed, status: reply.status };
 };

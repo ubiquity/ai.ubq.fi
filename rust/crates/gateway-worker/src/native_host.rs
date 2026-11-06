@@ -139,11 +139,11 @@ impl NativeBindings {
         let child = platform
             .store
             .acquire(
-                gateway_authority_provisioning::model::Acquire {
+                gateway_authority_lifecycle::model::Acquire {
                     id: gateway_auth::crypto::sha256_hex(action.action_ref().as_bytes()),
                     capability_sha256: gateway_auth::crypto::sha256_hex(capability.as_bytes()),
-                    kind: gateway_authority_provisioning::model::LeaseKind::NativeOperation(
-                        gateway_authority_provisioning::model::NativeBinding {
+                    kind: gateway_authority_lifecycle::model::LeaseKind::NativeOperation(
+                        gateway_authority_lifecycle::model::NativeBinding {
                             operation_id: action.action_ref().into(),
                             action_ref: action.action_ref().into(),
                             owner_id: transport.identity.owner_id().into(),
@@ -161,7 +161,7 @@ impl NativeBindings {
         // post101 reverse writes lack a positive final acknowledgement and must block drain.
         child
             .finish_scope(Some(
-                gateway_authority_provisioning::model::Blocker::NativeEffectUnknown,
+                gateway_authority_lifecycle::model::Blocker::NativeEffectUnknown,
             ))
             .await?;
         result
@@ -298,11 +298,11 @@ impl NativeBindings {
         let child = platform
             .store
             .acquire(
-                gateway_authority_provisioning::model::Acquire {
+                gateway_authority_lifecycle::model::Acquire {
                     id: gateway_auth::crypto::sha256_hex(envelope.operation_id.as_bytes()),
                     capability_sha256: gateway_auth::crypto::sha256_hex(capability.as_bytes()),
-                    kind: gateway_authority_provisioning::model::LeaseKind::NativeOperation(
-                        gateway_authority_provisioning::model::NativeBinding {
+                    kind: gateway_authority_lifecycle::model::LeaseKind::NativeOperation(
+                        gateway_authority_lifecycle::model::NativeBinding {
                             operation_id: envelope.operation_id.clone(),
                             action_ref: action.action_ref().into(),
                             owner_id: native.owner_id().into(),
@@ -320,7 +320,7 @@ impl NativeBindings {
             Err(error) => {
                 let _unconfirmed = child
                     .finish_scope(Some(
-                        gateway_authority_provisioning::model::Blocker::NativeEffectUnknown,
+                        gateway_authority_lifecycle::model::Blocker::NativeEffectUnknown,
                     ))
                     .await;
                 return Err(error);
