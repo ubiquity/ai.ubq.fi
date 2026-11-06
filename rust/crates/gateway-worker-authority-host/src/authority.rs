@@ -7,7 +7,10 @@ use gateway_core::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
     },
 };
-use gateway_worker_authority::wire::*;
+use gateway_worker_authority::wire::{
+    Envelope, ProfileMigration, StoreRequest, StoreResponse, WIRE_MAX_BYTES, WIRE_VERSION,
+    WIRE_VERSION_HEADER, WireEntry, WireMutation,
+};
 use gateway_worker_storage::sqlite::SqliteAuthorityStore;
 use worker::{Method, Request, Response, State};
 
@@ -60,8 +63,8 @@ impl<H: Host> Authority<H> {
             Ok(bytes) => bytes,
             Err(error) => return error_response(&error),
         };
-        if version.as_deref() == Some("2") {
-            if let Ok(Envelope {
+        if version.as_deref() == Some("2")
+            && let Ok(Envelope {
                 access: _,
                 request:
                     StoreRequest::Coordination {
@@ -72,9 +75,8 @@ impl<H: Host> Authority<H> {
                             },
                     },
             }) = serde_json::from_slice(&bytes)
-            {
-                return self.await_response(reference_id, plan).await;
-            }
+        {
+            return self.await_response(reference_id, plan).await;
         }
         let result = async {
             let (access, message) = if version.as_deref() == Some("1") {
@@ -284,17 +286,17 @@ impl<H: Host> Authority<H> {
                 status: status.clone(),
             });
         }
-        if status.gate.phase == Phase::Frozen && status.gate.drain_revision == plan.drain_revision {
-            if let Some(reference) = status
+        if status.gate.phase == Phase::Frozen
+            && status.gate.drain_revision == plan.drain_revision
+            && let Some(reference) = status
                 .gate
                 .frozen
                 .as_ref()
                 .filter(|value| value.freeze_id == id)
-            {
-                return Some(Reply::Frozen {
-                    reference: reference.clone(),
-                });
-            }
+        {
+            return Some(Reply::Frozen {
+                reference: reference.clone(),
+            });
         }
         if status.gate.phase != Phase::Draining
             || status.gate.drain_revision != plan.drain_revision

@@ -125,43 +125,30 @@ impl AuthorityStore for SqliteAuthorityStore {
         let transaction_storage = Rc::clone(&self.storage);
         let access = self.access.clone();
         let ingress = self.ingress;
-        let result = self.storage.transaction(move |_| async move {
-            let apply = || -> Result<CommitOutcome, GatewayError> {
-                let sql = transaction_storage.sql();
-                gateway_worker_drain::control::authorize(&sql, &access, true, ingress)?;
-                let now = now_ms()?;
-                for (key, expected_revision) in &checks {
-                    let current = read_record(&sql, &RecordKey(key.clone()), now)?;
-                    if current.as_ref().map(|record| &record.revision) != expected_revision.as_ref() {
-                        return Ok(CommitOutcome::Conflict);
+        let result = self
+            .storage
+            .transaction(move |_| async move {
+                let apply = apply_transition(
+                    transaction_storage.as_ref(),
+                    &access,
+                    ingress,
+                    &checks,
+                    &mutations,
+                );
+                match apply {
+                    Ok(value) => {
+                        transaction_outcome.set(value);
+                        Ok(())
+                    }
+                    Err(error) => {
+                        transaction_failure.replace(Some(error));
+                        Err(worker::Error::RustError(
+                            "Authority transition refused".to_owned(),
+                        ))
                     }
                 }
-                // All checks run before the first write. Platform transaction rollback
-                // also protects against an error in a later mutation.
-                for mutation in &mutations {
-                    match mutation {
-                        PreparedMutation::Put { key, sort_key, record, payload, encoding } => {
-                            let expiry = record.expires_at_ms.map_or(SqlStorageValue::Null, SqlStorageValue::Integer);
-                            sql.exec(
-                                "INSERT INTO uos_authority_records (record_key, sort_key, schema_version, value_encoding, revision, payload, expires_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(record_key) DO UPDATE SET sort_key = excluded.sort_key, schema_version = excluded.schema_version, value_encoding = excluded.value_encoding, revision = excluded.revision, payload = excluded.payload, expires_at_ms = excluded.expires_at_ms",
-                                Some(vec![SqlStorageValue::String(key.clone()), SqlStorageValue::Blob(sort_key.clone()), SqlStorageValue::Integer(i64::from(record.schema_version)), SqlStorageValue::String(encoding.clone()), SqlStorageValue::String(record.revision.clone()), SqlStorageValue::String(payload.clone()), expiry]),
-                            ).map_err(|_| unavailable("authority_storage_unavailable"))?;
-                        }
-                        PreparedMutation::Delete { key } => {
-                            sql.exec("DELETE FROM uos_authority_records WHERE record_key = ?", Some(vec![SqlStorageValue::String(key.clone())])).map_err(|_| unavailable("authority_storage_unavailable"))?;
-                        }
-                    }
-                }
-                Ok(CommitOutcome::Committed)
-            };
-            match apply() {
-                Ok(value) => { transaction_outcome.set(value); Ok(()) }
-                Err(error) => {
-                    transaction_failure.replace(Some(error));
-                    Err(worker::Error::RustError("Authority transition refused".to_owned()))
-                }
-            }
-        }).await;
+            })
+            .await;
         if result.is_err() {
             return Err(failure
                 .borrow_mut()
@@ -348,4 +335,51 @@ pub fn read_control_record(
     key: &RecordKey,
 ) -> Result<Option<StoredRecord>, GatewayError> {
     read_record(sql, key, 0)
+}
+
+fn apply_transition(
+    storage: &Storage,
+    access: &Access,
+    ingress: bool,
+    checks: &std::collections::BTreeMap<String, Option<String>>,
+    mutations: &[PreparedMutation],
+) -> Result<CommitOutcome, GatewayError> {
+    let sql = storage.sql();
+    gateway_worker_drain::control::authorize(&sql, access, true, ingress)?;
+    let now = now_ms()?;
+    for (key, expected_revision) in checks {
+        let current = read_record(&sql, &RecordKey(key.clone()), now)?;
+        if current.as_ref().map(|record| &record.revision) != expected_revision.as_ref() {
+            return Ok(CommitOutcome::Conflict);
+        }
+    }
+    // All checks run before the first write. Platform transaction rollback
+    // also protects against an error in a later mutation.
+    for mutation in mutations {
+        match mutation {
+            PreparedMutation::Put {
+                key,
+                sort_key,
+                record,
+                payload,
+                encoding,
+            } => {
+                let expiry = record
+                    .expires_at_ms
+                    .map_or(SqlStorageValue::Null, SqlStorageValue::Integer);
+                sql.exec(
+                                "INSERT INTO uos_authority_records (record_key, sort_key, schema_version, value_encoding, revision, payload, expires_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(record_key) DO UPDATE SET sort_key = excluded.sort_key, schema_version = excluded.schema_version, value_encoding = excluded.value_encoding, revision = excluded.revision, payload = excluded.payload, expires_at_ms = excluded.expires_at_ms",
+                                Some(vec![SqlStorageValue::String(key.clone()), SqlStorageValue::Blob(sort_key.clone()), SqlStorageValue::Integer(i64::from(record.schema_version)), SqlStorageValue::String(encoding.clone()), SqlStorageValue::String(record.revision.clone()), SqlStorageValue::String(payload.clone()), expiry]),
+                            ).map_err(|_| unavailable("authority_storage_unavailable"))?;
+            }
+            PreparedMutation::Delete { key } => {
+                sql.exec(
+                    "DELETE FROM uos_authority_records WHERE record_key = ?",
+                    Some(vec![SqlStorageValue::String(key.clone())]),
+                )
+                .map_err(|_| unavailable("authority_storage_unavailable"))?;
+            }
+        }
+    }
+    Ok(CommitOutcome::Committed)
 }
