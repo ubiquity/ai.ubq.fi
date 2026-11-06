@@ -3,12 +3,12 @@
 import assert from "node:assert/strict";
 import { lstat, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { ARTIFACT_SHA, ARTIFACT_TREE, bytesHash, object, type Fixture, type Json } from "./state-transfer-freeze-support.ts";
+import { ARTIFACT_SHA, ARTIFACT_TREE, bytesHash, object, type Fixture, type Json, type WriterFixture } from "./state-transfer-freeze-support.ts";
 
 export class FixturePrerequisite extends Error {}
 export const preparedPath = (frames: string): string => `${frames}.prepared.json`;
 
-export async function preparedTool(fixture: Fixture, name: string): Promise<Readonly<{ path: string; sha256: string }>> {
+async function preparedInput(fixture: Fixture, name: string): Promise<Json> {
   const path = preparedPath(fixture.inputs.framesPath);
   let metadata;
   try {
@@ -25,13 +25,46 @@ export async function preparedTool(fixture: Fixture, name: string): Promise<Read
   assert.equal(manifest.artifact_tree, ARTIFACT_TREE);
   assert.equal(manifest.frames_sha256, await bytesHash(fixture.inputs.framesPath));
   if (!manifest[name]) throw new FixturePrerequisite(`Prepared ${name} helper is not bound in ${path}`);
-  const tool = object(manifest[name]);
+  return object(manifest[name]);
+}
+
+async function preparedFile(value: unknown): Promise<Readonly<{ path: string; sha256: string }>> {
+  const tool = object(value);
   assert(typeof tool.path === "string" && isAbsolute(tool.path));
   assert(typeof tool.sha256 === "string" && /^[a-f0-9]{64}$/u.test(tool.sha256));
   const file = await lstat(tool.path);
-  assert(file.isFile() && !file.isSymbolicLink() && (file.mode & 0o111) !== 0, "Prepared helper must be a regular executable");
+  assert(file.isFile() && !file.isSymbolicLink(), "Prepared input must be a regular file");
   assert.equal(await bytesHash(tool.path), tool.sha256);
   return { path: tool.path, sha256: tool.sha256 };
+}
+
+export async function preparedTool(fixture: Fixture, name: string): Promise<Readonly<{ path: string; sha256: string }>> {
+  const tool = await preparedFile(await preparedInput(fixture, name));
+  assert(((await lstat(tool.path)).mode & 0o111) !== 0, "Prepared helper must be executable");
+  return tool;
+}
+
+export async function preparedWriter(fixture: Fixture): Promise<WriterFixture> {
+  const value = await preparedInput(fixture, "writer_fixture");
+  const js = await preparedFile(value.js);
+  const wasm = await preparedFile(value.wasm);
+  assert(typeof value.source_sha === "string" && /^[a-f0-9]{40}$/u.test(value.source_sha));
+  assert(typeof value.source_tree === "string" && /^[a-f0-9]{40}$/u.test(value.source_tree));
+  return { js: js.path, jsSha256: js.sha256, wasm: wasm.path, wasmSha256: wasm.sha256, sourceSha: value.source_sha, sourceTree: value.source_tree };
+}
+
+export async function preparedBunSupport(fixture: Fixture): Promise<Readonly<{ path: string; sha256: string; sourceRoot: string }>> {
+  const value = await preparedInput(fixture, "bun_inverse");
+  const tool = await preparedFile(value);
+  assert.equal(tool.sha256, "5369b18b7fc6794dfe483438b1919c01053838d88acb9863ea1100b6fe6dbafa", "Reviewed standalone Bun support changed");
+  assert(typeof value.source_root === "string" && isAbsolute(value.source_root));
+  return { ...tool, sourceRoot: value.source_root };
+}
+
+function helperArgv(path: string, name: string): string[] {
+  if (name === "native_constructor_fixture") return [path, "--exact", "produce_freeze_native_fixture", "--nocapture"];
+  if (name === "bun_inverse_restore") return [process.execPath, "--no-env-file", "--no-install", path];
+  return [path];
 }
 
 export async function invokePrepared(fixture: Fixture, tool: Readonly<{ path: string; sha256: string }>, name: string, input: Json): Promise<Json> {
@@ -39,7 +72,7 @@ export async function invokePrepared(fixture: Fixture, tool: Readonly<{ path: st
   assert(Buffer.byteLength(raw) <= 65_536);
   const inputPath = join(fixture.directory, `${name}.input.private.json`);
   await writeFile(inputPath, raw, { flag: "wx", mode: 0o600 });
-  const argv = name === "native_constructor_fixture" ? [tool.path, "--exact", "produce_freeze_native_fixture", "--nocapture"] : [tool.path];
+  const argv = helperArgv(tool.path, name);
   const child = Bun.spawn(argv, {
     cwd: fixture.directory,
     env: { PATH: "/usr/bin:/bin", TMPDIR: fixture.directory },

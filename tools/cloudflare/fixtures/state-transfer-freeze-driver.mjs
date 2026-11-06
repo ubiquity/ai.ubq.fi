@@ -153,6 +153,10 @@ export default {
     if (!local && url.pathname.endsWith("/models")) return control(env, "/catalog?name=background");
     if (!local) return new Response("Unconfigured fixture destination", { status: 502 });
     if (url.pathname.startsWith("/control/")) return control(env, url.pathname.slice(8) + url.search, request);
+    if (url.pathname.startsWith("/writers/")) {
+      if (!env.WRITER_FIXTURE) return new Response("Writer fixture is not configured", { status: 503 });
+      return env.WRITER_FIXTURE.fetch(new Request(`https://writer-fixture.internal/${url.pathname.slice(9)}`, request));
+    }
     if (url.pathname.startsWith("/public/")) return env.GATEWAY.fetch(new Request(`https://gateway.internal/${url.pathname.slice(8)}${url.search}`, request));
     if (url.pathname === "/rpc") {
       const object = url.searchParams.get("object") ?? "gateway-authority-v1";

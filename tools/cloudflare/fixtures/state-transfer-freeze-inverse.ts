@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { awaitFrozen, beginDrain } from "../state-transfer-control.ts";
 import { canonical } from "../state-transfer.ts";
 import { ARTIFACT_SHA, ARTIFACT_TREE, ROOT, bytesHash, object, tuple, type Fixture, type Json } from "./state-transfer-freeze-support.ts";
-import { invokePrepared, preparedTool } from "./state-transfer-freeze-prepared.ts";
+import { invokePrepared, preparedBunSupport, preparedTool } from "./state-transfer-freeze-prepared.ts";
 
 export async function frozenInverse(fixture: Fixture): Promise<void> {
   const tool = await preparedTool(fixture, "reverse");
@@ -87,4 +87,22 @@ export async function frozenInverse(fixture: Fixture): Promise<void> {
     restore_and_recapture_verified: false,
     receipt,
   });
+  const support = await preparedBunSupport(fixture);
+  const output = join(fixture.directory, "new-bun-restore");
+  await mkdir(output, { mode: 0o700 });
+  const reverseReceipt = join(fixture.directory, "native_reverse.stdout.private.json");
+  const restored = await invokePrepared(fixture, support, "bun_inverse_restore", {
+    v: 1,
+    source_root: support.sourceRoot,
+    reverse_receipt: { path: reverseReceipt, sha256: await bytesHash(reverseReceipt) },
+    output_directory: output,
+  });
+  assert.equal(restored.kind, "frozen_inverse_new_bun_recapture");
+  assert.equal(restored.status, "matched");
+  assert.equal(restored.rows, actual.size);
+  assert.equal(restored.artifact_source_sha, ARTIFACT_SHA);
+  assert.equal(restored.artifact_source_tree, ARTIFACT_TREE);
+  assert.equal(restored.native_backend_loaded, false);
+  assert.equal(restored.live_state, false);
+  fixture.facts.push({ operation: "new_bun_restore_and_independent_recapture", verified: true, receipt: restored });
 }

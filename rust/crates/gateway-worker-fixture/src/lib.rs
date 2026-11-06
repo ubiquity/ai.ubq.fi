@@ -1,5 +1,6 @@
 //! Test-only constructor composition. The actual application and coordination
 //! authority are gateway-worker; no request handler, ledger or upstream is copied.
+mod freeze_writers;
 mod native_carrier;
 mod native_import;
 use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
@@ -44,6 +45,13 @@ pub async fn fetch(
     env: Env,
     context: Context,
 ) -> worker::Result<gateway_worker::response::GatewayResponse> {
+    if env
+        .var("UOS_MATRIX_SCENARIO")
+        .ok()
+        .is_some_and(|value| value.to_string() == "freeze-writers")
+    {
+        return freeze_writers::fetch(request, env, context).await;
+    }
     if env
         .var("UOS_MATRIX_SCENARIO")
         .ok()

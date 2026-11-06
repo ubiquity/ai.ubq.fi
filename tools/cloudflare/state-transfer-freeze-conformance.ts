@@ -7,10 +7,11 @@ import { join, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { testNetworkArgv } from "../../scripts/test-network.ts";
 import { sha256 } from "./state-transfer.ts";
-import { ARTIFACT_SHA, ARTIFACT_TREE, Fixture, ROOT, bytesHash, type Inputs, type Json } from "./fixtures/state-transfer-freeze-support.ts";
+import { ARTIFACT_SHA, ARTIFACT_TREE, Fixture, ROOT, bytesHash, object, type Inputs, type Json } from "./fixtures/state-transfer-freeze-support.ts";
 import { FixturePrerequisite, preparedPath } from "./fixtures/state-transfer-freeze-prepared.ts";
 import { positiveNativeReceiver } from "./fixtures/state-transfer-freeze-native.ts";
 import { frozenInverse } from "./fixtures/state-transfer-freeze-inverse.ts";
+import { actualProtocolTimeout, actualWriter } from "./fixtures/state-transfer-freeze-lifecycle.ts";
 import {
   backgroundWriter,
   eofWithoutTerminal,
@@ -30,6 +31,9 @@ export const caseMatrix = [
   { name: "orphan-restart", run: orphanAndCancellation },
   { name: "signed-unproved-callback", run: signedUnprovedCallback },
   { name: "eof", run: eofWithoutTerminal },
+  { name: "writer-complete", run: (fixture: Fixture) => actualWriter(fixture, false) },
+  { name: "writer-drop", run: (fixture: Fixture) => actualWriter(fixture, true) },
+  { name: "real-protocol-timeout", run: actualProtocolTimeout },
 ] as const;
 
 const sourceFiles = [
@@ -40,15 +44,14 @@ const sourceFiles = [
   "tools/cloudflare/fixtures/state-transfer-freeze-prepared.ts",
   "tools/cloudflare/fixtures/state-transfer-freeze-native.ts",
   "tools/cloudflare/fixtures/state-transfer-freeze-inverse.ts",
+  "tools/cloudflare/fixtures/state-transfer-freeze-lifecycle.ts",
+  "tools/cloudflare/fixtures/state-transfer-freeze-writers.mjs",
   "tools/cloudflare/state-transfer.ts",
   "tools/cloudflare/state-transfer-control.ts",
   "scripts/test-network.ts",
   "rust/crates/gateway-authority/tests/freeze_native_fixture.rs",
-];
-const missing = [
-  "Actual Rust WriterGroup task-abandonment Drop injection; HTTP EOF and client cancellation have separate cases",
-  "Actual five-minute AwaitFrozen protocol timeout; the bounded harness exercises client cancellation separately",
-  "Restore the native inverse into a NEW Bun KV and independently recapture exact raw keys, revisions, expiry and typed values",
+  "rust/crates/gateway-worker-fixture/src/lib.rs",
+  "rust/crates/gateway-worker-fixture/src/freeze_writers.rs",
 ];
 
 const argumentsFrom = (args: readonly string[]): Inputs => {
@@ -124,6 +127,15 @@ async function isolated(inputs: Inputs): Promise<number> {
   for (const item of caseMatrix) {
     const fixture = new Fixture(inputs, item.name);
     const started = Date.now();
+    await writeFile(
+      join(inputs.directory, "case-current.json"),
+      JSON.stringify(
+        { case: item.name, state: "running", started_at_ms: started, expected_ms: item.name === "real-protocol-timeout" ? 300_000 : 20_000 },
+        null,
+        2
+      ) + "\n",
+      { mode: 0o600 }
+    );
     try {
       await item.run(fixture);
       receipts.push({ case: item.name, passed: true, elapsed_ms: Date.now() - started, facts: fixture.facts });
@@ -146,19 +158,25 @@ async function isolated(inputs: Inputs): Promise<number> {
     // or hide it among later passes. The artifact stays unchanged for diagnosis.
     if (failed) break;
   }
+  const complete = !failed && receipts.length === caseMatrix.length && receipts.every((receipt) => receipt.passed === true);
   const receipt = {
     ...(await provenance(inputs)),
     os_egress_denied: true,
     cases: receipts,
-    all_implemented_cases_passed: !failed && receipts.length === caseMatrix.length && receipts.every((receipt) => receipt.passed === true),
-    acceptance_complete: false,
-    missing_acceptance: [...missing, ...receipts.filter((receipt) => receipt.blocked === true).map((receipt) => receipt.error)],
+    all_implemented_cases_passed: complete,
+    expected_cases: caseMatrix.map((item) => item.name),
+    acceptance_scope: "local_freeze_runtime_suite",
+    acceptance_complete: complete,
+    missing_acceptance: [
+      ...caseMatrix.filter((item) => !receipts.some((receipt) => receipt.case === item.name && receipt.passed === true)).map((item) => item.name),
+      ...receipts.filter((receipt) => receipt.blocked === true).map((receipt) => receipt.error),
+    ],
   };
   await writeFile(join(inputs.directory, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n", { flag: "wx", mode: 0o600 });
   console.log(JSON.stringify(receipt));
-  // Exit2 deliberately preserves the distinction between implemented checks
-  // passing and the owner's complete freeze acceptance matrix being proved.
-  return failed ? 1 : 2;
+  // A complete matrix remains a test-only receipt, never deployment acceptance.
+  if (failed) return 1;
+  return complete ? 0 : 2;
 }
 
 async function outer(inputs: Inputs): Promise<number> {
@@ -208,10 +226,19 @@ async function outer(inputs: Inputs): Promise<number> {
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
-  const deadline = setTimeout(stop, 240_000);
+  const deadline = setTimeout(stop, 600_000);
   try {
     const code = await child.exited;
-    console.log(JSON.stringify({ evidence: inputs.directory, code, acceptance_complete: false }));
+    let complete = false;
+    if (code === 0) {
+      const receipt = object(JSON.parse(await readFile(join(inputs.directory, "receipt.json"), "utf8")));
+      assert.equal(receipt.acceptance_scope, "local_freeze_runtime_suite");
+      assert.equal(receipt.acceptance_complete, true);
+      assert.equal(receipt.accepted, false);
+      assert.equal(receipt.deployment_eligible, false);
+      complete = true;
+    }
+    console.log(JSON.stringify({ evidence: inputs.directory, code, acceptance_scope: "local_freeze_runtime_suite", acceptance_complete: complete }));
     return code;
   } finally {
     clearTimeout(deadline);

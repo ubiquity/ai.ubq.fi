@@ -35,6 +35,23 @@ const randomHex = (): string => Buffer.from(crypto.getRandomValues(new Uint8Arra
 const boundedFetch: Transport["fetch"] = (input, init) => fetch(input, { ...init, signal: init.signal ?? AbortSignal.timeout(20_000) });
 
 export type Inputs = Readonly<{ workerJs: string; workerWasm: string; framesPath: string; directory: string }>;
+export type WriterFixture = Readonly<{ js: string; jsSha256: string; wasm: string; wasmSha256: string; sourceSha: string; sourceTree: string }>;
+async function writerConfiguration(writer?: WriterFixture): Promise<Readonly<{ binding: string; service: string }>> {
+  if (!writer) return { binding: "", service: "" };
+  assert.equal(await bytesHash(writer.js), writer.jsSha256);
+  assert.equal(await bytesHash(writer.wasm), writer.wasmSha256);
+  const q = JSON.stringify;
+  return {
+    binding: ', (name = "WRITER_FIXTURE", service = "writer-fixture")',
+    service: `,
+ (name = "writer-fixture", worker = (
+  modules = [(name = "writer-entrypoint.mjs", esModule = embed ${q(join(ROOT, "tools/cloudflare/fixtures/state-transfer-freeze-writers.mjs"))}),
+   (name = "writer-build/index.js", esModule = embed ${q(writer.js)}), (name = "writer-build/index_bg.wasm", wasm = embed ${q(writer.wasm)})],
+  compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal","request_signal_passthrough"], globalOutbound = "internet",
+  bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority", serviceName = "gateway")),
+   (name = "UOS_MATRIX_SCENARIO", text = "freeze-writers")]))`,
+  };
+}
 export type Pending<T> = { promise: Promise<T>; settled: boolean };
 export const pending = <T>(promise: Promise<T>): Pending<T> => {
   const result = { promise, settled: false };
@@ -53,6 +70,7 @@ export class Fixture {
   origin = "";
   binding?: Binding;
   drain?: ReturnType<typeof mintControlIntent>;
+  writer?: WriterFixture;
   private _child?: Bun.Subprocess;
   private _sequence = 0;
   readonly facts: Json[] = [];
@@ -95,6 +113,7 @@ export class Fixture {
     assert.equal(version.exitCode, 0);
     assert.equal(version.stdout.toString().trim(), "workerd 2026-10-12");
     const q = JSON.stringify;
+    const writer = await writerConfiguration(this.writer);
     const access = ingress ? ', (name = "UOS_AI_TOKEN", text = "fixture-access")' : "";
     const native = JSON.stringify({
       origin: "https://fixture-native.invalid",
@@ -122,8 +141,8 @@ const config :Workerd.Config = ( services = [
   modules = [(name = "driver.mjs", esModule = embed ${q(join(ROOT, "tools/cloudflare/fixtures/state-transfer-freeze-driver.mjs"))})],
   compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal","request_signal_passthrough"], globalOutbound = "internet",
   bindings = [(name = "GATEWAY", service = "gateway"), (name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority", serviceName = "gateway")),
-   (name = "CONTROL", durableObjectNamespace = (className = "FreezeFixtureControl"))],
-  durableObjectNamespaces = [(className = "FreezeFixtureControl", uniqueKey = "uos-freeze-fixture-control-v1", enableSql = true)], durableObjectStorage = (localDisk = "state")))
+   (name = "CONTROL", durableObjectNamespace = (className = "FreezeFixtureControl"))${writer.binding}],
+  durableObjectNamespaces = [(className = "FreezeFixtureControl", uniqueKey = "uos-freeze-fixture-control-v1", enableSql = true)], durableObjectStorage = (localDisk = "state")))${writer.service}
  ], sockets = [(name = "main", http = (), service = "driver")]);`;
     const stem = `workerd-${++this._sequence}`;
     const config = join(this.directory, `${stem}.capnp`);
@@ -141,7 +160,7 @@ const config :Workerd.Config = ( services = [
     });
     this._child = child;
     this.origin = `http://127.0.0.1:${port}`;
-    this.facts.push({ operation: "start", argv, config_sha256: sha256(text), workerd_sha256: await bytesHash(workerd) });
+    this.facts.push({ operation: "start", argv, config_sha256: sha256(text), workerd_sha256: await bytesHash(workerd), writer_fixture: this.writer ?? null });
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
       assert.equal(child.exitCode, null, `workerd exited: ${this.directory}/${stem}.stderr.log`);
