@@ -78,10 +78,9 @@ beforeEach(() => {
       assert.equal(init?.method, "POST");
       assert.equal(init.redirect, "error");
       exchanges.push(JSON.parse(await new Response(init.body).text()) as Record<string, unknown>);
-      return Response.json(
-        exchangeStatus === 200 ? { accessToken: exchangedToken, appSession: appGrant } : { error: "Exchange failed" },
-        { status: exchangeStatus }
-      );
+      return Response.json(exchangeStatus === 200 ? { accessToken: exchangedToken, appSession: appGrant } : { error: "Exchange failed" }, {
+        status: exchangeStatus,
+      });
     }
     if (url === `${ISSUER}/api/auth/sso/session`)
       return Response.json({
