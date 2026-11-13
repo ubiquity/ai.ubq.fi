@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Bounded offline clang-tidy gate for the pilot's actual compilation model."""
 import fnmatch
+from collections import Counter
 import hashlib
 import json
 import os
@@ -95,6 +96,43 @@ def consumer_profile(directory, source):
     return {"path": str(profiles[0]), "sha256": digest(profiles[0]), "file": value["file"], "timestamp": value["timestamp"]}
 
 
+def diagnostic_report(path, source, raw, workspace, output, label, timeout):
+    exported = path.read_text()
+    if not exported.startswith("---\n") or not exported.rstrip().endswith("\n..."):
+        raise ValueError("Incomplete clang-tidy YAML document")
+    common = Path(subprocess.check_output(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                         cwd=workspace, text=True).strip()).parent
+    bun = common / ".data/runtimes/bun/linux-arm64/1.4.0-086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9/bun"
+    if not bun.is_file():
+        raise FileNotFoundError("The pinned Bun YAML parser is unavailable")
+    script = ('if(Bun.version!=="1.4.0"||typeof Bun.YAML?.parse!=="function")throw new Error("Pinned YAML parser unavailable");'
+              'console.log(JSON.stringify(Bun.YAML.parse(await Bun.file(process.argv[1]).text())));')
+    parsed = execute([str(bun), "--no-env-file", "--no-install", "--eval", script, str(path)],
+                     workspace, output, label + "-yaml", min(timeout, 15))
+    if parsed["exit"] != 0 or Path(parsed["stderr"]).read_bytes():
+        raise ValueError("Malformed clang-tidy YAML report; parser output retained")
+    value = json.loads(Path(parsed["stdout"]).read_text())
+    if not isinstance(value, dict) or set(value) != {"MainSourceFile", "Diagnostics"}:
+        raise ValueError("Invalid clang-tidy report structure")
+    if value["MainSourceFile"] != str(source) or not isinstance(value["Diagnostics"], list):
+        raise ValueError("Source-mismatched report or invalid Diagnostics payload")
+    names = []
+    for entry in value["Diagnostics"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("DiagnosticName"), str):
+            raise ValueError("Malformed diagnostic entry")
+        message = entry.get("DiagnosticMessage")
+        if (not isinstance(message, dict) or not isinstance(message.get("Message"), str)
+                or not isinstance(message.get("FilePath"), str) or type(message.get("FileOffset")) is not int
+                or message["FileOffset"] < 0 or not isinstance(message.get("Replacements"), list)):
+            raise ValueError("Malformed diagnostic message")
+        names.append(entry["DiagnosticName"])
+    raw_names = [name for group in re.findall(r":\d+:\d+: (?:warning|error): [^\n]*\[([^\]]+)\]", raw)
+                 for name in group.split(",") if not name.startswith("-")]
+    if Counter(names) != Counter(raw_names):
+        raise ValueError("Raw diagnostics and YAML diagnostic IDs disagree")
+    return names
+
+
 def execute(argv, cwd, output, label, timeout):
     """Retain raw output, propagate timeout/crash, and settle the exact child group."""
     if timeout <= 0:
@@ -165,6 +203,7 @@ class Tool:
                 "enabled_checks": sorted(enabled), "metadata_commands": [version, catalog, selected]}
 
     def analyze(self, source, database, config_path, label, timeout):
+        started = time.monotonic()
         report = self.output / (label + ".yaml")
         profiles = self.output / (label + "-profiles")
         profiles.mkdir()
@@ -180,10 +219,8 @@ class Tool:
         profile = consumer_profile(profiles, Path(source))
         names = []
         if report.is_file():
-            exported = report.read_text()
-            if not re.search(r"^MainSourceFile:\s*['\"]?" + re.escape(str(source)), exported, re.MULTILINE) or "Diagnostics:" not in exported:
-                raise ValueError("Malformed or source-mismatched clang-tidy diagnostic report")
-            names = re.findall(r"^\s*- DiagnosticName:\s+([^\s]+)", exported, re.MULTILINE)
+            names = diagnostic_report(report, source, raw, self.workspace, self.output, label,
+                                      timeout - (time.monotonic() - started))
         elif result["exit"] != 0 or frontend_failed or re.search(r":\d+:\d+: (?:warning|error):", raw):
             raise ValueError("Missing clang-tidy diagnostic report: " + str(report))
         # Pinned Clang14 omits export-fixes entirely when there are no selected diagnostics.

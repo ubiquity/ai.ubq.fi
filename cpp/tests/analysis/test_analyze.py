@@ -7,6 +7,7 @@ import signal
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 WORKSPACE = Path(__file__).resolve().parents[3]
 SDK = Path(sys.argv[1]).resolve()
@@ -135,10 +136,46 @@ class AnalysisChecks(unittest.TestCase):
                                   WORKSPACE, self.output, "crash", 5)
         self.assertEqual(result["exit"], -signal.SIGTERM)
 
+    def test_emitted_report_must_be_complete_and_match_raw_diagnostics(self):
+        source = WORKSPACE / "cpp/tests/protocol_tests.cpp"
+        header = "---\nMainSourceFile: '" + str(source) + "'\n"
+        cases = [("truncated", header + "Diagnostics: [\n", "", True),
+                 ("unterminated", header + "Diagnostics: []\n", "", True),
+                 ("wrong-type", header + "Diagnostics: {}\n...\n", "", True),
+                 ("raw-disagrees", header + "Diagnostics: []\n...\n",
+                  str(source) + ":1:1: error: defect [clang-analyzer-unix.Malloc,-warnings-as-errors]\n", True),
+                 ("explicit-empty", header + "Diagnostics: []\n...\n", "", False)]
+        original_execute = ANALYSIS.execute
+        for name, document, raw, must_fail in cases:
+            with self.subTest(name=name):
+                output = self.output / ("report-" + name)
+                output.mkdir()
+                def fake_tool(argv, cwd, directory, label, timeout):
+                    if not any(str(value).startswith("--export-fixes=") for value in argv):
+                        return original_execute(argv, cwd, directory, label, timeout)
+                    report = Path(next(value.split("=", 1)[1] for value in argv if value.startswith("--export-fixes=")))
+                    report.write_text(document)
+                    profiles = Path(next(value.split("=", 1)[1] for value in argv if value.startswith("--store-check-profile=")))
+                    (profiles / "consumer.json").write_text(json.dumps({"file": str(source), "timestamp": "synthetic", "profile": {}}))
+                    stdout, stderr = directory / (label + ".stdout"), directory / (label + ".stderr")
+                    stdout.write_text(raw)
+                    stderr.write_text("")
+                    return {"exit": 0, "stdout": str(stdout), "stderr": str(stderr)}
+                tool = ANALYSIS.Tool(SDK, WORKSPACE, output)
+                with patch.object(ANALYSIS, "execute", side_effect=fake_tool):
+                    if must_fail:
+                        with self.assertRaises(ValueError):
+                            tool.analyze(source, self.build, self.config, name, 5)
+                    else:
+                        result = tool.analyze(source, self.build, self.config, name, 5)
+                        self.assertEqual(result["diagnostic_ids"], [])
+                        self.assertEqual(result["report_status"], "exported")
+                        self.assertIsNotNone(result["report"])
+
     @classmethod
     def tearDownClass(cls):
         print(json.dumps({"controls": str(cls.output), "metadata": cls.metadata, "cpp_programs_executed": False}))
 
 
 if __name__ == "__main__":
-    unittest.main(argv=[sys.argv[0]], verbosity=2)
+    unittest.main(argv=[sys.argv[0], *sys.argv[2:]], verbosity=2)
