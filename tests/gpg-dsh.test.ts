@@ -426,6 +426,35 @@ exec ${hostCommand("rm")} "$@"
     });
   });
 
+for (const signal of ["HUP", "INT", "TERM"])
+  test(`interrupted gate acquisition removes its own gate (${signal})`, async () => {
+    await withFixture(async (fixture) => {
+      await signed(fixture);
+      await unlink(join(fixture.gnupg, "private-keys-v1.d", "BBBB.key"));
+      const gate = `${fixture.seed}.lock.break`;
+      const interrupted = join(fixture.tmp, "interrupted-acquisition");
+      // Bash's inherited DEBUG trap injects the signal at the first parent-shell command after
+      // noclobber creates the gate, before the caller can record ownership. No timing race is needed.
+      const injectSignal = `if [ "$BASH_SUBSHELL" -eq 0 ] && [ -f ${shellQuote(gate)} ] && [ ! -e ${shellQuote(interrupted)} ]; then
+  : >${shellQuote(interrupted)}
+  kill -${signal} "$$"
+fi`;
+      const script = `set -T
+trap ${shellQuote(injectSignal)} DEBUG
+helper=$1
+shift
+. "$helper"
+`;
+      const result = await fixture.run("sandboxed", { shell: ["/bin/bash", "--posix", "-c", script, "gate-acquisition-test"] });
+      assert.equal(await readFile(interrupted, "utf8"), "", "the signal was injected after the gate was created");
+      assert.equal(result.code, 2, result.stderr);
+      assert.equal(result.stdout, "", "an interrupted signing never invokes gpg");
+      assert.match(result.stderr, /gpg-dsh: interrupted/);
+      await assert.rejects(stat(gate), { code: "ENOENT" }, "cleanup must remove the interrupted caller's gate");
+      assert.deepEqual(lines(await signed(fixture), "key="), ["AAAA.key:secret-a-old-passphrase"], "the next rebuild can acquire the gate");
+    });
+  });
+
 test("a failed gate release remains fatal and leaves the gate closed", async () => {
   await withFixture(async (fixture) => {
     await signed(fixture);
