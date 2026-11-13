@@ -20,6 +20,8 @@ python3 cpp/tools/build.py /absolute/qualified-sdk native-asan test
 python3 cpp/tools/build.py /absolute/qualified-sdk pi-release tidy
 ```
 
+`pi-release complete` runs configure, build, all six CTests and the mandatory static-analysis gate. `tidy` runs that same gate separately; the always-run CMake target is `cpp-static-analysis`. The gate verifies the Pi compilation database, analyzes all twelve production translation units plus `protocol_tests.cpp`, and checks three analysis-only controls. See [static-analysis.md](docs/static-analysis.md) for the selected checks, receipts and limitations.
+
 The driver creates one reusable directory per preset under `.data/cpp-build`, a task-local CMake executable view, disk-backed compiler scratch, and full command/resource logs under `.data/cpp-evidence`. Its view executes the same qualified SDK binaries through their pinned loader with `--argv0`, so generated archive, regeneration, test and install commands use that same loader. The SDK itself stays read-only; no global library path changes are required.
 
 Build jobs remain1. The first512MiB compiler virtual-memory limit was measured insufficient for the transport translation unit. The owner authorized768MiB for the compiler and bounded build cgroup; this is distinct from the candidate's provisional96MiB service-memory acceptance target. The one-second build sampler reports a lower-bound disk peak, enforces the additional768MiB/aggregate2GB storage envelope and refuses filesystem free space below2GiB. Native ASan runtime requires its shadow address space and does not inherit the compiler VM cap.
