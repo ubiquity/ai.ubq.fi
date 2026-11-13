@@ -61,6 +61,33 @@ const assertSequence = (capture: ConformanceWireCapture): void => {
   for (let index = 1; index < sequence.length; index++) assert.equal(sequence[index], sequence[index - 1] + 1);
 };
 
+const assertDurableReopen = (fixture: Fixture, captures: ConformanceWireCapture[], dispatches: number): void => {
+  assert.equal(fixture.storage.mode, "file");
+  assert.equal(fixture.storage.codec, "bun-jsc-v1");
+  const proof = fixture.verifyReopenedLedger();
+  assert.equal(proof.outcome, "verified");
+  assert.equal(proof.dispatchesBefore, dispatches);
+  assert.equal(proof.dispatchesAfter, dispatches);
+  assert.equal(proof.quotaCommitsBefore, proof.quotaCommitsAfter);
+  assert.deepEqual(proof.after, proof.before);
+  assert.ok(Array.isArray(proof.after));
+  assert.deepEqual(
+    proof.after.map((row) => conformanceRecord(row).requestId),
+    captures.map((capture) => capture.headers["x-uos-request-id"])
+  );
+  for (const row of proof.after.map(conformanceRecord)) {
+    assert.equal(conformanceRecord(row.request).state, "dispatched");
+    assert.equal(conformanceRecord(row.window).committed_requests, dispatches);
+    assert.equal(conformanceRecord(row.window).reserved_requests, 0);
+    assert.equal(typeof row.requestVersionstamp, "string");
+    assert.equal(typeof row.windowVersionstamp, "string");
+  }
+  assert.deepEqual(fixture.verifyReopenedLedger(), proof, "Repeated verification must be a read-only receipt lookup");
+  const events = fixture.journal.entries.map((entry) => entry.kind);
+  assert.ok(events.indexOf("transport_drained") < events.indexOf("kv_closed"));
+  assert.ok(events.indexOf("kv_closed") < events.indexOf("kv_reopened_verified"));
+};
+
 test("source Responses real sockets: split tool arguments, same call result and progressive final text", async () => {
   const fixture = await startResponsesConformanceFixture({ captureDirectory: await fixtureDirectory() });
   const captures: ConformanceWireCapture[] = [];
@@ -130,6 +157,7 @@ test("source Responses real sockets: split tool arguments, same call result and 
     await fixture.save(captures);
     await fixture.stop();
   }
+  assertDurableReopen(fixture, captures, 2);
 }, 30_000);
 
 test("source Responses real socket disconnect cancels held upstream and settles exactly once", async () => {
@@ -167,6 +195,8 @@ test("source Responses real socket disconnect cancels held upstream and settles 
     await fixture.save(capture);
     await fixture.stop();
   }
+  assert.ok(capture);
+  assertDurableReopen(fixture, [capture], 1);
 }, 15_000);
 
 test("source accepts a 240KiB synthetic history without altering its forwarded fields", async () => {
