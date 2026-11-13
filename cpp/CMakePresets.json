@@ -14,6 +14,7 @@
         "CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY": "OFF",
         "CMAKE_TOOLCHAIN_FILE": "$env{UOS_CPP_TOOLCHAIN_DIR}/probe/pi-arm64.cmake",
         "CMAKE_BUILD_TYPE": "Release",
+        "UOS_ANALYSIS_CONTROLS": "ON",
         "CMAKE_CXX_FLAGS_RELEASE": "-O2 -DNDEBUG -g1",
         "CMAKE_CXX_FLAGS": "-B$env{UOS_CPP_TOOLCHAIN_DIR}/host-tools/bin/",
         "CMAKE_AR": "$env{UOS_CPP_TOOLCHAIN_DIR}/host-tools/bin/ar",

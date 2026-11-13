@@ -65,12 +65,12 @@ commands = {
     "test": [str(view / "bin/ctest"), "--preset", preset],
 }
 phases = ["configure", "build", "test"] if phase == "complete" else ["configure", "build"] if phase == "checkpoint" else ["configure", "test"] if phase == "test-checkpoint" else [phase]
+if phase == "complete" and preset == "pi-release":
+    phases.append("tidy")
 receipts = []
 for current in phases:
     if current == "tidy":
-        units = sorted((source / "src").glob("*.cpp"))
-        argv = [loader, "--library-path", libraries, str(sdk / "root/usr/bin/clang-tidy-14"), *map(str, units), "-p", str(build), "--checks=-*,clang-analyzer-core.*,clang-analyzer-cplusplus.*,bugprone-dangling-handle,bugprone-use-after-move", "--warnings-as-errors=*", "--extra-arg=--gcc-toolchain=" + str(sdk / "root/usr"), "--extra-arg=-resource-dir=" + str(sdk / "root/usr/lib/llvm-14/lib/clang/14.0.6")]
-        argv = ["/usr/bin/python3", str(source / "tools/compiler-limit.py"), *argv]
+        argv = ["/usr/bin/python3", str(source / "tools/analyze.py"), str(sdk), preset]
     else:
         argv = commands[current]
     stamp = str(time.time_ns())
