@@ -1,0 +1,206 @@
+{
+  "binding": {
+    "schema": "uos-final-staged-acceptance/v1",
+    "ready": true,
+    "status": "verified",
+    "sourceCommit": "7069c31b3f50d0552ef77e99b984f59fde479b13",
+    "sourceTree": "827f3281deaa0b36002d710c172a6b0e43d89a38",
+    "exactStrippedBinarySha256": "bbb18300ea225e2803bc1f95ce5576b42af862c135c828667fd163a191c5bfd3",
+    "bytes": 991848,
+    "F": {
+      "core": "passed",
+      "native": "passed",
+      "headers": "passed",
+      "receipt": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/8b0902cc-1c71-4f4c-8425-e937f586b498"
+    },
+    "G": {
+      "tls": "passed",
+      "pressure": "passed",
+      "rawSendBuffer": 32768,
+      "receipts": [
+        "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/d7858bb1-7fc4-4043-90fb-a36697ad89b7",
+        "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/8452eda1-6019-4596-a64a-f5fc70e28ce1"
+      ]
+    },
+    "cleanup": {
+      "core": {
+        "state": "LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0",
+        "cgroupExists": false
+      },
+      "tls": {
+        "state": "LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0",
+        "cgroupExists": false
+      },
+      "pressure": {
+        "state": "LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0",
+        "cgroupExists": false
+      }
+    },
+    "preservedFailure": {
+      "ref": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/58294add-c5d3-465d-a663-dcd15f29d298",
+      "scope": "harness metadata missing before candidate launch",
+      "repaired": "fresh host-context.json only",
+      "verdict": "failed, never relabeled"
+    },
+    "priorPrototypes": "retained outside final-staged and not reused as final receipts",
+    "physicalPiAcceptance": "m01/controller-owned, not claimed by these local final-artifact smokes"
+  },
+  "core": [
+    {
+      "name": "raw",
+      "nativePass": null,
+      "match": true,
+      "headerDiffs": [],
+      "eventDiffCount": 0,
+      "upstreamDiffCount": 0
+    },
+    {
+      "name": "native",
+      "nativePass": true,
+      "match": true,
+      "headerDiffs": [],
+      "eventDiffCount": 0,
+      "upstreamDiffCount": 0
+    }
+  ],
+  "tls": [
+    {
+      "name": "valid",
+      "verdict": "verified",
+      "http": 200,
+      "sni": ["localhost"],
+      "tcpConnections": 1,
+      "httpPosts": 1,
+      "logicalCommitted": 1,
+      "reserved": 0,
+      "cppExit": 0
+    },
+    {
+      "name": "wrong-san",
+      "verdict": "verified",
+      "http": 502,
+      "sni": ["localhost"],
+      "tcpConnections": 1,
+      "httpPosts": 0,
+      "logicalCommitted": 1,
+      "reserved": 0,
+      "cppExit": 0
+    },
+    {
+      "name": "untrusted",
+      "verdict": "verified",
+      "http": 502,
+      "sni": ["localhost"],
+      "tcpConnections": 1,
+      "httpPosts": 0,
+      "logicalCommitted": 1,
+      "reserved": 0,
+      "cppExit": 0
+    }
+  ],
+  "pressure": [
+    {
+      "mode": "resume",
+      "epoch": "io_527b7f7e74619e44b7f4d6c4bc1be4ca",
+      "pendingBefore": 1,
+      "rawSendBuffer": 32768,
+      "readsBefore": 26,
+      "readsAfter": 26,
+      "releaseLatencyMs": null,
+      "final": {
+        "fixture_authority": true,
+        "journal_sequence": 5,
+        "revoked": false,
+        "committed_requests": 1,
+        "reserved_requests": 0,
+        "quota_transactions": 2,
+        "quota_mutations": 4,
+        "record_count": 1,
+        "paid_fallback": "not_applicable",
+        "kernel_quota": "not_applicable",
+        "logical_dispatch_count": 1,
+        "settlement_count": 1,
+        "unsettled_count": 0,
+        "active_requests": 0,
+        "queued_requests": 0,
+        "upstream_read_starts": 28,
+        "upstream_read_completions": 28,
+        "pending_upstream_reads": 0,
+        "downstream_write_starts": 13,
+        "downstream_write_completions": 13,
+        "pending_downstream_writes": 0,
+        "downstream_write_successes": 13,
+        "requested_downstream_send_buffer_bytes": 16384,
+        "actual_downstream_send_buffer_bytes": 32768,
+        "upstream_paused_for_downstream_write": false
+      }
+    },
+    {
+      "mode": "cancel",
+      "epoch": "io_404183017da74c1a696b9e10ba0c0703",
+      "pendingBefore": 1,
+      "rawSendBuffer": 32768,
+      "readsBefore": 28,
+      "readsAfter": 28,
+      "releaseLatencyMs": 6.04887900000017,
+      "final": {
+        "fixture_authority": true,
+        "journal_sequence": 5,
+        "revoked": false,
+        "committed_requests": 1,
+        "reserved_requests": 0,
+        "quota_transactions": 2,
+        "quota_mutations": 4,
+        "record_count": 1,
+        "paid_fallback": "not_applicable",
+        "kernel_quota": "not_applicable",
+        "logical_dispatch_count": 1,
+        "settlement_count": 1,
+        "unsettled_count": 0,
+        "active_requests": 0,
+        "queued_requests": 0,
+        "upstream_read_starts": 28,
+        "upstream_read_completions": 28,
+        "pending_upstream_reads": 0,
+        "downstream_write_starts": 8,
+        "downstream_write_completions": 8,
+        "pending_downstream_writes": 0,
+        "downstream_write_successes": 6,
+        "requested_downstream_send_buffer_bytes": 16384,
+        "actual_downstream_send_buffer_bytes": 32768,
+        "upstream_paused_for_downstream_write": false
+      }
+    }
+  ],
+  "scope": "Final committed stripped artifact local VPS qualification; candidate128MiB/outer768MiB/swap0/CPU1, not Pi resource measurements",
+  "staticNode": {
+    "status": "passed",
+    "ref": "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/f87ecea8-bcb2-4ada-94e0-7e1dc5d67c92",
+    "sourceCommit": "7069c31b3f50d0552ef77e99b984f59fde479b13",
+    "sourceTree": "827f3281deaa0b36002d710c172a6b0e43d89a38",
+    "exactCommand": [
+      "/opt/node-lts/bin/node",
+      "--max-old-space-size=1536",
+      "node_modules/typescript/bin/tsc",
+      "--noEmit",
+      "--project",
+      "tsconfig.json"
+    ],
+    "officialCompilerVersion": "6.0.3",
+    "nodeVersion": "v24.20.0",
+    "nodeSha256": "23a5637c2470fde09fcc1acc77c1b92e04e3d7e3e6e80ff7df6f5831958d1477",
+    "compilerJsSha256": "1c59e77a54b186ec43fa7f3e0d3c4bb15ca5eb5ba43e96b1d3a267139eddd3e3",
+    "exit": 0,
+    "captureDurationMs": 72051,
+    "maxChildRssKiB": 1284248,
+    "actualLimits": {
+      "memory.max": "2147483648",
+      "memory.swap.max": "0",
+      "cpu.max": "100000 100000",
+      "pids.max": "128"
+    },
+    "identityUnchangedBeforeAfter": true
+  },
+  "bunTimeouts": "240s/360s diagnostic-free attempts remain incomplete; not retroactively passed",
+  "noPrivateData": "No keys, auth values, raw native prompts, state databases or source bundle copied"
+}
