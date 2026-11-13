@@ -1,0 +1,1309 @@
+{
+  "scenario": "roundtrip",
+  "sourceSha": "b588420dc1275ac1f7548a6932a5e63330751cea",
+  "fixtureCommit": "96cfca54d033aedff8e237a4cbcebb051f62f066",
+  "status": "passed",
+  "accountingScope": "Rust ordinary synthetic token; routing journal only, no API quota or paid reservation",
+  "memoryScope": "workerd process excludes mock/client; full enclosing cgroup includes mock/client/helpers",
+  "nativeEgressProbe": {
+    "code": 0,
+    "stdout": "{\"errno\": 101, \"name\": \"ENETUNREACH\"}\n",
+    "stderr": ""
+  },
+  "egress": {
+    "errno": 101,
+    "name": "ENETUNREACH"
+  },
+  "argv": [
+    "/home/codex/rust-worker-prep/checkout-b588420dc1275ac1f7548a6932a5e63330751cea/node_modules/@cloudflare/workerd-linux-arm64/bin/workerd",
+    "serve",
+    "/tmp/ai-cpp-pilot-20261112/rust-baseline/comparison-bridge/cases/roundtrip-final-v3/runtime.capnp",
+    "--experimental",
+    "--import-path",
+    "/",
+    "--socket-addr",
+    "public=127.0.0.1:18992",
+    "--external-addr",
+    "mock=127.0.0.1:33775"
+  ],
+  "gatewayPlacement": "/system.slice/uos-rust-shared-roundtrip-20261113.service/gateway-roundtrip",
+  "workerdExitCode": 0,
+  "gatewayCountersAfterStop": {
+    "memory.current": "1433600",
+    "memory.peak": "251244544",
+    "memory.max": "536870912",
+    "memory.swap.current": "0",
+    "memory.swap.max": "0",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+    "cpu.max": "100000 100000",
+    "cpu.stat": "usage_usec 1925217\nuser_usec 1713773\nsystem_usec 211444\nnice_usec 0\nnr_periods 23\nnr_throttled 4\nthrottled_usec 43138\nnr_bursts 0\nburst_usec 0",
+    "pids.current": "0",
+    "pids.max": "96",
+    "cgroup.procs": ""
+  },
+  "bridgeRequests": [
+    {
+      "sequence": 1,
+      "atMs": 1027.841035,
+      "method": "POST",
+      "path": "/chat/completions",
+      "host": "api.deepseek.com",
+      "classification": "generation",
+      "possibleAdditionalGeneration": false
+    },
+    {
+      "sequence": 2,
+      "atMs": 1034.395478,
+      "method": "GET",
+      "path": "/api/v1/models?output_modalities=text%2Cdecisions",
+      "host": "openrouter.ai",
+      "classification": "auxiliary_catalog_get",
+      "possibleAdditionalGeneration": false,
+      "bodyBase64": "",
+      "syntheticStatus": 503
+    },
+    {
+      "sequence": 3,
+      "atMs": 1433.774263,
+      "method": "POST",
+      "path": "/chat/completions",
+      "host": "api.deepseek.com",
+      "classification": "generation",
+      "possibleAdditionalGeneration": false
+    }
+  ],
+  "featureDifference": "Rust auxiliary OpenRouter catalog GET receives explicit synthetic503 and is excluded from generation mock call counting",
+  "captures": [
+    {
+      "request": {
+        "path": "/v1/responses",
+        "body": "{\"model\":\"deepseek-flash\",\"stream\":true,\"store\":false,\"reasoning\":{\"effort\":\"none\"},\"instructions\":\"Use the fixture tool and preserve its result.\",\"input\":[{\"role\":\"developer\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"}],\"tools\":[{\"type\":\"function\",\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}]}"
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "text/event-stream",
+        "cache-control": "no-store",
+        "x-uos-deployment-id": "cloudflare-b588420dc1275ac1f7548a6932a5e63330751cea",
+        "x-uos-git-sha": "b588420dc1275ac1f7548a6932a5e63330751cea",
+        "x-uos-provider-request-id": "fixture-provider-1",
+        "x-uos-request-id": "84384b4c-8bb5-47ac-a23f-81a2a1d70a17",
+        "x-uos-upstream": "deepseek"
+      },
+      "chunksBase64": [
+        "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2UuY3JlYXRlZCIsInJlc3BvbnNlIjp7ImlkIjoicmVzcF9maXh0dXJlcHJvdmlkZXIxIiwib2JqZWN0IjoicmVzcG9uc2UiLCJjcmVhdGVkX2F0IjoxNzk0NTMzOTQ2LCJzdGF0dXMiOiJpbl9wcm9ncmVzcyIsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJvdXRwdXQiOltdLCJlcnJvciI6bnVsbCwiaW5jb21wbGV0ZV9kZXRhaWxzIjpudWxsLCJpbnN0cnVjdGlvbnMiOiJVc2UgdGhlIGZpeHR1cmUgdG9vbCBhbmQgcHJlc2VydmUgaXRzIHJlc3VsdC4iLCJtZXRhZGF0YSI6e30sInBhcmFsbGVsX3Rvb2xfY2FsbHMiOnRydWUsInRvb2xfY2hvaWNlIjoiYXV0byIsInRvb2xzIjpbeyJ0eXBlIjoiZnVuY3Rpb24iLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwicGFyYW1ldGVycyI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJ0ZXh0Ijp7InR5cGUiOiJzdHJpbmcifX0sInJlcXVpcmVkIjpbInRleHQiXX19XSwidGVtcGVyYXR1cmUiOm51bGwsInRvcF9wIjpudWxsLCJtYXhfb3V0cHV0X3Rva2VucyI6bnVsbCwicHJldmlvdXNfcmVzcG9uc2VfaWQiOm51bGwsInJlYXNvbmluZyI6bnVsbCwic3RvcmUiOmZhbHNlLCJ0cnVuY2F0aW9uIjoiZGlzYWJsZWQiLCJ1c2FnZSI6bnVsbH0sInNlcXVlbmNlX251bWJlciI6MH0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmluX3Byb2dyZXNzCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmluX3Byb2dyZXNzIiwicmVzcG9uc2UiOnsiaWQiOiJyZXNwX2ZpeHR1cmVwcm92aWRlcjEiLCJvYmplY3QiOiJyZXNwb25zZSIsImNyZWF0ZWRfYXQiOjE3OTQ1MzM5NDYsInN0YXR1cyI6ImluX3Byb2dyZXNzIiwibW9kZWwiOiJkZWVwc2Vlay1mbGFzaCIsIm91dHB1dCI6W10sImVycm9yIjpudWxsLCJpbmNvbXBsZXRlX2RldGFpbHMiOm51bGwsImluc3RydWN0aW9ucyI6IlVzZSB0aGUgZml4dHVyZSB0b29sIGFuZCBwcmVzZXJ2ZSBpdHMgcmVzdWx0LiIsIm1ldGFkYXRhIjp7fSwicGFyYWxsZWxfdG9vbF9jYWxscyI6dHJ1ZSwidG9vbF9jaG9pY2UiOiJhdXRvIiwidG9vbHMiOlt7InR5cGUiOiJmdW5jdGlvbiIsIm5hbWUiOiJmaXh0dXJlX2VjaG8iLCJwYXJhbWV0ZXJzIjp7InR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7InRleHQiOnsidHlwZSI6InN0cmluZyJ9fSwicmVxdWlyZWQiOlsidGV4dCJdfX1dLCJ0ZW1wZXJhdHVyZSI6bnVsbCwidG9wX3AiOm51bGwsIm1heF9vdXRwdXRfdG9rZW5zIjpudWxsLCJwcmV2aW91c19yZXNwb25zZV9pZCI6bnVsbCwicmVhc29uaW5nIjpudWxsLCJzdG9yZSI6ZmFsc2UsInRydW5jYXRpb24iOiJkaXNhYmxlZCIsInVzYWdlIjpudWxsfSwic2VxdWVuY2VfbnVtYmVyIjoxfQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkIiwib3V0cHV0X2luZGV4IjowLCJpdGVtIjp7ImlkIjoiZmNfcmVzcF9maXh0dXJlcHJvdmlkZXIxXzAiLCJ0eXBlIjoiZnVuY3Rpb25fY2FsbCIsInN0YXR1cyI6ImluX3Byb2dyZXNzIiwiY2FsbF9pZCI6ImNhbGxfZml4dHVyZV9lY2hvXzEiLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwiYXJndW1lbnRzIjoiIn0sInNlcXVlbmNlX251bWJlciI6Mn0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhIiwiaXRlbV9pZCI6ImZjX3Jlc3BfZml4dHVyZXByb3ZpZGVyMV8wIiwib3V0cHV0X2luZGV4IjowLCJkZWx0YSI6IntcInRleHRcIjpcImZpeHR1cmUtIiwic2VxdWVuY2VfbnVtYmVyIjozfQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhIiwiaXRlbV9pZCI6ImZjX3Jlc3BfZml4dHVyZXByb3ZpZGVyMV8wIiwib3V0cHV0X2luZGV4IjowLCJkZWx0YSI6ImFyZ3VtZW50LW9rXCJ9Iiwic2VxdWVuY2VfbnVtYmVyIjo0fQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRvbmUKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2UuZnVuY3Rpb25fY2FsbF9hcmd1bWVudHMuZG9uZSIsIml0ZW1faWQiOiJmY19yZXNwX2ZpeHR1cmVwcm92aWRlcjFfMCIsIm91dHB1dF9pbmRleCI6MCwiYXJndW1lbnRzIjoie1widGV4dFwiOlwiZml4dHVyZS1hcmd1bWVudC1va1wifSIsInNlcXVlbmNlX251bWJlciI6NX0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF9pdGVtLmRvbmUKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2Uub3V0cHV0X2l0ZW0uZG9uZSIsIm91dHB1dF9pbmRleCI6MCwiaXRlbSI6eyJpZCI6ImZjX3Jlc3BfZml4dHVyZXByb3ZpZGVyMV8wIiwidHlwZSI6ImZ1bmN0aW9uX2NhbGwiLCJzdGF0dXMiOiJjb21wbGV0ZWQiLCJjYWxsX2lkIjoiY2FsbF9maXh0dXJlX2VjaG9fMSIsIm5hbWUiOiJmaXh0dXJlX2VjaG8iLCJhcmd1bWVudHMiOiJ7XCJ0ZXh0XCI6XCJmaXh0dXJlLWFyZ3VtZW50LW9rXCJ9In0sInNlcXVlbmNlX251bWJlciI6Nn0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmNvbXBsZXRlZApkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5jb21wbGV0ZWQiLCJyZXNwb25zZSI6eyJpZCI6InJlc3BfZml4dHVyZXByb3ZpZGVyMSIsIm9iamVjdCI6InJlc3BvbnNlIiwiY3JlYXRlZF9hdCI6MTc5NDUzMzk0Niwic3RhdHVzIjoiY29tcGxldGVkIiwibW9kZWwiOiJkZWVwc2Vlay1mbGFzaCIsIm91dHB1dCI6W3siaWQiOiJmY19yZXNwX2ZpeHR1cmVwcm92aWRlcjFfMCIsInR5cGUiOiJmdW5jdGlvbl9jYWxsIiwic3RhdHVzIjoiY29tcGxldGVkIiwiY2FsbF9pZCI6ImNhbGxfZml4dHVyZV9lY2hvXzEiLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwiYXJndW1lbnRzIjoie1widGV4dFwiOlwiZml4dHVyZS1hcmd1bWVudC1va1wifSJ9XSwiZXJyb3IiOm51bGwsImluY29tcGxldGVfZGV0YWlscyI6bnVsbCwiaW5zdHJ1Y3Rpb25zIjoiVXNlIHRoZSBmaXh0dXJlIHRvb2wgYW5kIHByZXNlcnZlIGl0cyByZXN1bHQuIiwibWV0YWRhdGEiOnt9LCJwYXJhbGxlbF90b29sX2NhbGxzIjp0cnVlLCJ0b29sX2Nob2ljZSI6ImF1dG8iLCJ0b29scyI6W3sidHlwZSI6ImZ1bmN0aW9uIiwibmFtZSI6ImZpeHR1cmVfZWNobyIsInBhcmFtZXRlcnMiOnsidHlwZSI6Im9iamVjdCIsInByb3BlcnRpZXMiOnsidGV4dCI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJ0ZXh0Il19fV0sInRlbXBlcmF0dXJlIjpudWxsLCJ0b3BfcCI6bnVsbCwibWF4X291dHB1dF90b2tlbnMiOm51bGwsInByZXZpb3VzX3Jlc3BvbnNlX2lkIjpudWxsLCJyZWFzb25pbmciOm51bGwsInN0b3JlIjpmYWxzZSwidHJ1bmNhdGlvbiI6ImRpc2FibGVkIiwidXNhZ2UiOnsiaW5wdXRfdG9rZW5zIjoxMSwib3V0cHV0X3Rva2VucyI6NSwidG90YWxfdG9rZW5zIjoxNiwiaW5wdXRfdG9rZW5zX2RldGFpbHMiOnsiY2FjaGVkX3Rva2VucyI6MH19fSwic2VxdWVuY2VfbnVtYmVyIjo3fQoK"
+      ],
+      "events": [
+        {
+          "type": "response.created",
+          "response": {
+            "id": "resp_fixtureprovider1",
+            "object": "response",
+            "created_at": 1794533946,
+            "status": "in_progress",
+            "model": "deepseek-flash",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": null
+          },
+          "sequence_number": 0
+        },
+        {
+          "type": "response.in_progress",
+          "response": {
+            "id": "resp_fixtureprovider1",
+            "object": "response",
+            "created_at": 1794533946,
+            "status": "in_progress",
+            "model": "deepseek-flash",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": null
+          },
+          "sequence_number": 1
+        },
+        {
+          "type": "response.output_item.added",
+          "output_index": 0,
+          "item": {
+            "id": "fc_resp_fixtureprovider1_0",
+            "type": "function_call",
+            "status": "in_progress",
+            "call_id": "call_fixture_echo_1",
+            "name": "fixture_echo",
+            "arguments": ""
+          },
+          "sequence_number": 2
+        },
+        {
+          "type": "response.function_call_arguments.delta",
+          "item_id": "fc_resp_fixtureprovider1_0",
+          "output_index": 0,
+          "delta": "{\"text\":\"fixture-",
+          "sequence_number": 3
+        },
+        {
+          "type": "response.function_call_arguments.delta",
+          "item_id": "fc_resp_fixtureprovider1_0",
+          "output_index": 0,
+          "delta": "argument-ok\"}",
+          "sequence_number": 4
+        },
+        {
+          "type": "response.function_call_arguments.done",
+          "item_id": "fc_resp_fixtureprovider1_0",
+          "output_index": 0,
+          "arguments": "{\"text\":\"fixture-argument-ok\"}",
+          "sequence_number": 5
+        },
+        {
+          "type": "response.output_item.done",
+          "output_index": 0,
+          "item": {
+            "id": "fc_resp_fixtureprovider1_0",
+            "type": "function_call",
+            "status": "completed",
+            "call_id": "call_fixture_echo_1",
+            "name": "fixture_echo",
+            "arguments": "{\"text\":\"fixture-argument-ok\"}"
+          },
+          "sequence_number": 6
+        },
+        {
+          "type": "response.completed",
+          "response": {
+            "id": "resp_fixtureprovider1",
+            "object": "response",
+            "created_at": 1794533946,
+            "status": "completed",
+            "model": "deepseek-flash",
+            "output": [
+              {
+                "id": "fc_resp_fixtureprovider1_0",
+                "type": "function_call",
+                "status": "completed",
+                "call_id": "call_fixture_echo_1",
+                "name": "fixture_echo",
+                "arguments": "{\"text\":\"fixture-argument-ok\"}"
+              }
+            ],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": {
+              "input_tokens": 11,
+              "output_tokens": 5,
+              "total_tokens": 16,
+              "input_tokens_details": {
+                "cached_tokens": 0
+              }
+            }
+          },
+          "sequence_number": 7
+        }
+      ],
+      "outcome": "delivered",
+      "error": null
+    },
+    {
+      "request": {
+        "path": "/v1/responses",
+        "body": "{\"model\":\"deepseek-flash\",\"stream\":true,\"store\":false,\"reasoning\":{\"effort\":\"none\"},\"instructions\":\"Use the fixture tool and preserve its result.\",\"input\":[{\"role\":\"developer\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"},{\"id\":\"fc_resp_fixtureprovider1_0\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_fixture_echo_1\",\"name\":\"fixture_echo\",\"arguments\":\"{\\\"text\\\":\\\"fixture-argument-ok\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_fixture_echo_1\",\"output\":\"fixture-tool-ok\"}],\"tools\":[{\"type\":\"function\",\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}],\"previous_response_id\":\"resp_fixtureprovider1\"}"
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "text/event-stream",
+        "cache-control": "no-store",
+        "x-uos-deployment-id": "cloudflare-b588420dc1275ac1f7548a6932a5e63330751cea",
+        "x-uos-git-sha": "b588420dc1275ac1f7548a6932a5e63330751cea",
+        "x-uos-provider-request-id": "fixture-provider-2",
+        "x-uos-request-id": "f1e63b35-e047-4761-a8dd-f92ee0ca8f57",
+        "x-uos-upstream": "deepseek"
+      },
+      "chunksBase64": [
+        "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2UuY3JlYXRlZCIsInJlc3BvbnNlIjp7ImlkIjoicmVzcF9maXh0dXJlcHJvdmlkZXIyIiwib2JqZWN0IjoicmVzcG9uc2UiLCJjcmVhdGVkX2F0IjoxNzk0NTMzOTQ3LCJzdGF0dXMiOiJpbl9wcm9ncmVzcyIsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJvdXRwdXQiOltdLCJlcnJvciI6bnVsbCwiaW5jb21wbGV0ZV9kZXRhaWxzIjpudWxsLCJpbnN0cnVjdGlvbnMiOiJVc2UgdGhlIGZpeHR1cmUgdG9vbCBhbmQgcHJlc2VydmUgaXRzIHJlc3VsdC4iLCJtZXRhZGF0YSI6e30sInBhcmFsbGVsX3Rvb2xfY2FsbHMiOnRydWUsInRvb2xfY2hvaWNlIjoiYXV0byIsInRvb2xzIjpbeyJ0eXBlIjoiZnVuY3Rpb24iLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwicGFyYW1ldGVycyI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJ0ZXh0Ijp7InR5cGUiOiJzdHJpbmcifX0sInJlcXVpcmVkIjpbInRleHQiXX19XSwidGVtcGVyYXR1cmUiOm51bGwsInRvcF9wIjpudWxsLCJtYXhfb3V0cHV0X3Rva2VucyI6bnVsbCwicHJldmlvdXNfcmVzcG9uc2VfaWQiOm51bGwsInJlYXNvbmluZyI6bnVsbCwic3RvcmUiOmZhbHNlLCJ0cnVuY2F0aW9uIjoiZGlzYWJsZWQiLCJ1c2FnZSI6bnVsbH0sInNlcXVlbmNlX251bWJlciI6MH0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmluX3Byb2dyZXNzCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmluX3Byb2dyZXNzIiwicmVzcG9uc2UiOnsiaWQiOiJyZXNwX2ZpeHR1cmVwcm92aWRlcjIiLCJvYmplY3QiOiJyZXNwb25zZSIsImNyZWF0ZWRfYXQiOjE3OTQ1MzM5NDcsInN0YXR1cyI6ImluX3Byb2dyZXNzIiwibW9kZWwiOiJkZWVwc2Vlay1mbGFzaCIsIm91dHB1dCI6W10sImVycm9yIjpudWxsLCJpbmNvbXBsZXRlX2RldGFpbHMiOm51bGwsImluc3RydWN0aW9ucyI6IlVzZSB0aGUgZml4dHVyZSB0b29sIGFuZCBwcmVzZXJ2ZSBpdHMgcmVzdWx0LiIsIm1ldGFkYXRhIjp7fSwicGFyYWxsZWxfdG9vbF9jYWxscyI6dHJ1ZSwidG9vbF9jaG9pY2UiOiJhdXRvIiwidG9vbHMiOlt7InR5cGUiOiJmdW5jdGlvbiIsIm5hbWUiOiJmaXh0dXJlX2VjaG8iLCJwYXJhbWV0ZXJzIjp7InR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7InRleHQiOnsidHlwZSI6InN0cmluZyJ9fSwicmVxdWlyZWQiOlsidGV4dCJdfX1dLCJ0ZW1wZXJhdHVyZSI6bnVsbCwidG9wX3AiOm51bGwsIm1heF9vdXRwdXRfdG9rZW5zIjpudWxsLCJwcmV2aW91c19yZXNwb25zZV9pZCI6bnVsbCwicmVhc29uaW5nIjpudWxsLCJzdG9yZSI6ZmFsc2UsInRydW5jYXRpb24iOiJkaXNhYmxlZCIsInVzYWdlIjpudWxsfSwic2VxdWVuY2VfbnVtYmVyIjoxfQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkIiwib3V0cHV0X2luZGV4IjowLCJpdGVtIjp7ImlkIjoibXNnX3Jlc3BfZml4dHVyZXByb3ZpZGVyMl8wIiwidHlwZSI6Im1lc3NhZ2UiLCJzdGF0dXMiOiJpbl9wcm9ncmVzcyIsInJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjpbXX0sInNlcXVlbmNlX251bWJlciI6Mn0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmNvbnRlbnRfcGFydC5hZGRlZApkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5jb250ZW50X3BhcnQuYWRkZWQiLCJpdGVtX2lkIjoibXNnX3Jlc3BfZml4dHVyZXByb3ZpZGVyMl8wIiwib3V0cHV0X2luZGV4IjowLCJjb250ZW50X2luZGV4IjowLCJwYXJ0Ijp7InR5cGUiOiJvdXRwdXRfdGV4dCIsInRleHQiOiIiLCJhbm5vdGF0aW9ucyI6W119LCJzZXF1ZW5jZV9udW1iZXIiOjN9Cgo=",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhIiwiaXRlbV9pZCI6Im1zZ19yZXNwX2ZpeHR1cmVwcm92aWRlcjJfMCIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaXh0dXJlLSIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjo0fQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhIiwiaXRlbV9pZCI6Im1zZ19yZXNwX2ZpeHR1cmVwcm92aWRlcjJfMCIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaW5hbC1vayIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjo1fQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRvbmUKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2Uub3V0cHV0X3RleHQuZG9uZSIsIml0ZW1faWQiOiJtc2dfcmVzcF9maXh0dXJlcHJvdmlkZXIyXzAiLCJvdXRwdXRfaW5kZXgiOjAsImNvbnRlbnRfaW5kZXgiOjAsInRleHQiOiJmaXh0dXJlLWZpbmFsLW9rIiwibG9ncHJvYnMiOltdLCJzZXF1ZW5jZV9udW1iZXIiOjZ9Cgo=",
+        "ZXZlbnQ6IHJlc3BvbnNlLmNvbnRlbnRfcGFydC5kb25lCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmNvbnRlbnRfcGFydC5kb25lIiwiaXRlbV9pZCI6Im1zZ19yZXNwX2ZpeHR1cmVwcm92aWRlcjJfMCIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwicGFydCI6eyJ0eXBlIjoib3V0cHV0X3RleHQiLCJ0ZXh0IjoiZml4dHVyZS1maW5hbC1vayIsImFubm90YXRpb25zIjpbXX0sInNlcXVlbmNlX251bWJlciI6N30KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF9pdGVtLmRvbmUKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2Uub3V0cHV0X2l0ZW0uZG9uZSIsIm91dHB1dF9pbmRleCI6MCwiaXRlbSI6eyJpZCI6Im1zZ19yZXNwX2ZpeHR1cmVwcm92aWRlcjJfMCIsInR5cGUiOiJtZXNzYWdlIiwic3RhdHVzIjoiY29tcGxldGVkIiwicm9sZSI6ImFzc2lzdGFudCIsImNvbnRlbnQiOlt7InR5cGUiOiJvdXRwdXRfdGV4dCIsInRleHQiOiJmaXh0dXJlLWZpbmFsLW9rIiwiYW5ub3RhdGlvbnMiOltdfV19LCJzZXF1ZW5jZV9udW1iZXIiOjh9Cgo=",
+        "ZXZlbnQ6IHJlc3BvbnNlLmNvbXBsZXRlZApkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5jb21wbGV0ZWQiLCJyZXNwb25zZSI6eyJpZCI6InJlc3BfZml4dHVyZXByb3ZpZGVyMiIsIm9iamVjdCI6InJlc3BvbnNlIiwiY3JlYXRlZF9hdCI6MTc5NDUzMzk0Nywic3RhdHVzIjoiY29tcGxldGVkIiwibW9kZWwiOiJkZWVwc2Vlay1mbGFzaCIsIm91dHB1dCI6W3siaWQiOiJtc2dfcmVzcF9maXh0dXJlcHJvdmlkZXIyXzAiLCJ0eXBlIjoibWVzc2FnZSIsInN0YXR1cyI6ImNvbXBsZXRlZCIsInJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjpbeyJ0eXBlIjoib3V0cHV0X3RleHQiLCJ0ZXh0IjoiZml4dHVyZS1maW5hbC1vayIsImFubm90YXRpb25zIjpbXX1dfV0sImVycm9yIjpudWxsLCJpbmNvbXBsZXRlX2RldGFpbHMiOm51bGwsImluc3RydWN0aW9ucyI6IlVzZSB0aGUgZml4dHVyZSB0b29sIGFuZCBwcmVzZXJ2ZSBpdHMgcmVzdWx0LiIsIm1ldGFkYXRhIjp7fSwicGFyYWxsZWxfdG9vbF9jYWxscyI6dHJ1ZSwidG9vbF9jaG9pY2UiOiJhdXRvIiwidG9vbHMiOlt7InR5cGUiOiJmdW5jdGlvbiIsIm5hbWUiOiJmaXh0dXJlX2VjaG8iLCJwYXJhbWV0ZXJzIjp7InR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7InRleHQiOnsidHlwZSI6InN0cmluZyJ9fSwicmVxdWlyZWQiOlsidGV4dCJdfX1dLCJ0ZW1wZXJhdHVyZSI6bnVsbCwidG9wX3AiOm51bGwsIm1heF9vdXRwdXRfdG9rZW5zIjpudWxsLCJwcmV2aW91c19yZXNwb25zZV9pZCI6bnVsbCwicmVhc29uaW5nIjpudWxsLCJzdG9yZSI6ZmFsc2UsInRydW5jYXRpb24iOiJkaXNhYmxlZCIsInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MjMsIm91dHB1dF90b2tlbnMiOjcsInRvdGFsX3Rva2VucyI6MzB9fSwic2VxdWVuY2VfbnVtYmVyIjo5fQoK"
+      ],
+      "events": [
+        {
+          "type": "response.created",
+          "response": {
+            "id": "resp_fixtureprovider2",
+            "object": "response",
+            "created_at": 1794533947,
+            "status": "in_progress",
+            "model": "deepseek-flash",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": null
+          },
+          "sequence_number": 0
+        },
+        {
+          "type": "response.in_progress",
+          "response": {
+            "id": "resp_fixtureprovider2",
+            "object": "response",
+            "created_at": 1794533947,
+            "status": "in_progress",
+            "model": "deepseek-flash",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": null
+          },
+          "sequence_number": 1
+        },
+        {
+          "type": "response.output_item.added",
+          "output_index": 0,
+          "item": {
+            "id": "msg_resp_fixtureprovider2_0",
+            "type": "message",
+            "status": "in_progress",
+            "role": "assistant",
+            "content": []
+          },
+          "sequence_number": 2
+        },
+        {
+          "type": "response.content_part.added",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "part": {
+            "type": "output_text",
+            "text": "",
+            "annotations": []
+          },
+          "sequence_number": 3
+        },
+        {
+          "type": "response.output_text.delta",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "delta": "fixture-",
+          "logprobs": [],
+          "sequence_number": 4
+        },
+        {
+          "type": "response.output_text.delta",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "delta": "final-ok",
+          "logprobs": [],
+          "sequence_number": 5
+        },
+        {
+          "type": "response.output_text.done",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "text": "fixture-final-ok",
+          "logprobs": [],
+          "sequence_number": 6
+        },
+        {
+          "type": "response.content_part.done",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "part": {
+            "type": "output_text",
+            "text": "fixture-final-ok",
+            "annotations": []
+          },
+          "sequence_number": 7
+        },
+        {
+          "type": "response.output_item.done",
+          "output_index": 0,
+          "item": {
+            "id": "msg_resp_fixtureprovider2_0",
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "fixture-final-ok",
+                "annotations": []
+              }
+            ]
+          },
+          "sequence_number": 8
+        },
+        {
+          "type": "response.completed",
+          "response": {
+            "id": "resp_fixtureprovider2",
+            "object": "response",
+            "created_at": 1794533947,
+            "status": "completed",
+            "model": "deepseek-flash",
+            "output": [
+              {
+                "id": "msg_resp_fixtureprovider2_0",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "text": "fixture-final-ok",
+                    "annotations": []
+                  }
+                ]
+              }
+            ],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": {
+              "input_tokens": 23,
+              "output_tokens": 7,
+              "total_tokens": 30
+            }
+          },
+          "sequence_number": 9
+        }
+      ],
+      "outcome": "delivered",
+      "error": null
+    }
+  ],
+  "completedCaptures": [
+    {
+      "request": {
+        "path": "/v1/responses",
+        "body": "{\"model\":\"deepseek-flash\",\"stream\":true,\"store\":false,\"reasoning\":{\"effort\":\"none\"},\"instructions\":\"Use the fixture tool and preserve its result.\",\"input\":[{\"role\":\"developer\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"}],\"tools\":[{\"type\":\"function\",\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}]}"
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "text/event-stream",
+        "cache-control": "no-store",
+        "x-uos-deployment-id": "cloudflare-b588420dc1275ac1f7548a6932a5e63330751cea",
+        "x-uos-git-sha": "b588420dc1275ac1f7548a6932a5e63330751cea",
+        "x-uos-provider-request-id": "fixture-provider-1",
+        "x-uos-request-id": "84384b4c-8bb5-47ac-a23f-81a2a1d70a17",
+        "x-uos-upstream": "deepseek"
+      },
+      "chunksBase64": [
+        "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2UuY3JlYXRlZCIsInJlc3BvbnNlIjp7ImlkIjoicmVzcF9maXh0dXJlcHJvdmlkZXIxIiwib2JqZWN0IjoicmVzcG9uc2UiLCJjcmVhdGVkX2F0IjoxNzk0NTMzOTQ2LCJzdGF0dXMiOiJpbl9wcm9ncmVzcyIsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJvdXRwdXQiOltdLCJlcnJvciI6bnVsbCwiaW5jb21wbGV0ZV9kZXRhaWxzIjpudWxsLCJpbnN0cnVjdGlvbnMiOiJVc2UgdGhlIGZpeHR1cmUgdG9vbCBhbmQgcHJlc2VydmUgaXRzIHJlc3VsdC4iLCJtZXRhZGF0YSI6e30sInBhcmFsbGVsX3Rvb2xfY2FsbHMiOnRydWUsInRvb2xfY2hvaWNlIjoiYXV0byIsInRvb2xzIjpbeyJ0eXBlIjoiZnVuY3Rpb24iLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwicGFyYW1ldGVycyI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJ0ZXh0Ijp7InR5cGUiOiJzdHJpbmcifX0sInJlcXVpcmVkIjpbInRleHQiXX19XSwidGVtcGVyYXR1cmUiOm51bGwsInRvcF9wIjpudWxsLCJtYXhfb3V0cHV0X3Rva2VucyI6bnVsbCwicHJldmlvdXNfcmVzcG9uc2VfaWQiOm51bGwsInJlYXNvbmluZyI6bnVsbCwic3RvcmUiOmZhbHNlLCJ0cnVuY2F0aW9uIjoiZGlzYWJsZWQiLCJ1c2FnZSI6bnVsbH0sInNlcXVlbmNlX251bWJlciI6MH0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmluX3Byb2dyZXNzCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmluX3Byb2dyZXNzIiwicmVzcG9uc2UiOnsiaWQiOiJyZXNwX2ZpeHR1cmVwcm92aWRlcjEiLCJvYmplY3QiOiJyZXNwb25zZSIsImNyZWF0ZWRfYXQiOjE3OTQ1MzM5NDYsInN0YXR1cyI6ImluX3Byb2dyZXNzIiwibW9kZWwiOiJkZWVwc2Vlay1mbGFzaCIsIm91dHB1dCI6W10sImVycm9yIjpudWxsLCJpbmNvbXBsZXRlX2RldGFpbHMiOm51bGwsImluc3RydWN0aW9ucyI6IlVzZSB0aGUgZml4dHVyZSB0b29sIGFuZCBwcmVzZXJ2ZSBpdHMgcmVzdWx0LiIsIm1ldGFkYXRhIjp7fSwicGFyYWxsZWxfdG9vbF9jYWxscyI6dHJ1ZSwidG9vbF9jaG9pY2UiOiJhdXRvIiwidG9vbHMiOlt7InR5cGUiOiJmdW5jdGlvbiIsIm5hbWUiOiJmaXh0dXJlX2VjaG8iLCJwYXJhbWV0ZXJzIjp7InR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7InRleHQiOnsidHlwZSI6InN0cmluZyJ9fSwicmVxdWlyZWQiOlsidGV4dCJdfX1dLCJ0ZW1wZXJhdHVyZSI6bnVsbCwidG9wX3AiOm51bGwsIm1heF9vdXRwdXRfdG9rZW5zIjpudWxsLCJwcmV2aW91c19yZXNwb25zZV9pZCI6bnVsbCwicmVhc29uaW5nIjpudWxsLCJzdG9yZSI6ZmFsc2UsInRydW5jYXRpb24iOiJkaXNhYmxlZCIsInVzYWdlIjpudWxsfSwic2VxdWVuY2VfbnVtYmVyIjoxfQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkIiwib3V0cHV0X2luZGV4IjowLCJpdGVtIjp7ImlkIjoiZmNfcmVzcF9maXh0dXJlcHJvdmlkZXIxXzAiLCJ0eXBlIjoiZnVuY3Rpb25fY2FsbCIsInN0YXR1cyI6ImluX3Byb2dyZXNzIiwiY2FsbF9pZCI6ImNhbGxfZml4dHVyZV9lY2hvXzEiLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwiYXJndW1lbnRzIjoiIn0sInNlcXVlbmNlX251bWJlciI6Mn0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhIiwiaXRlbV9pZCI6ImZjX3Jlc3BfZml4dHVyZXByb3ZpZGVyMV8wIiwib3V0cHV0X2luZGV4IjowLCJkZWx0YSI6IntcInRleHRcIjpcImZpeHR1cmUtIiwic2VxdWVuY2VfbnVtYmVyIjozfQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRlbHRhIiwiaXRlbV9pZCI6ImZjX3Jlc3BfZml4dHVyZXByb3ZpZGVyMV8wIiwib3V0cHV0X2luZGV4IjowLCJkZWx0YSI6ImFyZ3VtZW50LW9rXCJ9Iiwic2VxdWVuY2VfbnVtYmVyIjo0fQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLmZ1bmN0aW9uX2NhbGxfYXJndW1lbnRzLmRvbmUKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2UuZnVuY3Rpb25fY2FsbF9hcmd1bWVudHMuZG9uZSIsIml0ZW1faWQiOiJmY19yZXNwX2ZpeHR1cmVwcm92aWRlcjFfMCIsIm91dHB1dF9pbmRleCI6MCwiYXJndW1lbnRzIjoie1widGV4dFwiOlwiZml4dHVyZS1hcmd1bWVudC1va1wifSIsInNlcXVlbmNlX251bWJlciI6NX0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF9pdGVtLmRvbmUKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2Uub3V0cHV0X2l0ZW0uZG9uZSIsIm91dHB1dF9pbmRleCI6MCwiaXRlbSI6eyJpZCI6ImZjX3Jlc3BfZml4dHVyZXByb3ZpZGVyMV8wIiwidHlwZSI6ImZ1bmN0aW9uX2NhbGwiLCJzdGF0dXMiOiJjb21wbGV0ZWQiLCJjYWxsX2lkIjoiY2FsbF9maXh0dXJlX2VjaG9fMSIsIm5hbWUiOiJmaXh0dXJlX2VjaG8iLCJhcmd1bWVudHMiOiJ7XCJ0ZXh0XCI6XCJmaXh0dXJlLWFyZ3VtZW50LW9rXCJ9In0sInNlcXVlbmNlX251bWJlciI6Nn0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmNvbXBsZXRlZApkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5jb21wbGV0ZWQiLCJyZXNwb25zZSI6eyJpZCI6InJlc3BfZml4dHVyZXByb3ZpZGVyMSIsIm9iamVjdCI6InJlc3BvbnNlIiwiY3JlYXRlZF9hdCI6MTc5NDUzMzk0Niwic3RhdHVzIjoiY29tcGxldGVkIiwibW9kZWwiOiJkZWVwc2Vlay1mbGFzaCIsIm91dHB1dCI6W3siaWQiOiJmY19yZXNwX2ZpeHR1cmVwcm92aWRlcjFfMCIsInR5cGUiOiJmdW5jdGlvbl9jYWxsIiwic3RhdHVzIjoiY29tcGxldGVkIiwiY2FsbF9pZCI6ImNhbGxfZml4dHVyZV9lY2hvXzEiLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwiYXJndW1lbnRzIjoie1widGV4dFwiOlwiZml4dHVyZS1hcmd1bWVudC1va1wifSJ9XSwiZXJyb3IiOm51bGwsImluY29tcGxldGVfZGV0YWlscyI6bnVsbCwiaW5zdHJ1Y3Rpb25zIjoiVXNlIHRoZSBmaXh0dXJlIHRvb2wgYW5kIHByZXNlcnZlIGl0cyByZXN1bHQuIiwibWV0YWRhdGEiOnt9LCJwYXJhbGxlbF90b29sX2NhbGxzIjp0cnVlLCJ0b29sX2Nob2ljZSI6ImF1dG8iLCJ0b29scyI6W3sidHlwZSI6ImZ1bmN0aW9uIiwibmFtZSI6ImZpeHR1cmVfZWNobyIsInBhcmFtZXRlcnMiOnsidHlwZSI6Im9iamVjdCIsInByb3BlcnRpZXMiOnsidGV4dCI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJ0ZXh0Il19fV0sInRlbXBlcmF0dXJlIjpudWxsLCJ0b3BfcCI6bnVsbCwibWF4X291dHB1dF90b2tlbnMiOm51bGwsInByZXZpb3VzX3Jlc3BvbnNlX2lkIjpudWxsLCJyZWFzb25pbmciOm51bGwsInN0b3JlIjpmYWxzZSwidHJ1bmNhdGlvbiI6ImRpc2FibGVkIiwidXNhZ2UiOnsiaW5wdXRfdG9rZW5zIjoxMSwib3V0cHV0X3Rva2VucyI6NSwidG90YWxfdG9rZW5zIjoxNiwiaW5wdXRfdG9rZW5zX2RldGFpbHMiOnsiY2FjaGVkX3Rva2VucyI6MH19fSwic2VxdWVuY2VfbnVtYmVyIjo3fQoK"
+      ],
+      "events": [
+        {
+          "type": "response.created",
+          "response": {
+            "id": "resp_fixtureprovider1",
+            "object": "response",
+            "created_at": 1794533946,
+            "status": "in_progress",
+            "model": "deepseek-flash",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": null
+          },
+          "sequence_number": 0
+        },
+        {
+          "type": "response.in_progress",
+          "response": {
+            "id": "resp_fixtureprovider1",
+            "object": "response",
+            "created_at": 1794533946,
+            "status": "in_progress",
+            "model": "deepseek-flash",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": null
+          },
+          "sequence_number": 1
+        },
+        {
+          "type": "response.output_item.added",
+          "output_index": 0,
+          "item": {
+            "id": "fc_resp_fixtureprovider1_0",
+            "type": "function_call",
+            "status": "in_progress",
+            "call_id": "call_fixture_echo_1",
+            "name": "fixture_echo",
+            "arguments": ""
+          },
+          "sequence_number": 2
+        },
+        {
+          "type": "response.function_call_arguments.delta",
+          "item_id": "fc_resp_fixtureprovider1_0",
+          "output_index": 0,
+          "delta": "{\"text\":\"fixture-",
+          "sequence_number": 3
+        },
+        {
+          "type": "response.function_call_arguments.delta",
+          "item_id": "fc_resp_fixtureprovider1_0",
+          "output_index": 0,
+          "delta": "argument-ok\"}",
+          "sequence_number": 4
+        },
+        {
+          "type": "response.function_call_arguments.done",
+          "item_id": "fc_resp_fixtureprovider1_0",
+          "output_index": 0,
+          "arguments": "{\"text\":\"fixture-argument-ok\"}",
+          "sequence_number": 5
+        },
+        {
+          "type": "response.output_item.done",
+          "output_index": 0,
+          "item": {
+            "id": "fc_resp_fixtureprovider1_0",
+            "type": "function_call",
+            "status": "completed",
+            "call_id": "call_fixture_echo_1",
+            "name": "fixture_echo",
+            "arguments": "{\"text\":\"fixture-argument-ok\"}"
+          },
+          "sequence_number": 6
+        },
+        {
+          "type": "response.completed",
+          "response": {
+            "id": "resp_fixtureprovider1",
+            "object": "response",
+            "created_at": 1794533946,
+            "status": "completed",
+            "model": "deepseek-flash",
+            "output": [
+              {
+                "id": "fc_resp_fixtureprovider1_0",
+                "type": "function_call",
+                "status": "completed",
+                "call_id": "call_fixture_echo_1",
+                "name": "fixture_echo",
+                "arguments": "{\"text\":\"fixture-argument-ok\"}"
+              }
+            ],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": {
+              "input_tokens": 11,
+              "output_tokens": 5,
+              "total_tokens": 16,
+              "input_tokens_details": {
+                "cached_tokens": 0
+              }
+            }
+          },
+          "sequence_number": 7
+        }
+      ],
+      "outcome": "delivered",
+      "error": null
+    },
+    {
+      "request": {
+        "path": "/v1/responses",
+        "body": "{\"model\":\"deepseek-flash\",\"stream\":true,\"store\":false,\"reasoning\":{\"effort\":\"none\"},\"instructions\":\"Use the fixture tool and preserve its result.\",\"input\":[{\"role\":\"developer\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"},{\"id\":\"fc_resp_fixtureprovider1_0\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_fixture_echo_1\",\"name\":\"fixture_echo\",\"arguments\":\"{\\\"text\\\":\\\"fixture-argument-ok\\\"}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_fixture_echo_1\",\"output\":\"fixture-tool-ok\"}],\"tools\":[{\"type\":\"function\",\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}],\"previous_response_id\":\"resp_fixtureprovider1\"}"
+      },
+      "status": 200,
+      "headers": {
+        "content-type": "text/event-stream",
+        "cache-control": "no-store",
+        "x-uos-deployment-id": "cloudflare-b588420dc1275ac1f7548a6932a5e63330751cea",
+        "x-uos-git-sha": "b588420dc1275ac1f7548a6932a5e63330751cea",
+        "x-uos-provider-request-id": "fixture-provider-2",
+        "x-uos-request-id": "f1e63b35-e047-4761-a8dd-f92ee0ca8f57",
+        "x-uos-upstream": "deepseek"
+      },
+      "chunksBase64": [
+        "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2UuY3JlYXRlZCIsInJlc3BvbnNlIjp7ImlkIjoicmVzcF9maXh0dXJlcHJvdmlkZXIyIiwib2JqZWN0IjoicmVzcG9uc2UiLCJjcmVhdGVkX2F0IjoxNzk0NTMzOTQ3LCJzdGF0dXMiOiJpbl9wcm9ncmVzcyIsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJvdXRwdXQiOltdLCJlcnJvciI6bnVsbCwiaW5jb21wbGV0ZV9kZXRhaWxzIjpudWxsLCJpbnN0cnVjdGlvbnMiOiJVc2UgdGhlIGZpeHR1cmUgdG9vbCBhbmQgcHJlc2VydmUgaXRzIHJlc3VsdC4iLCJtZXRhZGF0YSI6e30sInBhcmFsbGVsX3Rvb2xfY2FsbHMiOnRydWUsInRvb2xfY2hvaWNlIjoiYXV0byIsInRvb2xzIjpbeyJ0eXBlIjoiZnVuY3Rpb24iLCJuYW1lIjoiZml4dHVyZV9lY2hvIiwicGFyYW1ldGVycyI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJ0ZXh0Ijp7InR5cGUiOiJzdHJpbmcifX0sInJlcXVpcmVkIjpbInRleHQiXX19XSwidGVtcGVyYXR1cmUiOm51bGwsInRvcF9wIjpudWxsLCJtYXhfb3V0cHV0X3Rva2VucyI6bnVsbCwicHJldmlvdXNfcmVzcG9uc2VfaWQiOm51bGwsInJlYXNvbmluZyI6bnVsbCwic3RvcmUiOmZhbHNlLCJ0cnVuY2F0aW9uIjoiZGlzYWJsZWQiLCJ1c2FnZSI6bnVsbH0sInNlcXVlbmNlX251bWJlciI6MH0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmluX3Byb2dyZXNzCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmluX3Byb2dyZXNzIiwicmVzcG9uc2UiOnsiaWQiOiJyZXNwX2ZpeHR1cmVwcm92aWRlcjIiLCJvYmplY3QiOiJyZXNwb25zZSIsImNyZWF0ZWRfYXQiOjE3OTQ1MzM5NDcsInN0YXR1cyI6ImluX3Byb2dyZXNzIiwibW9kZWwiOiJkZWVwc2Vlay1mbGFzaCIsIm91dHB1dCI6W10sImVycm9yIjpudWxsLCJpbmNvbXBsZXRlX2RldGFpbHMiOm51bGwsImluc3RydWN0aW9ucyI6IlVzZSB0aGUgZml4dHVyZSB0b29sIGFuZCBwcmVzZXJ2ZSBpdHMgcmVzdWx0LiIsIm1ldGFkYXRhIjp7fSwicGFyYWxsZWxfdG9vbF9jYWxscyI6dHJ1ZSwidG9vbF9jaG9pY2UiOiJhdXRvIiwidG9vbHMiOlt7InR5cGUiOiJmdW5jdGlvbiIsIm5hbWUiOiJmaXh0dXJlX2VjaG8iLCJwYXJhbWV0ZXJzIjp7InR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7InRleHQiOnsidHlwZSI6InN0cmluZyJ9fSwicmVxdWlyZWQiOlsidGV4dCJdfX1dLCJ0ZW1wZXJhdHVyZSI6bnVsbCwidG9wX3AiOm51bGwsIm1heF9vdXRwdXRfdG9rZW5zIjpudWxsLCJwcmV2aW91c19yZXNwb25zZV9pZCI6bnVsbCwicmVhc29uaW5nIjpudWxsLCJzdG9yZSI6ZmFsc2UsInRydW5jYXRpb24iOiJkaXNhYmxlZCIsInVzYWdlIjpudWxsfSwic2VxdWVuY2VfbnVtYmVyIjoxfQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLm91dHB1dF9pdGVtLmFkZGVkIiwib3V0cHV0X2luZGV4IjowLCJpdGVtIjp7ImlkIjoibXNnX3Jlc3BfZml4dHVyZXByb3ZpZGVyMl8wIiwidHlwZSI6Im1lc3NhZ2UiLCJzdGF0dXMiOiJpbl9wcm9ncmVzcyIsInJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjpbXX0sInNlcXVlbmNlX251bWJlciI6Mn0KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLmNvbnRlbnRfcGFydC5hZGRlZApkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5jb250ZW50X3BhcnQuYWRkZWQiLCJpdGVtX2lkIjoibXNnX3Jlc3BfZml4dHVyZXByb3ZpZGVyMl8wIiwib3V0cHV0X2luZGV4IjowLCJjb250ZW50X2luZGV4IjowLCJwYXJ0Ijp7InR5cGUiOiJvdXRwdXRfdGV4dCIsInRleHQiOiIiLCJhbm5vdGF0aW9ucyI6W119LCJzZXF1ZW5jZV9udW1iZXIiOjN9Cgo=",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhIiwiaXRlbV9pZCI6Im1zZ19yZXNwX2ZpeHR1cmVwcm92aWRlcjJfMCIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaXh0dXJlLSIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjo0fQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhIiwiaXRlbV9pZCI6Im1zZ19yZXNwX2ZpeHR1cmVwcm92aWRlcjJfMCIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaW5hbC1vayIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjo1fQoK",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRvbmUKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2Uub3V0cHV0X3RleHQuZG9uZSIsIml0ZW1faWQiOiJtc2dfcmVzcF9maXh0dXJlcHJvdmlkZXIyXzAiLCJvdXRwdXRfaW5kZXgiOjAsImNvbnRlbnRfaW5kZXgiOjAsInRleHQiOiJmaXh0dXJlLWZpbmFsLW9rIiwibG9ncHJvYnMiOltdLCJzZXF1ZW5jZV9udW1iZXIiOjZ9Cgo=",
+        "ZXZlbnQ6IHJlc3BvbnNlLmNvbnRlbnRfcGFydC5kb25lCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmNvbnRlbnRfcGFydC5kb25lIiwiaXRlbV9pZCI6Im1zZ19yZXNwX2ZpeHR1cmVwcm92aWRlcjJfMCIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwicGFydCI6eyJ0eXBlIjoib3V0cHV0X3RleHQiLCJ0ZXh0IjoiZml4dHVyZS1maW5hbC1vayIsImFubm90YXRpb25zIjpbXX0sInNlcXVlbmNlX251bWJlciI6N30KCg==",
+        "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF9pdGVtLmRvbmUKZGF0YTogeyJ0eXBlIjoicmVzcG9uc2Uub3V0cHV0X2l0ZW0uZG9uZSIsIm91dHB1dF9pbmRleCI6MCwiaXRlbSI6eyJpZCI6Im1zZ19yZXNwX2ZpeHR1cmVwcm92aWRlcjJfMCIsInR5cGUiOiJtZXNzYWdlIiwic3RhdHVzIjoiY29tcGxldGVkIiwicm9sZSI6ImFzc2lzdGFudCIsImNvbnRlbnQiOlt7InR5cGUiOiJvdXRwdXRfdGV4dCIsInRleHQiOiJmaXh0dXJlLWZpbmFsLW9rIiwiYW5ub3RhdGlvbnMiOltdfV19LCJzZXF1ZW5jZV9udW1iZXIiOjh9Cgo=",
+        "ZXZlbnQ6IHJlc3BvbnNlLmNvbXBsZXRlZApkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5jb21wbGV0ZWQiLCJyZXNwb25zZSI6eyJpZCI6InJlc3BfZml4dHVyZXByb3ZpZGVyMiIsIm9iamVjdCI6InJlc3BvbnNlIiwiY3JlYXRlZF9hdCI6MTc5NDUzMzk0Nywic3RhdHVzIjoiY29tcGxldGVkIiwibW9kZWwiOiJkZWVwc2Vlay1mbGFzaCIsIm91dHB1dCI6W3siaWQiOiJtc2dfcmVzcF9maXh0dXJlcHJvdmlkZXIyXzAiLCJ0eXBlIjoibWVzc2FnZSIsInN0YXR1cyI6ImNvbXBsZXRlZCIsInJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjpbeyJ0eXBlIjoib3V0cHV0X3RleHQiLCJ0ZXh0IjoiZml4dHVyZS1maW5hbC1vayIsImFubm90YXRpb25zIjpbXX1dfV0sImVycm9yIjpudWxsLCJpbmNvbXBsZXRlX2RldGFpbHMiOm51bGwsImluc3RydWN0aW9ucyI6IlVzZSB0aGUgZml4dHVyZSB0b29sIGFuZCBwcmVzZXJ2ZSBpdHMgcmVzdWx0LiIsIm1ldGFkYXRhIjp7fSwicGFyYWxsZWxfdG9vbF9jYWxscyI6dHJ1ZSwidG9vbF9jaG9pY2UiOiJhdXRvIiwidG9vbHMiOlt7InR5cGUiOiJmdW5jdGlvbiIsIm5hbWUiOiJmaXh0dXJlX2VjaG8iLCJwYXJhbWV0ZXJzIjp7InR5cGUiOiJvYmplY3QiLCJwcm9wZXJ0aWVzIjp7InRleHQiOnsidHlwZSI6InN0cmluZyJ9fSwicmVxdWlyZWQiOlsidGV4dCJdfX1dLCJ0ZW1wZXJhdHVyZSI6bnVsbCwidG9wX3AiOm51bGwsIm1heF9vdXRwdXRfdG9rZW5zIjpudWxsLCJwcmV2aW91c19yZXNwb25zZV9pZCI6bnVsbCwicmVhc29uaW5nIjpudWxsLCJzdG9yZSI6ZmFsc2UsInRydW5jYXRpb24iOiJkaXNhYmxlZCIsInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MjMsIm91dHB1dF90b2tlbnMiOjcsInRvdGFsX3Rva2VucyI6MzB9fSwic2VxdWVuY2VfbnVtYmVyIjo5fQoK"
+      ],
+      "events": [
+        {
+          "type": "response.created",
+          "response": {
+            "id": "resp_fixtureprovider2",
+            "object": "response",
+            "created_at": 1794533947,
+            "status": "in_progress",
+            "model": "deepseek-flash",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": null
+          },
+          "sequence_number": 0
+        },
+        {
+          "type": "response.in_progress",
+          "response": {
+            "id": "resp_fixtureprovider2",
+            "object": "response",
+            "created_at": 1794533947,
+            "status": "in_progress",
+            "model": "deepseek-flash",
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": null
+          },
+          "sequence_number": 1
+        },
+        {
+          "type": "response.output_item.added",
+          "output_index": 0,
+          "item": {
+            "id": "msg_resp_fixtureprovider2_0",
+            "type": "message",
+            "status": "in_progress",
+            "role": "assistant",
+            "content": []
+          },
+          "sequence_number": 2
+        },
+        {
+          "type": "response.content_part.added",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "part": {
+            "type": "output_text",
+            "text": "",
+            "annotations": []
+          },
+          "sequence_number": 3
+        },
+        {
+          "type": "response.output_text.delta",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "delta": "fixture-",
+          "logprobs": [],
+          "sequence_number": 4
+        },
+        {
+          "type": "response.output_text.delta",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "delta": "final-ok",
+          "logprobs": [],
+          "sequence_number": 5
+        },
+        {
+          "type": "response.output_text.done",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "text": "fixture-final-ok",
+          "logprobs": [],
+          "sequence_number": 6
+        },
+        {
+          "type": "response.content_part.done",
+          "item_id": "msg_resp_fixtureprovider2_0",
+          "output_index": 0,
+          "content_index": 0,
+          "part": {
+            "type": "output_text",
+            "text": "fixture-final-ok",
+            "annotations": []
+          },
+          "sequence_number": 7
+        },
+        {
+          "type": "response.output_item.done",
+          "output_index": 0,
+          "item": {
+            "id": "msg_resp_fixtureprovider2_0",
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "fixture-final-ok",
+                "annotations": []
+              }
+            ]
+          },
+          "sequence_number": 8
+        },
+        {
+          "type": "response.completed",
+          "response": {
+            "id": "resp_fixtureprovider2",
+            "object": "response",
+            "created_at": 1794533947,
+            "status": "completed",
+            "model": "deepseek-flash",
+            "output": [
+              {
+                "id": "msg_resp_fixtureprovider2_0",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "text": "fixture-final-ok",
+                    "annotations": []
+                  }
+                ]
+              }
+            ],
+            "error": null,
+            "incomplete_details": null,
+            "instructions": "Use the fixture tool and preserve its result.",
+            "metadata": {},
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "type": "function",
+                "name": "fixture_echo",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["text"]
+                }
+              }
+            ],
+            "temperature": null,
+            "top_p": null,
+            "max_output_tokens": null,
+            "previous_response_id": null,
+            "reasoning": null,
+            "store": false,
+            "truncation": "disabled",
+            "usage": {
+              "input_tokens": 23,
+              "output_tokens": 7,
+              "total_tokens": 30
+            }
+          },
+          "sequence_number": 9
+        }
+      ],
+      "outcome": "delivered",
+      "error": null
+    }
+  ],
+  "upstream": [
+    {
+      "calls": [
+        {
+          "path": "/chat/completions",
+          "body": "{\"model\":\"deepseek-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"Use the fixture tool and preserve its result.\\n\\nWhen tools are available, a progress update does not complete a requested action. If required work remains and you can perform it, continue with the next appropriate tool call instead of ending with a status message. Provide a final answer when the requested work is complete, or when you need user input or are blocked. Never claim a tool action has been done unless its result is in the conversation.\"},{\"role\":\"system\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"}],\"stream\":true,\"reasoning_effort\":\"none\",\"stream_options\":{\"include_usage\":true},\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}}]}",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "response": {
+            "status": 200,
+            "headers": {
+              "content-type": "text/event-stream",
+              "cache-control": "no-cache",
+              "x-request-id": "fixture-provider-1"
+            },
+            "chunksBase64": [
+              "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLWZpeHR1cmUtMSIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3ODAwMDAwMDEsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsicm9sZSI6ImFzc2lzdGFudCIsInRvb2xfY2FsbHMiOlt7ImluZGV4IjowLCJpZCI6ImNhbGxfZml4dHVyZV9lY2hvXzEiLCJ0eXBlIjoiZnVuY3Rpb24iLCJmdW5jdGlvbiI6eyJuYW1lIjoiZml4dHVyZV9lY2hvIiwiYXJndW1lbnRzIjoie1widGV4dFwiOlwiZml4dHVyZS0ifX1dfSwiZmluaXNoX3JlYXNvbiI6bnVsbH1dfQoK",
+              "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLWZpeHR1cmUtMSIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3ODAwMDAwMDEsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsidG9vbF9jYWxscyI6W3siaW5kZXgiOjAsImZ1bmN0aW9uIjp7ImFyZ3VtZW50cyI6ImFyZ3VtZW50LW9rXCJ9In19XX0sImZpbmlzaF9yZWFzb24iOiJ0b29sX2NhbGxzIn1dfQoKZGF0YTogeyJpZCI6ImNoYXRjbXBsLWZpeHR1cmUtMSIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3ODAwMDAwMDEsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJjaG9pY2VzIjpbXSwidXNhZ2UiOnsicHJvbXB0X3Rva2VucyI6MTEsImNvbXBsZXRpb25fdG9rZW5zIjo1LCJ0b3RhbF90b2tlbnMiOjE2LCJwcm9tcHRfY2FjaGVfaGl0X3Rva2VucyI6MH19CgpkYXRhOiBbRE9ORV0KCg=="
+            ]
+          }
+        },
+        {
+          "path": "/chat/completions",
+          "body": "{\"model\":\"deepseek-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"Use the fixture tool and preserve its result.\\n\\nWhen tools are available, a progress update does not complete a requested action. If required work remains and you can perform it, continue with the next appropriate tool call instead of ending with a status message. Provide a final answer when the requested work is complete, or when you need user input or are blocked. Never claim a tool action has been done unless its result is in the conversation.\"},{\"role\":\"system\",\"content\":\"Keep the exact fixture values.\"},{\"role\":\"user\",\"content\":\"Run the fixture tool.\"},{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call_fixture_echo_1\",\"type\":\"function\",\"function\":{\"name\":\"fixture_echo\",\"arguments\":\"{\\\"text\\\":\\\"fixture-argument-ok\\\"}\"}}],\"reasoning_content\":\"\"},{\"role\":\"tool\",\"tool_call_id\":\"call_fixture_echo_1\",\"content\":\"fixture-tool-ok\"}],\"stream\":true,\"reasoning_effort\":\"none\",\"stream_options\":{\"include_usage\":true},\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"fixture_echo\",\"parameters\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}}}]}",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "response": {
+            "status": 200,
+            "headers": {
+              "content-type": "text/event-stream",
+              "cache-control": "no-cache",
+              "x-request-id": "fixture-provider-2"
+            },
+            "chunksBase64": [
+              "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLWZpeHR1cmUtMSIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3ODAwMDAwMDEsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsicm9sZSI6ImFzc2lzdGFudCIsImNvbnRlbnQiOiJmaXh0dXJlLSJ9LCJmaW5pc2hfcmVhc29uIjpudWxsfV19Cgo=",
+              "ZGF0YTogeyJpZCI6ImNoYXRjbXBsLWZpeHR1cmUtMSIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3ODAwMDAwMDEsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsiY29udGVudCI6ImZpbmFsLW9rIn0sImZpbmlzaF9yZWFzb24iOiJzdG9wIn1dfQoKZGF0YTogeyJpZCI6ImNoYXRjbXBsLWZpeHR1cmUtMSIsIm9iamVjdCI6ImNoYXQuY29tcGxldGlvbi5jaHVuayIsImNyZWF0ZWQiOjE3ODAwMDAwMDEsIm1vZGVsIjoiZGVlcHNlZWstZmxhc2giLCJjaG9pY2VzIjpbXSwidXNhZ2UiOnsicHJvbXB0X3Rva2VucyI6MjMsImNvbXBsZXRpb25fdG9rZW5zIjo3LCJ0b3RhbF90b2tlbnMiOjMwfX0KCmRhdGE6IFtET05FXQoK"
+            ]
+          }
+        }
+      ],
+      "chronology": [
+        {
+          "kind": "provider_dispatch",
+          "atMs": 1031.66962,
+          "detail": {
+            "turn": 1,
+            "body": {
+              "model": "deepseek-flash",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "Use the fixture tool and preserve its result.\n\nWhen tools are available, a progress update does not complete a requested action. If required work remains and you can perform it, continue with the next appropriate tool call instead of ending with a status message. Provide a final answer when the requested work is complete, or when you need user input or are blocked. Never claim a tool action has been done unless its result is in the conversation."
+                },
+                {
+                  "role": "system",
+                  "content": "Keep the exact fixture values."
+                },
+                {
+                  "role": "user",
+                  "content": "Run the fixture tool."
+                }
+              ],
+              "stream": true,
+              "reasoning_effort": "none",
+              "stream_options": {
+                "include_usage": true
+              },
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "fixture_echo",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["text"]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "kind": "provider_first_delta",
+          "atMs": 1033.21715,
+          "detail": {
+            "turn": 1
+          }
+        },
+        {
+          "kind": "client_received_delta",
+          "atMs": 1192.299596,
+          "detail": {
+            "turn": 1,
+            "event": {
+              "type": "response.function_call_arguments.delta",
+              "item_id": "fc_resp_fixtureprovider1_0",
+              "output_index": 0,
+              "delta": "{\"text\":\"fixture-",
+              "sequence_number": 3
+            }
+          }
+        },
+        {
+          "kind": "provider_resumed",
+          "atMs": 1192.330396,
+          "detail": {
+            "turn": 1
+          }
+        },
+        {
+          "kind": "provider_dispatch",
+          "atMs": 1434.483628,
+          "detail": {
+            "turn": 2,
+            "body": {
+              "model": "deepseek-flash",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "Use the fixture tool and preserve its result.\n\nWhen tools are available, a progress update does not complete a requested action. If required work remains and you can perform it, continue with the next appropriate tool call instead of ending with a status message. Provide a final answer when the requested work is complete, or when you need user input or are blocked. Never claim a tool action has been done unless its result is in the conversation."
+                },
+                {
+                  "role": "system",
+                  "content": "Keep the exact fixture values."
+                },
+                {
+                  "role": "user",
+                  "content": "Run the fixture tool."
+                },
+                {
+                  "role": "assistant",
+                  "content": null,
+                  "tool_calls": [
+                    {
+                      "id": "call_fixture_echo_1",
+                      "type": "function",
+                      "function": {
+                        "name": "fixture_echo",
+                        "arguments": "{\"text\":\"fixture-argument-ok\"}"
+                      }
+                    }
+                  ],
+                  "reasoning_content": ""
+                },
+                {
+                  "role": "tool",
+                  "tool_call_id": "call_fixture_echo_1",
+                  "content": "fixture-tool-ok"
+                }
+              ],
+              "stream": true,
+              "reasoning_effort": "none",
+              "stream_options": {
+                "include_usage": true
+              },
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "fixture_echo",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["text"]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "kind": "provider_first_delta",
+          "atMs": 1434.691629,
+          "detail": {
+            "turn": 2
+          }
+        },
+        {
+          "kind": "client_received_delta",
+          "atMs": 1487.667657,
+          "detail": {
+            "turn": 2,
+            "event": {
+              "type": "response.output_text.delta",
+              "item_id": "msg_resp_fixtureprovider2_0",
+              "output_index": 0,
+              "content_index": 0,
+              "delta": "fixture-",
+              "logprobs": [],
+              "sequence_number": 4
+            }
+          }
+        },
+        {
+          "kind": "provider_resumed",
+          "atMs": 1487.677857,
+          "detail": {
+            "turn": 2
+          }
+        }
+      ]
+    }
+  ],
+  "snapshots": [
+    {
+      "stage": "cold-ready",
+      "atMs": 473.819234,
+      "pidInNamespace": 11,
+      "executable": "/home/codex/rust-worker-prep/checkout-b588420dc1275ac1f7548a6932a5e63330751cea/node_modules/@cloudflare/workerd-linux-arm64/bin/workerd",
+      "smapsRollup": "b00000000-fffff9817000 ---p 00000000 00:00 0                             [rollup]\nRss:              108688 kB\nPss:              106930 kB\nPss_Dirty:         70260 kB\nPss_Anon:          70228 kB\nPss_File:          36670 kB\nPss_Shmem:            32 kB\nShared_Clean:       1784 kB\nShared_Dirty:          0 kB\nPrivate_Clean:     36644 kB\nPrivate_Dirty:     70260 kB\nReferenced:       108676 kB\nAnonymous:         70228 kB\nKSM:                   0 kB\nLazyFree:              0 kB\nAnonHugePages:         0 kB\nShmemPmdMapped:        0 kB\nFilePmdMapped:         0 kB\nShared_Hugetlb:        0 kB\nPrivate_Hugetlb:       0 kB\nSwap:                  0 kB\nSwapPss:               0 kB\nLocked:                0 kB\n",
+      "processStatus": "Name:\tworkerd\nUmask:\t0022\nState:\tS (sleeping)\nTgid:\t11\nNgid:\t0\nPid:\t11\nPPid:\t4\nTracerPid:\t0\nUid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\nFDSize:\t64\nGroups:\t65534 0 \nNStgid:\t11\nNSpid:\t11\nNSpgid:\t0\nNSsid:\t0\nKthread:\t0\nVmPeak:\t13899412 kB\nVmSize:\t13899384 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t  108688 kB\nVmRSS:\t  108688 kB\nRssAnon:\t   70228 kB\nRssFile:\t   38428 kB\nRssShmem:\t      32 kB\nVmData:\t  414572 kB\nVmStk:\t     196 kB\nVmExe:\t   56552 kB\nVmLib:\t    2780 kB\nVmPTE:\t     420 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t0\nuntag_mask:\t0xffffffffffffff\nThreads:\t2\nSigQ:\t0/47675\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001400044e8\nCapInh:\t0000000000000000\nCapPrm:\t000001ffffffffff\nCapEff:\t000001ffffffffff\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tthread vulnerable\nSpeculationIndirectBranch:\tunknown\nCpus_allowed:\t3\nCpus_allowed_list:\t0-1\nMems_allowed:\t1\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t2\nnonvoluntary_ctxt_switches:\t94\n",
+      "cgroup": {
+        "memory.current": "72605696",
+        "memory.peak": "82575360",
+        "memory.max": "536870912",
+        "memory.stat": "anon 71913472\nfile 49152\nkernel 512000\nkernel_stack 16384\npagetables 434176\nsec_pagetables 0\npercpu 64\nsock 0\nvmalloc 0\nshmem 49152\nzswap 0\nzswapped 0\nzswap_incomp 0\nfile_mapped 32768\nfile_dirty 0\nfile_writeback 0\nswapcached 0\ninactive_anon 71921664\nactive_anon 12288\ninactive_file 4096\nactive_file 0\nunevictable 0\nslab_reclaimable 7392\nslab_unreclaimable 49648\nslab 57040\nhugetlb 0\nworkingset_refault_anon 0\nworkingset_refault_file 0\nworkingset_activate_anon 0\nworkingset_activate_file 0\nworkingset_restore_anon 0\nworkingset_restore_file 0\nworkingset_nodereclaim 0\npgdemote_kswapd 0\npgdemote_direct 0\npgdemote_khugepaged 0\npgdemote_proactive 0\npgsteal_kswapd 0\npgsteal_direct 0\npgsteal_khugepaged 0\npgsteal_proactive 0\npgscan_kswapd 0\npgscan_direct 0\npgscan_khugepaged 0\npgscan_proactive 0\npgrefill 0\npgscan 0\npgsteal 0\npswpin 0\npswpout 0\npgfault 30707\npgmajfault 0\npgactivate 0\npgdeactivate 0\npglazyfree 0\npglazyfreed 0\nswpin_zero 0\nswpout_zero 0\nzswpin 0\nzswpout 0\nzswpwb 0",
+        "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+        "memory.swap.current": "0",
+        "memory.swap.max": "0",
+        "cpu.max": "100000 100000",
+        "cpu.stat": "usage_usec 179093\nuser_usec 125610\nsystem_usec 53483\nnice_usec 0\nnr_periods 2\nnr_throttled 1\nthrottled_usec 16613\nnr_bursts 0\nburst_usec 0",
+        "pids.current": "2",
+        "pids.max": "96",
+        "cgroup.procs": "11"
+      },
+      "cgroupPath": "/system.slice/uos-rust-shared-roundtrip-20261113.service/gateway-roundtrip"
+    },
+    {
+      "stage": "loaded-one-stream",
+      "atMs": 1178.163143,
+      "pidInNamespace": 11,
+      "executable": "/home/codex/rust-worker-prep/checkout-b588420dc1275ac1f7548a6932a5e63330751cea/node_modules/@cloudflare/workerd-linux-arm64/bin/workerd",
+      "smapsRollup": "b00000000-fffff9817000 ---p 00000000 00:00 0                             [rollup]\nRss:              251552 kB\nPss:              249794 kB\nPss_Dirty:        206340 kB\nPss_Anon:         206276 kB\nPss_File:          43454 kB\nPss_Shmem:            64 kB\nShared_Clean:       1784 kB\nShared_Dirty:          0 kB\nPrivate_Clean:     43428 kB\nPrivate_Dirty:    206340 kB\nReferenced:       251540 kB\nAnonymous:        206276 kB\nKSM:                   0 kB\nLazyFree:              0 kB\nAnonHugePages:         0 kB\nShmemPmdMapped:        0 kB\nFilePmdMapped:         0 kB\nShared_Hugetlb:        0 kB\nPrivate_Hugetlb:       0 kB\nSwap:                  0 kB\nSwapPss:               0 kB\nLocked:                0 kB\n",
+      "processStatus": "Name:\tworkerd\nUmask:\t0022\nState:\tR (running)\nTgid:\t11\nNgid:\t0\nPid:\t11\nPPid:\t4\nTracerPid:\t0\nUid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\nFDSize:\t64\nGroups:\t65534 0 \nNStgid:\t11\nNSpid:\t11\nNSpgid:\t0\nNSsid:\t0\nKthread:\t0\nVmPeak:\t13899668 kB\nVmSize:\t13899544 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t  251688 kB\nVmRSS:\t  251688 kB\nRssAnon:\t  206412 kB\nRssFile:\t   45212 kB\nRssShmem:\t      64 kB\nVmData:\t  515564 kB\nVmStk:\t     196 kB\nVmExe:\t   56552 kB\nVmLib:\t    2780 kB\nVmPTE:\t     712 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t0\nuntag_mask:\t0xffffffffffffff\nThreads:\t2\nSigQ:\t0/47675\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001400044e8\nCapInh:\t0000000000000000\nCapPrm:\t000001ffffffffff\nCapEff:\t000001ffffffffff\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tthread vulnerable\nSpeculationIndirectBranch:\tunknown\nCpus_allowed:\t3\nCpus_allowed_list:\t0-1\nMems_allowed:\t1\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t30\nnonvoluntary_ctxt_switches:\t307\n",
+      "cgroup": {
+        "memory.current": "212606976",
+        "memory.peak": "212606976",
+        "memory.max": "536870912",
+        "memory.stat": "anon 211189760\nfile 163840\nkernel 823296\nkernel_stack 16384\npagetables 733184\nsec_pagetables 0\npercpu 64\nsock 0\nvmalloc 0\nshmem 163840\nzswap 0\nzswapped 0\nzswap_incomp 0\nfile_mapped 65536\nfile_dirty 0\nfile_writeback 0\nswapcached 0\ninactive_anon 211255296\nactive_anon 94208\ninactive_file 4096\nactive_file 0\nunevictable 0\nslab_reclaimable 12472\nslab_unreclaimable 59024\nslab 71496\nhugetlb 0\nworkingset_refault_anon 0\nworkingset_refault_file 0\nworkingset_activate_anon 0\nworkingset_activate_file 0\nworkingset_restore_anon 0\nworkingset_restore_file 0\nworkingset_nodereclaim 0\npgdemote_kswapd 0\npgdemote_direct 0\npgdemote_khugepaged 0\npgdemote_proactive 0\npgsteal_kswapd 0\npgsteal_direct 0\npgsteal_khugepaged 0\npgsteal_proactive 0\npgscan_kswapd 0\npgscan_direct 0\npgscan_khugepaged 0\npgscan_proactive 0\npgrefill 0\npgscan 0\npgsteal 0\npswpin 0\npswpout 0\npgfault 64832\npgmajfault 0\npgactivate 8\npgdeactivate 0\npglazyfree 0\npglazyfreed 0\nswpin_zero 0\nswpout_zero 0\nzswpin 0\nzswpout 0\nzswpwb 0",
+        "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+        "memory.swap.current": "0",
+        "memory.swap.max": "0",
+        "cpu.max": "100000 100000",
+        "cpu.stat": "usage_usec 758676\nuser_usec 609411\nsystem_usec 149264\nnice_usec 0\nnr_periods 9\nnr_throttled 3\nthrottled_usec 41874\nnr_bursts 0\nburst_usec 0",
+        "pids.current": "2",
+        "pids.max": "96",
+        "cgroup.procs": "11"
+      },
+      "cgroupPath": "/system.slice/uos-rust-shared-roundtrip-20261113.service/gateway-roundtrip"
+    },
+    {
+      "stage": "warm-idle",
+      "atMs": 2510.5283,
+      "pidInNamespace": 11,
+      "executable": "/home/codex/rust-worker-prep/checkout-b588420dc1275ac1f7548a6932a5e63330751cea/node_modules/@cloudflare/workerd-linux-arm64/bin/workerd",
+      "smapsRollup": "b00000000-fffff9817000 ---p 00000000 00:00 0                             [rollup]\nRss:              289964 kB\nPss:              288206 kB\nPss_Dirty:        243664 kB\nPss_Anon:         243600 kB\nPss_File:          44542 kB\nPss_Shmem:            64 kB\nShared_Clean:       1784 kB\nShared_Dirty:          0 kB\nPrivate_Clean:     44516 kB\nPrivate_Dirty:    243664 kB\nReferenced:       289964 kB\nAnonymous:        243600 kB\nKSM:                   0 kB\nLazyFree:              0 kB\nAnonHugePages:         0 kB\nShmemPmdMapped:        0 kB\nFilePmdMapped:         0 kB\nShared_Hugetlb:        0 kB\nPrivate_Hugetlb:       0 kB\nSwap:                  0 kB\nSwapPss:               0 kB\nLocked:                0 kB\n",
+      "processStatus": "Name:\tworkerd\nUmask:\t0022\nState:\tS (sleeping)\nTgid:\t11\nNgid:\t0\nPid:\t11\nPPid:\t4\nTracerPid:\t0\nUid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\nFDSize:\t64\nGroups:\t65534 0 \nNStgid:\t11\nNSpid:\t11\nNSpgid:\t0\nNSsid:\t0\nKthread:\t0\nVmPeak:\t13900056 kB\nVmSize:\t13899932 kB\nVmLck:\t       0 kB\nVmPin:\t       0 kB\nVmHWM:\t  290008 kB\nVmRSS:\t  290008 kB\nRssAnon:\t  243644 kB\nRssFile:\t   46300 kB\nRssShmem:\t      64 kB\nVmData:\t  536560 kB\nVmStk:\t     196 kB\nVmExe:\t   56552 kB\nVmLib:\t    2780 kB\nVmPTE:\t     776 kB\nVmSwap:\t       0 kB\nHugetlbPages:\t       0 kB\nCoreDumping:\t0\nTHP_enabled:\t0\nuntag_mask:\t0xffffffffffffff\nThreads:\t2\nSigQ:\t0/47675\nSigPnd:\t0000000000000000\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\nSigIgn:\t0000000001001000\nSigCgt:\t00000001400044e8\nCapInh:\t0000000000000000\nCapPrm:\t000001ffffffffff\nCapEff:\t000001ffffffffff\nCapBnd:\t000001ffffffffff\nCapAmb:\t0000000000000000\nNoNewPrivs:\t0\nSeccomp:\t0\nSeccomp_filters:\t0\nSpeculation_Store_Bypass:\tthread vulnerable\nSpeculationIndirectBranch:\tunknown\nCpus_allowed:\t3\nCpus_allowed_list:\t0-1\nMems_allowed:\t1\nMems_allowed_list:\t0\nvoluntary_ctxt_switches:\t32\nnonvoluntary_ctxt_switches:\t497\n",
+      "cgroup": {
+        "memory.current": "250720256",
+        "memory.peak": "250777600",
+        "memory.max": "536870912",
+        "memory.stat": "anon 249446400\nfile 327680\nkernel 880640\nkernel_stack 16384\npagetables 798720\nsec_pagetables 0\npercpu 64\nsock 0\nvmalloc 0\nshmem 327680\nzswap 0\nzswapped 0\nzswap_incomp 0\nfile_mapped 65536\nfile_dirty 0\nfile_writeback 0\nswapcached 0\ninactive_anon 249483264\nactive_anon 258048\ninactive_file 4096\nactive_file 0\nunevictable 0\nslab_reclaimable 9552\nslab_unreclaimable 53872\nslab 63424\nhugetlb 0\nworkingset_refault_anon 0\nworkingset_refault_file 0\nworkingset_activate_anon 0\nworkingset_activate_file 0\nworkingset_restore_anon 0\nworkingset_restore_file 0\nworkingset_nodereclaim 0\npgdemote_kswapd 0\npgdemote_direct 0\npgdemote_khugepaged 0\npgdemote_proactive 0\npgsteal_kswapd 0\npgsteal_direct 0\npgsteal_khugepaged 0\npgsteal_proactive 0\npgscan_kswapd 0\npgscan_direct 0\npgscan_khugepaged 0\npgscan_proactive 0\npgrefill 0\npgscan 0\npgsteal 0\npswpin 0\npswpout 0\npgfault 79164\npgmajfault 0\npgactivate 23\npgdeactivate 0\npglazyfree 0\npglazyfreed 0\nswpin_zero 0\nswpout_zero 0\nzswpin 0\nzswpout 0\nzswpwb 0",
+        "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+        "memory.swap.current": "0",
+        "memory.swap.max": "0",
+        "cpu.max": "100000 100000",
+        "cpu.stat": "usage_usec 1901483\nuser_usec 1708203\nsystem_usec 193280\nnice_usec 0\nnr_periods 22\nnr_throttled 4\nthrottled_usec 43138\nnr_bursts 0\nburst_usec 0",
+        "pids.current": "2",
+        "pids.max": "96",
+        "cgroup.procs": "11"
+      },
+      "cgroupPath": "/system.slice/uos-rust-shared-roundtrip-20261113.service/gateway-roundtrip"
+    }
+  ],
+  "failedAssertions": [],
+  "timeOrigin": 1794533945932.4297
+}
