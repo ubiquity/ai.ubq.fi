@@ -1,0 +1,4 @@
+Checks: "-*,clang-analyzer-core.*,clang-analyzer-cplusplus.*,clang-analyzer-unix.Malloc,clang-analyzer-unix.MismatchedDeallocator,bugprone-dangling-handle,bugprone-use-after-move"
+WarningsAsErrors: "*"
+InheritParentConfig: false
+HeaderFilterRegex: ".*"
