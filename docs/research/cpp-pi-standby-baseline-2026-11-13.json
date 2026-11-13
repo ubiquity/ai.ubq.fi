@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "status": "sealed PR1 baseline; Rust cancellation mismatch retained",
+  "measuredSource": {
+    "commit": "96cfca54d033aedff8e237a4cbcebb051f62f066",
+    "tree": "7ae301184cfe261d45b1add6e0587e77d1f26688",
+    "oracleImplementation": "d94fef52ccc76e0d5aa019154f11e47d5e10fba6"
+  },
+  "runtimeIdentities": {
+    "typescript": {
+      "bun": "1.4.0",
+      "bunSha256": "086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9",
+      "nativeKvSha256": "d9e6e52f1b0fbe2e0023e63a4c0dcec4394a032801d6d2576b43d2555c314be3",
+      "nativeKvProvenanceSha256": "57d7405783c9f34343f3d4fe089b3733effc079d9521cd341a3dc5bc0c87c201"
+    },
+    "codex": {
+      "version": "0.167.2",
+      "sha256": "b581df3989da98e36fccd7d40cc980727a9ee87bcf0e6ef52ffb2544d6a5302f"
+    },
+    "rust": {
+      "sourceCommit": "b588420dc1275ac1f7548a6932a5e63330751cea",
+      "sourceTree": "c9bf439743b2f03d4761639fedd17ef2731430d3",
+      "wasmSha256": "99a3e146e0193c3c0d77847167374ecf1cef5834e8e123420b7a395e6df57f53",
+      "runtimeSha256": "fabfd6c40a3bb74a98aac54999b456bdb3b7aa7ede4cbbb33898e1f8836a2564",
+      "runtimePackage": "1.20261012.1"
+    },
+    "cppStackProbe": {
+      "sha256": "cc56a55e8aa0869ba64e412146dd2a3ec049b9d4eebb1fa26cf1991282efe13e",
+      "bytes": 559824,
+      "packageManifestSha256": "9dde9684e06dcbbdc5433fd26c8517cb0ff0b63c2a80e2501f05f6ce27eb52f5"
+    }
+  },
+  "receipts": {
+    "typescript": "cpp-pi-standby-baseline-2026-11-13/typescript.json",
+    "rust": "cpp-pi-standby-baseline-2026-11-13/rust.json",
+    "physicalPiStack": "cpp-pi-standby-baseline-2026-11-13/physical-pi-stack.json",
+    "sourceQuirks": "cpp-pi-standby-baseline-2026-11-13/source-quirks.json"
+  },
+  "cppGateway": "UNIMPLEMENTED; no readiness claim",
+  "pending": [
+    "serialized canonical report install",
+    "final strict typecheck and narrow gates",
+    "PR/merge/postmerge hosted receipt"
+  ],
+  "filesystemBoundary": {
+    "vpsTmp": "tmpfs",
+    "piTmp": "disk-backed",
+    "claim": "No power-loss, reboot or failover durability proved"
+  },
+  "cppPiGatewayMeasurements": "UNMEASURED"
+}

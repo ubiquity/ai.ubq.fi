@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "capturedAtUtc": "2026-11-13T01:43:10.137039+00:00",
+  "sourceBundleRoot": "private task evidence root; inputs below are relative",
+  "files": {
+    "ts-client-baseline/HANDOFF.md": "926aaa3456e4e1a7f4d0852d9b693b30eae8d9592f5194d0f0b3c296ebbc12c7",
+    "ts-client-baseline/summary.json": "4ee0a4109a67eb2cf2d70a906192a7c97f41bf92a7e3c536ce41378f9242aeb2",
+    "ts-client-baseline/artifact-hashes.json": "17f1645b4a171880502fc7fad4040b386b353090775802a334b36167f1df9067",
+    "ts-client-baseline/actual-client-prehash.json": "adceb2a68f20931e5c2d80ba32086c32f9c75a0f363b95db33c608689d12f04b",
+    "ts-client-baseline/metrics-prehash.json": "0739c51d1057376779e298543c2deb14282d5d3a2b1e6aad2bfb0af50b316ca3",
+    "ts-client-baseline/p95-prehash.json": "0739c51d1057376779e298543c2deb14282d5d3a2b1e6aad2bfb0af50b316ca3",
+    "fixture-contract/handback-v2.md": "9e6646c89e6902ed27d479a660b9a4e77119a49fe6cb9784849d9709537d329b",
+    "host-baseline/HANDOFF.md": "3b796086e13ab25c2b10b1fe831cc6f537fde5ccbd789847f292f18387f91ed7",
+    "host-baseline/physical-stack-probe/HANDOFF.md": "82cbf5e0b5933dae4c532b37fb68cf513766758f7e84af60c100d270911c5502",
+    "host-baseline/physical-stack-probe/physical-stack-proof.json": "9f09276758b672bc6566bfea99f2c8551c583154cdb9bc019ac828d17cfaa93c",
+    "cpp-protocol/half-close-probe/handback.md": "ce5318d81049f1dedbd351d9b8fcbaacdd7f6f53d921f992deddaf32b12790a6",
+    "cpp-protocol/half-close-probe/result.json": "c179537c14095c79b417179728305b40af1e48d79f8764a58e8921ddfb9bb9e7",
+    "rust-baseline/identity.json": "a894fea322c7df73b4af6af899fc8309756746dccd14be2525fe237edff3c171",
+    "cpp-research/toolchain-handback.md": "eaba77556d56e949a13c5823a133dd78010b89058ff73d594b72665ef8eeb19a",
+    "cpp-research/toolchain-proof.json": "268ce4f04730d3f8b7dd18ffe6ac31398e960c90dd263144ca2e666abd9bea99",
+    "rust-baseline/comparison-bridge/handback-20261113T015258Z/summary.json": "ad559c0732d00a6793159b7fccccbb37a114374dbb5e5c5dae91acc28951f8a3",
+    "rust-baseline/comparison-bridge/handback-20261113T015258Z/MANIFEST.json": "d19bc2658d13a52a5aa7581708d287d2ce7ba3c68d17ea963c42cc6b4fa70162",
+    "rust-baseline/comparison-bridge/handback-20261113T015258Z/REPORT.md": "2be072eae44d71152492efc6654b1ad9b6f1b5fa1f8df07dc83c8042b04dc5a8"
+  },
+  "sanitization": "No raw native input prompts, credentials, user CODEX_HOME, private KV files, customer payloads or private SSH route copied. Only fixed synthetic values and whitelisted receipt fields published."
+}

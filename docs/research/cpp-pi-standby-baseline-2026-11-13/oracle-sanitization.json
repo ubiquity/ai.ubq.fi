@@ -1,0 +1,76 @@
+[
+  {
+    "file": "typescript-two-turn.raw.json",
+    "source_sha256": "e177f9b1c2028961b8703e41eea6cf4b6d1845fe5661a00a326baded66e32893",
+    "published_sha256": "fdc62367b0bf8448740e4917c1cb4802d7da5cbb17e55acdcb49a1e45a1502aa",
+    "redactions": [
+      {
+        "path": "/inbound/0/headers/authorization",
+        "already_masked": false
+      },
+      {
+        "path": "/inbound/1/headers/authorization",
+        "already_masked": false
+      }
+    ],
+    "filesystem": "VPS /tmp tmpfs",
+    "retained": [
+      "all inbound/upstream payloads",
+      "response wire chunks and ordered events",
+      "IDs and exact arguments",
+      "usage/delivery/chronology",
+      "accounting rows and values/versionstamps",
+      "file-backed close/reopen proof"
+    ],
+    "omitted": ["credential header values", "machine-local SQLite path", "SQLite/native-private-state files"]
+  },
+  {
+    "file": "typescript-cancel.raw.json",
+    "source_sha256": "b49f61cc20fbb5688aa94f72f47434b2c02634061f0f52563ad97f9391c949a3",
+    "published_sha256": "2d0ce6df58844f42aac654d1d6fd1d78c75b51b07e15ae207eb2b187fe00a63f",
+    "redactions": [
+      {
+        "path": "/inbound/0/headers/authorization",
+        "already_masked": false
+      }
+    ],
+    "filesystem": "VPS /tmp tmpfs",
+    "retained": [
+      "all inbound/upstream payloads",
+      "response wire chunks and ordered events",
+      "IDs and exact arguments",
+      "usage/delivery/chronology",
+      "accounting rows and values/versionstamps",
+      "file-backed close/reopen proof"
+    ],
+    "omitted": ["credential header values", "machine-local SQLite path", "SQLite/native-private-state files"]
+  },
+  {
+    "file": "rust-two-turn.raw.json",
+    "source_sha256": "c45138126aa012b6d782c05ce7fb2ca03201652d0ca0a5af0d5303dc9c99cc4f",
+    "published_sha256": "d16e56d479556cafe878f20f5fd8df6423c9e1d5331a7a9195a73360ecd5a97d",
+    "redactions": [],
+    "classification": "accepted complete roundtrip oracle",
+    "filesystem": "VPS /tmp tmpfs",
+    "retained": [
+      "complete synthetic inbound/upstream payloads and SSE captures",
+      "IDs, exact arguments, ordered events and client accumulation",
+      "routing lifetime and durable snapshot readback"
+    ],
+    "omitted": ["credential header values", "private SQLite path/file contents"]
+  },
+  {
+    "file": "rust-cancel.raw.json",
+    "source_sha256": "e6294907deede3425827c00b725ab3de1b6eb98724c4ba8f335523ca849ca601",
+    "published_sha256": "7ab5d254122a202d98b7cb8cbbc8a83d69de0ddacdf66941de279a6100ba3ca1",
+    "redactions": [],
+    "classification": "accepted negative cancellation evidence",
+    "filesystem": "VPS /tmp tmpfs",
+    "retained": [
+      "complete synthetic inbound/upstream payloads and SSE captures",
+      "IDs, exact arguments, ordered events and client accumulation",
+      "routing lifetime and durable snapshot readback"
+    ],
+    "omitted": ["credential header values", "private SQLite path/file contents"]
+  }
+]
