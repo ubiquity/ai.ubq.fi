@@ -45,12 +45,13 @@ for (const [name, failure] of [
 ] as const) {
   test(`Bun Passport callback reports exchange ${name} as unavailable and clears state`, async () => {
     let exchanges = 0;
-    globalThis.fetch = createFetchMock(async (input, init) => {
+    globalThis.fetch = createFetchMock((input, init) => {
       assert.equal(input, "https://passport.ubq.fi/api/auth/sso/exchange");
-      assert.equal(init?.method, "POST");
-      assert(init?.signal instanceof AbortSignal);
+      assert(init);
+      assert.equal(init.method, "POST");
+      assert(init.signal instanceof AbortSignal);
       exchanges += 1;
-      throw failure;
+      return Promise.reject(failure);
     });
     const response = await callback();
     assert.equal(exchanges, 1);
@@ -60,10 +61,10 @@ for (const [name, failure] of [
 
 test("Bun Passport callback still rejects invalid exchanged credentials with 401 and clears state", async () => {
   let exchanges = 0;
-  globalThis.fetch = createFetchMock(async (input) => {
+  globalThis.fetch = createFetchMock((input) => {
     assert.equal(input, "https://passport.ubq.fi/api/auth/sso/exchange");
     exchanges += 1;
-    return Response.json({ accessToken: "invalid-token" });
+    return Promise.resolve(Response.json({ accessToken: "invalid-token" }));
   });
   const response = await callback();
   assert.equal(exchanges, 1);

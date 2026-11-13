@@ -313,6 +313,8 @@ const callback = async (req: Request): Promise<Response> => {
       body: JSON.stringify({ code, clientId: "ai", audience: "ai", origin: ORIGIN, redirectUri: CALLBACK, codeVerifier, appSession: true }),
       redirect: "error",
       signal: AbortSignal.timeout(10_000),
+    }).catch(() => {
+      throw new PassportError(502);
     });
     const body = await boundedJson(response, 65_536);
     if (!isRecord(body) || typeof body.accessToken !== "string") throw new PassportError();
