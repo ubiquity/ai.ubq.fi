@@ -1,0 +1,230 @@
+{
+  "sourceCommit": "7069c31b3f50d0552ef77e99b984f59fde479b13",
+  "sourceTree": "827f3281deaa0b36002d710c172a6b0e43d89a38",
+  "clean": true,
+  "sourceBytesUnchanged": true,
+  "builds": [
+    {
+      "label": "pi-release-clean",
+      "wall_seconds": 121.282365303,
+      "single_child_peak_rss_kib": 596240,
+      "cgroup_peak_bytes": 798167040,
+      "memory_max_events": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "swap_peak_bytes": 0,
+      "candidate_baseline_bytes": 376860672,
+      "candidate_peak_sampled_lower_bound_bytes": 402448384,
+      "additional_peak_sampled_lower_bound_bytes": 25587712,
+      "sample_interval_s": 1,
+      "ninja_edge_method": "exact appended Ninja log records",
+      "compiled_tus": 13,
+      "link_seconds": 0.539,
+      "all_ninja_edge_seconds": 120.359,
+      "ninja_edge_span_seconds": 120.365,
+      "artifact_sha256": "143d542bb842420f7a5d317de4cf9d91f4b31a643738f80be7670fbe0f6fbbd7",
+      "one_file_exact": null
+    },
+    {
+      "label": "pi-release-one-file",
+      "wall_seconds": 5.538512283,
+      "single_child_peak_rss_kib": 276108,
+      "cgroup_peak_bytes": 289214464,
+      "memory_max_events": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "swap_peak_bytes": 0,
+      "candidate_baseline_bytes": 403992576,
+      "candidate_peak_sampled_lower_bound_bytes": 404156416,
+      "additional_peak_sampled_lower_bound_bytes": 163840,
+      "sample_interval_s": 1,
+      "ninja_edge_method": "exact appended Ninja log records",
+      "compiled_tus": 1,
+      "link_seconds": 0.461,
+      "all_ninja_edge_seconds": 4.667,
+      "ninja_edge_span_seconds": 4.669,
+      "artifact_sha256": "143d542bb842420f7a5d317de4cf9d91f4b31a643738f80be7670fbe0f6fbbd7",
+      "one_file_exact": true
+    },
+    {
+      "label": "native-asan-clean",
+      "wall_seconds": 154.145103471,
+      "single_child_peak_rss_kib": 921300,
+      "cgroup_peak_bytes": 1073741824,
+      "memory_max_events": 211,
+      "oom": 0,
+      "oom_kill": 0,
+      "swap_peak_bytes": 0,
+      "candidate_baseline_bytes": 271097856,
+      "candidate_peak_sampled_lower_bound_bytes": 399708160,
+      "additional_peak_sampled_lower_bound_bytes": 128610304,
+      "sample_interval_s": 1,
+      "ninja_edge_method": "exact appended Ninja log records",
+      "compiled_tus": 13,
+      "link_seconds": 2.099,
+      "all_ninja_edge_seconds": 152.974,
+      "ninja_edge_span_seconds": 152.978,
+      "artifact_sha256": "c451963df901583d5cdd481b189ca2d2bfb1d70887685a8cb08df1fe90590d9b",
+      "one_file_exact": null
+    },
+    {
+      "label": "native-asan-one-file",
+      "wall_seconds": 7.789552909,
+      "single_child_peak_rss_kib": 361668,
+      "cgroup_peak_bytes": 370892800,
+      "memory_max_events": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "swap_peak_bytes": 0,
+      "candidate_baseline_bytes": 404320256,
+      "candidate_peak_sampled_lower_bound_bytes": 405008384,
+      "additional_peak_sampled_lower_bound_bytes": 688128,
+      "sample_interval_s": 1,
+      "ninja_edge_method": "exact appended Ninja log records",
+      "compiled_tus": 1,
+      "link_seconds": 1.428,
+      "all_ninja_edge_seconds": 7.35,
+      "ninja_edge_span_seconds": 7.35,
+      "artifact_sha256": "c451963df901583d5cdd481b189ca2d2bfb1d70887685a8cb08df1fe90590d9b",
+      "one_file_exact": true
+    }
+  ],
+  "postIncrementalTests": [
+    {
+      "preset": "pi-release",
+      "exit": 0,
+      "tests_passed": 6,
+      "wall_seconds": 21.995190062,
+      "cgroup_peak_bytes": 131174400,
+      "swap_peak_bytes": 0
+    },
+    {
+      "preset": "native-asan",
+      "exit": 0,
+      "tests_passed": 6,
+      "wall_seconds": 25.440632139,
+      "cgroup_peak_bytes": 184057856,
+      "swap_peak_bytes": 0
+    }
+  ],
+  "tools": {
+    "pi-release": {
+      "compiler_id": "GNU",
+      "compiler_version": "12.2.0",
+      "cmake_version": "3.25.1",
+      "compile_commands_sha256": "4df68676d7f8279e92c1308d6b03d78df8019cc6018e9619b4948252c7cc19bb",
+      "cache_sha256": "5cb23c42c5a1238cbbbc2e774640b5589582b3649bc47765106abec2e30376e7"
+    },
+    "native-asan": {
+      "compiler_id": "GNU",
+      "compiler_version": "16.1.1",
+      "cmake_version": "3.25.1",
+      "compile_commands_sha256": "82eaf94692453afa38bdc8f39a1f6de550969d2db1a1789759354a0da44f1f55",
+      "cache_sha256": "72e742c2b8027e993acf1746c81500302646e5655759e3b4aaa1d007d6c72eb6"
+    }
+  },
+  "refs": [
+    "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/eac26a0e-15ca-426f-8f8b-b0ea792b5262",
+    "c18ba89e18e8c4c810e8dfab831978ea7ed5aa33d6f343bf3282dea4e12db13c/6764590e-a563-4974-aba7-f34a021e5344"
+  ],
+  "package": {
+    "installed": {
+      "bytes": 991848,
+      "sha256": "bbb18300ea225e2803bc1f95ce5576b42af862c135c828667fd163a191c5bfd3"
+    },
+    "unstripped": {
+      "bytes": 6706448,
+      "sha256": "143d542bb842420f7a5d317de4cf9d91f4b31a643738f80be7670fbe0f6fbbd7"
+    },
+    "builderDebug": {
+      "bytes": 5717544,
+      "sha256": "e6a5815ec6ab9f469baf5810f3483a68c8cf63e18d166fcc2d933a0459365557"
+    },
+    "elf": {
+      "machine": "AArch64",
+      "class": "ELF64",
+      "interpreter": "/lib/ld-linux-aarch64.so.1",
+      "needed": [
+        "libssl.so.3",
+        "libcrypto.so.3",
+        "libstdc++.so.6",
+        "libgcc_s.so.1",
+        "libc.so.6",
+        "ld-linux-aarch64.so.1"
+      ],
+      "maximum_version_requirements": {
+        "GLIBC": "2.34",
+        "GLIBCXX": "3.4.29",
+        "CXXABI": "1.3.13"
+      },
+      "rpath": null,
+      "runpath": null,
+      "debuglink": "uos_cpp_pilot.debug",
+      "builder_paths_absent": true
+    },
+    "addedBinaryPayloadBytes": 991848,
+    "existingOsLibraryBytes": 10023608,
+    "osLibrariesBundled": false,
+    "binaryPlusRequiredLibrariesBytes": 11015456,
+    "runtimeConfigAndState": "Generated separately; not claimed zero or included in binary-only install",
+    "libraryHashes": [
+      {
+        "target": "/usr/lib/aarch64-linux-gnu/libssl.so.3",
+        "bytes": 737192,
+        "sha256": "09fe45f6e578f6a598b3f67a193d7dc56f679c2259933d90e78a368d594bc8b0"
+      },
+      {
+        "target": "/usr/lib/aarch64-linux-gnu/libcrypto.so.3",
+        "bytes": 4532392,
+        "sha256": "908bfe9966f80a31cec61ec4cbd0661d9fe9673edcca1848e038351e122eff74"
+      },
+      {
+        "target": "/usr/lib/aarch64-linux-gnu/libstdc++.so.6",
+        "bytes": 2174296,
+        "sha256": "532f3a12d7b8fef6cc7a064ea106b6c4ab2365674b73e743e4a385d4ffb6c8ab"
+      },
+      {
+        "target": "/lib/aarch64-linux-gnu/libgcc_s.so.1",
+        "bytes": 133448,
+        "sha256": "046856f95f4636f1fc7c3a12bf4f3cd5634c2fc5145c3fdf7395d4f349fa69c7"
+      },
+      {
+        "target": "/lib/aarch64-linux-gnu/libc.so.6",
+        "bytes": 1651408,
+        "sha256": "31f932525f5373857f0c8b5d94520b841a099e659388763a92484088b2bca235"
+      },
+      {
+        "target": "/lib/ld-linux-aarch64.so.1",
+        "bytes": 202912,
+        "sha256": "7fa5037b2ea1643fd2b8b7f3f3c1d9d546271011b4385aeea3e85fed0d5dcadd"
+      },
+      {
+        "target": "/lib/aarch64-linux-gnu/libm.so.6",
+        "bytes": 591960,
+        "sha256": "a84b0bfeb5abf4ad4eaebcd4a69a783736c2319c4f4fcd5d678b29c57d441951"
+      }
+    ]
+  },
+  "sdkAllocatedBytes": 1230209024,
+  "ownedOutputsAllocatedBytes": {
+    "cpp-build": 161759232,
+    "cpp-tmp": 5820416,
+    "cpp-stage": 1011712,
+    "cpp-debug": 5730304,
+    "cpp-evidence": 238026752,
+    "cpp-tool-view": 28672
+  },
+  "combinedAllocatedBytes": 1642586112,
+  "freeSnapshotBytes": 3083436032,
+  "cppSourceBytes": 177888,
+  "measuredScopeSourceBytes": 478631,
+  "caveats": [
+    "Configured clean builds retain SDK/CMake/OS filesystem caches; not machine-cold.",
+    "Wall time includes driver observer overhead and up to about1s exit-poll delay; raw Ninja edge timing is separately retained.",
+    "Disk1Hz sampled maxima are lower bounds; no filesystem high-water counter was available.",
+    "RUSAGE_CHILDREN is maximum single-child RSS for one invocation, not aggregate service memory.",
+    "Fresh cgroups include gate/worker/driver/compiler/linker and file cache; external controller/evidence wrapper overhead is outside those counters.",
+    "Native clean reached1GiB cgroup cap and max events, so its observed peak is resource-constrained.",
+    "Required APP no-emit timeout remains a separate root-owned gate gap; physical/client acceptance of this staged hash is independently assigned."
+  ]
+}

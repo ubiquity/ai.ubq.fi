@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "sourceCommit": "7069c31b3f50d0552ef77e99b984f59fde479b13",
+  "sourceTree": "827f3281deaa0b36002d710c172a6b0e43d89a38",
+  "stagedSha256": "bbb18300ea225e2803bc1f95ce5576b42af862c135c828667fd163a191c5bfd3",
+  "inputs": [
+    {
+      "name": "HANDOFF.md",
+      "sha256": "b840be66228d22051fe2253512933b7ba3e7b8181bf7097d4e3b7ec867d3d17c",
+      "bytes": 4530
+    },
+    {
+      "name": "summary.json",
+      "sha256": "0fa7fd64e7fce612e079b4aeaf6829326e77cd464614d82992b08d5f30f246d0",
+      "bytes": 8245
+    },
+    {
+      "name": "phase-scorecard.json",
+      "sha256": "7a26158d3315bc5db2837f68b4f633ece55b5e94f00241a8a31269dff4fc7eb9",
+      "bytes": 154569
+    },
+    {
+      "name": "MANIFEST.json",
+      "sha256": "ce2545ac72f56a13e252fce8c922b0133588accb47716f1d97b8f30bb016f0e4",
+      "bytes": 182289
+    },
+    {
+      "name": "run/ssh-swap-comparison.json",
+      "sha256": "fd15c4117a3a40ab528af3ca8d334022d685aa1ab4909abe46e0fc4daf94ffa9",
+      "bytes": 2604
+    },
+    {
+      "name": "run/pre-exit-helper-high-water.json",
+      "sha256": "d675c3ae0292640570592b566bad61ab3385756f9407e6205c8180b1a53622d8",
+      "bytes": 11114
+    },
+    {
+      "name": "run/pi-final-evidence/independent-final-settlement.json",
+      "sha256": "66b1220edd1684b2b2b7569d9d9e64eb5699bc81194d75a5914bd193306dbde3",
+      "bytes": 789
+    },
+    {
+      "name": "run/final-stopped-ledger.json",
+      "sha256": "ed9d5bf242b3d87e1826b248907b15c20749bbfc3609b4ee943eae4856523031",
+      "bytes": 826
+    },
+    {
+      "name": "summary.json",
+      "sha256": "2c2cbc97732cfb1ddc7932d138dd47e64f6f42227ec75f2bf54cbd349f3aaf82",
+      "bytes": 20046
+    },
+    {
+      "name": "package-manifest.json",
+      "sha256": "6be353baebb049d62429abc46742648c459865d17ae1f00ac0dbd047ffa01426",
+      "bytes": 10959
+    },
+    {
+      "name": "F-G-bindings.json",
+      "sha256": "f3587f8413ded7f699983c486745c13fcfed9317fb17c57f812739a25574e28c",
+      "bytes": 1781
+    },
+    {
+      "name": "HANDOFF.json",
+      "sha256": "8b58ff5a3a8237d0dba2aa5bf2fa8db542ba20ef9af2d2def498cc46da5bc2f5",
+      "bytes": 3159
+    }
+  ],
+  "sealedPiInventory": {
+    "files": 1231,
+    "bytes": 32969400,
+    "publishedAsWhole": false
+  },
+  "sanitization": "Only whitelisted scalar verdicts, phase/resource/accounting/build data and original hashes. No key/config/native prompt/DB/source bundle copied.",
+  "author": {
+    "model": "gpt-6.1-sol",
+    "effort": "max",
+    "turn": "01a1d45b-e479-76c3-8542-70faf11ff10f"
+  },
+  "actions": "Scratch authoring only; no new tests/Git/CI/model/deploy actions."
+}
