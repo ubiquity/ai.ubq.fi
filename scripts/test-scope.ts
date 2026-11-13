@@ -17,6 +17,8 @@ const UNTRACKED_ROOTS = ["src/", "scripts/", "tests/", "ops/", "benchmarks/", "t
 const PRIVATE_COPY_CONTROLLER = "tests/private-bun-copy-confinement.test.ts";
 const PRIVATE_COPY_PRODUCT = "tools/cloudflare/private-bun-copy.ts";
 const RESEARCH_ARTIFACT = /^docs\/research\/.+\.(?:json|py)$/i;
+const LINT_PROJECT_CONFIG = "tsconfig.lint.json";
+const requiresStaticValidation = (paths: readonly string[]): boolean => paths.some((path) => SOURCE_FILE.test(path) || path === LINT_PROJECT_CONFIG);
 const WORKER_RUNTIME_TEST = "tests/native-authority-workerd.test.ts";
 const WORKER_RUNTIME_INPUT = /^(?:tests\/fixtures\/native-authority\/|tools\/worker-test-runtime\/|scripts\/prepare-worker-test-runtime\.ts$)/;
 const WORKER_RUNTIME_FIXTURES = ["tests/fixtures/native-authority/fixture-worker.mjs", "tests/fixtures/native-authority/bun-client.ts"];
@@ -34,7 +36,7 @@ export type TestSelection = ChangeScope &
   Readonly<{
     affectedTests: readonly string[];
     runAll: boolean;
-    reason: "no-base" | "no-changes" | "documentation-only" | "no-dependent-tests" | "selected" | "config";
+    reason: "no-base" | "no-changes" | "documentation-only" | "no-dependent-tests" | "validation-only" | "selected" | "config";
   }>;
 
 export type CiScope = TestSelection &
@@ -244,9 +246,11 @@ const literalReferences = (file: string, root: string): string[] => {
 const referencesComponent = (reference: string, target: string, component: string): boolean =>
   reference === target || (!extname(reference) && (reference === component || reference.startsWith(component + "/")) && target.startsWith(reference + "/"));
 
-/** Research records and the CMake pilot are separate unless a Bun consumer reaches them. */
+/** Research, lint-project and CMake inputs stay separate unless a Bun consumer reaches them. */
 const separateComponentPaths = (paths: readonly string[], root: string): ReadonlySet<string> => {
-  const candidates = uniqueSorted(paths.map(normalizePath).filter((path) => RESEARCH_ARTIFACT.test(path) || path.startsWith("cpp/")));
+  const candidates = uniqueSorted(
+    paths.map(normalizePath).filter((path) => RESEARCH_ARTIFACT.test(path) || path.startsWith("cpp/") || path === LINT_PROJECT_CONFIG)
+  );
   if (!candidates.length) return new Set();
   const targets = candidates.map((path) => ({
     path,
@@ -325,24 +329,32 @@ const DARWIN_PATH =
 const candidateTestFiles = (changedPaths: readonly string[]): string[] =>
   uniqueSorted([...pathList(["ls-files", "-z"]).map(normalizePath).filter(isTestPath), ...changedPaths.filter(isTestPath)]);
 
-export const detectTestSelection = (): TestSelection => {
-  const paths = changedPathsFromGit();
-  if (paths === null) return { paths: [], documentationOnly: false, affectedTests: [], runAll: true, reason: "no-base" };
-  const separate = separateComponentPaths(paths, ROOT);
+export const testSelectionForPaths = (paths: readonly string[], candidates: readonly string[], root = ROOT): TestSelection => {
+  const separate = separateComponentPaths(paths, root);
   const scope = classifyPaths(paths, separate);
   if (scope.paths.length === 0) return { ...scope, affectedTests: [], runAll: true, reason: "no-changes" };
   if (scope.documentationOnly) return { ...scope, affectedTests: [], runAll: false, reason: "documentation-only" };
 
   const changedCode = scope.paths.filter((path) => !isDocumentationPath(path) && !isRustPath(path) && !separate.has(path) && path !== WORKFLOW_CONTRACT_PATH);
-  const candidates = candidateTestFiles(scope.paths);
   const dependencyScoped = changedCode.every((path) => SOURCE_FILE.test(path) || isTestPath(path));
   // The workflow is a readFile dependency of this contract test, not a TS import.
   const workflowTests = scope.paths.includes(WORKFLOW_CONTRACT_PATH) ? ["scripts/test-scope.test.ts"] : [];
   // Retain the existing explicit Darwin signing gate for its native/profile inputs.
   const darwinTests = scope.paths.some((path) => DARWIN_PATH.test(path)) && candidates.includes("tests/gpg-dsh.test.ts") ? ["tests/gpg-dsh.test.ts"] : [];
-  const affectedTests = uniqueSorted([...(dependencyScoped ? selectAffectedTestFiles(changedCode, candidates) : candidates), ...workflowTests, ...darwinTests]);
-  if (affectedTests.length === 0) return { ...scope, affectedTests, runAll: false, reason: "no-dependent-tests" };
+  const affectedTests = uniqueSorted([
+    ...(dependencyScoped ? selectAffectedTestFiles(changedCode, candidates, root) : candidates),
+    ...workflowTests,
+    ...darwinTests,
+  ]);
+  if (affectedTests.length === 0)
+    return { ...scope, affectedTests, runAll: false, reason: separate.has(LINT_PROJECT_CONFIG) ? "validation-only" : "no-dependent-tests" };
   return { ...scope, affectedTests, runAll: false, reason: dependencyScoped ? "selected" : "config" };
+};
+export const detectTestSelection = (): TestSelection => {
+  const paths = changedPathsFromGit();
+  return paths === null
+    ? { paths: [], documentationOnly: false, affectedTests: [], runAll: true, reason: "no-base" }
+    : testSelectionForPaths(paths, candidateTestFiles(paths));
 };
 
 const manualDispatchInputs = (environment: NodeJS.ProcessEnv): Record<string, unknown> => {
@@ -379,7 +391,8 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
   const nativeOnly = rustPaths.length > 0 && rustPaths.every((path) => RUST_NATIVE_ONLY_PACKAGES.some((name) => path.startsWith(`rust/crates/${name}/`)));
   const needsRustWasm = needsRustNative && (completeCheckSet || selection.runAll || !nativeOnly);
   const separate = separateComponentPaths(selection.paths, root);
-  const hasTypeScriptWork = selection.paths.some((path) => SOURCE_FILE.test(path) || (!isDocumentationPath(path) && !isRustPath(path) && !separate.has(path)));
+  const hasTypeScriptWork =
+    requiresStaticValidation(selection.paths) || selection.paths.some((path) => !isDocumentationPath(path) && !isRustPath(path) && !separate.has(path));
   const needsNativeKv =
     selection.runAll ||
     selection.paths.some((path) => NATIVE_PATH.test(path)) ||
@@ -437,7 +450,7 @@ export const formatScopeMessage = (selection: TestSelection, command: string): s
     "Required checks for this change:",
     "  - Format only the changed files.",
     "  - Run `git diff --check`.",
-    ...(selection.paths.some((path) => SOURCE_FILE.test(path))
+    ...(requiresStaticValidation(selection.paths)
       ? ["  - Retain changed-source lint, formatting, and strict no-emit checks; do not run unrelated test suites."]
       : ["  - Do not run unrelated tests, lint, Knip, native builds, or deployment suites."]),
     "Override only for an explicitly requested test run: TEST_SCOPE_FORCE=1",
@@ -473,5 +486,5 @@ if (import.meta.main) {
   const selection = detectTestSelection();
   if (selection.runAll) process.exit(10);
   console.log(formatScopeMessage(selection, "bun run verify"));
-  process.exit(selection.affectedTests.length === 0 && !selection.paths.some((path) => SOURCE_FILE.test(path)) ? 0 : 10);
+  process.exit(selection.affectedTests.length === 0 && !requiresStaticValidation(selection.paths) ? 0 : 10);
 }
