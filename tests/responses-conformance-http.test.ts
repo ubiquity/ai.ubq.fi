@@ -61,6 +61,33 @@ const assertSequence = (capture: ConformanceWireCapture): void => {
   for (let index = 1; index < sequence.length; index++) assert.equal(sequence[index], sequence[index - 1] + 1);
 };
 
+const assertDurableReopen = (fixture: Fixture, captures: ConformanceWireCapture[], dispatches: number): void => {
+  assert.equal(fixture.storage.mode, "file");
+  assert.equal(fixture.storage.codec, "bun-jsc-v1");
+  const proof = fixture.verifyReopenedLedger();
+  assert.equal(proof.outcome, "verified");
+  assert.equal(proof.dispatchesBefore, dispatches);
+  assert.equal(proof.dispatchesAfter, dispatches);
+  assert.equal(proof.quotaCommitsBefore, proof.quotaCommitsAfter);
+  assert.deepEqual(proof.after, proof.before);
+  assert.ok(Array.isArray(proof.after));
+  assert.deepEqual(
+    proof.after.map((row) => conformanceRecord(row).requestId),
+    captures.map((capture) => capture.headers["x-uos-request-id"])
+  );
+  for (const row of proof.after.map(conformanceRecord)) {
+    assert.equal(conformanceRecord(row.request).state, "dispatched");
+    assert.equal(conformanceRecord(row.window).committed_requests, dispatches);
+    assert.equal(conformanceRecord(row.window).reserved_requests, 0);
+    assert.equal(typeof row.requestVersionstamp, "string");
+    assert.equal(typeof row.windowVersionstamp, "string");
+  }
+  assert.deepEqual(fixture.verifyReopenedLedger(), proof, "Repeated verification must be a read-only receipt lookup");
+  const events = fixture.journal.entries.map((entry) => entry.kind);
+  assert.ok(events.indexOf("transport_drained") < events.indexOf("kv_closed"));
+  assert.ok(events.indexOf("kv_closed") < events.indexOf("kv_reopened_verified"));
+};
+
 test("source Responses real sockets: split tool arguments, same call result and progressive final text", async () => {
   const fixture = await startResponsesConformanceFixture({ captureDirectory: await fixtureDirectory() });
   const captures: ConformanceWireCapture[] = [];
@@ -130,6 +157,7 @@ test("source Responses real sockets: split tool arguments, same call result and 
     await fixture.save(captures);
     await fixture.stop();
   }
+  assertDurableReopen(fixture, captures, 2);
 }, 30_000);
 
 test("source Responses real socket disconnect cancels held upstream and settles exactly once", async () => {
@@ -167,6 +195,8 @@ test("source Responses real socket disconnect cancels held upstream and settles 
     await fixture.save(capture);
     await fixture.stop();
   }
+  assert.ok(capture);
+  assertDurableReopen(fixture, [capture], 1);
 }, 15_000);
 
 test("source accepts a 240KiB synthetic history without altering its forwarded fields", async () => {
@@ -275,4 +305,36 @@ test("source records the namespace collision replay name without silently repair
     await fixture.save(captures);
     await fixture.stop();
   }
+}, 15_000);
+
+const exerciseMockDispatchBound = async (maxDispatches?: number): Promise<number> => {
+  const fixture = await startResponsesConformanceFixture({ maxDispatches, captureDirectory: await fixtureDirectory() });
+  const captures: ConformanceWireCapture[] = [];
+  const maximum = maxDispatches ?? 4;
+  try {
+    for (let turn = 1; turn <= maximum; turn++) {
+      const response = await openConformanceResponse(fixture.endpoint, fixture.token, conformanceRequest());
+      const event = await response.waitFor(turn === 1 ? "response.function_call_arguments.delta" : "response.output_text.delta");
+      fixture.acknowledge(turn, event);
+      const capture = await response.finished;
+      completedConformanceResponse(capture);
+      await terminalFor(fixture, capture);
+      captures.push(capture);
+    }
+    const refusal = await openConformanceResponse(fixture.endpoint, fixture.token, conformanceRequest());
+    const refused = await refusal.finished;
+    captures.push(refused);
+    assert.ok(refused.status >= 500, "An exhausted mock must refuse the next actual transport request");
+    assert.equal(fixture.calls.length, maximum);
+    assert.equal(fixture.journal.entries.filter((entry) => entry.kind === "mock_error").length, 1);
+    return captures.filter((capture) => capture.events.some((event) => event.type === "response.output_text.delta")).length;
+  } finally {
+    await fixture.save(captures);
+    await fixture.stop();
+  }
+};
+
+test("warm source fixture permits more than four text dispatches with a finite override and preserves the default bound", async () => {
+  assert.equal(await exerciseMockDispatchBound(), 3);
+  assert.equal(await exerciseMockDispatchBound(6), 5);
 }, 15_000);

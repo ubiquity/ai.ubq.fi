@@ -1,12 +1,19 @@
 import { serveHttp, type NetAddr } from "#http";
-import { openKv, type Kv, type KvKey } from "#kv";
+import { BUN_KV_CODEC, openKv, type Kv, type KvKey } from "#kv";
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { shutdownOptionalTelemetry } from "../../serve.ts";
 import { PAID_FALLBACK_NO_LIMIT } from "../../src/api-keys.ts";
-import { apiKeyPolicyFromHashRecord, apiKeyUsageV3RequestKey, apiKeyUsageV3WindowKey, resetApiKeyPolicyCacheForTest } from "../../src/api-key-policy.ts";
+import {
+  apiKeyPolicyFromHashRecord,
+  apiKeyUsageV3RequestKey,
+  apiKeyUsageV3WindowKey,
+  resetApiKeyPolicyCacheForTest,
+  type ApiKeyPolicy,
+} from "../../src/api-key-policy.ts";
 import { config } from "../../src/config.ts";
 import { DEEPSEEK_CHAT_COMPLETIONS_URL } from "../../src/deepseek/index.ts";
 import { setInferenceAdmissionControllerForTest } from "../../src/handler/admission.ts";
@@ -40,7 +47,14 @@ type RecordedRequest = Readonly<{
   headers: Record<string, string>;
   response?: { status: number; headers: Record<string, string>; chunksBase64: string[] };
 }>;
-type FixtureOptions = Readonly<{ toolName?: string; holdToolDelta?: boolean; usageLimit?: number; captureDirectory?: string; providerOrigin?: string }>;
+type FixtureOptions = Readonly<{
+  toolName?: string;
+  holdToolDelta?: boolean;
+  usageLimit?: number;
+  captureDirectory?: string;
+  providerOrigin?: string;
+  maxDispatches?: number;
+}>;
 
 const observeQuotaCommits = (kv: Kv, journal: ReturnType<typeof createConformanceJournal>): void => {
   const originalAtomic = kv.atomic.bind(kv);
@@ -149,13 +163,20 @@ const readRequest = async (request: IncomingMessage): Promise<string> => {
   return Buffer.concat(chunks).toString("utf8");
 };
 
+const boundedMockDispatches = (value?: number): number => {
+  if (value === undefined) return 4;
+  if (!Number.isInteger(value) || value < 4 || value > 4_096) throw new Error("Mock maxDispatches must be an integer from 4 through 4096");
+  return value;
+};
+
 export const startConformanceMock = async (options: FixtureOptions = {}, journal = createConformanceJournal()) => {
+  const maxDispatches = boundedMockDispatches(options.maxDispatches);
   const calls: RecordedRequest[] = [];
   const pending = new Map<number, (reason: "receipt" | "cancel") => void>();
   const tasks = new Set<Promise<void>>();
   const serve = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const body = await readRequest(request);
-    if (calls.length >= 4) throw new Error("Fixture mock dispatch bound exceeded");
+    if (calls.length >= maxDispatches) throw new Error("Fixture mock dispatch bound exceeded");
     const responseHeaders = { "content-type": "text/event-stream", "cache-control": "no-cache", "x-request-id": `fixture-provider-${calls.length + 1}` };
     const frames: string[] = [];
     calls.push({
@@ -255,12 +276,37 @@ const redirectMockFetch = (origin: string): (() => void) => {
   };
 };
 
+const privateDatabasePath = async (captureDirectory?: string): Promise<string> => {
+  const parent = captureDirectory ?? tmpdir();
+  if (captureDirectory) await mkdir(parent, { recursive: true, mode: 0o700 });
+  return join(await mkdtemp(join(parent, "uos-state-")), "kv-bun.sqlite3");
+};
+
+const readLedger = async (database: Kv, policy: ApiKeyPolicy, requestId: string) => {
+  const request = await database.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(policy, requestId), { consistency: "strong" });
+  const window = await database.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(policy), { consistency: "strong" });
+  return {
+    request: request.value,
+    requestVersionstamp: request.versionstamp,
+    window: window.value,
+    windowVersionstamp: window.versionstamp,
+    paidFallback: "not_applicable" as const,
+  };
+};
+
 /** The complete source handler, real delivery transport, native KV and synthetic authority. */
 export const startResponsesConformanceFixture = async (options: FixtureOptions = {}) => {
   assert.equal(Bun.version, "1.4.0");
+  boundedMockDispatches(options.maxDispatches);
   for (const name of PROVIDER_KEYS) assert.equal(process.env[name], undefined, `Credential-free profile must omit ${name}`);
   const journal = createConformanceJournal();
-  const kv = await openKv(":memory:");
+  const storage: { mode: "file"; databasePath: string; codec: string; reopen: ConformanceEvent | null } = {
+    mode: "file",
+    databasePath: await privateDatabasePath(options.captureDirectory),
+    codec: BUN_KV_CODEC,
+    reopen: null,
+  };
+  const kv = await openKv(storage.databasePath);
   const key = await seedKey(kv, options.usageLimit ?? 50);
   observeQuotaCommits(kv, journal);
   const upstream = options.providerOrigin ? externalMock(options.providerOrigin) : await startConformanceMock(options, journal);
@@ -294,30 +340,61 @@ export const startResponsesConformanceFixture = async (options: FixtureOptions =
   await gateway.ready;
   const endpoint = `http://127.0.0.1:${(gateway.addr as NetAddr).port}`;
   let stopped = false;
-  const ledger = async (requestId: string) => ({
-    request: (await kv.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(key.policy, requestId), { consistency: "strong" })).value,
-    window: (await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(key.policy), { consistency: "strong" })).value,
-    // This direct DeepSeek fixture has no paid-fallback entitlement or billing row.
-    paidFallback: "not_applicable" as const,
-  });
-  const save = async (captures: unknown): Promise<void> => {
+  let kvClosed = false;
+  let savedCaptures: unknown = null;
+  const ledger = (requestId: string) => readLedger(kv, key.policy, requestId);
+  const accountingFor = (database: Kv) =>
+    Promise.all(
+      terminals.map(async (terminal) => ({ requestId: terminal.request_id, ...(await readLedger(database, key.policy, String(terminal.request_id))) }))
+    );
+  let accounting: Awaited<ReturnType<typeof accountingFor>> = [];
+  const persist = async (): Promise<void> => {
     if (!options.captureDirectory) return;
     await mkdir(options.captureDirectory, { recursive: true, mode: 0o700 });
-    const accounting = await Promise.all(
-      terminals.map(async (terminal) => ({ requestId: terminal.request_id, ...(await ledger(String(terminal.request_id))) }))
-    );
     const receipt = {
       oracleSourceSha: CONFORMANCE_SOURCE_SHA,
       providerOwnership: options.providerOrigin ? "external" : "fixture",
+      storage,
       inbound,
       upstream: upstream.calls,
       chronology: journal.entries,
       terminals,
       accounting,
-      captures,
+      captures: savedCaptures,
     };
     await writeFile(join(options.captureDirectory, "raw.json"), JSON.stringify(receipt, null, 2) + "\n", { mode: 0o600 });
     await writeFile(join(options.captureDirectory, "normalized.json"), JSON.stringify(normalizeConformanceValue(receipt), null, 2) + "\n", { mode: 0o600 });
+  };
+  const save = async (captures: unknown): Promise<void> => {
+    savedCaptures = captures;
+    if (!kvClosed) accounting = await accountingFor(kv);
+    await persist();
+  };
+  const quotaCommits = (): number => journal.entries.filter((entry) => entry.kind === "quota_commit").length;
+  const reopen = async (): Promise<void> => {
+    const before = accounting;
+    const dispatchesBefore = upstream.calls.length;
+    const quotaCommitsBefore = quotaCommits();
+    const database = await openKv(storage.databasePath);
+    try {
+      observeQuotaCommits(database, journal);
+      accounting = await accountingFor(database);
+      assert.deepEqual(accounting, before, "Ledger rows and revisions must survive closing and reopening the real Bun database");
+      assert.equal(upstream.calls.length, dispatchesBefore, "Reopening state cannot dispatch another generation");
+      assert.equal(quotaCommits(), quotaCommitsBefore, "Reopening state cannot settle a ledger twice");
+      storage.reopen = {
+        outcome: "verified",
+        before,
+        after: accounting,
+        dispatchesBefore,
+        dispatchesAfter: upstream.calls.length,
+        quotaCommitsBefore,
+        quotaCommitsAfter: quotaCommits(),
+      };
+      journal.add("kv_reopened_verified");
+    } finally {
+      database.close();
+    }
   };
   return {
     endpoint,
@@ -327,8 +404,13 @@ export const startResponsesConformanceFixture = async (options: FixtureOptions =
     terminals,
     calls: upstream.calls,
     controller,
+    storage,
     ledger,
     save,
+    verifyReopenedLedger: (): ConformanceEvent => {
+      assert.ok(stopped && storage.reopen?.outcome === "verified", "Stop and drain the fixture before durable readback");
+      return storage.reopen;
+    },
     acknowledge: upstream.receipt,
     expected: { callId: CONFORMANCE_CALL_ID, arguments: CONFORMANCE_ARGUMENTS, final: CONFORMANCE_FINAL },
     revoke: async (): Promise<void> => {
@@ -343,6 +425,17 @@ export const startResponsesConformanceFixture = async (options: FixtureOptions =
         await shutdownOptionalTelemetry();
         const failure = shutdown.find((result) => result.status === "rejected");
         if (failure?.status === "rejected") throw failure.reason;
+        journal.add("transport_drained");
+        accounting = await accountingFor(kv);
+        kv.close();
+        kvClosed = true;
+        journal.add("kv_closed");
+        await reopen();
+        await persist();
+      } catch (error) {
+        storage.reopen = { outcome: "failed", message: error instanceof Error ? error.message : String(error) };
+        await persist();
+        throw error;
       } finally {
         console.info = originalInfo;
         restoreFetch();
@@ -351,7 +444,7 @@ export const startResponsesConformanceFixture = async (options: FixtureOptions =
         setInferenceAdmissionControllerForTest(null);
         setKvForTest(null);
         resetApiKeyPolicyCacheForTest();
-        kv.close();
+        if (!kvClosed) kv.close();
       }
     },
   };
