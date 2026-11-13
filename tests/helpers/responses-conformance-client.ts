@@ -271,6 +271,8 @@ type CodexConformanceOptions = Readonly<{
   onTextDelta: (event: ConformanceEvent) => void;
 }>;
 
+type CodexExit = Readonly<{ code: number | null; signal: NodeJS.Signals | null; error?: string }>;
+
 const pinCodexExecutable = async (options: CodexConformanceOptions): Promise<string> => {
   const digest = createHash("sha256");
   for await (const chunk of createReadStream(options.executable)) {
@@ -317,7 +319,7 @@ skip_host_skill_discovery = true
 code_mode_host = false
 `;
 
-const finishCodexChild = async (child: ReturnType<typeof spawn>, closed: Promise<ConformanceEvent>): Promise<ConformanceEvent> => {
+const finishCodexChild = async (child: ReturnType<typeof spawn>, closed: Promise<CodexExit>): Promise<CodexExit> => {
   child.stdin?.end();
   for (const signal of [null, "SIGTERM", "SIGKILL"] as const) {
     if (signal && child.pid) {
@@ -352,7 +354,7 @@ const startCodexClient = (options: CodexConformanceOptions, directory: string) =
     stdio: ["pipe", "pipe", "pipe"],
   });
   const journal = createConformanceJournal();
-  const closed = Promise.withResolvers<ConformanceEvent>();
+  const closed = Promise.withResolvers<CodexExit>();
   const tools: ConformanceEvent[] = [];
   let stderr = "";
   let sequence = 0;
@@ -410,7 +412,7 @@ const startCodexClient = (options: CodexConformanceOptions, directory: string) =
       if (reply.error) throw new Error(`Native ${method} failed: ${JSON.stringify(reply.error)}`);
       return conformanceRecord(reply.result);
     },
-    stop: async () => ({ ...(await finishCodexChild(child, closed.promise)), stderr }),
+    stop: async (): Promise<CodexExit & { stderr: string }> => ({ ...(await finishCodexChild(child, closed.promise)), stderr }),
   };
 };
 
