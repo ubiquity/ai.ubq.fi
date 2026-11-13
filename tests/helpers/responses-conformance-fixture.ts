@@ -47,7 +47,14 @@ type RecordedRequest = Readonly<{
   headers: Record<string, string>;
   response?: { status: number; headers: Record<string, string>; chunksBase64: string[] };
 }>;
-type FixtureOptions = Readonly<{ toolName?: string; holdToolDelta?: boolean; usageLimit?: number; captureDirectory?: string; providerOrigin?: string }>;
+type FixtureOptions = Readonly<{
+  toolName?: string;
+  holdToolDelta?: boolean;
+  usageLimit?: number;
+  captureDirectory?: string;
+  providerOrigin?: string;
+  maxDispatches?: number;
+}>;
 
 const observeQuotaCommits = (kv: Kv, journal: ReturnType<typeof createConformanceJournal>): void => {
   const originalAtomic = kv.atomic.bind(kv);
@@ -156,13 +163,20 @@ const readRequest = async (request: IncomingMessage): Promise<string> => {
   return Buffer.concat(chunks).toString("utf8");
 };
 
+const boundedMockDispatches = (value?: number): number => {
+  if (value === undefined) return 4;
+  if (!Number.isInteger(value) || value < 4 || value > 4_096) throw new Error("Mock maxDispatches must be an integer from 4 through 4096");
+  return value;
+};
+
 export const startConformanceMock = async (options: FixtureOptions = {}, journal = createConformanceJournal()) => {
+  const maxDispatches = boundedMockDispatches(options.maxDispatches);
   const calls: RecordedRequest[] = [];
   const pending = new Map<number, (reason: "receipt" | "cancel") => void>();
   const tasks = new Set<Promise<void>>();
   const serve = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const body = await readRequest(request);
-    if (calls.length >= 4) throw new Error("Fixture mock dispatch bound exceeded");
+    if (calls.length >= maxDispatches) throw new Error("Fixture mock dispatch bound exceeded");
     const responseHeaders = { "content-type": "text/event-stream", "cache-control": "no-cache", "x-request-id": `fixture-provider-${calls.length + 1}` };
     const frames: string[] = [];
     calls.push({
@@ -283,6 +297,7 @@ const readLedger = async (database: Kv, policy: ApiKeyPolicy, requestId: string)
 /** The complete source handler, real delivery transport, native KV and synthetic authority. */
 export const startResponsesConformanceFixture = async (options: FixtureOptions = {}) => {
   assert.equal(Bun.version, "1.4.0");
+  boundedMockDispatches(options.maxDispatches);
   for (const name of PROVIDER_KEYS) assert.equal(process.env[name], undefined, `Credential-free profile must omit ${name}`);
   const journal = createConformanceJournal();
   const storage: { mode: "file"; databasePath: string; codec: string; reopen: ConformanceEvent | null } = {

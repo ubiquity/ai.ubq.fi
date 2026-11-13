@@ -306,3 +306,35 @@ test("source records the namespace collision replay name without silently repair
     await fixture.stop();
   }
 }, 15_000);
+
+const exerciseMockDispatchBound = async (maxDispatches?: number): Promise<number> => {
+  const fixture = await startResponsesConformanceFixture({ maxDispatches, captureDirectory: await fixtureDirectory() });
+  const captures: ConformanceWireCapture[] = [];
+  const maximum = maxDispatches ?? 4;
+  try {
+    for (let turn = 1; turn <= maximum; turn++) {
+      const response = await openConformanceResponse(fixture.endpoint, fixture.token, conformanceRequest());
+      const event = await response.waitFor(turn === 1 ? "response.function_call_arguments.delta" : "response.output_text.delta");
+      fixture.acknowledge(turn, event);
+      const capture = await response.finished;
+      completedConformanceResponse(capture);
+      await terminalFor(fixture, capture);
+      captures.push(capture);
+    }
+    const refusal = await openConformanceResponse(fixture.endpoint, fixture.token, conformanceRequest());
+    const refused = await refusal.finished;
+    captures.push(refused);
+    assert.ok(refused.status >= 500, "An exhausted mock must refuse the next actual transport request");
+    assert.equal(fixture.calls.length, maximum);
+    assert.equal(fixture.journal.entries.filter((entry) => entry.kind === "mock_error").length, 1);
+    return captures.filter((capture) => capture.events.some((event) => event.type === "response.output_text.delta")).length;
+  } finally {
+    await fixture.save(captures);
+    await fixture.stop();
+  }
+};
+
+test("warm source fixture permits more than four text dispatches with a finite override and preserves the default bound", async () => {
+  assert.equal(await exerciseMockDispatchBound(), 3);
+  assert.equal(await exerciseMockDispatchBound(6), 5);
+}, 15_000);
