@@ -130,7 +130,67 @@ def diagnostic_report(path, source, raw, workspace, output, label, timeout):
                  for name in group.split(",") if not name.startswith("-")]
     if Counter(names) != Counter(raw_names):
         raise ValueError("Raw diagnostics and YAML diagnostic IDs disagree")
-    return names
+    return names, value["Diagnostics"]
+
+
+def beast_baseline(path, sdk, workspace):
+    baseline = json.loads(path.read_text())
+    if baseline["schema"] != "uos-clang14-beast-read-v1" or baseline["source"] != "cpp/src/session.cpp" or len(baseline["diagnostics"]) != 4:
+        raise ValueError("Invalid finite Beast diagnostic baseline")
+    expected_sdk = {"root/lib/ld-linux-aarch64.so.1", "root/usr/bin/clang-tidy-14",
+                    "root/usr/lib/aarch64-linux-gnu/libclang-cpp.so.14", "root/usr/lib/aarch64-linux-gnu/libLLVM-14.so.1",
+                    "root/usr/include/boost/beast/http/impl/read.hpp", "root/usr/include/boost/asio/coroutine.hpp",
+                    "root/usr/include/boost/asio/compose.hpp"}
+    if set(baseline["sdk_sha256"]) != expected_sdk:
+        raise ValueError("Incomplete Beast baseline identity binding")
+    for relative, expected in baseline["sdk_sha256"].items():
+        if digest(sdk / relative) != expected:
+            raise ValueError("Stale Beast baseline identity: " + relative)
+    if digest(workspace / "cpp/.clang-tidy") != baseline["policy_sha256"]:
+        raise ValueError("Stale Beast baseline check policy")
+    return baseline
+
+
+def beast_fingerprint(diagnostic, sdk):
+    if diagnostic.get("DiagnosticName") != "bugprone-use-after-move" or diagnostic.get("Level") != "Warning":
+        return None
+    def location(value):
+        if set(value) != {"Message", "FilePath", "FileOffset", "Replacements"} or value["Replacements"] != []:
+            raise ValueError("Changed Beast diagnostic location structure")
+        path = Path(value["FilePath"])
+        relative = path.relative_to(sdk / "root/usr/include")
+        if str(relative) != "boost/beast/http/impl/read.hpp":
+            raise ValueError("Finding is outside the reviewed Beast header")
+        data, offset = path.read_bytes(), value["FileOffset"]
+        if type(offset) is not int or offset < 0 or offset >= len(data):
+            raise ValueError("Invalid Beast diagnostic offset")
+        return {"path": str(relative), "offset": offset, "line": data[:offset].count(b"\n") + 1,
+                "column": offset - data.rfind(b"\n", 0, offset), "message": value["Message"], "replacements": []}
+    try:
+        return {"check": diagnostic["DiagnosticName"], "primary": location(diagnostic["DiagnosticMessage"]),
+                "notes": [location(note) for note in diagnostic["Notes"]], "level": diagnostic["Level"]}
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def classify_beast(results, baseline, sdk, workspace):
+    expected = Counter(json.dumps(value, sort_keys=True) for value in baseline["diagnostics"])
+    observed, classified, new = Counter(), [], []
+    for result in results:
+        for index, diagnostic in enumerate(result["diagnostics"]):
+            fingerprint = beast_fingerprint(diagnostic, sdk) if result["source"] == str(workspace / baseline["source"]) else None
+            key = json.dumps(fingerprint, sort_keys=True)
+            item = {"source": result["source"], "diagnostic_index": index, "check": diagnostic["DiagnosticName"]}
+            if fingerprint is not None and observed[key] < expected[key]:
+                observed[key] += 1
+                classified.append(item)
+            else:
+                new.append(item)
+    missing = sum((expected - observed).values())
+    failed_exits = sum(result["exit"] != 0 and (result["exit"] != 1 or not result["diagnostics"]) for result in results)
+    return {"classified_count": len(classified), "new_count": len(new), "missing_count": missing,
+            "unclassified_exit_count": failed_exits, "classified": classified, "new": new,
+            "raw_child_exits": [result["exit"] for result in results]}
 
 
 def execute(argv, cwd, output, label, timeout):
@@ -217,14 +277,15 @@ class Tool:
         frontend_failed = bool(re.search(r"clang-diagnostic-error|Error while processing|LLVM ERROR:|fatal error:|"
                                         r"Error while trying to load a compilation database|Running without flags|Skipping .*file", raw))
         profile = consumer_profile(profiles, Path(source))
-        names = []
+        names, diagnostics = [], []
         if report.is_file():
-            names = diagnostic_report(report, source, raw, self.workspace, self.output, label,
-                                      timeout - (time.monotonic() - started))
+            names, diagnostics = diagnostic_report(report, source, raw, self.workspace, self.output, label,
+                                                   timeout - (time.monotonic() - started))
         elif result["exit"] != 0 or frontend_failed or re.search(r":\d+:\d+: (?:warning|error):", raw):
             raise ValueError("Missing clang-tidy diagnostic report: " + str(report))
         # Pinned Clang14 omits export-fixes entirely when there are no selected diagnostics.
-        result.update(source=str(source), report=str(report) if report.is_file() else None, diagnostic_ids=names, consumer_profile=profile,
+        result.update(source=str(source), report=str(report) if report.is_file() else None, diagnostic_ids=names,
+                      diagnostics=diagnostics, consumer_profile=profile,
                       report_status="exported" if report.is_file() else "not-emitted-for-clean-input",
                       frontend_success=not frontend_failed and result["exit"] in (0, 1))
         if result["exit"] == 0 and (frontend_failed or names):
@@ -243,14 +304,16 @@ def controls(tool, units, build, config_path):
         if source.name == "raw_defects.cpp":
             expected = {"clang-analyzer-unix.Malloc", "clang-analyzer-cplusplus.NewDeleteLeaks",
                         "clang-analyzer-cplusplus.NewDelete", "clang-analyzer-unix.MismatchedDeallocator",
-                        "clang-analyzer-core.CallAndMessage"}
-            if result["exit"] != 1 or len(result["diagnostic_ids"]) != 5 or set(result["diagnostic_ids"]) != expected:
-                raise ValueError("Dirty control did not produce its exact five required findings")
+                        "clang-analyzer-core.CallAndMessage", "bugprone-use-after-move", "clang-analyzer-cplusplus.Move"}
+            if result["exit"] != 1 or len(result["diagnostic_ids"]) != 7 or set(result["diagnostic_ids"]) != expected:
+                raise ValueError("Dirty control did not produce its exact seven required findings")
             raw = Path(result["stdout"]).read_text()
             markers = [(source, "expect-malloc", "clang-analyzer-unix.Malloc"),
                        (source, "expect-new-leak", "clang-analyzer-cplusplus.NewDeleteLeaks"),
                        (source, "expect-new-uaf", "clang-analyzer-cplusplus.NewDelete"),
                        (source, "expect-uninitialized", "clang-analyzer-core.CallAndMessage"),
+                       (source, "expect-genuine-move", "bugprone-use-after-move"),
+                       (source, "expect-genuine-move", "clang-analyzer-cplusplus.Move"),
                        (source.parent / "fixture_sdk/release.hpp", "expect-mismatch", "clang-analyzer-unix.MismatchedDeallocator")]
             for path, marker, check in markers:
                 line = next(i + 1 for i, value in enumerate(path.read_text().splitlines()) if marker in value)
@@ -286,6 +349,9 @@ def main():
                        source_sha256={str(path.relative_to(workspace)): digest(path) for path in units + sorted((workspace / "cpp/include").rglob("*.hpp"))})
         tool = Tool(sdk, workspace, output)
         receipt["tool"] = tool.metadata(configuration, config_path)
+        baseline_path = workspace / "cpp/clang14-beast-read-baseline.json"
+        baseline = beast_baseline(baseline_path, sdk, workspace)
+        receipt["baseline_sha256"] = digest(baseline_path)
         fixtures = [source for source in units if source.parent == workspace / "cpp/tests/analysis"]
         real = [source for source in units if source not in fixtures]
         receipt.update(expected_real_units=list(map(str, real)), expected_control_units=list(map(str, fixtures)))
@@ -298,8 +364,13 @@ def main():
                 receipt["units"].append(result)
                 if not result["frontend_success"]:
                     raise ValueError("Frontend failed for " + str(source))
-        code = int(any(result["exit"] != 0 for result in receipt["units"]))
-        receipt["status"] = "passed" if code == 0 else "findings"
+        if mode != "controls":
+            classification = classify_beast(receipt["units"], baseline, sdk, workspace)
+            receipt["classification"] = classification
+            code = int(classification["new_count"] != 0 or classification["missing_count"] != 0 or classification["unclassified_exit_count"] != 0)
+            receipt["status"] = "passed_with_four_known_diagnostics" if code == 0 else "findings_or_stale_baseline"
+        else:
+            code, receipt["status"] = 0, "controls_passed"
     except (OSError, ValueError, KeyError, IndexError, TypeError, TimeoutError, subprocess.SubprocessError) as error:
         receipt["error"] = str(error)
     finally:
@@ -310,7 +381,10 @@ def main():
         receipt["git_status"] = subprocess.check_output(["git", "status", "--porcelain"], cwd=workspace, text=True)
         path = output / "receipt.json"
         path.write_text(json.dumps(receipt, indent=2) + "\n")
-        print(json.dumps({"status": receipt["status"], "receipt": str(path), "units": len(receipt["units"]), "error": receipt.get("error")}))
+        classification = receipt.get("classification", {})
+        print(json.dumps({"status": receipt["status"], "receipt": str(path), "units": len(receipt["units"]),
+                          "classified": classification.get("classified_count"), "new": classification.get("new_count"),
+                          "missing": classification.get("missing_count"), "error": receipt.get("error")}))
     return code
 
 

@@ -1,5 +1,7 @@
 // Analysis input only: never compile, link or execute these deliberate defects.
 #include <cstdlib>
+#include <memory>
+#include <utility>
 #include <release.hpp>
 
 int malloc_branch(bool cleanup) {
@@ -33,4 +35,9 @@ void uninitialized_argument() {
   int value;
   int* alias = &value;
   consume_value(*alias); // expect-uninitialized
+}
+
+void genuine_same_dispatch(std::unique_ptr<int> self) {
+  auto destination=std::move(self);
+  *self=7; // expect-genuine-move
 }

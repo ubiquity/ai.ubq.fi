@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Real engine controls and fail-closed wrapper checks; never execute C++ input."""
 import importlib.util
+import copy
 import json
 from pathlib import Path
 import signal
@@ -35,6 +36,8 @@ class AnalysisChecks(unittest.TestCase):
         cls.tool = ANALYSIS.Tool(SDK, WORKSPACE, metadata)
         cls.metadata = cls.tool.metadata(cls.configuration, cls.config)
         cls.catalog = ANALYSIS.check_names((metadata / "catalog.stdout").read_text())
+        cls.baseline_path = WORKSPACE / "cpp/clang14-beast-read-baseline.json"
+        cls.baseline = ANALYSIS.beast_baseline(cls.baseline_path, SDK, WORKSPACE)
 
     def control(self, name, source):
         output = self.output / name
@@ -103,6 +106,50 @@ class AnalysisChecks(unittest.TestCase):
                 self.assertEqual(result["diagnostic_ids"], [])
                 self.assertIsNone(result["report"])
                 self.assertEqual(result["report_status"], "not-emitted-for-clean-input")
+            else:
+                self.assertIn("bugprone-use-after-move", result["diagnostic_ids"])
+                self.assertIn("clang-analyzer-cplusplus.Move", result["diagnostic_ids"])
+                self.assertEqual(ANALYSIS.classify_beast([result], self.baseline, SDK, WORKSPACE)["classified_count"], 0)
+
+    def test_beast_baseline_rejects_identity_drift(self):
+        for name, key in [("tool", "root/usr/bin/clang-tidy-14"), ("frontend", "root/usr/lib/aarch64-linux-gnu/libclang-cpp.so.14"),
+                          ("header", "root/usr/include/boost/beast/http/impl/read.hpp"), ("policy", None)]:
+            with self.subTest(name=name):
+                value = copy.deepcopy(self.baseline)
+                if key is None:
+                    value["policy_sha256"] = "0" * 64
+                else:
+                    value["sdk_sha256"][key] = "0" * 64
+                path = self.output / (name + "-baseline.json")
+                path.write_text(json.dumps(value))
+                with self.assertRaises(ValueError):
+                    ANALYSIS.beast_baseline(path, SDK, WORKSPACE)
+
+    def test_beast_classification_is_exact_and_finite(self):
+        def location(value):
+            return {"Message": value["message"], "FilePath": str(SDK / "root/usr/include" / value["path"]),
+                    "FileOffset": value["offset"], "Replacements": value["replacements"]}
+        diagnostics = [{"DiagnosticName": value["check"], "DiagnosticMessage": location(value["primary"]),
+                        "Notes": [location(note) for note in value["notes"]], "Level": value["level"]}
+                       for value in self.baseline["diagnostics"]]
+        result = {"source": str(WORKSPACE / "cpp/src/session.cpp"), "exit": 1, "diagnostics": diagnostics}
+        accepted = ANALYSIS.classify_beast([result], self.baseline, SDK, WORKSPACE)
+        self.assertEqual((accepted["classified_count"], accepted["new_count"], accepted["missing_count"]), (4, 0, 0))
+        for mutation in ("check", "offset", "message", "note", "path", "first-party", "extra", "missing", "empty-failed-exit"):
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(result)
+                first = changed["diagnostics"][0]
+                if mutation == "check": first["DiagnosticName"] = "bugprone-dangling-handle"
+                elif mutation == "offset": first["DiagnosticMessage"]["FileOffset"] += 1
+                elif mutation == "message": first["DiagnosticMessage"]["Message"] += " changed"
+                elif mutation == "note": first["Notes"][0]["Message"] += " changed"
+                elif mutation == "path": first["DiagnosticMessage"]["FilePath"] = str(SDK / "root/usr/include/boost/asio/coroutine.hpp")
+                elif mutation == "first-party": first["DiagnosticMessage"]["FilePath"] = str(WORKSPACE / "cpp/src/session.cpp")
+                elif mutation == "extra": changed["diagnostics"].append(copy.deepcopy(first))
+                elif mutation == "missing": changed["diagnostics"].pop()
+                else: changed["diagnostics"] = []
+                classified = ANALYSIS.classify_beast([changed], self.baseline, SDK, WORKSPACE)
+                self.assertTrue(classified["new_count"] or classified["missing_count"] or classified["unclassified_exit_count"])
 
     def test_missing_malformed_and_wrong_source_profiles(self):
         directory = self.output / "invalid-profiles"

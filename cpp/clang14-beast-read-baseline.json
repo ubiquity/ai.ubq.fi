@@ -1,0 +1,139 @@
+{
+  "schema": "uos-clang14-beast-read-v1",
+  "source": "cpp/src/session.cpp",
+  "sdk_sha256": {
+    "root/lib/ld-linux-aarch64.so.1": "7fa5037b2ea1643fd2b8b7f3f3c1d9d546271011b4385aeea3e85fed0d5dcadd",
+    "root/usr/bin/clang-tidy-14": "c66bd47837a3621500d26b3ec4636890eaf6c85f0afefd5b3d8f570eecdc8e90",
+    "root/usr/include/boost/beast/http/impl/read.hpp": "dcace292f59d5e5d6ca45930fb02eeea4418f940c91af52de28de2fa6f53a6ce",
+    "root/usr/include/boost/asio/coroutine.hpp": "aa981b4602747d1c62d105e5266026b47d7e4dfb4ce2d03ac6cbcdbc0160aa60",
+    "root/usr/include/boost/asio/compose.hpp": "5fa98287529632714d7e46c8da09312ab357a2b7afb026208fd83621f6abdde7",
+    "root/usr/lib/aarch64-linux-gnu/libclang-cpp.so.14": "b9cdd42ec88a2655f2ff005738dfcfe4cab08a188daa4ebabb200251d6773d84",
+    "root/usr/lib/aarch64-linux-gnu/libLLVM-14.so.1": "1ff1243403be3b8dd5120198e13212f69256d4399d39271dc00bc04f24393dca"
+  },
+  "diagnostics": [
+    {
+      "check": "bugprone-use-after-move",
+      "primary": {
+        "path": "boost/beast/http/impl/read.hpp",
+        "offset": 6729,
+        "line": 248,
+        "column": 61,
+        "message": "'self' used after it was moved",
+        "replacements": []
+      },
+      "notes": [
+        {
+          "path": "boost/beast/http/impl/read.hpp",
+          "offset": 6693,
+          "line": 248,
+          "column": 25,
+          "message": "move occurred here",
+          "replacements": []
+        },
+        {
+          "path": "boost/beast/http/impl/read.hpp",
+          "offset": 6729,
+          "line": 248,
+          "column": 61,
+          "message": "the use happens in a later loop iteration than the move",
+          "replacements": []
+        }
+      ],
+      "level": "Warning"
+    },
+    {
+      "check": "bugprone-use-after-move",
+      "primary": {
+        "path": "boost/beast/http/impl/read.hpp",
+        "offset": 6786,
+        "line": 251,
+        "column": 13,
+        "message": "'self' used after it was moved",
+        "replacements": []
+      },
+      "notes": [
+        {
+          "path": "boost/beast/http/impl/read.hpp",
+          "offset": 5590,
+          "line": 215,
+          "column": 24,
+          "message": "move occurred here",
+          "replacements": []
+        }
+      ],
+      "level": "Warning"
+    },
+    {
+      "check": "bugprone-use-after-move",
+      "primary": {
+        "path": "boost/beast/http/impl/read.hpp",
+        "offset": 7674,
+        "line": 287,
+        "column": 41,
+        "message": "'self' used after it was moved",
+        "replacements": []
+      },
+      "notes": [
+        {
+          "path": "boost/beast/http/impl/read.hpp",
+          "offset": 7654,
+          "line": 287,
+          "column": 21,
+          "message": "move occurred here",
+          "replacements": []
+        },
+        {
+          "path": "boost/beast/http/impl/read.hpp",
+          "offset": 7674,
+          "line": 287,
+          "column": 41,
+          "message": "the use happens in a later loop iteration than the move",
+          "replacements": []
+        }
+      ],
+      "level": "Warning"
+    },
+    {
+      "check": "bugprone-use-after-move",
+      "primary": {
+        "path": "boost/beast/http/impl/read.hpp",
+        "offset": 8090,
+        "line": 301,
+        "column": 51,
+        "message": "'self' used after it was moved",
+        "replacements": []
+      },
+      "notes": [
+        {
+          "path": "boost/beast/http/impl/read.hpp",
+          "offset": 8023,
+          "line": 300,
+          "column": 25,
+          "message": "move occurred here",
+          "replacements": []
+        },
+        {
+          "path": "boost/beast/http/impl/read.hpp",
+          "offset": 8090,
+          "line": 301,
+          "column": 51,
+          "message": "the use happens in a later loop iteration than the move",
+          "replacements": []
+        }
+      ],
+      "level": "Warning"
+    }
+  ],
+  "proof": {
+    "original_source": "6a1c02674c45bc4b9fcbf6d17a72226fc074e9a4",
+    "failed_ref": "fae1741f-4e00-446f-a5eb-3540ddcf1016",
+    "reduction_ref": "b40d5db8-1a12-4d60-8d04-3d757ccbf877",
+    "reduction_sha256": "f5aebc7aed2ff847ee92415484c3e98581a8afb5f7cf6273dc93fa486f9a633f",
+    "reason": "Asio stackless YIELD transfers handler and exits invocation; reentry binds moved-to handler. Clang14 flow-sensitive use-after-move does not correlate this macro control path.",
+    "source_sha256": {
+      "cpp/src/session.cpp": "5f6ece8ae6ddefb9363a6f6ee846bd6f75d7f30b090917a3f668e5604cc17590",
+      "cpp/src/server.cpp": "bf83d9b3fdfb67b0015f64f602fecacd1f58a66da42bea2d484467ad71f91531"
+    }
+  },
+  "policy_sha256": "6711fc1ae69b8fea751850754030df2c882b7ed8610d5e43bea173515a331966"
+}
