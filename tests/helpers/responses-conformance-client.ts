@@ -456,11 +456,10 @@ export const runCodexConformance = async (options: CodexConformanceOptions): Pro
         entry.detail.method === "turn/completed" &&
         conformanceRecord(conformanceRecord(entry.detail.params).turn).id === turnId
     );
-    assert.equal(conformanceRecord(conformanceRecord(terminal.detail.params).turn).status, "completed");
-    const state = await native.rpc("thread/read", { threadId, includeTurns: true });
-    const turns = conformanceRecord(state.thread).turns;
-    assert.ok(Array.isArray(turns));
-    const items = conformanceRecord(turns.at(-1)).items;
+    const completedTurn = conformanceRecord(conformanceRecord(terminal.detail.params).turn);
+    assert.equal(completedTurn.status, "completed");
+    assert.equal(completedTurn.error, null);
+    const items = completedTurn.items;
     assert.ok(Array.isArray(items));
     const answer = items.map(conformanceRecord).findLast((item) => item.type === "agentMessage");
     assert.equal(answer?.text, CONFORMANCE_FINAL);
