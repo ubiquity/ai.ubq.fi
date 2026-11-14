@@ -76,6 +76,48 @@ test("the runner builds every group's network boundary before the native build",
   expect(validated.files.map((file) => file.label)).toEqual(["tests/live-default-model.e2e.ts"]);
 });
 
+test("the runner wraps every live file in its own relay parent, even after a nonzero exit", async () => {
+  const [e2e] = groupsFor("e2e", ["tests/live-default-model.e2e.ts"]);
+  const groups = validatedGroups([{ ...e2e, files: [...e2e.files, "tests/live-network-policy.test.ts"] }], { BASE_URL: "http://127.0.0.1:9" }, () => []);
+  const parents: string[] = [];
+  const paths: string[] = [];
+  const result = await runGroups(groups, async (path, item) => {
+    expect(item.policy.live).toEqual(groups[0].policy.live);
+    const parent = item.policy.relayParent ?? "";
+    expect(basename(parent)).toMatch(/^uos-live-run-/);
+    expect(existsSync(parent)).toBe(true);
+    // Each previous file's parent must already be gone before the next file starts.
+    for (const previous of parents) expect(existsSync(previous)).toBe(false);
+    parents.push(parent);
+    paths.push(path);
+    // Simulate a relay killed before it could clean up its own files.
+    await mkdir(join(parent, "uos-live-orphan"));
+    expect(existsSync(parent)).toBe(true);
+    return paths.length === 1 ? 1 : 0;
+  });
+  expect(result).toEqual({ files: 2, failures: 1 });
+  expect(paths).toEqual(groups[0].files.map((file) => file.path));
+  expect(new Set(parents).size).toBe(2);
+  for (const parent of parents) expect(existsSync(parent)).toBe(false);
+  expect(groups[0].policy.relayParent).toBeUndefined();
+});
+
+test("the runner removes a live file's relay parent when execution throws", async () => {
+  const groups = validatedGroups(groupsFor("e2e", ["tests/live-default-model.e2e.ts"]), { BASE_URL: "http://127.0.0.1:9" }, () => []);
+  let parent = "";
+  await assert.rejects(
+    runGroups(groups, async (_path, item) => {
+      parent = item.policy.relayParent ?? "";
+      expect(basename(parent)).toMatch(/^uos-live-run-/);
+      expect(existsSync(parent)).toBe(true);
+      await mkdir(join(parent, "uos-live-orphan"));
+      throw new Error("fixture execution failed");
+    }),
+    { message: "fixture execution failed" }
+  );
+  expect(existsSync(parent)).toBe(false);
+});
+
 test("the runner loop gives each live file its own relay parent and cleans it before the next file", async () => {
   const live = { ...groupsFor("e2e", ["tests/live-default-model.e2e.ts"])[0], files: ["tests/live-default-model.e2e.ts", "tests/live-network-policy.test.ts"] };
   const groups = validatedGroups([live, ...groupsFor("files", ["tests/live-network-policy.test.ts"])], { BASE_URL: "http://127.0.0.1:8123" }, () => []);
@@ -249,7 +291,7 @@ const parentSource = String.raw`
 import assert from "node:assert/strict";
 import { connect, createServer } from "node:net";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 const config = JSON.parse(process.argv.at(-1));
 const { liveDestination, testNetworkArgv } = await import(config.module);
 const setup = (argv) => {
