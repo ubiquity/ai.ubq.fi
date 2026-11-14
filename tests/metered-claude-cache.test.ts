@@ -236,6 +236,26 @@ test("OpenLux native Messages preserves JSON-schema output config", async () => 
   await result.response.body?.cancel();
 });
 
+test("OpenLux native Messages accepts the default text format without output config", async () => {
+  const { calls, fetcher } = capture();
+  const result = await fetchMeteredResponses(
+    { model, input: "Hello", max_output_tokens: 128, text: { format: { type: "text" } } },
+    { apiKey: "fixture-key", fetcher }
+  );
+  assert.equal(calls[0].url, "https://api.openlux.ai/v1/messages");
+  assert.equal(calls[0].body.output_config, undefined);
+  await result.response.body?.cancel();
+});
+
+test("OpenLux keeps an unknown text format on the original Responses route", async () => {
+  const body = { model, input: "Hello", max_output_tokens: 128, text: { format: { type: "unknown_format" } } };
+  const { calls, fetcher } = capture(() => new Response("upstream rejected", { status: 400 }));
+  const result = await fetchMeteredResponses(body, { apiKey: "fixture-key", fetcher });
+  assert.equal(calls[0].url, "https://api.openlux.ai/v1/responses");
+  assert.deepEqual(calls[0].body, body);
+  await result.response.body?.cancel();
+});
+
 test("OpenLux transport restores native signed tool history only within the authenticated provider scope", async () => {
   const scope = "metered-cache-fixture-principal";
   const blocks = [
