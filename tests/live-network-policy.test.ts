@@ -105,15 +105,16 @@ test("the runner wraps every live file in its own relay parent, even after a non
 test("the runner removes a live file's relay parent when execution throws", async () => {
   const groups = validatedGroups(groupsFor("e2e", ["tests/live-default-model.e2e.ts"]), { BASE_URL: "http://127.0.0.1:9" }, () => []);
   let parent = "";
-  await expect(
+  await assert.rejects(
     runGroups(groups, async (_path, item) => {
       parent = item.policy.relayParent ?? "";
       expect(basename(parent)).toMatch(/^uos-live-run-/);
       expect(existsSync(parent)).toBe(true);
       await mkdir(join(parent, "uos-live-orphan"));
       throw new Error("fixture execution failed");
-    })
-  ).rejects.toThrow("fixture execution failed");
+    }),
+    { message: "fixture execution failed" }
+  );
   expect(existsSync(parent)).toBe(false);
 });
 
