@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cerrno>
 #include <climits>
 #include <cmath>
@@ -279,7 +280,17 @@ namespace uos::rt::fs {
       out.blksize = static_cast<std::int64_t>(info.st_blksize);
       out.blocks = static_cast<std::int64_t>(info.st_blocks);
       auto milliseconds = [](const struct timespec& time) { return static_cast<double>(time.tv_sec) * 1e3 + static_cast<double>(time.tv_nsec) / 1e6; };
-      auto nanoseconds = [](const struct timespec& time) { return static_cast<std::int64_t>(time.tv_sec) * 1000000000 + static_cast<std::int64_t>(time.tv_nsec); };
+      auto nanoseconds = [](const struct timespec& time) {
+#if defined(__APPLE__)
+        // The normalized minimum has a seconds product below INT64_MIN, even
+        // though adding its positive nanoseconds yields exactly INT64_MIN.
+        const __int128 total = static_cast<__int128>(time.tv_sec) * 1000000000 + time.tv_nsec;
+        return static_cast<std::int64_t>(std::clamp(total, static_cast<__int128>(std::numeric_limits<std::int64_t>::min()),
+                                                   static_cast<__int128>(std::numeric_limits<std::int64_t>::max())));
+#else
+        return static_cast<std::int64_t>(time.tv_sec) * 1000000000 + static_cast<std::int64_t>(time.tv_nsec);
+#endif
+      };
 #if defined(__APPLE__)
       const auto& atime = info.st_atimespec;
       const auto& mtime = info.st_mtimespec;
@@ -634,6 +645,16 @@ namespace uos::rt::fs {
         out.tv_sec = value >= 9223372036854775808.0 ? std::numeric_limits<time_t>::max() : static_cast<time_t>(value);
         out.tv_nsec = static_cast<long>(std::fmod(value, 1.0) * 1e9);
       }
+#if defined(__APPLE__)
+      // Bun's Darwin TimeLike saturates the total signed 64-bit nanoseconds,
+      // rather than the Linux representation's signed 64-bit seconds.
+      if (out.tv_nsec != UTIME_NOW) {
+        if (out.tv_sec > 9223372036LL || (out.tv_sec == 9223372036LL && out.tv_nsec > 854775807L))
+          out = timespec{9223372036LL, 854775807L};
+        else if (out.tv_sec < -9223372037LL || (out.tv_sec == -9223372037LL && out.tv_nsec < 145224192L))
+          out = timespec{-9223372037LL, 145224192L};
+      }
+#endif
       return out;
     }
   }

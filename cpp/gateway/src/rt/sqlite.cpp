@@ -1,4 +1,7 @@
 #include "uos/rt/sqlite.hpp"
+#if defined(__APPLE__)
+#include "sqlite_darwin.hpp"
+#endif
 
 #include "uos/rt/json.hpp"
 #include "uos/rt/string.hpp"
@@ -178,9 +181,8 @@ namespace uos::rt::sqlite {
       resolve(library, api.config, "sqlite3_config");
       resolve(library, api.libversion, "sqlite3_libversion");
 #endif
-      // Bun's SQLite is built without SQLITE_USE_URI and bun:sqlite adds no SQLITE_OPEN_URI,
-      // so a "file:" name is a plain path unless the caller passes SQLITE_OPEN_URI. This must
-      // run before the library initializes (the first open).
+      // Linux requires explicit SQLITE_OPEN_URI; Darwin adds it per open below.
+      // Configure before the library initializes (the first open).
       api.config(SQLITE_CONFIG_URI, 0);
       return api;
     }
@@ -628,7 +630,11 @@ namespace uos::rt::sqlite {
       const bool anonymous = filename.empty() || filename == ":memory:";
       if (anonymous && (flags & constants::SQLITE_OPEN_READONLY) != 0) throw JsError("Cannot open an anonymous database in read-only mode.");
       const Api& sqlite = api();
+#if defined(__APPLE__)
+      const std::string path = anonymous ? std::string(":memory:") : detail::darwinDatabasePath(toSqlite(filename), flags);
+#else
       const std::string path = anonymous ? std::string(":memory:") : toSqlite(filename);
+#endif
       Connection3* handle = nullptr;
       const int status = sqlite.open_v2(path.c_str(), &handle, flags, nullptr);
       if (status != SQLITE_OK) {

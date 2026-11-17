@@ -13,6 +13,7 @@
 #include <sys/wait.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
+#include <sys/param.h>
 #endif
 #include <unistd.h>
 #include <climits>
@@ -145,15 +146,24 @@ TEST("exitCode and exit statuses match Bun (masked to 8 bits)") {
 TEST("signal names and numbers as Bun spells them") {
   EXPECT_EQ(process::signalNumber("SIGINT"), std::optional<int>(2));
   EXPECT_EQ(process::signalNumber("SIGTERM"), std::optional<int>(15));
+#if defined(__APPLE__)
+  EXPECT_EQ(process::signalNumber("SIG16"), std::nullopt);
+  EXPECT_EQ(process::signalNumber("SIGSYS"), std::optional<int>(12));
+#else
   EXPECT_EQ(process::signalNumber("SIG16"), std::optional<int>(16));
   EXPECT_EQ(process::signalNumber("SIGSYS"), std::optional<int>(31));
+#endif
   EXPECT_EQ(process::signalNumber("SIGFOO"), std::nullopt);
   EXPECT_EQ(process::signalName(9), std::optional<std::string_view>("SIGKILL"));
   EXPECT_EQ(process::signalName(32), std::nullopt);
 }
 
 TEST("node:os hostname, release and tmpdir") {
+#if defined(__APPLE__)
+  char host[MAXHOSTNAMELEN + 1] = {};
+#else
   char host[HOST_NAME_MAX + 1] = {};
+#endif
   ::gethostname(host, sizeof host - 1);
   EXPECT_EQ(rt::os::hostname(), std::string(host));
   struct utsname info;
@@ -190,7 +200,11 @@ TEST("signal listeners: dedupe, once, order, (name, number), default action rest
     EXPECT(!defaultAction(SIGUSR2));
     ::kill(::getpid(), SIGUSR2);
     while (signalOrder.find("b;") == std::string::npos) co_await rt::sleep(1);
+#if defined(__APPLE__)
+    EXPECT_EQ(signalOrder, "a SIGUSR2 31;b;");
+#else
     EXPECT_EQ(signalOrder, "a SIGUSR2 12;b;");
+#endif
     EXPECT_EQ(process::listenerCount("SIGUSR2"), std::size_t(1));
     process::removeListener("SIGUSR2", b);
     EXPECT_EQ(process::listenerCount("SIGUSR2"), std::size_t(0));
@@ -253,8 +267,19 @@ TEST("Bun.spawn exit codes, signals, kill and killed (spawn1 probe)") {
 
     auto self = process::spawn({"sh", "-c", "kill -USR1 $$"});
     auto awaited5 = co_await self.exited().wait();
+#if defined(__APPLE__)
+    // The native shell sends Darwin SIGUSR1 (30); Bun.spawn uses Linux names.
+    EXPECT_EQ(awaited5, 158);
+    EXPECT_EQ(self.signalCode(), std::optional<std::string>("SIGPWR"));
+    auto namedSignal = process::spawn({"sleep", "5"});
+    namedSignal.kill("SIGUSR1");
+    const int namedExit = co_await namedSignal.exited().wait();
+    EXPECT_EQ(namedExit, 138);
+    EXPECT_EQ(namedSignal.signalCode(), std::optional<std::string>("SIGUSR1"));
+#else
     EXPECT_EQ(awaited5, 138);
     EXPECT_EQ(self.signalCode(), std::optional<std::string>("SIGUSR1"));
+#endif
 
     auto done = process::spawn({"true"});
     auto awaited6 = co_await done.exited().wait();
@@ -311,6 +336,49 @@ TEST("Bun.spawn pipes: stdin FileSink, stdout and stderr streams (spawn1 probe)"
   }());
 }
 
+#if defined(__APPLE__)
+TEST("Darwin SIGCHLD watcher reaps concurrent immediate exits without zombie children") {
+  rt::Loop loop;
+  rt::blockOn(loop, []() -> rt::Task<void> {
+    std::vector<process::Subprocess> children;
+    for (int index = 0; index < 64; ++index)
+      children.push_back(process::spawn({"sh", "-c", "exit " + std::to_string(index % 16)},
+                                        {.stdout = process::Stdio::ignore, .stderr = process::Stdio::ignore}));
+    for (std::size_t index = 0; index < children.size(); ++index) {
+      auto& child = children[index];
+      const int status = co_await child.exited().wait();
+      EXPECT_EQ(status, static_cast<int>(index % 16));
+      EXPECT_EQ(child.exitCode(), std::optional<int>(status));
+      EXPECT(child.killed());
+      int raw = 0;
+      errno = 0;
+      EXPECT_EQ(::waitpid(child.pid(), &raw, WNOHANG), -1);
+      EXPECT_EQ(errno, ECHILD);
+    }
+  }());
+}
+
+TEST("Darwin child stdin returns EPIPE after the reader exits") {
+  rt::Loop loop;
+  rt::blockOn(loop, []() -> rt::Task<void> {
+    auto child = process::spawn({"true"}, {.stdin = process::Stdio::pipe, .stdout = process::Stdio::ignore});
+    const int status = co_await child.exited().wait();
+    EXPECT_EQ(status, 0);
+    auto sink = child.stdin();
+    sink.write("after exit");
+    bool rejected = false;
+    try {
+      co_await sink.flush().wait();
+    } catch (const rt::fs::ErrnoError& error) {
+      rejected = true;
+      EXPECT_EQ(error.code, "EPIPE");
+      EXPECT_EQ(error.errno_, std::optional<int>(-32));
+    }
+    EXPECT(rejected);
+  }());
+}
+#endif
+
 TEST("Bun.spawn environment, PATH lookup, cwd and spawn errors (spawn1/spawn2 probes)") {
   rt::Loop loop;
   rt::blockOn(loop, []() -> rt::Task<void> {
@@ -343,7 +411,11 @@ TEST("Bun.spawn environment, PATH lookup, cwd and spawn errors (spawn1/spawn2 pr
               "Error|ENOENT: no such file or directory, posix_spawn '/nonexistent/bin'|ENOENT|-2|posix_spawn|/nonexistent/bin");
     EXPECT_EQ(errorOf([] { process::spawn({"/usr/bin/true"}, {.cwd = "/nonexistent-dir"}); }),
               "Error|ENOENT: no such file or directory, posix_spawn '/usr/bin/true'|ENOENT|-2|posix_spawn|/usr/bin/true");
+#if defined(__APPLE__)
+    EXPECT_EQ(errorOf([] { process::spawn({"/etc/hostname"}); }), "Error|ENOENT: no such file or directory, posix_spawn '/etc/hostname'|ENOENT|-2|posix_spawn|/etc/hostname");
+#else
     EXPECT_EQ(errorOf([] { process::spawn({"/etc/hostname"}); }), "Error|EACCES: permission denied, posix_spawn '/etc/hostname'|EACCES|-13|posix_spawn|/etc/hostname");
+#endif
     EXPECT_EQ(errorOf([] { process::spawn({}); }), "TypeError|cmd must not be empty");
     EXPECT_EQ(errorOf([] { process::spawn({"./nonexist"}, {.env = std::vector<std::pair<std::string, std::string>>{{"PATH", "/usr/bin"}}}); }),
               "Error|ENOENT: no such file or directory, posix_spawn './nonexist'|ENOENT|-2|posix_spawn|./nonexist");

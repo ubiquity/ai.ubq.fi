@@ -76,7 +76,11 @@ namespace {
 
   SourceArtifact sourceArtifact(const std::string& base) {
     SourceArtifact source;
+#if defined(__APPLE__)
+    source.inputsManifest = rt::path::join(workspace(), "tools", "native-kv", "inputs-darwin-arm64.json");
+#else
     source.inputsManifest = rt::path::join(workspace(), "tools", "native-kv", "inputs.json");
+#endif
     source.artifactDirectory = rt::path::join(base, "source");
     rt::fs::mkdirSync(source.artifactDirectory);
     const rt::fs::Bytes inputsBytes = rt::fs::readFileSync(source.inputsManifest);

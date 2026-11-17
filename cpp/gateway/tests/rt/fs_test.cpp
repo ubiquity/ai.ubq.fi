@@ -20,6 +20,13 @@
 #include <string_view>
 #include <vector>
 
+// Platform-specific literals are recorded by Bun 1.4.0 on each host.
+#if defined(__APPLE__)
+#define DARWIN_EXPECTATION(linuxValue, darwinValue) darwinValue
+#else
+#define DARWIN_EXPECTATION(linuxValue, darwinValue) linuxValue
+#endif
+
 using namespace uos;
 using namespace std::literals;
 namespace fs = uos::rt::fs;
@@ -304,47 +311,47 @@ TEST("node:path posix functions match bun (cwd /tmp)") {
   EXPECT_EQ(rt::path::isAbsolute("a/.b"sv), false);
   EXPECT_EQ(rt::path::isAbsolute(". ."sv), false);
   EXPECT_EQ(rt::path::isAbsolute("..."sv), false);
-  EXPECT_EQ(rt::path::resolve(""sv), std::string("/tmp"sv));
-  EXPECT_EQ(rt::path::resolve("."sv), std::string("/tmp"sv));
-  EXPECT_EQ(rt::path::resolve(".."sv), std::string("/"sv));
+  EXPECT_EQ(rt::path::resolve(""sv), std::string(DARWIN_EXPECTATION("/tmp"sv, "/private/tmp"sv)));
+  EXPECT_EQ(rt::path::resolve("."sv), std::string(DARWIN_EXPECTATION("/tmp"sv, "/private/tmp"sv)));
+  EXPECT_EQ(rt::path::resolve(".."sv), std::string(DARWIN_EXPECTATION("/"sv, "/private"sv)));
   EXPECT_EQ(rt::path::resolve("/"sv), std::string("/"sv));
   EXPECT_EQ(rt::path::resolve("//"sv), std::string("/"sv));
   EXPECT_EQ(rt::path::resolve("///"sv), std::string("/"sv));
-  EXPECT_EQ(rt::path::resolve("a"sv), std::string("/tmp/a"sv));
-  EXPECT_EQ(rt::path::resolve("a/"sv), std::string("/tmp/a"sv));
-  EXPECT_EQ(rt::path::resolve("a//"sv), std::string("/tmp/a"sv));
+  EXPECT_EQ(rt::path::resolve("a"sv), std::string(DARWIN_EXPECTATION("/tmp/a"sv, "/private/tmp/a"sv)));
+  EXPECT_EQ(rt::path::resolve("a/"sv), std::string(DARWIN_EXPECTATION("/tmp/a"sv, "/private/tmp/a"sv)));
+  EXPECT_EQ(rt::path::resolve("a//"sv), std::string(DARWIN_EXPECTATION("/tmp/a"sv, "/private/tmp/a"sv)));
   EXPECT_EQ(rt::path::resolve("/a"sv), std::string("/a"sv));
   EXPECT_EQ(rt::path::resolve("/a/"sv), std::string("/a"sv));
   EXPECT_EQ(rt::path::resolve("/a/b"sv), std::string("/a/b"sv));
   EXPECT_EQ(rt::path::resolve("/a/b/"sv), std::string("/a/b"sv));
-  EXPECT_EQ(rt::path::resolve("a/b/c"sv), std::string("/tmp/a/b/c"sv));
-  EXPECT_EQ(rt::path::resolve("./a"sv), std::string("/tmp/a"sv));
-  EXPECT_EQ(rt::path::resolve("../a"sv), std::string("/a"sv));
+  EXPECT_EQ(rt::path::resolve("a/b/c"sv), std::string(DARWIN_EXPECTATION("/tmp/a/b/c"sv, "/private/tmp/a/b/c"sv)));
+  EXPECT_EQ(rt::path::resolve("./a"sv), std::string(DARWIN_EXPECTATION("/tmp/a"sv, "/private/tmp/a"sv)));
+  EXPECT_EQ(rt::path::resolve("../a"sv), std::string(DARWIN_EXPECTATION("/a"sv, "/private/a"sv)));
   EXPECT_EQ(rt::path::resolve("/a/b/../c"sv), std::string("/a/c"sv));
   EXPECT_EQ(rt::path::resolve("/a/./b"sv), std::string("/a/b"sv));
-  EXPECT_EQ(rt::path::resolve("a/../.."sv), std::string("/"sv));
+  EXPECT_EQ(rt::path::resolve("a/../.."sv), std::string(DARWIN_EXPECTATION("/"sv, "/private"sv)));
   EXPECT_EQ(rt::path::resolve("../../a/.."sv), std::string("/"sv));
   EXPECT_EQ(rt::path::resolve("//a//b//"sv), std::string("/a/b"sv));
   EXPECT_EQ(rt::path::resolve("///a"sv), std::string("/a"sv));
   EXPECT_EQ(rt::path::resolve("/a//b"sv), std::string("/a/b"sv));
-  EXPECT_EQ(rt::path::resolve("foo/bar/../baz/"sv), std::string("/tmp/foo/baz"sv));
-  EXPECT_EQ(rt::path::resolve("./../a/"sv), std::string("/a"sv));
+  EXPECT_EQ(rt::path::resolve("foo/bar/../baz/"sv), std::string(DARWIN_EXPECTATION("/tmp/foo/baz"sv, "/private/tmp/foo/baz"sv)));
+  EXPECT_EQ(rt::path::resolve("./../a/"sv), std::string(DARWIN_EXPECTATION("/a"sv, "/private/a"sv)));
   EXPECT_EQ(rt::path::resolve("/../a"sv), std::string("/a"sv));
-  EXPECT_EQ(rt::path::resolve("a/b/c/."sv), std::string("/tmp/a/b/c"sv));
-  EXPECT_EQ(rt::path::resolve("a/b/c/.."sv), std::string("/tmp/a/b"sv));
-  EXPECT_EQ(rt::path::resolve(".a"sv), std::string("/tmp/.a"sv));
-  EXPECT_EQ(rt::path::resolve("a."sv), std::string("/tmp/a."sv));
-  EXPECT_EQ(rt::path::resolve("a.b"sv), std::string("/tmp/a.b"sv));
-  EXPECT_EQ(rt::path::resolve("a.b.c"sv), std::string("/tmp/a.b.c"sv));
+  EXPECT_EQ(rt::path::resolve("a/b/c/."sv), std::string(DARWIN_EXPECTATION("/tmp/a/b/c"sv, "/private/tmp/a/b/c"sv)));
+  EXPECT_EQ(rt::path::resolve("a/b/c/.."sv), std::string(DARWIN_EXPECTATION("/tmp/a/b"sv, "/private/tmp/a/b"sv)));
+  EXPECT_EQ(rt::path::resolve(".a"sv), std::string(DARWIN_EXPECTATION("/tmp/.a"sv, "/private/tmp/.a"sv)));
+  EXPECT_EQ(rt::path::resolve("a."sv), std::string(DARWIN_EXPECTATION("/tmp/a."sv, "/private/tmp/a."sv)));
+  EXPECT_EQ(rt::path::resolve("a.b"sv), std::string(DARWIN_EXPECTATION("/tmp/a.b"sv, "/private/tmp/a.b"sv)));
+  EXPECT_EQ(rt::path::resolve("a.b.c"sv), std::string(DARWIN_EXPECTATION("/tmp/a.b.c"sv, "/private/tmp/a.b.c"sv)));
   EXPECT_EQ(rt::path::resolve("/x/.hidden"sv), std::string("/x/.hidden"sv));
   EXPECT_EQ(rt::path::resolve("/x/file.tar.gz"sv), std::string("/x/file.tar.gz"sv));
-  EXPECT_EQ(rt::path::resolve("..a"sv), std::string("/tmp/..a"sv));
-  EXPECT_EQ(rt::path::resolve("a.."sv), std::string("/tmp/a.."sv));
+  EXPECT_EQ(rt::path::resolve("..a"sv), std::string(DARWIN_EXPECTATION("/tmp/..a"sv, "/private/tmp/..a"sv)));
+  EXPECT_EQ(rt::path::resolve("a.."sv), std::string(DARWIN_EXPECTATION("/tmp/a.."sv, "/private/tmp/a.."sv)));
   EXPECT_EQ(rt::path::resolve("/a/b.c/"sv), std::string("/a/b.c"sv));
   EXPECT_EQ(rt::path::resolve("/a/b.c//"sv), std::string("/a/b.c"sv));
-  EXPECT_EQ(rt::path::resolve("a/.b"sv), std::string("/tmp/a/.b"sv));
-  EXPECT_EQ(rt::path::resolve(". ."sv), std::string("/tmp/. ."sv));
-  EXPECT_EQ(rt::path::resolve("..."sv), std::string("/tmp/..."sv));
+  EXPECT_EQ(rt::path::resolve("a/.b"sv), std::string(DARWIN_EXPECTATION("/tmp/a/.b"sv, "/private/tmp/a/.b"sv)));
+  EXPECT_EQ(rt::path::resolve(". ."sv), std::string(DARWIN_EXPECTATION("/tmp/. ."sv, "/private/tmp/. ."sv)));
+  EXPECT_EQ(rt::path::resolve("..."sv), std::string(DARWIN_EXPECTATION("/tmp/..."sv, "/private/tmp/..."sv)));
   EXPECT_EQ(rt::path::basename("/a/b.txt"sv, ".txt"sv), std::string("b"sv));
   EXPECT_EQ(rt::path::basename("/a/b.txt"sv, "txt"sv), std::string("b."sv));
   EXPECT_EQ(rt::path::basename("/a/b.txt"sv, "b.txt"sv), std::string("b.txt"sv));
@@ -358,14 +365,14 @@ TEST("node:path posix functions match bun (cwd /tmp)") {
   EXPECT_EQ(rt::path::basename("/aaa/"sv, "a"sv), std::string("aa"sv));
   EXPECT_EQ(rt::path::basename("//"sv, "/"sv), std::string("//"sv));
   EXPECT_EQ(rt::path::relative("a"sv, "b"sv), std::string("../b"sv));
-  EXPECT_EQ(rt::path::relative("/a"sv, "../b"sv), std::string("../b"sv));
+  EXPECT_EQ(rt::path::relative("/a"sv, "../b"sv), std::string(DARWIN_EXPECTATION("../b"sv, "../private/b"sv)));
   EXPECT_EQ(rt::path::relative(""sv, ""sv), std::string(""sv));
   EXPECT_EQ(rt::path::relative("a"sv, ""sv), std::string(".."sv));
   EXPECT_EQ(rt::path::relative(""sv, "a"sv), std::string("a"sv));
   EXPECT_EQ(rt::path::relative("/a/"sv, "/b/"sv), std::string("../b"sv));
-  EXPECT_EQ(rt::path::relative("a"sv, "/b"sv), std::string("../../b"sv));
+  EXPECT_EQ(rt::path::relative("a"sv, "/b"sv), std::string(DARWIN_EXPECTATION("../../b"sv, "../../../b"sv)));
   EXPECT_EQ(rt::path::relative("."sv, "."sv), std::string(""sv));
-  EXPECT_EQ(rt::path::relative("/"sv, ".."sv), std::string(""sv));
+  EXPECT_EQ(rt::path::relative("/"sv, ".."sv), std::string(DARWIN_EXPECTATION(""sv, "private"sv)));
   EXPECT_EQ(rt::path::relative("/a/b"sv, "/a/b"sv), std::string(""sv));
   EXPECT_EQ(rt::path::relative("/a/b"sv, "/a/b/c/d"sv), std::string("c/d"sv));
   EXPECT_EQ(rt::path::relative("/a/b/c"sv, "/a/d"sv), std::string("../../d"sv));
@@ -376,13 +383,13 @@ TEST("node:path posix functions match bun (cwd /tmp)") {
   EXPECT_EQ(rt::path::relative("/data"sv, "/data/x/y"sv), std::string("x/y"sv));
   EXPECT_EQ(rt::path::relative("/data"sv, "/other"sv), std::string("../other"sv));
   EXPECT_EQ(rt::path::relative("/data/"sv, "/data/x"sv), std::string("x"sv));
-  EXPECT_EQ(rt::path::relative("/a/b"sv, "a/b"sv), std::string("../../tmp/a/b"sv));
-  EXPECT_EQ(rt::path::relative("/home/x/.codex"sv, "app-server-control"sv), std::string("../../../tmp/app-server-control"sv));
-  EXPECT_EQ(rt::path::relative("/r"sv, ".data"sv), std::string("../tmp/.data"sv));
+  EXPECT_EQ(rt::path::relative("/a/b"sv, "a/b"sv), std::string(DARWIN_EXPECTATION("../../tmp/a/b"sv, "../../private/tmp/a/b"sv)));
+  EXPECT_EQ(rt::path::relative("/home/x/.codex"sv, "app-server-control"sv), std::string(DARWIN_EXPECTATION("../../../tmp/app-server-control"sv, "../../../private/tmp/app-server-control"sv)));
+  EXPECT_EQ(rt::path::relative("/r"sv, ".data"sv), std::string(DARWIN_EXPECTATION("../tmp/.data"sv, "../private/tmp/.data"sv)));
   EXPECT_EQ(rt::path::relative("a/"sv, ".."sv), std::string("../.."sv));
   EXPECT_EQ(rt::path::relative("/x/y/"sv, "../.."sv), std::string("../.."sv));
-  EXPECT_EQ(rt::path::relative(""sv, "/"sv), std::string(".."sv));
-  EXPECT_EQ(rt::path::relative("/"sv, ""sv), std::string("tmp"sv));
+  EXPECT_EQ(rt::path::relative(""sv, "/"sv), std::string(DARWIN_EXPECTATION(".."sv, "../.."sv)));
+  EXPECT_EQ(rt::path::relative("/"sv, ""sv), std::string(DARWIN_EXPECTATION("tmp"sv, "private/tmp"sv)));
   EXPECT_EQ(rt::path::join("a"sv, "b"sv), std::string("a/b"sv));
   EXPECT_EQ(rt::path::join("/a"sv, "../b"sv), std::string("/b"sv));
   EXPECT_EQ(rt::path::join(""sv, ""sv), std::string("."sv));
@@ -409,14 +416,14 @@ TEST("node:path posix functions match bun (cwd /tmp)") {
   EXPECT_EQ(rt::path::join("/x/y/"sv, "../.."sv), std::string("/"sv));
   EXPECT_EQ(rt::path::join(""sv, "/"sv), std::string("/"sv));
   EXPECT_EQ(rt::path::join("/"sv, ""sv), std::string("/"sv));
-  EXPECT_EQ(rt::path::resolve("a"sv, "b"sv), std::string("/tmp/a/b"sv));
+  EXPECT_EQ(rt::path::resolve("a"sv, "b"sv), std::string(DARWIN_EXPECTATION("/tmp/a/b"sv, "/private/tmp/a/b"sv)));
   EXPECT_EQ(rt::path::resolve("/a"sv, "../b"sv), std::string("/b"sv));
-  EXPECT_EQ(rt::path::resolve(""sv, ""sv), std::string("/tmp"sv));
-  EXPECT_EQ(rt::path::resolve("a"sv, ""sv), std::string("/tmp/a"sv));
-  EXPECT_EQ(rt::path::resolve(""sv, "a"sv), std::string("/tmp/a"sv));
+  EXPECT_EQ(rt::path::resolve(""sv, ""sv), std::string(DARWIN_EXPECTATION("/tmp"sv, "/private/tmp"sv)));
+  EXPECT_EQ(rt::path::resolve("a"sv, ""sv), std::string(DARWIN_EXPECTATION("/tmp/a"sv, "/private/tmp/a"sv)));
+  EXPECT_EQ(rt::path::resolve(""sv, "a"sv), std::string(DARWIN_EXPECTATION("/tmp/a"sv, "/private/tmp/a"sv)));
   EXPECT_EQ(rt::path::resolve("/a/"sv, "/b/"sv), std::string("/b"sv));
   EXPECT_EQ(rt::path::resolve("a"sv, "/b"sv), std::string("/b"sv));
-  EXPECT_EQ(rt::path::resolve("."sv, "."sv), std::string("/tmp"sv));
+  EXPECT_EQ(rt::path::resolve("."sv, "."sv), std::string(DARWIN_EXPECTATION("/tmp"sv, "/private/tmp"sv)));
   EXPECT_EQ(rt::path::resolve("/"sv, ".."sv), std::string("/"sv));
   EXPECT_EQ(rt::path::resolve("/a/b"sv, "/a/b"sv), std::string("/a/b"sv));
   EXPECT_EQ(rt::path::resolve("/a/b"sv, "/a/b/c/d"sv), std::string("/a/b/c/d"sv));
@@ -431,7 +438,7 @@ TEST("node:path posix functions match bun (cwd /tmp)") {
   EXPECT_EQ(rt::path::resolve("/a/b"sv, "a/b"sv), std::string("/a/b/a/b"sv));
   EXPECT_EQ(rt::path::resolve("/home/x/.codex"sv, "app-server-control"sv), std::string("/home/x/.codex/app-server-control"sv));
   EXPECT_EQ(rt::path::resolve("/r"sv, ".data"sv), std::string("/r/.data"sv));
-  EXPECT_EQ(rt::path::resolve("a/"sv, ".."sv), std::string("/tmp"sv));
+  EXPECT_EQ(rt::path::resolve("a/"sv, ".."sv), std::string(DARWIN_EXPECTATION("/tmp"sv, "/private/tmp"sv)));
   EXPECT_EQ(rt::path::resolve("/x/y/"sv, "../.."sv), std::string("/"sv));
   EXPECT_EQ(rt::path::resolve(""sv, "/"sv), std::string("/"sv));
   EXPECT_EQ(rt::path::resolve("/"sv, ""sv), std::string("/"sv));
@@ -446,17 +453,17 @@ TEST("node:path posix functions match bun (cwd /tmp)") {
   EXPECT_EQ(rt::path::join("/a/b"sv, ".."sv, "c"sv), std::string("/a/c"sv));
   EXPECT_EQ(rt::path::join("x"sv, "/y"sv, "z"sv), std::string("x/y/z"sv));
   EXPECT_EQ(rt::path::join(""sv, ""sv, ""sv), std::string("."sv));
-  EXPECT_EQ(rt::path::resolve(), std::string("/tmp"sv));
-  EXPECT_EQ(rt::path::resolve("a"sv, "b"sv, "c"sv), std::string("/tmp/a/b/c"sv));
+  EXPECT_EQ(rt::path::resolve(), std::string(DARWIN_EXPECTATION("/tmp"sv, "/private/tmp"sv)));
+  EXPECT_EQ(rt::path::resolve("a"sv, "b"sv, "c"sv), std::string(DARWIN_EXPECTATION("/tmp/a/b/c"sv, "/private/tmp/a/b/c"sv)));
   EXPECT_EQ(rt::path::resolve("/a"sv, "b"sv, "../c"sv, "./d"sv), std::string("/a/c/d"sv));
-  EXPECT_EQ(rt::path::resolve("a/"sv, ".."sv, ".."sv), std::string("/"sv));
+  EXPECT_EQ(rt::path::resolve("a/"sv, ".."sv, ".."sv), std::string(DARWIN_EXPECTATION("/"sv, "/private"sv)));
   EXPECT_EQ(rt::path::resolve("/"sv, ".."sv, "a"sv), std::string("/a"sv));
   EXPECT_EQ(rt::path::resolve("/r"sv, ".data"sv, "native-kv.binding.json"sv), std::string("/r/.data/native-kv.binding.json"sv));
   EXPECT_EQ(rt::path::resolve("/a"sv, ""sv, "b"sv), std::string("/a/b"sv));
   EXPECT_EQ(rt::path::resolve("/a//b/"sv, "./c/"sv), std::string("/a/b/c"sv));
   EXPECT_EQ(rt::path::resolve("/a/b"sv, ".."sv, "c"sv), std::string("/a/c"sv));
   EXPECT_EQ(rt::path::resolve("x"sv, "/y"sv, "z"sv), std::string("/y/z"sv));
-  EXPECT_EQ(rt::path::resolve(""sv, ""sv, ""sv), std::string("/tmp"sv));
+  EXPECT_EQ(rt::path::resolve(""sv, ""sv, ""sv), std::string(DARWIN_EXPECTATION("/tmp"sv, "/private/tmp"sv)));
 }
 
 TEST("fs error objects: open, read, stat, lstat, realpath (fs1 probe)") {
@@ -479,7 +486,7 @@ TEST("fs error objects: open, read, stat, lstat, realpath (fs1 probe)") {
   const std::string unicode = base + "/\xc3\xbcn\xc3\xaf \"q'";
   EXPECT_EQ(errorOf([&] { fs::readFileSync(unicode); }), errno_("ENOENT", -2, "no such file or directory", "open", unicode));
   const std::string longName = base + "/" + std::string(300, 'x');
-  EXPECT_EQ(errorOf([&] { fs::readFileSync(longName); }), errno_("ENAMETOOLONG", -36, "name too long", "open", longName));
+  EXPECT_EQ(errorOf([&] { fs::readFileSync(longName); }), errno_("ENAMETOOLONG", DARWIN_EXPECTATION(-36, -63), "name too long", "open", longName));
   fs::writeFileSync(base + "/file1", "x");
   EXPECT_EQ(errorOf([&] { fs::readFileSync(base + "/file1/x"); }), errno_("ENOTDIR", -20, "not a directory", "open", base + "/file1/x"));
   if (::geteuid() != 0) {
@@ -506,7 +513,7 @@ TEST("fs error objects: descriptors, create flags, copy and link (fs1 probe)") {
   EXPECT_EQ(errorOf([&] { fs::openSync(base + "/missing", "r"); }), errno_("ENOENT", -2, "no such file or directory", "open", base + "/missing"));
   ASSERT(::symlink((base + "/file1").c_str(), (base + "/link1").c_str()) == 0);
   EXPECT_EQ(errorOf([&] { fs::openSync(base + "/link1", fs::constants::O_RDONLY_ | fs::constants::O_NOFOLLOW_); }),
-            errno_("ELOOP", -40, "too many symbolic links encountered", "open", base + "/link1"));
+            errno_("ELOOP", DARWIN_EXPECTATION(-40, -62), "too many symbolic links encountered", "open", base + "/link1"));
   EXPECT_EQ(errorOf([&] { fs::closeSync(99999); }), "Error|EBADF: bad file descriptor, close|EBADF|-9|close|-|-|99999");
   EXPECT_EQ(errorOf([&] { fs::fstatSync(99999); }), errno_("EBADF", -9, "bad file descriptor", "fstat"));
   EXPECT_EQ(errorOf([&] { fs::fsyncSync(99999); }), errno_("EBADF", -9, "bad file descriptor", "fsync"));
@@ -530,17 +537,19 @@ TEST("fs error objects: descriptors, create flags, copy and link (fs1 probe)") {
   fs::closeSync(twice);
   EXPECT_EQ(errorOf([&] { fs::closeSync(twice); }), "Error|EBADF: bad file descriptor, close|EBADF|-9|close|-|-|" + std::to_string(twice));
   EXPECT_EQ(fs::constants::O_RDONLY_, 0);
-#if defined(__linux__) && defined(__x86_64__)
+#if defined(__APPLE__)
+  EXPECT_EQ(fs::constants::O_NOFOLLOW_, 256);
+#elif defined(__linux__) && defined(__x86_64__)
   EXPECT_EQ(fs::constants::O_NOFOLLOW_, 131072);
 #else
   EXPECT_EQ(fs::constants::O_NOFOLLOW_, 32768);
 #endif
   EXPECT_EQ(fs::constants::COPYFILE_EXCL, 1);
-  EXPECT_EQ(fs::constants::O_CREAT_, 64);
-  EXPECT_EQ(fs::constants::O_EXCL_, 128);
+  EXPECT_EQ(fs::constants::O_CREAT_, DARWIN_EXPECTATION(64, 512));
+  EXPECT_EQ(fs::constants::O_EXCL_, DARWIN_EXPECTATION(128, 2048));
   EXPECT_EQ(fs::constants::O_WRONLY_, 1);
-  EXPECT_EQ(fs::constants::O_TRUNC_, 512);
-  EXPECT_EQ(fs::constants::O_APPEND_, 1024);
+  EXPECT_EQ(fs::constants::O_TRUNC_, DARWIN_EXPECTATION(512, 1024));
+  EXPECT_EQ(fs::constants::O_APPEND_, DARWIN_EXPECTATION(1024, 8));
 }
 
 TEST("mkdirSync, mkdtempSync and rmSync results and errors (fs1/fs2 probes)") {
@@ -662,7 +671,7 @@ TEST("file contents, modes, links, copies and existsSync (fs2 probe)") {
   EXPECT_EQ(fs::readFileSync("copy5", "utf8"), "five");
   fs::copyFileSync("file2", "copy5");
   EXPECT_EQ(fs::readFileSync("copy5", "utf8"), "new");
-  EXPECT_EQ(errorOf([&] { fs::copyFileSync(".", "copy6"); }), errno_("ENOTSUP", -95, "operation not supported on socket", "copyfile", ".", "copy6"));
+  EXPECT_EQ(errorOf([&] { fs::copyFileSync(".", "copy6"); }), errno_("ENOTSUP", DARWIN_EXPECTATION(-95, -45), "operation not supported on socket", "copyfile", ".", "copy6"));
   EXPECT(!fs::existsSync("copy6"));
   const auto entries = fs::promises::readdir(".", fs::withFileTypes);
   for (const auto& entry : entries) {
@@ -789,7 +798,8 @@ TEST("symlinkSync and renameSync results and errors (bun 1.4 probe)") {
   EXPECT(!fs::existsSync(base + "/dangling"));
   EXPECT_EQ(errorOf([&] { fs::symlinkSync("file", base + "/nope/link"); }),
             errno_("ENOENT", -2, "no such file or directory", "symlink", "file", base + "/nope/link"));
-  EXPECT_EQ(errorOf([&] { fs::symlinkSync("", base + "/empty"); }), "Error|ENOENT: no such file or directory, symlink|ENOENT|-2|symlink|-|" + base + "/empty|-");
+  EXPECT_EQ(errorOf([&] { fs::symlinkSync("", base + "/empty"); }),
+            DARWIN_EXPECTATION("Error|ENOENT: no such file or directory, symlink|ENOENT|-2|symlink|-|" + base + "/empty|-", "no error"));
   EXPECT_EQ(errorOf([&] { fs::symlinkSync("file", ""); }), errno_("ENOENT", -2, "no such file or directory", "symlink", "file"));
   {
     Cwd cwd(base);
@@ -809,7 +819,7 @@ TEST("symlinkSync and renameSync results and errors (bun 1.4 probe)") {
   fs::writeFileSync(base + "/dir/inner", "y");
   fs::mkdirSync(base + "/dir2");
   EXPECT_EQ(errorOf([&] { fs::renameSync(base + "/dir2", base + "/dir"); }),
-            errno_("ENOTEMPTY", -39, "directory not empty", "rename", base + "/dir2", base + "/dir"));
+            errno_("ENOTEMPTY", DARWIN_EXPECTATION(-39, -66), "directory not empty", "rename", base + "/dir2", base + "/dir"));
   EXPECT_EQ(errorOf([&] { fs::renameSync(base + "/dir2", base + "/file2"); }),
             errno_("ENOTDIR", -20, "not a directory", "rename", base + "/dir2", base + "/file2"));
   fs::writeFileSync(base + "/a", "A");
@@ -849,12 +859,16 @@ TEST("utimesSync sets both times as Bun does: seconds kept to the nanosecond, Da
   fs::utimesSync(file, rt::Date(1.9), rt::Date(-1.9));
   EXPECT_EQ(timesOf(file), "1000000 -1000000");
   fs::utimesSync(file, rt::Date(8.64e15), rt::Date(-8.64e15));
-  EXPECT_EQ(rawTimesOf(file), "8640000000000.0 -8640000000000.0");
+  EXPECT_EQ(rawTimesOf(file), DARWIN_EXPECTATION("8640000000000.0 -8640000000000.0", "9223372036.854775807 -9223372037.145224192"));
+#if defined(__APPLE__)
+  EXPECT_EQ(fs::statSync(file).atimeNs, std::numeric_limits<std::int64_t>::max());
+  EXPECT_EQ(fs::statSync(file).mtimeNs, std::numeric_limits<std::int64_t>::min());
+#endif
   fs::utimesSync(file, 9.2e18, 1);
-  EXPECT_EQ(rawTimesOf(file), "9200000000000000000.0 1.0");
+  EXPECT_EQ(rawTimesOf(file), DARWIN_EXPECTATION("9200000000000000000.0 1.0", "9223372036.854775807 1.0"));
   // Seconds past int64 saturate (Bun: 1e19 and 1e300 both store 9223372036854775807 s).
   fs::utimesSync(file, 1e19, 1e300);
-  EXPECT_EQ(rawTimesOf(file), "9223372036854775807.0 9223372036854775807.0");
+  EXPECT_EQ(rawTimesOf(file), DARWIN_EXPECTATION("9223372036854775807.0 9223372036854775807.0", "9223372036.854775807 9223372036.854775807"));
 
   // A negative number is now, for that time alone; two of them share one kernel timestamp.
   const auto before = static_cast<long long>(std::time(nullptr));
