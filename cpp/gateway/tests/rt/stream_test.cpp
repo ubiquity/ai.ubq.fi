@@ -301,7 +301,9 @@ ASYNC_TEST("bun stream2: tee() gives both branches every chunk; both cancels can
     };
     source.cancel = [log](rt::Reason reason) { log->push_back("tee source cancel reason=" + describe(reason)); };
     Stream s(source, {.highWaterMark = 0});
-    auto [a, b] = s.tee();
+    auto branches = s.tee();
+    auto& a = branches.first;
+    auto& b = branches.second;
     log->push_back(std::string("tee locked source=") + (s.locked() ? "true" : "false"));
     auto ra = a.getReader();
     log->push_back("a1: " + co_await outcome(ra.read()));
@@ -317,7 +319,9 @@ ASYNC_TEST("bun stream2: tee() gives both branches every chunk; both cancels can
     rt::UnderlyingSource<std::string> source;
     source.cancel = [log](rt::Reason reason) { log->push_back("tee2 source cancel reason=" + describe(reason)); };
     Stream s(source);
-    auto [a, b] = s.tee();
+    auto branches = s.tee();
+    auto& a = branches.first;
+    auto& b = branches.second;
     auto ca = a.cancel(rt::thrown(json::value("ra")));
     log->push_back("after cancel a (source not cancelled yet)");
     auto cb = b.cancel(rt::thrown(json::value("rb")));
@@ -330,7 +334,9 @@ ASYNC_TEST("bun stream2: tee() gives both branches every chunk; both cancels can
     rt::UnderlyingSource<std::string> source;
     source.start = [&ctl](Controller c) { ctl = c; };
     Stream s(source);
-    auto [a, b] = s.tee();
+    auto branches = s.tee();
+    auto& a = branches.first;
+    auto& b = branches.second;
     auto pa = a.getReader().read();
     ctl->error(rt::makeReason(rt::JsError("src-err")));
     auto first = co_await outcome(std::move(pa));

@@ -84,7 +84,8 @@ TEST("paid pure deferral retains unresolved exposure and preserves the original 
   ASSERT_EQ(deferred.request.reserved_microcredits, 80.0);
   ASSERT_EQ(deferred.delay, 21'600'000.0);
   ASSERT_EQ(deferred.request.terminal_state, "pending");
-  ASSERT(v.deferralCleanup == NativePaidDeferralPlan(NativePaidDeferralPlanCleanup{.checks = {"pending", "gate"}}));
+  const NativePaidDeferralPlan expectedCleanup = NativePaidDeferralPlanCleanup{.checks = {"pending", "gate"}};
+  ASSERT(v.deferralCleanup == expectedCleanup);
   ASSERT(v.deferralNoop == NativePaidDeferralPlan(NativePaidDeferralPlanNoop{.checks = {}}));
   ASSERT(std::holds_alternative<paid::PaidFallbackDeletionPlanV3Blocked>(v.deletion));
 }

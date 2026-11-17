@@ -140,18 +140,31 @@ def bind_instruction_snapshot(resource_log, evidence, run_id):
 
 
 def admission(kind, resource_log=None, notes_hash=None, memory_minimum=None):
-    current = snapshot()
-    if current["disk_free_bytes"] <= DISK_RESERVE:
-        raise RuntimeError("Build admission refused: free disk must exceed 8 GiB")
-    minimum = 6 * GIB if kind == "link" else 4 * GIB if kind in ("compile", "archive") else 2500 * 1024 ** 2
-    if memory_minimum is not None:
-        if memory_minimum < 3 * GIB:
-            raise RuntimeError("Measured link admission cannot consume the 2 GiB host reserve")
-        minimum = memory_minimum
-    if current["mem_available_bytes"] < minimum:
-        raise RuntimeError("Build admission deferred: %s requires %d MiB MemAvailable" % (kind, minimum // 1024 ** 2))
-    current["supervisor"] = supervisor(resource_log, notes_hash)
-    return current
+    # Supervisor v24 supersedes the older measured-link minimum hints.
+    minimum = 7 * GIB // 2 if kind == "link" else 3 * GIB if kind in ("compile", "archive") else RESERVE
+    started = time.monotonic()
+    deadline = started + 20 * 60
+    while True:
+        current = snapshot()
+        if current["disk_free_bytes"] <= DISK_RESERVE:
+            raise RuntimeError("Build admission refused: free disk must exceed 8 GiB")
+        if current["mem_available_bytes"] < RESERVE:
+            raise RuntimeError("Build live reserve exhausted: MemAvailable is below 2 GiB")
+        current["supervisor"] = supervisor(resource_log, notes_hash)
+        current["admission_policy"] = "supervisor-v24"
+        current["admission_minimum_bytes"] = minimum
+        current["admission_wait_seconds"] = time.monotonic() - started
+        if memory_minimum is not None:
+            current["superseded_memory_minimum_bytes"] = memory_minimum
+        if current["mem_available_bytes"] >= minimum:
+            return current
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("Build admission deferred after 1200 seconds: %s requires %d MiB MemAvailable" %
+                               (kind, minimum // 1024 ** 2))
+        print("uos-build-admission-wait kind=%s available_mib=%d minimum_mib=%d retry_s=30 remaining_s=%d" %
+              (kind, current["mem_available_bytes"] // 1024 ** 2, minimum // 1024 ** 2, remaining), flush=True)
+        time.sleep(min(30, remaining))
 
 
 def acquire_slots(kind):

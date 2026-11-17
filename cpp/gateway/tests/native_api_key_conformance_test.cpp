@@ -236,13 +236,15 @@ TEST("native API V3 pure plans preserve policy identity, named write sets, lease
   EXPECT(deepEquals(planJson(result.identityConflict), R"({"kind":"unavailable","reason":"identity_conflict"})"));
   EXPECT(deepEquals(planJson(result.malformedRequest), R"({"kind":"unavailable","reason":"request_malformed"})"));
   EXPECT(deepEquals(planJson(result.malformedWindow), R"({"kind":"unavailable","reason":"window_malformed"})"));
-  EXPECT(result.dispatched.checks == (std::vector<std::string>{"request", "window"}));
+  const std::vector<std::string> dispatchedChecks{"request", "window"};
+  EXPECT(result.dispatched.checks == dispatchedChecks);
   EXPECT_EQ(result.dispatched.window.reserved_requests, 0.0);
   EXPECT_EQ(result.dispatched.window.committed_requests, 1.0);
   EXPECT(deepEquals(planJson(result.repeatedDispatch), R"({"kind":"already_dispatched"})"));
   // Native dispatch does not add a new lease-expiry or hash-policy fence after reservation.
   EXPECT_EQ(kindOf(planJson(result.expiredDispatch)), "write");
-  EXPECT(result.cancelled.checks == (std::vector<std::string>{"request", "window"}));
+  const std::vector<std::string> cancelledChecks{"request", "window"};
+  EXPECT(result.cancelled.checks == cancelledChecks);
   EXPECT_EQ(result.cancelled.window.committed_requests, 0.0);
   EXPECT(!result.cancelled.request.provider.has_value());
   EXPECT_EQ(result.cancelled.request.release_reason, std::optional<std::string>("transport_cancelled_before_fetch"));

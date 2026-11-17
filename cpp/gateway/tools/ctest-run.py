@@ -156,8 +156,8 @@ def run_test(selected, binary, owner_path, registry_path, evidence, options):
         raise RuntimeError("Missing test binary or binary outside its owned profile: " + str(binary))
     accepted = supervisor(options.supervisor_log, options.notes_hash) if options.supervisor_log else None
     admitted = admission("driver", options.supervisor_log, accepted["notes_sha256"] if accepted else None)
-    if admitted["mem_available_bytes"] < 4 * GIB:
-        raise RuntimeError("Test runtime requires 4 GiB MemAvailable before its sampled 2 GiB RSS guard")
+    if admitted["mem_available_bytes"] < 2 * GIB:
+        raise RuntimeError("Test runtime requires 2 GiB MemAvailable before its sampled 2 GiB RSS guard")
     scratch = Path(tempfile.mkdtemp(prefix="uos-test-", dir=scratch_parent(options)))
     for name in ("h", "t", "w"):
         (scratch / name).mkdir(mode=0o700)

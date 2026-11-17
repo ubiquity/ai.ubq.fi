@@ -103,6 +103,11 @@ def main():
     # Catastrophic backtracking is the JavaScript engines' own behaviour for patterns such as
     # (a*)+ and (.+)+, so slow regex inputs are kept in the artifacts but are not failures.
     expected = [name for name in findings if args.target == "regex" and name.startswith("timeout-")]
+    # On ARM64 libFuzzer's fork-mode parent leaks 32 bytes of its own at exit (fuzzer::FuzzWithFork);
+    # LeakSanitizer then records an empty "crash" input. It is the tool's leak, not a target finding.
+    log_text = (out / "campaign.log").read_text(errors="replace")
+    if "fuzzer::FuzzWithFork" in log_text:
+        expected += [name for name in findings if name.startswith("crash-") and (artifacts / name).stat().st_size == 0]
     findings = [name for name in findings if name not in expected]
     tail = (out / "campaign.log").read_text(errors="replace")[-3000:]
     summary = {"target": args.target, "seconds": args.seconds, "jobs": args.jobs, "exit": code,

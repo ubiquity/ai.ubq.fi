@@ -39,6 +39,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <tuple>
 #include <utility>
 #include <span>
 #include <string>
@@ -987,7 +988,9 @@ ASYNC_TEST("concurrent native arithmetic retains updates while caller CAS failur
   rt::Promise<KvCommitResult> one(first->commit());
   rt::Promise<KvCommitResult> two(second->commit());
   auto both = rt::all(one, two);
-  const auto [a, b] = co_await both.wait();
+  const auto committed = co_await both.wait();
+  const auto& a = std::get<0>(committed);
+  const auto& b = std::get<1>(committed);
   EXPECT(a.ok && b.ok);
   EXPECT_EQ((co_await kv->get({"guard-counter"})).value, KvValue(KvU64(2)));
   const KvEntryMaybe<> stale = co_await kv->get({"caller-fence"});
@@ -1044,7 +1047,9 @@ ASYNC_TEST("two native handles share CAS fencing and monotonic persisted revisio
   rt::Promise<KvCommitResult> ra(a->commit());
   rt::Promise<KvCommitResult> rb(b->commit());
   auto both = rt::all(ra, rb);
-  const auto [one, two] = co_await both.wait();
+  const auto committed = co_await both.wait();
+  const auto& one = std::get<0>(committed);
+  const auto& two = std::get<1>(committed);
   EXPECT_EQ(static_cast<int>(one.ok) + static_cast<int>(two.ok), 1);
   const KvEntryMaybe<> before = co_await first->get({"claim"});
   co_await second->delete_({"claim"});
