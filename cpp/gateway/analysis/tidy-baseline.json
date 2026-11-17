@@ -4,10 +4,13 @@
       "files": {
         "include/uos/rt/nullable.hpp": 2,
         "include/uos/rt/record.hpp": 1,
-        "src/auth/passkeys.cpp": 1
+        "include/uos/rt/sqlite.hpp": 1,
+        "src/auth/passkeys.cpp": 1,
+        "src/handler/terminal_log.cpp": 1,
+        "src/images.cpp": 1
       },
-      "tu_emissions": 192,
-      "unique": 4
+      "tu_emissions": 352,
+      "unique": 7
     },
     "bugprone-empty-catch": {
       "files": {
@@ -40,20 +43,47 @@
         "src/codex/banked_reset_provider.cpp": 1,
         "src/codex/capacity_routing.cpp": 6,
         "src/codex/dispatch.cpp": 8,
-        "src/codex/overage_settings.cpp": 1
+        "src/codex/native_auth.cpp": 1,
+        "src/codex/overage_settings.cpp": 1,
+        "src/codex/responses_operations.cpp": 8,
+        "src/codex/responses_runners.cpp": 2,
+        "src/codex/routing_mutations.cpp": 4,
+        "src/codex/routing_serial.cpp": 1,
+        "src/codex/session.cpp": 1,
+        "src/codex/supervisor.cpp": 1,
+        "src/codex/supervisor_inventory.cpp": 1,
+        "src/codex/supervisor_transport.cpp": 3,
+        "src/decisions/handlers.cpp": 1,
+        "src/deepseek/handlers.cpp": 2,
+        "src/deepseek/responses_payload.cpp": 1,
+        "src/deepseek/stream.cpp": 2,
+        "src/deepseek/waterfall_handler.cpp": 1,
+        "src/embeddings/handlers.cpp": 2,
+        "src/embeddings/jobs.cpp": 1,
+        "src/embeddings/voyage.cpp": 1,
+        "src/handler/terminal_log.cpp": 6,
+        "src/handler/terminal_route.cpp": 2,
+        "src/harmony/reliability/context.cpp": 1,
+        "src/harmony/reliability/harness.cpp": 2,
+        "src/health.cpp": 11,
+        "src/images.cpp": 5,
+        "src/jev_compaction/compaction.cpp": 1,
+        "src/lib/jev_compaction/jev_compaction_smoke.cpp": 1
       },
-      "tu_emissions": 507,
-      "unique": 76
+      "tu_emissions": 997,
+      "unique": 138
     },
     "bugprone-exception-copy-constructor-throws": {
       "files": {
-        "src/api_key_policy.cpp": 1
+        "src/api_key_policy.cpp": 1,
+        "src/codex/responses_runners.cpp": 1
       },
-      "tu_emissions": 1,
-      "unique": 1
+      "tu_emissions": 2,
+      "unique": 2
     },
     "bugprone-float-loop-counter": {
       "files": {
+        "include/uos/codex/supervisor_config.hpp": 1,
         "src/analytics.cpp": 1,
         "src/api_key_policy.cpp": 5,
         "src/auth/passkeys.cpp": 4,
@@ -61,19 +91,31 @@
         "src/catalog/store.cpp": 5,
         "src/codex/banked_reset_claim.cpp": 4,
         "src/codex/banked_reset_pool.cpp": 1,
-        "src/codex/capacity_routing.cpp": 1
+        "src/codex/capacity_routing.cpp": 1,
+        "src/codex/supervisor_inventory.cpp": 1,
+        "src/embeddings/ledger.cpp": 7,
+        "src/harmony/reliability/harness.cpp": 2,
+        "src/images.cpp": 2,
+        "src/jev_compaction/hybrid.cpp": 1,
+        "src/kernel/quota_reservations.cpp": 5,
+        "src/kernel/quota_reserve.cpp": 1,
+        "src/kernel/quota_write.cpp": 2,
+        "src/kernel/usage.cpp": 1,
+        "src/kv_conversion/legacy_codec.cpp": 1
       },
-      "tu_emissions": 22,
-      "unique": 22
+      "tu_emissions": 51,
+      "unique": 46
     },
     "bugprone-implicit-widening-of-multiplication-result": {
       "files": {
         "include/uos/request.hpp": 1,
         "include/uos/rt/gzip.hpp": 1,
-        "include/uos/sentinel/upstream_capture.hpp": 1
+        "include/uos/sentinel/upstream_capture.hpp": 1,
+        "src/codex/supervisor_brief.cpp": 1,
+        "src/codex/supervisor_log.cpp": 1
       },
-      "tu_emissions": 33,
-      "unique": 3
+      "tu_emissions": 88,
+      "unique": 5
     },
     "bugprone-optional-value-conversion": {
       "files": {
@@ -83,16 +125,22 @@
         "src/authority/native_authority_codex.cpp": 1,
         "src/authority/native_codex_capacity.cpp": 1,
         "src/authority/native_codex_evaluation.cpp": 1,
-        "src/codex/banked_reset_claim.cpp": 1
+        "src/codex/banked_reset_claim.cpp": 1,
+        "src/deepseek/chat_projection.cpp": 2,
+        "src/embeddings/ledger.cpp": 1,
+        "src/embeddings/voyage.cpp": 1,
+        "src/handler/http.cpp": 1,
+        "src/health.cpp": 1,
+        "src/images.cpp": 3
       },
-      "tu_emissions": 8,
-      "unique": 7
+      "tu_emissions": 17,
+      "unique": 16
     },
     "bugprone-reserved-identifier": {
       "files": {
         "include/uos/provider/stream_relay.hpp": 1
       },
-      "tu_emissions": 1,
+      "tu_emissions": 3,
       "unique": 1
     },
     "bugprone-return-const-ref-from-parameter": {
@@ -100,25 +148,38 @@
         "include/uos/rt/ordered.hpp": 1,
         "src/auth/passkeys.cpp": 1
       },
-      "tu_emissions": 73,
+      "tu_emissions": 149,
       "unique": 2
     },
     "bugprone-signed-bitwise": {
       "files": {
         "include/uos/rt/number.hpp": 2,
         "include/uos/rt/string.hpp": 1,
-        "src/auth/passkeys.cpp": 63
+        "src/auth/passkeys.cpp": 63,
+        "src/codex/supervisor_secret.cpp": 1,
+        "src/embeddings/voyage.cpp": 1,
+        "src/kv_conversion/convert.cpp": 1,
+        "src/kv_conversion/legacy_codec.cpp": 1,
+        "src/kv_conversion/proof.cpp": 2,
+        "src/kv_conversion/typed_value.cpp": 1
       },
-      "tu_emissions": 358,
-      "unique": 66
+      "tu_emissions": 655,
+      "unique": 73
     },
     "bugprone-std-exception-baseclass": {
       "files": {
         "include/uos/rt/async.hpp": 2,
         "include/uos/rt/stream.hpp": 1
       },
-      "tu_emissions": 264,
+      "tu_emissions": 513,
       "unique": 3
+    },
+    "bugprone-suspicious-missing-comma": {
+      "files": {
+        "src/codex/supervisor_brief.cpp": 1
+      },
+      "tu_emissions": 1,
+      "unique": 1
     },
     "bugprone-throwing-static-initialization": {
       "files": {
@@ -141,12 +202,23 @@
         "include/uos/codex/manual_reset_state.hpp": 1,
         "include/uos/codex/overage_settings.hpp": 1,
         "include/uos/codex/reset_settings.hpp": 3,
+        "include/uos/codex/session.hpp": 1,
+        "include/uos/codex/supervisor_config.hpp": 5,
         "include/uos/debug_routing.hpp": 1,
         "include/uos/deepseek/flash_aliases.hpp": 1,
         "include/uos/deepseek/index.hpp": 3,
         "include/uos/deepseek/waterfall.hpp": 2,
         "include/uos/defaults.hpp": 5,
         "include/uos/embeddings/ledger.hpp": 7,
+        "include/uos/handler/admission.hpp": 1,
+        "include/uos/handler/index.hpp": 1,
+        "include/uos/harmony/classifier.hpp": 1,
+        "include/uos/harmony/probe_scenarios.hpp": 1,
+        "include/uos/harmony/probes.hpp": 3,
+        "include/uos/harmony/reliability/retry.hpp": 1,
+        "include/uos/harmony/reliability/surfaces.hpp": 1,
+        "include/uos/harmony/tools/fakes.hpp": 2,
+        "include/uos/harmony/tools/schemas.hpp": 1,
         "include/uos/input_normalization.hpp": 1,
         "include/uos/kernel/usage.hpp": 4,
         "include/uos/metered_quota.hpp": 4,
@@ -181,10 +253,25 @@
         "src/cache/prompt_analytics_core.cpp": 2,
         "src/catalog/types.cpp": 5,
         "src/codex/banked_reset.cpp": 1,
-        "src/codex/banked_reset_provider.cpp": 1
+        "src/codex/banked_reset_provider.cpp": 1,
+        "src/codex/supervisor_secret.cpp": 15,
+        "src/codex/supervisor_transport.cpp": 2,
+        "src/config.cpp": 1,
+        "src/decisions/handlers.cpp": 1,
+        "src/deepseek/chat_projection.cpp": 1,
+        "src/deepseek/flash_aliases.cpp": 3,
+        "src/deepseek/handlers.cpp": 1,
+        "src/harmony/probe_scenarios.cpp": 1,
+        "src/harmony/reliability/failure.cpp": 1,
+        "src/harmony/reliability/loops.cpp": 1,
+        "src/images.cpp": 10,
+        "src/kernel/attestation.cpp": 1,
+        "src/kv_conversion/cursors.cpp": 2,
+        "src/kv_conversion/native_schema.cpp": 1,
+        "src/lib/jev_compaction/compact.cpp": 1
       },
-      "tu_emissions": 1044,
-      "unique": 166
+      "tu_emissions": 1900,
+      "unique": 226
     },
     "bugprone-unchecked-optional-access": {
       "files": {
@@ -192,6 +279,7 @@
         "include/uos/rt/async.hpp": 5,
         "include/uos/rt/nullable.hpp": 6,
         "include/uos/rt/regex.hpp": 3,
+        "include/uos/rt/sqlite.hpp": 2,
         "include/uos/rt/stream.hpp": 1,
         "src/admin/api_key_mutations.cpp": 1,
         "src/admin/api_keys.cpp": 6,
@@ -249,27 +337,97 @@
         "src/codex/external_auth.cpp": 8,
         "src/codex/manual_reset.cpp": 2,
         "src/codex/manual_reset_state.cpp": 3,
-        "src/codex/native_auth_transport.cpp": 1
+        "src/codex/native_auth.cpp": 26,
+        "src/codex/native_auth_transport.cpp": 1,
+        "src/codex/responses_error.cpp": 2,
+        "src/codex/responses_operations.cpp": 2,
+        "src/codex/responses_runners.cpp": 1,
+        "src/codex/routing_evaluation.cpp": 2,
+        "src/codex/routing_serial.cpp": 1,
+        "src/codex/supervisor.cpp": 2,
+        "src/codex/supervisor_brief.cpp": 4,
+        "src/codex/supervisor_inventory.cpp": 4,
+        "src/codex/supervisor_log.cpp": 3,
+        "src/codex/supervisor_secret.cpp": 5,
+        "src/debug_routing.cpp": 6,
+        "src/decisions/handlers.cpp": 1,
+        "src/deepseek/chat_projection.cpp": 7,
+        "src/deepseek/context_admission_failure.cpp": 1,
+        "src/deepseek/index.cpp": 14,
+        "src/deepseek/stream.cpp": 1,
+        "src/deepseek/waterfall_handler.cpp": 2,
+        "src/embeddings/jobs.cpp": 5,
+        "src/embeddings/ledger.cpp": 3,
+        "src/handler/admission.cpp": 1,
+        "src/handler/http.cpp": 1,
+        "src/handler/index.cpp": 2,
+        "src/handler/terminal_log.cpp": 8,
+        "src/handler/terminal_route.cpp": 4,
+        "src/harmony/parse.cpp": 2,
+        "src/harmony/probe_scenarios.cpp": 4,
+        "src/harmony/render.cpp": 1,
+        "src/harmony/tools/backend.cpp": 4,
+        "src/health.cpp": 1,
+        "src/http.cpp": 3,
+        "src/images.cpp": 4,
+        "src/inference_admission.cpp": 1,
+        "src/input_normalization.cpp": 9,
+        "src/jev_compaction/compaction.cpp": 5,
+        "src/kernel/attestation.cpp": 6,
+        "src/kernel/quota_reservations.cpp": 1,
+        "src/kernel/quota_reserve.cpp": 1,
+        "src/kernel/usage.cpp": 1,
+        "src/kv_conversion/convert.cpp": 1,
+        "src/kv_conversion/cursors.cpp": 4,
+        "src/kv_conversion/legacy_codec.cpp": 2,
+        "src/kv_conversion/profile_json.cpp": 1,
+        "src/kv_conversion/proof.cpp": 1,
+        "src/kv_conversion/typed_value.cpp": 4,
+        "src/lib/jev_compaction/jev_compaction_smoke.cpp": 6,
+        "src/lib/jev_compaction/state.cpp": 3
       },
-      "tu_emissions": 541,
-      "unique": 309
+      "tu_emissions": 1004,
+      "unique": 484
     },
     "bugprone-unhandled-self-assignment": {
       "files": {
         "include/uos/rt/ordered.hpp": 1
       },
-      "tu_emissions": 72,
+      "tu_emissions": 148,
       "unique": 1
     },
     "cert-err09-cpp": {
       "files": {
-        "src/api_key_policy.cpp": 1
+        "src/api_key_policy.cpp": 1,
+        "src/codex/responses_runners.cpp": 1
+      },
+      "tu_emissions": 2,
+      "unique": 2
+    },
+    "clang-analyzer-core.CallAndMessage": {
+      "files": {
+        "src/codex/supervisor_inventory.cpp": 1
       },
       "tu_emissions": 1,
       "unique": 1
     },
+    "clang-analyzer-core.NonNullParamChecker": {
+      "files": {
+        "src/codex/supervisor_inventory.cpp": 1
+      },
+      "tu_emissions": 1,
+      "unique": 1
+    },
+    "clang-analyzer-core.NullDereference": {
+      "files": {
+        "src/images.cpp": 3
+      },
+      "tu_emissions": 3,
+      "unique": 3
+    },
     "clang-analyzer-security.FloatLoopCounter": {
       "files": {
+        "include/uos/codex/supervisor_config.hpp": 1,
         "src/analytics.cpp": 1,
         "src/api_key_policy.cpp": 5,
         "src/auth/passkeys.cpp": 4,
@@ -277,22 +435,40 @@
         "src/catalog/store.cpp": 5,
         "src/codex/banked_reset_claim.cpp": 4,
         "src/codex/banked_reset_pool.cpp": 1,
-        "src/codex/capacity_routing.cpp": 1
+        "src/codex/capacity_routing.cpp": 1,
+        "src/codex/supervisor_inventory.cpp": 1,
+        "src/embeddings/ledger.cpp": 7,
+        "src/harmony/reliability/harness.cpp": 2,
+        "src/images.cpp": 2,
+        "src/jev_compaction/hybrid.cpp": 1,
+        "src/kernel/quota_reservations.cpp": 5,
+        "src/kernel/quota_reserve.cpp": 1,
+        "src/kernel/quota_write.cpp": 2,
+        "src/kernel/usage.cpp": 1,
+        "src/kv_conversion/legacy_codec.cpp": 1
       },
-      "tu_emissions": 22,
-      "unique": 22
+      "tu_emissions": 46,
+      "unique": 46
     },
     "cppcoreguidelines-avoid-capturing-lambda-coroutines": {
       "files": {
+        "include/uos/codex/supervisor_config.hpp": 1,
+        "include/uos/kv_conversion/convert.hpp": 1,
         "src/admin/codex.cpp": 1,
         "src/admin/kernel.cpp": 4,
         "src/chat/envelope.cpp": 1,
         "src/chat/stream_translation.cpp": 2,
         "src/codex/account_routing.cpp": 1,
-        "src/codex/overage_settings.cpp": 1
+        "src/codex/overage_settings.cpp": 1,
+        "src/codex/routing_serial.cpp": 1,
+        "src/handler/terminal_log.cpp": 1,
+        "src/kernel/quota_reservations.cpp": 3,
+        "src/kernel/quota_reserve.cpp": 1,
+        "src/kernel/quota_write.cpp": 2,
+        "src/kv_conversion/profile_json.cpp": 2
       },
-      "tu_emissions": 10,
-      "unique": 10
+      "tu_emissions": 29,
+      "unique": 22
     },
     "cppcoreguidelines-avoid-reference-coroutine-parameters": {
       "files": {
@@ -302,10 +478,13 @@
         "src/cache/kv_migration_usage.cpp": 25,
         "src/cache/kv_migration_validation.cpp": 9,
         "src/catalog/models.cpp": 1,
-        "src/catalog/store.cpp": 15
+        "src/catalog/store.cpp": 15,
+        "src/embeddings/jobs.cpp": 1,
+        "src/embeddings/voyage.cpp": 8,
+        "src/harmony/reliability/harness.cpp": 23
       },
-      "tu_emissions": 74,
-      "unique": 74
+      "tu_emissions": 106,
+      "unique": 106
     },
     "performance-expensive-value-or": {
       "files": {
@@ -319,25 +498,44 @@
         "src/cache/scope_experiment.cpp": 1,
         "src/chat/envelope.cpp": 2,
         "src/codex/banked_reset_submission.cpp": 2,
-        "src/codex/manual_reset.cpp": 1
+        "src/codex/manual_reset.cpp": 1,
+        "src/codex/supervisor_inventory.cpp": 1,
+        "src/deepseek/flash_aliases.cpp": 3,
+        "src/handler/terminal_log.cpp": 6,
+        "src/harmony/adapter.cpp": 3,
+        "src/harmony/reliability/harness.cpp": 1,
+        "src/health.cpp": 1,
+        "src/http.cpp": 2,
+        "src/kernel/quota_reservations.cpp": 1,
+        "src/lib/jev_compaction/compact.cpp": 2
       },
-      "tu_emissions": 19,
-      "unique": 19
+      "tu_emissions": 39,
+      "unique": 39
     },
     "performance-faster-string-find": {
       "files": {
-        "src/auth/passkeys.cpp": 2
+        "src/auth/passkeys.cpp": 2,
+        "src/codex/supervisor_log.cpp": 1,
+        "src/deepseek/stream.cpp": 1,
+        "src/harmony/tools/backend.cpp": 3,
+        "src/kv_conversion/convert.cpp": 1,
+        "src/kv_conversion/native_schema.cpp": 1,
+        "src/kv_conversion/proof.cpp": 1,
+        "src/kv_conversion/typed_value.cpp": 2
       },
-      "tu_emissions": 2,
-      "unique": 2
+      "tu_emissions": 12,
+      "unique": 12
     },
     "performance-inefficient-string-concatenation": {
       "files": {
         "src/authority/native_authority_sql.cpp": 3,
-        "src/cache/kv_migration_projection.cpp": 1
+        "src/cache/kv_migration_projection.cpp": 1,
+        "src/deepseek/responses_payload.cpp": 3,
+        "src/harmony/reliability/feedback.cpp": 1,
+        "src/harmony/render.cpp": 1
       },
-      "tu_emissions": 4,
-      "unique": 4
+      "tu_emissions": 9,
+      "unique": 9
     },
     "performance-inefficient-vector-operation": {
       "files": {
@@ -357,19 +555,41 @@
         "src/codex/banked_reset.cpp": 1,
         "src/codex/banked_reset_pool.cpp": 5,
         "src/codex/capacity_routing.cpp": 2,
-        "src/codex/overage_settings.cpp": 1
+        "src/codex/overage_settings.cpp": 1,
+        "src/codex/routing_evaluation.cpp": 4,
+        "src/codex/routing_serial.cpp": 2,
+        "src/codex/supervisor_brief.cpp": 3,
+        "src/codex/supervisor_inventory.cpp": 1,
+        "src/codex/supervisor_secret.cpp": 1,
+        "src/deepseek/flash_aliases.cpp": 2,
+        "src/deepseek/waterfall_handler.cpp": 1,
+        "src/embeddings/handlers.cpp": 3,
+        "src/embeddings/jobs.cpp": 3,
+        "src/embeddings/ledger.cpp": 1,
+        "src/embeddings/voyage.cpp": 1,
+        "src/harmony/probes.cpp": 3,
+        "src/harmony/reliability/state.cpp": 3,
+        "src/harmony/tools/router.cpp": 2,
+        "src/health.cpp": 1,
+        "src/images.cpp": 1,
+        "src/jev_compaction/compaction.cpp": 1,
+        "src/jev_compaction/hybrid.cpp": 2,
+        "src/lib/jev_compaction/compact.cpp": 2,
+        "src/lib/jev_compaction/state.cpp": 1
       },
-      "tu_emissions": 28,
-      "unique": 28
+      "tu_emissions": 66,
+      "unique": 66
     },
     "performance-move-const-arg": {
       "files": {
         "include/uos/rt/websocket.hpp": 1,
         "src/authority/authority_rpc.cpp": 1,
-        "src/authority/native_codex_capacity.cpp": 2
+        "src/authority/native_codex_capacity.cpp": 2,
+        "src/harmony/classifier.cpp": 1,
+        "src/harmony/tools/fakes.cpp": 2
       },
-      "tu_emissions": 7,
-      "unique": 4
+      "tu_emissions": 17,
+      "unique": 7
     },
     "performance-no-automatic-move": {
       "files": {
@@ -383,30 +603,54 @@
         "src/authority/native_authority_paid.cpp": 1,
         "src/cache/prompt_analytics_core.cpp": 1,
         "src/cache/telemetry_gate.cpp": 1,
-        "src/codex/auth.cpp": 5
+        "src/codex/auth.cpp": 5,
+        "src/codex/native_auth.cpp": 1,
+        "src/codex/session.cpp": 1,
+        "src/embeddings/voyage.cpp": 1,
+        "src/handler/http.cpp": 1,
+        "src/images.cpp": 1,
+        "src/jev_compaction/compaction.cpp": 1
       },
-      "tu_emissions": 17,
-      "unique": 17
+      "tu_emissions": 23,
+      "unique": 23
+    },
+    "performance-string-view-conversions": {
+      "files": {
+        "src/deepseek/waterfall_handler.cpp": 1,
+        "src/lib/jev_compaction/jev_compaction_smoke.cpp": 1
+      },
+      "tu_emissions": 2,
+      "unique": 2
     },
     "performance-unnecessary-copy-initialization": {
       "files": {
-        "include/uos/rt/async.hpp": 29,
+        "include/uos/rt/async.hpp": 40,
         "src/admin/sentinel_incident.cpp": 1,
         "src/auth/passport.cpp": 1,
         "src/cache/scope_experiment_targets.cpp": 1,
         "src/catalog/store.cpp": 1,
         "src/codex/auth.cpp": 2,
         "src/codex/auth_refresh.cpp": 1,
-        "src/codex/dispatch.cpp": 1
+        "src/codex/dispatch.cpp": 1,
+        "src/codex/native_auth.cpp": 1,
+        "src/codex/responses_state.cpp": 1,
+        "src/codex/supervisor.cpp": 1,
+        "src/handler/terminal_log.cpp": 5,
+        "src/health.cpp": 1,
+        "src/images.cpp": 1,
+        "src/kv_conversion/cli.cpp": 1,
+        "src/kv_conversion/proof.cpp": 1,
+        "src/lib/jev_compaction/jev_compaction_smoke.cpp": 1
       },
-      "tu_emissions": 50,
-      "unique": 37
+      "tu_emissions": 88,
+      "unique": 61
     },
     "performance-unnecessary-value-param": {
       "files": {
+        "include/uos/handler/index.hpp": 3,
         "include/uos/optional_telemetry_queue.hpp": 2,
         "include/uos/provider/stream_relay.hpp": 1,
-        "include/uos/rt/async.hpp": 7,
+        "include/uos/rt/async.hpp": 10,
         "include/uos/rt/stream.hpp": 1,
         "src/admin/api_keys.cpp": 1,
         "src/admin/chart_source_proxy.cpp": 2,
@@ -425,10 +669,44 @@
         "src/codex/auth_repair.cpp": 1,
         "src/codex/banked_reset.cpp": 4,
         "src/codex/dispatch.cpp": 2,
-        "src/codex/manual_reset.cpp": 1
+        "src/codex/manual_reset.cpp": 1,
+        "src/codex/native_auth.cpp": 1,
+        "src/codex/responses_operations.cpp": 25,
+        "src/codex/responses_runners.cpp": 3,
+        "src/codex/supervisor.cpp": 2,
+        "src/codex/supervisor_config.cpp": 3,
+        "src/codex/supervisor_inventory.cpp": 1,
+        "src/codex/supervisor_transport.cpp": 1,
+        "src/decisions/handlers.cpp": 1,
+        "src/deepseek/handlers.cpp": 16,
+        "src/deepseek/stream.cpp": 2,
+        "src/deepseek/waterfall_handler.cpp": 6,
+        "src/embeddings/handlers.cpp": 3,
+        "src/embeddings/jobs.cpp": 2,
+        "src/embeddings/voyage.cpp": 1,
+        "src/handler/http.cpp": 2,
+        "src/handler/index.cpp": 115,
+        "src/handler/serve_handler.cpp": 6,
+        "src/handler/terminal_log.cpp": 10,
+        "src/handler/terminal_route.cpp": 5,
+        "src/harmony/adapter.cpp": 1,
+        "src/harmony/classifier.cpp": 1,
+        "src/harmony/probes.cpp": 1,
+        "src/harmony/reliability/harness.cpp": 3,
+        "src/health.cpp": 2,
+        "src/http.cpp": 6,
+        "src/images.cpp": 3,
+        "src/inference_admission.cpp": 4,
+        "src/inference_deadline.cpp": 3,
+        "src/jev_compaction/compaction.cpp": 1,
+        "src/kernel/quota_reservations.cpp": 1,
+        "src/kv.cpp": 1,
+        "src/kv_conversion/native_schema.cpp": 1,
+        "src/kv_conversion/proof.cpp": 1,
+        "src/lib/jev_compaction/jev_compaction_smoke.cpp": 4
       },
-      "tu_emissions": 76,
-      "unique": 52
+      "tu_emissions": 351,
+      "unique": 296
     },
     "performance-use-std-move": {
       "files": {
@@ -436,10 +714,16 @@
         "src/agent_messages.cpp": 1,
         "src/catalog/index.cpp": 2,
         "src/codex/auth.cpp": 1,
-        "src/codex/dispatch.cpp": 2
+        "src/codex/dispatch.cpp": 2,
+        "src/codex/native_auth.cpp": 3,
+        "src/codex/responses_operations.cpp": 1,
+        "src/codex/responses_state.cpp": 4,
+        "src/codex/routing_mutations.cpp": 1,
+        "src/deepseek/waterfall_handler.cpp": 1,
+        "src/handler/terminal_route.cpp": 2
       },
-      "tu_emissions": 7,
-      "unique": 7
+      "tu_emissions": 19,
+      "unique": 19
     }
   },
   "complete": false,
@@ -541,23 +825,123 @@
     "src/codex/index.cpp",
     "src/codex/manual_reset.cpp",
     "src/codex/manual_reset_state.cpp",
+    "src/codex/native_auth.cpp",
     "src/codex/native_auth_transport.cpp",
     "src/codex/overage_settings.cpp",
-    "src/codex/quota.cpp"
+    "src/codex/quota.cpp",
+    "src/codex/rate_limit_429.cpp",
+    "src/codex/reset_settings.cpp",
+    "src/codex/responses_error.cpp",
+    "src/codex/responses_operations.cpp",
+    "src/codex/responses_runners.cpp",
+    "src/codex/responses_state.cpp",
+    "src/codex/routing_evaluation.cpp",
+    "src/codex/routing_mutations.cpp",
+    "src/codex/routing_serial.cpp",
+    "src/codex/routing_state.cpp",
+    "src/codex/session.cpp",
+    "src/codex/supervisor.cpp",
+    "src/codex/supervisor_brief.cpp",
+    "src/codex/supervisor_config.cpp",
+    "src/codex/supervisor_follow.cpp",
+    "src/codex/supervisor_inventory.cpp",
+    "src/codex/supervisor_log.cpp",
+    "src/codex/supervisor_secret.cpp",
+    "src/codex/supervisor_transport.cpp",
+    "src/config.cpp",
+    "src/debug_routing.cpp",
+    "src/decisions/handlers.cpp",
+    "src/deepseek/chat_projection.cpp",
+    "src/deepseek/context_admission_failure.cpp",
+    "src/deepseek/flash_aliases.cpp",
+    "src/deepseek/forwarded_payload_policy.cpp",
+    "src/deepseek/handlers.cpp",
+    "src/deepseek/index.cpp",
+    "src/deepseek/responses.cpp",
+    "src/deepseek/responses_payload.cpp",
+    "src/deepseek/responses_stream.cpp",
+    "src/deepseek/stream.cpp",
+    "src/deepseek/waterfall.cpp",
+    "src/deepseek/waterfall_handler.cpp",
+    "src/defaults.cpp",
+    "src/embeddings/handlers.cpp",
+    "src/embeddings/jobs.cpp",
+    "src/embeddings/ledger.cpp",
+    "src/embeddings/voyage.cpp",
+    "src/handler/admission.cpp",
+    "src/handler/http.cpp",
+    "src/handler/index.cpp",
+    "src/handler/serve_handler.cpp",
+    "src/handler/terminal_log.cpp",
+    "src/handler/terminal_route.cpp",
+    "src/harmony/adapter.cpp",
+    "src/harmony/classifier.cpp",
+    "src/harmony/conversation.cpp",
+    "src/harmony/parse.cpp",
+    "src/harmony/probe_scenarios.cpp",
+    "src/harmony/probes.cpp",
+    "src/harmony/reliability/context.cpp",
+    "src/harmony/reliability/failure.cpp",
+    "src/harmony/reliability/feedback.cpp",
+    "src/harmony/reliability/harness.cpp",
+    "src/harmony/reliability/hash.cpp",
+    "src/harmony/reliability/loops.cpp",
+    "src/harmony/reliability/retry.cpp",
+    "src/harmony/reliability/state.cpp",
+    "src/harmony/reliability/surfaces.cpp",
+    "src/harmony/reliability/verify.cpp",
+    "src/harmony/render.cpp",
+    "src/harmony/tools/backend.cpp",
+    "src/harmony/tools/fakes.cpp",
+    "src/harmony/tools/result.cpp",
+    "src/harmony/tools/router.cpp",
+    "src/harmony/tools/schemas.cpp",
+    "src/harmony/types.cpp",
+    "src/health.cpp",
+    "src/http.cpp",
+    "src/images.cpp",
+    "src/inference_admission.cpp",
+    "src/inference_deadline.cpp",
+    "src/input_normalization.cpp",
+    "src/jev_compaction/compaction.cpp",
+    "src/jev_compaction/hybrid.cpp",
+    "src/kernel/attestation.cpp",
+    "src/kernel/policy_queue.cpp",
+    "src/kernel/quota_reservations.cpp",
+    "src/kernel/quota_reserve.cpp",
+    "src/kernel/quota_v2.cpp",
+    "src/kernel/quota_write.cpp",
+    "src/kernel/usage.cpp",
+    "src/kv.cpp",
+    "src/kv_conversion/cli.cpp",
+    "src/kv_conversion/convert.cpp",
+    "src/kv_conversion/cursors.cpp",
+    "src/kv_conversion/legacy_codec.cpp",
+    "src/kv_conversion/native_schema.cpp",
+    "src/kv_conversion/profile_json.cpp",
+    "src/kv_conversion/proof.cpp",
+    "src/kv_conversion/typed_value.cpp",
+    "src/lib/jev_compaction/client.cpp",
+    "src/lib/jev_compaction/codex_items.cpp",
+    "src/lib/jev_compaction/compact.cpp",
+    "src/lib/jev_compaction/jev_compaction_smoke.cpp",
+    "src/lib/jev_compaction/request.cpp",
+    "src/lib/jev_compaction/state.cpp",
+    "src/lib/jev_compaction/types.cpp"
   ],
   "configuration_yaml": "---\n# Hazard discovery, not a style policy. See docs/findings/cppgw-clang-tidy-audit-20261117.md.\nInheritParentConfig: false\nChecks: >-\n  -*,\n  bugprone-*,\n  -bugprone-easily-swappable-parameters,\n  cppcoreguidelines-avoid-capturing-lambda-coroutines,\n  cppcoreguidelines-avoid-reference-coroutine-parameters,\n  misc-coroutine-hostile-raii,\n  cert-*,\n  -cert-dcl37-c,\n  -cert-dcl51-cpp,\n  performance-*,\n  -performance-avoid-endl,\n  -performance-enum-size,\n  concurrency-*,\n  clang-analyzer-core.*,\n  clang-analyzer-cplusplus.*,\n  clang-analyzer-optin.cplusplus.*,\n  clang-analyzer-security.*,\n  clang-analyzer-unix.*\n# Adjacent same-type parameters are deliberate module-for-module TS API translations.\n# Reserved identifiers are naming/style issues outside this lifetime audit (cert-dcl37/51).\n# endl and enum storage size are micro-style suggestions, not hot-path copy hazards.\nWarningsAsErrors: ''\nHeaderFilterRegex: '(^|/)cpp/gateway/(include|src|tests)/'\nSystemHeaders: false\nFormatStyle: none\nCheckOptions:\n  bugprone-dangling-handle.HandleClasses: 'std::basic_string_view;std::span'\n  bugprone-unchecked-optional-access.IgnoreSmartPointerDereference: 'false'\n  bugprone-exception-escape.CheckDestructors: 'true'\n  bugprone-exception-escape.CheckMoveMemberFunctions: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerToFloatingPointNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnFloatingPointNarrowingConversion: 'true'\n  performance-unnecessary-value-param.AllowedTypes: ''\n",
   "counting": "Unique (check/alias-group, gateway-relative file, line, column, message); repeated header emissions deduplicated. TU emissions also counted separately.",
   "coverage": {
-    "completed": 100,
+    "completed": 200,
     "database_units": 830,
     "failed": 0,
     "inputs_unchanged": true,
-    "ok": 100,
+    "ok": 200,
     "selected": 830,
     "source_units": 369,
     "test_support_units": 461,
     "timeouts": 0,
-    "units_with_findings": 100
+    "units_with_findings": 200
   },
   "failures": [],
   "head_commit": "33e1539d74bc3b69566875b449a01c97b0cfca3d",
@@ -2233,12 +2617,12 @@
   "resources": {
     "jobs": 4,
     "largest_process_rss_kib": 845964,
-    "sum_system_seconds": 107.87,
-    "sum_unit_seconds": 2963.875,
-    "sum_user_seconds": 2770.91,
-    "wall_seconds": 756.181
+    "sum_system_seconds": 202.51,
+    "sum_unit_seconds": 5308.542,
+    "sum_user_seconds": 4956.56,
+    "wall_seconds": 1342.68
   },
   "schema_version": 1,
-  "tu_diagnostic_emissions": 3433,
-  "unique_diagnostics": 938
+  "tu_diagnostic_emissions": 6694,
+  "unique_diagnostics": 1720
 }

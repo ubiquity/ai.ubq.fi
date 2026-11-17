@@ -72,8 +72,8 @@ analyzer limitations on coroutine frames, and authenticated Git publication/inte
 Stop condition: all units reconciled with source hashes and all reporting checks triaged, or explicit
 terminal evidence of an external blocker. No incomplete run will be labeled a complete baseline.
 
-Long-operation budget: pilot representative units first, then at most four workers; expected full-run
-time 15–60 minutes, per-TU timeout and persistent progress/logs under `/tmp/cppgw-tidy-20261117`.
+Long-operation budget: pilot representative units first, then at most four workers; initial expected full-run
+time 15–60 minutes (the current 100-unit checkpoint suggests roughly 90–110 minutes), per-TU timeout and persistent progress/logs under `/tmp/cppgw-tidy-20261117`.
 Inspect a confirmed-live handle at most once per minute; retain failures and adjust only with a recorded
 reason. All builds, downloads, HOME/TMPDIR directories and raw evidence stay outside the checkout.
 
@@ -143,6 +143,7 @@ must use the enclosing job's authorized delivery mechanism unless write access a
 | Completed | Frontend failures | Timeouts | Unique diagnostics | Wall seconds | Largest TU RSS (KiB) | Inputs unchanged |
 | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | 100/830 | 0 | 0 | 938 | 756.181 | 845964 | yes |
+| 200/830 | 0 | 0 | 1720 | 1342.68 | 845964 | yes |
 
 The baseline remains explicitly incomplete until all 830 receipts reconcile. This table
 records persisted runner checkpoints, not extrapolated pass counts. All units analyzed so far
@@ -163,7 +164,7 @@ Real but benign in sampled `src/admin/chart_source_proxy.cpp:43` and `src/admin/
 
 ### `bugprone-exception-copy-constructor-throws`
 
-Real but benign resource-exhaustion risk at `src/api_key_policy.cpp:502`: throwing the named const ApiKeyQuotaDispatchError copies JsError string fields, which may allocate. A failed allocation can replace the intended error; no ordinary request value makes this copy constructor explicitly throw. Minimal improvement is a non-const error moved at its last use, preserving all fields. Treat allocation-failure exception handling as hardening, not a proven request-path memory-safety defect.
+Real but benign resource-exhaustion risk at `src/api_key_policy.cpp:502`: throwing the named const ApiKeyQuotaDispatchError copies JsError string fields, which may allocate. A failed allocation can replace the intended error; no ordinary request value makes this copy constructor explicitly throw. Minimal improvement is a non-const error moved at its last use, preserving all fields. Treat allocation-failure exception handling as hardening, not a proven request-path memory-safety defect. A second sample at `src/codex/responses_runners.cpp:435` throws an engaged transportFailure error object of its declared type; the same allocation-copy concern applies without evidence of slicing or an input-dependent throwing copy body.
 
 ### `bugprone-float-loop-counter`
 
@@ -193,6 +194,10 @@ Initial sample is benign: `include/uos/rt/number.hpp:85,226` shifts unsigned 64-
 
 Real but benign: `include/uos/rt/async.hpp:1036,1079` and `include/uos/rt/stream.hpp:548` throw the private `GeneratorReturn` token, caught by the generator's exact-type handler to implement iterator return. This is intentional control flow distinct from JavaScript errors; retain behavior rather than changing the exception hierarchy.
 
+### `bugprone-suspicious-missing-comma`
+
+False positive at `src/codex/supervisor_brief.cpp:56`: adjacent string literals intentionally continue one prompt paragraph, ending in a space before the next literal; the surrounding vector separates paragraphs with actual commas. Inserting a comma would change the prompt's newline structure. Preserve the source-compatible string.
+
 ### `bugprone-throwing-static-initialization`
 
 Real but benign startup risk: fixed inline KvKey/JSON/string constants (for example API_KEY_CHANGE_PREFIX at `include/uos/authority/native_api_key_audit.hpp:13`) allocate before main; malformed request data cannot enter these initializers. Allocation failure can terminate startup, also consistent with a process unable to allocate. Literal regex initialization is separate from request parsing. No request-path exception escape is established by this check (alias cert-err58-cpp).
@@ -207,7 +212,19 @@ False positive at `include/uos/rt/ordered.hpp:182`: copy assignment attaches the
 
 ### `cert-err09-cpp`
 
-Real but benign at `src/api_key_policy.cpp:502`: the named thrown value has the exact ApiKeyQuotaDispatchError type, so no slicing occurs. The related potentially throwing-copy warning is documented separately; naming it is not itself an incorrect exception value.
+Real but benign at `src/api_key_policy.cpp:502`: the named thrown value has the exact ApiKeyQuotaDispatchError type, so no slicing occurs. The related potentially throwing-copy warning is documented separately; naming it is not itself an incorrect exception value. A second sample at `src/codex/responses_runners.cpp:435` throws an engaged transportFailure error object of its declared type; the same allocation-copy concern applies without evidence of slicing or an input-dependent throwing copy body.
+
+### `clang-analyzer-core.CallAndMessage`
+
+False positive at `src/codex/supervisor_inventory.cpp:405`: the trace passes null into quotaBucketsOf and then assumes its external isRecord(null) guard succeeds. The defining supervisor_config isRecord pointer overload explicitly rejects null; clang-tidy's per-TU analyzer does not import that function body. The path is infeasible. Separate SDK-primary warnings in Boost.Asio awaitable internals are retained in raw logs but excluded from first-party counts; they are not silently reclassified as gateway defects. Exact guard chain: `src/codex/supervisor_config.cpp:43` delegates to `src/rt/json.cpp:957`, `return value && value->is_object();`.
+
+### `clang-analyzer-core.NonNullParamChecker`
+
+False positive at `src/codex/supervisor_inventory.cpp:422`: the trace initializes resetCredits to null and assumes isRecord(resetCredits) is true. supervisor_config::isRecord(const json::value*) returns false on null, so the branch forming *resetCredits cannot execute. This is a cross-TU guard-model limitation, not a request-controlled null dereference. Keep the broad audit evidence even if disabling this noisy check in the default profile. Exact guard chain: `src/codex/supervisor_config.cpp:43` delegates to `src/rt/json.cpp:957`, `return value && value->is_object();`.
+
+### `clang-analyzer-core.NullDereference`
+
+False positives in the sampled Boost.JSON array range loops at `src/images.cpp:112,410,552`. The latter two explicitly reject a null output array first. Exported traces take a continue branch, then invent a null __begin iterator while assuming it differs from __end, without a source mutation of the container. Valid Boost.JSON begin/end iterators cannot become null between elements this way; empty arrays have begin == end and do not enter the loop. The first trace even enters an untouched default-empty references array. This is an iterator-model limitation, not a proven malformed-image-input dereference. Later null diagnostics remain under review; no blanket safety claim.
 
 ### `clang-analyzer-security.FloatLoopCounter`
 
@@ -219,7 +236,7 @@ Mixed: confirmed P1 defect at `src/admin/kernel.cpp:130,134`, plus legitimately 
 
 ### `cppcoreguidelines-avoid-reference-coroutine-parameters`
 
-Initial sample is real but benign borrowing under structured await. `src/cache/kv_migration.cpp:37` borrows progress from the migration caller's live frame; the sole caller starts a Promise and awaits its completion at 161-163. Private collectors at `src/cache/kv_migration_paid_fallback.cpp:143,169,194,216,235` borrow knownKeyIds/errors from inspectPaidFallbackV3; callers at 445-452 await each task sequentially and keep all referents in the parent frame. No task is detached or raced in these calls, so ordinary failure destroys the active child before its parent state. Prefer owning state for APIs that can escape; these internal helpers do not establish a UAF. Further reported coroutine-reference sites remain to be classified. Further structured-borrow samples: migration projection repairOnePaidFallbackWindow at `src/cache/kv_migration_projection.cpp:484` is immediately awaited at 535 with a named local context; usage collectStrictApiKeyPairs at `src/cache/kv_migration_usage.cpp:716` is awaited at 882 while hashEntries/errors remain in scope. Migration validation auditApiKeyBoundedAggregates at 151 and auditApiKeyPolicy at 169 are similarly sequential. Catalog store APIs explicitly require the Kv object to outlive their tasks/heartbeat (PORT-NOTES); their reference signatures are an API precondition, not automatic evidence that current callers violate it.
+Initial sample is real but benign borrowing under structured await. `src/cache/kv_migration.cpp:37` borrows progress from the migration caller's live frame; the sole caller starts a Promise and awaits its completion at 161-163. Private collectors at `src/cache/kv_migration_paid_fallback.cpp:143,169,194,216,235` borrow knownKeyIds/errors from inspectPaidFallbackV3; callers at 445-452 await each task sequentially and keep all referents in the parent frame. No task is detached or raced in these calls, so ordinary failure destroys the active child before its parent state. Prefer owning state for APIs that can escape; these internal helpers do not establish a UAF. Further reported coroutine-reference sites remain to be classified. Further structured-borrow samples: migration projection repairOnePaidFallbackWindow at `src/cache/kv_migration_projection.cpp:484` is immediately awaited at 535 with a named local context; usage collectStrictApiKeyPairs at `src/cache/kv_migration_usage.cpp:716` is awaited at 882 while hashEntries/errors remain in scope. Migration validation auditApiKeyBoundedAggregates at 151 and auditApiKeyPolicy at 169 are similarly sequential. Catalog store APIs explicitly require the Kv object to outlive their tasks/heartbeat (PORT-NOTES); their reference signatures are an API precondition, not automatic evidence that current callers violate it. Request-path KV-reference samples in `src/embeddings/voyage.cpp:55,144,258,272` and `src/embeddings/jobs.cpp:83` are awaited by handlers/jobs that retain the owning shared_ptr in kv or params.kv; child failures are observed before that owner leaves scope. This establishes current-call lifetime, not safety for arbitrary detached calls with a short-lived Kv.
 
 ### `performance-expensive-value-or`
 
@@ -245,6 +262,10 @@ Initial sample is benign: `include/uos/rt/websocket.hpp:290` moves a trivially c
 
 Real but benign optimization debt: `src/admin/api_keys.cpp:224`, `src/admin/kernel.cpp:61`, and `src/agent_messages.cpp:72,84,101` return const local strings/optionals and may copy into the optional result. Minimal improvement: remove const from the local and retain automatic move on return. No latency claim is made without measurement; do not alter oracle-visible values.
 
+### `performance-string-view-conversions`
+
+Real but benign small allocation at `src/deepseek/waterfall_handler.cpp:116`: a constant provider string_view is converted to std::string and immediately viewed again by isProviderEnabled. Pass the constant directly to the synchronous view-taking API to remove the copy; do not apply that rewrite to views that cross coroutine suspension. No measured latency regression is established.
+
 ### `performance-unnecessary-copy-initialization`
 
 Mixed false positives and benign optimization debt. `include/uos/rt/async.hpp:859,891` makes shared-state copies before installing by-value async callbacks; the copies express ownership and must not be blindly replaced by borrowed storage. `src/admin/sentinel_incident.cpp:131` copies an immutable optional string; `src/auth/passport.cpp:316` copies request.method() in a synchronous validator, where a const reference is safe. Neither is a measured latency defect. Template specializations at the same source line are distinct diagnostic messages and remain separately counted.
@@ -267,6 +288,8 @@ is applied. Test verdicts describe fixture lifetimes, not runtime test-pass clai
 
 | Site | Verdict |
 | --- | --- |
+| `include/uos/codex/supervisor_config.hpp:256` | Real but benign: each concurrency worker uses rt::async and owns shared State; sibling rejection cannot free another worker's closure or items/run callback. |
+| `include/uos/kv_conversion/convert.hpp:68` | Real but benign: erased SnapshotRead is moved into the by-value snapshot-operation parameter, which awaits it; read and shared result remain owned until completion. |
 | `src/admin/codex.cpp:103` | Real but benign: forwarding overload copies `reader` into the awaited handler's by-value `ReadBaselineJson` parameter, which owns the closure until completion. |
 | `src/admin/kernel.cpp:130` | TRUE DEFECT, P1/URGENT: fail-fast `all` can destroy the handler's closure/set while a sibling KV read still resumes; proposed owning-parameter diff above. |
 | `src/admin/kernel.cpp:134` | TRUE DEFECT, P1/URGENT: same escaping sibling lifetime for repository reads and `repoPolicyPairs`; proposed owning-parameter diff above. |
@@ -277,6 +300,16 @@ is applied. Test verdicts describe fixture lifetimes, not runtime test-pass clai
 | `src/chat/stream_translation.cpp:369` | Real but benign on current production calls: cancel is stored in StreamState.source; SourceAlgorithm retains the outer state-owning callback until StreamState::cancel has awaited it. Calling a detached task from a temporary adapter would require additional ownership. |
 | `src/codex/account_routing.cpp:303` | Real but benign: withCodexAdmission takes action by value and awaits it; captured KV/account values and closure survive the admission lock and operation. |
 | `src/codex/overage_settings.cpp:73` | Real but benign: each parallel child is wrapped in rt::async, whose shared holder owns the closure even if all rejects before other children finish. |
+| `src/codex/routing_serial.cpp:303` | Real but benign: withCodexAdmission owns the action parameter and waits for its Promise before releasing admission and returning. |
+| `src/handler/terminal_log.cpp:481` | Real but benign: the local owner coroutine is passed to rt::async before constructing its running Promise, retaining the state-owning closure for the buffered response. |
+| `src/kernel/quota_reservations.cpp:227` | Real but benign: withKernelQuotaLock owns operation by value and awaits it through success/error settlement; all captures are values. |
+| `src/kernel/quota_reservations.cpp:282` | Real but benign: settlement operation is moved into withKernelQuotaLock's owning parameter and completes before that frame releases it. |
+| `src/kernel/quota_reservations.cpp:586` | Real but benign: scope-policy cleanup operation owns copied target fields/KV and is retained by withKernelQuotaLock while awaited. |
+| `src/kernel/quota_reserve.cpp:241` | Real but benign: withKernelQuotaLock owns the copied reservation operation/options across all retry awaits. |
+| `src/kernel/quota_write.cpp:186` | Real but benign: policy-write closure owns request/keys/KV and is moved into the awaited lock helper's by-value operation parameter. |
+| `src/kernel/quota_write.cpp:282` | Real but benign: policy-delete closure owns scope/owner/repo/keys and is retained in the awaited lock helper. |
+| `src/kv_conversion/profile_json.cpp:373` | Real but benign: SourceAlgorithm::runAsync retains the pull callable and its shared iterator until the pull settles, including close clearing algorithms. |
+| `src/kv_conversion/profile_json.cpp:383` | Real but benign: SourceAlgorithm owns the cancel callable through awaited iterator.return_; clearing the stream's algorithms cannot destroy an active invocation. |
 
 ## Ranked confirmed defect classes
 
