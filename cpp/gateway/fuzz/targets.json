@@ -79,6 +79,19 @@
       "entry": "ConnectionState::parseHead / decodeChunked",
       "max_len": 16384
     },
+    "http_server_library": {
+      "harness": "fuzz/http_server_library.cpp",
+      "included_implementation": "src/runtime/http.cpp",
+      "entry": "ConnectionState::parseHead / decodeChunked",
+      "extra_sources": [
+        "src/runtime/http_body.cpp",
+        "src/runtime/http_early_sse.cpp",
+        "src/runtime/http_tasks.cpp",
+        "src/runtime/http_upgrade.cpp",
+        "src/runtime/websocket.cpp"
+      ],
+      "max_len": 32768
+    },
     "fetch_response": {
       "harness": "fuzz/fetch_response.cpp",
       "entry": "parseResponseHead / responseFraming / ChunkedDecoder::decode",
