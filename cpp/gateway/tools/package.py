@@ -11,6 +11,8 @@ import subprocess
 import sys
 
 sys.dont_write_bytecode = True
+import vendor_sources
+
 GATEWAY = Path(__file__).resolve().parents[1]
 WORKSPACE = GATEWAY.parents[1]
 spec = importlib.util.spec_from_file_location("uos_runtime_manifest", GATEWAY / "tools/runtime-manifest.py")
@@ -89,6 +91,15 @@ def copy_file(source, destination, executable=False):
         raise ValueError(f"Input changed during packaging: {source}")
 
 
+def copy_vendor_licenses(stage):
+    production_sources = (path.relative_to(GATEWAY).as_posix() for path in (GATEWAY / "src").rglob("*.cpp")
+                          if not path.name.startswith("."))
+    for library in vendor_sources.required(vendor_sources.selected(GATEWAY), production_sources):
+        destination = stage / "licenses" / library.name
+        copy_file(GATEWAY / "third_party" / library.name / "LICENSE", destination / "LICENSE")
+        copy_file(GATEWAY / "docs/licenses" / library.name / "NOTICE", destination / "NOTICE")
+
+
 def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
     path.chmod(0o644)
@@ -148,6 +159,7 @@ def main():
             copy_file(args.permissions / name, stage / "native/permissions" / name)
         for name in ("launch-native.sh", "uos-gateway-native.service", "README.md"):
             copy_file(GATEWAY / "ops" / name, stage / "ops" / name, name.endswith(".sh"))
+        copy_vendor_licenses(stage)
         copy_file(GATEWAY / "docs/RUNTIME.md", stage / "README.md")
         copy_file(args.profile_manifest, stage / "build-profile.json")
         copy_file(GATEWAY / "runtime/launch-schema.json", stage / "runtime/launch-schema.json")

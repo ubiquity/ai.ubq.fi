@@ -46,6 +46,10 @@ def third_party():
         flags.append("-isystem" + str(library))
         sources += sorted(str(path.relative_to(GATEWAY)) for path in library.rglob("*")
                           if path.suffix in (".cpp", ".c", ".cc"))
+    if flags:
+        # First-party code also includes vendored headers by their tree path ("third_party/..."):
+        # Clang then treats them as system headers too, so the port's -Werror set does not apply to them.
+        flags.append("--system-header-prefix=third_party/")
     return flags, sources
 
 
