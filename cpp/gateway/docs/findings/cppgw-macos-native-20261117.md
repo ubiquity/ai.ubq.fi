@@ -162,6 +162,33 @@ The native build had already compiled successfully through transitive declaratio
 is nevertheless the correct standard-library dependency and is added as normal implementation work;
 this does not salvage the identity-mismatched official review receipt.
 
+## Continuation contract v2, 2026-11-17
+
+The continuation starts at clean commit `1f095000` on a new Apple Silicon runner. Preserve all v1
+changes and evidence. The objective is now to finish the interrupted qualification: rebuild with
+the existing driver, verify its already-committed canonical scratch paths and capture-name fix,
+execute the whole application suite after the runtime suite, and resolve real Darwin failures.
+The v1 non-goals, owned/prohibited paths, Linux invariants and credential/network isolation remain.
+No deployment, service activation, provider calls or hosted workflow dispatch is authorized.
+
+Acceptance commands are the driver with `--suite all --require-clean`, selected Bun 1.4.0 oracle
+probes for any new host-dependent expectation, a focused `--legacy-loaders` run, changed-document
+formatting, `bash -n`, Python AST parsing and `git diff --check`. Unknowns are the unexecuted gateway
+targets, fallback loaders and any new-runner dependency drift. The stop condition is full real counts
+and exact receipts, or an evidenced outside-owned blocker with the unfinished work preserved.
+
+Long operations: external build root, at most three compile workers on this three-core/7 GiB host,
+20–40 minutes expected for a cold build plus the complete serial suite, per-object logs and incremental
+hash-checked reuse. Test timeout remains 180 seconds per process group. One persistent execution
+handle per run supplies progress; failures trigger diagnosis and focused reruns, not blind rebuilds.
+Commit after meaningful steps so another interruption preserves the completed work.
+
+Fresh host observation: macOS 26.7.2 (25G332), arm64, Apple Clang 21.0.0
+(`clang-2100.1.1.101`), Homebrew 7.0.11. The previous job's temporary artifacts are absent.
+Boost, zlib and ICU 78 must be prepared again; the existing remaining Homebrew versions match
+the earlier report. The canonical `Path(scratch_name).resolve()` and guarded capture correction
+are already in the starting commit; do not reapply them.
+
 ## Final handoff
 
-Pending exact commands, pass/fail counts, source changes, unresolved work and outside-owned defects.
+Continuation in progress; exact commands, complete counts and remaining boundaries will be appended.
