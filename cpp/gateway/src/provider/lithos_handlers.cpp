@@ -30,6 +30,7 @@ namespace uos::provider::lithos_handlers {
   using namespace lithos_rate_limits;
   const rt::OrderedSet<std::string> LITHOS_REASONING_LEVEL_SET = [] { rt::OrderedSet<std::string> result; for (auto level : LITHOS_REASONING_LEVELS) result.add(std::string(level)); return result; }();
   namespace {
+    std::function<void(std::weak_ptr<rt::AbortController>)> pendingCancellationObserver;
     constexpr double LITHOS_BUFFERED_BODY_MAX_BYTES = 8 * 1024 * 1024;
     struct LithosChatCompletionOk { json::object value; };
     struct LithosResponseNotOk { rt::Response response; };
@@ -115,7 +116,7 @@ namespace uos::provider::lithos_handlers {
     };
     struct LithosDispatchFailed { rt::Response response; rt::AbortSignal requestSignal; rt::AbortSignal downstreamSignal; };
     using LithosDispatchOutcome = std::variant<LithosDispatchOk, LithosDispatchFailed>;
-    struct LithosDispatchInput { json::object body; std::string modelRaw; rt::AbortSignal requestSignal; rt::AbortSignal downstreamSignal; const UsageContext* usageContext; std::shared_ptr<const UsageContext> ownedUsageContext{}; };
+    struct LithosDispatchInput { json::object body; std::string modelRaw; rt::AbortSignal requestSignal; rt::AbortSignal downstreamSignal; const UsageContext* usageContext; std::shared_ptr<const UsageContext> ownedUsageContext{}; std::shared_ptr<rt::AbortController> ownedCancellation{}; };
     struct LithosDispatchProgress {
       double attempt; std::string attemptModel; std::size_t ladderIndex; rt::OrderedSet<std::string> noRetryModels; double waitedMs; double elapsedWaitMs; double waits;
     };
@@ -231,16 +232,21 @@ namespace uos::provider::lithos_handlers {
           co_return std::get<LithosDispatchFailed>(terminal->result);
         }
         if (auto* deferred = std::get_if<DispatchPassDefer>(&*pass)) {
-          logWait(input, deferred->state, deferred->planned); rt::AbortController cancellation;
-          auto requestSignal = rt::AbortSignal::any({input.requestSignal, cancellation.signal()});
-          auto downstreamSignal = rt::AbortSignal::any({input.downstreamSignal, cancellation.signal()});
+          logWait(input, deferred->state, deferred->planned); const auto cancellation = std::make_shared<rt::AbortController>();
+          if (pendingCancellationObserver) pendingCancellationObserver(cancellation);
+          auto requestSignal = rt::AbortSignal::any({input.requestSignal, cancellation->signal()});
+          auto downstreamSignal = rt::AbortSignal::any({input.downstreamSignal, cancellation->signal()});
           auto pendingInput = input; pendingInput.requestSignal = requestSignal; pendingInput.downstreamSignal = downstreamSignal;
+          pendingInput.ownedCancellation = cancellation;
           if (input.usageContext) {
             pendingInput.ownedUsageContext = std::make_shared<const UsageContext>(*input.usageContext);
             pendingInput.usageContext = pendingInput.ownedUsageContext.get();
           }
           rt::Promise<LithosDispatchOutcome> pending(resumeLithosDispatch(pendingInput, *deferred, policy));
-          stream_relay::CancelPending cancel = [cancellation](rt::Reason reason) mutable { if (!cancellation.signal().aborted()) cancellation.abort(reason); };
+          // The running dispatch owns its interrupt; a downstream listener must not own its own signal source.
+          stream_relay::CancelPending cancel = [weak = std::weak_ptr(cancellation)](rt::Reason reason) {
+            if (const auto active = weak.lock(); active && !active->signal().aborted()) active->abort(reason);
+          };
           co_return LithosPendingDispatch{pending, requestSignal, downstreamSignal, std::move(cancel)};
         }
         state = std::get<DispatchPassRetry>(*pass).state;
@@ -267,6 +273,9 @@ namespace uos::provider::lithos_handlers {
       for (const auto c : raw) if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) { if (result.size() == 45) break; result += c; }
       return result;
     }
+  }
+  void setLithosPendingCancellationObserverForTest(std::function<void(std::weak_ptr<rt::AbortController>)> observer) {
+    pendingCancellationObserver = std::move(observer);
   }
   rt::Task<rt::Response> handleLithosChatCompletions(rt::Request req, json::object rawRecord, std::string modelRaw, const UsageContext* usageContext) {
     auto parsed = validateLithosChatRequestFields(rawRecord); if (auto* refusal = std::get_if<rt::Response>(&parsed)) co_return *refusal;

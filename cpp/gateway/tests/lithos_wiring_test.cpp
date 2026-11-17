@@ -39,6 +39,7 @@
 #include "uos/responses_handler.hpp"
 #include "uos/models/catalog.hpp"
 #include "uos/provider/lithos.hpp"
+#include "uos/provider/lithos_handlers.hpp"
 #include "uos/provider/lithos_rate_limits.hpp"
 #include "uos/deepseek/waterfall.hpp"
 #include "uos/inference_deadline.hpp"
@@ -165,4 +166,41 @@ ASYNC_TEST("lithos wiring: a differently-cased refused Ultra id serves from the 
 }
 ASYNC_TEST("lithos wiring: a refusal on a tier with no configured sibling opens no window") {
   Fixture fixture;Responder first=[](const Call&,std::size_t){return refusal("120000");};auto firstTask=run(true,false,BASE,first);const auto value=co_await std::move(firstTask);EXPECT_EQ(value.calls.size(),1U);EXPECT_EQ(value.response.status(),429);Responder second=[](const Call&,std::size_t){return success();};auto secondTask=run(true,false,MODEL,second);const auto next=co_await std::move(secondTask);EXPECT_EQ(models(next),std::vector<std::string>{MODEL});co_await h::settleHarness();
+}
+
+
+ASYNC_TEST("lithos wiring: completed deferred dispatch releases its signals while the loop stays live") {
+  const std::vector<bool> wires{false, true};
+  for (const bool chat : wires) {
+    std::weak_ptr<rt::AbortController> observed;
+    bool sawController = false;
+    int calls = 0;
+    uos::provider::lithos_handlers::setLithosPendingCancellationObserverForTest([&observed, &sawController](auto weak) { observed = std::move(weak); sawController = true; });
+    const auto clearObserver = rt::scopeExit([] { uos::provider::lithos_handlers::setLithosPendingCancellationObserverForTest({}); });
+    {
+      Fixture fixture;
+      rt::GlobalFetchOverride fetch(h::createFetchMock([&calls](std::string, std::optional<std::string>, rt::RequestInit init) {
+        ++calls;
+        if (calls <= 3) return rt::fulfilledTask(refusal("1"));
+        EXPECT(init.signal);
+        return rt::fulfilledTask(stream());
+      }));
+      json::object body{{"model", MODEL}, {"stream", true}};
+      if (chat) body["messages"] = json::array{json::object{{"role", "user"}, {"content", "hi"}}};
+      else body["input"] = "hi";
+      const auto request = chat ? h::specialProviderChatRequest(body) : h::specialProviderResponsesRequest(body);
+      auto dispatch = chat ? uos::provider::lithos_handlers::handleLithosChatCompletions(request, body, MODEL)
+                           : uos::provider::lithos_handlers::handleLithosResponses(request, body, MODEL);
+      const auto response = co_await std::move(dispatch);
+      EXPECT_EQ(response.status(), 200);
+      auto reading = response.text();
+      const auto output = co_await std::move(reading);
+      EXPECT(rt::includes(output, "Paris"));
+      EXPECT_EQ(calls, 4);
+      co_await h::settleHarness();
+    }
+    co_await rt::microtask();
+    EXPECT(sawController);
+    EXPECT(observed.expired());
+  }
 }

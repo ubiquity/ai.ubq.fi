@@ -550,6 +550,7 @@ namespace {
     rt::Task<void> cleanup() const {
       state->cleanupGate.resolve();
       if (state->iterator && state->counts.finalized == 0) co_await state->iterator->return_();
+      state->iterator.reset();
       co_await releaseProbe(probe);
     }
   };
@@ -698,4 +699,60 @@ ASYNC_TEST("Lithos handlers cancel deferred waits and report elapsed time throug
   }
   uos::provider::lithos_rate_limits::clearLithosFailoverWindows();
   co_await harness::settleHarness();
+}
+
+namespace {
+  rt::Task<void> pendingCancellationLifetime(std::weak_ptr<int>* observed, bool lateAbort) {
+    const auto calls = std::make_shared<int>(0);
+    *observed = calls;
+    const rt::AbortController cancellation;
+    const auto signal = rt::AbortSignal::any({cancellation.signal()});
+    auto adapter = fixtureAdapter();
+    adapter.frames = [](rt::Response, std::string, relay::ProviderStreamFrameOptions) -> FrameIterator {
+      const rt::AsyncGenerator<Frame> frames([](rt::Yield<Frame> yield) -> rt::Task<void> {
+        Frame done = uos::deepseek::stream::DeepSeekStreamFrameDone{};
+        co_await yield(std::move(done));
+      });
+      return frames;
+    };
+    const relay::CancelPending cancel = [calls, cancellation](rt::Reason reason) {
+      ++*calls;
+      cancellation.abort(reason);
+    };
+    const auto response = fixtureRelay(true, adapter, rt::Response(), nullptr, signal, signal, cancel);
+    auto reading = response.text();
+    const auto output = co_await std::move(reading);
+    EXPECT_EQ(output, "data: [DONE]\n\n");
+    EXPECT_EQ(*calls, 0);
+    if (lateAbort) {
+      const auto reason = rt::thrown(json::value("late downstream abort"));
+      cancellation.abort(reason);
+      EXPECT_EQ(*calls, 1);
+      cancellation.abort(reason);
+      EXPECT_EQ(*calls, 1);
+    }
+  }
+}
+
+TEST("provider relay releases pending cancellation signal cycles when its loop ends") {
+  std::weak_ptr<int> observed;
+  rt::FakeClock clock;
+  {
+    rt::Loop loop(clock);
+    auto running = pendingCancellationLifetime(&observed, false);
+    rt::blockOn(loop, std::move(running));
+    EXPECT(!observed.expired());
+  }
+  EXPECT(observed.expired());
+}
+
+TEST("provider relay preserves exactly one late downstream cancellation after completion") {
+  std::weak_ptr<int> observed;
+  rt::FakeClock clock;
+  {
+    rt::Loop loop(clock);
+    auto running = pendingCancellationLifetime(&observed, true);
+    rt::blockOn(loop, std::move(running));
+  }
+  EXPECT(observed.expired());
 }
