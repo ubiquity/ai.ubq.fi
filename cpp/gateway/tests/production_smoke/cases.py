@@ -8,6 +8,7 @@ import math
 import signal
 import statistics
 import time
+from collections import Counter
 from pathlib import Path
 
 from client import request, websocket
@@ -113,6 +114,24 @@ def terminals(lines):
             value = json.loads(line["line"].split(marker, 1)[1])
             result.append({"at_ns": line["at_ns"], "value": value})
     return result
+
+
+def validate_delivery_terminals(events, upstream_calls):
+    calls = [call for call in upstream_calls if call["path"] == "/chat/completions"]
+    identifiers = [entry["value"].get("request_id") for entry in events]
+    if len(identifiers) != len(calls) or len(identifiers) != len(set(identifiers)) or any(not item for item in identifiers):
+        raise RuntimeError("Every scripted inference needs exactly one correlated delivery terminal")
+    expected = Counter(502 if call.get("response_status") in (301, 302) else 200 for call in calls)
+    observed = Counter(entry["value"].get("status") for entry in events)
+    if observed != expected:
+        raise RuntimeError("Terminal statuses differ from the finite provider script")
+    for entry in events:
+        value = entry["value"]
+        if value.get("delivery_outcome") != "delivered":
+            raise RuntimeError("A complete scripted client read lost physical delivery evidence")
+        if value["status"] == 200 and (value.get("stream_terminal_type") != "response.completed" or
+                                      value.get("input_tokens") != 11 or value.get("output_tokens") != 5 or value.get("total_tokens") != 16):
+            raise RuntimeError("A successful scripted inference lost its semantic terminal or usage")
 
 
 def metrics(values):
@@ -239,6 +258,7 @@ def one_runtime(arguments, runtime, trial):
         if process_receipt["exit_code"] != 0 or process_receipt["forced"] or not process_receipt["settled"]:
             raise RuntimeError("Gateway did not settle naturally after SIGTERM drain")
         events = terminals(gateway.lines)
+        validate_delivery_terminals(events, upstream.calls)
         result["terminals"] = events
         for name in ("chat_buffered", "chat_stream", "responses_buffered", "responses_stream", "shutdown_stream"):
             request_id = captures[name]["headers"].get("x-uos-request-id")
