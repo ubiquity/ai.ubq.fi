@@ -144,6 +144,7 @@ must use the enclosing job's authorized delivery mechanism unless write access a
 | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | 100/830 | 0 | 0 | 938 | 756.181 | 845964 | yes |
 | 200/830 | 0 | 0 | 1720 | 1342.68 | 845964 | yes |
+| 300/830 | 0 | 0 | 2447 | 2079.729 | 906484 | yes |
 
 The baseline remains explicitly incomplete until all 830 receipts reconcile. This table
 records persisted runner checkpoints, not extrapolated pass counts. All units analyzed so far
@@ -153,6 +154,10 @@ emit shared-header warnings; a successful frontend is not a warning-free audit p
 
 Each named check has sampled source-path evidence below. Counts remain in the baseline;
 classification is per defect class, not an assertion that a warning proves a bug.
+
+### `bugprone-bitwise-pointer-cast`
+
+Real but benign within the audited POSIX ABI at `src/rt/gzip.cpp:105`: memcpy transfers a dlsym address into a function-pointer slot. POSIX dynamic linking requires callable symbol conversion and these supported Linux pointer representations have matching size. This is not portable ISO-only code, but no malformed request or current-ABI lifetime failure is demonstrated. A different function/object-pointer ABI would require a new loader contract, outside this Linux profile.
 
 ### `bugprone-branch-clone`
 
@@ -166,6 +171,10 @@ Real but benign in sampled `src/admin/chart_source_proxy.cpp:43` and `src/admin/
 
 Real but benign resource-exhaustion risk at `src/api_key_policy.cpp:502`: throwing the named const ApiKeyQuotaDispatchError copies JsError string fields, which may allocate. A failed allocation can replace the intended error; no ordinary request value makes this copy constructor explicitly throw. Minimal improvement is a non-const error moved at its last use, preserving all fields. Treat allocation-failure exception handling as hardening, not a proven request-path memory-safety defect. A second sample at `src/codex/responses_runners.cpp:435` throws an engaged transportFailure error object of its declared type; the same allocation-copy concern applies without evidence of slicing or an input-dependent throwing copy body.
 
+### `bugprone-exception-escape`
+
+Mixed. TRUE DEFECT / P2 resource-exhaustion cleanup: the ~ScopeExit diagnostic at `include/uos/rt/async.hpp:564`, instantiated from `src/rt/fetch_transport.cpp:274-277`, has an exact exported call chain through reader.cancel -> rejected<void> -> awaitOwned frame allocation -> boost::wrapexcept<std::bad_alloc>. If abort/unwind cleanup cannot allocate that cancellation task, the exception escapes an implicitly noexcept destructor and terminates the process. This is static evidence limited to allocation/scheduling failure, not a normal-input crash reproduction. Minimal fix: catch synchronous failure around the specific best-effort cancel/spawn expression after closing the connection; leave ScopeExit's general behavior and the primary transaction error unchanged. The async rejection is already ignored. Other sampled diagnostics are false positives on type-state invariants: `src/rt/kv_js.cpp:380` checks isString/isNumber/isBigInt/isBool before std::get; `src/rt/kv_value.cpp:358,372` visits valid stored-value variants. A deliberately valueless public raw variant can terminate those noexcept APIs, but no current request path constructing that state was found. The libstdc++ never-valueless trait is false, so this is a caller invariant, not a compiler-guaranteed claim.
+
 ### `bugprone-float-loop-counter`
 
 Real but benign in `src/analytics.cpp:126` and `src/api_key_policy.cpp:237,310,346,398,669`: integer-valued double retry counters with fixed small limits and increments of one mirror TS Number. Values stay exactly representable, so there is no rounding-driven infinite loop. Do not change arithmetic merely to satisfy a C++ convention. Input-facing CBOR samples at `src/auth/passkeys.cpp:388,404` also remain bounded: decodeLength rejects lengths above 2^53-1 and every iteration consumes bytes or rejects exhausted input. PEM chunking at 2289 iterates over the actual string length. This additional sample does not reveal a rounding-stalled loop.
@@ -173,6 +182,14 @@ Real but benign in `src/analytics.cpp:126` and `src/api_key_policy.cpp:237,310,3
 ### `bugprone-implicit-widening-of-multiplication-result`
 
 Real but benign at `include/uos/request.hpp:20` and `include/uos/sentinel/upstream_capture.hpp:43`: 32*1024*1024 and 4*1024*1024 fit int before conversion to int64_t. No overflow occurs. Use a suffixed first operand only if changing these constants in future.
+
+### `bugprone-misplaced-widening-cast`
+
+Real but benign at `src/rt/websocket_frame.cpp:320`: index ranges from 0 through 7, so 2+index is 2..9 and cannot overflow int before conversion to size_t. The corresponding uint64 shift count is 0..56. No narrowing/truncation or untrusted-length overflow is demonstrated.
+
+### `bugprone-multi-level-implicit-pointer-conversion`
+
+False positive for intended byte-copy API use at `src/rt/gzip.cpp:105`: addresses of function-pointer slots and the dlsym void* value are passed to memcpy's void*/const void* parameters. The code copies representations and never dereferences a converted pointer-to-pointer as an incompatible pointee. Adding explicit void casts would silence syntax without changing behavior; no source fix is needed for this class.
 
 ### `bugprone-optional-value-conversion`
 
@@ -184,7 +201,7 @@ Real but benign naming concern at `include/uos/provider/stream_relay.hpp:24`: th
 
 ### `bugprone-return-const-ref-from-parameter`
 
-False positive at `include/uos/rt/ordered.hpp:249`: SetKey is an internal projection called on table-owned live entries, not temporaries. Returning the original key reference is intentional; replacing it with a copy is unnecessary. A second sample, `src/auth/passkeys.cpp:1651`, validates and returns requireMap's input; every current caller passes a named decoded CBOR object or a caller-owned key reference, so no temporary escape is demonstrated.
+False positive at `include/uos/rt/ordered.hpp:249`: SetKey is an internal projection called on table-owned live entries, not temporaries. Returning the original key reference is intentional; replacing it with a copy is unnecessary. A second sample, `src/auth/passkeys.cpp:1651`, validates and returns requireMap's input; every current caller passes a named decoded CBOR object or a caller-owned key reference, so no temporary escape is demonstrated. `src/provider/claude_code_quota.cpp:293` newerWindow chooses an existing or observed window reference; all four callers at 308,313,562,568 immediately copy it into a value local while the observed/window owners remain alive. This is the same safe selector-reference class.
 
 ### `bugprone-signed-bitwise`
 
@@ -192,11 +209,15 @@ Initial sample is benign: `include/uos/rt/number.hpp:85,226` shifts unsigned 64-
 
 ### `bugprone-std-exception-baseclass`
 
-Real but benign: `include/uos/rt/async.hpp:1036,1079` and `include/uos/rt/stream.hpp:548` throw the private `GeneratorReturn` token, caught by the generator's exact-type handler to implement iterator return. This is intentional control flow distinct from JavaScript errors; retain behavior rather than changing the exception hierarchy.
+Real but benign: `include/uos/rt/async.hpp:1036,1079` and `include/uos/rt/stream.hpp:548` throw the private `GeneratorReturn` token, caught by the generator's exact-type handler to implement iterator return. This is intentional control flow distinct from JavaScript errors; retain behavior rather than changing the exception hierarchy. Additional production samples in `src/provider/anthropic_chat_responses.cpp:429,441`, `anthropic_chat_stream.cpp:214`, and `anthropic_responses.cpp:711,758` are the same GeneratorReturn token propagated to the exact generator handler, not arbitrary non-error exception leakage.
 
 ### `bugprone-suspicious-missing-comma`
 
 False positive at `src/codex/supervisor_brief.cpp:56`: adjacent string literals intentionally continue one prompt paragraph, ending in a space before the next literal; the surrounding vector separates paragraphs with actual commas. Inserting a comma would change the prompt's newline structure. Preserve the source-compatible string.
+
+### `bugprone-suspicious-stringview-data-usage`
+
+False positive at `src/rt/regex.cpp:79`: matcher.search receives bytes_.data() followed by the explicit length_ argument; ASCII input uses equal byte/UTF-16 length and non-ASCII input takes the separate units_ branch. The matcher is length-aware and does not require NUL termination. The heuristic does not recognize the separately stored size member.
 
 ### `bugprone-throwing-static-initialization`
 
@@ -210,25 +231,45 @@ Initial sample: false positives on runtime invariants at `include/uos/rt/async.h
 
 False positive at `include/uos/rt/ordered.hpp:182`: copy assignment attaches the incoming table before detaching the outgoing one. On self-assignment this increments then decrements the same iterator count without reclaiming the table. The final table and position remain valid.
 
+### `bugprone-unused-return-value`
+
+Real but benign cleanup/optional socket-option handling at `src/rt/fetch_transport.cpp:138` (TCP_NODELAY setup) and `src/rt/fetch_transport_net.cpp:53` (close). Both use the explicit error_code overload with a named ignored variable; connection failure/ownership are handled elsewhere, and teardown is best effort. Do not generalize this verdict to ignored persistence/settlement results.
+
+### `bugprone-use-after-move`
+
+False positives in the two runtime JSON sites: `src/rt/json.cpp:116` moves insertion value only when monotonically increasing cursor equals a single fixed position; that branch cannot execute twice for a valid container. At 745, last was moved into a child at 748/757, but every path returning to the enclosing completion loop either assigns last from frame.container before popping the frame, or breaks to parse and assign the next token value. The checker does not preserve these loop/state relationships. No request-input use of a moved-out JSON value is established by these reports; later sites remain individually reviewable.
+
 ### `cert-err09-cpp`
 
 Real but benign at `src/api_key_policy.cpp:502`: the named thrown value has the exact ApiKeyQuotaDispatchError type, so no slicing occurs. The related potentially throwing-copy warning is documented separately; naming it is not itself an incorrect exception value. A second sample at `src/codex/responses_runners.cpp:435` throws an engaged transportFailure error object of its declared type; the same allocation-copy concern applies without evidence of slicing or an input-dependent throwing copy body.
 
+### `cert-err33-c`
+
+Initial real but benign best-effort diagnostics: `src/rt/async.cpp:277,278` and `src/rt/clock.cpp:48,51,53` ignore fprintf/fflush results when reporting uncaught errors or Node-compatible timer warnings. Failed stderr logging is not a durable request write and should not become a second thrown error. Further filesystem/SQLite/process return-value warnings will be reviewed separately; this sample does not justify ignoring durability errors.
+
 ### `clang-analyzer-core.CallAndMessage`
 
-False positive at `src/codex/supervisor_inventory.cpp:405`: the trace passes null into quotaBucketsOf and then assumes its external isRecord(null) guard succeeds. The defining supervisor_config isRecord pointer overload explicitly rejects null; clang-tidy's per-TU analyzer does not import that function body. The path is infeasible. Separate SDK-primary warnings in Boost.Asio awaitable internals are retained in raw logs but excluded from first-party counts; they are not silently reclassified as gateway defects. Exact guard chain: `src/codex/supervisor_config.cpp:43` delegates to `src/rt/json.cpp:957`, `return value && value->is_object();`.
+False positive at `src/codex/supervisor_inventory.cpp:405`: the trace passes null into quotaBucketsOf and then assumes its external isRecord(null) guard succeeds. The defining supervisor_config isRecord pointer overload explicitly rejects null; clang-tidy's per-TU analyzer does not import that function body. The path is infeasible. Separate SDK-primary warnings in Boost.Asio awaitable internals are retained in raw logs but excluded from first-party counts; they are not silently reclassified as gateway defects. Exact guard chain: `src/codex/supervisor_config.cpp:43` delegates to `src/rt/json.cpp:957`, `return value && value->is_object();`. A second traced class at `src/provider/anthropic_chat_responses.cpp:368,369` assumes record(nullptr) is true after a missing choices/delta. Its local record wrapper at line 39 also delegates to rt::isRecord, so the identical null-rejecting guard makes those paths infeasible.
 
 ### `clang-analyzer-core.NonNullParamChecker`
 
-False positive at `src/codex/supervisor_inventory.cpp:422`: the trace initializes resetCredits to null and assumes isRecord(resetCredits) is true. supervisor_config::isRecord(const json::value*) returns false on null, so the branch forming *resetCredits cannot execute. This is a cross-TU guard-model limitation, not a request-controlled null dereference. Keep the broad audit evidence even if disabling this noisy check in the default profile. Exact guard chain: `src/codex/supervisor_config.cpp:43` delegates to `src/rt/json.cpp:957`, `return value && value->is_object();`.
+False positive at `src/codex/supervisor_inventory.cpp:422`: the trace initializes resetCredits to null and assumes isRecord(resetCredits) is true. supervisor_config::isRecord(const json::value*) returns false on null, so the branch forming *resetCredits cannot execute. This is a cross-TU guard-model limitation, not a request-controlled null dereference. Keep the broad audit evidence even if disabling this noisy check in the default profile. Exact guard chain: `src/codex/supervisor_config.cpp:43` delegates to `src/rt/json.cpp:957`, `return value && value->is_object();`. A second traced class at `src/provider/anthropic_chat_responses.cpp:368,369` assumes record(nullptr) is true after a missing choices/delta. Its local record wrapper at line 39 also delegates to rt::isRecord, so the identical null-rejecting guard makes those paths infeasible. The new `src/provider/metered.cpp:601` envelopeItems warning is also guarded by an isRecord pointer helper; the path must not assume that null is a record.
 
 ### `clang-analyzer-core.NullDereference`
 
 False positives in the sampled Boost.JSON array range loops at `src/images.cpp:112,410,552`. The latter two explicitly reject a null output array first. Exported traces take a continue branch, then invent a null __begin iterator while assuming it differs from __end, without a source mutation of the container. Valid Boost.JSON begin/end iterators cannot become null between elements this way; empty arrays have begin == end and do not enter the loop. The first trace even enters an untouched default-empty references array. This is an iterator-model limitation, not a proven malformed-image-input dereference. Later null diagnostics remain under review; no blanket safety claim.
 
+### `clang-analyzer-security.ArrayBound`
+
+False positives under the current WebSocket state invariant at `src/rt/websocket.cpp:228`: the private notOpenMessage helper indexes READY_STATES using the internal readyState. Its only call passes state.readyState; all production assignments in websocket.cpp/internal.hpp use CONNECTING, OPEN, CLOSING, CLOSED (0..3). The analyzer treats the helper's integer as unconstrained and reports both negative and >=4 paths. This is not a wire-controlled arbitrary index. A C++ extension that corrupts the exposed internal state would violate the library precondition.
+
 ### `clang-analyzer-security.FloatLoopCounter`
 
 Same benign bounded-double-counter class as bugprone-float-loop-counter; sampled `src/analytics.cpp:126` and API-key retry loops. No unbounded or fractional-step request-controlled counter was found in this sample. Input-facing CBOR samples at `src/auth/passkeys.cpp:388,404` also remain bounded: decodeLength rejects lengths above 2^53-1 and every iteration consumes bytes or rejects exhausted input. PEM chunking at 2289 iterates over the actual string length. This additional sample does not reveal a rounding-stalled loop.
+
+### `concurrency-mt-unsafe`
+
+Real API constraints but benign current uses: `src/rt/fs.cpp:348,365` uses readdir only on a fresh function-local DIR handle, consuming each entry before the next read; no handle is shared between concurrent calls. `src/rt/gzip.cpp:123` uses dlerror in synchronous loader error handling; glibc's error slot is thread-local and the gateway loop is single-threaded. The checker names APIs without proving a shared-handle or global-state race. Threaded SQLite workers do not share these DIR objects.
 
 ### `cppcoreguidelines-avoid-capturing-lambda-coroutines`
 
@@ -310,6 +351,11 @@ is applied. Test verdicts describe fixture lifetimes, not runtime test-pass clai
 | `src/kernel/quota_write.cpp:282` | Real but benign: policy-delete closure owns scope/owner/repo/keys and is retained in the awaited lock helper. |
 | `src/kv_conversion/profile_json.cpp:373` | Real but benign: SourceAlgorithm::runAsync retains the pull callable and its shared iterator until the pull settles, including close clearing algorithms. |
 | `src/kv_conversion/profile_json.cpp:383` | Real but benign: SourceAlgorithm owns the cancel callable through awaited iterator.return_; clearing the stream's algorithms cannot destroy an active invocation. |
+| `src/provider/claude_code_usage_refresh.cpp:43` | Real but benign: work is wrapped in rt::async and then awaited inside withFinally, retaining the owning closure/KV/binding/options across refresh suspension. |
+| `src/provider/claude_code_usage_refresh.cpp:74` | Real but benign: withFinally copies cleanup into its by-value parameter and awaits it after work settles, retaining key/owner/KV until cleanup completes. |
+| `src/responses_attempts.cpp:54` | Real but benign: ResponsesStreamIterator/AsyncGenerator owns the sanitizing coroutine body and captured iterator through yields and error cleanup. |
+| `src/responses_buffered.cpp:78` | Real but benign for the closure: AsyncGenerator retains copied prepared/options for the complete buffered iteration; pointer-valued options retain their separate caller lifetime contract. |
+| `src/responses_handler.cpp:239` | Real but benign: fire-and-forget probe cleanup explicitly uses rt::async before spawn, retaining the delivery/type closure through mark/release awaits. |
 
 ## Ranked confirmed defect classes
 
@@ -321,6 +367,29 @@ is applied. Test verdicts describe fixture lifetimes, not runtime test-pass clai
    preserving fail-fast semantics and await positions (exact proposed diff in URGENT).
    Current-run clang-tidy warning is reproduced; the ASan witness is retained earlier-agent
    evidence, not a fresh run or real HTTP request. No source change applied.
+
+2. **P2 availability, resource-exhaustion cleanup path:**
+   `src/rt/fetch_transport.cpp:274-277`, instantiated `include/uos/rt/async.hpp:564`.
+   An aborted transaction closes its socket, then its ScopeExit destructor constructs
+   and spawns a reader-cancellation task. The exported exception-escape trace proves that
+   coroutine-frame allocation may throw `boost::wrapexcept<std::bad_alloc>`; escaping the
+   implicitly noexcept destructor invokes terminate. No ordinary-input or runtime
+   reproduction is claimed. Keep the cancellation best effort at its synchronous boundary,
+   consistent with the existing ignoreRejection for asynchronous failure:
+
+```diff
+--- a/cpp/gateway/src/rt/fetch_transport.cpp
++++ b/cpp/gateway/src/rt/fetch_transport.cpp
+@@
+-        if (writer->reader && signal.aborted()) spawn(writer->reader->cancel(signal.reason()), ignoreRejection);
++        if (writer->reader && signal.aborted()) {
++          try { spawn(writer->reader->cancel(signal.reason()), ignoreRejection); }
++          catch (...) {}
++        }
+```
+
+This is an owner-applied proposal only; no source edit is applied. Do not globally
+suppress cleanup exceptions or treat a noexcept annotation as a fix.
 
 Other warnings below are currently classified as benign real costs/conventions or false positives;
 additional true defects will be ranked here as the remaining units complete. Resource-exhaustion-only
@@ -388,6 +457,30 @@ prove the lifetime of arbitrary coroutine/member objects or model every helper p
 exceptional callback and async state transition. A zero count is not a memory-safety proof.
 The supplied controls establish that representative move, optional, dangling-view,
 heap-use-after-free, null and coroutine checks execute on this compiler.
+
+## Tooling verification (current checkpoint)
+
+Changed paths are the four owned audit files. The shell/Python runner uses `sh -n`,
+ShellCheck, Python syntax compilation and five negative CLI controls; configuration uses
+Clang's `--verify-config`, inventory and positive/negative C++ controls; generated JSON uses
+JSON parsing/count reconciliation; changed Markdown/JSON/YAML use the pinned formatter and
+`git diff --check`. No application TypeScript, Rust, native build or deployment gate is relevant.
+
+- `sh -n cpp/gateway/tools/tidy.sh`: pass.
+- `shellcheck cpp/gateway/tools/tidy.sh`: pass.
+- Embedded Python `compile(..., 'exec')`: pass, without an in-checkout pycache.
+- CLI rejection controls: **5/5 pass**, exit 2 for nonpositive jobs/timeout/checkpoint
+  interval, mutually exclusive `--audit`/`--config`, and in-checkout build output.
+  Controls run with fresh HOME/TMPDIR and an explicit credential-free environment.
+- Audit `--verify-config`: pass; 245 installed checks selected.
+- Marked hazard controls: **8/8 expected markers**, clean control zero diagnostics;
+  validation JSON SHA-256 `55a5bc8ed88dc036c0dc04807c1279698f402d488d0bcb9d5cede1d4285046bd`.
+- Full 830-unit analysis, final formatting and source/receipt reconciliation: pending.
+
+The root and quality-tool lockfiles exist and remain unchanged. Pinned Bun 1.4.0 and
+frozen quality dependencies were prepared under `/tmp/cppgw-tidy-20261117/lint` so the
+checkout contains no dependency downloads. No application tests are executed by this
+static-analysis task; analyzed test TUs are not runtime pass counts.
 
 ## Final handoff summary
 

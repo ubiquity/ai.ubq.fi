@@ -9,13 +9,14 @@
         "src/handler/terminal_log.cpp": 1,
         "src/images.cpp": 1
       },
-      "tu_emissions": 352,
+      "tu_emissions": 518,
       "unique": 7
     },
     "bugprone-empty-catch": {
       "files": {
         "include/uos/codex/auth.hpp": 2,
         "include/uos/deepseek/stream.hpp": 1,
+        "include/uos/provider/openrouter_streams.hpp": 1,
         "include/uos/responses_stream.hpp": 1,
         "include/uos/rt/async.hpp": 2,
         "include/uos/rt/error.hpp": 2,
@@ -68,10 +69,47 @@
         "src/health.cpp": 11,
         "src/images.cpp": 5,
         "src/jev_compaction/compaction.cpp": 1,
-        "src/lib/jev_compaction/jev_compaction_smoke.cpp": 1
+        "src/lib/jev_compaction/jev_codex_smoke.cpp": 7,
+        "src/lib/jev_compaction/jev_compaction_smoke.cpp": 1,
+        "src/live/calls.cpp": 3,
+        "src/live/sideband.cpp": 4,
+        "src/live/upstream.cpp": 1,
+        "src/metered_quota.cpp": 1,
+        "src/models/codex_models_availability.cpp": 1,
+        "src/models/codex_models_fetch.cpp": 6,
+        "src/models/openrouter_models.cpp": 1,
+        "src/openai_telemetry.cpp": 1,
+        "src/paid_fallback/claude_code_route.cpp": 1,
+        "src/paid_fallback/health.cpp": 7,
+        "src/paid_fallback/index.cpp": 1,
+        "src/paid_fallback/ledger_backfill.cpp": 2,
+        "src/paid_fallback/routing.cpp": 2,
+        "src/provider/anthropic_chat_responses.cpp": 3,
+        "src/provider/anthropic_responses.cpp": 3,
+        "src/provider/capacity.cpp": 3,
+        "src/provider/capacity_history.cpp": 1,
+        "src/provider/cerebras_handlers.cpp": 2,
+        "src/provider/claude_code.cpp": 1,
+        "src/provider/claude_code_models.cpp": 2,
+        "src/provider/claude_code_usage.cpp": 1,
+        "src/provider/health.cpp": 1,
+        "src/provider/lithos.cpp": 1,
+        "src/provider/lithos_rate_limits.cpp": 1,
+        "src/provider/lithos_streams.cpp": 2,
+        "src/provider/metered.cpp": 3,
+        "src/provider/openrouter.cpp": 1,
+        "src/provider/openrouter_handlers.cpp": 3,
+        "src/provider/openrouter_streams.cpp": 4,
+        "src/provider/stream_relay.cpp": 2,
+        "src/provider/surplus.cpp": 2,
+        "src/responses_attempts.cpp": 3,
+        "src/responses_buffered.cpp": 2,
+        "src/responses_failover_stream.cpp": 2,
+        "src/responses_native_headers.cpp": 1,
+        "src/responses_stream.cpp": 3
       },
-      "tu_emissions": 997,
-      "unique": 138
+      "tu_emissions": 1545,
+      "unique": 224
     },
     "bugprone-exception-copy-constructor-throws": {
       "files": {
@@ -80,6 +118,13 @@
       },
       "tu_emissions": 2,
       "unique": 2
+    },
+    "bugprone-exception-escape": {
+      "files": {
+        "include/uos/rt/async.hpp": 1
+      },
+      "tu_emissions": 1,
+      "unique": 1
     },
     "bugprone-float-loop-counter": {
       "files": {
@@ -101,10 +146,19 @@
         "src/kernel/quota_reserve.cpp": 1,
         "src/kernel/quota_write.cpp": 2,
         "src/kernel/usage.cpp": 1,
-        "src/kv_conversion/legacy_codec.cpp": 1
+        "src/kv_conversion/legacy_codec.cpp": 1,
+        "src/models/codex_models_availability.cpp": 1,
+        "src/paid_fallback/index.cpp": 1,
+        "src/paid_fallback/ledger_admission.cpp": 4,
+        "src/paid_fallback/ledger_backfill.cpp": 2,
+        "src/paid_fallback/ledger_settlement.cpp": 4,
+        "src/paid_fallback/ledger_state.cpp": 1,
+        "src/paid_fallback/ledger_stats.cpp": 1,
+        "src/paid_fallback/rollups.cpp": 1,
+        "src/provider/metered.cpp": 1
       },
-      "tu_emissions": 51,
-      "unique": 46
+      "tu_emissions": 67,
+      "unique": 62
     },
     "bugprone-implicit-widening-of-multiplication-result": {
       "files": {
@@ -114,7 +168,7 @@
         "src/codex/supervisor_brief.cpp": 1,
         "src/codex/supervisor_log.cpp": 1
       },
-      "tu_emissions": 88,
+      "tu_emissions": 140,
       "unique": 5
     },
     "bugprone-optional-value-conversion": {
@@ -131,25 +185,29 @@
         "src/embeddings/voyage.cpp": 1,
         "src/handler/http.cpp": 1,
         "src/health.cpp": 1,
-        "src/images.cpp": 3
+        "src/images.cpp": 3,
+        "src/provider/cerebras_responses.cpp": 1,
+        "src/provider/surplus_claude_chat_request.cpp": 1,
+        "src/rt/crypto.cpp": 1
       },
-      "tu_emissions": 17,
-      "unique": 16
+      "tu_emissions": 20,
+      "unique": 19
     },
     "bugprone-reserved-identifier": {
       "files": {
         "include/uos/provider/stream_relay.hpp": 1
       },
-      "tu_emissions": 3,
+      "tu_emissions": 10,
       "unique": 1
     },
     "bugprone-return-const-ref-from-parameter": {
       "files": {
         "include/uos/rt/ordered.hpp": 1,
-        "src/auth/passkeys.cpp": 1
+        "src/auth/passkeys.cpp": 1,
+        "src/provider/claude_code_quota.cpp": 1
       },
-      "tu_emissions": 149,
-      "unique": 2
+      "tu_emissions": 217,
+      "unique": 3
     },
     "bugprone-signed-bitwise": {
       "files": {
@@ -161,18 +219,30 @@
         "src/kv_conversion/convert.cpp": 1,
         "src/kv_conversion/legacy_codec.cpp": 1,
         "src/kv_conversion/proof.cpp": 2,
-        "src/kv_conversion/typed_value.cpp": 1
+        "src/kv_conversion/typed_value.cpp": 1,
+        "src/provider/capacity_analytics.cpp": 1,
+        "src/rt/base64.cpp": 47,
+        "src/rt/console.cpp": 17,
+        "src/rt/crypto.cpp": 40,
+        "src/rt/date.cpp": 1,
+        "src/rt/fetch_transport_http.cpp": 1
       },
-      "tu_emissions": 655,
-      "unique": 73
+      "tu_emissions": 1019,
+      "unique": 180
     },
     "bugprone-std-exception-baseclass": {
       "files": {
         "include/uos/rt/async.hpp": 2,
-        "include/uos/rt/stream.hpp": 1
+        "include/uos/rt/stream.hpp": 1,
+        "src/provider/anthropic_chat_responses.cpp": 2,
+        "src/provider/anthropic_chat_stream.cpp": 1,
+        "src/provider/anthropic_responses.cpp": 2,
+        "src/provider/surplus.cpp": 1,
+        "src/responses_stream.cpp": 1,
+        "src/rt/fetch_transport.cpp": 1
       },
-      "tu_emissions": 513,
-      "unique": 3
+      "tu_emissions": 772,
+      "unique": 11
     },
     "bugprone-suspicious-missing-comma": {
       "files": {
@@ -221,6 +291,7 @@
         "include/uos/harmony/tools/schemas.hpp": 1,
         "include/uos/input_normalization.hpp": 1,
         "include/uos/kernel/usage.hpp": 4,
+        "include/uos/live/upstream.hpp": 1,
         "include/uos/metered_quota.hpp": 4,
         "include/uos/models/codex_models_availability.hpp": 1,
         "include/uos/models/codex_models_whitelist.hpp": 1,
@@ -229,6 +300,8 @@
         "include/uos/provider/capacity_contract.hpp": 5,
         "include/uos/provider/capacity_events.hpp": 3,
         "include/uos/provider/capacity_rollups.hpp": 1,
+        "include/uos/provider/claude_capacity_history.hpp": 1,
+        "include/uos/provider/claude_capacity_rollups.hpp": 2,
         "include/uos/provider/claude_code_access.hpp": 1,
         "include/uos/provider/claude_code_accounts.hpp": 1,
         "include/uos/provider/claude_code_credentials.hpp": 2,
@@ -268,15 +341,26 @@
         "src/kernel/attestation.cpp": 1,
         "src/kv_conversion/cursors.cpp": 2,
         "src/kv_conversion/native_schema.cpp": 1,
-        "src/lib/jev_compaction/compact.cpp": 1
+        "src/lib/jev_compaction/compact.cpp": 1,
+        "src/lib/jev_compaction/jev_codex_smoke.cpp": 5,
+        "src/models/openrouter_models.cpp": 1,
+        "src/openai.cpp": 4,
+        "src/provider/anthropic_replay.cpp": 1,
+        "src/provider/capacity.cpp": 1,
+        "src/provider/lithos_handlers.cpp": 1,
+        "src/provider/openrouter_handlers.cpp": 1,
+        "src/provider/openrouter_streams.cpp": 2,
+        "src/responses_failover_stream.cpp": 2,
+        "src/rt/fetch_transport_internal.hpp": 1
       },
-      "tu_emissions": 1900,
-      "unique": 226
+      "tu_emissions": 2848,
+      "unique": 249
     },
     "bugprone-unchecked-optional-access": {
       "files": {
         "include/uos/authority/native_authority_contracts.hpp": 1,
-        "include/uos/rt/async.hpp": 5,
+        "include/uos/provider/selection.hpp": 1,
+        "include/uos/rt/async.hpp": 8,
         "include/uos/rt/nullable.hpp": 6,
         "include/uos/rt/regex.hpp": 3,
         "include/uos/rt/sqlite.hpp": 2,
@@ -383,40 +467,100 @@
         "src/kv_conversion/profile_json.cpp": 1,
         "src/kv_conversion/proof.cpp": 1,
         "src/kv_conversion/typed_value.cpp": 4,
+        "src/lib/jev_compaction/jev_codex_smoke.cpp": 2,
         "src/lib/jev_compaction/jev_compaction_smoke.cpp": 6,
-        "src/lib/jev_compaction/state.cpp": 3
+        "src/lib/jev_compaction/state.cpp": 3,
+        "src/live/routes.cpp": 1,
+        "src/metered_quota.cpp": 3,
+        "src/models/codex_models.cpp": 7,
+        "src/models/codex_models_fetch.cpp": 5,
+        "src/models/metadata.cpp": 4,
+        "src/models/openrouter_models.cpp": 3,
+        "src/paid_fallback/claude_code_route.cpp": 2,
+        "src/paid_fallback/index.cpp": 11,
+        "src/provider/anthropic_chat_responses.cpp": 6,
+        "src/provider/anthropic_chat_stream.cpp": 1,
+        "src/provider/anthropic_replay.cpp": 1,
+        "src/provider/anthropic_response_wire.cpp": 3,
+        "src/provider/anthropic_responses.cpp": 7,
+        "src/provider/capacity.cpp": 1,
+        "src/provider/cerebras.cpp": 2,
+        "src/provider/claude_capacity_history.cpp": 1,
+        "src/provider/claude_code.cpp": 7,
+        "src/provider/claude_code_models.cpp": 2,
+        "src/provider/claude_code_usage.cpp": 1,
+        "src/provider/claude_code_usage_schema.cpp": 1,
+        "src/provider/lithos.cpp": 14,
+        "src/provider/lithos_handlers.cpp": 1,
+        "src/provider/metered.cpp": 1,
+        "src/provider/openrouter_streams.cpp": 1,
+        "src/provider/stream_relay.cpp": 6,
+        "src/provider/surplus.cpp": 2,
+        "src/provider/surplus_claude_request.cpp": 2,
+        "src/quota_projection.cpp": 11,
+        "src/request.cpp": 1,
+        "src/request_policy.cpp": 1,
+        "src/responses_buffered.cpp": 1,
+        "src/responses_failover_stream.cpp": 30,
+        "src/responses_native_headers.cpp": 1,
+        "src/responses_stream.cpp": 9,
+        "src/rt/async.cpp": 11,
+        "src/rt/crypto.cpp": 16,
+        "src/rt/fetch.cpp": 3,
+        "src/rt/fetch_transport.cpp": 5
       },
-      "tu_emissions": 1004,
-      "unique": 484
+      "tu_emissions": 1511,
+      "unique": 675
     },
     "bugprone-unhandled-self-assignment": {
       "files": {
         "include/uos/rt/ordered.hpp": 1
       },
-      "tu_emissions": 148,
+      "tu_emissions": 215,
+      "unique": 1
+    },
+    "bugprone-unused-return-value": {
+      "files": {
+        "src/rt/fetch_transport.cpp": 1
+      },
+      "tu_emissions": 1,
       "unique": 1
     },
     "cert-err09-cpp": {
       "files": {
         "src/api_key_policy.cpp": 1,
-        "src/codex/responses_runners.cpp": 1
+        "src/codex/responses_runners.cpp": 1,
+        "src/rt/async.cpp": 1
+      },
+      "tu_emissions": 3,
+      "unique": 3
+    },
+    "cert-err33-c": {
+      "files": {
+        "src/rt/async.cpp": 2,
+        "src/rt/clock.cpp": 3,
+        "src/rt/fetch_transport.cpp": 1,
+        "src/rt/fetch_transport_codec.cpp": 2
+      },
+      "tu_emissions": 8,
+      "unique": 8
+    },
+    "clang-analyzer-core.CallAndMessage": {
+      "files": {
+        "src/codex/supervisor_inventory.cpp": 1,
+        "src/provider/anthropic_chat_responses.cpp": 1
       },
       "tu_emissions": 2,
       "unique": 2
     },
-    "clang-analyzer-core.CallAndMessage": {
-      "files": {
-        "src/codex/supervisor_inventory.cpp": 1
-      },
-      "tu_emissions": 1,
-      "unique": 1
-    },
     "clang-analyzer-core.NonNullParamChecker": {
       "files": {
-        "src/codex/supervisor_inventory.cpp": 1
+        "src/codex/supervisor_inventory.cpp": 1,
+        "src/provider/anthropic_chat_responses.cpp": 1,
+        "src/provider/metered.cpp": 1
       },
-      "tu_emissions": 1,
-      "unique": 1
+      "tu_emissions": 3,
+      "unique": 3
     },
     "clang-analyzer-core.NullDereference": {
       "files": {
@@ -445,10 +589,19 @@
         "src/kernel/quota_reserve.cpp": 1,
         "src/kernel/quota_write.cpp": 2,
         "src/kernel/usage.cpp": 1,
-        "src/kv_conversion/legacy_codec.cpp": 1
+        "src/kv_conversion/legacy_codec.cpp": 1,
+        "src/models/codex_models_availability.cpp": 1,
+        "src/paid_fallback/index.cpp": 1,
+        "src/paid_fallback/ledger_admission.cpp": 4,
+        "src/paid_fallback/ledger_backfill.cpp": 2,
+        "src/paid_fallback/ledger_settlement.cpp": 4,
+        "src/paid_fallback/ledger_state.cpp": 1,
+        "src/paid_fallback/ledger_stats.cpp": 1,
+        "src/paid_fallback/rollups.cpp": 1,
+        "src/provider/metered.cpp": 1
       },
-      "tu_emissions": 46,
-      "unique": 46
+      "tu_emissions": 62,
+      "unique": 62
     },
     "cppcoreguidelines-avoid-capturing-lambda-coroutines": {
       "files": {
@@ -465,10 +618,14 @@
         "src/kernel/quota_reservations.cpp": 3,
         "src/kernel/quota_reserve.cpp": 1,
         "src/kernel/quota_write.cpp": 2,
-        "src/kv_conversion/profile_json.cpp": 2
+        "src/kv_conversion/profile_json.cpp": 2,
+        "src/provider/claude_code_usage_refresh.cpp": 2,
+        "src/responses_attempts.cpp": 1,
+        "src/responses_buffered.cpp": 1,
+        "src/responses_handler.cpp": 1
       },
-      "tu_emissions": 29,
-      "unique": 22
+      "tu_emissions": 34,
+      "unique": 27
     },
     "cppcoreguidelines-avoid-reference-coroutine-parameters": {
       "files": {
@@ -481,10 +638,12 @@
         "src/catalog/store.cpp": 15,
         "src/embeddings/jobs.cpp": 1,
         "src/embeddings/voyage.cpp": 8,
-        "src/harmony/reliability/harness.cpp": 23
+        "src/harmony/reliability/harness.cpp": 23,
+        "src/provider/capacity.cpp": 1,
+        "src/provider/claude_code_access.cpp": 1
       },
-      "tu_emissions": 106,
-      "unique": 106
+      "tu_emissions": 108,
+      "unique": 108
     },
     "performance-expensive-value-or": {
       "files": {
@@ -507,10 +666,14 @@
         "src/health.cpp": 1,
         "src/http.cpp": 2,
         "src/kernel/quota_reservations.cpp": 1,
-        "src/lib/jev_compaction/compact.cpp": 2
+        "src/lib/jev_compaction/compact.cpp": 2,
+        "src/live/upstream.cpp": 2,
+        "src/provider/capacity.cpp": 1,
+        "src/provider/claude_code.cpp": 1,
+        "src/provider/stream_relay.cpp": 4
       },
-      "tu_emissions": 39,
-      "unique": 39
+      "tu_emissions": 47,
+      "unique": 47
     },
     "performance-faster-string-find": {
       "files": {
@@ -521,10 +684,13 @@
         "src/kv_conversion/convert.cpp": 1,
         "src/kv_conversion/native_schema.cpp": 1,
         "src/kv_conversion/proof.cpp": 1,
-        "src/kv_conversion/typed_value.cpp": 2
+        "src/kv_conversion/typed_value.cpp": 2,
+        "src/provider/anthropic_replay.cpp": 2,
+        "src/provider/anthropic_responses.cpp": 1,
+        "src/provider/capacity.cpp": 1
       },
-      "tu_emissions": 12,
-      "unique": 12
+      "tu_emissions": 16,
+      "unique": 16
     },
     "performance-inefficient-string-concatenation": {
       "files": {
@@ -532,13 +698,15 @@
         "src/cache/kv_migration_projection.cpp": 1,
         "src/deepseek/responses_payload.cpp": 3,
         "src/harmony/reliability/feedback.cpp": 1,
-        "src/harmony/render.cpp": 1
+        "src/harmony/render.cpp": 1,
+        "src/rt/fetch_transport_http.cpp": 1
       },
-      "tu_emissions": 9,
-      "unique": 9
+      "tu_emissions": 10,
+      "unique": 10
     },
     "performance-inefficient-vector-operation": {
       "files": {
+        "include/uos/provider/selection.hpp": 1,
         "src/admin/codex.cpp": 1,
         "src/admin/kernel.cpp": 4,
         "src/auth/local_admin.cpp": 1,
@@ -575,10 +743,18 @@
         "src/jev_compaction/compaction.cpp": 1,
         "src/jev_compaction/hybrid.cpp": 2,
         "src/lib/jev_compaction/compact.cpp": 2,
-        "src/lib/jev_compaction/state.cpp": 1
+        "src/lib/jev_compaction/state.cpp": 1,
+        "src/models/codex_models_fetch.cpp": 1,
+        "src/paid_fallback/claude_code_route.cpp": 1,
+        "src/paid_fallback/ledger_backfill.cpp": 2,
+        "src/provider/anthropic_chat_responses.cpp": 1,
+        "src/provider/capacity.cpp": 2,
+        "src/provider/health.cpp": 2,
+        "src/provider/surplus.cpp": 1,
+        "src/provider/surplus_claude_request.cpp": 1
       },
-      "tu_emissions": 66,
-      "unique": 66
+      "tu_emissions": 78,
+      "unique": 78
     },
     "performance-move-const-arg": {
       "files": {
@@ -586,10 +762,17 @@
         "src/authority/authority_rpc.cpp": 1,
         "src/authority/native_codex_capacity.cpp": 2,
         "src/harmony/classifier.cpp": 1,
-        "src/harmony/tools/fakes.cpp": 2
+        "src/harmony/tools/fakes.cpp": 2,
+        "src/metered_quota.cpp": 1,
+        "src/paid_fallback/ledger_admission.cpp": 1,
+        "src/paid_fallback/ledger_settlement.cpp": 2,
+        "src/provider/capacity_parse.cpp": 4,
+        "src/provider/cerebras.cpp": 1,
+        "src/provider/claude_code_quota.cpp": 2,
+        "src/responses_stream.cpp": 1
       },
-      "tu_emissions": 17,
-      "unique": 7
+      "tu_emissions": 32,
+      "unique": 19
     },
     "performance-no-automatic-move": {
       "files": {
@@ -609,22 +792,30 @@
         "src/embeddings/voyage.cpp": 1,
         "src/handler/http.cpp": 1,
         "src/images.cpp": 1,
-        "src/jev_compaction/compaction.cpp": 1
+        "src/jev_compaction/compaction.cpp": 1,
+        "src/models/openrouter_models.cpp": 1,
+        "src/paid_fallback/health.cpp": 1,
+        "src/provider/capacity_parse.cpp": 1,
+        "src/provider/openrouter.cpp": 1,
+        "src/responses_failover_stream.cpp": 5
       },
-      "tu_emissions": 23,
-      "unique": 23
+      "tu_emissions": 32,
+      "unique": 32
     },
     "performance-string-view-conversions": {
       "files": {
         "src/deepseek/waterfall_handler.cpp": 1,
-        "src/lib/jev_compaction/jev_compaction_smoke.cpp": 1
+        "src/lib/jev_compaction/jev_codex_smoke.cpp": 1,
+        "src/lib/jev_compaction/jev_compaction_smoke.cpp": 1,
+        "src/live/upstream.cpp": 1,
+        "src/openai_telemetry.cpp": 1
       },
-      "tu_emissions": 2,
-      "unique": 2
+      "tu_emissions": 5,
+      "unique": 5
     },
     "performance-unnecessary-copy-initialization": {
       "files": {
-        "include/uos/rt/async.hpp": 40,
+        "include/uos/rt/async.hpp": 54,
         "src/admin/sentinel_incident.cpp": 1,
         "src/auth/passport.cpp": 1,
         "src/cache/scope_experiment_targets.cpp": 1,
@@ -640,17 +831,28 @@
         "src/images.cpp": 1,
         "src/kv_conversion/cli.cpp": 1,
         "src/kv_conversion/proof.cpp": 1,
-        "src/lib/jev_compaction/jev_compaction_smoke.cpp": 1
+        "src/lib/jev_compaction/jev_compaction_smoke.cpp": 1,
+        "src/models/codex_models_availability.cpp": 1,
+        "src/provider/anthropic_replay.cpp": 1,
+        "src/provider/metered.cpp": 2,
+        "src/provider/openrouter_streams.cpp": 1,
+        "src/provider/selection.cpp": 1,
+        "src/provider/surplus.cpp": 2,
+        "src/rt/async.cpp": 1,
+        "src/rt/console.cpp": 1,
+        "src/rt/fetch.cpp": 1,
+        "src/rt/fetch_transport.cpp": 3
       },
-      "tu_emissions": 88,
-      "unique": 61
+      "tu_emissions": 138,
+      "unique": 89
     },
     "performance-unnecessary-value-param": {
       "files": {
         "include/uos/handler/index.hpp": 3,
         "include/uos/optional_telemetry_queue.hpp": 2,
         "include/uos/provider/stream_relay.hpp": 1,
-        "include/uos/rt/async.hpp": 10,
+        "include/uos/rt/abort.hpp": 1,
+        "include/uos/rt/async.hpp": 12,
         "include/uos/rt/stream.hpp": 1,
         "src/admin/api_keys.cpp": 1,
         "src/admin/chart_source_proxy.cpp": 2,
@@ -703,10 +905,47 @@
         "src/kv.cpp": 1,
         "src/kv_conversion/native_schema.cpp": 1,
         "src/kv_conversion/proof.cpp": 1,
-        "src/lib/jev_compaction/jev_compaction_smoke.cpp": 4
+        "src/lib/jev_compaction/jev_codex_smoke.cpp": 5,
+        "src/lib/jev_compaction/jev_compaction_smoke.cpp": 4,
+        "src/live/handler.cpp": 1,
+        "src/live/sideband.cpp": 1,
+        "src/models/codex_models_whitelist.cpp": 1,
+        "src/openai_telemetry.cpp": 2,
+        "src/paid_fallback/claude_code_route.cpp": 1,
+        "src/paid_fallback/health.cpp": 9,
+        "src/paid_fallback/ledger_backfill.cpp": 1,
+        "src/provider/anthropic_chat_responses.cpp": 3,
+        "src/provider/anthropic_chat_stream.cpp": 2,
+        "src/provider/anthropic_replay.cpp": 1,
+        "src/provider/anthropic_response_wire.cpp": 1,
+        "src/provider/anthropic_responses.cpp": 7,
+        "src/provider/cerebras_handlers.cpp": 2,
+        "src/provider/cerebras_responses.cpp": 2,
+        "src/provider/claude_code_quota.cpp": 1,
+        "src/provider/health.cpp": 26,
+        "src/provider/lithos.cpp": 3,
+        "src/provider/lithos_handlers.cpp": 3,
+        "src/provider/lithos_rate_limits.cpp": 1,
+        "src/provider/lithos_streams.cpp": 12,
+        "src/provider/metered.cpp": 3,
+        "src/provider/openrouter.cpp": 4,
+        "src/provider/openrouter_handlers.cpp": 3,
+        "src/provider/openrouter_streams.cpp": 18,
+        "src/provider/stream_relay.cpp": 9,
+        "src/provider/surplus.cpp": 2,
+        "src/responses_attempts.cpp": 4,
+        "src/responses_buffered.cpp": 3,
+        "src/responses_failover_stream.cpp": 2,
+        "src/responses_handler.cpp": 11,
+        "src/responses_request.cpp": 1,
+        "src/responses_stream.cpp": 5,
+        "src/rt/abort.cpp": 3,
+        "src/rt/async.cpp": 2,
+        "src/rt/fetch.cpp": 5,
+        "src/rt/fetch_transport.cpp": 4
       },
-      "tu_emissions": 351,
-      "unique": 296
+      "tu_emissions": 590,
+      "unique": 463
     },
     "performance-use-std-move": {
       "files": {
@@ -720,10 +959,19 @@
         "src/codex/responses_state.cpp": 4,
         "src/codex/routing_mutations.cpp": 1,
         "src/deepseek/waterfall_handler.cpp": 1,
-        "src/handler/terminal_route.cpp": 2
+        "src/handler/terminal_route.cpp": 2,
+        "src/live/calls.cpp": 1,
+        "src/metered_quota.cpp": 1,
+        "src/models/codex_models_fetch.cpp": 1,
+        "src/paid_fallback/health.cpp": 1,
+        "src/paid_fallback/routing.cpp": 1,
+        "src/provider/metered.cpp": 1,
+        "src/provider/stream_relay.cpp": 2,
+        "src/responses_attempts.cpp": 1,
+        "src/rt/fetch_transport.cpp": 2
       },
-      "tu_emissions": 19,
-      "unique": 19
+      "tu_emissions": 30,
+      "unique": 30
     }
   },
   "complete": false,
@@ -924,24 +1172,124 @@
     "src/lib/jev_compaction/client.cpp",
     "src/lib/jev_compaction/codex_items.cpp",
     "src/lib/jev_compaction/compact.cpp",
+    "src/lib/jev_compaction/jev_codex_smoke.cpp",
     "src/lib/jev_compaction/jev_compaction_smoke.cpp",
     "src/lib/jev_compaction/request.cpp",
     "src/lib/jev_compaction/state.cpp",
-    "src/lib/jev_compaction/types.cpp"
+    "src/lib/jev_compaction/types.cpp",
+    "src/live/calls.cpp",
+    "src/live/handler.cpp",
+    "src/live/routes.cpp",
+    "src/live/sideband.cpp",
+    "src/live/upstream.cpp",
+    "src/metered_quota.cpp",
+    "src/models/catalog.cpp",
+    "src/models/codex_models.cpp",
+    "src/models/codex_models_availability.cpp",
+    "src/models/codex_models_fetch.cpp",
+    "src/models/codex_models_whitelist.cpp",
+    "src/models/metadata.cpp",
+    "src/models/openrouter_models.cpp",
+    "src/openai.cpp",
+    "src/openai_schema.cpp",
+    "src/openai_telemetry.cpp",
+    "src/optional_telemetry_queue.cpp",
+    "src/paid_fallback/claude_code_route.cpp",
+    "src/paid_fallback/health.cpp",
+    "src/paid_fallback/index.cpp",
+    "src/paid_fallback/ledger_admission.cpp",
+    "src/paid_fallback/ledger_backfill.cpp",
+    "src/paid_fallback/ledger_settlement.cpp",
+    "src/paid_fallback/ledger_state.cpp",
+    "src/paid_fallback/ledger_stats.cpp",
+    "src/paid_fallback/removed_provider.cpp",
+    "src/paid_fallback/rollups.cpp",
+    "src/paid_fallback/routing.cpp",
+    "src/provider/anthropic_chat_responses.cpp",
+    "src/provider/anthropic_chat_stream.cpp",
+    "src/provider/anthropic_replay.cpp",
+    "src/provider/anthropic_response_wire.cpp",
+    "src/provider/anthropic_responses.cpp",
+    "src/provider/capacity.cpp",
+    "src/provider/capacity_analytics.cpp",
+    "src/provider/capacity_contract.cpp",
+    "src/provider/capacity_events.cpp",
+    "src/provider/capacity_history.cpp",
+    "src/provider/capacity_parse.cpp",
+    "src/provider/capacity_rollups.cpp",
+    "src/provider/cerebras.cpp",
+    "src/provider/cerebras_handlers.cpp",
+    "src/provider/cerebras_rate_limits.cpp",
+    "src/provider/cerebras_responses.cpp",
+    "src/provider/claude_capacity_history.cpp",
+    "src/provider/claude_capacity_rollups.cpp",
+    "src/provider/claude_code.cpp",
+    "src/provider/claude_code_access.cpp",
+    "src/provider/claude_code_accounts.cpp",
+    "src/provider/claude_code_credentials.cpp",
+    "src/provider/claude_code_models.cpp",
+    "src/provider/claude_code_quota.cpp",
+    "src/provider/claude_code_usage.cpp",
+    "src/provider/claude_code_usage_refresh.cpp",
+    "src/provider/claude_code_usage_schema.cpp",
+    "src/provider/health.cpp",
+    "src/provider/lithos.cpp",
+    "src/provider/lithos_handlers.cpp",
+    "src/provider/lithos_models.cpp",
+    "src/provider/lithos_rate_limits.cpp",
+    "src/provider/lithos_streams.cpp",
+    "src/provider/metered.cpp",
+    "src/provider/openrouter.cpp",
+    "src/provider/openrouter_handlers.cpp",
+    "src/provider/openrouter_request_controls.cpp",
+    "src/provider/openrouter_streams.cpp",
+    "src/provider/openrouter_web_tools.cpp",
+    "src/provider/presentation.cpp",
+    "src/provider/removed_provider_circuit.cpp",
+    "src/provider/removed_provider_telemetry.cpp",
+    "src/provider/selection.cpp",
+    "src/provider/stream_relay.cpp",
+    "src/provider/surplus.cpp",
+    "src/provider/surplus_claude_chat_request.cpp",
+    "src/provider/surplus_claude_request.cpp",
+    "src/quota_projection.cpp",
+    "src/recent_model_context.cpp",
+    "src/release.cpp",
+    "src/request.cpp",
+    "src/request_policy.cpp",
+    "src/responses_attempts.cpp",
+    "src/responses_buffered.cpp",
+    "src/responses_failover_stream.cpp",
+    "src/responses_handler.cpp",
+    "src/responses_native_headers.cpp",
+    "src/responses_request.cpp",
+    "src/responses_stream.cpp",
+    "src/rt/abort.cpp",
+    "src/rt/async.cpp",
+    "src/rt/base64.cpp",
+    "src/rt/clock.cpp",
+    "src/rt/console.cpp",
+    "src/rt/crypto.cpp",
+    "src/rt/date.cpp",
+    "src/rt/env.cpp",
+    "src/rt/fetch.cpp",
+    "src/rt/fetch_transport.cpp",
+    "src/rt/fetch_transport_codec.cpp",
+    "src/rt/fetch_transport_http.cpp"
   ],
   "configuration_yaml": "---\n# Hazard discovery, not a style policy. See docs/findings/cppgw-clang-tidy-audit-20261117.md.\nInheritParentConfig: false\nChecks: >-\n  -*,\n  bugprone-*,\n  -bugprone-easily-swappable-parameters,\n  cppcoreguidelines-avoid-capturing-lambda-coroutines,\n  cppcoreguidelines-avoid-reference-coroutine-parameters,\n  misc-coroutine-hostile-raii,\n  cert-*,\n  -cert-dcl37-c,\n  -cert-dcl51-cpp,\n  performance-*,\n  -performance-avoid-endl,\n  -performance-enum-size,\n  concurrency-*,\n  clang-analyzer-core.*,\n  clang-analyzer-cplusplus.*,\n  clang-analyzer-optin.cplusplus.*,\n  clang-analyzer-security.*,\n  clang-analyzer-unix.*\n# Adjacent same-type parameters are deliberate module-for-module TS API translations.\n# Reserved identifiers are naming/style issues outside this lifetime audit (cert-dcl37/51).\n# endl and enum storage size are micro-style suggestions, not hot-path copy hazards.\nWarningsAsErrors: ''\nHeaderFilterRegex: '(^|/)cpp/gateway/(include|src|tests)/'\nSystemHeaders: false\nFormatStyle: none\nCheckOptions:\n  bugprone-dangling-handle.HandleClasses: 'std::basic_string_view;std::span'\n  bugprone-unchecked-optional-access.IgnoreSmartPointerDereference: 'false'\n  bugprone-exception-escape.CheckDestructors: 'true'\n  bugprone-exception-escape.CheckMoveMemberFunctions: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerToFloatingPointNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnFloatingPointNarrowingConversion: 'true'\n  performance-unnecessary-value-param.AllowedTypes: ''\n",
   "counting": "Unique (check/alias-group, gateway-relative file, line, column, message); repeated header emissions deduplicated. TU emissions also counted separately.",
   "coverage": {
-    "completed": 200,
+    "completed": 300,
     "database_units": 830,
     "failed": 0,
     "inputs_unchanged": true,
-    "ok": 200,
+    "ok": 300,
     "selected": 830,
     "source_units": 369,
     "test_support_units": 461,
     "timeouts": 0,
-    "units_with_findings": 200
+    "units_with_findings": 297
   },
   "failures": [],
   "head_commit": "33e1539d74bc3b69566875b449a01c97b0cfca3d",
@@ -2616,13 +2964,13 @@
   ],
   "resources": {
     "jobs": 4,
-    "largest_process_rss_kib": 845964,
-    "sum_system_seconds": 202.51,
-    "sum_unit_seconds": 5308.542,
-    "sum_user_seconds": 4956.56,
-    "wall_seconds": 1342.68
+    "largest_process_rss_kib": 906484,
+    "sum_system_seconds": 318.78,
+    "sum_unit_seconds": 8271.12,
+    "sum_user_seconds": 7720.4,
+    "wall_seconds": 2079.729
   },
   "schema_version": 1,
-  "tu_diagnostic_emissions": 6694,
-  "unique_diagnostics": 1720
+  "tu_diagnostic_emissions": 10088,
+  "unique_diagnostics": 2447
 }
