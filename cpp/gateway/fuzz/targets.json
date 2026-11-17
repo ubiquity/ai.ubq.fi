@@ -52,6 +52,12 @@
       "entry": "uos::rt::jsonParse",
       "max_len": 16384
     },
+    "date_parse": {
+      "harness": "fuzz/date_parse.cpp",
+      "entry": "uos::rt::Date::parse and string constructor",
+      "max_len": 16384,
+      "extra_sources": ["src/rt/date.cpp"]
+    },
     "url": {
       "harness": "fuzz/url.cpp",
       "entry": "uos::rt::URL / URLSearchParams",
