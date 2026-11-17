@@ -24,7 +24,6 @@ namespace asio = boost::asio;
 
 namespace uos::rt::ws::detail {
   namespace {
-    constexpr const char* GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     // node:http's default limit on a response head.
     constexpr std::size_t MAX_HEADER_SIZE = 16 * 1024;
 
@@ -512,7 +511,7 @@ namespace uos::rt::ws::detail {
       current.req = nullptr;
       const std::optional<std::string> upgrade = response->header("upgrade");
       if (!upgrade || toLowerCase(*upgrade) != "websocket") return abortHandshakeSocket(websocket, socket, "Invalid Upgrade header");
-      const std::string digest = rt::crypto::createHash("sha1").update(key + GUID).digest("base64");
+      const std::string digest = handshakeAccept(key);
       if (response->header("sec-websocket-accept") != digest) return abortHandshakeSocket(websocket, socket, "Invalid Sec-WebSocket-Accept header");
       if (response->header("sec-websocket-protocol")) return abortHandshakeSocket(websocket, socket, "Server sent a subprotocol but none was requested");
       if (response->header("sec-websocket-extensions"))

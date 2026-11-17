@@ -6,19 +6,28 @@
 #include "uos/rt/number.hpp"
 #include "uos/rt/text_codec.hpp"
 
+#include <boost/beast/websocket/detail/frame.hpp>
+#include <boost/beast/websocket/detail/mask.hpp>
+#include <boost/endian/conversion.hpp>
+
 #include <algorithm>
-#include <cstring>
 #include <string>
 #include <utility>
 
 namespace uos::rt::ws::detail {
   namespace {
-    // `isValidStatusCode(code)`: allowed in a close frame.
-    bool isValidStatusCode(int code) { return (code >= 1000 && code <= 1014 && code != 1004 && code != 1005 && code != 1006) || (code >= 3000 && code <= 4999); }
+    namespace beastWs = boost::beast::websocket::detail;
 
-    std::uint32_t readUInt32BE(const Bytes& data, std::size_t offset) {
-      return (static_cast<std::uint32_t>(data[offset]) << 24) | (static_cast<std::uint32_t>(data[offset + 1]) << 16) | (static_cast<std::uint32_t>(data[offset + 2]) << 8) |
-             static_cast<std::uint32_t>(data[offset + 3]);
+    bool isValidStatusCode(int code) {
+      return code >= 0 && code <= 4999 && beastWs::is_valid_close_code(static_cast<std::uint16_t>(code));
+    }
+
+    bool validUtf8(BytesView bytes) {
+      return bytes.empty() || beastWs::check_utf8(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    }
+
+    void applyMask(boost::asio::mutable_buffer payload, beastWs::prepared_key key) {
+      if (key != beastWs::prepared_key{}) beastWs::mask_inplace(payload, key);
     }
 
     // `Buffer.from(data)` for a string (UTF-8, a lone surrogate as U+FFFD), the bytes otherwise.
@@ -35,7 +44,7 @@ namespace uos::rt::ws::detail {
     }
     std::size_t randomPoolPointer = RANDOM_POOL_SIZE;
 
-    void nextMask(std::uint8_t (&mask)[4]) {
+    void nextMask(beastWs::prepared_key& mask) {
       if (randomPoolPointer == RANDOM_POOL_SIZE) {
         rt::crypto::getRandomValues(std::span<std::uint8_t>(randomPool()));
         randomPoolPointer = 0;
@@ -146,7 +155,7 @@ namespace uos::rt::ws::detail {
       return;
     }
     const Bytes buf = consume(2);
-    payloadLength_ = (static_cast<std::uint64_t>(buf[0]) << 8) | buf[1];
+    payloadLength_ = boost::endian::load_big_u16(buf.data());
     haveLength();
   }
 
@@ -156,11 +165,11 @@ namespace uos::rt::ws::detail {
       return;
     }
     const Bytes buf = consume(8);
-    const std::uint32_t num = readUInt32BE(buf, 0);
+    payloadLength_ = boost::endian::load_big_u64(buf.data());
     // The maximum safe integer in JavaScript is 2^53 - 1. An error is returned
     // if payload length is greater than this number.
-    if (num > (1u << 21) - 1) return fail("RangeError", "Unsupported WebSocket frame: payload length > 2^53 - 1", false, 1009, "WS_ERR_UNSUPPORTED_DATA_PAYLOAD_LENGTH");
-    payloadLength_ = (static_cast<std::uint64_t>(num) << 32) + readUInt32BE(buf, 4);
+    if (payloadLength_ >= (std::uint64_t{1} << 53))
+      return fail("RangeError", "Unsupported WebSocket frame: payload length > 2^53 - 1", false, 1009, "WS_ERR_UNSUPPORTED_DATA_PAYLOAD_LENGTH");
     haveLength();
   }
 
@@ -178,7 +187,7 @@ namespace uos::rt::ws::detail {
       return;
     }
     const Bytes buf = consume(4);
-    std::copy(buf.begin(), buf.end(), mask_);
+    std::copy(buf.begin(), buf.end(), mask_.begin());
     state_ = Step::getData;
   }
 
@@ -190,9 +199,7 @@ namespace uos::rt::ws::detail {
         return;
       }
       data = consume(static_cast<std::size_t>(payloadLength_));
-      if (masked_ && (mask_[0] | mask_[1] | mask_[2] | mask_[3]) != 0) {
-        for (std::size_t index = 0; index < data.size(); ++index) data[index] ^= mask_[index & 3];
-      }
+      if (masked_) applyMask(boost::asio::buffer(data), mask_);
     }
     if (opcode_ > 0x07) return controlMessage(std::move(data));
     if (!data.empty()) {
@@ -219,7 +226,7 @@ namespace uos::rt::ws::detail {
       for (const Bytes& fragment : fragments) data.insert(data.end(), fragment.begin(), fragment.end());
     }
     const bool isBinary = opcode_ == 2;
-    if (!isBinary && !skipUTF8Validation_ && !isUtf8(std::span<const std::uint8_t>(data))) return fail("Error", "invalid UTF-8 sequence", true, 1007, "WS_ERR_INVALID_UTF8");
+    if (!isBinary && !skipUTF8Validation_ && !validUtf8(data)) return fail("Error", "invalid UTF-8 sequence", true, 1007, "WS_ERR_INVALID_UTF8");
     // ws resets its state right after the listeners return; a listener that
     // throws must not leave the parser mid-frame here.
     state_ = Step::getInfo;
@@ -239,7 +246,7 @@ namespace uos::rt::ws::detail {
         const int code = (data[0] << 8) | data[1];
         if (!isValidStatusCode(code)) return fail("RangeError", "invalid status code " + std::to_string(code), true, 1002, "WS_ERR_INVALID_CLOSE_CODE");
         Bytes reason(data.begin() + 2, data.end());
-        if (!skipUTF8Validation_ && !isUtf8(std::span<const std::uint8_t>(reason))) return fail("Error", "invalid UTF-8 sequence", true, 1007, "WS_ERR_INVALID_UTF8");
+        if (!skipUTF8Validation_ && !validUtf8(reason)) return fail("Error", "invalid UTF-8 sequence", true, 1007, "WS_ERR_INVALID_UTF8");
         loop_ = false;
         state_ = Step::getInfo;
         auto listener = onConclude;
@@ -291,41 +298,18 @@ namespace uos::rt::ws::detail {
   Sender::Sender(std::shared_ptr<Socket> socket) : socket_(std::move(socket)) {}
 
   Bytes Sender::frame(BytesView data, int opcode, bool fin, bool rsv1, bool mask) {
-    std::uint8_t key[4] = {0, 0, 0, 0};
-    std::size_t offset = 2;
-    bool skipMasking = false;
-    if (mask) {
-      nextMask(key);
-      skipMasking = (key[0] | key[1] | key[2] | key[3]) == 0;
-      offset = 6;
-    }
-    const std::size_t dataLength = data.size();
-    std::size_t payloadLength = dataLength;
-    if (dataLength >= 65536) {
-      offset += 8;
-      payloadLength = 127;
-    } else if (dataLength > 125) {
-      offset += 2;
-      payloadLength = 126;
-    }
-    Bytes target(offset + dataLength);
-    target[0] = static_cast<std::uint8_t>(fin ? opcode | 0x80 : opcode);
-    if (rsv1) target[0] |= 0x40;
-    target[1] = static_cast<std::uint8_t>(payloadLength);
-    if (payloadLength == 126) {
-      target[2] = static_cast<std::uint8_t>(dataLength >> 8);
-      target[3] = static_cast<std::uint8_t>(dataLength);
-    } else if (payloadLength == 127) {
-      const auto length = static_cast<std::uint64_t>(dataLength);
-      for (int index = 0; index < 8; ++index) target[static_cast<std::size_t>(2 + index)] = static_cast<std::uint8_t>(length >> (8 * (7 - index)));
-      target[2] = target[3] = 0;
-    }
-    std::copy(data.begin(), data.end(), target.begin() + static_cast<std::ptrdiff_t>(offset));
-    if (!mask) return target;
-    target[1] |= 0x80;
-    std::copy(key, key + 4, target.begin() + static_cast<std::ptrdiff_t>(offset - 4));
-    if (skipMasking) return target;
-    for (std::size_t index = 0; index < dataLength; ++index) target[offset + index] ^= key[index & 3];
+    beastWs::prepared_key key{};
+    if (mask) nextMask(key);
+    const beastWs::frame_header header{data.size(), boost::endian::load_little_u32(key.data()), static_cast<beastWs::opcode>(opcode), fin, mask, rsv1, false, false};
+    beastWs::fh_buffer serialized;
+    beastWs::write(serialized, header);
+    const auto bytes = serialized.data();
+    const auto* start = static_cast<const std::uint8_t*>(bytes.data());
+    Bytes target;
+    target.reserve(bytes.size() + data.size());
+    target.insert(target.end(), start, start + bytes.size());
+    target.insert(target.end(), data.begin(), data.end());
+    if (mask) applyMask(boost::asio::buffer(target) + bytes.size(), key);
     return target;
   }
 

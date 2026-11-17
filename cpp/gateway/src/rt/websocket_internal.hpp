@@ -5,6 +5,7 @@
 #include "uos/rt/clock.hpp"
 #include "uos/rt/websocket.hpp"
 #include <boost/asio/generic/stream_protocol.hpp>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -45,6 +46,8 @@ namespace uos::rt::ws::detail {
   // The "<value>" of node:http's join rules for a header map built from raw
   // name/value pairs (see IncomingResponse::header).
   std::optional<std::string> joinedHeader(const std::vector<std::pair<std::string, std::string>>& rawHeaders, std::string_view name);
+  // RFC 6455 accept token for a generated or validated handshake key.
+  std::string handshakeAccept(std::string_view key);
 
   // A node:net Socket (allowHalfOpen false, so the socket ends its side when
   // the peer does and is destroyed once both sides are done) over a connected
@@ -201,7 +204,7 @@ namespace uos::rt::ws::detail {
     Bytes buffer_;
     std::size_t bufferOffset_ = 0;
     std::uint64_t payloadLength_ = 0;
-    std::uint8_t mask_[4] = {0, 0, 0, 0};
+    std::array<std::uint8_t, 4> mask_{};
     int fragmented_ = 0;
     bool masked_ = false;
     bool fin_ = false;

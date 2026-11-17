@@ -3,12 +3,12 @@
 // inherit, and the helpers the other websocket_*.cpp files share.
 #include "websocket_internal.hpp"
 
-#include "uos/rt/crypto.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 
 #include <boost/asio/io_context.hpp>
+#include <boost/beast/websocket/detail/hybi13.hpp>
 
 #include <algorithm>
 #include <cerrno>
@@ -70,6 +70,12 @@ namespace uos::rt::ws {
     void nextTick(std::function<void()> function) { rt::queueMicrotask(std::move(function)); }
 
     Reason codedError(std::string message, std::string code, std::string name) { return std::make_exception_ptr(CodedError(std::move(message), std::move(code), std::move(name))); }
+
+    std::string handshakeAccept(std::string_view key) {
+      boost::beast::websocket::detail::sec_ws_accept_type accept;
+      boost::beast::websocket::detail::make_sec_ws_accept(accept, key);
+      return {accept.data(), accept.size()};
+    }
 
     std::string errnoName(int errorNumber) {
       switch (errorNumber) {
@@ -627,7 +633,6 @@ namespace uos::rt::ws {
   // ---- WebSocketServer -------------------------------------------------------------------
 
   namespace {
-    constexpr const char* GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     constexpr int RUNNING = 0;
     constexpr int CLOSING_STATE = 1;
     constexpr int CLOSED_STATE = 2;
@@ -783,7 +788,7 @@ namespace uos::rt::ws {
       return;
     }
     if (state_ > RUNNING) return abortHandshake(socket, 503);
-    const std::string digest = rt::crypto::createHash("sha1").update(key + GUID).digest("base64");
+    const std::string digest = detail::handshakeAccept(key);
     std::vector<std::string> headers{"HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade", "Sec-WebSocket-Accept: " + digest};
     std::shared_ptr<ws::WebSocket> websocket = options_.WebSocket(options_);
     if (!protocols.empty()) {
