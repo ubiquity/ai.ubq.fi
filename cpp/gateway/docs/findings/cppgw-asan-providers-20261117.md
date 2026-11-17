@@ -1,6 +1,6 @@
 # Provider sanitizer bring-up — 2026-11-17
 
-Local validation finished with six outside-owned leak failures. Starting commit: `141cb4d482a3b0d8624ce0411cbd3b93e45873e6`.
+Validation checkpoints and a live-loop ownership refinement are recorded below; six outside-owned leak failures remain. Starting commit: `141cb4d482a3b0d8624ce0411cbd3b93e45873e6`.
 
 ## Contract v1
 
@@ -296,7 +296,7 @@ and real loopback ingress cases within each selected group.
 | `usage_`      |        1 |                   1 |
 | **Total**     |   **99** |            **1153** |
 
-## Full rerun after owned fixes
+## Intermediate full rerun after initial owned fixes
 
 Both full rebuilds succeed with strict warnings and unchanged expected values.
 The two new regressions raise the case total from 1153 to 1155, with 99 binaries.
@@ -320,7 +320,7 @@ Full working-source run directories:
   `results.json` SHA-256: `ce601524f1eb31c10ea1bd6856f5127ce81385ef252a8853ec5fc85c0764925c`.
   `provenance.json` SHA-256: `f16898953b1b153a3731da7defb1cad1955084a1874d05c74c9b77f30a5c0ad4`.
 
-The final clean-commit receipt uses these same commands with `--require-clean`:
+The clean-commit receipt uses these same commands with `--require-clean`:
 
 ```sh
 python3 /tmp/cppgw-asan-providers-20261117/checks.py build --profile plain --jobs 4
@@ -694,5 +694,107 @@ is active. The weak registry preserves callbacks until abort or loop shutdown;
 unreachable cyclic signal graphs can remain during a live loop, consistent with
 the runtime's existing lifetime boundary and the late-abort contract.
 
-Final clean-commit, local review, and publication receipts will be appended after
-this checkpoint; the six outside-owned sanitizer failures remain unresolved.
+The first clean-commit receipt is preserved below. Its source hashes became stale
+for the working tree when the subsequent live-loop refinement changed Lithos
+ownership; final-tree validation is required again. Six outside-owned sanitizer
+failures remain unresolved.
+
+## First clean source receipt and local review
+
+The initial implementation was committed as
+`621e5e2fb0a2047c28520f190adcb1573d6083e6`, tree
+`31b1f17f3ce0333e216dc815ee5d0bfcd4d2fa30`, base/parent
+`141cb4d482a3b0d8624ce0411cbd3b93e45873e6`.
+Both clean full-profile gates reproduced 1155 passing cases: normal 99/99 binary
+exits, sanitizer 93/99 exits and the same six LSan failures. All 1368 input
+hashes and commit/tree identities stayed unchanged in those runs. Their sorted
+input manifest hash is `35a32823c27e047635c305529324c8070944ec7e9a11bf7142f117f830834e39`.
+These are exact receipts for that intermediate commit, not the later refinement.
+
+Actual local Codex review mode (CLI 0.169.0):
+
+```sh
+timeout 180s codex --sandbox read-only -c 'review_model="codex-auto-review"' review --commit 621e5e2fb0a2047c28520f190adcb1573d6083e6
+```
+
+The command exited 0 after 83.399 seconds, with zero credential redactions.
+Transcript: `/tmp/cppgw-asan-providers-20261117/review.log`, SHA-256
+`6b1253162cd7714f6fd94d8f27bd162e6098fe0d577c6827c83ba83c599e5139`.
+Its banner reports `model: ubiquity/deepseek-flash`, `provider: uos`, reasoning
+`none`; it does not verify the requested `codex-auto-review` identity.
+**Reject this receipt for official review ingestion.** No finding was ingested
+or identity-mismatched review marked accepted. The original final finding text
+is preserved here; the CLI printed it twice and the complete transcript retains
+both copies:
+
+```text
+The new registry defers callback release until loop destruction, but production loops are long-lived or process-wide, so completed requests can retain cancellation graphs indefinitely. The added tests only cover loop teardown and do not expose this production lifetime issue.
+
+Review comment:
+
+- [P1] Release completed cancellation callbacks before loop shutdown — /home/runner/work/_temp/agent-jobs/cppgw-asan-providers-20261117/checkout/cpp/gateway/src/provider/stream_relay.cpp:127-129
+  When a long-lived HTTP loop handles a completed stream with a non-empty `cancelPending`, this registry only stores a weak reference and clears the callback in `shutdown()`. The downstream abort listener still strongly owns `PendingCancellation`, so its callback and captured cancellation graph remain reachable for the entire loop lifetime; the process-wide default loop is never destroyed, causing unbounded per-request memory retention. Remove or weaken this ownership when the relay is terminal, while preserving only the required late-abort behavior.
+```
+
+## Live-loop ownership refinement
+
+Code inspection confirms that Lithos's production callback can own the same
+controller whose dependent downstream signal owns that callback. Teardown cleanup
+alone preserves the late-abort contract but does not release that production
+graph during a running loop. The contract scope and behavioral requirements are
+unchanged; the intermediate source receipts are superseded after these edits.
+
+`src/provider/lithos_handlers.cpp` now keeps the cancellation controller in the
+owning deferred coroutine input, and the callback captures it weakly. The owner
+survives every refusal wait and transport attempt and ends when deferred dispatch
+settles. External downstream abort still propagates into the request signal:
+`openai::inferenceSignal` is composed from `downstreamSignalFor`; relay-owned
+cancellation still interrupts stream reads. The callback remains callable after
+completion, with no additional pending work to cancel. No wait, delivery,
+settlement, status, or output ordering is changed.
+
+The matching header adds a scoped, normally empty test observer receiving only
+a weak controller reference. The new `lithos_wiring_test` case exercises both
+wires through three refused attempts, deferred retry, completed streamed output,
+and a live-loop weak-owner check. It preserves all existing expected values.
+An initial probe of the per-fetch child signal also passed against the old
+implementation; it did not observe the source controller, so it was replaced by
+the direct weak-controller observer before acceptance. The stronger negative
+control is recorded with its actual result below.
+
+The direct-controller regression passes all 29 Lithos wiring cases in the normal
+profile. A controlled variant restores only the strong cancellation capture,
+keeping the observer and all production/test inputs otherwise identical. The
+same new test then fails twice at `observed.expired()` (one failure for each
+wire), before the loop is destroyed:
+
+```text
+strong-capture control exit 1
+    tests/lithos_wiring_test.cpp:204: expected observed.expired()
+    tests/lithos_wiring_test.cpp:204: expected observed.expired()
+FAIL lithos wiring: completed deferred dispatch releases its signals while the loop stays live
+1 run, 0 passed, 1 failed
+```
+
+The strong-capture control source SHA-256 is
+`298cb130f3dae7a45f25b5c276bef42d1ba214d6c64cc42fd9158a9e3c6c11b9`.
+Its expanded compile/link commands are retained in
+`/tmp/cppgw-asan-providers-20261117/negative-build-strong.log`, and its output is
+`negative-live-loop-strong.log` in the same directory. It is a temporary test
+control, not a checkout source edit. It compiles one controlled owned source
+object with the normal flags and replaces only that object in the existing
+Lithos wiring link closure. The initial per-fetch probe's passing negative
+control remains separately retained in `negative-live-loop.log`.
+
+Final changed production/test paths now also include:
+
+- `src/provider/lithos_handlers.cpp` and `include/uos/provider/lithos_handlers.hpp`:
+  the owning coroutine input/weak cancellation callback and an inert, scoped,
+  weak-only test observer. Both profiles compile the affected header closures.
+- `tests/lithos_wiring_test.cpp`: the live-loop release regression on both wires;
+  29 cases, with the strong-capture negative control above.
+
+All 99 binaries rebuilt successfully after this refinement. The final case
+count is 1156 (three new cases relative to the original 1153). Full clean-commit
+run receipts follow below; no pass count for this refined tree is inferred from
+the superseded 621e5e2f receipt.
