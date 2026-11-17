@@ -6,6 +6,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <unicode/casemap.h>
 #include <unicode/ucol.h>
 #include <unicode/ustring.h>
 
@@ -254,17 +255,29 @@ namespace uos::rt {
       return static_cast<std::int32_t>(length);
     }
 
-    std::string mapCase(std::string_view text, decltype(&u_strToUpper) map) {
+    using Utf8CaseMap = std::int32_t (*)(const char*, std::uint32_t, const char*, std::int32_t, char*, std::int32_t, icu::Edits*, UErrorCode&);
+
+    std::string mapCase(std::string_view text, decltype(&u_strToUpper) mapUtf16, Utf8CaseMap mapUtf8) {
+      if (text.empty()) return {};
+      UErrorCode status = U_ZERO_ERROR;
+      if (isAscii(text)) {
+        // Root casing of ASCII keeps the byte length unchanged.
+        const std::int32_t length = icuLength(text.size());
+        std::string result(text.size(), '\0');
+        mapUtf8("", 0, text.data(), length, result.data(), length, nullptr, status);
+        if (U_FAILURE(status)) throw JsError(u_errorName(status));
+        return result;
+      }
+
       const std::u16string source = toUtf16(text);
       const std::int32_t length = icuLength(source.size());
       std::array<char16_t, 64> buffer;
-      UErrorCode status = U_ZERO_ERROR;
       const std::int32_t capacity = icuLength(buffer.size());
-      const std::int32_t count = map(buffer.data(), capacity, source.data(), length, "", &status);
+      const std::int32_t count = mapUtf16(buffer.data(), capacity, source.data(), length, "", &status);
       if (status == U_BUFFER_OVERFLOW_ERROR) {
         std::u16string expanded(static_cast<std::size_t>(count), u'\0');
         status = U_ZERO_ERROR;
-        map(expanded.data(), count, source.data(), length, "", &status);
+        mapUtf16(expanded.data(), count, source.data(), length, "", &status);
         if (U_FAILURE(status)) throw JsError(u_errorName(status));
         return fromUtf16(expanded);
       }
@@ -941,9 +954,9 @@ namespace uos::rt {
     return out;
   }
 
-  std::string toLowerCase(std::string_view text) { return mapCase(text, u_strToLower); }
+  std::string toLowerCase(std::string_view text) { return mapCase(text, u_strToLower, icu::CaseMap::utf8ToLower); }
 
-  std::string toUpperCase(std::string_view text) { return mapCase(text, u_strToUpper); }
+  std::string toUpperCase(std::string_view text) { return mapCase(text, u_strToUpper, icu::CaseMap::utf8ToUpper); }
 
   // ---- Construction ------------------------------------------------------------------------
   std::string fromCharCode(std::uint16_t unit) {
