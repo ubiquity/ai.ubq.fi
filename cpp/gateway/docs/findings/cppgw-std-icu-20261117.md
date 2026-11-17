@@ -97,7 +97,10 @@ The test sweep uses the unchanged portable CI driver's `write_ninja`, `links.res
 ```bash
 env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/python3 -B "$work/sweep.py" "$PWD" release 2
 env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/python3 -B "$work/sweep.py" "$PWD" asan 2
+env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/python3 -B "$work/sweep-resume.py" "$PWD" asan 4
 ```
+
+Once release finished, the sanitizer controller retained the completed waves and resumed the outstanding waves with four jobs. It checked the source digest, compiler version, compile and link flags, library paths, and selected-test count against its initial run before reusing any result.
 
 The initial sweep linked ICU and SQLite from a directory supplied through `LD_LIBRARY_PATH`. The KV crash fixture starts a child with an explicit environment, and that child exited 127 because the loader could not find ICU. The final sweep links a `DT_RPATH` to the same, verified runtime libraries under `/var/tmp` so the child can start with its intended clean environment. The final run passes that fixture in both profiles.
 
@@ -123,11 +126,22 @@ Source and test identity `ef1128617bc38571dad784a2361a0b129e7e0cc9`, tree `cf579
 
 | Profile             | Passing binaries / selected | Passing cases / run | Failures |
 | ------------------- | --------------------------: | ------------------: | -------: |
-| Clang 21 release    |                   312 / 442 |       3,142 / 3,142 |        0 |
-| Clang 21 ASan/UBSan |                   232 / 442 |       1,913 / 1,913 |        0 |
+| Clang 21 release    |                   442 / 442 |       5,027 / 5,027 |        0 |
+| Clang 21 ASan/UBSan |                   312 / 442 |       3,142 / 3,142 |        0 |
 
-At 2026-11-17 23:17 UTC, release had 130 binaries pending and ASan/UBSan had 210. The incremental receipts captured `sweep-release/rows-20261117T231704.jsonl` SHA-256 `ddbf0970afa9510057ee6c419da636eb12b1666bf3438db0df420ab407cdcb43` and `sweep-asan/rows-20261117T231704.jsonl` SHA-256 `4540f04650b98320596c3c2b7aedfeade3b886fd22e3f0fd9feadb013f428dbe`. The final libFuzzer run completed 3,036,331 inputs in 121 seconds, reached 154 instrumented edges and 622 features, and exited with zero findings or artifacts. Peak RSS was 445 MiB.
+At 2026-11-17 23:57 UTC, release had 0 binaries pending and ASan/UBSan had 130. The incremental receipts captured `sweep-release/rows-20261117T235745.jsonl` SHA-256 `5959fd61caf26d65480fc69a30ae79da47d58b285db2837d98d63cef49a369a5` and `sweep-asan/rows-20261117T235745.jsonl` SHA-256 `d1828d34f7c0f5d75657b829ce3038705f4739576b0f404442743a56ecf8d987`. The final libFuzzer run completed 3,036,331 inputs in 121 seconds, reached 154 instrumented edges and 622 features, and exited with zero findings or artifacts. Peak RSS was 445 MiB.
 
-The SDK CMake registration found ICU 78.3, generated a 442-test registry and built the string object using the runner's compiler. The historical SDK sysroot and macOS were unavailable on this runner. The old `tools/unit.sh` SDK wrapper still lists only Boost and OpenSSL, and `docs/rt/text.md` still describes the old implicit order. Both are outside this lane's ownership.
+The SDK CMake registration found ICU 78.3, generated a 442-test registry and built the string object using the runner's compiler. An independent GCC 14.2 strict compile of `src/rt/string.cpp` also passed. All three legacy string cases passed with `LANG` and `LC_ALL` set to `tr_TR.UTF-8`.
+
+```bash
+env UOS_GATEWAY_BUILD_EVIDENCE=runner-disposable cmake -S cpp/gateway -B "$work/cmake-sdk-probe" -G Ninja \
+  -DCMAKE_CXX_COMPILER=/usr/bin/clang++-21 -DUOS_GATEWAY_IS_SDK=ON -DICU_ROOT="$work/icu78" -DUOS_GATEWAY_TESTS=ON
+cmake --build "$work/cmake-sdk-probe" --target uos_obj_08617ca7441f4e6a -j1
+g++-14 "${strict[@]}" -c cpp/gateway/src/rt/string.cpp -o "$work/new-string-gcc14.o"
+python3 -B cpp/gateway/tools/links.py --check
+git diff --check 093a9e05..HEAD
+```
+
+The historical SDK sysroot and macOS were unavailable on this runner. The old `tools/unit.sh` SDK wrapper still lists only Boost and OpenSSL, and `docs/rt/text.md` still describes the old implicit order. Both are outside this lane's ownership.
 
 The working branch is `agent-job` for collection into `claude/cpp-gateway-port`. `git push --dry-run origin HEAD:refs/heads/cppgw-std-icu-20261117` failed because GitHub write credentials were unavailable.
