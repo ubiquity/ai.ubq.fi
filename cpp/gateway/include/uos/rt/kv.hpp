@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <span>
@@ -163,7 +164,77 @@ namespace uos::rt {
   // ---- Values ---------------------------------------------------------------------------
 
   class KvValue;
-  using KvArray = std::vector<KvValue>;
+  namespace kv_detail {
+    class ValueGraph;
+    struct GraphNode;
+  }
+
+  // Array length includes holes. Large gaps occupy no element slots.
+  class KvArray {
+  public:
+    class const_iterator {
+    public:
+      using iterator_category = std::random_access_iterator_tag;
+      using value_type = KvValue;
+      using difference_type = std::ptrdiff_t;
+      using pointer = const KvValue*;
+      using reference = const KvValue&;
+
+      const_iterator() = default;
+      reference operator*() const;
+      pointer operator->() const { return &**this; }
+      reference operator[](difference_type offset) const;
+      const_iterator& operator++() { return *this += 1; }
+      const_iterator& operator--() { return *this -= 1; }
+      const_iterator operator++(int) { auto previous = *this; ++*this; return previous; }
+      const_iterator operator--(int) { auto previous = *this; --*this; return previous; }
+      const_iterator& operator+=(difference_type offset) { index_ += offset; return *this; }
+      const_iterator& operator-=(difference_type offset) { index_ -= offset; return *this; }
+      friend const_iterator operator+(const_iterator it, difference_type offset) { return it += offset; }
+      friend const_iterator operator+(difference_type offset, const_iterator it) { return it += offset; }
+      friend const_iterator operator-(const_iterator it, difference_type offset) { return it -= offset; }
+      friend difference_type operator-(const_iterator left, const_iterator right) { return left.index_ - right.index_; }
+      friend auto operator<=>(const const_iterator&, const const_iterator&) = default;
+
+    private:
+      friend class KvArray;
+      const_iterator(const KvArray* array, std::size_t index) : array_(array), index_(static_cast<difference_type>(index)) {}
+      const KvArray* array_ = nullptr;
+      difference_type index_ = 0;
+    };
+
+    KvArray();
+    KvArray(std::initializer_list<KvValue> values);
+    KvArray(std::size_t count, const KvValue& value);
+    KvArray(const_iterator first, const_iterator last);
+    KvArray(const KvArray&);
+    KvArray(KvArray&&) noexcept;
+    KvArray& operator=(const KvArray&);
+    KvArray& operator=(KvArray&&) noexcept;
+    ~KvArray();
+
+    std::size_t size() const noexcept;
+    bool empty() const noexcept { return size() == 0; }
+    void reserve(std::size_t count);
+    void push_back(KvValue value);
+    template<class... Args> void emplace_back(Args&&... args);
+    void insert(const_iterator position, const_iterator first, const_iterator last);
+    const KvValue& operator[](std::size_t index) const noexcept;
+    KvValue& operator[](std::size_t index);
+    const_iterator begin() const noexcept { return const_iterator(this, 0); }
+    const_iterator end() const noexcept { return const_iterator(this, size()); }
+
+    // Define an index, extending the length as necessary. nextPresent returns
+    // size() at the end. Explicit undefined is present; a hole is absent.
+    void set(std::size_t index, KvValue value);
+    std::size_t nextPresent(std::size_t from) const noexcept;
+    friend bool operator==(const KvArray& left, const KvArray& right);
+
+  private:
+    struct Sparse;
+    std::vector<KvValue> dense_;
+    std::unique_ptr<Sparse> sparse_;
+  };
 
   // `undefined`
   struct KvUndefined {
@@ -210,8 +281,7 @@ namespace uos::rt {
   };
 
   // A Map in insertion order. Primitive keys are unique under SameValueZero (a -0
-  // key is stored as +0, like Map.prototype.set); container keys (arrays, objects,
-  // ...) are distinct identities in JS, so every set() with one appends.
+  // key is stored as +0, like Map.prototype.set); decoded objects compare by identity.
   class KvMap {
   public:
     using Entry = std::pair<KvValue, KvValue>;
@@ -296,6 +366,28 @@ namespace uos::rt {
     friend bool operator==(const KvArrayBufferView&, const KvArrayBufferView&) = default;
   };
 
+  namespace kv_detail {
+    class ErrorCause {
+    public:
+      ErrorCause() = default;
+      ErrorCause(std::nullptr_t) {}
+      ErrorCause(std::shared_ptr<const KvValue> value) : value_(std::move(value)) {}
+      ErrorCause(const ErrorCause&);
+      ErrorCause(ErrorCause&&) noexcept = default;
+      ErrorCause& operator=(const ErrorCause&);
+      ErrorCause& operator=(ErrorCause&&) noexcept = default;
+      ErrorCause& operator=(std::nullptr_t) { value_.reset(); return *this; }
+      ErrorCause& operator=(std::shared_ptr<const KvValue> value) { value_ = std::move(value); return *this; }
+      explicit operator bool() const noexcept { return static_cast<bool>(value_); }
+      const KvValue* get() const noexcept { return value_.get(); }
+      const KvValue& operator*() const noexcept { return *value_; }
+      const KvValue* operator->() const noexcept { return get(); }
+
+    private:
+      std::shared_ptr<const KvValue> value_;
+    };
+  }
+
   // An Error instance as structured clone keeps it: the class name (Error,
   // EvalError, RangeError, ReferenceError, SyntaxError, TypeError or URIError; any
   // other name clones as "Error"), the own message (std::nullopt when absent), the
@@ -310,17 +402,22 @@ namespace uos::rt {
     std::uint32_t column = 0;
     std::optional<std::string> sourceURL{};
     std::optional<std::string> stack{};
-    std::shared_ptr<const KvValue> cause{};
+    kv_detail::ErrorCause cause{};
     friend bool operator==(const KvError& left, const KvError& right);
   };
 
-  // A stored value: every JavaScript value the gateway, its migration import and
-  // its tests write. Numbers are doubles (JS numbers); strings are WTF-8. Values
-  // are trees: shared references and cycles have no representation.
+  // A stored value: numbers are doubles and strings are WTF-8. Decoded object
+  // graphs own their nodes together, and copying a node handle keeps its graph alive.
   class KvValue {
+    struct GraphReference {
+      const kv_detail::ValueGraph* graph;
+      kv_detail::GraphNode* node;
+      std::shared_ptr<const kv_detail::ValueGraph> owner;
+    };
+
   public:
     using Variant = std::variant<KvUndefined, std::nullptr_t, bool, double, std::string, BigInt, KvU64, KvBytes, KvArrayBuffer, KvArrayBufferView,
-                                 KvDate, KvRegExp, KvError, KvArray, KvObject, KvMap, KvSet, KvHole>;
+                                 KvDate, KvRegExp, KvError, KvArray, KvObject, KvMap, KvSet, KvHole, GraphReference>;
 
     // `undefined`
     KvValue() noexcept : value_(KvUndefined{}) {}
@@ -352,27 +449,31 @@ namespace uos::rt {
     KvValue(const json::array& array);
     KvValue(const json::string& text) : value_(std::string(text)) {}
     template <class T> KvValue(T*) = delete;
+    KvValue(const KvValue&);
+    KvValue(KvValue&&) noexcept = default;
+    KvValue& operator=(const KvValue&);
+    KvValue& operator=(KvValue&&) noexcept = default;
 
     static KvValue undefined() noexcept { return KvValue(); }
     static KvValue array(std::initializer_list<KvValue> items);
     static KvValue object(std::initializer_list<KvObject::Entry> entries);
 
-    bool isUndefined() const noexcept { return std::holds_alternative<KvUndefined>(value_); }
-    bool isNull() const noexcept { return std::holds_alternative<std::nullptr_t>(value_); }
+    bool isUndefined() const noexcept { return is<KvUndefined>(); }
+    bool isNull() const noexcept { return is<std::nullptr_t>(); }
     // `value == null`: null or undefined.
     bool isNullish() const noexcept { return isUndefined() || isNull(); }
-    bool isBool() const noexcept { return std::holds_alternative<bool>(value_); }
-    bool isNumber() const noexcept { return std::holds_alternative<double>(value_); }
-    bool isString() const noexcept { return std::holds_alternative<std::string>(value_); }
-    bool isBigInt() const noexcept { return std::holds_alternative<BigInt>(value_); }
+    bool isBool() const noexcept { return is<bool>(); }
+    bool isNumber() const noexcept { return is<double>(); }
+    bool isString() const noexcept { return is<std::string>(); }
+    bool isBigInt() const noexcept { return is<BigInt>(); }
     // `value instanceof KvU64` (only a top-level stored KvU64 reads back as one).
-    bool isU64() const noexcept { return std::holds_alternative<KvU64>(value_); }
+    bool isU64() const noexcept { return is<KvU64>(); }
     // `value instanceof Uint8Array` for a Uint8Array owning its whole buffer.
-    bool isBytes() const noexcept { return std::holds_alternative<KvBytes>(value_); }
-    bool isArray() const noexcept { return std::holds_alternative<KvArray>(value_); }
+    bool isBytes() const noexcept { return is<KvBytes>(); }
+    bool isArray() const noexcept { return is<KvArray>(); }
     // A plain object (not an array, Map, Set, Date, ...).
-    bool isObject() const noexcept { return std::holds_alternative<KvObject>(value_); }
-    template <class T> bool is() const noexcept { return std::holds_alternative<T>(value_); }
+    bool isObject() const noexcept { return is<KvObject>(); }
+    template <class T> bool is() const noexcept { return std::holds_alternative<T>(variant()); }
 
     // Typed access; TypeError "KV value is <type>, not <type>" on a mismatch.
     bool asBool() const { return as<bool>(); }
@@ -386,11 +487,11 @@ namespace uos::rt {
     const KvObject& asObject() const { return as<KvObject>(); }
     KvObject& asObject() { return as<KvObject>(); }
     template <class T> const T& as() const {
-      if (const T* found = std::get_if<T>(&value_)) return *found;
+      if (const T* found = std::get_if<T>(&variant())) return *found;
       throwMismatch(kindName<T>());
     }
     template <class T> T& as() {
-      if (T* found = std::get_if<T>(&value_)) return *found;
+      if (is<T>()) return std::get<T>(variant());
       throwMismatch(kindName<T>());
     }
 
@@ -415,13 +516,24 @@ namespace uos::rt {
     // throws TypeError "KV value is <type>, not JSON".
     json::value toJson() const;
 
-    const Variant& variant() const noexcept { return value_; }
-    Variant& variant() noexcept { return value_; }
+    const Variant& variant() const noexcept {
+      if (const auto* reference = std::get_if<GraphReference>(&value_)) return graphValue(*reference);
+      return value_;
+    }
+    // Editable C++ values are snapshots of the selected node. Const access
+    // traverses the decoded graph with its original identities.
+    Variant& variant();
+    const void* identity() const noexcept;
+    const KvValue* backingBuffer() const noexcept;
 
     // Structural equality; numbers (also inside Date) compare with Object.is.
     friend bool operator==(const KvValue& left, const KvValue& right);
 
   private:
+    friend class kv_detail::ValueGraph;
+    explicit KvValue(GraphReference reference) : value_(std::move(reference)) {}
+    static const Variant& graphValue(const GraphReference& reference) noexcept;
+    void retainGraph();
     template <class T> static constexpr std::string_view kindName() noexcept {
       if constexpr (std::is_same_v<T, KvUndefined>) return "undefined";
       else if constexpr (std::is_same_v<T, std::nullptr_t>) return "null";
@@ -445,6 +557,10 @@ namespace uos::rt {
     [[noreturn]] void throwMismatch(std::string_view expected) const;
     Variant value_;
   };
+
+  template<class... Args> void KvArray::emplace_back(Args&&... args) {
+    push_back(KvValue(std::forward<Args>(args)...));
+  }
 
   // Test-harness display hooks (found by argument-dependent lookup). The text is a
   // compact debugging rendering, not Bun's console format.
@@ -485,17 +601,17 @@ namespace uos::rt {
   // JavaScriptCore SerializedScriptValue (version <= 14) holds, also inside Bun's
   // `ff 42 55 4e 01` envelope around graphs with Buffers (a Buffer reads as the
   // Uint8Array it is). Every form Bun writes reads back, the history-dependent ones
-  // included (DoubleTag for integral numbers, 16-bit strings of Latin-1 text); a
-  // shared reference reads as a copy of the value it names. Errors as Bun reports
+  // included (DoubleTag for integral numbers, 16-bit strings of Latin-1 text),
+  // with object references and sparse arrays. Errors as Bun reports
   // them: an empty input is null; malformed bytes throw TypeError "Unable to
   // deserialize data."; a malformed envelope throws Error "failed to parse
   // serialized buffer envelope"; nesting deeper than 2000 containers (Bun: 40001;
   // KvValue copies recursively) throws RangeError "Maximum call stack size
   // exceeded.". A value KvValue
-  // cannot hold (a cycle, a boxed primitive, properties on an array, Map or Set, a
-  // Float16Array, a resizable or length-tracking buffer, an array longer than 2^24, a
+  // cannot hold (a boxed primitive, properties on an array, Map or Set, a
+  // Float16Array, a resizable or length-tracking buffer, a
   // Blob or DOMException) throws TypeError "Serialized value <what> has no KvValue
-  // representation"; so does a graph whose shared references expand past 2^24 values.
+  // representation".
   KvValue kvJscDeserialize(std::span<const std::uint8_t> bytes);
 
   // Conversion behind the typed `get<T>` / `getMany<T>` / entry `as<T>()`:

@@ -7,6 +7,7 @@
 #include "uos/rt/number.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
+#include "../rt/kv_internal.hpp"
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -17,12 +18,14 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 namespace uos::kv_conversion::typed_value {
   namespace {
     using rt::KvValue;
+    using rt::kv_detail::ValueGraph;
 
     // `ARRAY_TYPES`: the constructors by name, with BYTES_PER_ELEMENT (Bun gives DataView 1).
     struct ArrayType {
@@ -153,8 +156,11 @@ namespace uos::kv_conversion::typed_value {
       // container, whose atom follows its children.
       std::optional<json::value> visit(const KvValue& item) {
         if (std::optional<json::value> primitive = primitiveAtom(item)) return primitive;
-        // A KvValue is a tree: no object is seen twice, so every object gets its own node.
         const std::size_t id = nodes.size();
+        if (const void* identity = item.identity()) {
+          const auto [previous, added] = seen_.try_emplace(identity, id);
+          if (!added) return refAtom(previous->second);
+        }
         nodes.push_back(json::object{{"type", "object"}});
         if (writeSpecialNode(item, id)) return refAtom(id);
         writeContainerNode(item, id);
@@ -173,7 +179,8 @@ namespace uos::kv_conversion::typed_value {
           node(id)["type"] = json::string(nativeBuffer ? std::string_view("Buffer") : constructorName);
           if (!nativeBuffer && !arrayType(constructorName)) throw rt::TypeError("Unsupported typed array");
           const rt::KvBytes& bytes = view ? view->buffer : item.asBytes();
-          std::optional<json::value> backing = visit(KvValue(rt::KvArrayBuffer{bytes}));
+          const KvValue* bufferValue = item.backingBuffer();
+          std::optional<json::value> backing = bufferValue ? visit(*bufferValue) : visit(KvValue(rt::KvArrayBuffer{bytes}));
           node(id)["buffer"] = std::move(*backing);
           node(id)["offset"] = rt::makeNumber(static_cast<double>(view ? view->byteOffset : 0));
           node(id)["length"] = rt::makeNumber(static_cast<double>(view ? view->byteLength : bytes.size()));
@@ -219,7 +226,7 @@ namespace uos::kv_conversion::typed_value {
         const KvValue::Variant& variant = frame.item->variant();
         const auto position = [&frame] { return static_cast<std::ptrdiff_t>(frame.next); };
         if (const auto* array = std::get_if<rt::KvArray>(&variant)) {
-          while (frame.next < array->size() && (*array)[frame.next].is<rt::KvHole>()) ++frame.next;
+          frame.next = array->nextPresent(frame.next);
           return frame.next < array->size() ? &(*array)[frame.next] : nullptr;
         }
         if (const auto* map = std::get_if<rt::KvMap>(&variant)) {
@@ -259,6 +266,7 @@ namespace uos::kv_conversion::typed_value {
 
       bool nativeCapture_;
       std::deque<Frame> frames_;
+      std::unordered_map<const void*, std::size_t> seen_;
     };
 
     TypedValue encodeValueGraph(const KvValue& value, bool nativeCapture) {
@@ -410,13 +418,6 @@ namespace uos::kv_conversion::typed_value {
       return viewValue(rt::KvViewKind::Uint8Array, buffer.bytes, std::trunc(byteOffset) + 0.0, std::trunc(length));
     }
 
-    // What `read` returns: a value, or the container a node still being populated is building
-    // (JavaScript returns that very object; a KvValue tree cannot hold it).
-    struct Read {
-      KvValue value;
-      const KvValue* building = nullptr;
-    };
-
     // The `objects` Map keys: the `ref` values with SameValueZero (object refs by identity).
     struct NodeKey {
       int kind = 0;
@@ -425,9 +426,6 @@ namespace uos::kv_conversion::typed_value {
       const void* identity = nullptr;
       friend bool operator<(const NodeKey& left, const NodeKey& right) {
         return std::tie(left.kind, left.number, left.text, left.identity) < std::tie(right.kind, right.number, right.text, right.identity);
-      }
-      friend bool operator==(const NodeKey& left, const NodeKey& right) {
-        return std::tie(left.kind, left.number, left.text, left.identity) == std::tie(right.kind, right.number, right.text, right.identity);
       }
     };
     NodeKey nodeKey(const json::value& id) {
@@ -461,30 +459,21 @@ namespace uos::kv_conversion::typed_value {
     // where a nested `read` reaches a node that is not decoded yet.
     class Decoder {
     public:
-      Decoder(const json::value& graph, bool nativeCapture) : graph_(graph), nativeCapture_(nativeCapture) { countRefs(); }
+      Decoder(const json::value& graph, bool nativeCapture) : graph_(graph), nativeCapture_(nativeCapture) {}
 
       KvValue decode() {
         if (graph_.is_null()) throw rt::TypeError("null is not an object (evaluating 'graph.root')");
-        std::optional<Read> incoming = beginRead(rt::get(graph_, "root"));
+        std::optional<KvValue> incoming = beginRead(rt::get(graph_, "root"));
         while (!frames_.empty()) {
           Frame& frame = frames_.back();
           if (!advance(frame, incoming)) continue;
-          Slot& slot = objects_[frame.key];
-          slot.building = nullptr;
-          slot.done = true;
-          if (keepAll_ || refCounts_[frame.key] > 1) slot.value = frame.value;
-          incoming = Read{std::move(frame.value)};
+          incoming = std::move(frame.value);
           frames_.pop_back();
         }
-        return settled(std::move(*incoming));
+        return ValueGraph::finish(std::move(*incoming));
       }
 
     private:
-      struct Slot {
-        bool done = false;
-        KvValue value;
-        const KvValue* building = nullptr;
-      };
       enum class Stage { allocate, flags, buffer, populate, mapKey, mapValue, setItem, property };
       // One `readNode(id)` in progress.
       struct Frame {
@@ -498,7 +487,7 @@ namespace uos::kv_conversion::typed_value {
         std::size_t index = 0;
         const json::value* entryAtom = nullptr;
         std::string propertyKey;
-        Read keyRead;
+        KvValue keyRead;
       };
 
       // `base.key` where base is an atom or node: TypeError for undefined and null.
@@ -508,15 +497,10 @@ namespace uos::kv_conversion::typed_value {
         return rt::get(*base, key);
       }
 
-      static KvValue settled(Read read) {
-        if (read.building) throw noKvValue("cycle");
-        return std::move(read.value);
-      }
-
-      static Read take(std::optional<Read>& incoming) {
-        Read read = std::move(*incoming);
+      static KvValue take(std::optional<KvValue>& incoming) {
+        KvValue value = std::move(*incoming);
         incoming.reset();
-        return read;
+        return value;
       }
 
       const json::value* keep(json::value value) {
@@ -524,66 +508,26 @@ namespace uos::kv_conversion::typed_value {
         return &scratch_.back();
       }
 
-      // How many `ref` atoms name each node key. A finished node is kept for a later read only
-      // when another atom names it (copying every node would be quadratic in depth). Two keys
-      // naming one node (`0` and "0") decode it twice, and with it the atoms inside it: then
-      // every finished node is kept.
-      void countRefs() {
-        const json::array* nodes = rt::getArray(graph_, "nodes");
-        std::map<double, NodeKey> keyOfNode;
-        std::vector<const json::value*> pending{&graph_};
-        while (!pending.empty()) {
-          const json::value* value = pending.back();
-          pending.pop_back();
-          if (const json::object* object = rt::getObject(*value)) {
-            const json::value* ref = rt::get(*object, "ref");
-            const std::optional<std::string_view> type = rt::getString(*object, "type");
-            if (ref && type == "ref") {
-              const NodeKey key = nodeKey(*ref);
-              ++refCounts_[key];
-              if (!nodes) {
-                keepAll_ = true;
-              } else {
-                const double number = rt::toNumber(*ref);
-                double index = std::isnan(number) ? 0 : std::trunc(number);
-                if (index < 0) index += static_cast<double>(nodes->size());
-                if (index >= 0 && index < static_cast<double>(nodes->size())) {
-                  const auto [found, added] = keyOfNode.emplace(index, key);
-                  if (!added && !(found->second == key)) keepAll_ = true;
-                }
-              }
-            }
-            for (const auto& member : *object) pending.push_back(&member.value());
-          } else if (const json::array* array = rt::getArray(*value)) {
-            for (const json::value& element : *array) pending.push_back(&element);
-          }
-        }
-      }
-
       // `read(atom)`: the value, or std::nullopt after starting the node it names.
-      std::optional<Read> beginRead(const json::value* atom) {
+      std::optional<KvValue> beginRead(const json::value* atom) {
         const json::value* type = property(atom, "type", "atom.type");
         const std::optional<std::string_view> name = rt::getString(type);
-        if (name == "undefined") return Read{KvValue()};
-        if (name == "null") return Read{KvValue(nullptr)};
+        if (name == "undefined") return KvValue();
+        if (name == "null") return KvValue(nullptr);
         if (name == "string" || name == "boolean") {
           const json::value* value = rt::get(*atom, "value");
-          return Read{value ? KvValue(*value) : KvValue()};
+          return value ? KvValue(*value) : KvValue();
         }
-        if (name == "bigint") return Read{KvValue(rt::BigInt::fromString(rt::toString(rt::get(*atom, "value"))))};
+        if (name == "bigint") return KvValue(rt::BigInt::fromString(rt::toString(rt::get(*atom, "value"))));
         if (name == "number") {
           const json::value* value = rt::get(*atom, "value");
           const std::optional<std::string_view> text = rt::getString(value);
-          return Read{KvValue(text == "-0" ? -0.0 : rt::toNumber(value))};
+          return KvValue(text == "-0" ? -0.0 : rt::toNumber(value));
         }
         if (name == "ref") {
           const json::value& id = required(rt::get(*atom, "ref"));
           NodeKey key = nodeKey(id);
-          if (const auto found = objects_.find(key); found != objects_.end()) {
-            // A finished node read again is a copy: a KvValue cannot share it.
-            if (found->second.done) return Read{found->second.value};
-            return Read{KvValue(), found->second.building};
-          }
+          if (const auto found = objects_.find(key); found != objects_.end()) return ValueGraph::borrow(found->second);
           if (frames_.size() >= kMaxNesting) throw rt::RangeError("Maximum call stack size exceeded.");
           const json::value& node = required(nodeAt(id));
           Frame frame;
@@ -609,23 +553,26 @@ namespace uos::kv_conversion::typed_value {
       }
 
       // Runs `frame` until it waits for a node read (false) or its node is complete (true).
-      bool advance(Frame& frame, std::optional<Read>& incoming) {
+      bool advance(Frame& frame, std::optional<KvValue>& incoming) {
         for (;;) {
           switch (frame.stage) {
             case Stage::allocate:
               if (!allocateNode(frame, incoming)) return false;
               continue;
             case Stage::flags: {
-              const Read flags = take(incoming);
-              const rt::Regex regexp(rt::toString(frame.pattern), jsString(flags.building ? *flags.building : flags.value));
+              const KvValue flags = take(incoming);
+              const rt::Regex regexp(rt::toString(frame.pattern), jsString(flags));
               frame.value = rt::KvRegExp{regexp.source(), regexp.flags()};
               startPopulation(frame);
               continue;
             }
-            case Stage::buffer:
-              frame.value = allocateView(frame, take(incoming));
+            case Stage::buffer: {
+              const KvValue buffer = take(incoming);
+              frame.value = allocateView(frame, buffer);
               startPopulation(frame);
+              ValueGraph::node(frame.value).backing = std::make_unique<KvValue>(ValueGraph::borrow(buffer));
               continue;
+            }
             case Stage::populate: {
               if (frame.index >= frame.elements.size()) return true;
               const json::value& element = *frame.elements[frame.index];
@@ -654,18 +601,16 @@ namespace uos::kv_conversion::typed_value {
               if (!incoming) return false;
               continue;
             case Stage::mapValue: {
-              Read entry = take(incoming);
-              KvValue mapKey = settled(std::move(frame.keyRead));
-              frame.value.as<rt::KvMap>().set(std::move(mapKey), settled(std::move(entry)));
+              ValueGraph::node(frame.value).value.as<rt::KvMap>().set(std::move(frame.keyRead), take(incoming));
               nextElement(frame);
               continue;
             }
             case Stage::setItem:
-              frame.value.as<rt::KvSet>().add(settled(take(incoming)));
+              ValueGraph::node(frame.value).value.as<rt::KvSet>().add(take(incoming));
               nextElement(frame);
               continue;
             case Stage::property:
-              defineProperty(frame.value, frame.propertyKey, take(incoming));
+              defineProperty(ValueGraph::node(frame.value).value, frame.propertyKey, take(incoming));
               nextElement(frame);
               continue;
           }
@@ -678,7 +623,7 @@ namespace uos::kv_conversion::typed_value {
       }
 
       // allocateNode; false while a view's buffer or a RegExp's flags wait for a node read.
-      bool allocateNode(Frame& frame, std::optional<Read>& incoming) {
+      bool allocateNode(Frame& frame, std::optional<KvValue>& incoming) {
         const json::value& node = *frame.node;
         frame.type = property(&node, "type", "node.type");
         const std::optional<std::string_view> name = rt::getString(frame.type);
@@ -736,9 +681,9 @@ namespace uos::kv_conversion::typed_value {
       }
 
       // allocateView, once `read(required(node.buffer))` produced `buffer`.
-      KvValue allocateView(const Frame& frame, const Read& buffer) {
+      KvValue allocateView(const Frame& frame, const KvValue& buffer) {
         const json::value& node = *frame.node;
-        const auto* backing = buffer.building ? nullptr : std::get_if<rt::KvArrayBuffer>(&buffer.value.variant());
+        const auto* backing = std::get_if<rt::KvArrayBuffer>(&buffer.variant());
         const std::optional<std::string_view> name = rt::getString(frame.type);
         if (nativeCapture_ && name == "Buffer") {
           if (!backing) throw rt::TypeError("Native Buffer capture requires an ArrayBuffer backing");
@@ -760,8 +705,9 @@ namespace uos::kv_conversion::typed_value {
 
       // `objects.set(id, value)`, then populateNode's iteration of entries or items.
       void startPopulation(Frame& frame) {
-        Slot& slot = objects_[frame.key];
-        slot = Slot{false, KvValue(), &frame.value};
+        if (!valueGraph_) valueGraph_ = std::make_shared<ValueGraph>();
+        frame.value = valueGraph_->add(std::move(frame.value));
+        objects_.emplace(frame.key, ValueGraph::borrow(frame.value));
         frame.stage = Stage::populate;
         frame.index = 0;
         const json::value& node = *frame.node;
@@ -781,7 +727,6 @@ namespace uos::kv_conversion::typed_value {
         const std::optional<double> number = rt::getNumber(*length);
         if (!number) return rt::KvArray{KvValue(*length)};
         if (static_cast<double>(rt::toUint32(*number)) != *number) throw rt::RangeError("Array length must be a positive integer of safe magnitude.");
-        if (*number > kMaxDenseLength) throw noKvValue("sparse array length " + rt::numberToString(*number));
         return rt::KvArray(static_cast<std::size_t>(*number), KvValue(rt::KvHole{}));
       }
 
@@ -814,41 +759,32 @@ namespace uos::kv_conversion::typed_value {
       }
 
       // Object.defineProperty(value, key, { value: read(entry), writable: true, enumerable, configurable: true })
-      static void defineProperty(KvValue& target, const std::string& key, Read read) {
+      static void defineProperty(KvValue& target, const std::string& key, KvValue property) {
         if (auto* array = std::get_if<rt::KvArray>(&target.variant())) {
           if (key == "length") {
-            const double number = read.building ? jsNumber(*read.building) : jsNumber(read.value);
+            const double number = jsNumber(property);
             if (static_cast<double>(rt::toUint32(number)) != number) throw rt::RangeError("Invalid array length");
             throw rt::TypeError("Attempting to change configurable attribute of unconfigurable property.");
           }
-          KvValue element = settled(std::move(read));
           if (!rt::isArrayIndex(key)) throw noKvValue("array property " + rt::jsonQuote(key));
           const double index = rt::stringToNumber(key);
-          if (index >= kMaxDenseLength) throw noKvValue("sparse array index " + key);
-          const auto position = static_cast<std::size_t>(index);
-          if (position >= array->size()) array->resize(position + 1, KvValue(rt::KvHole{}));
-          (*array)[position] = std::move(element);
+          array->set(static_cast<std::size_t>(index), std::move(property));
           return;
         }
         if (auto* error = std::get_if<rt::KvError>(&target.variant())) {
-          KvValue property = settled(std::move(read));
           if (key == "message" && property.isString()) error->message = property.asString();
           else if (key == "stack" && (property.isString() || property.isUndefined())) error->stack = property.isString() ? std::optional<std::string>(property.asString()) : std::nullopt;
           else if (key == "cause") error->cause = std::make_shared<const KvValue>(std::move(property));
           else throw noKvValue("Error property " + rt::jsonQuote(key) + " holding " + std::string(property.kind()));
           return;
         }
-        target.asObject().set(key, settled(std::move(read)));
+        target.asObject().set(key, std::move(property));
       }
-
-      // KvArray is dense: longer (sparse) JavaScript arrays are refused.
-      static constexpr double kMaxDenseLength = 1 << 24;
 
       const json::value& graph_;
       bool nativeCapture_;
-      std::map<NodeKey, Slot> objects_;
-      std::map<NodeKey, std::size_t> refCounts_;
-      bool keepAll_ = false;
+      std::shared_ptr<ValueGraph> valueGraph_;
+      std::map<NodeKey, KvValue> objects_;
       std::deque<Frame> frames_;
       std::deque<json::value> scratch_;
     };

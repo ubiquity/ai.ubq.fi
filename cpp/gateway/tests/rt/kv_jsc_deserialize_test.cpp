@@ -15,6 +15,7 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 using namespace uos;
@@ -59,6 +60,14 @@ namespace {
 
   // The recording script's `describe(value)`: how a Bun outcome was printed.
   std::string describe(const KvValue& value) {
+    static thread_local std::unordered_set<const void*> active;
+    const void* identity = value.identity();
+    if (identity && !active.insert(identity).second) return "<cycle>";
+    struct Remove {
+      std::unordered_set<const void*>& active;
+      const void* identity;
+      ~Remove() { if (identity) active.erase(identity); }
+    } remove{active, identity};
     if (value.isUndefined()) return "undefined";
     if (value.isNull()) return "null";
     if (value.isBool()) return value.asBool() ? "true" : "false";
@@ -259,6 +268,10 @@ TEST("malformed and unusual inputs fail or succeed like Bun's deserialize") {
       {"magic without version", "ff42554e", "TypeError: Unable to deserialize data.", nullptr},
   };
   for (const Case& entry : cases) {
+    if (std::string_view(entry.name) == "cycle") {
+      EXPECT_EQ(outcome(entry.hex), std::string(entry.bun));
+      continue;
+    }
     const std::string expected = std::string(entry.name) + ": " + (entry.cpp ? entry.cpp : entry.bun);
     EXPECT_EQ(std::string(entry.name) + ": " + outcome(entry.hex), expected);
   }
