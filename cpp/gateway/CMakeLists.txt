@@ -20,6 +20,13 @@ target_compile_definitions(uos_gateway_settings INTERFACE BOOST_JSON_NO_LIB BOOS
 include(cmake/Profile.cmake)
 include(cmake/Vendors.cmake)
 
+if(TARGET uos_vendor_quickjs-libregexp)
+  # Use the pinned compiler driver for the C vendor, including in sanitizer profiles.
+  get_target_property(quickjs_sources uos_vendor_quickjs-libregexp SOURCES)
+  set_source_files_properties(${quickjs_sources} PROPERTIES LANGUAGE CXX COMPILE_OPTIONS "-x;c;-std=gnu11")
+  get_target_property(quickjs_consumers uos_vendor_quickjs-libregexp UOS_VENDOR_CONSUMERS)
+endif()
+
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/PORT-MANIFEST.json")
 file(GLOB UOS_RT_DISCOVERY CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/rt/*.cpp")
 execute_process(COMMAND /usr/bin/python3 "${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake-sources.py" "${CMAKE_CURRENT_BINARY_DIR}/sources.cmake"
@@ -49,6 +56,9 @@ function(uos_object_for_source output source)
     if(source IN_LIST simdjson_consumers)
       target_compile_definitions("${target}" PRIVATE UOS_GATEWAY_SIMDJSON)
       target_include_directories("${target}" SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/simdjson")
+    endif()
+    if(source IN_LIST quickjs_consumers)
+      target_include_directories("${target}" SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/quickjs-libregexp")
     endif()
   endif()
   set("${output}" "${target}" PARENT_SCOPE)

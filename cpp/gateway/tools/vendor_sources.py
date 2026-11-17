@@ -10,12 +10,16 @@ from typing import NamedTuple
 
 GATEWAY = Path(__file__).resolve().parents[1]
 REGISTRY = Path("cmake/vendors.json")
-NAMES = {"simdutf", "simdjson"}
+NAMES = {"simdutf", "simdjson", "quickjs-libregexp"}
 SIMDJSON_HEADER = "third_party/simdjson/simdjson.h"
 VENDOR_MANIFESTS = {
+    "quickjs-libregexp": "698d914c326a35c7f009a663f079e56c61d51c7c03fc3e877f11c85f82b8bd0b",
     "simdjson": "e958e232e00f9de08ca1118888fbe15ddf75e5b9ffb0c4d5b606eb645909d834",
     "simdutf": "f7b0cb9c96b51c837550c4a68f0f5305833cc8649aa7f25897c5dab487c60481",
 }
+QUICKJS_SOURCES = ("libregexp.c", "libunicode.c")
+QUICKJS_FILES = {*QUICKJS_SOURCES, "LICENSE", "cutils.h", "libregexp.h", "libregexp-opcode.h",
+                 "libunicode.h", "libunicode-table.h"}
 STRICT_WARNINGS = {"-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror"}
 
 
@@ -24,6 +28,11 @@ class Library(NamedTuple):
     source: str
     consumers: tuple[str, ...]
     inputs: tuple[str, ...]
+    additional_sources: tuple[str, ...] = ()
+
+    @property
+    def sources(self):
+        return (self.source, *self.additional_sources)
 
     @property
     def target(self):
@@ -47,8 +56,8 @@ def selected(root=GATEWAY):
         directory = Path("third_party") / name
         provenance = directory / "PROVENANCE.md"
         manifest = directory / "SHA256SUMS"
-        source_filename = name + ".cpp"
-        filenames = {source_filename, name + ".h", "LICENSE"}
+        source_filenames = QUICKJS_SOURCES if name == "quickjs-libregexp" else (name + ".cpp",)
+        filenames = QUICKJS_FILES if name == "quickjs-libregexp" else {source_filenames[0], name + ".h", "LICENSE"}
         entries = {}
         manifest_bytes = (root / manifest).read_bytes()
         if hashlib.sha256(manifest_bytes).hexdigest() != VENDOR_MANIFESTS[name]:
@@ -72,7 +81,8 @@ def selected(root=GATEWAY):
                 if hashlib.file_digest(handle, "sha256").hexdigest() != expected:
                     raise ValueError("Supplied vendor input bytes differ: " + str(relative))
             inputs.append(relative.as_posix())
-        yield Library(name, (directory / source_filename).as_posix(), tuple(consumers), tuple(inputs))
+        source, *additional = ((directory / filename).as_posix() for filename in source_filenames)
+        yield Library(name, source, tuple(consumers), tuple(inputs), tuple(additional))
 
 
 def required(libraries, sources, targets=()):
@@ -98,9 +108,13 @@ def main(args):
         for library in libraries:
             args = [library.name, library.source, *library.consumers]
             print("uos_register_vendor(" + " ".join('"' + value + '"' for value in args) + ")")
+            if library.additional_sources:
+                print(f'target_sources("{library.target}" PRIVATE ' + " ".join(f'"{source}"' for source in library.additional_sources) + ")")
+                print('set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS '
+                      + " ".join(f'"{path}"' for path in library.inputs) + ")")
     elif args[0] == "unit":
         print(" ".join(sorted(simdjson_consumers(libraries))))
-        print(" ".join(lib.source for lib in required(libraries, args[1:])))
+        print(" ".join(source for lib in required(libraries, args[1:]) for source in lib.sources))
     else:
         raise ValueError("Expected cmake or unit")
 

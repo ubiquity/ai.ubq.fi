@@ -1,4 +1,5 @@
 {
+  "quickjs-libregexp": ["src/rt/regex_compile.cpp", "src/rt/regex_match.cpp", "src/rt/regex_tables.cpp"],
   "simdjson": ["src/rt/json.cpp"],
   "simdutf": ["src/rt/base64.cpp"]
 }
