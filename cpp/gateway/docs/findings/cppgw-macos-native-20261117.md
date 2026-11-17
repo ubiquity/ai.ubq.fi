@@ -189,6 +189,63 @@ Boost, zlib and ICU 78 must be prepared again; the existing remaining Homebrew v
 the earlier report. The canonical `Path(scratch_name).resolve()` and guarded capture correction
 are already in the starting commit; do not reapply them.
 
+## Continuation discovery and SQLite correction
+
+Prepared Boost 1.92.0_1, zlib **1.3.2** and ICU 78.3_1 with
+`HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1 brew install boost zlib icu4c@78`.
+The other installed versions match v1. Prepared the same SHA-verified SQLite 3.54.0 dylib using
+the commands in MACOS.md, under `/tmp/cppgw-macos-native-20261117b/sqlite-3.54.0`.
+All downloads, frozen lint-tool installs, probes, objects and logs remain external.
+
+Started the complete sweep with:
+
+```sh
+cpp/gateway/tools/macos-build.sh --build-root /tmp/cppgw-macos-native-20261117b/native \
+  --sqlite-prefix /tmp/cppgw-macos-native-20261117b/sqlite-3.54.0 --jobs 3 --suite all --require-clean
+```
+
+Run `native/runs/1794925481996443000` started at clean commit
+`566c0ccefe9551128bd15d97265a416802b26710`, tree
+`dd436ee1028249dbe6acd86def2c15d268acfd3c`. All **369/369 production sources** and **36/36 runtime
+test sources** compile; the archive contains 369 members. Initial runtime execution is **34/36 binaries
+passing, 456 cases / 449 passed / 7 failed**, with no timeout. Gateway compilation continues.
+There are now **405 application targets** and 441 total, including additions merged after v1.
+The source corrections below invalidate this initial sweep as final acceptance; retain it as diagnosis.
+
+Fresh Bun 1.4.0 probes confirm canonical cwd/TMPDIR and the asset-wrapper parent check, Darwin flags
+and signal constants, 121 default versus two system TLS roots, and the exact Linux-confinement refusal.
+Scripts and complete output are `/tmp/cppgw-macos-native-20261117b/oracle-*.{mjs,log}`.
+
+The inherited `src/rt/sqlite_darwin.hpp` URI/readonly-SHM adapter was added after v1's successful
+runtime phase and was absent from its source-change table. Bun on this Mac validates its URI and
+missing-SHM behavior, but the adapter alone exposed an incomplete portability contract:
+
+| Bun-on-Darwin scenario                                                              | Exact observed result                                                     |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `new Database('file:urirel.db?mode=ro')`, absent file                               | `SQLITE_CANTOPEN`, errno 14, `unable to open database file`               |
+| Existing `file://.../ro.db?immutable=1`, readonly/strict, no explicit URI flag      | Opens successfully, result 1                                              |
+| Close a writable WAL database, default persistence                                  | Both `-wal` and `-shm` remain; readonly query returns `{a:7}`             |
+| Explicit `fileControl(SQLITE_FCNTL_PERSIST_WAL, 0)` after accessing WAL, then close | Both sidecars disappear; readonly query throws the same `SQLITE_CANTOPEN` |
+| Missing sidecars, immutable readonly connection to stopped checkpointed file        | Returns `{a:7}`; write rejects with `SQLITE_READONLY`                     |
+
+Correction: `src/rt/sqlite.cpp` sets `SQLITE_FCNTL_PERSIST_WAL=1` only on Darwin, matching Bun's
+default and preserving explicit disable calls. This fixes the lifecycle cause of six durable-KV
+inspection failures without changing their readonly helper, schema/value assertions or expected values.
+`tests/rt/sqlite_test.cpp` gains the two exact Bun-proven Darwin URI expectations, retaining Linux
+literals, plus a Darwin-only persistence/readback/explicit-disable regression. The source change is
+guarded; Linux production preprocessing is unchanged. New runtime total will be 457 cases.
+Compilation/execution of this correction is pending the next driver invocation.
+
+Early gates pass: shell syntax, embedded Python AST, both documents' initial Prettier checks,
+`bun --no-env-file --no-install run size:check` (851 files; this ratchet covers TypeScript), and
+`git diff --check`. No TypeScript source, test or dependency lock changed.
+
+Publication preflight again exits 128: `fatal: could not read Username for 'https://github.com':
+terminal prompts disabled`. Public fetch succeeds; `origin/development` is
+`002fe15fa926674c97f0169355d24929bf529710`, and the continuation tip is not its ancestor.
+No authenticated push, PR or development handoff is claimed.
+
 ## Final handoff
 
-Continuation in progress; exact commands, complete counts and remaining boundaries will be appended.
+Continuation in progress; complete application counts, corrected-source receipts and remaining
+boundaries will be appended. The enclosing runner publisher owns authenticated publication/integration.

@@ -644,6 +644,12 @@ namespace uos::rt::sqlite {
         throw error;
       }
       sqlite.extended_result_codes(handle, 1);
+#if defined(__APPLE__)
+      // Apple's SQLite, used by Bun on Darwin, keeps WAL sidecars by default.
+      // A later fileControl(PERSIST_WAL, 0) must still disable that behavior.
+      int persistWal = 1;
+      sqlite.file_control(handle, nullptr, constants::SQLITE_FCNTL_PERSIST_WAL, &persistWal);
+#endif
 #if defined(UOS_GATEWAY_NATIVE_LIBRARIES)
       // Bun and the retained SDK reject expression trees deeper than 1000.
       ::sqlite3_limit(handle, SQLITE_LIMIT_EXPR_DEPTH, 1000);

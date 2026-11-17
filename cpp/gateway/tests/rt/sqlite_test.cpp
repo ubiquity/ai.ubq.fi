@@ -176,6 +176,12 @@ namespace {
 #define SQLITE_VERSIONED_EXPECTATION(sdk, native) sdk
 #endif
 
+#if defined(__APPLE__)
+#define SQLITE_PLATFORM_EXPECTATION(linux, darwin) darwin
+#else
+#define SQLITE_PLATFORM_EXPECTATION(linux, darwin) linux
+#endif
+
 #define LINE(expected, name, ...) EXPECT_EQ(recorded(name, [&]() -> json::value { __VA_ARGS__ }), std::string(expected));
 
   json::value text(std::string_view value) { return json::value(std::string(value)); }
@@ -283,7 +289,8 @@ TEST("open: a file: name is a plain path unless SQLITE_OPEN_URI is given") {
   {
     // The recorder chdir()s into its directory: a relative "file:" name is created there.
     const WorkingDirectory inside(dir.root);
-    LINE(R"(uri-plain-relative	{"ok":[{"$row":[["one",1]],"proto":"Object"},["file:urirel.db?mode=ro"]]})", "uri-plain-relative", {
+    LINE(SQLITE_PLATFORM_EXPECTATION(R"(uri-plain-relative	{"ok":[{"$row":[["one",1]],"proto":"Object"},["file:urirel.db?mode=ro"]]})",
+      R"(uri-plain-relative	{"threw":{"$error":{"ctor":"Error","name":"SQLiteError","message":"unable to open database file","code":"SQLITE_CANTOPEN","errno":14,"byteOffset":-1,"keys":["code","errno","byteOffset"],"string":"SQLiteError: unable to open database file","isSQLiteError":true}}})"), "uri-plain-relative", {
       const Closing db(Database("file:urirel.db?mode=ro"));
       const json::value row = enc(db->query("SELECT 1 AS one").get());
       json::array files;
@@ -299,7 +306,8 @@ TEST("open: a file: name is a plain path unless SQLITE_OPEN_URI is given") {
       return nullptr;
     })
   LINE(
-    R"(uri-readonly-strict-immutable	{"threw":{"$error":{"ctor":"Error","name":"SQLiteError","message":"unable to open database file","code":"SQLITE_CANTOPEN","errno":14,"byteOffset":-1,"keys":["code","errno","byteOffset"],"string":"SQLiteError: unable to open database file","isSQLiteError":true}}})",
+    SQLITE_PLATFORM_EXPECTATION(R"(uri-readonly-strict-immutable	{"threw":{"$error":{"ctor":"Error","name":"SQLiteError","message":"unable to open database file","code":"SQLITE_CANTOPEN","errno":14,"byteOffset":-1,"keys":["code","errno","byteOffset"],"string":"SQLiteError: unable to open database file","isSQLiteError":true}}})",
+      R"(uri-readonly-strict-immutable	{"ok":1})"),
     "uri-readonly-strict-immutable", {
       const Closing db(Database("file://" + dir.path("ro.db") + "?immutable=1", {.readonly = true, .strict = true}));
       return 1;
@@ -2503,6 +2511,31 @@ TEST("inventory: kv.ts, convert.ts, native-schema.ts, supervisor-inventory.ts an
     return result;
   })
 }
+
+#if defined(__APPLE__)
+TEST("Darwin WAL sidecars survive close unless persistence is explicitly disabled") {
+  const TempDir dir;
+  const std::string file = dir.path("persist.db");
+  const Database writer(file);
+  writer.run("PRAGMA journal_mode=WAL");
+  writer.run("CREATE TABLE t(a)");
+  writer.run("INSERT INTO t VALUES(7)");
+  writer.close(true);
+  EXPECT(rt::fs::existsSync(file + "-wal"));
+  EXPECT(rt::fs::existsSync(file + "-shm"));
+  const Database reader(file, {.readonly = true});
+  LINE(R"(persist-readonly	{"ok":{"$row":[["a",7]],"proto":"Object"}})", "persist-readonly", return enc(reader.query("SELECT a FROM t").get());)
+  reader.close(true);
+  const Database reset(file);
+  LINE(R"(reset-row	{"ok":{"$row":[["a",7]],"proto":"Object"}})", "reset-row", return enc(reset.query("SELECT a FROM t").get());)
+  EXPECT_EQ(reset.fileControl(constants::SQLITE_FCNTL_PERSIST_WAL, 0), std::optional<int>(0));
+  reset.close(true);
+  EXPECT(!rt::fs::existsSync(file + "-wal"));
+  EXPECT(!rt::fs::existsSync(file + "-shm"));
+  LINE(R"(reset-readonly	{"threw":{"$error":{"ctor":"Error","name":"SQLiteError","message":"unable to open database file","code":"SQLITE_CANTOPEN","errno":14,"byteOffset":-1,"keys":["code","errno","byteOffset"],"string":"SQLiteError: unable to open database file","isSQLiteError":true}}})",
+       "reset-readonly", { const Database readonly(file, {.readonly = true}); return enc(readonly.query("SELECT a FROM t").get()); })
+}
+#endif
 
 TEST("version: the selected SQLite library") {
   // The behaviour differences documented in docs/rt/sqlite.md were measured against this
