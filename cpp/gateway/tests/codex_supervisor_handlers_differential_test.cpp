@@ -262,6 +262,15 @@ namespace {
     if (controller) init.signal = controller->signal();
     return rt::Request("https://ai.ubq.fi/admin/codex/supervisor/output?" + query, init);
   }
+
+  ws::WebSocketConstructor trackedConstructor(std::weak_ptr<ws::WebSocket>& socket) {
+    const auto construct = RoutedSocket::constructor();
+    return [&socket, construct](std::string url, ws::ClientOptions options) {
+      auto created = construct(std::move(url), std::move(options));
+      socket = created;
+      return created;
+    };
+  }
 }
 
 ASYNC_TEST("differential: the supervisor admin handlers match Bun over a routed inventory") {
@@ -326,4 +335,36 @@ ASYNC_TEST("differential: the supervisor admin handlers match Bun over a routed 
   EXPECT_EQ(next, expected.size());
 
   rt::fs::rmSync(root, rt::fs::RmOptions{.recursive = true, .force = true});
+}
+
+ASYNC_TEST("supervisor transport releases a closed socket with its retained listeners") {
+  std::weak_ptr<ws::WebSocket> socket;
+  setSupervisorWebSocketConstructorForTest(trackedConstructor(socket));
+  const auto restore = rt::scopeExit([] { setSupervisorWebSocketConstructorForTest(nullptr); });
+  {
+    const std::string socketPath = "/fixture/supervisor.sock";
+    auto opening = uos::codex::supervisor_transport::openSupervisorConnection(socketPath);
+    auto connection = co_await std::move(opening);
+    EXPECT(!socket.expired());
+    auto closing = connection.close();
+    co_await std::move(closing);
+  }
+  EXPECT(socket.expired());
+}
+
+ASYNC_TEST("supervisor transport releases a socket when opening fails") {
+  std::weak_ptr<ws::WebSocket> socket;
+  setSupervisorWebSocketConstructorForTest(trackedConstructor(socket));
+  const auto restore = rt::scopeExit([] { setSupervisorWebSocketConstructorForTest(nullptr); });
+  bool rejected = false;
+  try {
+    const std::string socketPath = "/fixture/missing.sock";
+    auto opening = uos::codex::supervisor_transport::openSupervisorConnection(socketPath);
+    const auto connection = co_await std::move(opening);
+    (void)connection;
+  } catch (const rt::JsError& error) {
+    rejected = error.message == "app-server socket unavailable";
+  }
+  EXPECT(rejected);
+  EXPECT(socket.expired());
 }
