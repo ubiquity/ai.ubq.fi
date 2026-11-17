@@ -18,7 +18,7 @@
         "src/rt/url.cpp": 1,
         "tests/helpers/native_authority_harness.hpp": 1
       },
-      "tu_emissions": 1091,
+      "tu_emissions": 1180,
       "unique": 9
     },
     "bugprone-derived-method-shadowing-base-method": {
@@ -156,10 +156,19 @@
         "tests/oss_gateway_http_test.cpp": 5,
         "tests/oss_stream_lifecycle_test.cpp": 2,
         "tests/passkeys_part1_test.cpp": 1,
-        "tests/passport_sessions_test.cpp": 1
+        "tests/passport_sessions_test.cpp": 1,
+        "tests/responses_failover_stream_test.cpp": 1,
+        "tests/rt/abort_test.cpp": 1,
+        "tests/rt/error_test.cpp": 1,
+        "tests/rt/ordered_test.cpp": 1,
+        "tests/rt/sqlite_test.cpp": 2,
+        "tests/rt/url_test.cpp": 1,
+        "tests/rt/websocket_test.cpp": 1,
+        "tests/runtime_http_differential_test.cpp": 1,
+        "tests/sentinel_replay_coverage_test.cpp": 1
       },
-      "tu_emissions": 3751,
-      "unique": 283
+      "tu_emissions": 4238,
+      "unique": 293
     },
     "bugprone-exception-copy-constructor-throws": {
       "files": {
@@ -221,10 +230,15 @@
         "tests/metered_quota_coverage_test.cpp": 1,
         "tests/passkeys_test.cpp": 4,
         "tests/prompt_analytics_differential_test.cpp": 1,
-        "tests/prompt_cache_analytics_test.cpp": 5
+        "tests/prompt_cache_analytics_test.cpp": 5,
+        "tests/responses_failover_stream_test.cpp": 1,
+        "tests/sentinel_incident_index_test.cpp": 2,
+        "tests/sentinel_replay_bootstrap_retry_test.cpp": 8,
+        "tests/sentinel_replay_deletion_budget_test.cpp": 1,
+        "tests/sentinel_replay_differential_test.cpp": 1
       },
-      "tu_emissions": 107,
-      "unique": 95
+      "tu_emissions": 120,
+      "unique": 108
     },
     "bugprone-forward-declaration-namespace": {
       "files": {
@@ -258,10 +272,23 @@
         "tests/compaction_summary_forwarding_test.cpp": 2,
         "tests/images_test.cpp": 7,
         "tests/openrouter_serving_test.cpp": 1,
-        "tests/oss_stream_lifecycle_test.cpp": 1
+        "tests/oss_stream_lifecycle_test.cpp": 1,
+        "tests/provider_capacity_analytics_differential_test.cpp": 1,
+        "tests/responses_conformance_http_test.cpp": 2,
+        "tests/rt/websocket_test.cpp": 1,
+        "tests/runtime_http_test.cpp": 1,
+        "tests/sentinel_incident_index_test.cpp": 1,
+        "tests/sentinel_replay_bootstrap_retry_test.cpp": 1
       },
-      "tu_emissions": 425,
-      "unique": 47
+      "tu_emissions": 477,
+      "unique": 54
+    },
+    "bugprone-integer-division": {
+      "files": {
+        "tests/rt/fs_test.cpp": 1
+      },
+      "tu_emissions": 1,
+      "unique": 1
     },
     "bugprone-macro-parentheses": {
       "files": {
@@ -337,10 +364,15 @@
         "tests/prompt_cache_scope_experiment_failure_test.cpp": 1,
         "tests/prompt_cache_scope_experiment_part1_test.cpp": 1,
         "tests/prompt_cache_scope_experiment_part2_test.cpp": 1,
-        "tests/prompt_cache_scope_experiment_targets_test.cpp": 1
+        "tests/prompt_cache_scope_experiment_targets_test.cpp": 1,
+        "tests/provider_capacity_named_limits_test.cpp": 1,
+        "tests/provider_images_branch_coverage_test.cpp": 1,
+        "tests/provider_selection_test.cpp": 1,
+        "tests/quota_projection_test.cpp": 1,
+        "tests/reliability_harness_test.cpp": 1
       },
-      "tu_emissions": 73,
-      "unique": 73
+      "tu_emissions": 78,
+      "unique": 78
     },
     "bugprone-misplaced-widening-cast": {
       "files": {
@@ -358,7 +390,7 @@
     },
     "bugprone-optional-value-conversion": {
       "files": {
-        "include/uos/rt/async.hpp": 1,
+        "include/uos/rt/async.hpp": 2,
         "src/admin/sentinel_incident.cpp": 1,
         "src/auth/passkeys.cpp": 1,
         "src/authority/native_authority_codex.cpp": 1,
@@ -386,16 +418,27 @@
         "tests/paid_fallback_ledger_state_differential_test.cpp": 2,
         "tests/passkeys_webauthn_differential_test.cpp": 1,
         "tests/passport_sessions_test.cpp": 1,
-        "tests/prompt_analytics_differential_test.cpp": 2
+        "tests/prompt_analytics_differential_test.cpp": 2,
+        "tests/reliability_harness_test.cpp": 4,
+        "tests/responses_attempts_coverage_test.cpp": 1
       },
-      "tu_emissions": 38,
-      "unique": 37
+      "tu_emissions": 45,
+      "unique": 43
+    },
+    "bugprone-random-generator-seed": {
+      "files": {
+        "tests/rt/json_test.cpp": 1,
+        "tests/rt/ordered_test.cpp": 1,
+        "tests/sentinel_replay_limits_differential_test.cpp": 1
+      },
+      "tu_emissions": 3,
+      "unique": 3
     },
     "bugprone-reserved-identifier": {
       "files": {
         "include/uos/provider/stream_relay.hpp": 1
       },
-      "tu_emissions": 15,
+      "tu_emissions": 16,
       "unique": 1
     },
     "bugprone-return-const-ref-from-parameter": {
@@ -404,7 +447,7 @@
         "src/auth/passkeys.cpp": 1,
         "src/provider/claude_code_quota.cpp": 1
       },
-      "tu_emissions": 487,
+      "tu_emissions": 526,
       "unique": 3
     },
     "bugprone-signed-bitwise": {
@@ -465,10 +508,29 @@
         "tests/kv_runtime_conversion_test.cpp": 1,
         "tests/live_sideband_http_test.cpp": 3,
         "tests/passport_differential_test.cpp": 1,
-        "tests/permissions_linux_test.cpp": 7
+        "tests/permissions_linux_test.cpp": 7,
+        "tests/provider_capacity_differential_test.cpp": 1,
+        "tests/rt/crypto_test.cpp": 8,
+        "tests/rt/fetch_transport_test.cpp": 3,
+        "tests/rt/fs_test.cpp": 4,
+        "tests/rt/gzip_test.cpp": 11,
+        "tests/rt/http_test.cpp": 2,
+        "tests/rt/kv_jsc_deserialize_test.cpp": 4,
+        "tests/rt/kv_sqlite_test.cpp": 2,
+        "tests/rt/kv_test.cpp": 19,
+        "tests/rt/number_test.cpp": 5,
+        "tests/rt/record_test.cpp": 2,
+        "tests/rt/regex_test.cpp": 33,
+        "tests/rt/sqlite_test.cpp": 6,
+        "tests/rt/string_test.cpp": 5,
+        "tests/rt/websocket_test.cpp": 17,
+        "tests/runtime_http_differential_test.cpp": 1,
+        "tests/sentinel_replay_bootstrap_retry_test.cpp": 4,
+        "tests/sentinel_replay_envelope_coverage_test.cpp": 7,
+        "tests/sentinel_replay_limits_differential_test.cpp": 1
       },
-      "tu_emissions": 2598,
-      "unique": 578
+      "tu_emissions": 2942,
+      "unique": 713
     },
     "bugprone-std-exception-baseclass": {
       "files": {
@@ -481,18 +543,22 @@
         "src/provider/surplus.cpp": 1,
         "src/responses_stream.cpp": 1,
         "src/rt/fetch_transport.cpp": 1,
-        "tests/oss_stream_lifecycle_test.cpp": 1
+        "tests/oss_stream_lifecycle_test.cpp": 1,
+        "tests/responses_failover_stream_test.cpp": 1,
+        "tests/rt/ordered_test.cpp": 2
       },
-      "tu_emissions": 2082,
-      "unique": 13
+      "tu_emissions": 2386,
+      "unique": 16
     },
     "bugprone-string-constructor": {
       "files": {
         "tests/images_test.cpp": 1,
-        "tests/rt/kv_jsc_deserialize_vectors.inc": 3
+        "tests/rt/fetch_transport_test.cpp": 1,
+        "tests/rt/kv_jsc_deserialize_vectors.inc": 3,
+        "tests/rt/number_test.cpp": 4
       },
-      "tu_emissions": 4,
-      "unique": 4
+      "tu_emissions": 12,
+      "unique": 9
     },
     "bugprone-suspicious-include": {
       "files": {
@@ -504,14 +570,23 @@
     },
     "bugprone-suspicious-missing-comma": {
       "files": {
-        "src/codex/supervisor_brief.cpp": 1
+        "src/codex/supervisor_brief.cpp": 1,
+        "tests/rt/http_test.cpp": 1,
+        "tests/rt/kv_sqlite_test.cpp": 1
       },
-      "tu_emissions": 1,
-      "unique": 1
+      "tu_emissions": 3,
+      "unique": 3
     },
     "bugprone-suspicious-stringview-data-usage": {
       "files": {
         "src/rt/regex.cpp": 1
+      },
+      "tu_emissions": 1,
+      "unique": 1
+    },
+    "bugprone-switch-missing-default-case": {
+      "files": {
+        "tests/rt/ordered_test.cpp": 1
       },
       "tu_emissions": 1,
       "unique": 1
@@ -950,20 +1025,120 @@
         "tests/prompt_cache_scope_experiment_targets_test.cpp": 23,
         "tests/prompt_cache_scope_targets_test.cpp": 3,
         "tests/prompt_cache_telemetry_gate_differential_test.cpp": 3,
-        "tests/prompt_cache_telemetry_gate_test.cpp": 9
+        "tests/prompt_cache_telemetry_gate_test.cpp": 9,
+        "tests/provider_branch_coverage_test.cpp": 14,
+        "tests/provider_capacity_analytics_differential_test.cpp": 4,
+        "tests/provider_capacity_differential_test.cpp": 1,
+        "tests/provider_capacity_history_events_differential_test.cpp": 5,
+        "tests/provider_capacity_named_limits_test.cpp": 3,
+        "tests/provider_capacity_rollups_differential_test.cpp": 7,
+        "tests/provider_capacity_rollups_test.cpp": 6,
+        "tests/provider_capacity_test.cpp": 1,
+        "tests/provider_images_branch_coverage_test.cpp": 7,
+        "tests/provider_removed_provider_circuit_differential_test.cpp": 3,
+        "tests/provider_request_cache_controls_test.cpp": 1,
+        "tests/provider_selection_health_differential_test.cpp": 10,
+        "tests/provider_selection_test.cpp": 21,
+        "tests/provider_stream_usage_failure_test.cpp": 1,
+        "tests/public_provider_cache_controls_test.cpp": 4,
+        "tests/quota_projection_test.cpp": 32,
+        "tests/recent_model_context_differential_test.cpp": 3,
+        "tests/recent_model_context_test.cpp": 3,
+        "tests/reliability_context_test.cpp": 8,
+        "tests/reliability_differential_test.cpp": 6,
+        "tests/reliability_failure_differential_test.cpp": 3,
+        "tests/reliability_feedback_test.cpp": 8,
+        "tests/reliability_harness_test.cpp": 45,
+        "tests/reliability_hash_test.cpp": 2,
+        "tests/reliability_loops_test.cpp": 10,
+        "tests/reliability_retry_differential_test.cpp": 4,
+        "tests/reliability_retry_test.cpp": 6,
+        "tests/reliability_state_test.cpp": 7,
+        "tests/reliability_verify_test.cpp": 12,
+        "tests/removed_provider_differential_test.cpp": 1,
+        "tests/removed_provider_telemetry_differential_test.cpp": 1,
+        "tests/request_delivery_lifecycle_test.cpp": 1,
+        "tests/request_differential_test.cpp": 12,
+        "tests/request_policy_differential_test.cpp": 9,
+        "tests/responses_attempts_coverage_test.cpp": 12,
+        "tests/responses_conformance_http_test.cpp": 7,
+        "tests/responses_failover_branch_coverage_test.cpp": 22,
+        "tests/responses_failover_stream_test.cpp": 22,
+        "tests/responses_native_headers_test.cpp": 9,
+        "tests/responses_stream_http_test.cpp": 1,
+        "tests/responses_stream_test.cpp": 20,
+        "tests/rt/abort_test.cpp": 13,
+        "tests/rt/async_test.cpp": 32,
+        "tests/rt/base64_test.cpp": 6,
+        "tests/rt/clock_test.cpp": 11,
+        "tests/rt/console_test.cpp": 9,
+        "tests/rt/crypto_test.cpp": 18,
+        "tests/rt/date_test.cpp": 6,
+        "tests/rt/env_test.cpp": 7,
+        "tests/rt/error_test.cpp": 4,
+        "tests/rt/fetch_connection_test.cpp": 2,
+        "tests/rt/fetch_test.cpp": 9,
+        "tests/rt/fetch_transport_test.cpp": 51,
+        "tests/rt/fs_test.cpp": 10,
+        "tests/rt/gzip_test.cpp": 10,
+        "tests/rt/harness_test.cpp": 3,
+        "tests/rt/headers_test.cpp": 4,
+        "tests/rt/http_test.cpp": 6,
+        "tests/rt/json_test.cpp": 24,
+        "tests/rt/kv_js_test.cpp": 8,
+        "tests/rt/kv_jsc_deserialize_test.cpp": 7,
+        "tests/rt/kv_sqlite_test.cpp": 17,
+        "tests/rt/kv_test.cpp": 55,
+        "tests/rt/nullable_test.cpp": 6,
+        "tests/rt/number_test.cpp": 21,
+        "tests/rt/ordered_test.cpp": 9,
+        "tests/rt/process_test.cpp": 10,
+        "tests/rt/record_test.cpp": 6,
+        "tests/rt/regex_test.cpp": 16,
+        "tests/rt/sqlite_test.cpp": 29,
+        "tests/rt/stream_test.cpp": 10,
+        "tests/rt/string_test.cpp": 19,
+        "tests/rt/text_codec_test.cpp": 6,
+        "tests/rt/url_idna_test.cpp": 2,
+        "tests/rt/url_test.cpp": 6,
+        "tests/rt/websocket_lifetime_test.cpp": 4,
+        "tests/rt/websocket_test.cpp": 19,
+        "tests/runtime_config_differential_test.cpp": 9,
+        "tests/runtime_config_test.cpp": 4,
+        "tests/runtime_early_sse_test.cpp": 4,
+        "tests/runtime_http_body_test.cpp": 9,
+        "tests/runtime_http_differential_test.cpp": 5,
+        "tests/runtime_http_early_sse_differential_test.cpp": 3,
+        "tests/runtime_http_sse_headers_test.cpp": 2,
+        "tests/runtime_http_tasks_test.cpp": 1,
+        "tests/runtime_http_test.cpp": 14,
+        "tests/runtime_matrix_compaction_header_test.cpp": 4,
+        "tests/runtime_matrix_legacy_replay_test.cpp": 7,
+        "tests/runtime_native_startup_test.cpp": 18,
+        "tests/runtime_websocket_test.cpp": 2,
+        "tests/sentinel_incident_index_test.cpp": 17,
+        "tests/sentinel_incident_outbox_differential_test.cpp": 4,
+        "tests/sentinel_replay_bootstrap_retry_test.cpp": 26,
+        "tests/sentinel_replay_coverage_test.cpp": 24,
+        "tests/sentinel_replay_deletion_budget_test.cpp": 4,
+        "tests/sentinel_replay_differential_test.cpp": 12,
+        "tests/sentinel_replay_envelope_coverage_test.cpp": 16,
+        "tests/sentinel_replay_limits_differential_test.cpp": 3,
+        "tests/sentinel_replay_limits_test.cpp": 3,
+        "tests/sentinel_replay_retention_metadata_differential_test.cpp": 1
       },
-      "tu_emissions": 11317,
-      "unique": 3622
+      "tu_emissions": 12900,
+      "unique": 4643
     },
     "bugprone-unchecked-optional-access": {
       "files": {
         "include/uos/authority/native_authority_contracts.hpp": 1,
         "include/uos/kv_conversion/convert.hpp": 1,
         "include/uos/provider/selection.hpp": 1,
-        "include/uos/rt/async.hpp": 9,
-        "include/uos/rt/nullable.hpp": 8,
+        "include/uos/rt/async.hpp": 11,
+        "include/uos/rt/nullable.hpp": 10,
         "include/uos/rt/regex.hpp": 3,
-        "include/uos/rt/sqlite.hpp": 2,
+        "include/uos/rt/sqlite.hpp": 3,
         "include/uos/rt/stream.hpp": 5,
         "include/uos/storage/sqlite_readonly.hpp": 1,
         "src/admin/api_key_mutations.cpp": 1,
@@ -1344,16 +1519,66 @@
         "tests/prompt_cache_scope_experiment_part2_test.cpp": 2,
         "tests/prompt_cache_scope_experiment_targets_test.cpp": 2,
         "tests/prompt_cache_telemetry_gate_differential_test.cpp": 7,
-        "tests/prompt_cache_telemetry_gate_test.cpp": 10
+        "tests/prompt_cache_telemetry_gate_test.cpp": 10,
+        "tests/provider_branch_coverage_test.cpp": 43,
+        "tests/provider_capacity_rollups_differential_test.cpp": 5,
+        "tests/provider_capacity_rollups_test.cpp": 4,
+        "tests/provider_images_branch_coverage_test.cpp": 1,
+        "tests/provider_selection_health_differential_test.cpp": 1,
+        "tests/provider_selection_test.cpp": 10,
+        "tests/public_provider_cache_controls_test.cpp": 1,
+        "tests/quota_projection_test.cpp": 13,
+        "tests/reliability_context_test.cpp": 3,
+        "tests/reliability_failure_differential_test.cpp": 1,
+        "tests/reliability_retry_test.cpp": 1,
+        "tests/request_differential_test.cpp": 2,
+        "tests/request_policy_differential_test.cpp": 2,
+        "tests/responses_attempts_coverage_test.cpp": 8,
+        "tests/responses_conformance_http_test.cpp": 3,
+        "tests/responses_failover_branch_coverage_test.cpp": 2,
+        "tests/responses_failover_stream_test.cpp": 5,
+        "tests/responses_native_headers_test.cpp": 17,
+        "tests/responses_stream_http_test.cpp": 1,
+        "tests/responses_stream_test.cpp": 9,
+        "tests/rt/async_test.cpp": 3,
+        "tests/rt/error_test.cpp": 6,
+        "tests/rt/fetch_transport_test.cpp": 22,
+        "tests/rt/gzip_test.cpp": 7,
+        "tests/rt/http_test.cpp": 17,
+        "tests/rt/kv_js_test.cpp": 4,
+        "tests/rt/kv_sqlite_test.cpp": 7,
+        "tests/rt/kv_test.cpp": 11,
+        "tests/rt/nullable_test.cpp": 17,
+        "tests/rt/number_test.cpp": 1,
+        "tests/rt/process_test.cpp": 2,
+        "tests/rt/regex_test.cpp": 24,
+        "tests/rt/sqlite_test.cpp": 6,
+        "tests/rt/stream_test.cpp": 19,
+        "tests/rt/string_test.cpp": 1,
+        "tests/rt/url_test.cpp": 16,
+        "tests/runtime_config_test.cpp": 2,
+        "tests/runtime_early_sse_test.cpp": 7,
+        "tests/runtime_http_body_test.cpp": 1,
+        "tests/runtime_http_differential_test.cpp": 7,
+        "tests/runtime_matrix_compaction_header_test.cpp": 4,
+        "tests/runtime_matrix_legacy_replay_test.cpp": 2,
+        "tests/sentinel_incident_index_test.cpp": 7,
+        "tests/sentinel_incident_outbox_differential_test.cpp": 2,
+        "tests/sentinel_replay_bootstrap_retry_test.cpp": 24,
+        "tests/sentinel_replay_coverage_test.cpp": 18,
+        "tests/sentinel_replay_deletion_budget_test.cpp": 1,
+        "tests/sentinel_replay_differential_test.cpp": 13,
+        "tests/sentinel_replay_envelope_coverage_test.cpp": 8,
+        "tests/sentinel_replay_limits_differential_test.cpp": 1
       },
-      "tu_emissions": 5089,
-      "unique": 2710
+      "tu_emissions": 5924,
+      "unique": 3107
     },
     "bugprone-unhandled-self-assignment": {
       "files": {
         "include/uos/rt/ordered.hpp": 1
       },
-      "tu_emissions": 485,
+      "tu_emissions": 524,
       "unique": 1
     },
     "bugprone-unused-local-non-trivial-variable": {
@@ -1373,17 +1598,21 @@
         "src/runtime/http.cpp": 11,
         "tests/codex_supervisor_inventory_differential_test.cpp": 1,
         "tests/helpers/loopback_http.cpp": 3,
-        "tests/native_auth_verification_test.cpp": 1
+        "tests/native_auth_verification_test.cpp": 1,
+        "tests/rt/fetch_transport_test.cpp": 5,
+        "tests/rt/websocket_test.cpp": 10,
+        "tests/runtime_websocket_test.cpp": 1
       },
-      "tu_emissions": 29,
-      "unique": 29
+      "tu_emissions": 45,
+      "unique": 45
     },
     "bugprone-use-after-move": {
       "files": {
-        "src/rt/json.cpp": 2
+        "src/rt/json.cpp": 2,
+        "tests/rt/fs_test.cpp": 1
       },
-      "tu_emissions": 2,
-      "unique": 2
+      "tu_emissions": 3,
+      "unique": 3
     },
     "cert-err09-cpp": {
       "files": {
@@ -1392,10 +1621,11 @@
         "src/rt/async.cpp": 1,
         "src/rt/fs.cpp": 2,
         "src/rt/sqlite.cpp": 3,
-        "src/rt/websocket_client.cpp": 2
+        "src/rt/websocket_client.cpp": 2,
+        "tests/rt/error_test.cpp": 1
       },
-      "tu_emissions": 10,
-      "unique": 10
+      "tu_emissions": 11,
+      "unique": 11
     },
     "cert-err33-c": {
       "files": {
@@ -1452,10 +1682,31 @@
         "tests/paid_fallback_ledger_stats_differential_test.cpp": 2,
         "tests/permissions_linux_test.cpp": 1,
         "tests/production_smoke/serve_failure_gate.cpp": 3,
-        "tests/prompt_cache_telemetry_gate_differential_test.cpp": 1
+        "tests/prompt_cache_telemetry_gate_differential_test.cpp": 1,
+        "tests/reliability_failure_differential_test.cpp": 1,
+        "tests/request_differential_test.cpp": 1,
+        "tests/rt/abort_test.cpp": 1,
+        "tests/rt/async_test.cpp": 2,
+        "tests/rt/console_test.cpp": 1,
+        "tests/rt/env_test.cpp": 1,
+        "tests/rt/fetch_transport_test.cpp": 1,
+        "tests/rt/fs_test.cpp": 1,
+        "tests/rt/gzip_test.cpp": 5,
+        "tests/rt/headers_test.cpp": 1,
+        "tests/rt/http_test.cpp": 1,
+        "tests/rt/kv_sqlite_test.cpp": 1,
+        "tests/rt/number_test.cpp": 1,
+        "tests/rt/process_test.cpp": 1,
+        "tests/rt/regex_test.cpp": 4,
+        "tests/rt/url_idna_test.cpp": 4,
+        "tests/rt/url_test.cpp": 2,
+        "tests/rt/websocket_test.cpp": 4,
+        "tests/runtime_http_differential_test.cpp": 3,
+        "tests/sentinel_incident_outbox_differential_test.cpp": 2,
+        "tests/sentinel_replay_coverage_test.cpp": 1
       },
-      "tu_emissions": 1027,
-      "unique": 95
+      "tu_emissions": 1366,
+      "unique": 134
     },
     "clang-analyzer-core.CallAndMessage": {
       "files": {
@@ -1494,6 +1745,13 @@
       },
       "tu_emissions": 7,
       "unique": 7
+    },
+    "clang-analyzer-cplusplus.StringChecker": {
+      "files": {
+        "tests/rt/env_test.cpp": 1
+      },
+      "tu_emissions": 1,
+      "unique": 1
     },
     "clang-analyzer-security.ArrayBound": {
       "files": {
@@ -1545,19 +1803,34 @@
         "tests/metered_quota_coverage_test.cpp": 1,
         "tests/passkeys_test.cpp": 4,
         "tests/prompt_analytics_differential_test.cpp": 1,
-        "tests/prompt_cache_analytics_test.cpp": 5
+        "tests/prompt_cache_analytics_test.cpp": 5,
+        "tests/responses_failover_stream_test.cpp": 1,
+        "tests/sentinel_incident_index_test.cpp": 2,
+        "tests/sentinel_replay_bootstrap_retry_test.cpp": 4,
+        "tests/sentinel_replay_deletion_budget_test.cpp": 1,
+        "tests/sentinel_replay_differential_test.cpp": 1
       },
-      "tu_emissions": 97,
-      "unique": 95
+      "tu_emissions": 106,
+      "unique": 104
+    },
+    "clang-analyzer-unix.StdCLibraryFunctions": {
+      "files": {
+        "tests/rt/console_test.cpp": 1
+      },
+      "tu_emissions": 1,
+      "unique": 1
     },
     "concurrency-mt-unsafe": {
       "files": {
         "src/rt/fs.cpp": 2,
         "src/rt/gzip.cpp": 1,
-        "src/rt/process_loop.cpp": 1
+        "src/rt/process_loop.cpp": 1,
+        "tests/rt/env_test.cpp": 6,
+        "tests/rt/fs_test.cpp": 1,
+        "tests/rt/process_test.cpp": 2
       },
-      "tu_emissions": 4,
-      "unique": 4
+      "tu_emissions": 13,
+      "unique": 13
     },
     "cppcoreguidelines-avoid-capturing-lambda-coroutines": {
       "files": {
@@ -1645,10 +1918,38 @@
         "tests/passport_test.cpp": 1,
         "tests/prompt_cache_analytics_admin_test.cpp": 2,
         "tests/prompt_cache_scope_experiment_part1_test.cpp": 1,
-        "tests/prompt_cache_telemetry_gate_differential_test.cpp": 1
+        "tests/prompt_cache_telemetry_gate_differential_test.cpp": 1,
+        "tests/provider_capacity_differential_test.cpp": 5,
+        "tests/provider_capacity_history_events_differential_test.cpp": 1,
+        "tests/provider_removed_provider_circuit_differential_test.cpp": 1,
+        "tests/provider_selection_health_differential_test.cpp": 2,
+        "tests/provider_stream_usage_failure_test.cpp": 1,
+        "tests/removed_provider_differential_test.cpp": 1,
+        "tests/responses_failover_branch_coverage_test.cpp": 2,
+        "tests/responses_failover_stream_test.cpp": 2,
+        "tests/responses_native_headers_test.cpp": 5,
+        "tests/responses_stream_http_test.cpp": 1,
+        "tests/responses_stream_test.cpp": 3,
+        "tests/rt/abort_test.cpp": 2,
+        "tests/rt/async_test.cpp": 39,
+        "tests/rt/clock_test.cpp": 1,
+        "tests/rt/fetch_test.cpp": 1,
+        "tests/rt/fetch_transport_test.cpp": 7,
+        "tests/rt/gzip_test.cpp": 1,
+        "tests/rt/kv_sqlite_test.cpp": 2,
+        "tests/rt/kv_test.cpp": 13,
+        "tests/rt/stream_test.cpp": 9,
+        "tests/rt/websocket_test.cpp": 1,
+        "tests/runtime_early_sse_test.cpp": 5,
+        "tests/runtime_http_differential_test.cpp": 1,
+        "tests/runtime_http_sse_headers_test.cpp": 2,
+        "tests/runtime_http_test.cpp": 14,
+        "tests/sentinel_replay_bootstrap_retry_test.cpp": 8,
+        "tests/sentinel_replay_coverage_test.cpp": 1,
+        "tests/sentinel_replay_retention_metadata_differential_test.cpp": 4
       },
-      "tu_emissions": 207,
-      "unique": 183
+      "tu_emissions": 342,
+      "unique": 318
     },
     "cppcoreguidelines-avoid-reference-coroutine-parameters": {
       "files": {
@@ -1682,10 +1983,17 @@
         "tests/kv_durable_suite_test.cpp": 2,
         "tests/live_sideband_http_test.cpp": 1,
         "tests/oss_inference_admission_test.cpp": 1,
-        "tests/passport_differential_test.cpp": 2
+        "tests/passport_differential_test.cpp": 2,
+        "tests/rt/http_test.cpp": 3,
+        "tests/rt/kv_test.cpp": 2,
+        "tests/sentinel_incident_index_test.cpp": 1,
+        "tests/sentinel_replay_bootstrap_retry_test.cpp": 8,
+        "tests/sentinel_replay_coverage_test.cpp": 3,
+        "tests/sentinel_replay_deletion_budget_test.cpp": 5,
+        "tests/sentinel_replay_retention_metadata_differential_test.cpp": 4
       },
-      "tu_emissions": 202,
-      "unique": 202
+      "tu_emissions": 228,
+      "unique": 228
     },
     "performance-expensive-value-or": {
       "files": {
@@ -1742,10 +2050,16 @@
         "tests/kv_durable_suite_test.cpp": 2,
         "tests/metered_quota_coverage_test.cpp": 2,
         "tests/passkeys_part1_test.cpp": 1,
-        "tests/prompt_cache_analytics_admin_test.cpp": 2
+        "tests/prompt_cache_analytics_admin_test.cpp": 2,
+        "tests/reliability_harness_test.cpp": 29,
+        "tests/request_policy_differential_test.cpp": 1,
+        "tests/rt/kv_jsc_deserialize_test.cpp": 1,
+        "tests/rt/kv_test.cpp": 2,
+        "tests/rt/sqlite_test.cpp": 2,
+        "tests/sentinel_replay_bootstrap_retry_test.cpp": 4
       },
-      "tu_emissions": 172,
-      "unique": 172
+      "tu_emissions": 211,
+      "unique": 211
     },
     "performance-faster-string-find": {
       "files": {
@@ -1775,10 +2089,15 @@
         "tests/helpers/counting_kv.cpp": 1,
         "tests/helpers/passkeys_harness.cpp": 2,
         "tests/helpers/sentinel_kv_stub.cpp": 2,
-        "tests/prompt_cache_analytics_test.cpp": 1
+        "tests/prompt_cache_analytics_test.cpp": 1,
+        "tests/rt/gzip_test.cpp": 1,
+        "tests/rt/http_test.cpp": 1,
+        "tests/rt/json_test.cpp": 1,
+        "tests/rt/kv_jsc_deserialize_test.cpp": 1,
+        "tests/rt/url_test.cpp": 1
       },
-      "tu_emissions": 40,
-      "unique": 40
+      "tu_emissions": 45,
+      "unique": 45
     },
     "performance-inefficient-string-concatenation": {
       "files": {
@@ -1803,10 +2122,18 @@
         "tests/native_codex_capacity_test.cpp": 6,
         "tests/openai_telemetry_differential_test.cpp": 2,
         "tests/openapi_runtime_contract_test.cpp": 2,
-        "tests/passport_test.cpp": 1
+        "tests/passport_test.cpp": 1,
+        "tests/request_policy_differential_test.cpp": 2,
+        "tests/rt/fetch_transport_test.cpp": 3,
+        "tests/rt/headers_test.cpp": 1,
+        "tests/rt/http_test.cpp": 1,
+        "tests/rt/regex_test.cpp": 5,
+        "tests/rt/sqlite_test.cpp": 1,
+        "tests/rt/url_test.cpp": 3,
+        "tests/rt/websocket_test.cpp": 1
       },
-      "tu_emissions": 48,
-      "unique": 37
+      "tu_emissions": 66,
+      "unique": 54
     },
     "performance-inefficient-vector-operation": {
       "files": {
@@ -1909,10 +2236,32 @@
         "tests/paid_fallback_rollups_differential_test.cpp": 1,
         "tests/paid_fallback_test.cpp": 6,
         "tests/passport_test.cpp": 1,
-        "tests/prompt_cache_analytics_test.cpp": 7
+        "tests/prompt_cache_analytics_test.cpp": 7,
+        "tests/provider_capacity_rollups_differential_test.cpp": 1,
+        "tests/provider_capacity_rollups_test.cpp": 1,
+        "tests/provider_selection_test.cpp": 2,
+        "tests/quota_projection_test.cpp": 1,
+        "tests/reliability_context_test.cpp": 1,
+        "tests/reliability_feedback_test.cpp": 1,
+        "tests/responses_attempts_coverage_test.cpp": 1,
+        "tests/responses_failover_branch_coverage_test.cpp": 1,
+        "tests/responses_failover_stream_test.cpp": 3,
+        "tests/responses_stream_test.cpp": 1,
+        "tests/rt/fetch_transport_test.cpp": 3,
+        "tests/rt/headers_test.cpp": 1,
+        "tests/rt/http_test.cpp": 1,
+        "tests/rt/json_test.cpp": 1,
+        "tests/rt/kv_test.cpp": 4,
+        "tests/rt/nullable_test.cpp": 1,
+        "tests/rt/regex_test.cpp": 2,
+        "tests/rt/url_test.cpp": 1,
+        "tests/sentinel_incident_index_test.cpp": 1,
+        "tests/sentinel_replay_deletion_budget_test.cpp": 2,
+        "tests/sentinel_replay_envelope_coverage_test.cpp": 1,
+        "tests/sentinel_replay_limits_test.cpp": 1
       },
-      "tu_emissions": 171,
-      "unique": 169
+      "tu_emissions": 205,
+      "unique": 201
     },
     "performance-move-const-arg": {
       "files": {
@@ -1933,10 +2282,12 @@
         "tests/admin_native_owner_test.cpp": 1,
         "tests/authority_durable_test.cpp": 1,
         "tests/codex_auth_repair_test.cpp": 2,
-        "tests/helpers/loopback_http.cpp": 1
+        "tests/helpers/loopback_http.cpp": 1,
+        "tests/provider_branch_coverage_test.cpp": 2,
+        "tests/sentinel_incident_index_test.cpp": 2
       },
-      "tu_emissions": 98,
-      "unique": 28
+      "tu_emissions": 118,
+      "unique": 32
     },
     "performance-no-automatic-move": {
       "files": {
@@ -1984,14 +2335,17 @@
         "tests/admin_api_keys_coverage_test.cpp": 1,
         "tests/decisions_test.cpp": 1,
         "tests/openapi_runtime_contract_test.cpp": 1,
-        "tests/passkeys_test.cpp": 1
+        "tests/passkeys_test.cpp": 1,
+        "tests/public_provider_cache_controls_test.cpp": 1,
+        "tests/rt/json_test.cpp": 1,
+        "tests/rt/url_test.cpp": 1
       },
-      "tu_emissions": 12,
-      "unique": 10
+      "tu_emissions": 15,
+      "unique": 13
     },
     "performance-unnecessary-copy-initialization": {
       "files": {
-        "include/uos/rt/async.hpp": 62,
+        "include/uos/rt/async.hpp": 66,
         "src/admin/sentinel_incident.cpp": 1,
         "src/auth/passport.cpp": 1,
         "src/cache/scope_experiment_targets.cpp": 1,
@@ -2044,10 +2398,18 @@
         "tests/kv_conversion_legacy_codec_differential_test.cpp": 1,
         "tests/metered_test.cpp": 2,
         "tests/optional_telemetry_queue_differential_test.cpp": 1,
-        "tests/paid_fallback_index_local_development_key_differential_test.cpp": 1
+        "tests/paid_fallback_index_local_development_key_differential_test.cpp": 1,
+        "tests/reliability_state_test.cpp": 1,
+        "tests/request_differential_test.cpp": 1,
+        "tests/rt/async_test.cpp": 1,
+        "tests/rt/fetch_test.cpp": 1,
+        "tests/rt/http_test.cpp": 2,
+        "tests/rt/json_test.cpp": 2,
+        "tests/rt/stream_test.cpp": 2,
+        "tests/runtime_http_differential_test.cpp": 1
       },
-      "tu_emissions": 215,
-      "unique": 145
+      "tu_emissions": 247,
+      "unique": 160
     },
     "performance-unnecessary-value-param": {
       "files": {
@@ -2056,8 +2418,8 @@
         "include/uos/optional_telemetry_queue.hpp": 2,
         "include/uos/provider/stream_relay.hpp": 1,
         "include/uos/rt/abort.hpp": 1,
-        "include/uos/rt/async.hpp": 14,
-        "include/uos/rt/stream.hpp": 2,
+        "include/uos/rt/async.hpp": 18,
+        "include/uos/rt/stream.hpp": 3,
         "src/admin/api_keys.cpp": 1,
         "src/admin/chart_source_proxy.cpp": 2,
         "src/admin/codex.cpp": 2,
@@ -2337,10 +2699,49 @@
         "tests/passport_sessions_test.cpp": 9,
         "tests/prompt_cache_analytics_admin_test.cpp": 2,
         "tests/prompt_cache_scope_experiment_part1_test.cpp": 1,
-        "tests/prompt_cache_telemetry_gate_test.cpp": 2
+        "tests/prompt_cache_telemetry_gate_test.cpp": 2,
+        "tests/provider_branch_coverage_test.cpp": 3,
+        "tests/provider_capacity_differential_test.cpp": 3,
+        "tests/provider_capacity_history_events_differential_test.cpp": 12,
+        "tests/provider_capacity_named_limits_test.cpp": 2,
+        "tests/provider_capacity_rollups_test.cpp": 3,
+        "tests/provider_capacity_test.cpp": 2,
+        "tests/provider_images_branch_coverage_test.cpp": 6,
+        "tests/provider_selection_test.cpp": 7,
+        "tests/provider_stream_usage_failure_test.cpp": 12,
+        "tests/public_provider_cache_controls_test.cpp": 11,
+        "tests/reliability_harness_test.cpp": 15,
+        "tests/removed_provider_differential_test.cpp": 2,
+        "tests/request_delivery_lifecycle_test.cpp": 1,
+        "tests/request_differential_test.cpp": 17,
+        "tests/request_policy_differential_test.cpp": 4,
+        "tests/responses_attempts_coverage_test.cpp": 1,
+        "tests/responses_failover_branch_coverage_test.cpp": 16,
+        "tests/responses_failover_stream_test.cpp": 9,
+        "tests/responses_native_headers_test.cpp": 5,
+        "tests/responses_stream_http_test.cpp": 3,
+        "tests/responses_stream_test.cpp": 19,
+        "tests/rt/async_test.cpp": 12,
+        "tests/rt/fetch_test.cpp": 4,
+        "tests/rt/fetch_transport_test.cpp": 12,
+        "tests/rt/fs_test.cpp": 5,
+        "tests/rt/http_test.cpp": 2,
+        "tests/rt/kv_test.cpp": 1,
+        "tests/rt/sqlite_test.cpp": 3,
+        "tests/rt/stream_test.cpp": 22,
+        "tests/rt/websocket_test.cpp": 72,
+        "tests/runtime_early_sse_test.cpp": 1,
+        "tests/runtime_http_differential_test.cpp": 9,
+        "tests/runtime_http_sse_headers_test.cpp": 2,
+        "tests/runtime_http_test.cpp": 8,
+        "tests/runtime_native_startup_test.cpp": 6,
+        "tests/runtime_websocket_test.cpp": 3,
+        "tests/sentinel_incident_index_test.cpp": 5,
+        "tests/sentinel_replay_coverage_test.cpp": 3,
+        "tests/sentinel_replay_limits_test.cpp": 1
       },
-      "tu_emissions": 2435,
-      "unique": 1984
+      "tu_emissions": 2844,
+      "unique": 2313
     },
     "performance-use-std-move": {
       "files": {
@@ -2381,10 +2782,14 @@
         "tests/helpers/loopback_http.cpp": 1,
         "tests/helpers/openai_compat_harness.cpp": 1,
         "tests/oss_gateway_http_test.cpp": 1,
-        "tests/passport_differential_test.cpp": 1
+        "tests/passport_differential_test.cpp": 1,
+        "tests/rt/clock_test.cpp": 2,
+        "tests/rt/fetch_transport_test.cpp": 2,
+        "tests/rt/websocket_test.cpp": 1,
+        "tests/runtime_config_differential_test.cpp": 1
       },
-      "tu_emissions": 50,
-      "unique": 50
+      "tu_emissions": 56,
+      "unique": 56
     }
   },
   "complete": false,
@@ -3088,21 +3493,121 @@
     "tests/prompt_cache_scope_experiment_targets_test.cpp",
     "tests/prompt_cache_scope_targets_test.cpp",
     "tests/prompt_cache_telemetry_gate_differential_test.cpp",
-    "tests/prompt_cache_telemetry_gate_test.cpp"
+    "tests/prompt_cache_telemetry_gate_test.cpp",
+    "tests/provider_branch_coverage_test.cpp",
+    "tests/provider_capacity_analytics_differential_test.cpp",
+    "tests/provider_capacity_differential_test.cpp",
+    "tests/provider_capacity_history_events_differential_test.cpp",
+    "tests/provider_capacity_named_limits_test.cpp",
+    "tests/provider_capacity_rollups_differential_test.cpp",
+    "tests/provider_capacity_rollups_test.cpp",
+    "tests/provider_capacity_test.cpp",
+    "tests/provider_images_branch_coverage_test.cpp",
+    "tests/provider_removed_provider_circuit_differential_test.cpp",
+    "tests/provider_request_cache_controls_test.cpp",
+    "tests/provider_selection_health_differential_test.cpp",
+    "tests/provider_selection_test.cpp",
+    "tests/provider_stream_usage_failure_test.cpp",
+    "tests/public_provider_cache_controls_test.cpp",
+    "tests/quota_projection_test.cpp",
+    "tests/recent_model_context_differential_test.cpp",
+    "tests/recent_model_context_test.cpp",
+    "tests/reliability_context_test.cpp",
+    "tests/reliability_differential_test.cpp",
+    "tests/reliability_failure_differential_test.cpp",
+    "tests/reliability_feedback_test.cpp",
+    "tests/reliability_harness_test.cpp",
+    "tests/reliability_hash_test.cpp",
+    "tests/reliability_loops_test.cpp",
+    "tests/reliability_retry_differential_test.cpp",
+    "tests/reliability_retry_test.cpp",
+    "tests/reliability_state_test.cpp",
+    "tests/reliability_verify_test.cpp",
+    "tests/removed_provider_differential_test.cpp",
+    "tests/removed_provider_telemetry_differential_test.cpp",
+    "tests/request_delivery_lifecycle_test.cpp",
+    "tests/request_differential_test.cpp",
+    "tests/request_policy_differential_test.cpp",
+    "tests/responses_attempts_coverage_test.cpp",
+    "tests/responses_conformance_http_test.cpp",
+    "tests/responses_failover_branch_coverage_test.cpp",
+    "tests/responses_failover_stream_test.cpp",
+    "tests/responses_native_headers_test.cpp",
+    "tests/responses_stream_http_test.cpp",
+    "tests/responses_stream_test.cpp",
+    "tests/rt/abort_test.cpp",
+    "tests/rt/async_test.cpp",
+    "tests/rt/base64_test.cpp",
+    "tests/rt/clock_test.cpp",
+    "tests/rt/console_test.cpp",
+    "tests/rt/crypto_test.cpp",
+    "tests/rt/date_test.cpp",
+    "tests/rt/env_test.cpp",
+    "tests/rt/error_test.cpp",
+    "tests/rt/fetch_connection_test.cpp",
+    "tests/rt/fetch_test.cpp",
+    "tests/rt/fetch_transport_test.cpp",
+    "tests/rt/fs_test.cpp",
+    "tests/rt/gzip_test.cpp",
+    "tests/rt/harness_test.cpp",
+    "tests/rt/headers_test.cpp",
+    "tests/rt/http_test.cpp",
+    "tests/rt/json_test.cpp",
+    "tests/rt/kv_js_test.cpp",
+    "tests/rt/kv_jsc_deserialize_test.cpp",
+    "tests/rt/kv_sqlite_test.cpp",
+    "tests/rt/kv_test.cpp",
+    "tests/rt/nullable_test.cpp",
+    "tests/rt/number_test.cpp",
+    "tests/rt/ordered_test.cpp",
+    "tests/rt/process_test.cpp",
+    "tests/rt/record_test.cpp",
+    "tests/rt/regex_test.cpp",
+    "tests/rt/sqlite_test.cpp",
+    "tests/rt/stream_test.cpp",
+    "tests/rt/string_test.cpp",
+    "tests/rt/text_codec_test.cpp",
+    "tests/rt/url_idna_test.cpp",
+    "tests/rt/url_test.cpp",
+    "tests/rt/websocket_lifetime_test.cpp",
+    "tests/rt/websocket_test.cpp",
+    "tests/runtime_config_differential_test.cpp",
+    "tests/runtime_config_test.cpp",
+    "tests/runtime_early_sse_test.cpp",
+    "tests/runtime_http_body_test.cpp",
+    "tests/runtime_http_differential_test.cpp",
+    "tests/runtime_http_early_sse_differential_test.cpp",
+    "tests/runtime_http_sse_headers_test.cpp",
+    "tests/runtime_http_tasks_test.cpp",
+    "tests/runtime_http_test.cpp",
+    "tests/runtime_matrix_compaction_header_test.cpp",
+    "tests/runtime_matrix_legacy_replay_test.cpp",
+    "tests/runtime_native_startup_test.cpp",
+    "tests/runtime_websocket_test.cpp",
+    "tests/sentinel_incident_index_test.cpp",
+    "tests/sentinel_incident_outbox_differential_test.cpp",
+    "tests/sentinel_replay_bootstrap_retry_test.cpp",
+    "tests/sentinel_replay_coverage_test.cpp",
+    "tests/sentinel_replay_deletion_budget_test.cpp",
+    "tests/sentinel_replay_differential_test.cpp",
+    "tests/sentinel_replay_envelope_coverage_test.cpp",
+    "tests/sentinel_replay_limits_differential_test.cpp",
+    "tests/sentinel_replay_limits_test.cpp",
+    "tests/sentinel_replay_retention_metadata_differential_test.cpp"
   ],
   "configuration_yaml": "---\n# Hazard discovery, not a style policy. See docs/findings/cppgw-clang-tidy-audit-20261117.md.\nInheritParentConfig: false\nChecks: >-\n  -*,\n  bugprone-*,\n  -bugprone-easily-swappable-parameters,\n  cppcoreguidelines-avoid-capturing-lambda-coroutines,\n  cppcoreguidelines-avoid-reference-coroutine-parameters,\n  misc-coroutine-hostile-raii,\n  cert-*,\n  -cert-dcl37-c,\n  -cert-dcl51-cpp,\n  performance-*,\n  -performance-avoid-endl,\n  -performance-enum-size,\n  concurrency-*,\n  clang-analyzer-core.*,\n  clang-analyzer-cplusplus.*,\n  clang-analyzer-optin.cplusplus.*,\n  clang-analyzer-security.*,\n  clang-analyzer-unix.*\n# Adjacent same-type parameters are deliberate module-for-module TS API translations.\n# Reserved identifiers are naming/style issues outside this lifetime audit (cert-dcl37/51).\n# endl and enum storage size are micro-style suggestions, not hot-path copy hazards.\nWarningsAsErrors: ''\nHeaderFilterRegex: '(^|/)cpp/gateway/(include|src|tests)/'\nSystemHeaders: false\nFormatStyle: none\nCheckOptions:\n  bugprone-dangling-handle.HandleClasses: 'std::basic_string_view;std::span'\n  bugprone-unchecked-optional-access.IgnoreSmartPointerDereference: 'false'\n  bugprone-exception-escape.CheckDestructors: 'true'\n  bugprone-exception-escape.CheckMoveMemberFunctions: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerToFloatingPointNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnFloatingPointNarrowingConversion: 'true'\n  performance-unnecessary-value-param.AllowedTypes: ''\n",
   "counting": "Unique (check/alias-group, gateway-relative file, line, column, message); repeated header emissions deduplicated. TU emissions also counted separately.",
   "coverage": {
-    "completed": 700,
+    "completed": 800,
     "database_units": 830,
     "failed": 0,
     "inputs_unchanged": true,
-    "ok": 700,
+    "ok": 800,
     "selected": 830,
     "source_units": 369,
     "test_support_units": 461,
     "timeouts": 0,
-    "units_with_findings": 697
+    "units_with_findings": 797
   },
   "failures": [],
   "head_commit": "33e1539d74bc3b69566875b449a01c97b0cfca3d",
@@ -4778,12 +5283,12 @@
   "resources": {
     "jobs": 4,
     "largest_process_rss_kib": 1019216,
-    "sum_system_seconds": 938.09,
-    "sum_unit_seconds": 25971.867,
-    "sum_user_seconds": 24296.46,
-    "wall_seconds": 6524.375
+    "sum_system_seconds": 1107.87,
+    "sum_unit_seconds": 31054.437,
+    "sum_user_seconds": 29055.48,
+    "wall_seconds": 7806.283
   },
   "schema_version": 1,
-  "tu_diagnostic_emissions": 32486,
-  "unique_diagnostics": 10815
+  "tu_diagnostic_emissions": 37403,
+  "unique_diagnostics": 13112
 }
