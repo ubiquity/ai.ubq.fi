@@ -25,8 +25,8 @@ See [the exact job findings](findings/cppgw-macos-native-20261117.md) for source
 | Oracle            | Bun 1.4.0, revision 34cbb9a40b4bd1bd767d134a7065e66c2432a676               |
 
 Homebrew SQLite 3.54.1 is installed but the qualified fixture run selects the separate **3.54.0**
-header and dylib explicitly. The system SQLite is not selected. Bun 1.4.0 on this Mac reports its
-SQLite as 3.51.0; the C++ native-library fixture already has separate native-version
+header and dylib explicitly. The system SQLite is not selected. Bun 1.4.0 on this Mac reports
+SQLite 3.51.0; the C++ native-library fixture already has separate native-version
 expectations. Do not change its recorded 3.54.0 expectation to make another dependency pass.
 
 ICU 79.1 failed the exhaustive IDNA data gate; Bun on this Mac matches all 1088 original scalar
@@ -159,7 +159,7 @@ cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
 | Runtime tests           | 36/36 binaries, 457/457 cases       |
 | Application tests       | 405/405 binaries, 4,572/4,572 cases |
 | Whole suite             | 441/441 binaries, 5,029/5,029 cases |
-| Darwin fallback loaders | Execution receipt pending           |
+| Darwin fallback loaders | 4/4 binaries, 91/91 cases           |
 
 The complete primary receipt binds clean commit `c6cd29f9e9743e37c4eca1a0313194fd3279ba9e` and
 tree `8599a3a0bc292a66a664832f01ca1404d2192e3d`, with unchanged identity and every input hash.

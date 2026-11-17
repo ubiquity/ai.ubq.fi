@@ -377,7 +377,77 @@ Darwin fallback loader syntax checks pass for all three loader sources; executio
 qualification step before restoring the primary native archive. Documentation-only changes after the
 primary receipt do not alter its consumed source inputs.
 
+## Fallback loaders and restored primary archive
+
+Both final commands exit 0 on clean documentation checkpoint
+`bc8fc4f60423614c38c480d58e33213f68a701eb`, tree `bea2f5bdfb7d7672cb3b016ed9182ae4d168d7c2`:
+
+```sh
+cpp/gateway/tools/macos-build.sh --build-root /tmp/cppgw-macos-native-20261117b/native \
+  --sqlite-prefix /tmp/cppgw-macos-native-20261117b/sqlite-3.54.0 --jobs 3 --suite rt \
+  --filter gzip,sqlite,fetch_transport --legacy-loaders --require-clean
+cpp/gateway/tools/macos-build.sh --build-root /tmp/cppgw-macos-native-20261117b/native \
+  --sqlite-prefix /tmp/cppgw-macos-native-20261117b/sqlite-3.54.0 --jobs 3 --suite none --require-clean
+```
+
+Fallback run `native/runs/1794930031969413000`: **4/4 binaries, 91/91 cases**, zero failures,
+skips, aborts or timeouts; input and identity stability true. This executes Darwin's `libz.1.dylib`,
+`libsqlite3.dylib`, `libbrotlidec.1.dylib` and `libzstd.1.dylib` paths, including the readonly VFS
+bindings through dlsym. Results SHA-256:
+`0196e0ce7c4a373a2845ea04ba9a89b489060032c39a04c5811c624641522716`;
+provenance SHA-256: `5fa20aeb5d5f652db2091dc9a5cd9af83d4b28d92fdcfc270e34c397b076b93e`.
+
+Restore run `native/runs/1794930155908005000`: all **369/369 production objects** use the native
+define again; a fresh 369-member archive is published externally. Tests are explicitly unselected
+only for this archive restoration. Input/identity stability true; provenance SHA-256
+`f5226c7df15fe9180ae6395d23f4ea826ffd927a466b0c60a55f7430906aa821`.
+Current primary archive: **680,701,232 bytes**, SHA-256
+`43c670d08b260f091529c6b23dcbb7d40be193d75e35354bf607d25caef2315e`.
+The archive hash differs after the documented recompile/archive cycle; the full primary test receipt
+retains its own artifact hash and all source inputs are identical. No test binary remains in the build root.
+
+Final changed-document formatting, shell syntax, embedded Python AST and whitespace checks pass.
+`git diff --exit-code c6cd29f9 -- cpp/gateway/src cpp/gateway/include cpp/gateway/tests cpp/gateway/tools`
+confirms all changes after the full passing receipt are documentation only. No unrelated TypeScript,
+Rust, Linux-only fixture, hosted CI, deployment or production probe was run.
+
+Fresh outside-owned checks reproduce the two existing boundaries:
+
+```text
+cmake -S cpp/gateway -B /tmp/cppgw-macos-native-20261117b/cmake-probe -G Ninja
+CMake Error at CMakeLists.txt:3 (message):
+  Configure through cpp/gateway/tools/build.py so resource bounds and SDK
+  identity are recorded
+```
+
+`runtime/startup.cpp:145` still refuses non-Linux-ARM64 ELF artifacts, line 326 applies Linux
+confinement, and lines 361–362/402–403 require `native/permissions/linux-arm64.node`.
+These are runtime/release-owner work, unchanged and never activated. Arbitrary macOS keychain trust
+equivalence, older Mac/SDK/Intel hosts, patched native-addon acceptance and Linux/Pi/sanitizer/performance
+profiles remain their separate qualification surfaces.
+
+Publication command:
+
+```sh
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/usr/bin/false \
+  git push origin HEAD:refs/heads/build/cppgw-macos-native-20261117b
+```
+
+It exits 128: `fatal: could not read Username for 'https://github.com': terminal prompts disabled`.
+`gh auth status --hostname github.com` also reports no authenticated host. No credentials were printed,
+saved, replaced or refreshed. Public development fetch works, but the task commits are outside
+`origin/development`; no authenticated PR, merge or development checkout handoff is claimed.
+Leave the clean owned `agent-job` checkout for the enclosing runner publisher / parent port owner,
+who owns publication and normal ancestry-preserving integration. Local review remains unaccepted
+for its reported model-identity mismatch and is not a delivery gate.
+
 ## Final handoff
 
-Continuation in progress; complete application counts, corrected-source receipts and remaining
-boundaries will be appended. The enclosing runner publisher owns authenticated publication/integration.
+Built all **369 production sources** into a native Apple Silicon C++20/libc++ archive with Apple
+Clang 21 and the exact commands above. All **832 source/test/support units compile**; the whole
+suite passes **441 binaries / 5,029 cases**, plus **4 fallback-loader binaries / 91 overlapping cases**.
+Every continuation source change and its Bun evidence is listed in the per-file table; the inherited
+Darwin changes are preserved and verified. No test failure, skip or timeout remains. Build artifacts
+and oracle/review logs are outside the checkout. Source/build/test work is finished; GitHub write
+authentication blocks publication/integration, owned by the enclosing publisher. The Linux-specific
+CMake/release launcher and Mac service/packaging/trust qualification remain outside this task.
