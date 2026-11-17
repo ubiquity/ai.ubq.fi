@@ -10,9 +10,10 @@ from typing import NamedTuple
 
 GATEWAY = Path(__file__).resolve().parents[1]
 REGISTRY = Path("cmake/vendors.json")
-NAMES = {"simdutf", "simdjson"}
+NAMES = {"simdutf", "simdjson", "libcbor"}
 SIMDJSON_HEADER = "third_party/simdjson/simdjson.h"
 VENDOR_MANIFESTS = {
+    "libcbor": "2d6d9b8a3fbb09e643f15cc6dfec0051a1c915d57cbf0e9928f8f8040908edf5",
     "simdjson": "e958e232e00f9de08ca1118888fbe15ddf75e5b9ffb0c4d5b606eb645909d834",
     "simdutf": "f7b0cb9c96b51c837550c4a68f0f5305833cc8649aa7f25897c5dab487c60481",
 }
@@ -21,9 +22,15 @@ STRICT_WARNINGS = {"-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror"}
 
 class Library(NamedTuple):
     name: str
-    source: str
+    sources: tuple[str, ...]
     consumers: tuple[str, ...]
     inputs: tuple[str, ...]
+
+    @property
+    def source(self):
+        if len(self.sources) != 1 or not self.sources[0].endswith(".cpp"):
+            raise ValueError("Use the CMake vendor target to compile " + self.name + " as C")
+        return self.sources[0]
 
     @property
     def target(self):
@@ -41,7 +48,7 @@ def selected(root=GATEWAY):
     for name, consumers in sorted(active.items()):
         if not isinstance(consumers, list) or not consumers or any(not isinstance(src, str) for src in consumers) or len(set(consumers)) != len(consumers):
             raise ValueError("Declare nonempty unique vendor consumers for " + name)
-        if any(not re.fullmatch(r"(?:src|tests|bench)/[a-zA-Z0-9_/.-]+\.cpp", source)
+        if any(not re.fullmatch(r"(?:src|tests|bench|fuzz)/[a-zA-Z0-9_/.-]+\.cpp", source)
                or ".." in Path(source).parts or not (root / source).is_file() for source in consumers):
             raise ValueError("Invalid vendor consumer for " + name)
         directory = Path("third_party") / name
@@ -49,12 +56,15 @@ def selected(root=GATEWAY):
         manifest = directory / "SHA256SUMS"
         source_filename = name + ".cpp"
         filenames = {source_filename, name + ".h", "LICENSE"}
+        if name == "libcbor":
+            filenames = {path.relative_to(root / directory).as_posix() for path in (root / directory).rglob("*")
+                         if path.is_file() and path not in (root / provenance, root / manifest)}
         entries = {}
         manifest_bytes = (root / manifest).read_bytes()
         if hashlib.sha256(manifest_bytes).hexdigest() != VENDOR_MANIFESTS[name]:
             raise ValueError("Selected vendor manifest differs from the qualified upstream release: " + name)
         for line in manifest_bytes.decode().splitlines():
-            match = re.fullmatch(r"([0-9a-f]{64})  ([a-zA-Z0-9_.-]+)", line)
+            match = re.fullmatch(r"([0-9a-f]{64})  ([a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)*)", line)
             if not match or match[2] not in filenames or match[2] in entries:
                 raise ValueError("Invalid upstream SHA256SUMS for " + name)
             entries[match[2]] = match[1]
@@ -72,7 +82,8 @@ def selected(root=GATEWAY):
                 if hashlib.file_digest(handle, "sha256").hexdigest() != expected:
                     raise ValueError("Supplied vendor input bytes differ: " + str(relative))
             inputs.append(relative.as_posix())
-        yield Library(name, (directory / source_filename).as_posix(), tuple(consumers), tuple(inputs))
+        sources = tuple(path for path in inputs if path.endswith((".c", ".cpp")))
+        yield Library(name, sources, tuple(consumers), tuple(inputs))
 
 
 def required(libraries, sources, targets=()):
@@ -96,8 +107,13 @@ def main(args):
     libraries = tuple(selected())
     if args[0] == "cmake":
         for library in libraries:
-            args = [library.name, library.source, *library.consumers]
-            print("uos_register_vendor(" + " ".join('"' + value + '"' for value in args) + ")")
+            if library.name == "libcbor":
+                command = "uos_register_c_vendor"
+                arguments = [library.name, ";".join(library.sources), ";".join(library.inputs), *library.consumers]
+            else:
+                command = "uos_register_vendor"
+                arguments = [library.name, library.source, *library.consumers]
+            print(command + "(" + " ".join('"' + value + '"' for value in arguments) + ")")
     elif args[0] == "unit":
         print(" ".join(sorted(simdjson_consumers(libraries))))
         print(" ".join(lib.source for lib in required(libraries, args[1:])))

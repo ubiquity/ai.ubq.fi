@@ -1,4 +1,5 @@
 {
+  "libcbor": ["src/auth/passkeys.cpp", "fuzz/passkeys.cpp", "fuzz/passkeys_cbor_library.cpp", "tests/legacy/passkeys_cbor_test.cpp"],
   "simdjson": ["src/rt/json.cpp"],
   "simdutf": ["src/rt/base64.cpp"]
 }

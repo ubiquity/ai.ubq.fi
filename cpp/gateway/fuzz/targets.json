@@ -94,6 +94,34 @@
       "included_implementation": "src/auth/passkeys.cpp",
       "entry": "isoCBOR::decodeFirst / asn1::fromBER / parseCertificate",
       "max_len": 4096
+    },
+    "passkeys_cbor_library": {
+      "harness": "fuzz/passkeys_cbor_library.cpp",
+      "included_implementation": "src/auth/passkeys.cpp",
+      "entry": "isoCBOR::decodeFirst / isoCBOR::encode / parseAuthenticatorData",
+      "max_len": 4096,
+      "extra_sources": [
+        "third_party/libcbor/allocators.c",
+        "third_party/libcbor/cbor.c",
+        "third_party/libcbor/cbor/arrays.c",
+        "third_party/libcbor/cbor/bytestrings.c",
+        "third_party/libcbor/cbor/callbacks.c",
+        "third_party/libcbor/cbor/common.c",
+        "third_party/libcbor/cbor/encoding.c",
+        "third_party/libcbor/cbor/floats_ctrls.c",
+        "third_party/libcbor/cbor/internal/builder_callbacks.c",
+        "third_party/libcbor/cbor/internal/encoders.c",
+        "third_party/libcbor/cbor/internal/loaders.c",
+        "third_party/libcbor/cbor/internal/memory_utils.c",
+        "third_party/libcbor/cbor/internal/stack.c",
+        "third_party/libcbor/cbor/internal/unicode.c",
+        "third_party/libcbor/cbor/ints.c",
+        "third_party/libcbor/cbor/maps.c",
+        "third_party/libcbor/cbor/serialization.c",
+        "third_party/libcbor/cbor/streaming.c",
+        "third_party/libcbor/cbor/strings.c",
+        "third_party/libcbor/cbor/tags.c"
+      ]
     }
   },
   "libraries": [

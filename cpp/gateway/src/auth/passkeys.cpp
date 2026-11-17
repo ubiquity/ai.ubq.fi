@@ -30,13 +30,14 @@
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
 
+#include "third_party/libcbor/cbor.h"
+
 #include <algorithm>
 #include <array>
-#include <cfloat>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <exception>
 #include <functional>
 #include <limits>
@@ -44,6 +45,7 @@
 #include <memory>
 #include <span>
 #include <utility>
+#include <variant>
 
 namespace uos::auth::passkeys {
   namespace {
@@ -191,461 +193,258 @@ namespace uos::auth::passkeys {
       return isoBase64URL::isBase64URL(value->as_string());
     }
 
-    // ---- @levischuck/tiny-cbor ----------------------------------------------------------
+    // ---- Passkey CBOR (libcbor) ----------------------------------------------------------
 
-    struct CborEntry;
-
-    // A decoded CBOR item as a JS value: numbers are JS numbers, maps are Maps keyed by
-    // string or number (SameValueZero, -0 stored as +0), tags are CBORTag objects.
-    struct Cbor {
+    class Cbor {
+    public:
       enum class Kind { undefined_, null_, boolean, number, string, bytes, array, map, tag };
-      Kind kind = Kind::undefined_;
-      bool boolean = false;
-      double number = 0;
-      std::string text;
-      Bytes bytes;
-      std::vector<Cbor> items;  // array elements; a tag's single tagged value
-      std::vector<CborEntry> entries;
-      double tag = 0;
 
-      bool isMap() const noexcept { return kind == Kind::map; }
-      bool isNumber() const noexcept { return kind == Kind::number; }
-      bool isBytes() const noexcept { return kind == Kind::bytes; }
-      // `map.get(key)`; nullptr is undefined.
-      const Cbor* get(double key) const;
-      const Cbor* get(std::string_view key) const;
-      bool truthy() const noexcept;
-    };
-
-    // A Map key: `typeof key === "string" || typeof key === "number"`.
-    struct CborKey {
-      bool isString = false;
-      std::string text;
-      double number = 0;
-    };
-
-    struct CborEntry {
-      CborKey key;
-      Cbor value;
-    };
-
-    bool sameKey(const CborKey& a, const CborKey& b) {
-      if (a.isString != b.isString) return false;
-      if (a.isString) return a.text == b.text;
-      return a.number == b.number || (std::isnan(a.number) && std::isnan(b.number));
-    }
-
-    const Cbor* Cbor::get(double key) const {
-      if (kind != Kind::map) return nullptr;
-      const CborKey wanted{.isString = false, .text = {}, .number = key};
-      for (const CborEntry& entry : entries)
-        if (sameKey(entry.key, wanted)) return &entry.value;
-      return nullptr;
-    }
-
-    const Cbor* Cbor::get(std::string_view key) const {
-      if (kind != Kind::map) return nullptr;
-      const CborKey wanted{.isString = true, .text = std::string(key), .number = 0};
-      for (const CborEntry& entry : entries)
-        if (sameKey(entry.key, wanted)) return &entry.value;
-      return nullptr;
-    }
-
-    bool Cbor::truthy() const noexcept {
-      switch (kind) {
-        case Kind::undefined_:
-        case Kind::null_: return false;
-        case Kind::boolean: return boolean;
-        case Kind::number: return !(number == 0 || std::isnan(number));
-        case Kind::string: return !text.empty();
-        default: return true;  // objects (Uint8Array, arrays, Maps, CBORTag) are truthy
+      Cbor() = default;
+      explicit Cbor(cbor_item_t* owned) : item_(owned) {
+        if (!item_) fail("Could not allocate CBOR item");
       }
-    }
+      Cbor(const Cbor& other) : item_(other ? cbor_incref(other.raw()) : nullptr) {}
+      Cbor(Cbor&&) noexcept = default;
+      Cbor& operator=(Cbor other) noexcept {
+        item_.swap(other.item_);
+        return *this;
+      }
 
-    bool truthy(const Cbor* value) { return value != nullptr && value->truthy(); }
+      explicit operator bool() const { return static_cast<bool>(item_); }
+      cbor_item_t* raw() const { return item_.get(); }
 
-    // `String(value)` / `${value}` of a decoded item, for the library's error messages.
-    std::string jsString(const Cbor* value);
+      Kind kind() const {
+        if (!item_) return Kind::undefined_;
+        switch (cbor_typeof(raw())) {
+          case CBOR_TYPE_UINT:
+          case CBOR_TYPE_NEGINT: return Kind::number;
+          case CBOR_TYPE_BYTESTRING: return Kind::bytes;
+          case CBOR_TYPE_STRING: return Kind::string;
+          case CBOR_TYPE_ARRAY: return Kind::array;
+          case CBOR_TYPE_MAP: return Kind::map;
+          case CBOR_TYPE_TAG: return Kind::tag;
+          case CBOR_TYPE_FLOAT_CTRL:
+            if (cbor_is_float(raw())) return Kind::number;
+            if (cbor_is_bool(raw())) return Kind::boolean;
+            if (cbor_is_null(raw())) return Kind::null_;
+            if (cbor_is_undef(raw())) return Kind::undefined_;
+            break;
+        }
+        fail("Unsupported CBOR item");
+      }
+
+      bool boolean() const { return cbor_get_bool(raw()); }
+
+      static double number(const cbor_item_t* item) {
+        if (cbor_isa_float_ctrl(item)) return cbor_float_get_float(item);
+        const double argument = static_cast<double>(cbor_get_int(item));
+        return cbor_isa_negint(item) ? -1 - argument : argument;
+      }
+      double number() const { return number(raw()); }
+
+      static std::string_view text(const cbor_item_t* item) {
+        const std::size_t size = cbor_string_length(item);
+        if (size == 0) return {};
+        return {reinterpret_cast<const char*>(cbor_string_handle(item)), size};
+      }
+      std::string_view text() const { return text(raw()); }
+
+      BytesView bytes() const { return {cbor_bytestring_handle(raw()), cbor_bytestring_length(raw())}; }
+      std::size_t arraySize() const { return cbor_array_size(raw()); }
+      Cbor at(std::size_t index) const { return Cbor(cbor_incref(cbor_array_handle(raw())[index])); }
+
+      static bool isNumber(const cbor_item_t* item) { return cbor_is_int(item) || cbor_is_float(item); }
+
+      Cbor get(double key) const {
+        return find([key](const cbor_item_t* item) { return isNumber(item) && number(item) == key; });
+      }
+      Cbor get(std::string_view key) const {
+        return find([key](const cbor_item_t* item) { return cbor_isa_string(item) && text(item) == key; });
+      }
+
+      bool truthy() const {
+        switch (kind()) {
+          case Kind::undefined_:
+          case Kind::null_: return false;
+          case Kind::boolean: return boolean();
+          case Kind::number: return number() != 0 && !std::isnan(number());
+          case Kind::string: return !text().empty();
+          default: return true;
+        }
+      }
+
+    private:
+      struct Decref {
+        void operator()(cbor_item_t* item) const { cbor_decref(&item); }
+      };
+      std::unique_ptr<cbor_item_t, Decref> item_;
+
+      template<class Match>
+      Cbor find(Match matches) const {
+        if (!item_ || !cbor_isa_map(raw())) return {};
+        for (const auto& pair : std::span(cbor_map_handle(raw()), cbor_map_size(raw()))) {
+          if (matches(pair.key)) return Cbor(cbor_incref(pair.value));
+        }
+        return {};
+      }
+    };
+
+    bool truthy(const Cbor& value) { return value.truthy(); }
+
+    // WebAuthn passes decoded values to JavaScript string and byte APIs.
     std::string jsString(const Cbor& value) {
-      switch (value.kind) {
+      switch (value.kind()) {
         case Cbor::Kind::undefined_: return "undefined";
         case Cbor::Kind::null_: return "null";
-        case Cbor::Kind::boolean: return value.boolean ? "true" : "false";
-        case Cbor::Kind::number: return rt::numberToString(value.number);
-        case Cbor::Kind::string: return value.text;
+        case Cbor::Kind::boolean: return value.boolean() ? "true" : "false";
+        case Cbor::Kind::number: return rt::numberToString(value.number());
+        case Cbor::Kind::string: return std::string(value.text());
         case Cbor::Kind::bytes: {
           std::string out;
-          for (std::size_t i = 0; i < value.bytes.size(); ++i) out += (i ? "," : "") + std::to_string(value.bytes[i]);
+          for (std::uint8_t byte : value.bytes()) {
+            if (!out.empty()) out += ",";
+            out += std::to_string(byte);
+          }
           return out;
         }
         case Cbor::Kind::array: {
           std::string out;
-          for (std::size_t i = 0; i < value.items.size(); ++i) {
+          for (std::size_t i = 0; i < value.arraySize(); ++i) {
             if (i) out += ",";
-            const Cbor& item = value.items[i];
-            if (item.kind != Cbor::Kind::undefined_ && item.kind != Cbor::Kind::null_) out += jsString(item);
+            const Cbor item = value.at(i);
+            if (item.kind() != Cbor::Kind::undefined_ && item.kind() != Cbor::Kind::null_) out += jsString(item);
           }
           return out;
         }
         case Cbor::Kind::map: return "[object Map]";
         case Cbor::Kind::tag: return "[object Object]";
       }
-      return "";
+      return {};
     }
-    std::string jsString(const Cbor* value) { return value == nullptr ? "undefined" : jsString(*value); }
 
-    namespace cbor {
-      constexpr int MAJOR_TYPE_UNSIGNED_INTEGER = 0;
-      constexpr int MAJOR_TYPE_NEGATIVE_INTEGER = 1;
-      constexpr int MAJOR_TYPE_BYTE_STRING = 2;
-      constexpr int MAJOR_TYPE_TEXT_STRING = 3;
-      constexpr int MAJOR_TYPE_ARRAY = 4;
-      constexpr int MAJOR_TYPE_MAP = 5;
-      constexpr int MAJOR_TYPE_TAG = 6;
-      constexpr int MAJOR_TYPE_SIMPLE_OR_FLOAT = 7;
-      constexpr const char* MAP_ERROR = "Map is not supported or well formed";
+    namespace isoCBOR {
+      enum class Use { standalone, credentialKey, extensions };
 
-      // Positions and lengths are JS numbers: a declared length can reach 2^53.
+      template<class Integer>
+      void recordArgument(void* context, Integer argument) { *static_cast<std::uint64_t*>(context) = argument; }
+
+      // libcbor reads tokens without allocating. Check the passkey profile and that
+      // every declared child can fit before handing the complete item to cbor_load.
+      std::size_t firstItemSize(BytesView input, Use use) {
+        if (input.empty()) fail("No data");
+        static const cbor_callbacks callbacks = [] {
+          cbor_callbacks cb = cbor_empty_callbacks;
+          cb.uint8 = cb.negint8 = recordArgument<std::uint8_t>;
+          cb.uint16 = cb.negint16 = recordArgument<std::uint16_t>;
+          cb.uint32 = cb.negint32 = recordArgument<std::uint32_t>;
+          cb.uint64 = cb.negint64 = cb.array_start = cb.map_start = cb.tag = recordArgument<std::uint64_t>;
+          cb.byte_string = cb.string = [](void* context, cbor_data, std::uint64_t length) { recordArgument(context, length); };
+          return cb;
+        }();
+        constexpr std::uint64_t maxSafeInteger = 9007199254740991ULL;
+        std::size_t consumed = 0;
+        std::size_t pending = 1;
+        while (pending != 0) {
+          const BytesView next = input.subspan(consumed);
+          std::uint64_t argument = 0;
+          const auto token = cbor_stream_decode(next.data(), next.size(), &callbacks, &argument);
+          if (token.status != CBOR_DECODER_FINISHED) fail("Malformed or incomplete CBOR");
+          const unsigned major = next.front() >> 5;
+          const unsigned width = next.front() & 0x1f;
+          if (major == 7) {
+            if (width < 20 || width > 27 || width == 24) fail("Unsupported CBOR simple value");
+            if (width >= 25 && use != Use::standalone) fail("Floating-point CBOR in authenticator data");
+            if (width == 25 && (next[2] != 0 || (next[1] != 0x7c && next[1] != 0x7e && next[1] != 0xfc)))
+              fail("Unsupported half-precision CBOR");
+          } else {
+            if (width == 31 || (width >= 24 && argument < 24) || argument > maxSafeInteger ||
+                (major == 1 && argument == maxSafeInteger))
+              fail("Unsupported CBOR argument");
+            if (use != Use::standalone) {
+              std::array<std::uint8_t, 9> header{};
+              const std::size_t headerSize = token.read - ((major == 2 || major == 3) ? static_cast<std::size_t>(argument) : 0);
+              if (headerSize != cbor_encode_uint(argument, header.data(), header.size()))
+                fail("Non-minimal CBOR argument in authenticator data");
+            }
+          }
+          const std::uint64_t children = major == 4 ? argument : major == 5 ? 2 * argument : major == 6 ? 1 : 0;
+          consumed += token.read;
+          --pending;
+          const std::size_t remaining = input.size() - consumed;
+          if (pending > remaining || children > remaining - pending) fail("Incomplete CBOR container");
+          pending += static_cast<std::size_t>(children);
+        }
+        return consumed;
+      }
+
+      void validate(const cbor_item_t* item, Use use) {
+        switch (cbor_typeof(item)) {
+          case CBOR_TYPE_STRING: {
+            const std::string_view text = Cbor::text(item);
+            const std::size_t codepoints = cbor_string_codepoint_count(item);
+            if ((!text.empty() && codepoints == 0) || text.starts_with("\xef\xbb\xbf")) fail("Invalid CBOR text");
+            if (use != Use::standalone && codepoints != text.size()) {
+              if (use == Use::extensions) fail("Error decoding authenticator extensions: Map is not supported or well formed");
+              fail("Non-ASCII CBOR text in credential public key");
+            }
+            break;
+          }
+          case CBOR_TYPE_ARRAY:
+            for (const auto* child : std::span(cbor_array_handle(item), cbor_array_size(item))) validate(child, use);
+            break;
+          case CBOR_TYPE_MAP: {
+            using Key = std::variant<std::string_view, std::uint64_t>;
+            const auto pairs = std::span(cbor_map_handle(item), cbor_map_size(item));
+            std::vector<Key> keys;
+            keys.reserve(pairs.size());
+            for (const auto& pair : pairs) {
+              validate(pair.key, use);
+              if (cbor_isa_string(pair.key)) keys.emplace_back(Cbor::text(pair.key));
+              else if (Cbor::isNumber(pair.key)) {
+                const double number = Cbor::number(pair.key);
+                const double normalized = std::isnan(number) ? std::numeric_limits<double>::quiet_NaN() : number;
+                keys.emplace_back(number == 0 ? std::uint64_t{0} : std::bit_cast<std::uint64_t>(normalized));
+              } else fail("Map is not supported or well formed");
+              validate(pair.value, use);
+            }
+            std::sort(keys.begin(), keys.end());
+            if (std::adjacent_find(keys.begin(), keys.end()) != keys.end()) fail("Map is not supported or well formed");
+            break;
+          }
+          case CBOR_TYPE_TAG: {
+            const Cbor tagged(cbor_tag_item(item));
+            validate(tagged.raw(), use);
+            break;
+          }
+          default: break;
+        }
+      }
+
       struct Decoded {
-        Cbor value;
-        double length;
+        Cbor item;
+        std::size_t read;
       };
 
-      std::uint64_t readBigEndian(BytesView data, std::size_t start, std::size_t count) {
-        std::uint64_t out = 0;
-        for (std::size_t i = 0; i < count; ++i) out = (out << 8) | data[start + i];
-        return out;
+      Decoded decode(BytesView input, Use use) {
+        const std::size_t size = firstItemSize(input, use);
+        cbor_load_result result{};
+        cbor_item_t* loaded = cbor_load(input.data(), size, &result);
+        if (loaded == nullptr) fail("Could not decode CBOR item");
+        Cbor item(loaded);
+        if (result.read != size) fail("Incomplete CBOR item");
+        validate(item.raw(), use);
+        return {std::move(item), result.read};
       }
 
-      std::pair<double, double> decodeLength(BytesView data, int argument, double index) {
-        if (argument < 24) return {static_cast<double>(argument), 1};
-        const double remainingDataLength = static_cast<double>(data.size()) - index - 1;
-        const std::size_t at = static_cast<std::size_t>(index) + 1;
-        std::optional<double> output;
-        double bytes = 0;
-        switch (argument) {
-          case 24:
-            if (remainingDataLength > 0) {
-              output = data[at];
-              bytes = 2;
-            }
-            break;
-          case 25:
-            if (remainingDataLength > 1) {
-              output = static_cast<double>(readBigEndian(data, at, 2));
-              bytes = 3;
-            }
-            break;
-          case 26:
-            if (remainingDataLength > 3) {
-              output = static_cast<double>(readBigEndian(data, at, 4));
-              bytes = 5;
-            }
-            break;
-          case 27:
-            if (remainingDataLength > 7) {
-              const std::uint64_t bigOutput = readBigEndian(data, at, 8);
-              // Bound it to [24, MAX_SAFE_INTEGER], where it is safe
-              // to encode as a javascript number
-              if (bigOutput >= 24 && bigOutput <= 9007199254740991ULL) return {static_cast<double>(bigOutput), 9};
-            }
-            break;
-          default: break;
-        }
-        if (output && *output != 0 && *output >= 24) return {*output, bytes};
-        fail("Length not supported or not well formed");
+      Cbor decodeFirst(BytesView input) { return decode(input, Use::standalone).item; }
+
+      Bytes encode(const Cbor& input) {
+        if (!input) fail("No CBOR item to encode");
+        Bytes bytes(cbor_serialized_size(input.raw()));
+        if (bytes.empty() || cbor_serialize(input.raw(), bytes.data(), bytes.size()) != bytes.size())
+          fail("Could not encode CBOR item");
+        return bytes;
       }
-
-      Decoded decodeNext(BytesView data, double index);
-
-      Decoded decodeByteString(BytesView data, int argument, double index) {
-        const auto [lengthValue, lengthConsumed] = decodeLength(data, argument, index);
-        const double dataStartIndex = index + lengthConsumed;
-        const double size = static_cast<double>(data.size());
-        // `buffer.slice(start, start + length)` clamps to the buffer.
-        const double start = std::min(dataStartIndex, size);
-        const double end = std::min(dataStartIndex + lengthValue, size);
-        Cbor value;
-        value.kind = Cbor::Kind::bytes;
-        if (end > start) value.bytes.assign(data.begin() + static_cast<std::ptrdiff_t>(start), data.begin() + static_cast<std::ptrdiff_t>(end));
-        return {std::move(value), lengthConsumed + lengthValue};
-      }
-
-      Decoded decodeString(BytesView data, int argument, double index) {
-        Decoded decoded = decodeByteString(data, argument, index);
-        Cbor value;
-        value.kind = Cbor::Kind::string;
-        value.text = rt::decodeUtf8(BytesView(decoded.value.bytes));
-        return {std::move(value), decoded.length};
-      }
-
-      Decoded decodeArray(BytesView data, int argument, double index) {
-        Cbor value;
-        value.kind = Cbor::Kind::array;
-        if (argument == 0) return {std::move(value), 1};
-        const auto [length, lengthConsumed] = decodeLength(data, argument, index);
-        double consumedLength = lengthConsumed;
-        for (double i = 0; i < length; i++) {
-          const double remainingDataLength = static_cast<double>(data.size()) - index - consumedLength;
-          if (remainingDataLength <= 0) fail("array is not supported or well formed");
-          Decoded next = decodeNext(data, index + consumedLength);
-          value.items.push_back(std::move(next.value));
-          consumedLength += next.length;
-        }
-        return {std::move(value), consumedLength};
-      }
-
-      Decoded decodeMap(BytesView data, int argument, double index) {
-        Cbor result;
-        result.kind = Cbor::Kind::map;
-        if (argument == 0) return {std::move(result), 1};
-        const auto [length, lengthConsumed] = decodeLength(data, argument, index);
-        double consumedLength = lengthConsumed;
-        for (double i = 0; i < length; i++) {
-          double remainingDataLength = static_cast<double>(data.size()) - index - consumedLength;
-          if (remainingDataLength <= 0) fail(MAP_ERROR);
-          // Load key
-          Decoded key = decodeNext(data, index + consumedLength);
-          consumedLength += key.length;
-          remainingDataLength -= key.length;
-          // Check that there's enough to have a value
-          if (remainingDataLength <= 0) fail(MAP_ERROR);
-          // Technically CBOR maps can have any type as the key, and so can JS Maps
-          // However, JS Maps can only reference such keys as references which would
-          // require key iteration and pattern matching.
-          // For simplicity, since such keys are not in use with WebAuthn, this
-          // capability is not implemented and the types are restricted to strings
-          // and numbers.
-          if (key.value.kind != Cbor::Kind::string && key.value.kind != Cbor::Kind::number) fail(MAP_ERROR);
-          CborKey mapKey;
-          if (key.value.kind == Cbor::Kind::string) {
-            mapKey.isString = true;
-            mapKey.text = key.value.text;
-          } else {
-            mapKey.number = key.value.number == 0 ? 0 : key.value.number;  // Map stores -0 as +0
-          }
-          // CBOR Maps are not well formed if there are duplicate keys
-          for (const CborEntry& entry : result.entries)
-            if (sameKey(entry.key, mapKey)) fail(MAP_ERROR);
-          // Load value
-          Decoded value = decodeNext(data, index + consumedLength);
-          consumedLength += value.length;
-          result.entries.push_back(CborEntry{.key = std::move(mapKey), .value = std::move(value.value)});
-        }
-        return {std::move(result), consumedLength};
-      }
-
-      Cbor numberValue(double number) {
-        Cbor value;
-        value.kind = Cbor::Kind::number;
-        value.number = number;
-        return value;
-      }
-
-      Decoded decodeFloat16(BytesView data, double index) {
-        if (index + 3 > static_cast<double>(data.size())) fail("CBOR stream ended before end of Float 16");
-        // Skip the first byte
-        const std::uint64_t result = readBigEndian(data, static_cast<std::size_t>(index) + 1, 2);
-        // A minimal selection of supported values
-        if (result == 0x7c00) return {numberValue(std::numeric_limits<double>::infinity()), 3};
-        if (result == 0x7e00) return {numberValue(std::numeric_limits<double>::quiet_NaN()), 3};
-        if (result == 0xfc00) return {numberValue(-std::numeric_limits<double>::infinity()), 3};
-        fail("Float16 data is unsupported");
-      }
-
-      Decoded decodeFloat32(BytesView data, double index) {
-        if (index + 5 > static_cast<double>(data.size())) fail("CBOR stream ended before end of Float 32");
-        const std::uint32_t bits = static_cast<std::uint32_t>(readBigEndian(data, static_cast<std::size_t>(index) + 1, 4));
-        float result;
-        std::memcpy(&result, &bits, sizeof result);
-        // First byte + 4 byte float
-        return {numberValue(static_cast<double>(result)), 5};
-      }
-
-      Decoded decodeFloat64(BytesView data, double index) {
-        if (index + 9 > static_cast<double>(data.size())) fail("CBOR stream ended before end of Float 64");
-        const std::uint64_t bits = readBigEndian(data, static_cast<std::size_t>(index) + 1, 8);
-        double result;
-        std::memcpy(&result, &bits, sizeof result);
-        // First byte + 8 byte float
-        return {numberValue(result), 9};
-      }
-
-      Decoded decodeTag(BytesView data, int argument, double index) {
-        const auto [tag, tagBytes] = decodeLength(data, argument, index);
-        Decoded value = decodeNext(data, index + tagBytes);
-        Cbor result;
-        result.kind = Cbor::Kind::tag;
-        result.tag = tag;
-        result.items.push_back(std::move(value.value));
-        return {std::move(result), tagBytes + value.length};
-      }
-
-      Decoded decodeNext(BytesView data, double index) {
-        if (index >= static_cast<double>(data.size())) fail("CBOR stream ended before tag value");
-        const std::uint8_t byte = data[static_cast<std::size_t>(index)];
-        const int majorType = byte >> 5;
-        const int argument = byte & 0x1f;
-        switch (majorType) {
-          case MAJOR_TYPE_UNSIGNED_INTEGER: {
-            const auto [value, length] = decodeLength(data, argument, index);
-            return {numberValue(value), length};
-          }
-          case MAJOR_TYPE_NEGATIVE_INTEGER: {
-            const auto [value, length] = decodeLength(data, argument, index);
-            return {numberValue(-value - 1), length};
-          }
-          case MAJOR_TYPE_BYTE_STRING: return decodeByteString(data, argument, index);
-          case MAJOR_TYPE_TEXT_STRING: return decodeString(data, argument, index);
-          case MAJOR_TYPE_ARRAY: return decodeArray(data, argument, index);
-          case MAJOR_TYPE_MAP: return decodeMap(data, argument, index);
-          case MAJOR_TYPE_TAG: return decodeTag(data, argument, index);
-          case MAJOR_TYPE_SIMPLE_OR_FLOAT: {
-            Cbor simple;
-            switch (argument) {
-              case 20:
-                simple.kind = Cbor::Kind::boolean;
-                simple.boolean = false;
-                return {std::move(simple), 1};
-              case 21:
-                simple.kind = Cbor::Kind::boolean;
-                simple.boolean = true;
-                return {std::move(simple), 1};
-              case 22: simple.kind = Cbor::Kind::null_; return {std::move(simple), 1};
-              case 23: simple.kind = Cbor::Kind::undefined_; return {std::move(simple), 1};
-              // 24: Simple value (value 32..255 in following byte)
-              case 25:  // IEEE 754 Half-Precision Float (16 bits follow)
-                return decodeFloat16(data, index);
-              case 26:  // IEEE 754 Single-Precision Float (32 bits follow)
-                return decodeFloat32(data, index);
-              case 27:  // IEEE 754 Double-Precision Float (64 bits follow)
-                return decodeFloat64(data, index);
-              // 28-30: Reserved, not well-formed in the present document
-              // 31: "break" stop code for indefinite-length items
-              default: break;
-            }
-            break;
-          }
-          default: break;
-        }
-        fail("Unsupported or not well formed at " + rt::numberToString(index));
-      }
-
-      Decoded decodePartialCBOR(BytesView data, double index) {
-        if (data.empty() || static_cast<double>(data.size()) <= index || index < 0) fail("No data");
-        return decodeNext(data, index);
-      }
-
-      void encodeLength(Bytes& output, int major, std::uint64_t argument, bool negative = false) {
-        const std::uint8_t majorEncoded = static_cast<std::uint8_t>(major << 5);
-        // Negative 0 is not a thing
-        if (negative) {
-          if (argument == 0) fail("CBOR Data Item argument cannot be zero when negative");
-          argument -= 1;
-        }
-        if (argument <= 23) {
-          output.push_back(static_cast<std::uint8_t>(majorEncoded | argument));
-        } else if (argument <= 255) {
-          output.push_back(static_cast<std::uint8_t>(majorEncoded | 24));
-          output.push_back(static_cast<std::uint8_t>(argument));
-        } else if (argument <= 65535) {
-          output.push_back(static_cast<std::uint8_t>(majorEncoded | 25));
-          for (int shift = 8; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(argument >> shift));
-        } else if (argument <= 4294967295ULL) {
-          output.push_back(static_cast<std::uint8_t>(majorEncoded | 26));
-          for (int shift = 24; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(argument >> shift));
-        } else {
-          output.push_back(static_cast<std::uint8_t>(majorEncoded | 27));
-          for (int shift = 56; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(argument >> shift));
-        }
-      }
-
-      void encodeFloat(Bytes& output, double data) {
-        const bool fitsFloat32 = std::isfinite(data) && std::fabs(data) <= static_cast<double>(FLT_MAX) &&
-                                 static_cast<double>(static_cast<float>(data)) == data;
-        if (fitsFloat32 || !std::isfinite(data)) {
-          // Float32
-          std::uint32_t bits;
-          if (std::isnan(data)) {
-            bits = 0x7fc00000U;
-          } else {
-            const float narrowed = static_cast<float>(data);
-            std::memcpy(&bits, &narrowed, sizeof bits);
-          }
-          output.push_back(0xfa);
-          for (int shift = 24; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(bits >> shift));
-        } else {
-          // Float64
-          std::uint64_t bits;
-          std::memcpy(&bits, &data, sizeof bits);
-          output.push_back(0xfb);
-          for (int shift = 56; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(bits >> shift));
-        }
-      }
-
-      void encodeNumber(Bytes& output, double data) {
-        if (rt::Number::isSafeInteger(data)) {
-          // Encode integer
-          if (data < 0) encodeLength(output, MAJOR_TYPE_NEGATIVE_INTEGER, static_cast<std::uint64_t>(-data), true);
-          else encodeLength(output, MAJOR_TYPE_UNSIGNED_INTEGER, static_cast<std::uint64_t>(data == 0 ? 0 : data));
-          return;
-        }
-        encodeFloat(output, data);
-      }
-
-      void encodePartialCBOR(const Cbor& data, Bytes& output) {
-        switch (data.kind) {
-          case Cbor::Kind::boolean: output.push_back(data.boolean ? 0xf5 : 0xf4); return;
-          case Cbor::Kind::null_: output.push_back(0xf6); return;
-          case Cbor::Kind::undefined_: output.push_back(0xf7); return;
-          case Cbor::Kind::number: encodeNumber(output, data.number); return;
-          case Cbor::Kind::string: {
-            // The length prefix counts UTF-16 code units (`data.length`), the payload is UTF-8.
-            encodeLength(output, MAJOR_TYPE_TEXT_STRING, static_cast<std::uint64_t>(rt::length(data.text)));
-            const Bytes encoded = rt::encodeUtf8(data.text);
-            output.insert(output.end(), encoded.begin(), encoded.end());
-            return;
-          }
-          case Cbor::Kind::bytes:
-            encodeLength(output, MAJOR_TYPE_BYTE_STRING, data.bytes.size());
-            output.insert(output.end(), data.bytes.begin(), data.bytes.end());
-            return;
-          case Cbor::Kind::array:
-            encodeLength(output, MAJOR_TYPE_ARRAY, data.items.size());
-            for (const Cbor& element : data.items) encodePartialCBOR(element, output);
-            return;
-          case Cbor::Kind::map:
-            encodeLength(output, MAJOR_TYPE_MAP, data.entries.size());
-            for (const CborEntry& entry : data.entries) {
-              if (entry.key.isString) {
-                Cbor key;
-                key.kind = Cbor::Kind::string;
-                key.text = entry.key.text;
-                encodePartialCBOR(key, output);
-              } else {
-                encodeNumber(output, entry.key.number);
-              }
-              encodePartialCBOR(entry.value, output);
-            }
-            return;
-          case Cbor::Kind::tag:
-            encodeLength(output, MAJOR_TYPE_TAG, static_cast<std::uint64_t>(data.tag));
-            encodePartialCBOR(data.items.front(), output);
-            return;
-        }
-      }
-
-      Bytes encodeCBOR(const Cbor& data) {
-        Bytes output;
-        encodePartialCBOR(data, output);
-        return output;
-      }
-    }
-
-    // isoCBOR.decodeFirst / isoCBOR.encode
-    namespace isoCBOR {
-      Cbor decodeFirst(BytesView input) { return cbor::decodePartialCBOR(input, 0).value; }
-      Bytes encode(const Cbor& input) { return cbor::encodeCBOR(input); }
     }
 
     // ---- asn1js (BER decoding as @peculiar/asn1-schema's AsnParser.parse drives it) -----
@@ -1629,35 +1428,35 @@ namespace uos::auth::passkeys {
 
     // `Object.values(Enum).indexOf(value) >= 0` over a TS numeric enum: its member names and
     // its numbers both match.
-    bool inEnumValues(const Cbor* value, std::initializer_list<std::string_view> names, std::initializer_list<double> numbers) {
-      if (value == nullptr) return false;
-      if (value->kind == Cbor::Kind::string) return std::find(names.begin(), names.end(), value->text) != names.end();
-      if (value->kind == Cbor::Kind::number) return std::find(numbers.begin(), numbers.end(), value->number) != numbers.end();
+    bool inEnumValues(const Cbor& value, std::initializer_list<std::string_view> names, std::initializer_list<double> numbers) {
+      if (!value) return false;
+      if (value.kind() == Cbor::Kind::string) return std::find(names.begin(), names.end(), value.text()) != names.end();
+      if (value.kind() == Cbor::Kind::number) return std::find(numbers.begin(), numbers.end(), value.number()) != numbers.end();
       return false;
     }
-    bool isCOSEKty(const Cbor* kty) { return inEnumValues(kty, {"OKP", "EC2", "RSA"}, {1, 2, 3}); }
-    bool isCOSECrv(const Cbor* crv) { return inEnumValues(crv, {"P256", "P384", "P521", "ED25519", "SECP256K1"}, {1, 2, 3, 6, 8}); }
-    bool isCOSEAlg(const Cbor* alg) {
+    bool isCOSEKty(const Cbor& kty) { return inEnumValues(kty, {"OKP", "EC2", "RSA"}, {1, 2, 3}); }
+    bool isCOSECrv(const Cbor& crv) { return inEnumValues(crv, {"P256", "P384", "P521", "ED25519", "SECP256K1"}, {1, 2, 3, 6, 8}); }
+    bool isCOSEAlg(const Cbor& alg) {
       return inEnumValues(alg, {"ES256", "EdDSA", "ES384", "ES512", "PS256", "PS384", "PS512", "ES256K", "RS256", "RS384", "RS512", "RS1"},
                           {-7, -8, -35, -36, -37, -38, -39, -47, -257, -258, -259, -65535});
     }
-    bool numberIs(const Cbor* value, double number) { return value != nullptr && value->kind == Cbor::Kind::number && value->number == number; }
+    bool numberIs(const Cbor& value, double number) { return value.kind() == Cbor::Kind::number && value.number() == number; }
     bool isCOSEPublicKeyOKP(const Cbor& key) { return isCOSEKty(key.get(COSEKEYS::kty)) && numberIs(key.get(COSEKEYS::kty), 1); }
     bool isCOSEPublicKeyEC2(const Cbor& key) { return isCOSEKty(key.get(COSEKEYS::kty)) && numberIs(key.get(COSEKEYS::kty), 2); }
     bool isCOSEPublicKeyRSA(const Cbor& key) { return isCOSEKty(key.get(COSEKEYS::kty)) && numberIs(key.get(COSEKEYS::kty), 3); }
 
     // `name.get(...)` on a decoded value that may not be a Map (JavaScriptCore's TypeErrors).
     const Cbor& requireMap(const Cbor& value, std::string_view name, std::string_view key) {
-      if (value.kind == Cbor::Kind::map) return value;
+      if (value.kind() == Cbor::Kind::map) return value;
       const std::string variable(name);
-      if (value.kind == Cbor::Kind::null_ || value.kind == Cbor::Kind::undefined_)
-        throw rt::TypeError(std::string(value.kind == Cbor::Kind::null_ ? "null" : "undefined") + " is not an object (evaluating '" + variable + ".get')");
+      if (value.kind() == Cbor::Kind::null_ || value.kind() == Cbor::Kind::undefined_)
+        throw rt::TypeError(std::string(value.kind() == Cbor::Kind::null_ ? "null" : "undefined") + " is not an object (evaluating '" + variable + ".get')");
       throw rt::TypeError(variable + ".get is not a function. (In '" + variable + ".get(" + std::string(key) + ")', '" + variable + ".get' is undefined)");
     }
 
     // `mapCoseAlgToWebCryptoAlg(alg)`
-    std::string mapCoseAlgToWebCryptoAlg(const Cbor* alg) {
-      const auto in = [&](std::initializer_list<double> values) { return alg != nullptr && alg->kind == Cbor::Kind::number && std::find(values.begin(), values.end(), alg->number) != values.end(); };
+    std::string mapCoseAlgToWebCryptoAlg(const Cbor& alg) {
+      const auto in = [&](std::initializer_list<double> values) { return alg.kind() == Cbor::Kind::number && std::find(values.begin(), values.end(), alg.number()) != values.end(); };
       if (in({-65535})) return "SHA-1";
       if (in({-7, -37, -257})) return "SHA-256";
       if (in({-35, -38, -258})) return "SHA-384";
@@ -1666,8 +1465,8 @@ namespace uos::auth::passkeys {
     }
 
     // `mapCoseAlgToWebCryptoKeyAlgName(alg)`
-    std::string mapCoseAlgToWebCryptoKeyAlgName(const Cbor* alg) {
-      const auto in = [&](std::initializer_list<double> values) { return alg != nullptr && alg->kind == Cbor::Kind::number && std::find(values.begin(), values.end(), alg->number) != values.end(); };
+    std::string mapCoseAlgToWebCryptoKeyAlgName(const Cbor& alg) {
+      const auto in = [&](std::initializer_list<double> values) { return alg.kind() == Cbor::Kind::number && std::find(values.begin(), values.end(), alg.number()) != values.end(); };
       if (in({-8})) return "Ed25519";
       if (in({-7, -35, -36, -47})) return "ECDSA";
       if (in({-257, -258, -259, -65535})) return "RSASSA-PKCS1-v1_5";
@@ -1677,12 +1476,12 @@ namespace uos::auth::passkeys {
 
     // `Number(value)` of a decoded item, for `new Uint8Array(array)` elements.
     double cborToNumber(const Cbor& value) {
-      switch (value.kind) {
+      switch (value.kind()) {
         case Cbor::Kind::undefined_: return std::numeric_limits<double>::quiet_NaN();
         case Cbor::Kind::null_: return 0;
-        case Cbor::Kind::boolean: return value.boolean ? 1 : 0;
-        case Cbor::Kind::number: return value.number;
-        case Cbor::Kind::string: return rt::stringToNumber(value.text);
+        case Cbor::Kind::boolean: return value.boolean() ? 1 : 0;
+        case Cbor::Kind::number: return value.number();
+        case Cbor::Kind::string: return rt::stringToNumber(value.text());
         case Cbor::Kind::bytes:
         case Cbor::Kind::array: return rt::stringToNumber(jsString(value));
         case Cbor::Kind::map:
@@ -1704,23 +1503,23 @@ namespace uos::auth::passkeys {
 
     // `new Uint8Array(value)` of a decoded item (isoBase64URL.fromBuffer's first step).
     Bytes cborToUint8Array(const Cbor& value) {
-      switch (value.kind) {
-        case Cbor::Kind::bytes: return value.bytes;
+      switch (value.kind()) {
+        case Cbor::Kind::bytes: return Bytes(value.bytes().begin(), value.bytes().end());
         case Cbor::Kind::array: {
           Bytes out;
-          for (const Cbor& item : value.items) {
-            const double number = cborToNumber(item);
+          for (std::size_t i = 0; i < value.arraySize(); ++i) {
+            const double number = cborToNumber(value.at(i));
             out.push_back(std::isfinite(number) ? static_cast<std::uint8_t>(static_cast<std::int64_t>(std::fmod(std::trunc(number), 256.0) + 256) % 256) : 0);
           }
           return out;
         }
-        case Cbor::Kind::map: return Bytes(value.entries.size(), 0);  // each entry is a [key, value] array: NaN
+        case Cbor::Kind::map: return Bytes(cbor_map_size(value.raw()), 0);  // each entry is a [key, value] array: NaN
         case Cbor::Kind::tag: return {};                               // not iterable, no length
         case Cbor::Kind::null_: return {};
         case Cbor::Kind::undefined_: return {};
-        case Cbor::Kind::boolean: return Bytes(value.boolean ? 1 : 0, 0);
-        case Cbor::Kind::number: return Bytes(typedArrayLength(value.number), 0);
-        case Cbor::Kind::string: return Bytes(typedArrayLength(rt::stringToNumber(value.text)), 0);
+        case Cbor::Kind::boolean: return Bytes(value.boolean() ? 1 : 0, 0);
+        case Cbor::Kind::number: return Bytes(typedArrayLength(value.number()), 0);
+        case Cbor::Kind::string: return Bytes(typedArrayLength(rt::stringToNumber(value.text())), 0);
       }
       return {};
     }
@@ -1730,7 +1529,7 @@ namespace uos::auth::passkeys {
     // ---- isoCrypto.verify ----------------------------------------------------------------
 
     // `unwrapEC2Signature`'s component length; throws for any other curve.
-    std::size_t getSignatureComponentLength(const Cbor* crv) {
+    std::size_t getSignatureComponentLength(const Cbor& crv) {
       if (numberIs(crv, 1)) return 32;
       if (numberIs(crv, 2)) return 48;
       if (numberIs(crv, 3)) return 66;
@@ -1753,7 +1552,7 @@ namespace uos::auth::passkeys {
       fail("Invalid signature component length " + std::to_string(bytes.size()) + ", expected " + std::to_string(componentLength));
     }
 
-    Bytes unwrapEC2Signature(BytesView signature, const Cbor* crv) {
+    Bytes unwrapEC2Signature(BytesView signature, const Cbor& crv) {
       const EcdsaSigValue parsedSignature = parseEcdsaSigValue(signature);
       const std::size_t componentLength = getSignatureComponentLength(crv);
       return concatBytes({toNormalizedBytes(parsedSignature.r, componentLength), toNormalizedBytes(parsedSignature.s, componentLength)});
@@ -1763,10 +1562,10 @@ namespace uos::auth::passkeys {
     using ShaHashOverride = std::optional<Cbor>;
 
     bool verifyEC2(const Cbor& cosePublicKey, BytesView signature, BytesView data, const ShaHashOverride& shaHashOverride) {
-      const Cbor* alg = cosePublicKey.get(COSEKEYS::alg);
-      const Cbor* crv = cosePublicKey.get(COSEKEYS::crv);
-      const Cbor* x = cosePublicKey.get(COSEKEYS::x);
-      const Cbor* y = cosePublicKey.get(COSEKEYS::y);
+      const Cbor alg = cosePublicKey.get(COSEKEYS::alg);
+      const Cbor crv = cosePublicKey.get(COSEKEYS::crv);
+      const Cbor x = cosePublicKey.get(COSEKEYS::x);
+      const Cbor y = cosePublicKey.get(COSEKEYS::y);
       if (!truthy(alg)) fail("Public key was missing alg (EC2)");
       if (!truthy(crv)) fail("Public key was missing crv (EC2)");
       if (!truthy(x)) fail("Public key was missing x (EC2)");
@@ -1776,28 +1575,28 @@ namespace uos::auth::passkeys {
       else if (numberIs(crv, 2)) curve = {"P-384", "secp384r1", 48};
       else if (numberIs(crv, 3)) curve = {"P-521", "secp521r1", 66};
       else fail("Unexpected COSE crv value of " + jsString(crv) + " (EC2)");
-      const std::string keyX = cborBase64Url(*x);
-      const std::string keyY = cborBase64Url(*y);
+      const std::string keyX = cborBase64Url(x);
+      const std::string keyY = cborBase64Url(y);
       const ossl::Pkey key = importEcJwk(curve, keyX, keyY);
       // Determine which SHA algorithm to use for signature verification
       std::string subtleAlg = mapCoseAlgToWebCryptoAlg(alg);
-      if (shaHashOverride && shaHashOverride->truthy()) subtleAlg = mapCoseAlgToWebCryptoAlg(&*shaHashOverride);
+      if (shaHashOverride && shaHashOverride->truthy()) subtleAlg = mapCoseAlgToWebCryptoAlg(*shaHashOverride);
       return ecdsaVerify(key.get(), curve, subtleAlg, signature, data);
     }
 
     bool verifyRSA(const Cbor& cosePublicKey, BytesView signature, BytesView data, const ShaHashOverride& shaHashOverride) {
-      const Cbor* alg = cosePublicKey.get(COSEKEYS::alg);
-      const Cbor* n = cosePublicKey.get(COSEKEYS::n);
-      const Cbor* e = cosePublicKey.get(COSEKEYS::e);
+      const Cbor alg = cosePublicKey.get(COSEKEYS::alg);
+      const Cbor n = cosePublicKey.get(COSEKEYS::n);
+      const Cbor e = cosePublicKey.get(COSEKEYS::e);
       if (!truthy(alg)) fail("Public key was missing alg (RSA)");
       if (!isCOSEAlg(alg)) fail("Public key had invalid alg " + jsString(alg) + " (RSA)");
       if (!truthy(n)) fail("Public key was missing n (RSA)");
       if (!truthy(e)) fail("Public key was missing e (RSA)");
-      const std::string keyN = cborBase64Url(*n);
-      const std::string keyE = cborBase64Url(*e);
+      const std::string keyN = cborBase64Url(n);
+      const std::string keyE = cborBase64Url(e);
       const std::string keyAlgorithmName = mapCoseAlgToWebCryptoKeyAlgName(alg);
       std::string hashName = mapCoseAlgToWebCryptoAlg(alg);
-      if (shaHashOverride && shaHashOverride->truthy()) hashName = mapCoseAlgToWebCryptoAlg(&*shaHashOverride);
+      if (shaHashOverride && shaHashOverride->truthy()) hashName = mapCoseAlgToWebCryptoAlg(*shaHashOverride);
       std::string jwkAlg;
       std::optional<int> saltLength;
       if (keyAlgorithmName == "RSASSA-PKCS1-v1_5") {
@@ -1852,9 +1651,9 @@ namespace uos::auth::passkeys {
     }
 
     bool verifyOKP(const Cbor& cosePublicKey, BytesView signature, BytesView data) {
-      const Cbor* alg = cosePublicKey.get(COSEKEYS::alg);
-      const Cbor* crv = cosePublicKey.get(COSEKEYS::crv);
-      const Cbor* x = cosePublicKey.get(COSEKEYS::x);
+      const Cbor alg = cosePublicKey.get(COSEKEYS::alg);
+      const Cbor crv = cosePublicKey.get(COSEKEYS::crv);
+      const Cbor x = cosePublicKey.get(COSEKEYS::x);
       if (!truthy(alg)) fail("Public key was missing alg (OKP)");
       if (!isCOSEAlg(alg)) fail("Public key had invalid alg " + jsString(alg) + " (OKP)");
       if (!truthy(crv)) fail("Public key was missing crv (OKP)");
@@ -1862,7 +1661,7 @@ namespace uos::auth::passkeys {
       // Pulled key import steps from here:
       // https://wicg.github.io/webcrypto-secure-curves/#ed25519-operations
       if (!numberIs(crv, 6)) fail("Unexpected COSE crv value of " + jsString(crv) + " (OKP)");
-      const ossl::Pkey key = importEd25519Jwk(cborBase64Url(*x));
+      const ossl::Pkey key = importEd25519Jwk(cborBase64Url(x));
       return ed25519Verify(key.get(), signature, data);
     }
 
@@ -1872,7 +1671,7 @@ namespace uos::auth::passkeys {
     bool isoCryptoVerify(const Cbor& cosePublicKey, BytesView signature, BytesView data, const ShaHashOverride& shaHashOverride) {
       const Cbor& key = requireMap(cosePublicKey, "cosePublicKey", "COSEKEYS.kty");
       if (isCOSEPublicKeyEC2(key)) {
-        const Cbor* crv = key.get(COSEKEYS::crv);
+        const Cbor crv = key.get(COSEKEYS::crv);
         if (!isCOSECrv(crv)) fail("unknown COSE curve " + jsString(crv));
         const Bytes unwrappedSignature = unwrapEC2Signature(signature, crv);
         return verifyEC2(key, unwrappedSignature, data, shaHashOverride);
@@ -1882,7 +1681,15 @@ namespace uos::auth::passkeys {
       fail("Signature verification with public key of kty " + jsString(key.get(COSEKEYS::kty)) + " is not supported by this method");
     }
 
-    Cbor numberCbor(double value) { return cbor::numberValue(value); }
+    Cbor numberCbor(double value) {
+      if (!rt::Number::isSafeInteger(value)) return Cbor(cbor_build_float8(value));
+      const auto argument = static_cast<std::uint64_t>(value < 0 ? -1 - value : value);
+      Cbor item(argument <= UINT8_MAX ? cbor_build_uint8(static_cast<std::uint8_t>(argument)) :
+                argument <= UINT16_MAX ? cbor_build_uint16(static_cast<std::uint16_t>(argument)) :
+                argument <= UINT32_MAX ? cbor_build_uint32(static_cast<std::uint32_t>(argument)) : cbor_build_uint64(argument));
+      if (value < 0) cbor_mark_negint(item.raw());
+      return item;
+    }
 
     // `mapX509SignatureAlgToCOSEAlg(oid)`
     double mapX509SignatureAlgToCOSEAlg(std::string_view signatureAlgorithm) {
@@ -1897,18 +1704,15 @@ namespace uos::auth::passkeys {
     }
 
     Cbor coseMap(std::vector<std::pair<double, Cbor>> entries) {
-      Cbor map;
-      map.kind = Cbor::Kind::map;
-      for (auto& [key, value] : entries) map.entries.push_back(CborEntry{.key = CborKey{.isString = false, .text = {}, .number = key}, .value = std::move(value)});
+      Cbor map(cbor_new_definite_map(entries.size()));
+      for (const auto& [key, value] : entries) {
+        const Cbor label = numberCbor(key);
+        if (!cbor_map_add(map.raw(), {label.raw(), value.raw()})) fail("Could not build COSE key");
+      }
       return map;
     }
 
-    Cbor bytesCbor(Bytes bytes) {
-      Cbor value;
-      value.kind = Cbor::Kind::bytes;
-      value.bytes = std::move(bytes);
-      return value;
-    }
+    Cbor bytesCbor(BytesView bytes) { return Cbor(cbor_build_bytestring(bytes.data(), bytes.size())); }
 
     // `convertX509PublicKeyToCOSE(x509Certificate)`
     Cbor convertX509PublicKeyToCOSE(BytesView x509Certificate) {
@@ -1977,9 +1781,9 @@ namespace uos::auth::passkeys {
     }
 
     // `toHash(data, algorithm = -7)`
-    Bytes toHash(BytesView data, const Cbor* algorithm = nullptr) {
+    Bytes toHash(BytesView data, const Cbor& algorithm = {}) {
       const Cbor es256 = numberCbor(-7);
-      return subtleDigest(mapCoseAlgToWebCryptoAlg(algorithm ? algorithm : &es256), data);
+      return subtleDigest(mapCoseAlgToWebCryptoAlg(algorithm ? algorithm : es256), data);
     }
 
     // ---- authenticator data, client data -----------------------------------------------
@@ -2021,34 +1825,27 @@ namespace uos::auth::passkeys {
     // can fail (Maps are the only values it recurses into); the object it builds is never read.
     void convertMapToObjectDeep(const Cbor& input) {
       const auto notIterable = [](const Cbor& value, std::string_view expression) {
-        switch (value.kind) {
+        switch (value.kind()) {
           case Cbor::Kind::null_: throw rt::TypeError("null is not an object (evaluating '" + std::string(expression) + "')");
           case Cbor::Kind::undefined_: throw rt::TypeError("undefined is not an object (evaluating '" + std::string(expression) + "')");
-          case Cbor::Kind::boolean: throw rt::TypeError(std::string(value.boolean ? "true" : "false") + " is not iterable");
+          case Cbor::Kind::boolean: throw rt::TypeError(std::string(value.boolean() ? "true" : "false") + " is not iterable");
           case Cbor::Kind::number: throw rt::TypeError("number is not iterable");
           case Cbor::Kind::tag: throw rt::TypeError("{} is not iterable");
           default: break;
         }
       };
       notIterable(input, "const [key, value] of input");
-      if (input.kind == Cbor::Kind::bytes) {
-        if (!input.bytes.empty()) throw rt::TypeError("number is not iterable");
-      } else if (input.kind == Cbor::Kind::array) {
-        for (const Cbor& element : input.items) notIterable(element, "[key, value]");
+      if (input.kind() == Cbor::Kind::bytes) {
+        if (!input.bytes().empty()) throw rt::TypeError("number is not iterable");
+      } else if (input.kind() == Cbor::Kind::array) {
+        for (std::size_t i = 0; i < input.arraySize(); ++i) notIterable(input.at(i), "[key, value]");
       }
     }
 
-    /**
-     * Convert authenticator extension data buffer to a proper object
-     */
-    void decodeAuthenticatorExtensions(BytesView extensionData) {
-      Cbor toCBOR;
-      try {
-        toCBOR = isoCBOR::decodeFirst(extensionData);
-      } catch (const rt::JsError& err) {
-        fail("Error decoding authenticator extensions: " + err.message);
-      }
-      convertMapToObjectDeep(toCBOR);
+    std::size_t decodeAuthenticatorExtensions(BytesView extensionData) {
+      const auto decoded = isoCBOR::decode(extensionData, isoCBOR::Use::extensions);
+      convertMapToObjectDeep(decoded.item);
+      return decoded.read;
     }
 
     /**
@@ -2100,22 +1897,18 @@ namespace uos::auth::passkeys {
           foundBadCBOR = true;
           authData[pointer] = 0xa4;
         }
-        // Decode the next CBOR item in the buffer, then re-encode it back to a Buffer
-        const Cbor firstDecoded = isoCBOR::decodeFirst(sliceBytes(authData, pointer, authData.size()));
-        Bytes firstEncoded = isoCBOR::encode(firstDecoded);
+        if (pointer > authData.size()) fail("No data");
+        const auto decoded = isoCBOR::decode(BytesView(authData).subspan(pointer), isoCBOR::Use::credentialKey);
         if (foundBadCBOR) {
           // Restore the bit we changed so that `authData` is the same as it came in and won't break
           // signature verification.
           authData[pointer] = 0xa3;
         }
-        pointer += firstEncoded.size();
-        parsed.credentialPublicKey = std::move(firstEncoded);
+        pointer += decoded.read;
+        parsed.credentialPublicKey = isoCBOR::encode(decoded.item);
       }
       if (parsed.flags.ed) {
-        const Cbor firstDecoded = isoCBOR::decodeFirst(sliceBytes(authData, pointer, authData.size()));
-        const Bytes extensionsDataBuffer = isoCBOR::encode(firstDecoded);
-        decodeAuthenticatorExtensions(extensionsDataBuffer);
-        pointer += extensionsDataBuffer.size();
+        pointer += decodeAuthenticatorExtensions(BytesView(authData).subspan(pointer));
       }
       // Pointer should be at the end of the authenticator data, otherwise too much data was sent
       if (authData.size() > pointer) fail("Leftover bytes detected while parsing authenticator data");
@@ -2184,18 +1977,21 @@ namespace uos::auth::passkeys {
 
     // `value.length` of a decoded item: Uint8Array, array and string have one.
     std::optional<double> cborLength(const Cbor& value) {
-      switch (value.kind) {
-        case Cbor::Kind::bytes: return static_cast<double>(value.bytes.size());
-        case Cbor::Kind::array: return static_cast<double>(value.items.size());
-        case Cbor::Kind::string: return static_cast<double>(rt::length(value.text));
+      switch (value.kind()) {
+        case Cbor::Kind::bytes: return static_cast<double>(value.bytes().size());
+        case Cbor::Kind::array: return static_cast<double>(value.arraySize());
+        case Cbor::Kind::string: return static_cast<double>(rt::length(value.text()));
         default: return std::nullopt;
       }
     }
 
     // `value[index]` of a decoded item as the strict-equality operand isoUint8Array.areEqual reads.
     std::optional<double> cborElementNumber(const Cbor& value, std::size_t index) {
-      if (value.kind == Cbor::Kind::bytes) return index < value.bytes.size() ? std::optional<double>(value.bytes[index]) : std::nullopt;
-      if (value.kind == Cbor::Kind::array && index < value.items.size() && value.items[index].kind == Cbor::Kind::number) return value.items[index].number;
+      if (value.kind() == Cbor::Kind::bytes) return index < value.bytes().size() ? std::optional<double>(value.bytes()[index]) : std::nullopt;
+      if (value.kind() == Cbor::Kind::array && index < value.arraySize()) {
+        const Cbor element = value.at(index);
+        if (element.kind() == Cbor::Kind::number) return element.number();
+      }
       return std::nullopt;  // undefined, a string character or another type: never === a byte
     }
 
@@ -2221,15 +2017,15 @@ namespace uos::auth::passkeys {
       double pointer = 0;
       for (const Cbor* array : arrays) {
         const double offset = std::isnan(pointer) ? 0 : pointer;
-        if (array->kind == Cbor::Kind::null_ || array->kind == Cbor::Kind::undefined_) throw rt::TypeError("Argument is not an object");
+        if (array->kind() == Cbor::Kind::null_ || array->kind() == Cbor::Kind::undefined_) throw rt::TypeError("Argument is not an object");
         const std::optional<double> length = cborLength(*array);
         const double srcLength = length ? *length : 0;
         if (srcLength + offset > static_cast<double>(toReturn.size())) throw rt::RangeError("Source is too large");
         for (std::size_t i = 0; i < static_cast<std::size_t>(srcLength); ++i) {
           double number = 0;
-          if (array->kind == Cbor::Kind::bytes) number = array->bytes[i];
-          else if (array->kind == Cbor::Kind::array) number = cborToNumber(array->items[i]);
-          else number = rt::stringToNumber(rt::charAt(array->text, static_cast<double>(i)));
+          if (array->kind() == Cbor::Kind::bytes) number = array->bytes()[i];
+          else if (array->kind() == Cbor::Kind::array) number = cborToNumber(array->at(i));
+          else number = rt::stringToNumber(rt::charAt(array->text(), static_cast<double>(i)));
           toReturn[static_cast<std::size_t>(offset) + i] =
             std::isfinite(number) ? static_cast<std::uint8_t>(static_cast<std::int64_t>(std::fmod(std::trunc(number), 256.0) + 256) % 256) : 0;
         }
@@ -2240,16 +2036,16 @@ namespace uos::auth::passkeys {
 
     // A decoded item that the library hands to a byte API (AsnParser, DataView, digest, verify):
     // anything but a Uint8Array makes that API throw.
-    const Bytes& requireBytes(const Cbor* value, std::string_view what) {
-      if (value == nullptr || value->kind != Cbor::Kind::bytes)
+    Bytes requireBytes(const Cbor& value, std::string_view what) {
+      if (value.kind() != Cbor::Kind::bytes)
         throw rt::TypeError("The provided value is not of type '(ArrayBuffer or ArrayBufferView)' (" + std::string(what) + ")");
-      return value->bytes;
+      return Bytes(value.bytes().begin(), value.bytes().end());
     }
 
     // `value[0]` of an attestation statement's x5c, which must be a Uint8Array for the parsers.
-    const Bytes& firstCertificate(const Cbor* x5c) {
-      if (x5c == nullptr || x5c->kind != Cbor::Kind::array || x5c->items.empty()) throw rt::TypeError("x5c[0] is not a certificate");
-      return requireBytes(&x5c->items.front(), "x5c[0]");
+    Bytes firstCertificate(const Cbor& x5c) {
+      if (x5c.kind() != Cbor::Kind::array || x5c.arraySize() == 0) throw rt::TypeError("x5c[0] is not a certificate");
+      return requireBytes(x5c.at(0), "x5c[0]");
     }
 
     /**
@@ -2262,11 +2058,11 @@ namespace uos::auth::passkeys {
       const Cbor decoded = isoCBOR::decodeFirst(cosePublicKey);
       const Cbor& structure = requireMap(decoded, "struct", "COSEKEYS.x");
       const Cbor tag = bytesCbor(Bytes{0x04});
-      const Cbor* x = structure.get(COSEKEYS::x);
-      const Cbor* y = structure.get(COSEKEYS::y);
+      const Cbor x = structure.get(COSEKEYS::x);
+      const Cbor y = structure.get(COSEKEYS::y);
       if (!truthy(x)) fail("COSE public key was missing x");
-      if (truthy(y)) return jsConcat({&tag, x, y});
-      return jsConcat({&tag, x});
+      if (truthy(y)) return jsConcat({&tag, &x, &y});
+      return jsConcat({&tag, &x});
     }
 
     /**
@@ -2277,9 +2073,9 @@ namespace uos::auth::passkeys {
       /**
        * Get certBuffer to a base64 representation
        */
-      if (certBuffer.kind == Cbor::Kind::string) {
-        if (isoBase64URL::isBase64URL(certBuffer.text)) b64cert = isoBase64URL::toBase64(certBuffer.text);
-        else if (isoBase64URL::isBase64(certBuffer.text)) b64cert = certBuffer.text;
+      if (certBuffer.kind() == Cbor::Kind::string) {
+        if (isoBase64URL::isBase64URL(certBuffer.text())) b64cert = isoBase64URL::toBase64(certBuffer.text());
+        else if (isoBase64URL::isBase64(certBuffer.text())) b64cert = certBuffer.text();
         else fail("Certificate is not a valid base64 or base64url string");
       } else {
         b64cert = isoBase64URL::fromBuffer(cborToUint8Array(certBuffer), false);
@@ -2291,10 +2087,10 @@ namespace uos::auth::passkeys {
     }
 
     // `x5c.map(convertCertBufferToPEM)` on a decoded attestation statement member.
-    std::vector<std::string> mapCertsToPEM(const Cbor* x5c) {
-      if (x5c == nullptr || x5c->kind != Cbor::Kind::array) throw rt::TypeError("x5c.map is not a function");
+    std::vector<std::string> mapCertsToPEM(const Cbor& x5c) {
+      if (x5c.kind() != Cbor::Kind::array) throw rt::TypeError("x5c.map is not a function");
       std::vector<std::string> out;
-      for (const Cbor& certBuffer : x5c->items) out.push_back(convertCertBufferToPEM(certBuffer));
+      for (std::size_t i = 0; i < x5c.arraySize(); ++i) out.push_back(convertCertBufferToPEM(x5c.at(i)));
       return out;
     }
 
@@ -2897,14 +2693,14 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
     };
 
     // `attStmt.get(key)`: the statement must be a Map.
-    const Cbor* statementMember(const Cbor& attStmt, std::string_view key) {
-      if (attStmt.kind == Cbor::Kind::null_ || attStmt.kind == Cbor::Kind::undefined_)
-        throw rt::TypeError(std::string(attStmt.kind == Cbor::Kind::null_ ? "null" : "undefined") + " is not an object (evaluating 'attStmt.get')");
-      if (attStmt.kind != Cbor::Kind::map) throw rt::TypeError("attStmt.get is not a function. (In 'attStmt.get(\"" + std::string(key) + "\")', 'attStmt.get' is undefined)");
+    Cbor statementMember(const Cbor& attStmt, std::string_view key) {
+      if (attStmt.kind() == Cbor::Kind::null_ || attStmt.kind() == Cbor::Kind::undefined_)
+        throw rt::TypeError(std::string(attStmt.kind() == Cbor::Kind::null_ ? "null" : "undefined") + " is not an object (evaluating 'attStmt.get')");
+      if (attStmt.kind() != Cbor::Kind::map) throw rt::TypeError("attStmt.get is not a function. (In 'attStmt.get(\"" + std::string(key) + "\")', 'attStmt.get' is undefined)");
       return attStmt.get(key);
     }
 
-    std::optional<Cbor> optionalCbor(const Cbor* value) { return value == nullptr ? std::nullopt : std::optional<Cbor>(*value); }
+    std::optional<Cbor> optionalCbor(const Cbor& value) { return value ? std::optional<Cbor>(value) : std::nullopt; }
 
     /**
      * Verify an attestation response with fmt 'fido-u2f'
@@ -2912,8 +2708,8 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
     rt::Task<bool> verifyAttestationFIDOU2F(AttestationFormatVerifierOpts options) {
       const Bytes publicKey = convertCOSEtoPKCS(options.credentialPublicKey);
       const Bytes signatureBase = concatBytes({Bytes{0x00}, options.rpIdHash, options.clientDataHash, options.credentialID, publicKey});
-      const Cbor* sig = statementMember(options.attStmt, "sig");
-      const Cbor* x5c = statementMember(options.attStmt, "x5c");
+      const Cbor sig = statementMember(options.attStmt, "sig");
+      const Cbor x5c = statementMember(options.attStmt, "x5c");
       if (!truthy(x5c)) fail("No attestation certificate provided in attestation statement (FIDOU2F)");
       if (!truthy(sig)) fail("No attestation signature provided in attestation statement (FIDOU2F)");
       // FIDO spec says that aaguid _must_ equal 0x00 here to be legit
@@ -2939,9 +2735,9 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
      * Verify an attestation response with fmt 'packed'
      */
     rt::Task<bool> verifyAttestationPacked(AttestationFormatVerifierOpts options) {
-      const Cbor* sig = statementMember(options.attStmt, "sig");
-      const Cbor* x5c = statementMember(options.attStmt, "x5c");
-      const Cbor* alg = statementMember(options.attStmt, "alg");
+      const Cbor sig = statementMember(options.attStmt, "sig");
+      const Cbor x5c = statementMember(options.attStmt, "x5c");
+      const Cbor alg = statementMember(options.attStmt, "alg");
       if (!truthy(sig)) fail("No attestation signature provided in attestation statement (Packed)");
       if (!truthy(alg)) fail("Attestation statement did not contain alg (Packed)");
       if (!isCOSEAlg(alg)) fail("Attestation statement contained invalid alg " + jsString(alg) + " (Packed)");
@@ -2999,10 +2795,10 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
      * Verify an attestation response with fmt 'android-safetynet'
      */
     rt::Task<bool> verifyAttestationAndroidSafetyNet(AttestationFormatVerifierOpts options) {
-      const Cbor* alg = statementMember(options.attStmt, "alg");
+      const Cbor alg = statementMember(options.attStmt, "alg");
       (void)alg;
-      const Cbor* response = statementMember(options.attStmt, "response");
-      const Cbor* ver = statementMember(options.attStmt, "ver");
+      const Cbor response = statementMember(options.attStmt, "response");
+      const Cbor ver = statementMember(options.attStmt, "ver");
       if (!truthy(ver)) fail("No ver value in attestation (SafetyNet)");
       if (!truthy(response)) fail("No response was included in attStmt by authenticator (SafetyNet)");
       // Prepare to verify a JWT
@@ -3067,17 +2863,12 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
         for (const json::value& item : headerX5c->as_array()) {
           Cbor certBuffer;
           if (item.is_string()) {
-            certBuffer.kind = Cbor::Kind::string;
-            certBuffer.text = std::string(item.as_string());
+            const auto& text = item.as_string();
+            certBuffer = Cbor(cbor_build_stringn(text.data(), text.size()));
           } else if (rt::isNumber(item)) {
             certBuffer = numberCbor(rt::toNumber(item));
           } else if (item.is_bool()) {
-            certBuffer.kind = Cbor::Kind::boolean;
-            certBuffer.boolean = item.as_bool();
-          } else if (item.is_null()) {
-            certBuffer.kind = Cbor::Kind::null_;
-          } else {
-            certBuffer.kind = Cbor::Kind::tag;  // a JSON object or array: not a certificate buffer
+            certBuffer = Cbor(cbor_build_bool(item.as_bool()));
           }
           certs.push_back(convertCertBufferToPEM(certBuffer));
         }
@@ -3128,9 +2919,9 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
      * Verify an attestation response with fmt 'android-key'
      */
     rt::Task<bool> verifyAttestationAndroidKey(AttestationFormatVerifierOpts options) {
-      const Cbor* x5c = statementMember(options.attStmt, "x5c");
-      const Cbor* sig = statementMember(options.attStmt, "sig");
-      const Cbor* alg = statementMember(options.attStmt, "alg");
+      const Cbor x5c = statementMember(options.attStmt, "x5c");
+      const Cbor sig = statementMember(options.attStmt, "sig");
+      const Cbor alg = statementMember(options.attStmt, "alg");
       if (!truthy(x5c)) fail("No attestation certificate provided in attestation statement (Android Key)");
       if (!truthy(sig)) fail("No attestation signature provided in attestation statement (Android Key)");
       if (!truthy(alg)) fail("Attestation statement did not contain alg (Android Key)");
@@ -3448,27 +3239,27 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
     // `eBuffer[0] + (eBuffer[1] << 8) + (eBuffer[2] << 16)`; std::nullopt when the sum is not a
     // number (a string concatenation or NaN), which never equals the pubArea exponent.
     std::optional<double> exponentSum(const Cbor& eBuffer) {
-      const auto element = [&](std::size_t index) -> std::optional<const Cbor*> {
-        if (eBuffer.kind == Cbor::Kind::array) return index < eBuffer.items.size() ? std::optional<const Cbor*>(&eBuffer.items[index]) : std::nullopt;
-        return std::nullopt;
+      const auto element = [&](std::size_t index) -> Cbor {
+        if (eBuffer.kind() == Cbor::Kind::array && index < eBuffer.arraySize()) return eBuffer.at(index);
+        return {};
       };
       const auto shifted = [&](std::size_t index, int shift) -> double {
         double value = 0;
-        if (eBuffer.kind == Cbor::Kind::bytes) value = index < eBuffer.bytes.size() ? eBuffer.bytes[index] : 0;
-        else if (const auto item = element(index)) value = cborToNumber(**item);
+        if (eBuffer.kind() == Cbor::Kind::bytes) value = index < eBuffer.bytes().size() ? eBuffer.bytes()[index] : 0;
+        else if (const auto item = element(index)) value = cborToNumber(item);
         return static_cast<double>(rt::toInt32(rt::toInt32(value) * std::pow(2.0, shift)));
       };
       double first = std::numeric_limits<double>::quiet_NaN();
-      if (eBuffer.kind == Cbor::Kind::bytes) {
-        if (!eBuffer.bytes.empty()) first = eBuffer.bytes[0];
+      if (eBuffer.kind() == Cbor::Kind::bytes) {
+        if (!eBuffer.bytes().empty()) first = eBuffer.bytes()[0];
       } else if (const auto item = element(0)) {
-        const Cbor& value = **item;
-        if (value.kind == Cbor::Kind::number) first = value.number;
-        else if (value.kind == Cbor::Kind::boolean) first = value.boolean ? 1 : 0;
-        else if (value.kind == Cbor::Kind::null_) first = 0;
-        else if (value.kind != Cbor::Kind::undefined_) return std::nullopt;  // string concatenation
-      } else if (eBuffer.kind == Cbor::Kind::string) {
-        if (!eBuffer.text.empty()) return std::nullopt;  // `"x"[0] + ...` concatenates
+        const Cbor& value = item;
+        if (value.kind() == Cbor::Kind::number) first = value.number();
+        else if (value.kind() == Cbor::Kind::boolean) first = value.boolean() ? 1 : 0;
+        else if (value.kind() == Cbor::Kind::null_) first = 0;
+        else if (value.kind() != Cbor::Kind::undefined_) return std::nullopt;  // string concatenation
+      } else if (eBuffer.kind() == Cbor::Kind::string) {
+        if (!eBuffer.text().empty()) return std::nullopt;  // `"x"[0] + ...` concatenates
       }
       const double sum = first + shifted(1, 8) + shifted(2, 16);
       if (std::isnan(sum)) return std::nullopt;
@@ -3495,23 +3286,23 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
     }
 
     rt::Task<bool> verifyAttestationTPM(AttestationFormatVerifierOpts options) {
-      const Cbor* ver = statementMember(options.attStmt, "ver");
-      const Cbor* sig = statementMember(options.attStmt, "sig");
-      const Cbor* alg = statementMember(options.attStmt, "alg");
-      const Cbor* x5c = statementMember(options.attStmt, "x5c");
-      const Cbor* pubArea = statementMember(options.attStmt, "pubArea");
-      const Cbor* certInfo = statementMember(options.attStmt, "certInfo");
+      const Cbor ver = statementMember(options.attStmt, "ver");
+      const Cbor sig = statementMember(options.attStmt, "sig");
+      const Cbor alg = statementMember(options.attStmt, "alg");
+      const Cbor x5c = statementMember(options.attStmt, "x5c");
+      const Cbor pubArea = statementMember(options.attStmt, "pubArea");
+      const Cbor certInfo = statementMember(options.attStmt, "certInfo");
       /**
        * Verify structures
        */
-      if (ver == nullptr || ver->kind != Cbor::Kind::string || ver->text != "2.0") fail("Unexpected ver \"" + jsString(ver) + "\", expected \"2.0\" (TPM)");
+      if (ver.kind() != Cbor::Kind::string || ver.text() != "2.0") fail("Unexpected ver \"" + jsString(ver) + "\", expected \"2.0\" (TPM)");
       if (!truthy(sig)) fail("No attestation signature provided in attestation statement (TPM)");
       if (!truthy(alg)) fail("Attestation statement did not contain alg (TPM)");
       if (!isCOSEAlg(alg)) fail("Attestation statement contained invalid alg " + jsString(alg) + " (TPM)");
       if (!truthy(x5c)) fail("No attestation certificate provided in attestation statement (TPM)");
       if (!truthy(pubArea)) fail("Attestation statement did not contain pubArea (TPM)");
       if (!truthy(certInfo)) fail("Attestation statement did not contain certInfo (TPM)");
-      const Bytes& pubAreaBytes = requireBytes(pubArea, "pubArea");
+      const Bytes pubAreaBytes = requireBytes(pubArea, "pubArea");
       const TpmPubArea parsedPubArea = parsePubArea(pubAreaBytes);
       // Verify that the public key specified by the parameters and unique fields of pubArea is
       // identical to the credentialPublicKey in the attestedCredentialData in authenticatorData.
@@ -3519,26 +3310,26 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       const Cbor& coseKey = requireMap(cosePublicKey, "cosePublicKey", "COSEKEYS.kty");
       if (parsedPubArea.type == "TPM_ALG_RSA") {
         if (!isCOSEPublicKeyRSA(coseKey)) fail("Credential public key with kty " + jsString(coseKey.get(COSEKEYS::kty)) + " did not match TPM_ALG_RSA");
-        const Cbor* n = coseKey.get(COSEKEYS::n);
-        const Cbor* e = coseKey.get(COSEKEYS::e);
+        const Cbor n = coseKey.get(COSEKEYS::n);
+        const Cbor e = coseKey.get(COSEKEYS::e);
         if (!truthy(n)) fail("COSE public key missing n (TPM|RSA)");
         if (!truthy(e)) fail("COSE public key missing e (TPM|RSA)");
-        if (!areEqual(parsedPubArea.unique, *n)) fail("PubArea unique is not same as credentialPublicKey (TPM|RSA)");
+        if (!areEqual(parsedPubArea.unique, n)) fail("PubArea unique is not same as credentialPublicKey (TPM|RSA)");
         if (!parsedPubArea.hasRsa) fail("Parsed pubArea type is RSA, but missing parameters.rsa (TPM|RSA)");
         // If `exponent` is equal to 0x00, then exponent is the default RSA exponent of 2^16+1 (65537)
         const double pubAreaExponent = parsedPubArea.rsaExponent != 0 ? parsedPubArea.rsaExponent : 65537;
         // Do some bit shifting to get to an integer
-        const std::optional<double> eSum = exponentSum(*e);
+        const std::optional<double> eSum = exponentSum(e);
         if (!eSum || pubAreaExponent != *eSum) fail("Unexpected public key exp, expected " + rt::numberToString(pubAreaExponent) + " (TPM|RSA)");
       } else if (parsedPubArea.type == "TPM_ALG_ECC") {
         if (!isCOSEPublicKeyEC2(coseKey)) fail("Credential public key with kty " + jsString(coseKey.get(COSEKEYS::kty)) + " did not match TPM_ALG_ECC");
-        const Cbor* crv = coseKey.get(COSEKEYS::crv);
-        const Cbor* x = coseKey.get(COSEKEYS::x);
-        const Cbor* y = coseKey.get(COSEKEYS::y);
+        const Cbor crv = coseKey.get(COSEKEYS::crv);
+        const Cbor x = coseKey.get(COSEKEYS::x);
+        const Cbor y = coseKey.get(COSEKEYS::y);
         if (!truthy(crv)) fail("COSE public key missing crv (TPM|ECC)");
         if (!truthy(x)) fail("COSE public key missing x (TPM|ECC)");
         if (!truthy(y)) fail("COSE public key missing y (TPM|ECC)");
-        const Cbor uniqueXY = bytesCbor(jsConcat({x, y}));
+        const Cbor uniqueXY = bytesCbor(jsConcat({&x, &y}));
         if (!areEqual(parsedPubArea.unique, uniqueXY)) fail("PubArea unique is not same as public key x and y (TPM|ECC)");
         if (!parsedPubArea.hasEcc) fail("Parsed pubArea type is ECC, but missing parameters.ecc (TPM|ECC)");
         const std::optional<double> pubAreaCurveIDMapToCOSECRV = TPM_ECC_CURVE_COSE_CRV_MAP(parsedPubArea.eccCurveID);
@@ -3546,14 +3337,14 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       } else {
         fail("Unsupported pubArea.type \"" + parsedPubArea.type.value_or("undefined") + "\"");
       }
-      const Bytes& certInfoBytes = requireBytes(certInfo, "certInfo");
+      const Bytes certInfoBytes = requireBytes(certInfo, "certInfo");
       const TpmCertInfo parsedCertInfo = parseCertInfo(certInfoBytes);
       if (parsedCertInfo.magic != 0xff544347) fail("Unexpected magic value \"" + rt::numberToString(parsedCertInfo.magic) + "\", expected \"0xff544347\" (TPM)");
       if (parsedCertInfo.type != "TPM_ST_ATTEST_CERTIFY")
         fail("Unexpected type \"" + parsedCertInfo.type.value_or("undefined") + "\", expected \"TPM_ST_ATTEST_CERTIFY\" (TPM)");
       // Hash pubArea to create pubAreaHash using the nameAlg in attested
       const Cbor nameAlg = numberCbor(attestedNameAlgToCOSEAlg(parsedCertInfo.nameAlg));
-      const Bytes pubAreaHash = toHash(pubAreaBytes, &nameAlg);
+      const Bytes pubAreaHash = toHash(pubAreaBytes, nameAlg);
       // Concatenate attested.nameAlg and pubAreaHash to create attestedName.
       const Bytes attestedName = concatBytes({parsedCertInfo.nameAlgBuffer, pubAreaHash});
       // Check that certInfo.attested.name is equals to attestedName.
@@ -3567,7 +3358,7 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       /**
        * Verify signature
        */
-      const std::optional<double> x5cLength = cborLength(*x5c);
+      const std::optional<double> x5cLength = cborLength(x5c);
       if (x5cLength && *x5cLength < 1) fail("No certificates present in x5c array (TPM)");
       // Pick a leaf AIK certificate of the x5c array and parse it.
       const CertificateInfo leafCertInfo = getCertificateInfo(firstCertificate(x5c));
@@ -3654,7 +3445,7 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
     }
 
     rt::Task<bool> verifyAttestationApple(AttestationFormatVerifierOpts options) {
-      const Cbor* x5c = statementMember(options.attStmt, "x5c");
+      const Cbor x5c = statementMember(options.attStmt, "x5c");
       if (!truthy(x5c)) fail("No attestation certificate provided in attestation statement (Apple)");
       /**
        * Verify certificate path
@@ -3747,10 +3538,10 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       const Bytes attestationObject = isoBase64URL::toBuffer(attestationObjectText->as_string());
       const Cbor decodedAttestationObject = isoCBOR::decodeFirst(attestationObject);
       const Cbor& attestationMap = requireMap(decodedAttestationObject, "decodedAttestationObject", "\"fmt\"");
-      const Cbor* fmt = attestationMap.get("fmt");
-      const Cbor* authDataValue = attestationMap.get("authData");
-      const Cbor attStmt = attestationMap.get("attStmt") != nullptr ? *attestationMap.get("attStmt") : Cbor();
-      const Bytes& authData = requireBytes(authDataValue, "authData");
+      const Cbor fmt = attestationMap.get("fmt");
+      const Cbor authDataValue = attestationMap.get("authData");
+      const Cbor attStmt = attestationMap.get("attStmt");
+      const Bytes authData = requireBytes(authDataValue, "authData");
       const ParsedAuthenticatorData parsedAuthData = parseAuthenticatorData(authData);
       // Make sure the response's RP ID is ours
       if (!expectedRPID.empty()) (void)matchExpectedRPID(parsedAuthData.rpIdHash, {expectedRPID});
@@ -3762,13 +3553,13 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       if (!parsedAuthData.credentialPublicKey) fail("No public key was provided by authenticator");
       if (!parsedAuthData.aaguid) fail("No AAGUID was present during registration");
       const Cbor decodedPublicKey = isoCBOR::decodeFirst(*parsedAuthData.credentialPublicKey);
-      const Cbor* alg = requireMap(decodedPublicKey, "decodedPublicKey", "COSEKEYS.alg").get(COSEKEYS::alg);
-      if (alg == nullptr || alg->kind != Cbor::Kind::number) fail("Credential public key was missing numeric alg");
+      const Cbor alg = requireMap(decodedPublicKey, "decodedPublicKey", "COSEKEYS.alg").get(COSEKEYS::alg);
+      if (alg.kind() != Cbor::Kind::number) fail("Credential public key was missing numeric alg");
       // Make sure the key algorithm is one we specified within the registration options
-      if (std::find(supportedCOSEAlgorithmIdentifiers.begin(), supportedCOSEAlgorithmIdentifiers.end(), alg->number) == supportedCOSEAlgorithmIdentifiers.end())
-        fail("Unexpected public key alg \"" + rt::numberToString(alg->number) + "\", expected one of \"-8, -7, -36, -37, -38, -39, -257, -258, -259, -65535\"");
+      if (std::find(supportedCOSEAlgorithmIdentifiers.begin(), supportedCOSEAlgorithmIdentifiers.end(), alg.number()) == supportedCOSEAlgorithmIdentifiers.end())
+        fail("Unexpected public key alg \"" + rt::numberToString(alg.number()) + "\", expected one of \"-8, -7, -36, -37, -38, -39, -257, -258, -259, -65535\"");
       const Bytes clientDataHash = toHash(isoBase64URL::toBuffer(clientDataJSONText->as_string()));
-      const std::string fmtText = fmt != nullptr && fmt->kind == Cbor::Kind::string ? fmt->text : std::string();
+      const std::string fmtText = fmt.kind() == Cbor::Kind::string ? std::string(fmt.text()) : std::string();
       // Prepare arguments to pass to the relevant verification method
       AttestationFormatVerifierOpts verifierOpts{
         .aaguid = *parsedAuthData.aaguid,
@@ -3785,7 +3576,7 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
        * Verification can only be performed when attestation = 'direct'
        */
       bool verified = false;
-      const bool knownFormat = fmt != nullptr && fmt->kind == Cbor::Kind::string;
+      const bool knownFormat = fmt.kind() == Cbor::Kind::string;
       if (knownFormat && fmtText == "fido-u2f") {
         rt::Task<bool> verifying = verifyAttestationFIDOU2F(std::move(verifierOpts));
         verified = co_await std::move(verifying);
@@ -3806,9 +3597,9 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
         verified = co_await std::move(verifying);
       } else if (knownFormat && fmtText == "none") {
         // `attStmt.size > 0`: only a non-empty Map has a size above zero; null and undefined throw.
-        if (attStmt.kind == Cbor::Kind::null_ || attStmt.kind == Cbor::Kind::undefined_)
-          throw rt::TypeError(std::string(attStmt.kind == Cbor::Kind::null_ ? "null" : "undefined") + " is not an object (evaluating 'attStmt.size')");
-        if (attStmt.kind == Cbor::Kind::map && !attStmt.entries.empty()) fail("None attestation had unexpected attestation statement");
+        if (attStmt.kind() == Cbor::Kind::null_ || attStmt.kind() == Cbor::Kind::undefined_)
+          throw rt::TypeError(std::string(attStmt.kind() == Cbor::Kind::null_ ? "null" : "undefined") + " is not an object (evaluating 'attStmt.size')");
+        if (attStmt.kind() == Cbor::Kind::map && cbor_map_size(attStmt.raw()) != 0) fail("None attestation had unexpected attestation statement");
         // This is the weaker of the attestations, so there's nothing else to really check
         verified = true;
       } else {
