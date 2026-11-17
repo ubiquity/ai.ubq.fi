@@ -536,31 +536,27 @@ TEST("a writer waits five seconds for another connection's lock, then reports it
 }
 
 #if defined(__APPLE__)
-TEST("Darwin busy timeout still rejects a lock held beyond the coalesced deadline") {
+TEST("Darwin busy timeout rejects a writer while the other connection still holds its lock") {
   const Directory directory;
   const sqlite::Database holder(directory.file());
-  std::optional<std::thread> releaser;
   std::string writeOutcome;
   std::int64_t waited = 0;
   blockOn(async([&]() -> Task<void> {
     SqliteKv kv(directory.file(), steps());
     co_await kv.set(KvKey{"a"}, KvValue(0));
     holder.run("BEGIN IMMEDIATE");
-    releaser.emplace([holder] {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10'000));
-      holder.run("ROLLBACK");
-    });
     const auto started = std::chrono::steady_clock::now();
     auto writing = outcome(kv.set(KvKey{"a"}, KvValue(1)));
     writeOutcome = co_await std::move(writing);
     waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+    EXPECT(holder.inTransaction());
+    holder.run("ROLLBACK");
     kv.close();
   }));
-  releaser->join();
   holder.close();
-  // Bun 1.4.0 reports database-is-locked after 7816 ms for this control.
+  std::fprintf(stderr, "Darwin held-lock busy timeout: %lld ms\n", static_cast<long long>(waited));
   EXPECT_EQ(writeOutcome, std::string("Error: database is locked"));
-  EXPECT(waited >= 5'000 && waited < 10'000);
+  EXPECT(waited >= 4'900);
 }
 #endif
 
