@@ -308,6 +308,9 @@ namespace uos::rt::detail::fetch {
       }
     }
     if (method == "HEAD" || method == "TRACE" || head.status == 204 || head.status == 304) return {};
+    // A trailing comma can make llhttp treat an otherwise final chunked
+    // coding as EOF-delimited. Never send the chunk framing to the consumer.
+    if (sawChunked && head.framing.framing != Framing::chunked) return {Framing::empty, 0, "UnsupportedTransferEncoding"};
     return head.framing;
   }
 

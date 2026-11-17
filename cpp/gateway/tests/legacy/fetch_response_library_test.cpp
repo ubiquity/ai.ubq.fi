@@ -86,6 +86,8 @@ TEST("llhttp consumes chunk extensions and trailers through arbitrary splits") {
 
 TEST("strict HTTP client rejects ambiguous framing and obsolete head grammar") {
   constexpr std::string_view malformed[] = {
+    "HTTP/1.1  200 OK\r\n\r\n",
+    "HTTP/1.2 200 OK\r\n\r\n",
     "HTTP/1.1 200 OK\nX: y\n\n",
     "HTTP/1.1 200 OK\r\nX: y\r\n folded\r\n\r\n",
     "HTTP/1.1 200 A\x7f" "B\r\n\r\n",
@@ -95,6 +97,7 @@ TEST("strict HTTP client rejects ambiguous framing and obsolete head grammar") {
     "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n",
     "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 0\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nContent-Length: 0\r\n\r\n",
   };
   for (const auto input : malformed) {
     EXPECT_EQ(fetch::parseResponseHead(input).status, fetch::HeadStatus::malformed);
@@ -103,6 +106,7 @@ TEST("strict HTTP client rejects ambiguous framing and obsolete head grammar") {
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, gzip\r\n\r\n",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, chunked\r\n\r\n",
     "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: gzip\r\n\r\n",
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked,\r\n\r\n",
   };
   for (const auto input : ambiguous) {
     const auto parsed = fetch::parseResponseHead(input);
