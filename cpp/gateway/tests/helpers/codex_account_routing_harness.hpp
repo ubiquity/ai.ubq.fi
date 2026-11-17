@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -21,12 +22,12 @@ namespace uos::tests::helpers::codex_account_routing_harness {
   rt::Response deltaSecondsQuotaResponse(const std::string& retryAfter);
   json::object syntheticLegacyBlock(double blockedUntilMs, double quotaSignalObservedAtMs);
 
-  template <class T> const T& required(const std::optional<T>& value, const std::string& what) {
-    if (!value) throw rt::JsError("expected " + what + " to be present");
+  template <class T> const T& required(const std::optional<T>& value, std::string_view what) {
+    if (!value) throw rt::JsError("expected " + std::string(what) + " to be present");
     return *value;
   }
-  template <class T> const T& required(const T* value, const std::string& what) {
-    if (!value) throw rt::JsError("expected " + what + " to be present");
+  template <class T> const T& required(const T* value, std::string_view what) {
+    if (!value) throw rt::JsError("expected " + std::string(what) + " to be present");
     return *value;
   }
   std::string requestUrl(const rt::RequestInfo& input);

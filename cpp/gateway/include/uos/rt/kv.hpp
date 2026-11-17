@@ -117,6 +117,7 @@ namespace uos::rt {
       requires(sizeof...(Parts) > 0 && !(sizeof...(Parts) == 1 && (std::is_same_v<std::remove_cvref_t<Parts>, KvKey> && ...)) &&
                ((std::is_same_v<std::remove_cvref_t<Parts>, KvKey> || std::is_constructible_v<KvKeyPart, Parts>) && ...))
     KvKey(Parts&&... parts) {
+      reserve(sizeof...(Parts));
       (append(std::forward<Parts>(parts)), ...);
     }
 

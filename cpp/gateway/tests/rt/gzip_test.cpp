@@ -247,6 +247,7 @@ namespace {
     }
     const std::uint32_t adler = (b << 16) | a;
     gz::Bytes body{0x78, 0x01, 0x00, 0xFE, 0xFF, 0x01, 0x00};
+    body.reserve(body.size() + data.size() + 6);
     body.insert(body.end(), data.begin(), data.end());
     body.insert(body.end(), {0x03, 0x00, static_cast<std::uint8_t>(adler >> 24), static_cast<std::uint8_t>(adler >> 16), static_cast<std::uint8_t>(adler >> 8),
                              static_cast<std::uint8_t>(adler)});

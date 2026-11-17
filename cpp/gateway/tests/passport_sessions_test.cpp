@@ -146,12 +146,12 @@ namespace {
   // beforeEach / afterEach: the harness, the default state and the session fetch mock.
   struct Fixture {
     std::shared_ptr<State> state = std::make_shared<State>();
-    std::optional<rt::GlobalFetchOverride> fetch;
+    std::unique_ptr<rt::GlobalFetchOverride> fetch{};
 
     Fixture() {
       harness::resetHarness();
       std::shared_ptr<State> shared = state;
-      fetch.emplace(rt::Fetch([shared](rt::RequestInfo input, rt::RequestInit init) -> rt::Task<rt::Response> {
+      fetch = std::make_unique<rt::GlobalFetchOverride>(rt::Fetch([shared](rt::RequestInfo input, rt::RequestInit init) -> rt::Task<rt::Response> {
         EXPECT_EQ(init.method, std::optional<std::string>("POST"));
         EXPECT_EQ(init.redirect, std::optional<std::string>("error"));
         const rt::Response bodyReader(init.body ? *init.body : rt::BodyInit(nullptr));
@@ -183,7 +183,7 @@ namespace {
 
     void replaceFetch(rt::Fetch replacement) {
       fetch.reset();
-      fetch.emplace(std::move(replacement));
+      fetch = std::make_unique<rt::GlobalFetchOverride>(std::move(replacement));
     }
   };
 

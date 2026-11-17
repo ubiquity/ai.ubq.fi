@@ -5,6 +5,7 @@
 #include "uos/provider/capacity.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/test_async.hpp"
+#include <string_view>
 
 namespace {
   namespace rt = uos::rt;
@@ -27,9 +28,9 @@ namespace {
     if (!row) throw rt::JsError("expected stored capacity row");
     return row->value.toJson();
   }
-  const json::value& member(const json::value& value, const std::string& name) {
+  const json::value& member(const json::value& value, std::string_view name) {
     const auto* result = rt::get(value, name);
-    if (!result) throw rt::JsError("expected capacity member " + name);
+    if (!result) throw rt::JsError("expected capacity member " + std::string(name));
     return *result;
   }
 }
