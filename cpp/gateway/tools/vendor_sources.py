@@ -10,9 +10,16 @@ from typing import NamedTuple
 
 GATEWAY = Path(__file__).resolve().parents[1]
 REGISTRY = Path("cmake/vendors.json")
-NAMES = {"simdutf", "simdjson"}
+NAMES = {"qcbor", "simdutf", "simdjson"}
 SIMDJSON_HEADER = "third_party/simdjson/simdjson.h"
+QCBOR_SOURCES = ("src/qcbor_decode.c", "src/qcbor_encode.c", "src/qcbor_err_to_str.c", "src/UsefulBuf.c", "src/ieee754.c")
+QCBOR_HEADERS = {
+    "inc/UsefulBuf.h", "inc/qcbor.h", "inc/qcbor/UsefulBuf.h", "inc/qcbor/qcbor.h", "inc/qcbor/qcbor_common.h",
+    "inc/qcbor/qcbor_decode.h", "inc/qcbor/qcbor_encode.h", "inc/qcbor/qcbor_private.h", "inc/qcbor/qcbor_spiffy_decode.h",
+    "src/ieee754.h",
+}
 VENDOR_MANIFESTS = {
+    "qcbor": "c149f42818ce685d5b2fc99f67ae7dd617274b111b28f2ceee185f9fc9aa4fbe",
     "simdjson": "e958e232e00f9de08ca1118888fbe15ddf75e5b9ffb0c4d5b606eb645909d834",
     "simdutf": "f7b0cb9c96b51c837550c4a68f0f5305833cc8649aa7f25897c5dab487c60481",
 }
@@ -21,9 +28,13 @@ STRICT_WARNINGS = {"-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror"}
 
 class Library(NamedTuple):
     name: str
-    source: str
+    sources: tuple[str, ...]
     consumers: tuple[str, ...]
     inputs: tuple[str, ...]
+
+    @property
+    def source(self):
+        return self.sources[0]
 
     @property
     def target(self):
@@ -47,14 +58,15 @@ def selected(root=GATEWAY):
         directory = Path("third_party") / name
         provenance = directory / "PROVENANCE.md"
         manifest = directory / "SHA256SUMS"
-        source_filename = name + ".cpp"
-        filenames = {source_filename, name + ".h", "LICENSE"}
+        source_filenames = QCBOR_SOURCES if name == "qcbor" else (name + ".cpp",)
+        headers = QCBOR_HEADERS if name == "qcbor" else {name + ".h"}
+        filenames = {*source_filenames, *headers, "LICENSE"}
         entries = {}
         manifest_bytes = (root / manifest).read_bytes()
         if hashlib.sha256(manifest_bytes).hexdigest() != VENDOR_MANIFESTS[name]:
             raise ValueError("Selected vendor manifest differs from the qualified upstream release: " + name)
         for line in manifest_bytes.decode().splitlines():
-            match = re.fullmatch(r"([0-9a-f]{64})  ([a-zA-Z0-9_.-]+)", line)
+            match = re.fullmatch(r"([0-9a-f]{64})  ([a-zA-Z0-9_/.-]+)", line)
             if not match or match[2] not in filenames or match[2] in entries:
                 raise ValueError("Invalid upstream SHA256SUMS for " + name)
             entries[match[2]] = match[1]
@@ -72,7 +84,7 @@ def selected(root=GATEWAY):
                 if hashlib.file_digest(handle, "sha256").hexdigest() != expected:
                     raise ValueError("Supplied vendor input bytes differ: " + str(relative))
             inputs.append(relative.as_posix())
-        yield Library(name, (directory / source_filename).as_posix(), tuple(consumers), tuple(inputs))
+        yield Library(name, tuple((directory / source).as_posix() for source in source_filenames), tuple(consumers), tuple(inputs))
 
 
 def required(libraries, sources, targets=()):
@@ -98,9 +110,13 @@ def main(args):
         for library in libraries:
             args = [library.name, library.source, *library.consumers]
             print("uos_register_vendor(" + " ".join('"' + value + '"' for value in args) + ")")
+            if library.name == "qcbor":
+                print("target_sources(uos_vendor_qcbor PRIVATE " + " ".join(library.sources[1:]) + ")")
+                print('target_include_directories(uos_vendor_qcbor SYSTEM PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/third_party/qcbor/inc")')
+                print("set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS " + " ".join(library.inputs) + ")")
     elif args[0] == "unit":
         print(" ".join(sorted(simdjson_consumers(libraries))))
-        print(" ".join(lib.source for lib in required(libraries, args[1:])))
+        print(" ".join(source for lib in required(libraries, args[1:]) for source in lib.sources))
     else:
         raise ValueError("Expected cmake or unit")
 
