@@ -69,10 +69,11 @@ def main():
     parser.add_argument("--source", action="append", help="Gateway-relative pilot TU; repeatable; full database is still generated")
     parser.add_argument("--checks", help="Explicit discovery override; retained verbatim in the receipt")
     parser.add_argument("--resume", action="store_true", help="Reuse successful receipts only when all input/tool/config identities match")
+    parser.add_argument("--checkpoint-every", type=int, default=100, help="Atomically publish partial baseline and diagnostics every N units")
     parser.add_argument("--fail-on-findings", action="store_true")
     args = parser.parse_args(sys.argv[2:])
-    if args.jobs < 1 or args.timeout < 1:
-        parser.error("jobs and timeout must be positive")
+    if args.jobs < 1 or args.timeout < 1 or args.checkpoint_every < 1:
+        parser.error("jobs, timeout and checkpoint-every must be positive")
     if args.audit and args.config:
         parser.error("select --audit or --config, not both")
     root = args.build_dir.resolve() if args.build_dir else Path(tempfile.mkdtemp(prefix="cppgw-tidy-"))
@@ -146,6 +147,45 @@ def main():
     started = time.monotonic()
     rows = []
 
+    def checkpoint(final=False):
+        unique = {}
+        occurrences = Counter()
+        for row in rows:
+            for d in row["diagnostics"]:
+                key = (d["check"], d["file"], d["line"], d["column"], d["message"])
+                unique[key] = d
+                occurrences[(d["check"], d["file"])] += 1
+        counts = defaultdict(Counter)
+        for d in unique.values():
+            counts[d["check"]][d["file"]] += 1
+        unchanged = inputs() == before and digest(config) == identity["config_sha256"]
+        complete = (final and len(rows) == len(selected) and selected == sources and unchanged
+                    and all(row["status"] == "ok" for row in rows))
+        baseline = {"schema_version": 1, "complete": complete, "head_commit": git[0], "head_tree": git[1],
+                    "configuration_yaml": config_text,
+                    "head_is_audit_input_identity": not bool(status), "identity": identity, "input_sha256": before,
+                    "counting": "Unique (check/alias-group, gateway-relative file, line, column, message); repeated header emissions deduplicated. TU emissions also counted separately.",
+                    "coverage": {"database_units": len(sources), "selected": len(selected), "completed": len(rows),
+                                 "source_units": sum("src" == p.relative_to(GATEWAY).parts[0] for p in sources),
+                                 "test_support_units": sum("tests" == p.relative_to(GATEWAY).parts[0] for p in sources),
+                                 "ok": sum(r["status"] == "ok" for r in rows), "failed": sum(r["status"] == "failed" for r in rows),
+                                 "timeouts": sum(r["status"] == "timeout" for r in rows), "inputs_unchanged": unchanged,
+                                 "units_with_findings": sum(bool(r["diagnostics"]) for r in rows)},
+                    "resources": {"wall_seconds": round(time.monotonic() - started, 3), "jobs": args.jobs,
+                                  "sum_unit_seconds": round(sum(r["seconds"] for r in rows), 3),
+                                  "sum_user_seconds": round(sum(r.get("user_s", 0) for r in rows), 3),
+                                  "sum_system_seconds": round(sum(r.get("system_s", 0) for r in rows), 3),
+                                  "largest_process_rss_kib": max((r.get("peak_rss_kib", 0) for r in rows), default=0)},
+                    "packages": packages, "unique_diagnostics": len(unique), "tu_diagnostic_emissions": sum(occurrences.values()),
+                    "checks": {c: {"unique": sum(files.values()), "files": dict(sorted(files.items())),
+                                   "tu_emissions": sum(v for (check, _), v in occurrences.items() if check == c)}
+                               for c, files in sorted(counts.items())},
+                    "failures": [{k: r[k] for k in ("source", "status", "exit")} for r in rows if r["status"] != "ok"],
+                    "completed_units": sorted(row["source"] for row in rows)}
+        write_json(root / "diagnostics.json", sorted(unique.values(), key=lambda d: (d["check"], d["file"], d["line"], d["column"], d["message"])))
+        write_json(args.baseline.resolve() if args.baseline else root / "tidy-baseline.json", baseline)
+        return baseline
+
     def run(source):
         relative = str(source.relative_to(GATEWAY))
         base = root / "units" / relative
@@ -215,6 +255,7 @@ def main():
         return row
 
     print(json.dumps({"event": "start", "units": len(selected), "database_units": len(sources), "checks": len(checks), "build_dir": str(root)}), flush=True)
+    checkpoint()
     last_progress = 0.0
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         for future in as_completed([pool.submit(run, p) for p in selected]):
@@ -226,43 +267,12 @@ def main():
                                   "last": row["source"], "last_seconds": row["seconds"], "elapsed_s": round(now - started, 1)}), flush=True)
                 last_progress = now
             write_json(root / "progress.json", {"done": len(rows), "total": len(selected), "failures": [r["source"] for r in rows if r["status"] != "ok"]})
-    unique = {}
-    occurrences = Counter()
-    for row in rows:
-        for d in row["diagnostics"]:
-            # Alias groups stay one clang-tidy diagnostic, not several invented findings.
-            key = (d["check"], d["file"], d["line"], d["column"], d["message"])
-            unique[key] = d
-            occurrences[(d["check"], d["file"])] += 1
-    counts = defaultdict(Counter)
-    for d in unique.values():
-        counts[d["check"]][d["file"]] += 1
-    unchanged = inputs() == before and digest(config) == identity["config_sha256"]
-    complete = selected == sources and unchanged and all(row["status"] == "ok" for row in rows)
-    baseline = {"schema_version": 1, "complete": complete, "head_commit": git[0], "head_tree": git[1],
-                "configuration_yaml": config_text,
-                "head_is_audit_input_identity": not bool(status), "identity": identity, "input_sha256": before,
-                "counting": "Unique (check/alias-group, gateway-relative file, line, column, message); repeated header emissions deduplicated. TU emissions also counted separately.",
-                "coverage": {"database_units": len(sources), "selected": len(selected), "completed": len(rows),
-                             "source_units": sum("src" == p.relative_to(GATEWAY).parts[0] for p in sources),
-                             "test_support_units": sum("tests" == p.relative_to(GATEWAY).parts[0] for p in sources),
-                             "ok": sum(r["status"] == "ok" for r in rows), "failed": sum(r["status"] == "failed" for r in rows),
-                             "timeouts": sum(r["status"] == "timeout" for r in rows), "inputs_unchanged": unchanged,
-                             "units_with_findings": sum(bool(r["diagnostics"]) for r in rows)},
-                "resources": {"wall_seconds": round(time.monotonic() - started, 3), "jobs": args.jobs,
-                              "sum_unit_seconds": round(sum(r["seconds"] for r in rows), 3),
-                              "sum_user_seconds": round(sum(r.get("user_s", 0) for r in rows), 3),
-                              "sum_system_seconds": round(sum(r.get("system_s", 0) for r in rows), 3),
-                              "largest_process_rss_kib": max((r.get("peak_rss_kib", 0) for r in rows), default=0)},
-                "packages": packages, "unique_diagnostics": len(unique), "tu_diagnostic_emissions": sum(occurrences.values()),
-                "checks": {c: {"unique": sum(files.values()), "files": dict(sorted(files.items())),
-                               "tu_emissions": sum(v for (check, _), v in occurrences.items() if check == c)}
-                           for c, files in sorted(counts.items())},
-                "failures": [{k: r[k] for k in ("source", "status", "exit")} for r in rows if r["status"] != "ok"]}
-    write_json(root / "diagnostics.json", sorted(unique.values(), key=lambda d: (d["check"], d["file"], d["line"], d["column"], d["message"])))
-    write_json(args.baseline.resolve() if args.baseline else root / "tidy-baseline.json", baseline)
-    print(json.dumps({"event": "finish", "complete": complete, "coverage": baseline["coverage"], "unique_diagnostics": len(unique), "resources": baseline["resources"]}), flush=True)
-    return int(not unchanged or any(row["status"] != "ok" for row in rows) or (args.fail_on_findings and bool(unique)))
+            if len(rows) % args.checkpoint_every == 0:
+                checkpoint()
+    baseline = checkpoint(final=True)
+    print(json.dumps({"event": "finish", "complete": baseline["complete"], "coverage": baseline["coverage"], "unique_diagnostics": baseline["unique_diagnostics"], "resources": baseline["resources"]}), flush=True)
+    return int(not baseline["coverage"]["inputs_unchanged"] or any(row["status"] != "ok" for row in rows)
+               or (args.fail_on_findings and baseline["unique_diagnostics"] != 0))
 
 
 try:
