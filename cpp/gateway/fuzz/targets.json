@@ -94,6 +94,13 @@
       "included_implementation": "src/auth/passkeys.cpp",
       "entry": "isoCBOR::decodeFirst / asn1::fromBER / parseCertificate",
       "max_len": 4096
+    },
+    "passkeys_asn1_library": {
+      "harness": "fuzz/passkeys_asn1_library.cpp",
+      "included_implementation": "src/auth/passkeys.cpp",
+      "extra_sources": [],
+      "entry": "passkey ECDSA, OCTET STRING, X.509, CRL, Android KeyDescription and Apple nonce decoders",
+      "max_len": 4096
     }
   },
   "libraries": [
