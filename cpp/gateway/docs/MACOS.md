@@ -144,13 +144,13 @@ normal invocation restores the three native objects before creating the primary 
 
 ## Native results
 
-| Gate                    | Result             |
-| ----------------------- | ------------------ |
-| Full production compile | 369/369 passed     |
-| Static archive          | 369 members, built |
-| Runtime tests           | In progress        |
-| Other standalone tests  | Pending            |
-| Darwin fallback loaders | Pending            |
+| Gate                    | Result                         |
+| ----------------------- | ------------------------------ |
+| Full production compile | 369/369 passed                 |
+| Static archive          | 369 members, built             |
+| Runtime tests           | 36 binaries / 456 cases passed |
+| Other standalone tests  | Pending                        |
+| Darwin fallback loaders | Pending                        |
 
 ## Proven Darwin behavior and remaining boundaries
 

@@ -107,7 +107,60 @@ Execution of that correction and the full larger suite remains pending.
 
 The fixture driver now canonicalizes its scratch paths before setting HOME/TMPDIR, so native Darwin
 cwd comparisons use the same `/private/tmp` spelling. Build outputs, receipts and archives stay external.
-The complete gateway test build is in progress; final receipts follow below.
+The complete gateway build compiled **423/424** test/support sources, with the one guarded capture
+fix pending recompilation. Initial execution was intentionally interrupted after 218 completed targets: 205 passed / 13 non-passing; case counts [2691, 2640, 51].
+The broad failures share a wrapper spelling bug: native cwd is `/private/tmp/...`, while the earlier
+wrapper supplied `/tmp/...` as TMPDIR, triggering `Gateway assets require the wrapper task workdir`
+and `T2 public assets require the wrapper task workdir`. The driver now canonicalizes HOME/TMPDIR/cwd.
+No asset test or guard was changed. The interrupted process group was killed and its scratch cleaned;
+these partial counts are diagnostic only. The complete rerun uses the corrected committed driver.
+
+## Source changes
+
+All paths are under `cpp/gateway`; Linux production branches remain unchanged except a standard include.
+
+| Path                                     | Reason and evidence                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/rt/fs.cpp`                          | Darwin total-nanosecond saturation matches Bun; use a wide intermediate for normalized INT64_MIN Stats arithmetic. All ten filesystem cases pass with UBSan. Add the direct `<algorithm>` declaration for `std::clamp`.                                                                                                                                              |
+| `src/rt/process_loop.cpp`                | macOS 26 deployment targets use nondeprecated POSIX addchdir; Darwin subprocess names preserve Bun's Linux-table quirk separately from native signals. Twelve process cases pass, including named kill, concurrent reaping and EPIPE.                                                                                                                                |
+| `tests/rt/fs_test.cpp`                   | 41 Bun-proven cwd path literals, native open flags/errno values, empty symlink success and exact extreme timestamp endpoints become conditional. Linux literals and every assertion remain.                                                                                                                                                                          |
+| `tests/rt/process_test.cpp`              | Guard the native hostname buffer and recorded Darwin signals/missing `/etc/hostname`; add concurrent waitpid/ECHILD, named-kill and closed-stdin checks.                                                                                                                                                                                                             |
+| `tests/rt/fetch_connection_test.cpp`     | Darwin-only TCP/Unix getsockopt(SO_NOSIGPIPE), FIN/half-close and EPIPE regression; all three cases pass.                                                                                                                                                                                                                                                            |
+| `tests/rt/gzip_test.cpp`                 | Darwin gzip OS byte 19 and all nine exact buffer hashes, measured by Bun's independent decompressor; preserve byte counts, original Linux hashes and both round-trip assertions.                                                                                                                                                                                     |
+| `tests/rt/kv_sqlite_test.cpp`            | Record the Bun-observed Darwin six-second-lock outcome and add the ten-second rejection control; retain original Linux timeout/error assertions.                                                                                                                                                                                                                     |
+| `tests/rt/websocket_test.cpp`            | Actual pinned ws under the repository HTTP loader reports Darwin ECONNREFUSED errno -61, Linux remains -111.                                                                                                                                                                                                                                                         |
+| `tests/codex_supervisor_secret_test.cpp` | Guarded capture-name fix for Apple Clang 21's two `-Wshadow` diagnostics on init-captured structured bindings. No case removed or changed.                                                                                                                                                                                                                           |
+| `tools/macos-build.sh`                   | External compile-once archive/test driver, exact Links closures, frozen dependency receipts, private credential-free canonical scratch, Seatbelt network preflight, group timeouts, cache hash checks and source identity. Fresh archive publication avoids stale duplicate basename members; the Darwin symbol-table member is excluded from the 369-source census. |
+| `docs/MACOS.md`, this report             | Exact prerequisites, reproducible commands, measured host semantics, pass/fail counts and remaining boundaries.                                                                                                                                                                                                                                                      |
+
+## Outside-owned boundaries
+
+- `cmake -S cpp/gateway -B /tmp/cppgw-macos-native-20261117/cmake-probe -G Ninja` exits 1:
+  `CMake Error at CMakeLists.txt:3 (message): Configure through cpp/gateway/tools/build.py so resource
+bounds and SDK identity are recorded`. Existing presets/drivers remain tied to Linux host paths.
+- `rg -n 'Linux ARM64 ELF|applyLinuxPermissions|linux-arm64.node' cpp/gateway/runtime/startup.cpp`
+  finds the ELF refusal at line 145, Linux confinement at 325 and Linux native artifact checks at
+  365–366. This runtime/release-owned launcher cannot start a Mach-O Mac candidate. It was not activated
+  or changed. A production Mach-O/Seatbelt package is separate owner work.
+
+## Local review evidence
+
+Actual review mode: `codex -c 'review_model="codex-auto-review"' review --commit
+1bcfc4e59f561cd0bccb2f8fb175384b7df559d7`, base `141cb4d482a3b0d8624ce0411cbd3b93e45873e6`.
+CLI 0.169.0 exited 0 in 138.156 seconds, but announced `model: ubiquity/deepseek-flash`, provider `uos`.
+The requested reviewer identity is unverified: reject this receipt for official ingestion, ingest
+nothing and do not mark an official review complete. Review status does not gate delivery.
+The exact credential-redacted transcript remains `/tmp/cppgw-macos-native-20261117/review-1bcfc4e5.log`,
+SHA-256 `7c6fa9189088c8d12cc7e69dffb6515fc94e0a2cdfa8091b744e00b69a44a517`.
+The original finding was emitted twice; both occurrences remain in that transcript:
+
+> [P1] Include the header that declares std::clamp — /Users/runner/work/_temp/agent-jobs/cppgw-macos-native-20261117/checkout/cpp/gateway/src/rt/fs.cpp:287-288
+>
+> On the new Apple path this calls `std::clamp`, but `fs.cpp` and its included headers do not include `<algorithm>`. Apple Clang/libc++ does not guarantee this declaration through the current transitive includes, so the native macOS build can fail with `std::clamp` not found; add the direct standard-library include.
+
+The native build had already compiled successfully through transitive declarations. The direct include
+is nevertheless the correct standard-library dependency and is added as normal implementation work;
+this does not salvage the identity-mismatched official review receipt.
 
 ## Final handoff
 

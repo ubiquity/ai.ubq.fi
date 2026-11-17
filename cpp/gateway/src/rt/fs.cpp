@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cerrno>
 #include <climits>
 #include <cmath>
