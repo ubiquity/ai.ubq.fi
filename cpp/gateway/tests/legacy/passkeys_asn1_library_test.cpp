@@ -1,7 +1,15 @@
 // Links: tests/legacy/passkeys_asn1_library_test.cpp src/auth/relay.cpp src/http.cpp src/request.cpp src/utils.cpp src/kv.cpp
 //   src/storage/kv.cpp src/release.cpp src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/native_addon.cpp
 //   src/config.cpp src/provider/cerebras_rate_limits.cpp
+#if defined(__GNUC__) && !defined(__clang__)
+// GCC diagnoses TU-local coroutine fields when their source is textually included.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsubobject-linkage"
+#endif
 #include "src/auth/passkeys.cpp"
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 #include "uos/rt/test_async.hpp"
 
 namespace passkeys = uos::auth::passkeys;

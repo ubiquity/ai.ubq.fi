@@ -98,7 +98,20 @@
     "passkeys_asn1_library": {
       "harness": "fuzz/passkeys_asn1_library.cpp",
       "included_implementation": "src/auth/passkeys.cpp",
-      "extra_sources": [],
+      "extra_sources": [
+        "src/auth/relay.cpp",
+        "src/http.cpp",
+        "src/request.cpp",
+        "src/utils.cpp",
+        "src/kv.cpp",
+        "src/storage/kv.cpp",
+        "src/release.cpp",
+        "src/storage/sqlite_readonly.cpp",
+        "src/storage/native_kv.cpp",
+        "src/storage/native_addon.cpp",
+        "src/config.cpp",
+        "src/provider/cerebras_rate_limits.cpp"
+      ],
       "entry": "passkey ECDSA, OCTET STRING, X.509, CRL, Android KeyDescription and Apple nonce decoders",
       "max_len": 4096
     }
