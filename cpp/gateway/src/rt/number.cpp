@@ -944,10 +944,7 @@ namespace uos::rt {
     if (exponent.negative_) throw RangeError("Negative exponent is not allowed");
     if (exponent.isZero()) return BigInt(1);
     if (isZero()) return *this;
-    if (magnitude_.size() == 1 && magnitude_[0] == 1) {
-      if (negative_ && !(exponent.magnitude_[0] & 1u)) return -*this;
-      return *this;
-    }
+    if (magnitude_.size() == 1 && magnitude_[0] == 1) return BigInt(negative_ && (exponent.magnitude_[0] & 1u) ? -1 : 1);
     if (exponent.magnitude_.size() > 2 || (exponent.magnitude_.size() == 2 && exponent.magnitude_[1])) throw RangeError(kOutOfMemory);
     const std::uint64_t power = exponent.magnitude_[0];
     if (power == 1) return *this;

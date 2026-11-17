@@ -139,9 +139,9 @@ namespace uos::provider::claude_capacity_history {
 
     rt::KvKey historyKey(double bucketStartAtMs, const std::string& accountId, const std::string& accountCohortId) {
       rt::KvKey key = CLAUDE_CAPACITY_HISTORY_PREFIX;
-      key.push_back(bucketStartAtMs);
-      key.push_back(accountId);
-      key.push_back(accountCohortId);
+      key.emplace_back(bucketStartAtMs);
+      key.emplace_back(accountId);
+      key.emplace_back(accountCohortId);
       return key;
     }
 

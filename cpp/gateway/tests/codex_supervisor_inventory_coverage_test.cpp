@@ -36,6 +36,7 @@
 #include "uos/rt/regex.hpp"
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/websocket.hpp"
+#include <exception>
 #include <algorithm>
 #include <unistd.h>
 #include <deque>
@@ -86,7 +87,7 @@ namespace {
     explicit ScopedCwd(const std::string& directory) {
       if (::chdir(directory.c_str()) != 0) throw std::runtime_error("chdir failed");
     }
-    ~ScopedCwd() { (void)::chdir(previous.c_str()); }
+    ~ScopedCwd() { if (::chdir(previous.c_str()) != 0) std::terminate(); }
     ScopedCwd(const ScopedCwd&) = delete;
     ScopedCwd& operator=(const ScopedCwd&) = delete;
   };

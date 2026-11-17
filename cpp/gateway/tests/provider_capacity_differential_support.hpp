@@ -82,8 +82,8 @@ namespace uos::tests::capacity_differential {
   inline rt::KvKey keyOf(const json::value& value) {
     rt::KvKey key;
     for (const json::value& part : value.as_array()) {
-      if (part.is_string()) key.push_back(rt::KvKeyPart(std::string(part.get_string())));
-      else key.push_back(rt::KvKeyPart(rt::toNumber(part)));
+      if (part.is_string()) key.emplace_back(std::string(part.get_string()));
+      else key.emplace_back(rt::toNumber(part));
     }
     return key;
   }

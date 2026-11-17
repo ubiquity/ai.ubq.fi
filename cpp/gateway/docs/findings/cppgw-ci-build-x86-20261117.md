@@ -2,13 +2,15 @@
 
 Status: discovery in progress. This file is maintained during the run; no full-suite acceptance claimed yet.
 
-## Work contract v6
+## Work contract v7
 
 Objective: add a portable, compiler-selectable CI driver, compile all gateway runtime/module sources once per configuration, and run every standalone test on this disposable x86_64 runner in GCC debug and release configurations. Provide sanitizer support, deterministic sharding, isolated test environments, a final result table, and a documented workflow proposal.
 
 Non-goals: deployment/service activation, live databases, provider requests, credential changes, application redesign, changing Bun-recorded expected values, or fixing defects outside the owned paths. Existing production-host build wrappers and presets remain separate.
 
 Invariants: C++20; `-Wall -Wextra -Wshadow -Wconversion -Werror`; Boost JSON/Container/System no-autolink definitions; every runtime object in each test; exact per-test Links closure; existing coroutine/lifetime rules and AArch64 behavior; no credentials inherited by tests; all build artifacts outside the checkout. No test skipped or weakened to obtain success.
+
+Contract v7 optimized-source amendment: apply the probe-validated KV key construction, abort-handler flow and BigInt ±1 shortcut changes, plus optimizer-visible fixture ownership and checked cwd restoration. These preserve all existing values/assertions. The shared KV header changes invalidate earlier application receipts; both complete profiles must be rebuilt and rerun.
 
 Contract v6 compiler matrix: final debug qualification uses GCC 15.2; final optimized qualification uses the user-permitted GCC 14.3 toolchain. GCC 15 optimized diagnostics in libstdc++ variant copying and direct awaited structured bindings are retained as unresolved findings. The representative `src/admin/index.cpp` and `src/api_key_policy.cpp` both compile warning-free with GCC 14.3 using the same strict `-O2` flags and standard Asio allocation mode. No compiler warning flag is weakened. A complete GCC 14 release run is required.
 
@@ -82,3 +84,29 @@ The second GCC 15 release attempt (standard Asio allocation, `/tmp/uos-gateway-b
 - `src/admin/index.cpp`, `src/api_keys.cpp`, `src/authority/native_api_key_audit.cpp`, `src/authority/native_kernel.cpp`, `src/cache/prompt_analytics.cpp` and `src/codex/manual_reset_state.cpp` instantiate a libstdc++ `std::variant` copy-assignment path through `KvKeyPart`. First diagnostic: `/usr/include/c++/15/bits/new_allocator.h:172:66: error: void operator delete(void*, std::size_t) called on unallocated object <anonymous> [-Werror=free-nonheap-object]`; the note points to the temporary variant at `/usr/include/c++/15/variant:679`. Those standard-library files are outside the owned paths and are untouched. No warning suppression or broad change to KV value semantics was applied.
 - `src/api_key_policy.cpp` (four direct awaited tuple bindings), `src/cache/kv_migration.cpp`, `src/cache/scope_experiment.cpp` and `src/cache/scope_experiment_targets.cpp` emit `-Werror=maybe-uninitialized` on the unnamed result of structured bindings from `co_await`. The GCC 15 optimized profile is not qualified; these require a separate compiler-focused lifetime investigation rather than an unproved semantic change. Debug execution of their existing cases is recorded above.
 - Exact strict comparison probes: `g++-14 -std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion -Werror -DBOOST_JSON_NO_LIB -DBOOST_CONTAINER_NO_LIB -DBOOST_SYSTEM_NO_LIB -DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING -DUOS_GATEWAY_NATIVE_LIBRARIES=1 -I cpp/gateway/include -I cpp/gateway -I /usr/local/include -c cpp/gateway/src/admin/index.cpp -o /tmp/cppgw-gcc14-variant-probe.o` and the same flags with `src/api_key_policy.cpp -o /tmp/cppgw-gcc14-policy-probe.o`. Both exit 0 with empty logs `/tmp/cppgw-gcc14-{variant,policy}-probe.log`. GCC 14.3 was already installed on the runner.
+
+## GCC 14 optimized discovery and prepared root fixes
+
+The full GCC 14 `-O2` run is collecting diagnostics on v6 source before any further source edits. Optimized probes of three prepared fixes passed with no warning suppressions:
+
+- Pre-reserve the argument count in `KvKey`'s variadic constructor. The current repeated vector growth triggers GCC 14 `-Werror=stringop-overflow` in the inlined variant constructor (for example `src/admin/sentinel_incident.cpp`). The prepared header view `/tmp/cppgw-key-probe-include/uos/rt/kv.hpp` preserves every appended/spread key part. The previously failing Sentinel module compiles with the view; `/tmp/cppgw-key-reserve-probe.log` is empty.
+- Normalize absent/empty abort handlers through one clear branch, then bind a validated listener in the other branch. GCC 14 diagnoses the old reset-then-dereference optional flow as maybe uninitialized. Prepared `/tmp/cppgw-portability-probes/abort.cpp` compiles warning-free with strict `-O2`; `/tmp/cppgw-abort-probe.log` is empty. Listener identity, position and registration/removal order remain the same.
+- In the existing BigInt base ±1 exponentiation shortcut, construct the exact ±1 result from sign/parity. This avoids GCC 14's array-bounds diagnostic in the inlined vector copy from `return *this`, with no numerical or error-contract change. Prepared `/tmp/cppgw-portability-probes/number.cpp` compiles warning-free; `/tmp/cppgw-number-probe.log` is empty. This replacement shrinks the already oversized file.
+
+These are prepared probes only until the source edits and complete reruns are recorded below.
+
+## Applied v7 portability fixes and acceptance plan
+
+The complete first GCC 14 optimized attempt ended with 361/369 production objects, 437 BUILD_FAIL targets, zero executed cases, and no skipped targets. The failed shared abort/number objects necessarily prevent every test from linking. Compile wall time was 2,206.941 s, link/test scheduling 0.789 s, total 2,208.087 s. The receipt recorded unchanged inputs. Immutable discovery evidence is `/tmp/cppgw-gcc14-first-optimized/{receipt.json,results.tsv,compile.log,driver.log}`. These are failure receipts, not release acceptance.
+
+The prepared fixes above are now applied to `include/uos/rt/kv.hpp`, `src/rt/abort.cpp` and `src/rt/number.cpp`. KV spreading additionally reserves the resulting space and copy-constructs each component, avoiding optimizer diagnostics from vector range insertion/variant assignment while preserving order and every typed part. The existing tracked `.kv.hpp` staging header is preserved byte-for-byte; an atomic-write staging-name collision was immediately restored from HEAD, and no change to that file remains. Number source shrank from 1,023 to 1,020 lines; SQLite test size remains 2,522 lines. `bun --no-env-file run size:check` passes (851 selected repository files); the manual C++ no-growth counts are recorded separately.
+
+Additional source changes, all prompted by the optimized diagnostics:
+
+- `src/provider/claude_capacity_history.cpp`: construct the same double/string key parts directly with `emplace_back`, avoiding temporary variants. No key or row changes.
+- `tests/provider_capacity_differential_support.hpp` and `tests/provider_capacity_differential_test.cpp`: the same direct in-place construction in their duplicated JSON-to-key helpers; inputs, conversions and checks are unchanged.
+- `tests/passport_sessions_test.cpp`: own the scoped fetch override with `unique_ptr`. The same old override is reset before installing the replacement, and destruction still restores the original fetch. GCC 14's coroutine/optional inlining diagnosed an uninitialized fetch guard; explicit heap ownership removes that ambiguous optional storage path. No request/response or cancellation assertions changed.
+- `tests/rt/gzip_test.cpp`: reserve the complete known fixture length before appending the same header/data/trailer bytes. This avoids GCC 14's inlined initializer-list insertion array-bounds diagnostic. Byte recipes and expectations are unchanged.
+- `tests/codex_supervisor_brief_handler_differential_test.cpp`, `codex_supervisor_handlers_differential_test.cpp`, `codex_supervisor_inventory_differential_test.cpp`, `codex_supervisor_inventory_coverage_test.cpp`, `rt/fs_test.cpp`, and `rt/sqlite_test.cpp`: check `chdir` during cleanup and terminate on restoration failure. Optimized glibc's `warn_unused_result` rejects the old void-cast discard. Successful cleanup behavior is identical; failed cleanup cannot silently contaminate another case. Direct `<exception>` includes are added without growing the oversized SQLite file.
+
+Strict focused Ninja compiles of the amended abort, number, gzip, passport, Sentinel, capacity-history and capacity-differential targets pass. Logs include `/tmp/cppgw-optimized-confirmation.log`, `/tmp/cppgw-optimized-final-probes.log` and their preserved earlier failures. Isolated Bun 1.4.0 also confirmed BigInt ±1 powers for zero, odd, even and 131-bit exponents. Full final-tree debug and release reruns remain required after these shared-source edits.

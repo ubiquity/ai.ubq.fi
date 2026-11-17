@@ -152,26 +152,25 @@ namespace uos::rt {
   }
 
   void AbortSignal::setOnabort(std::optional<EventListener> handler) const {
-    if (handler && !*handler) handler.reset();
-    if (handler) {
-      if (state_->onabort) *state_->onabort = *handler;
-      else state_->onabort.emplace(*handler);
-    } else {
+    if (!handler || !*handler) {
       state_->onabort.reset();
-    }
-    if (!handler) {
       if (state_->onabortEntry) {
         removeEntry(*state_, state_->onabortEntry);
         state_->onabortEntry.reset();
       }
-    } else if (state_->onabortEntry) {
-      state_->onabortEntry->listener = *handler;
-    } else if (!state_->aborted) {
-      auto entry = std::make_shared<State::Entry>();
-      entry->listener = *handler;
-      entry->handler = true;
-      state_->onabortEntry = entry;
-      state_->listeners.push_back(std::move(entry));
+    } else {
+      const EventListener listener = *handler;
+      if (state_->onabort) *state_->onabort = listener;
+      else state_->onabort.emplace(listener);
+      if (state_->onabortEntry) {
+        state_->onabortEntry->listener = listener;
+      } else if (!state_->aborted) {
+        auto entry = std::make_shared<State::Entry>();
+        entry->listener = listener;
+        entry->handler = true;
+        state_->onabortEntry = entry;
+        state_->listeners.push_back(std::move(entry));
+      }
     }
     updatePin(state_);
   }

@@ -4,6 +4,7 @@
 #include "uos/rt/date.hpp"
 #include "uos/rt/fs.hpp"
 #include "uos/rt/test.hpp"
+#include <exception>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -61,7 +62,7 @@ namespace {
   struct Cwd {
     std::string previous = fs::realpathSync(".");
     explicit Cwd(const std::string& target) { ASSERT(::chdir(target.c_str()) == 0); }
-    ~Cwd() { (void)::chdir(previous.c_str()); }
+    ~Cwd() { if (::chdir(previous.c_str()) != 0) std::terminate(); }
   };
 
   struct Umask {

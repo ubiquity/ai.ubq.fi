@@ -20,7 +20,7 @@
 #include "uos/rt/test.hpp"
 
 #include <unistd.h>
-
+#include <exception>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -216,7 +216,7 @@ namespace {
     }
     WorkingDirectory(const WorkingDirectory&) = delete;
     WorkingDirectory& operator=(const WorkingDirectory&) = delete;
-    ~WorkingDirectory() { (void)::chdir(previous.c_str()); }
+    ~WorkingDirectory() { if (::chdir(previous.c_str()) != 0) std::terminate(); }
   };
 
   // An oracle line recorded under /tmp/.../o1 with the directory replaced by `root`.
