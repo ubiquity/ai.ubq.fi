@@ -26,6 +26,13 @@ def main():
     if actual_namespace == options.parent_namespace:
         raise RuntimeError("network namespace did not change")
     commands = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+    # tmpfs preserves the full Linux timestamp range used by the Bun filesystem
+    # vectors; an ext4-backed runner /tmp clamps those otherwise valid times.
+    subprocess.run(["mount", "-t", "tmpfs", "-o", "size=512M,mode=0700,uid=%d,gid=%d" % (options.uid, options.gid),
+                    "tmpfs", str(options.scratch)], env=commands, check=True)
+    for name in ("h", "t", "w"):
+        (options.scratch / name).mkdir()
+        os.chown(options.scratch / name, options.uid, options.gid)
     # Keep scratch and binary paths short while hiding all other host /tmp state.
     (options.scratch / "b").mkdir()
     subprocess.run(["mount", "--bind", str(options.binary_directory), str(options.scratch / "b")], env=commands, check=True)
@@ -57,7 +64,7 @@ def main():
     environment = json.loads(options.environment)
     environment.update(HOME="/tmp/h", TMPDIR="/tmp/t")
     print("UOS_CI_NETWORK " + json.dumps({"loopback": positive, "outside_errno": negative,
-          "namespace": actual_namespace, "private_tmp": True, "uid": os.getuid()}), flush=True)
+          "namespace": actual_namespace, "private_tmp": True, "tmpfs_mib": 512, "uid": os.getuid()}), flush=True)
     if options.binary != ":probe:":
         binary = "/tmp/b/" + options.binary
         os.execve(binary, [binary], environment)

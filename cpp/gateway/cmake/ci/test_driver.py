@@ -26,6 +26,7 @@ class DriverTests(unittest.TestCase):
         (cls.build / "bin").mkdir()
         cls.compiler = shlex.split(os.environ.get("CXX", "g++"))
         cls.compiler[0] = shutil.which(cls.compiler[0])
+        cls.flags = driver.CONFIGS[os.environ.get("UOS_CI_SELFTEST_CONFIG", "debug")]
         cls.environment = driver.clean_environment()
         cls.boundary = driver.find_boundary(cls.build, cls.environment)
 
@@ -38,9 +39,9 @@ class DriverTests(unittest.TestCase):
         target = driver.object_path(self.build, selected.test)
         target.parent.mkdir(parents=True, exist_ok=True)
         code = '#include <cstdio>\n#include <cstdlib>\n#include <filesystem>\n#include <cstring>\n#include <unistd.h>\nint main() {\n' + body + '\n}\n'
-        subprocess.run(self.compiler + ["-std=c++20", "-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror", "-x", "c++", "-c", "-o", str(target), "-"],
+        subprocess.run(self.compiler + self.flags + ["-std=c++20", "-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror", "-x", "c++", "-c", "-o", str(target), "-"],
                        input=code, text=True, check=True, capture_output=True)
-        return driver.run_test(selected, [], self.build, self.compiler, [], [], self.environment, timeout, self.boundary)
+        return driver.run_test(selected, [], self.build, self.compiler, self.flags, [], self.environment, timeout, self.boundary)
 
     def test_fresh_environment_parallel_and_no_credentials(self):
         body = r'''
@@ -82,7 +83,7 @@ class DriverTests(unittest.TestCase):
 
     def test_shards_cover_selection_once(self):
         script = driver.GATEWAY / "tools/ci-build.sh"
-        all_tests = subprocess.check_output([str(script), "--list"], text=True).splitlines()
+        all_tests = subprocess.check_output([str(script), "--list"], text=True, cwd=self.build).splitlines()
         shards = [subprocess.check_output([str(script), "--list", "--shard", str(index) + "/3"], text=True).splitlines()
                   for index in range(1, 4)]
         self.assertEqual(sorted(test for shard in shards for test in shard), all_tests)

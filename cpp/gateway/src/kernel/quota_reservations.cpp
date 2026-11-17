@@ -91,7 +91,8 @@ namespace uos::kernel::quota_reservations {
     rt::Promise<rt::KvEntryMaybe<>> repoRead(kv->get(native_kernel::kernelRepoPolicyKey(owner, repo), STRONG));
     rt::Promise<rt::KvEntryMaybe<>> orgRead(kv->get(native_kernel::kernelOrgPolicyKey(owner), STRONG));
     auto reads = rt::all(repoRead, orgRead);
-    auto [repoEntry, orgEntry] = co_await reads.wait();
+    auto entries = co_await reads.wait();
+    auto& [repoEntry, orgEntry] = entries;
     const native_kernel::KernelQuotaScopeSnapshot snapshot{.repoPolicy = kernelQuotaRead(repoEntry), .orgPolicy = kernelQuotaRead(orgEntry)};
     const native_kernel::KernelQuotaScopeDecision state = native_kernel::decideKernelQuotaScope(snapshot, owner, repo, KERNEL_QUOTA_CONSTANTS);
     KernelQuotaPolicyState resolved{.limit_scope = state.limit_scope, .has_policy = state.has_policy, .repo_entry = std::move(repoEntry), .org_entry = std::move(orgEntry)};

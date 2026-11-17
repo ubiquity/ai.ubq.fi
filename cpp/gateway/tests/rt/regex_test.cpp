@@ -742,7 +742,8 @@ TEST("re-entrancy: a callback may use the regex it is called from") {
   std::string out = rt::replace("ab cd", word, [](const rt::RegexMatch& m) {
     // The outer replace has already found every match; the inner calls see and move lastIndex
     // exactly as in JS (the second matchAll starts at 2, where the first test left it).
-    return std::to_string(rt::matchAll(m.str() + " x", word).size()) + std::string(word.test("zz") ? "t" : "f");
+    const auto count = rt::matchAll(m.str() + " x", word).size();
+    return std::to_string(count) + std::string(word.test("zz") ? "t" : "f");
   });
   EXPECT_EQ(out, "2t 1f");
   EXPECT_EQ(word.lastIndex, 0u);

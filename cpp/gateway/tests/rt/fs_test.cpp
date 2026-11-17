@@ -508,7 +508,12 @@ TEST("fs error objects: descriptors, create flags, copy and link (fs1 probe)") {
   fs::closeSync(twice);
   EXPECT_EQ(errorOf([&] { fs::closeSync(twice); }), "Error|EBADF: bad file descriptor, close|EBADF|-9|close|-|-|" + std::to_string(twice));
   EXPECT_EQ(fs::constants::O_RDONLY_, 0);
+#if defined(__aarch64__)
   EXPECT_EQ(fs::constants::O_NOFOLLOW_, 32768);
+#elif defined(__x86_64__)
+  // Bun 1.4.0 exposes the native x86_64 Linux flag value.
+  EXPECT_EQ(fs::constants::O_NOFOLLOW_, 131072);
+#endif
   EXPECT_EQ(fs::constants::COPYFILE_EXCL, 1);
   EXPECT_EQ(fs::constants::O_CREAT_, 64);
   EXPECT_EQ(fs::constants::O_EXCL_, 128);

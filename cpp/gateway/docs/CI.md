@@ -14,9 +14,28 @@ sudo apt-get install -y g++-14 clang ninja-build pkg-config libboost-json-dev li
 sudo apt-get install -y mold
 ```
 
+The current native SQLite differential suite expects SQLite 3.54.0, including double-quoted-string support. Distribution SQLite 3.46.1 can compile the port but does not meet those existing expected values. This runner prepared the published release as follows (all downloads/build outputs stay outside the checkout):
+
+```sh
+mkdir -p /tmp/cppgw-sqlite
+curl --fail --location https://www.sqlite.org/2026/sqlite-autoconf-3540000.tar.gz \
+  -o /tmp/cppgw-sqlite/sqlite-autoconf-3540000.tar.gz
+printf '%s  %s\n' 134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed \
+  /tmp/cppgw-sqlite/sqlite-autoconf-3540000.tar.gz | sha256sum --check
+tar -xzf /tmp/cppgw-sqlite/sqlite-autoconf-3540000.tar.gz -C /tmp/cppgw-sqlite
+cd /tmp/cppgw-sqlite/sqlite-autoconf-3540000
+./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'
+make -j1
+sudo make install
+sudo ldconfig
+pkg-config --modversion sqlite3
+```
+
+Library preparation is a separate prerequisite. The CI driver never installs dependencies at application startup or changes an expected value to accommodate an older system library. Ubuntu CI images need the same library prerequisite before the proposed build step below.
+
 Use GCC 14 or newer, or a recent Clang, with Boost >= 1.83. GCC 12 is refused because of its known coroutine miscompile. Dependencies are linked through their installed headers and libraries with `UOS_GATEWAY_NATIVE_LIBRARIES=1`; SQLite, zlib, Brotli, Zstd and ICU use the current direct-library path. OpenSSL, Boost.JSON, Boost.Container and pthread are also required. `pkg-config` resolves the native C library include/link flags. No package is installed or downloaded by the driver.
 
-Tests require real Linux network, mount and PID namespaces. The driver first tries unprivileged user namespaces. If those are restricted, it tries passwordless `sudo -n` for namespace setup and drops back to the invoking uid/gid before running the test. Each test gets its own loopback-only network namespace, private `/tmp`, empty `HOME=/tmp/h`, `TMPDIR=/tmp/t` and working directory `/tmp/w`. The helper proves loopback communication and an outside-route denial before executing the binary. A credential-free environment allowlist also excludes provider settings, `CODEX_HOME`, synchronized authentication locations and unknown future credential variables. Registry entries cannot override the home/temp/path isolation or introduce credential/provider variables. Unsupported isolation fails closed.
+Tests require real Linux network, mount and PID namespaces. The driver first tries unprivileged user namespaces. If those are restricted, it tries passwordless `sudo -n` for namespace setup and drops back to the invoking uid/gid before running the test. Each test gets its own loopback-only network namespace, private 512 MiB tmpfs at `/tmp`, empty `HOME=/tmp/h`, `TMPDIR=/tmp/t` and working directory `/tmp/w`. The helper proves loopback communication and an outside-route denial before executing the binary. A credential-free environment allowlist also excludes provider settings, `CODEX_HOME`, synchronized authentication locations and unknown future credential variables. Registry entries cannot override the home/temp/path isolation or introduce credential/provider variables. The tmpfs fixture preserves the full Linux timestamp range used by the Bun-recorded filesystem tests; an ext4-backed runner directory clamps those times. Unsupported isolation fails closed.
 
 The current runtime and fixtures still contain ARM64-only application contracts. A portable compilation does not mean production startup, native development bootstrap or confinement is supported on x86_64. See the findings linked below. Darwin execution needs a separately qualified OS fixture boundary and matching-platform runtime/tests; this driver currently refuses Darwin execution rather than claim an unrestricted pass.
 
@@ -45,27 +64,29 @@ All configurations retain `-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werro
 
 The final table lists every selected test, `PASS`, `FAIL`, `BUILD_FAIL` or `TIMEOUT`, and the harness's run/passed/failed case counts. A crash or missing summary cannot pass. Compilation continues after individual failures to collect complete diagnostics; any failed production compilation, test build, run or timeout makes the command exit nonzero. A crashed binary without a flushed harness summary has zero reported cases, not an invented count.
 
-Each output tree contains `compile.log`, per-object compiler logs, `logs/<test>/{build,run}.log`, incremental `results.tsv` and a final machine-readable `receipt.json` with compiler/flags/input identity, counts and wall times. Previous logs and receipts move to `history/` on a rerun. Original failures remain available.
+Each output tree contains `compile.log`, per-object compiler logs, `logs/<test>/{build,run}.log`, incremental `results.tsv` and a final machine-readable `receipt.json` with the Git commit/tree, compiler/flags/input identity, counts and wall times. Input hashes are checked again at the end; an edited input invalidates acceptance and makes the command fail while preserving the observed counts. Previous logs and receipts move to `history/` on a rerun. Original failures remain available.
 
 Driver control tests use the actual selected compiler and actual namespaces:
 
 ```sh
 CXX=g++ python3 -B cpp/gateway/cmake/ci/test_driver.py
 CXX=clang++ python3 -B cpp/gateway/cmake/ci/test_driver.py
+CXX=clang++ UOS_CI_SELFTEST_CONFIG=asan python3 -B cpp/gateway/cmake/ci/test_driver.py
 ```
 
 These six controls cover successful parallel environment isolation, failure counts, missing summaries, a timeout with descendants, link failure, and sharding. They are separate from the gateway suite.
 
 ## Runner measurements
 
-Measured on 2026-11-17: Ubuntu 26.04.1, x86_64, 4 CPUs, approximately 15 GiB RAM; GCC 15.2.0, Clang 21.1.8, Boost 1.90, OpenSSL 3.5.5, SQLite 3.46.1, ICU 78.2, zlib 1.3.1, Brotli 1.2.0, Zstd 1.5.7 and mold 2.40.4. Bun 1.4.0 is the unchanged behavior oracle.
+Measured on 2026-11-17: Ubuntu 26.04.1, x86_64, 4 CPUs, approximately 15 GiB RAM; GCC 15.2.0, Clang 21.1.8, Boost 1.90, OpenSSL 3.5.5, SQLite 3.54.0 (prepared from source; distribution version was 3.46.1), ICU 78.2, zlib 1.3.1, Brotli 1.2.0, Zstd 1.5.7 and mold 2.40.4. Bun 1.4.0 is the unchanged behavior oracle.
 
 | Configuration / gate        | Object build wall time | Link/test wall time | Outcome                                    |
 | --------------------------- | ---------------------- | ------------------- | ------------------------------------------ |
 | GCC debug, complete suite   | In progress            | Pending             | Pending                                    |
 | GCC release, complete suite | Pending                | Pending             | Pending                                    |
-| GCC driver controls         | Included in total      | 8.107 s total       | 6/6 passed                                 |
+| GCC driver controls         | Included in total      | 9.484 s total       | 6/6 passed                                 |
 | Clang driver controls       | Included in total      | 10.517 s total      | 6/6 passed                                 |
+| Clang ASan driver controls  | Included in total      | 12.850 s total      | 6/6 passed                                 |
 | Full ASan/UBSan suite       | Not run                | Not run             | No full-suite sanitizer acceptance claimed |
 | arm64 / macOS               | Not run                | Not run             | Proposed CI only                           |
 
@@ -115,6 +136,21 @@ jobs:
           sudo apt-get install -y g++-14 clang ninja-build pkg-config mold \
             libboost-json-dev libboost-container-dev libssl-dev libsqlite3-dev \
             zlib1g-dev libicu-dev libbrotli-dev libzstd-dev util-linux
+      - name: Prepare the native SQLite prerequisite
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/sqlite"
+          curl --fail --location https://www.sqlite.org/2026/sqlite-autoconf-3540000.tar.gz \
+            -o "$RUNNER_TEMP/sqlite/source.tar.gz"
+          printf '%s  %s\n' 134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed \
+            "$RUNNER_TEMP/sqlite/source.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/sqlite/source.tar.gz" -C "$RUNNER_TEMP/sqlite"
+          cd "$RUNNER_TEMP/sqlite/sqlite-autoconf-3540000"
+          ./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'
+          make -j2
+          sudo make install
+          sudo ldconfig
       - name: Install macOS prerequisites
         if: runner.os == 'macOS'
         run: brew install ninja pkgconf boost openssl@3 sqlite zlib icu4c brotli zstd

@@ -29,8 +29,9 @@ CONFIGS = {
 }
 SUMMARY = re.compile(r"^(\d+) run, (\d+) passed, (\d+) failed$", re.M)
 PRINT_LOCK = threading.Lock()
-CHILD_LOCK = threading.Lock()
+CHILD_LOCK = threading.RLock()
 CHILDREN = set()
+NINJA = None
 
 
 def announce(message):
@@ -46,8 +47,12 @@ def stop_group(pid):
     except PermissionError:
         # The sudo namespace supervisor retains uid 0 until its child settles.
         # Signal only the process group created by this exact Popen call.
-        subprocess.run(["sudo", "-n", "kill", "-KILL", "--", str(-pid)],
-                       env={"PATH": os.defpath}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        stopped = subprocess.run(["sudo", "-n", "kill", "-KILL", "--", str(-pid)],
+                                 env={"PATH": os.defpath, "LC_ALL": "C"}, capture_output=True, text=True)
+        # The last root supervisor can exit between the unprivileged signal and
+        # sudo's signal. Only ESRCH is harmless; an actual signal failure is fatal.
+        if stopped.returncode and "No such process" not in stopped.stderr:
+            raise RuntimeError("could not terminate owned process group %d: %s" % (pid, stopped.stderr.strip()))
 
 
 def positive(value):
@@ -129,7 +134,16 @@ def execute(command, log, *, cwd, environment, timeout):
 def interrupted(number, _frame):
     with CHILD_LOCK:
         for pid in CHILDREN:
-            stop_group(pid)
+            if NINJA is not None and pid == NINJA.pid:
+                # Ninja forwards termination to the separate process groups it
+                # creates for compiler commands; killing only Ninja would leak them.
+                os.kill(pid, signal.SIGTERM)
+                try:
+                    NINJA.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    stop_group(pid)
+            else:
+                stop_group(pid)
     raise SystemExit(128 + number)
 
 
@@ -157,6 +171,16 @@ def write_ninja(build, sources, compiler, flags):
 
 def result(test, status, note="", **extra):
     return dict(test=test, status=status, run=0, passed=0, failed=0, note=note, **extra)
+
+
+def input_digest():
+    digest = hashlib.sha256()
+    paths = [GATEWAY / "tools" / name for name in ("ci-build.sh", "links.py")]
+    for directory in ("src", "include", "tests", "cmake/ci"):
+        paths.extend(path for path in (GATEWAY / directory).rglob("*") if path.is_file())
+    for path in sorted(paths):
+        digest.update(path.relative_to(GATEWAY).as_posix().encode() + b"\0" + path.read_bytes())
+    return digest.hexdigest()
 
 
 def run_test(selected, runtime, build, compiler, flags, libraries, environment, timeout, boundary):
@@ -213,6 +237,7 @@ def run_test(selected, runtime, build, compiler, flags, libraries, environment, 
 
 
 def main():
+    global NINJA
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("filter", nargs="?", default="", help="substring of the test path")
     parser.add_argument("--config", choices=CONFIGS, default="debug")
@@ -233,8 +258,9 @@ def main():
     if options.list:
         print("\n".join(tests))
         return 0
+    default_jobs = subprocess.check_output(["nproc"], text=True).strip() if shutil.which("nproc") else str(os.cpu_count() or 1)
     try:
-        jobs = positive(os.environ.get("UOS_CI_JOBS", str(os.cpu_count() or 1)))
+        jobs = positive(os.environ.get("UOS_CI_JOBS", default_jobs))
         timeout = positive(os.environ.get("UOS_CI_TIMEOUT", "300"))
     except ValueError as error:
         parser.error("invalid UOS_CI_JOBS/UOS_CI_TIMEOUT: " + str(error))
@@ -300,11 +326,8 @@ def main():
             sources.update([test] + resolved.sources)
         except links.LinkError as error:
             rows.append(result(test, "BUILD_FAIL", str(error)))
-    source_hash = hashlib.sha256()
-    for directory in ("src", "include", "tests"):
-        for path in sorted((GATEWAY / directory).rglob("*")):
-            if path.is_file():
-                source_hash.update(path.relative_to(GATEWAY).as_posix().encode() + b"\0" + path.read_bytes())
+    source_hash = input_digest()
+    git_identity = subprocess.check_output(["git", "-C", str(GATEWAY), "rev-parse", "HEAD", "HEAD^{tree}"], text=True).splitlines()
     announce("Compiler: " + version.splitlines()[0])
     announce("Build: %s; %d production sources (%d runtime), %d tests, jobs=%d" % (build, len(production), len(runtime), len(tests), jobs))
     write_ninja(build, sorted(sources), compiler, flags)
@@ -316,6 +339,7 @@ def main():
         process = subprocess.Popen(["ninja", "-C", str(build), "-k", "0", "-j", str(jobs)],
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                    env=environment, start_new_session=True)
+        NINJA = process
         with CHILD_LOCK:
             CHILDREN.add(process.pid)
         for line in process.stdout:
@@ -325,6 +349,7 @@ def main():
         compile_code = process.wait()
         with CHILD_LOCK:
             CHILDREN.discard(process.pid)
+        NINJA = None
     compile_s = round(time.monotonic() - compile_started, 3)
     missing_production = [source for source in production if not object_path(build, source).is_file()]
     announce("Object phase: %.3fs, %d/%d production objects, exit %d" % (compile_s, len(production) - len(missing_production), len(production), compile_code))
@@ -332,6 +357,8 @@ def main():
     (build / "logs").mkdir(exist_ok=True)
     with (build / "results.tsv").open("w") as incremental:
         incremental.write("test\tstatus\trun\tpassed\tfailed\tbuild_seconds\tseconds\tnote\n")
+        for row in rows:
+            incremental.write("\t".join(str(row.get(key, "")) for key in ("test", "status", "run", "passed", "failed", "build_seconds", "seconds", "note")) + "\n")
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             pending = {pool.submit(run_test, item, runtime, build, compiler, flags, libraries, environment, timeout, boundary): item.test for item in selected}
             for future in concurrent.futures.as_completed(pending):
@@ -345,8 +372,10 @@ def main():
                 announce("%s %s (%d/%d cases)" % (row["status"], row["test"], row["passed"], row["run"]))
     rows.sort(key=lambda row: row["test"])
     statuses = {name: sum(row["status"] == name for row in rows) for name in ("PASS", "FAIL", "BUILD_FAIL", "TIMEOUT")}
+    after_hash = input_digest()
     receipt = dict(config=options.config, compiler=compiler, compiler_version=version, flags=flags,
-                   libraries=libraries, source_sha256=source_hash.hexdigest(), selected=tests,
+                   libraries=libraries, source_sha256=source_hash, after_source_sha256=after_hash,
+                   inputs_unchanged=source_hash == after_hash, git_commit=git_identity[0], git_tree=git_identity[1], selected=tests,
                    production_sources=len(production), runtime_sources=len(runtime),
                    production_compile_failures=missing_production, compile_exit=compile_code,
                    compile_seconds=compile_s, test_wall_seconds=round(time.monotonic() - test_started, 3),
@@ -358,7 +387,9 @@ def main():
         announce("%s\t%s\t%d\t%d\t%d" % tuple(row[key] for key in ("test", "status", "run", "passed", "failed")))
     announce("TOTAL " + json.dumps({"tests": statuses, "cases": receipt["cases"], "seconds": receipt["elapsed_seconds"]}))
     announce("Evidence: " + str(build / "receipt.json"))
-    return int(compile_code != 0 or any(row["status"] != "PASS" for row in rows))
+    if source_hash != after_hash:
+        announce("INPUTS CHANGED: result counts are preserved, but this run is not acceptance evidence")
+    return int(compile_code != 0 or source_hash != after_hash or any(row["status"] != "PASS" for row in rows))
 
 
 if __name__ == "__main__":
