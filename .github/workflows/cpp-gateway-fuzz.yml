@@ -19,8 +19,8 @@ on:
         default: "2400"
 
 concurrency:
-  group: cpp-gateway-fuzz-${{ github.ref }}
-  cancel-in-progress: true
+  group: cpp-gateway-fuzz-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
 
 permissions:
   contents: read

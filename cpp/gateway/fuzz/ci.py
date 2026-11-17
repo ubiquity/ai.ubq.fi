@@ -22,6 +22,19 @@ import sys
 GATEWAY = Path(__file__).resolve().parents[1]
 DEFINES = ["BOOST_JSON_NO_LIB", "BOOST_CONTAINER_NO_LIB", "BOOST_SYSTEM_NO_LIB",
            "BOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING", "UOS_GATEWAY_NATIVE_LIBRARIES=1"]
+# Harnesses that include an application source need that source's own link list;
+# it is taken from the unit test that already links the same implementation.
+LINK_LIST_TEST = {"sse": "tests/responses_stream_test.cpp", "http_request": "tests/runtime_http_test.cpp",
+                  "passkeys": "tests/passkeys_test.cpp"}
+
+
+def extra_sources(name, target, common):
+    if name not in LINK_LIST_TEST:
+        return []
+    listed = subprocess.run([sys.executable, str(GATEWAY / "tools/links.py"), LINK_LIST_TEST[name]],
+                            cwd=GATEWAY, capture_output=True, text=True, check=True).stdout.split()
+    skip = set(common) | {target.get("included_implementation")}
+    return [source for source in listed if source.startswith("src/") and source not in skip]
 
 
 def compile_one(compiler, flags, source, objects):
@@ -49,7 +62,8 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
     flags = ["-std=c++20", "-pthread", "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY)]
     flags += ["-D" + define for define in DEFINES] + policy["compile_options"]
-    sources = policy["common_sources"] + [target["harness"]]
+    sources = policy["common_sources"] + extra_sources(args.target, target, policy["common_sources"])
+    sources.append(target["harness"])
     failed = []
     built = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
