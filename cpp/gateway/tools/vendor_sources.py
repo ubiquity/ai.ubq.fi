@@ -10,9 +10,10 @@ from typing import NamedTuple
 
 GATEWAY = Path(__file__).resolve().parents[1]
 REGISTRY = Path("cmake/vendors.json")
-NAMES = {"simdutf", "simdjson"}
+NAMES = {"ada", "simdutf", "simdjson"}
 SIMDJSON_HEADER = "third_party/simdjson/simdjson.h"
 VENDOR_MANIFESTS = {
+    "ada": "a6085f89c35fc39b06802935130c4aeffb449b695e568f71b14db0bb7a6e403f",
     "simdjson": "e958e232e00f9de08ca1118888fbe15ddf75e5b9ffb0c4d5b606eb645909d834",
     "simdutf": "f7b0cb9c96b51c837550c4a68f0f5305833cc8649aa7f25897c5dab487c60481",
 }

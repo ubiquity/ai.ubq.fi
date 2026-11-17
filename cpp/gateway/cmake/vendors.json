@@ -1,4 +1,5 @@
 {
+  "ada": ["src/rt/url.cpp"],
   "simdjson": ["src/rt/json.cpp"],
   "simdutf": ["src/rt/base64.cpp"]
 }
