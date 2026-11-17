@@ -1,5 +1,12 @@
 {
   "checks": {
+    "bugprone-bitwise-pointer-cast": {
+      "files": {
+        "src/rt/gzip.cpp": 1
+      },
+      "tu_emissions": 1,
+      "unique": 1
+    },
     "bugprone-branch-clone": {
       "files": {
         "include/uos/rt/nullable.hpp": 2,
@@ -7,10 +14,18 @@
         "include/uos/rt/sqlite.hpp": 1,
         "src/auth/passkeys.cpp": 1,
         "src/handler/terminal_log.cpp": 1,
-        "src/images.cpp": 1
+        "src/images.cpp": 1,
+        "src/rt/url.cpp": 1
       },
-      "tu_emissions": 518,
-      "unique": 7
+      "tu_emissions": 605,
+      "unique": 8
+    },
+    "bugprone-derived-method-shadowing-base-method": {
+      "files": {
+        "tests/helpers/admin_auth_harness.hpp": 1
+      },
+      "tu_emissions": 7,
+      "unique": 1
     },
     "bugprone-empty-catch": {
       "files": {
@@ -20,6 +35,7 @@
         "include/uos/responses_stream.hpp": 1,
         "include/uos/rt/async.hpp": 2,
         "include/uos/rt/error.hpp": 2,
+        "include/uos/rt/test.hpp": 1,
         "src/admin/api_keys.cpp": 1,
         "src/admin/chart_source_proxy.cpp": 2,
         "src/admin/claude_code.cpp": 1,
@@ -106,10 +122,22 @@
         "src/responses_buffered.cpp": 2,
         "src/responses_failover_stream.cpp": 2,
         "src/responses_native_headers.cpp": 1,
-        "src/responses_stream.cpp": 3
+        "src/responses_stream.cpp": 3,
+        "src/rt/kv_key.cpp": 1,
+        "src/rt/kv_sqlite.cpp": 2,
+        "src/rt/websocket.cpp": 1,
+        "src/sentinel/replay_observation.cpp": 1,
+        "src/sentinel/replay_read.cpp": 1,
+        "src/sentinel/replay_retention_metadata.cpp": 1,
+        "src/sentinel/replay_store.cpp": 6,
+        "src/sentinel/upstream_capture.cpp": 3,
+        "src/serve.cpp": 2,
+        "src/types.cpp": 1,
+        "src/upstream_wire.cpp": 10,
+        "src/worker/entrypoint.cpp": 2
       },
-      "tu_emissions": 1545,
-      "unique": 224
+      "tu_emissions": 1999,
+      "unique": 256
     },
     "bugprone-exception-copy-constructor-throws": {
       "files": {
@@ -121,10 +149,12 @@
     },
     "bugprone-exception-escape": {
       "files": {
-        "include/uos/rt/async.hpp": 1
+        "include/uos/rt/async.hpp": 1,
+        "src/rt/kv_js.cpp": 1,
+        "src/rt/kv_value.cpp": 2
       },
-      "tu_emissions": 1,
-      "unique": 1
+      "tu_emissions": 4,
+      "unique": 4
     },
     "bugprone-float-loop-counter": {
       "files": {
@@ -155,10 +185,14 @@
         "src/paid_fallback/ledger_state.cpp": 1,
         "src/paid_fallback/ledger_stats.cpp": 1,
         "src/paid_fallback/rollups.cpp": 1,
-        "src/provider/metered.cpp": 1
+        "src/provider/metered.cpp": 1,
+        "src/sentinel/incident_outbox.cpp": 2,
+        "src/sentinel/replay_read.cpp": 2,
+        "src/sentinel/replay_retention.cpp": 7,
+        "src/sentinel/replay_store.cpp": 1
       },
-      "tu_emissions": 67,
-      "unique": 62
+      "tu_emissions": 79,
+      "unique": 74
     },
     "bugprone-implicit-widening-of-multiplication-result": {
       "files": {
@@ -166,10 +200,47 @@
         "include/uos/rt/gzip.hpp": 1,
         "include/uos/sentinel/upstream_capture.hpp": 1,
         "src/codex/supervisor_brief.cpp": 1,
-        "src/codex/supervisor_log.cpp": 1
+        "src/codex/supervisor_log.cpp": 1,
+        "src/rt/gzip.cpp": 1,
+        "src/rt/regex.cpp": 6,
+        "src/rt/regex_internal.hpp": 1,
+        "src/rt/regex_match.cpp": 6,
+        "src/rt/websocket_client.cpp": 1,
+        "src/rt/websocket_frame.cpp": 1,
+        "src/rt/websocket_socket.cpp": 1
       },
-      "tu_emissions": 140,
-      "unique": 5
+      "tu_emissions": 210,
+      "unique": 22
+    },
+    "bugprone-macro-parentheses": {
+      "files": {
+        "tests/admin_api_key_audit_test.cpp": 1,
+        "tests/admin_api_keys_coverage_test.cpp": 1,
+        "tests/admin_auth_part1_test.cpp": 1,
+        "tests/admin_auth_part2_test.cpp": 1,
+        "tests/admin_codex_coverage_test.cpp": 1,
+        "tests/admin_codex_scope_experiment_test.cpp": 1,
+        "tests/admin_index_harness_test.cpp": 1,
+        "tests/admin_kernel_coverage_test.cpp": 1,
+        "tests/admin_native_owner_test.cpp": 1,
+        "tests/agent_messages_test.cpp": 1
+      },
+      "tu_emissions": 10,
+      "unique": 10
+    },
+    "bugprone-misplaced-widening-cast": {
+      "files": {
+        "src/rt/websocket_frame.cpp": 1
+      },
+      "tu_emissions": 1,
+      "unique": 1
+    },
+    "bugprone-multi-level-implicit-pointer-conversion": {
+      "files": {
+        "src/rt/gzip.cpp": 6
+      },
+      "tu_emissions": 6,
+      "unique": 6
     },
     "bugprone-optional-value-conversion": {
       "files": {
@@ -188,10 +259,11 @@
         "src/images.cpp": 3,
         "src/provider/cerebras_responses.cpp": 1,
         "src/provider/surplus_claude_chat_request.cpp": 1,
-        "src/rt/crypto.cpp": 1
+        "src/rt/crypto.cpp": 1,
+        "src/sentinel/replay_envelope.cpp": 1
       },
-      "tu_emissions": 20,
-      "unique": 19
+      "tu_emissions": 21,
+      "unique": 20
     },
     "bugprone-reserved-identifier": {
       "files": {
@@ -206,7 +278,7 @@
         "src/auth/passkeys.cpp": 1,
         "src/provider/claude_code_quota.cpp": 1
       },
-      "tu_emissions": 217,
+      "tu_emissions": 256,
       "unique": 3
     },
     "bugprone-signed-bitwise": {
@@ -225,15 +297,41 @@
         "src/rt/console.cpp": 17,
         "src/rt/crypto.cpp": 40,
         "src/rt/date.cpp": 1,
-        "src/rt/fetch_transport_http.cpp": 1
+        "src/rt/fetch_transport_http.cpp": 1,
+        "src/rt/fs.cpp": 17,
+        "src/rt/gzip.cpp": 1,
+        "src/rt/headers.cpp": 1,
+        "src/rt/http.cpp": 1,
+        "src/rt/json.cpp": 7,
+        "src/rt/kv_jsc.cpp": 3,
+        "src/rt/kv_jsc_deserialize.cpp": 7,
+        "src/rt/kv_key.cpp": 70,
+        "src/rt/kv_memory.cpp": 1,
+        "src/rt/kv_sqlite.cpp": 8,
+        "src/rt/number.cpp": 34,
+        "src/rt/process.cpp": 2,
+        "src/rt/regex.cpp": 3,
+        "src/rt/regex_compile.cpp": 19,
+        "src/rt/regex_internal.hpp": 26,
+        "src/rt/regex_match.cpp": 4,
+        "src/rt/sqlite.cpp": 6,
+        "src/rt/string.cpp": 59,
+        "src/rt/tls.cpp": 2,
+        "src/rt/url.cpp": 37,
+        "src/rt/websocket_frame.cpp": 25,
+        "src/runtime/http.cpp": 7,
+        "src/runtime/native_kv_bootstrap.cpp": 3,
+        "src/runtime/permissions_linux.cpp": 1,
+        "src/sentinel/replay_envelope.cpp": 8
       },
-      "tu_emissions": 1019,
-      "unique": 180
+      "tu_emissions": 1672,
+      "unique": 532
     },
     "bugprone-std-exception-baseclass": {
       "files": {
         "include/uos/rt/async.hpp": 2,
         "include/uos/rt/stream.hpp": 1,
+        "include/uos/rt/test.hpp": 1,
         "src/provider/anthropic_chat_responses.cpp": 2,
         "src/provider/anthropic_chat_stream.cpp": 1,
         "src/provider/anthropic_responses.cpp": 2,
@@ -241,12 +339,19 @@
         "src/responses_stream.cpp": 1,
         "src/rt/fetch_transport.cpp": 1
       },
-      "tu_emissions": 772,
-      "unique": 11
+      "tu_emissions": 1007,
+      "unique": 12
     },
     "bugprone-suspicious-missing-comma": {
       "files": {
         "src/codex/supervisor_brief.cpp": 1
+      },
+      "tu_emissions": 1,
+      "unique": 1
+    },
+    "bugprone-suspicious-stringview-data-usage": {
+      "files": {
+        "src/rt/regex.cpp": 1
       },
       "tu_emissions": 1,
       "unique": 1
@@ -316,6 +421,7 @@
         "include/uos/runtime_config.hpp": 1,
         "include/uos/sentinel/incident_outbox.hpp": 3,
         "include/uos/sentinel/replay_model.hpp": 9,
+        "include/uos/sentinel/replay_retention_metadata.hpp": 1,
         "include/uos/sentinel/replay_retention_schema.hpp": 4,
         "src/admin/codex.cpp": 2,
         "src/auth/passport.cpp": 1,
@@ -351,20 +457,61 @@
         "src/provider/openrouter_handlers.cpp": 1,
         "src/provider/openrouter_streams.cpp": 2,
         "src/responses_failover_stream.cpp": 2,
-        "src/rt/fetch_transport_internal.hpp": 1
+        "src/rt/fetch_transport_internal.hpp": 1,
+        "src/rt/number.cpp": 2,
+        "src/rt/websocket.cpp": 1,
+        "src/runtime/http.cpp": 2,
+        "src/sentinel/replay_model.cpp": 1,
+        "src/systemone/handlers.cpp": 1,
+        "src/upstream_wire.cpp": 1,
+        "tests/admin_api_key_audit_test.cpp": 13,
+        "tests/admin_api_keys_coverage_test.cpp": 22,
+        "tests/admin_auth_part1_test.cpp": 27,
+        "tests/admin_auth_part2_test.cpp": 5,
+        "tests/admin_capacity_status_test.cpp": 1,
+        "tests/admin_codex_coverage_test.cpp": 33,
+        "tests/admin_codex_reset_test.cpp": 4,
+        "tests/admin_codex_scope_experiment_test.cpp": 6,
+        "tests/admin_defaults_differential_test.cpp": 21,
+        "tests/admin_error_log_test.cpp": 5,
+        "tests/admin_index_harness_test.cpp": 10,
+        "tests/admin_kernel_coverage_test.cpp": 29,
+        "tests/admin_models_catalog_test.cpp": 34,
+        "tests/admin_namespace_include_order_test.cpp": 1,
+        "tests/admin_native_owner_test.cpp": 5,
+        "tests/agent_messages_test.cpp": 4,
+        "tests/analytics_differential_test.cpp": 4,
+        "tests/anthropic_chat_responses_test.cpp": 16,
+        "tests/anthropic_chat_stream_differential_test.cpp": 4,
+        "tests/anthropic_replay_test.cpp": 23,
+        "tests/anthropic_response_wire_test.cpp": 3,
+        "tests/api_key_policy_differential_test.cpp": 1,
+        "tests/api_key_policy_dispatch_reuse_test.cpp": 7,
+        "tests/api_keys_test.cpp": 4,
+        "tests/auth_relay_differential_test.cpp": 1,
+        "tests/auth_relay_test.cpp": 3,
+        "tests/authority_admission_test.cpp": 11,
+        "tests/authority_differential_test.cpp": 6,
+        "tests/authority_durable_test.cpp": 14,
+        "tests/authority_publication_test.cpp": 6,
+        "tests/authority_settlement_test.cpp": 5,
+        "tests/helpers/admin_auth_harness.hpp": 4,
+        "tests/helpers/prompt_cache_scope_experiment_harness.hpp": 3,
+        "tests/helpers/responses_conformance_client.hpp": 4
       },
-      "tu_emissions": 2848,
-      "unique": 249
+      "tu_emissions": 4038,
+      "unique": 597
     },
     "bugprone-unchecked-optional-access": {
       "files": {
         "include/uos/authority/native_authority_contracts.hpp": 1,
         "include/uos/provider/selection.hpp": 1,
         "include/uos/rt/async.hpp": 8,
-        "include/uos/rt/nullable.hpp": 6,
+        "include/uos/rt/nullable.hpp": 8,
         "include/uos/rt/regex.hpp": 3,
         "include/uos/rt/sqlite.hpp": 2,
-        "include/uos/rt/stream.hpp": 1,
+        "include/uos/rt/stream.hpp": 5,
+        "include/uos/storage/sqlite_readonly.hpp": 1,
         "src/admin/api_key_mutations.cpp": 1,
         "src/admin/api_keys.cpp": 6,
         "src/admin/capacity_observation_sync.cpp": 2,
@@ -507,43 +654,104 @@
         "src/rt/async.cpp": 11,
         "src/rt/crypto.cpp": 16,
         "src/rt/fetch.cpp": 3,
-        "src/rt/fetch_transport.cpp": 5
+        "src/rt/fetch_transport.cpp": 5,
+        "src/rt/http.cpp": 7,
+        "src/rt/kv_jsc_deserialize.cpp": 3,
+        "src/rt/kv_sdk.cpp": 4,
+        "src/rt/kv_sqlite.cpp": 1,
+        "src/rt/process_loop.cpp": 3,
+        "src/rt/regex.cpp": 2,
+        "src/rt/sqlite.cpp": 1,
+        "src/rt/url.cpp": 1,
+        "src/rt/websocket.cpp": 3,
+        "src/rt/websocket_client.cpp": 1,
+        "src/runtime/http.cpp": 1,
+        "src/runtime/http_body.cpp": 4,
+        "src/runtime_config.cpp": 4,
+        "src/sentinel/incident_outbox.cpp": 2,
+        "src/sentinel/replay_envelope.cpp": 17,
+        "src/sentinel/replay_observation.cpp": 1,
+        "src/sentinel/replay_retention.cpp": 11,
+        "src/sentinel/replay_retention_bootstrap.cpp": 4,
+        "src/sentinel/replay_retention_metadata.cpp": 4,
+        "src/sentinel/replay_retention_schema.cpp": 3,
+        "src/storage/native_addon.cpp": 3,
+        "src/upstream_wire.cpp": 10,
+        "src/worker/entrypoint.cpp": 4,
+        "tests/admin_api_key_audit_test.cpp": 10,
+        "tests/admin_api_keys_coverage_test.cpp": 9,
+        "tests/admin_auth_part1_test.cpp": 5,
+        "tests/admin_auth_part2_test.cpp": 2,
+        "tests/admin_defaults_differential_test.cpp": 1,
+        "tests/admin_error_log_test.cpp": 5,
+        "tests/admin_kernel_coverage_test.cpp": 14,
+        "tests/admin_models_catalog_test.cpp": 4,
+        "tests/admin_native_owner_test.cpp": 1,
+        "tests/analytics_differential_test.cpp": 5,
+        "tests/anthropic_chat_responses_test.cpp": 15,
+        "tests/anthropic_chat_stream_differential_test.cpp": 5,
+        "tests/anthropic_replay_test.cpp": 5,
+        "tests/anthropic_response_wire_test.cpp": 6,
+        "tests/api_key_policy_differential_test.cpp": 2,
+        "tests/authority_admission_test.cpp": 1
       },
-      "tu_emissions": 1511,
-      "unique": 675
+      "tu_emissions": 1946,
+      "unique": 866
     },
     "bugprone-unhandled-self-assignment": {
       "files": {
         "include/uos/rt/ordered.hpp": 1
       },
-      "tu_emissions": 215,
+      "tu_emissions": 254,
       "unique": 1
     },
     "bugprone-unused-return-value": {
       "files": {
-        "src/rt/fetch_transport.cpp": 1
+        "src/rt/fetch_transport.cpp": 1,
+        "src/rt/fetch_transport_net.cpp": 1,
+        "src/rt/process_loop.cpp": 4,
+        "src/rt/websocket_client.cpp": 2,
+        "src/rt/websocket_socket.cpp": 5,
+        "src/runtime/http.cpp": 11
       },
-      "tu_emissions": 1,
-      "unique": 1
+      "tu_emissions": 24,
+      "unique": 24
+    },
+    "bugprone-use-after-move": {
+      "files": {
+        "src/rt/json.cpp": 2
+      },
+      "tu_emissions": 2,
+      "unique": 2
     },
     "cert-err09-cpp": {
       "files": {
         "src/api_key_policy.cpp": 1,
         "src/codex/responses_runners.cpp": 1,
-        "src/rt/async.cpp": 1
+        "src/rt/async.cpp": 1,
+        "src/rt/fs.cpp": 2,
+        "src/rt/sqlite.cpp": 3,
+        "src/rt/websocket_client.cpp": 2
       },
-      "tu_emissions": 3,
-      "unique": 3
+      "tu_emissions": 10,
+      "unique": 10
     },
     "cert-err33-c": {
       "files": {
+        "include/uos/rt/test.hpp": 3,
         "src/rt/async.cpp": 2,
         "src/rt/clock.cpp": 3,
         "src/rt/fetch_transport.cpp": 1,
-        "src/rt/fetch_transport_codec.cpp": 2
+        "src/rt/fetch_transport_codec.cpp": 2,
+        "src/rt/kv_key.cpp": 1,
+        "src/rt/process.cpp": 1,
+        "src/rt/process_loop.cpp": 1,
+        "src/rt/tls.cpp": 2,
+        "tests/analytics_differential_test.cpp": 1,
+        "tests/anthropic_chat_stream_differential_test.cpp": 1
       },
-      "tu_emissions": 8,
-      "unique": 8
+      "tu_emissions": 108,
+      "unique": 18
     },
     "clang-analyzer-core.CallAndMessage": {
       "files": {
@@ -557,10 +765,11 @@
       "files": {
         "src/codex/supervisor_inventory.cpp": 1,
         "src/provider/anthropic_chat_responses.cpp": 1,
-        "src/provider/metered.cpp": 1
+        "src/provider/metered.cpp": 1,
+        "src/upstream_wire.cpp": 1
       },
-      "tu_emissions": 3,
-      "unique": 3
+      "tu_emissions": 4,
+      "unique": 4
     },
     "clang-analyzer-core.NullDereference": {
       "files": {
@@ -568,6 +777,20 @@
       },
       "tu_emissions": 3,
       "unique": 3
+    },
+    "clang-analyzer-cplusplus.NewDeleteLeaks": {
+      "files": {
+        "src/runtime/http.cpp": 2
+      },
+      "tu_emissions": 2,
+      "unique": 2
+    },
+    "clang-analyzer-security.ArrayBound": {
+      "files": {
+        "src/rt/websocket.cpp": 2
+      },
+      "tu_emissions": 2,
+      "unique": 2
     },
     "clang-analyzer-security.FloatLoopCounter": {
       "files": {
@@ -598,10 +821,23 @@
         "src/paid_fallback/ledger_state.cpp": 1,
         "src/paid_fallback/ledger_stats.cpp": 1,
         "src/paid_fallback/rollups.cpp": 1,
-        "src/provider/metered.cpp": 1
+        "src/provider/metered.cpp": 1,
+        "src/sentinel/incident_outbox.cpp": 2,
+        "src/sentinel/replay_read.cpp": 2,
+        "src/sentinel/replay_retention.cpp": 7,
+        "src/sentinel/replay_store.cpp": 1
       },
-      "tu_emissions": 62,
-      "unique": 62
+      "tu_emissions": 74,
+      "unique": 74
+    },
+    "concurrency-mt-unsafe": {
+      "files": {
+        "src/rt/fs.cpp": 2,
+        "src/rt/gzip.cpp": 1,
+        "src/rt/process_loop.cpp": 1
+      },
+      "tu_emissions": 4,
+      "unique": 4
     },
     "cppcoreguidelines-avoid-capturing-lambda-coroutines": {
       "files": {
@@ -622,10 +858,16 @@
         "src/provider/claude_code_usage_refresh.cpp": 2,
         "src/responses_attempts.cpp": 1,
         "src/responses_buffered.cpp": 1,
-        "src/responses_handler.cpp": 1
+        "src/responses_handler.cpp": 1,
+        "src/sentinel/upstream_capture.cpp": 1,
+        "src/storage/kv.cpp": 1,
+        "tests/admin_codex_coverage_test.cpp": 1,
+        "tests/admin_codex_scope_experiment_test.cpp": 2,
+        "tests/admin_native_owner_test.cpp": 2,
+        "tests/api_key_policy_differential_test.cpp": 12
       },
-      "tu_emissions": 34,
-      "unique": 27
+      "tu_emissions": 53,
+      "unique": 46
     },
     "cppcoreguidelines-avoid-reference-coroutine-parameters": {
       "files": {
@@ -640,10 +882,20 @@
         "src/embeddings/voyage.cpp": 8,
         "src/harmony/reliability/harness.cpp": 23,
         "src/provider/capacity.cpp": 1,
-        "src/provider/claude_code_access.cpp": 1
+        "src/provider/claude_code_access.cpp": 1,
+        "src/rt/kv.cpp": 1,
+        "src/sentinel/incident_outbox.cpp": 9,
+        "src/sentinel/replay_read.cpp": 8,
+        "src/sentinel/replay_retention.cpp": 24,
+        "src/sentinel/replay_retention_bootstrap.cpp": 17,
+        "src/sentinel/replay_retention_metadata.cpp": 5,
+        "src/sentinel/replay_retention_schema.cpp": 8,
+        "src/sentinel/replay_store.cpp": 4,
+        "tests/admin_api_keys_coverage_test.cpp": 2,
+        "tests/api_key_policy_dispatch_reuse_test.cpp": 2
       },
-      "tu_emissions": 108,
-      "unique": 108
+      "tu_emissions": 188,
+      "unique": 188
     },
     "performance-expensive-value-or": {
       "files": {
@@ -670,10 +922,13 @@
         "src/live/upstream.cpp": 2,
         "src/provider/capacity.cpp": 1,
         "src/provider/claude_code.cpp": 1,
-        "src/provider/stream_relay.cpp": 4
+        "src/provider/stream_relay.cpp": 4,
+        "src/rt/http.cpp": 1,
+        "src/runtime/native_kv_bootstrap.cpp": 1,
+        "src/sentinel/replay_observation.cpp": 1
       },
-      "tu_emissions": 47,
-      "unique": 47
+      "tu_emissions": 50,
+      "unique": 50
     },
     "performance-faster-string-find": {
       "files": {
@@ -687,10 +942,16 @@
         "src/kv_conversion/typed_value.cpp": 2,
         "src/provider/anthropic_replay.cpp": 2,
         "src/provider/anthropic_responses.cpp": 1,
-        "src/provider/capacity.cpp": 1
+        "src/provider/capacity.cpp": 1,
+        "src/rt/kv_sqlite.cpp": 1,
+        "src/sentinel/replay_model.cpp": 1,
+        "src/sentinel/replay_observation.cpp": 4,
+        "src/sentinel/replay_retention.cpp": 2,
+        "src/sentinel/upstream_capture.cpp": 2,
+        "src/systemone/handlers.cpp": 1
       },
-      "tu_emissions": 16,
-      "unique": 16
+      "tu_emissions": 27,
+      "unique": 27
     },
     "performance-inefficient-string-concatenation": {
       "files": {
@@ -699,10 +960,15 @@
         "src/deepseek/responses_payload.cpp": 3,
         "src/harmony/reliability/feedback.cpp": 1,
         "src/harmony/render.cpp": 1,
-        "src/rt/fetch_transport_http.cpp": 1
+        "src/rt/fetch_transport_http.cpp": 1,
+        "src/rt/fs.cpp": 2,
+        "src/rt/process_loop.cpp": 1,
+        "src/rt/websocket_client.cpp": 1,
+        "src/runtime/http_upgrade.cpp": 2,
+        "tests/admin_api_keys_coverage_test.cpp": 1
       },
-      "tu_emissions": 10,
-      "unique": 10
+      "tu_emissions": 17,
+      "unique": 17
     },
     "performance-inefficient-vector-operation": {
       "files": {
@@ -751,10 +1017,18 @@
         "src/provider/capacity.cpp": 2,
         "src/provider/health.cpp": 2,
         "src/provider/surplus.cpp": 1,
-        "src/provider/surplus_claude_request.cpp": 1
+        "src/provider/surplus_claude_request.cpp": 1,
+        "src/rt/http.cpp": 2,
+        "src/rt/process_loop.cpp": 2,
+        "src/rt/url.cpp": 2,
+        "src/rt/websocket.cpp": 1,
+        "src/runtime/permissions_linux.cpp": 2,
+        "src/sentinel/replay_read.cpp": 1,
+        "tests/admin_error_log_test.cpp": 1,
+        "tests/anthropic_chat_stream_differential_test.cpp": 1
       },
-      "tu_emissions": 78,
-      "unique": 78
+      "tu_emissions": 90,
+      "unique": 90
     },
     "performance-move-const-arg": {
       "files": {
@@ -769,10 +1043,14 @@
         "src/provider/capacity_parse.cpp": 4,
         "src/provider/cerebras.cpp": 1,
         "src/provider/claude_code_quota.cpp": 2,
-        "src/responses_stream.cpp": 1
+        "src/responses_stream.cpp": 1,
+        "src/rt/headers.cpp": 1,
+        "src/rt/process_loop.cpp": 3,
+        "tests/admin_native_owner_test.cpp": 1,
+        "tests/authority_durable_test.cpp": 1
       },
-      "tu_emissions": 32,
-      "unique": 19
+      "tu_emissions": 53,
+      "unique": 25
     },
     "performance-no-automatic-move": {
       "files": {
@@ -797,10 +1075,17 @@
         "src/paid_fallback/health.cpp": 1,
         "src/provider/capacity_parse.cpp": 1,
         "src/provider/openrouter.cpp": 1,
-        "src/responses_failover_stream.cpp": 5
+        "src/responses_failover_stream.cpp": 5,
+        "src/rt/fs.cpp": 1,
+        "src/rt/kv_js.cpp": 1,
+        "src/rt/process_loop.cpp": 1,
+        "src/sentinel/replay_envelope.cpp": 2,
+        "src/sentinel/replay_retention.cpp": 2,
+        "src/sentinel/upstream_capture.cpp": 1,
+        "src/upstream_wire.cpp": 2
       },
-      "tu_emissions": 32,
-      "unique": 32
+      "tu_emissions": 42,
+      "unique": 42
     },
     "performance-string-view-conversions": {
       "files": {
@@ -808,14 +1093,16 @@
         "src/lib/jev_compaction/jev_codex_smoke.cpp": 1,
         "src/lib/jev_compaction/jev_compaction_smoke.cpp": 1,
         "src/live/upstream.cpp": 1,
-        "src/openai_telemetry.cpp": 1
+        "src/openai_telemetry.cpp": 1,
+        "tests/admin_api_key_audit_test.cpp": 1,
+        "tests/admin_api_keys_coverage_test.cpp": 1
       },
-      "tu_emissions": 5,
-      "unique": 5
+      "tu_emissions": 7,
+      "unique": 7
     },
     "performance-unnecessary-copy-initialization": {
       "files": {
-        "include/uos/rt/async.hpp": 54,
+        "include/uos/rt/async.hpp": 55,
         "src/admin/sentinel_incident.cpp": 1,
         "src/auth/passport.cpp": 1,
         "src/cache/scope_experiment_targets.cpp": 1,
@@ -841,10 +1128,16 @@
         "src/rt/async.cpp": 1,
         "src/rt/console.cpp": 1,
         "src/rt/fetch.cpp": 1,
-        "src/rt/fetch_transport.cpp": 3
+        "src/rt/fetch_transport.cpp": 3,
+        "src/rt/kv_sqlite.cpp": 1,
+        "src/rt/websocket_client.cpp": 1,
+        "src/runtime/http.cpp": 1,
+        "src/runtime/http_upgrade.cpp": 1,
+        "src/static.cpp": 2,
+        "src/worker/entrypoint.cpp": 2
       },
-      "tu_emissions": 138,
-      "unique": 89
+      "tu_emissions": 150,
+      "unique": 98
     },
     "performance-unnecessary-value-param": {
       "files": {
@@ -853,7 +1146,7 @@
         "include/uos/provider/stream_relay.hpp": 1,
         "include/uos/rt/abort.hpp": 1,
         "include/uos/rt/async.hpp": 12,
-        "include/uos/rt/stream.hpp": 1,
+        "include/uos/rt/stream.hpp": 2,
         "src/admin/api_keys.cpp": 1,
         "src/admin/chart_source_proxy.cpp": 2,
         "src/admin/codex.cpp": 2,
@@ -942,10 +1235,39 @@
         "src/rt/abort.cpp": 3,
         "src/rt/async.cpp": 2,
         "src/rt/fetch.cpp": 5,
-        "src/rt/fetch_transport.cpp": 4
+        "src/rt/fetch_transport.cpp": 4,
+        "src/rt/http.cpp": 4,
+        "src/rt/process_loop.cpp": 3,
+        "src/rt/sqlite.cpp": 1,
+        "src/rt/websocket.cpp": 14,
+        "src/rt/websocket_client.cpp": 4,
+        "src/runtime/http.cpp": 14,
+        "src/runtime/http_body.cpp": 2,
+        "src/runtime/http_early_sse.cpp": 1,
+        "src/runtime/http_tasks.cpp": 2,
+        "src/runtime/http_upgrade.cpp": 1,
+        "src/runtime/native_kv_bootstrap.cpp": 1,
+        "src/sentinel/upstream_capture.cpp": 1,
+        "src/serve.cpp": 4,
+        "src/storage/native_addon.cpp": 2,
+        "src/upstream_wire.cpp": 2,
+        "tests/admin_api_key_audit_test.cpp": 4,
+        "tests/admin_api_keys_coverage_test.cpp": 4,
+        "tests/admin_auth_part1_test.cpp": 14,
+        "tests/admin_codex_coverage_test.cpp": 22,
+        "tests/admin_codex_reset_test.cpp": 2,
+        "tests/admin_kernel_coverage_test.cpp": 1,
+        "tests/admin_models_catalog_test.cpp": 17,
+        "tests/admin_native_owner_test.cpp": 1,
+        "tests/agent_messages_test.cpp": 5,
+        "tests/anthropic_chat_responses_test.cpp": 3,
+        "tests/anthropic_chat_stream_differential_test.cpp": 4,
+        "tests/api_key_policy_differential_test.cpp": 6,
+        "tests/authority_durable_test.cpp": 1,
+        "tests/authority_publication_test.cpp": 2
       },
-      "tu_emissions": 590,
-      "unique": 463
+      "tu_emissions": 775,
+      "unique": 606
     },
     "performance-use-std-move": {
       "files": {
@@ -968,10 +1290,15 @@
         "src/provider/metered.cpp": 1,
         "src/provider/stream_relay.cpp": 2,
         "src/responses_attempts.cpp": 1,
-        "src/rt/fetch_transport.cpp": 2
+        "src/rt/fetch_transport.cpp": 2,
+        "src/runtime/http.cpp": 1,
+        "src/runtime_config.cpp": 3,
+        "src/sentinel/replay_retention_bootstrap.cpp": 1,
+        "tests/anthropic_replay_test.cpp": 1,
+        "tests/authority_durable_test.cpp": 1
       },
-      "tu_emissions": 30,
-      "unique": 30
+      "tu_emissions": 37,
+      "unique": 37
     }
   },
   "complete": false,
@@ -1275,21 +1602,121 @@
     "src/rt/fetch.cpp",
     "src/rt/fetch_transport.cpp",
     "src/rt/fetch_transport_codec.cpp",
-    "src/rt/fetch_transport_http.cpp"
+    "src/rt/fetch_transport_http.cpp",
+    "src/rt/fetch_transport_net.cpp",
+    "src/rt/fs.cpp",
+    "src/rt/gzip.cpp",
+    "src/rt/headers.cpp",
+    "src/rt/http.cpp",
+    "src/rt/json.cpp",
+    "src/rt/kv.cpp",
+    "src/rt/kv_js.cpp",
+    "src/rt/kv_jsc.cpp",
+    "src/rt/kv_jsc_deserialize.cpp",
+    "src/rt/kv_key.cpp",
+    "src/rt/kv_memory.cpp",
+    "src/rt/kv_sdk.cpp",
+    "src/rt/kv_sqlite.cpp",
+    "src/rt/kv_value.cpp",
+    "src/rt/number.cpp",
+    "src/rt/process.cpp",
+    "src/rt/process_loop.cpp",
+    "src/rt/regex.cpp",
+    "src/rt/regex_compile.cpp",
+    "src/rt/regex_match.cpp",
+    "src/rt/regex_tables.cpp",
+    "src/rt/sqlite.cpp",
+    "src/rt/stream.cpp",
+    "src/rt/string.cpp",
+    "src/rt/text_codec.cpp",
+    "src/rt/tls.cpp",
+    "src/rt/url.cpp",
+    "src/rt/websocket.cpp",
+    "src/rt/websocket_client.cpp",
+    "src/rt/websocket_frame.cpp",
+    "src/rt/websocket_socket.cpp",
+    "src/runtime/http.cpp",
+    "src/runtime/http_body.cpp",
+    "src/runtime/http_early_sse.cpp",
+    "src/runtime/http_tasks.cpp",
+    "src/runtime/http_upgrade.cpp",
+    "src/runtime/native_kv_bootstrap.cpp",
+    "src/runtime/permissions_linux.cpp",
+    "src/runtime/websocket.cpp",
+    "src/runtime_config.cpp",
+    "src/sentinel/incident_outbox.cpp",
+    "src/sentinel/replay_admin.cpp",
+    "src/sentinel/replay_capture.cpp",
+    "src/sentinel/replay_envelope.cpp",
+    "src/sentinel/replay_limits.cpp",
+    "src/sentinel/replay_model.cpp",
+    "src/sentinel/replay_observation.cpp",
+    "src/sentinel/replay_read.cpp",
+    "src/sentinel/replay_retention.cpp",
+    "src/sentinel/replay_retention_bootstrap.cpp",
+    "src/sentinel/replay_retention_metadata.cpp",
+    "src/sentinel/replay_retention_schema.cpp",
+    "src/sentinel/replay_store.cpp",
+    "src/sentinel/upstream_capture.cpp",
+    "src/serve.cpp",
+    "src/static.cpp",
+    "src/storage/key_compatibility.cpp",
+    "src/storage/kv.cpp",
+    "src/storage/native_addon.cpp",
+    "src/storage/native_kv.cpp",
+    "src/storage/sqlite_readonly.cpp",
+    "src/storage/value_compatibility.cpp",
+    "src/systemone/handlers.cpp",
+    "src/types.cpp",
+    "src/upstream_wire.cpp",
+    "src/utils.cpp",
+    "src/worker/entrypoint.cpp",
+    "src/worker/transport.cpp",
+    "tests/admin_api_key_audit_test.cpp",
+    "tests/admin_api_keys_coverage_test.cpp",
+    "tests/admin_auth_part1_test.cpp",
+    "tests/admin_auth_part2_test.cpp",
+    "tests/admin_capacity_status_test.cpp",
+    "tests/admin_codex_coverage_test.cpp",
+    "tests/admin_codex_reset_test.cpp",
+    "tests/admin_codex_scope_experiment_test.cpp",
+    "tests/admin_defaults_differential_test.cpp",
+    "tests/admin_error_log_test.cpp",
+    "tests/admin_index_harness_test.cpp",
+    "tests/admin_kernel_coverage_test.cpp",
+    "tests/admin_models_catalog_test.cpp",
+    "tests/admin_namespace_include_order_test.cpp",
+    "tests/admin_native_owner_test.cpp",
+    "tests/agent_messages_test.cpp",
+    "tests/analytics_differential_test.cpp",
+    "tests/anthropic_chat_responses_test.cpp",
+    "tests/anthropic_chat_stream_differential_test.cpp",
+    "tests/anthropic_replay_test.cpp",
+    "tests/anthropic_response_wire_test.cpp",
+    "tests/api_key_policy_differential_test.cpp",
+    "tests/api_key_policy_dispatch_reuse_test.cpp",
+    "tests/api_keys_test.cpp",
+    "tests/auth_relay_differential_test.cpp",
+    "tests/auth_relay_test.cpp",
+    "tests/authority_admission_test.cpp",
+    "tests/authority_differential_test.cpp",
+    "tests/authority_durable_test.cpp",
+    "tests/authority_publication_test.cpp",
+    "tests/authority_settlement_test.cpp"
   ],
   "configuration_yaml": "---\n# Hazard discovery, not a style policy. See docs/findings/cppgw-clang-tidy-audit-20261117.md.\nInheritParentConfig: false\nChecks: >-\n  -*,\n  bugprone-*,\n  -bugprone-easily-swappable-parameters,\n  cppcoreguidelines-avoid-capturing-lambda-coroutines,\n  cppcoreguidelines-avoid-reference-coroutine-parameters,\n  misc-coroutine-hostile-raii,\n  cert-*,\n  -cert-dcl37-c,\n  -cert-dcl51-cpp,\n  performance-*,\n  -performance-avoid-endl,\n  -performance-enum-size,\n  concurrency-*,\n  clang-analyzer-core.*,\n  clang-analyzer-cplusplus.*,\n  clang-analyzer-optin.cplusplus.*,\n  clang-analyzer-security.*,\n  clang-analyzer-unix.*\n# Adjacent same-type parameters are deliberate module-for-module TS API translations.\n# Reserved identifiers are naming/style issues outside this lifetime audit (cert-dcl37/51).\n# endl and enum storage size are micro-style suggestions, not hot-path copy hazards.\nWarningsAsErrors: ''\nHeaderFilterRegex: '(^|/)cpp/gateway/(include|src|tests)/'\nSystemHeaders: false\nFormatStyle: none\nCheckOptions:\n  bugprone-dangling-handle.HandleClasses: 'std::basic_string_view;std::span'\n  bugprone-unchecked-optional-access.IgnoreSmartPointerDereference: 'false'\n  bugprone-exception-escape.CheckDestructors: 'true'\n  bugprone-exception-escape.CheckMoveMemberFunctions: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerToFloatingPointNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnFloatingPointNarrowingConversion: 'true'\n  performance-unnecessary-value-param.AllowedTypes: ''\n",
   "counting": "Unique (check/alias-group, gateway-relative file, line, column, message); repeated header emissions deduplicated. TU emissions also counted separately.",
   "coverage": {
-    "completed": 300,
+    "completed": 400,
     "database_units": 830,
     "failed": 0,
     "inputs_unchanged": true,
-    "ok": 300,
+    "ok": 400,
     "selected": 830,
     "source_units": 369,
     "test_support_units": 461,
     "timeouts": 0,
-    "units_with_findings": 297
+    "units_with_findings": 397
   },
   "failures": [],
   "head_commit": "33e1539d74bc3b69566875b449a01c97b0cfca3d",
@@ -2965,12 +3392,12 @@
   "resources": {
     "jobs": 4,
     "largest_process_rss_kib": 906484,
-    "sum_system_seconds": 318.78,
-    "sum_unit_seconds": 8271.12,
-    "sum_user_seconds": 7720.4,
-    "wall_seconds": 2079.729
+    "sum_system_seconds": 452.14,
+    "sum_unit_seconds": 11992.689,
+    "sum_user_seconds": 11193.24,
+    "wall_seconds": 3056.977
   },
   "schema_version": 1,
-  "tu_diagnostic_emissions": 10088,
-  "unique_diagnostics": 2447
+  "tu_diagnostic_emissions": 13854,
+  "unique_diagnostics": 3797
 }

@@ -145,10 +145,17 @@ must use the enclosing job's authorized delivery mechanism unless write access a
 | 100/830 | 0 | 0 | 938 | 756.181 | 845964 | yes |
 | 200/830 | 0 | 0 | 1720 | 1342.68 | 845964 | yes |
 | 300/830 | 0 | 0 | 2447 | 2079.729 | 906484 | yes |
+| 400/830 | 0 | 0 | 3797 | 3056.977 | 906484 | yes |
 
 The baseline remains explicitly incomplete until all 830 receipts reconcile. This table
 records persisted runner checkpoints, not extrapolated pass counts. All units analyzed so far
 emit shared-header warnings; a successful frontend is not a warning-free audit pass.
+
+Production phase reconciliation: **369/369 source TUs analyzed**, zero frontend
+failures/timeouts. The baseline's next 400-unit checkpoint includes this completed
+production phase and the beginning of test/support analysis. Twenty-nine capturing
+coroutine sites were reported by the production phase and all received verdicts;
+additional production-header template sites can still be instantiated by tests.
 
 ## Incremental check triage
 
@@ -162,6 +169,10 @@ Real but benign within the audited POSIX ABI at `src/rt/gzip.cpp:105`: memcpy tr
 ### `bugprone-branch-clone`
 
 False positives in `include/uos/rt/nullable.hpp:32,33` and `include/uos/rt/record.hpp:68`: if-constexpr branches deliberately share expression text while selecting different types/codecs; enum and string types both describe a string on the wire. This is not a duplicated runtime branch with missing validation.
+
+### `bugprone-derived-method-shadowing-base-method`
+
+Real but benign fixture behavior at `tests/helpers/admin_auth_harness.hpp:34`: TestKvStore::clear intentionally extends OrderedMap::clear with resetting failure seams/recorded calls, matching the TypeScript Map subclass. Calls use the known derived fixture type; no virtual base override contract is lost. Renaming the source-mirrored API is outside the audit.
 
 ### `bugprone-empty-catch`
 
@@ -181,7 +192,11 @@ Real but benign in `src/analytics.cpp:126` and `src/api_key_policy.cpp:237,310,3
 
 ### `bugprone-implicit-widening-of-multiplication-result`
 
-Real but benign at `include/uos/request.hpp:20` and `include/uos/sentinel/upstream_capture.hpp:43`: 32*1024*1024 and 4*1024*1024 fit int before conversion to int64_t. No overflow occurs. Use a suffixed first operand only if changing these constants in future.
+Real but benign at `include/uos/request.hpp:20` and `include/uos/sentinel/upstream_capture.hpp:43`: 32*1024*1024 and 4*1024*1024 fit int before conversion to int64_t. No overflow occurs. Use a suffixed first operand only if changing these constants in future. The dynamic regex offsets at `src/rt/regex.cpp:157,169,170,179,253,254`, regex_internal.hpp:260, and regex_match.cpp use twice a uint32 capture index. The compiler caps captures at 32768 (`src/rt/regex_compile.cpp:105,632`), so these multiplications stay <=65536 before widening. No overflow occurs within that validated bytecode invariant.
+
+### `bugprone-macro-parentheses`
+
+False positive at `tests/admin_api_key_audit_test.cpp:113`: AWAIT's expression argument is already parenthesized, while name is a declaration identifier and token-paste operand. Parenthesizing that identifier is not an expression-safety fix. The macro deliberately binds the task/result separately to satisfy the port's coroutine rules.
 
 ### `bugprone-misplaced-widening-cast`
 
@@ -233,7 +248,7 @@ False positive at `include/uos/rt/ordered.hpp:182`: copy assignment attaches the
 
 ### `bugprone-unused-return-value`
 
-Real but benign cleanup/optional socket-option handling at `src/rt/fetch_transport.cpp:138` (TCP_NODELAY setup) and `src/rt/fetch_transport_net.cpp:53` (close). Both use the explicit error_code overload with a named ignored variable; connection failure/ownership are handled elsewhere, and teardown is best effort. Do not generalize this verdict to ignored persistence/settlement results.
+Real but benign cleanup/optional socket-option handling at `src/rt/fetch_transport.cpp:138` (TCP_NODELAY setup) and `src/rt/fetch_transport_net.cpp:53` (close). Both use the explicit error_code overload with a named ignored variable; connection failure/ownership are handled elsewhere, and teardown is best effort. Do not generalize this verdict to ignored persistence/settlement results. Additional false positives at `src/runtime/http.cpp:1264-1268` are Asio operations whose error_code output parameter is explicitly checked before proceeding; their returned result duplicates that handled error. WebSocket shutdown/close/no-delay calls use explicit best-effort error_code paths as well.
 
 ### `bugprone-use-after-move`
 
@@ -245,7 +260,7 @@ Real but benign at `src/api_key_policy.cpp:502`: the named thrown value has the 
 
 ### `cert-err33-c`
 
-Initial real but benign best-effort diagnostics: `src/rt/async.cpp:277,278` and `src/rt/clock.cpp:48,51,53` ignore fprintf/fflush results when reporting uncaught errors or Node-compatible timer warnings. Failed stderr logging is not a durable request write and should not become a second thrown error. Further filesystem/SQLite/process return-value warnings will be reviewed separately; this sample does not justify ignoring durability errors.
+Initial real but benign best-effort diagnostics: `src/rt/async.cpp:277,278` and `src/rt/clock.cpp:48,51,53` ignore fprintf/fflush results when reporting uncaught errors or Node-compatible timer warnings. Failed stderr logging is not a durable request write and should not become a second thrown error. Further filesystem/SQLite/process return-value warnings will be reviewed separately; this sample does not justify ignoring durability errors. Further benign bounded formatting: fetch_transport.cpp:178 uses a 32-byte buffer for <=16 hex digits plus CRLF; kv_key.cpp:505 uses 24 bytes for 16 hex digits plus four zeros and NUL; tls.cpp:36,41 uses buffers larger than maximal IPv4/group output. process.cpp:108 flushes best effort immediately before _Exit; process_loop.cpp:409 installs SIG_IGN for the fixed valid SIGPIPE signal. No dropped durability-write result was found in these samples.
 
 ### `clang-analyzer-core.CallAndMessage`
 
@@ -253,11 +268,15 @@ False positive at `src/codex/supervisor_inventory.cpp:405`: the trace passes nul
 
 ### `clang-analyzer-core.NonNullParamChecker`
 
-False positive at `src/codex/supervisor_inventory.cpp:422`: the trace initializes resetCredits to null and assumes isRecord(resetCredits) is true. supervisor_config::isRecord(const json::value*) returns false on null, so the branch forming *resetCredits cannot execute. This is a cross-TU guard-model limitation, not a request-controlled null dereference. Keep the broad audit evidence even if disabling this noisy check in the default profile. Exact guard chain: `src/codex/supervisor_config.cpp:43` delegates to `src/rt/json.cpp:957`, `return value && value->is_object();`. A second traced class at `src/provider/anthropic_chat_responses.cpp:368,369` assumes record(nullptr) is true after a missing choices/delta. Its local record wrapper at line 39 also delegates to rt::isRecord, so the identical null-rejecting guard makes those paths infeasible. The new `src/provider/metered.cpp:601` envelopeItems warning is also guarded by an isRecord pointer helper; the path must not assume that null is a record.
+False positive at `src/codex/supervisor_inventory.cpp:422`: the trace initializes resetCredits to null and assumes isRecord(resetCredits) is true. supervisor_config::isRecord(const json::value*) returns false on null, so the branch forming *resetCredits cannot execute. This is a cross-TU guard-model limitation, not a request-controlled null dereference. Keep the broad audit evidence even if disabling this noisy check in the default profile. Exact guard chain: `src/codex/supervisor_config.cpp:43` delegates to `src/rt/json.cpp:957`, `return value && value->is_object();`. A second traced class at `src/provider/anthropic_chat_responses.cpp:368,369` assumes record(nullptr) is true after a missing choices/delta. Its local record wrapper at line 39 also delegates to rt::isRecord, so the identical null-rejecting guard makes those paths infeasible. The new `src/provider/metered.cpp:601` envelopeItems warning is also guarded by an isRecord pointer helper; the path must not assume that null is a record. `src/upstream_wire.cpp:236` likewise follows utils::isRecord(value), whose pointer overload rejects nullptr; no null-reference path is established there.
 
 ### `clang-analyzer-core.NullDereference`
 
 False positives in the sampled Boost.JSON array range loops at `src/images.cpp:112,410,552`. The latter two explicitly reject a null output array first. Exported traces take a continue branch, then invent a null __begin iterator while assuming it differs from __end, without a source mutation of the container. Valid Boost.JSON begin/end iterators cannot become null between elements this way; empty arrays have begin == end and do not enter the loop. The first trace even enters an untouched default-empty references array. This is an iterator-model limitation, not a proven malformed-image-input dereference. Later null diagnostics remain under review; no blanket safety claim.
+
+### `clang-analyzer-cplusplus.NewDeleteLeaks`
+
+False positives at `src/runtime/http.cpp:1878,1879`: both traces stop after std::function copies allocate their heap functor. IncomingListener immediately owns that callable through shared_ptr<function<...>>; listener copies share ownership and std::function's manager destroys the functor on final release. The listeners are also copied into once registrations and the owning handleRequest frame, with explicit incoming listener removal at its end. No raw allocation is dropped at these construction sites. This does not assert that every unrelated callback retention cycle is absent.
 
 ### `clang-analyzer-security.ArrayBound`
 
@@ -269,7 +288,7 @@ Same benign bounded-double-counter class as bugprone-float-loop-counter; sampled
 
 ### `concurrency-mt-unsafe`
 
-Real API constraints but benign current uses: `src/rt/fs.cpp:348,365` uses readdir only on a fresh function-local DIR handle, consuming each entry before the next read; no handle is shared between concurrent calls. `src/rt/gzip.cpp:123` uses dlerror in synchronous loader error handling; glibc's error slot is thread-local and the gateway loop is single-threaded. The checker names APIs without proving a shared-handle or global-state race. Threaded SQLite workers do not share these DIR objects.
+Real API constraints but benign current uses: `src/rt/fs.cpp:348,365` uses readdir only on a fresh function-local DIR handle, consuming each entry before the next read; no handle is shared between concurrent calls. `src/rt/gzip.cpp:123` uses dlerror in synchronous loader error handling; glibc's error slot is thread-local and the gateway loop is single-threaded. The checker names APIs without proving a shared-handle or global-state race. Threaded SQLite workers do not share these DIR objects. `src/rt/process_loop.cpp:200` reads getenv(PATH) synchronously; gateway environment mutations and process preparation run on the single loop, and SQLite workers do not mutate that environment. A future multi-threaded environment mutator would require synchronization; this audit does not qualify such a use.
 
 ### `cppcoreguidelines-avoid-capturing-lambda-coroutines`
 
@@ -356,6 +375,30 @@ is applied. Test verdicts describe fixture lifetimes, not runtime test-pass clai
 | `src/responses_attempts.cpp:54` | Real but benign: ResponsesStreamIterator/AsyncGenerator owns the sanitizing coroutine body and captured iterator through yields and error cleanup. |
 | `src/responses_buffered.cpp:78` | Real but benign for the closure: AsyncGenerator retains copied prepared/options for the complete buffered iteration; pointer-valued options retain their separate caller lifetime contract. |
 | `src/responses_handler.cpp:239` | Real but benign: fire-and-forget probe cleanup explicitly uses rt::async before spawn, retaining the delivery/type closure through mark/release awaits. |
+| `src/sentinel/upstream_capture.cpp:580` | Real but benign: SourceAlgorithm retains the pull callable and its copied attempt/reader/finish/retain callbacks across reads, including paths that close or error the stream. |
+| `src/storage/kv.cpp:129` | Real but benign: the open operation is moved into retrySqliteBusy's by-value callback parameter, which retains it across retries and awaits. |
+
+### Tests and support
+
+| Site | Verdict |
+| --- | --- |
+| `tests/admin_codex_coverage_test.cpp:103` | Real but benign fixture: reader is copied into the awaited handler's by-value parameter; its captured diagnostic string remains owned through the expected rejection. |
+| `tests/admin_codex_scope_experiment_test.cpp:81` | Real but benign fixture: beforeGet is stored on the live fixture KV; the awaited handler consumes the throwing callback before fixture teardown. |
+| `tests/admin_codex_scope_experiment_test.cpp:85` | Real but benign fixture: the local Fetch/GlobalFetchOverride retains the closure; referenced resolvers/call counter stay in the ASYNC_TEST frame until the first pending request is released and awaited. |
+| `tests/admin_native_owner_test.cpp:108` | Real but benign fixture: installed readAuth hook is retained until awaited calls finish; Fixture and its nativeReads counter outlive the callback, and teardown removes the hook. |
+| `tests/admin_native_owner_test.cpp:109` | Real but benign fixture: refresh hook is retained while the Fixture/nativeRefreshes counter lives, throws synchronously on execution, and is removed at teardown. |
+| `tests/api_key_policy_differential_test.cpp:223` | Real but benign fixture: rt::async owns copied store/time/token inputs for authentication. |
+| `tests/api_key_policy_differential_test.cpp:289` | Real but benign fixture: rt::async owns the closure/KV/policy; referenced reservations belongs to the enclosing test, which awaits the reserve/replay work. |
+| `tests/api_key_policy_differential_test.cpp:303` | Real but benign fixture: rt::async retains name/work; referenced record callback remains in the parent frame until the awaited replay completes. |
+| `tests/api_key_policy_differential_test.cpp:325` | Real but benign fixture: rt::async owns a copied deferred reservation through its awaited dispatch. |
+| `tests/api_key_policy_differential_test.cpp:336` | Real but benign fixture: rt::async owns a copied deferred reservation through its awaited release. |
+| `tests/api_key_policy_differential_test.cpp:353` | Real but benign fixture: rt::async retains copied policy/store while reading usage. |
+| `tests/api_key_policy_differential_test.cpp:366` | Real but benign fixture: rt::async retains the copied reservation through dispatch/marking. |
+| `tests/api_key_policy_differential_test.cpp:384` | Real but benign fixture: rt::async retains the KV/time values through the live-reservation check. |
+| `tests/api_key_policy_differential_test.cpp:400` | Real but benign fixture: rt::async retains the shared KV through awaited reclamation. |
+| `tests/api_key_policy_differential_test.cpp:414` | Real but benign fixture: rt::async retains the KV/policy through window reclamation. |
+| `tests/api_key_policy_differential_test.cpp:464` | Real but benign fixture: rt::async retains the closure; referenced authenticate/KV locals remain in the enclosing test while both sequential calls and replay are awaited. |
+| `tests/api_key_policy_differential_test.cpp:476` | Real but benign fixture: rt::async retains the shared KV through awaited usage deletion. |
 
 ## Ranked confirmed defect classes
 
@@ -391,9 +434,10 @@ is applied. Test verdicts describe fixture lifetimes, not runtime test-pass clai
 This is an owner-applied proposal only; no source edit is applied. Do not globally
 suppress cleanup exceptions or treat a noexcept annotation as a fix.
 
-Other warnings below are currently classified as benign real costs/conventions or false positives;
-additional true defects will be ranked here as the remaining units complete. Resource-exhaustion-only
-hardening and unmeasured optimization opportunities are not promoted into confirmed request bugs.
+Other warnings below are classified as benign real costs/conventions or false positives;
+additional true defects will be ranked here as the remaining units complete. The P2 item explicitly
+concerns resource-exhaustion termination, not ordinary request input. Unmeasured copy/allocation
+opportunities remain separate from confirmed correctness defects.
 
 ## Current reproduction commands
 
