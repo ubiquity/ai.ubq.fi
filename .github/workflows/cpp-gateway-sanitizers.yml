@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   sanitize:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
