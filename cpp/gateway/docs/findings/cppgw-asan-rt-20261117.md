@@ -2,8 +2,7 @@
 
 Runtime validation passes: **36 binaries / 452 cases in each profile**, zero
 failures, timeouts, sanitizer reports, or suppressions. The original 34 binaries
-contain 446 cases; two new lifetime suites add six cases. Commit-bound final
-receipts and publication status are recorded after the source checkpoint.
+contain 446 cases; two new lifetime suites add six cases. The exact committed-source receipts and delivery limits follow below.
 
 Contract v1: build every `tests/rt/*_test.cpp` with all `src/rt/*.cpp`, retain the Bun
 1.4.0 behavioral oracle and warning policy, run ASan/UBSan and plain `-O2`, and fix
@@ -142,3 +141,192 @@ the first failed compile rather than retry an unchanged command. Each test gets 
 180-second process-group timeout. Expected runtime is seconds per binary; record
 timeouts without suppressing or skipping the test. Keep output to state changes
 and compact summaries; retain full reports in `/tmp`.
+
+## Exact committed-source receipts
+
+Both final sweeps passed **36 binaries / 452 cases**, with zero failed cases,
+timeouts, ASan/UBSan/LSan diagnostics or suppressions, on this clean source commit:
+
+- Commit: `5a4b09f61655c7c37f64ccce06c3b7183c332fc1`.
+- Tree: `e77e7466dc9f4dd2df613ada0ec5f5e0c25a34af`.
+- All 126 runtime input hashes stayed unchanged through each build and run.
+- Both receipts have `worktree_clean`, `inputs_unchanged`, and
+  `identity_unchanged` set to true. Only this report changes after that checkpoint.
+
+Exact acceptance command (Clang 21.1.8, both profiles):
+
+```sh
+python3 cpp/gateway/tests/rt/run_checks.py --profile both --jobs 4 --require-clean \
+  --sqlite-prefix /tmp/cppgw-sqlite-3.54.0 --fs-scratch-root /dev/shm
+```
+
+The regular `-O2` build is Valgrind-free. No test was omitted. The IDNA suite also
+checked its 2,228,224 recorded code-point/context results. Tests for the read-only
+JSON, URL and regex sources pass; none of those sources or public headers changed.
+
+- `asan` run: `/tmp/cppgw-asan-rt-20261117/asan/runs/1794912161636910879`.
+  `results.json` SHA-256: `2b00ea6c0d164c4970b08a4258cfd7ddc7ff80864e9e0d4f1b3f709d5d61aa48`.
+  `provenance.json` SHA-256: `06c39160041f653870fdad5739661cc5e126409867a5b1cfcb4c38fa2954f644`.
+- `plain` run: `/tmp/cppgw-asan-rt-20261117/plain/runs/1794912238825300289`.
+  `results.json` SHA-256: `caa816dac004e44e2ba4122f1c5559c338843cd98c44f55b8441ccfe1b1fd644`.
+  `provenance.json` SHA-256: `1f6831a31603ae2a779cbcafaf97e32d1eb6f0aa1c8a1ba42e4f8c66c15f6070`.
+
+| Binary                    | Cases | ASan/UBSan | Plain `-O2` |
+| ------------------------- | ----: | ---------- | ----------- |
+| `abort_test`              |    13 | PASS       | PASS        |
+| `async_test`              |    32 | PASS       | PASS        |
+| `base64_test`             |     6 | PASS       | PASS        |
+| `clock_test`              |    11 | PASS       | PASS        |
+| `console_test`            |     9 | PASS       | PASS        |
+| `crypto_test`             |    18 | PASS       | PASS        |
+| `date_test`               |     6 | PASS       | PASS        |
+| `env_test`                |     6 | PASS       | PASS        |
+| `error_test`              |     4 | PASS       | PASS        |
+| `fetch_connection_test`   |     2 | PASS       | PASS        |
+| `fetch_test`              |     9 | PASS       | PASS        |
+| `fetch_transport_test`    |    33 | PASS       | PASS        |
+| `fs_test`                 |    10 | PASS       | PASS        |
+| `gzip_test`               |    10 | PASS       | PASS        |
+| `harness_test`            |     3 | PASS       | PASS        |
+| `headers_test`            |     4 | PASS       | PASS        |
+| `http_test`               |     6 | PASS       | PASS        |
+| `json_test`               |    24 | PASS       | PASS        |
+| `kv_js_test`              |     8 | PASS       | PASS        |
+| `kv_jsc_deserialize_test` |     7 | PASS       | PASS        |
+| `kv_sqlite_test`          |    17 | PASS       | PASS        |
+| `kv_test`                 |    53 | PASS       | PASS        |
+| `nullable_test`           |     6 | PASS       | PASS        |
+| `number_test`             |    21 | PASS       | PASS        |
+| `ordered_test`            |     9 | PASS       | PASS        |
+| `process_test`            |    10 | PASS       | PASS        |
+| `record_test`             |     6 | PASS       | PASS        |
+| `regex_test`              |    16 | PASS       | PASS        |
+| `sqlite_test`             |    29 | PASS       | PASS        |
+| `stream_test`             |    10 | PASS       | PASS        |
+| `string_test`             |    19 | PASS       | PASS        |
+| `text_codec_test`         |     6 | PASS       | PASS        |
+| `url_idna_test`           |     2 | PASS       | PASS        |
+| `url_test`                |     6 | PASS       | PASS        |
+| `websocket_lifetime_test` |     4 | PASS       | PASS        |
+| `websocket_test`          |    17 | PASS       | PASS        |
+
+## Bun host observations
+
+Bun 1.4.0 on this x86_64 Linux host reports `process.arch === "x64"` and
+`fs.constants.O_NOFOLLOW === 131072`. The original AArch64 expectations (`arm64`, 32768) remain in their architecture branch. This corrects proven host-specific
+expectations; it does not change application behavior.
+
+The runner's ordinary filesystem clamps extreme timestamps just as Bun does.
+Tmpfs preserves the original values. Recorded seconds (atime, mtime):
+
+| Input                           | Ordinary filesystem under Bun | Tmpfs under Bun / retained test expectation |
+| ------------------------------- | ----------------------------- | ------------------------------------------- |
+| `Date(8.64e15), Date(-8.64e15)` | `15032385535, -2147483648`    | `8640000000000, -8640000000000`             |
+| `9.2e18, 1`                     | `15032385535, 1`              | `9200000000000000000, 1`                    |
+| `1e19, 1e300`                   | `15032385535, 15032385535`    | `9223372036854775807, 9223372036854775807`  |
+
+The fixture now honors TMPDIR and the runner selects a fresh tmpfs scratch
+for `fs_test`, keeping every original timestamp expectation. Reproduce the Bun
+observations without credentials or dotenv:
+
+```sh
+python3 - <<'PYTHON'
+import shutil, subprocess, tempfile
+bun = shutil.which('bun')
+program = '''import fs from "node:fs"; import os from "node:os";
+const file = os.tmpdir() + "/times"; fs.writeFileSync(file, "");
+console.log(JSON.stringify({bun:Bun.version, arch:process.arch, O_NOFOLLOW:fs.constants.O_NOFOLLOW}));
+for (const pair of [[new Date(8.64e15),new Date(-8.64e15)],[9.2e18,1],[1e19,1e300]]) {
+  fs.utimesSync(file,pair[0],pair[1]); const s=fs.statSync(file,{bigint:true});
+  console.log(String(s.atimeNs)+" "+String(s.mtimeNs));
+}'''
+for parent in ['/tmp', '/dev/shm']:
+    with tempfile.TemporaryDirectory(prefix='rt-oracle-', dir=parent) as scratch:
+        subprocess.run([bun, '--no-env-file', '--no-install', '-e', program],
+                       cwd=scratch, env={'PATH':'/usr/bin:/bin','HOME':scratch,'TMPDIR':scratch}, check=True)
+PYTHON
+```
+
+## Source changes and regression evidence
+
+Paths below are relative to `cpp/gateway`.
+
+| Changed files                                                                          | Reason and evidence                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/rt/async.cpp`                                                                     | Remove redundant C++20 `!=`; Clang's fatal unused-declaration diagnostic is gone and all 32 async cases pass                                                                                                                                                                             |
+| `src/rt/fetch_transport_internal.hpp`, `src/rt/fetch_transport_net.cpp`                | Acquire a connection owner when `fill()` is called and keep it through cancellation completion; remove duplicate unused pool capacity storage. The original ASan UAF and both new lifetime cases are clean; all 33 transport cases pass                                                  |
+| `src/rt/tls.cpp`                                                                       | Explicit unsigned-byte conversion in hostname validation; preserves checks and passes the strict warning build plus fetch/WebSocket TLS cases                                                                                                                                            |
+| `src/rt/websocket.cpp`, `src/rt/websocket_internal.hpp`, `src/rt/websocket_socket.cpp` | Track WebSockets weakly per IO context and release socket/receiver/listener owners during teardown without emitting abandoned events; clean up a constructor exception's unpublished request. Original 473,220-byte LSan report is gone; all 17 integration and four lifetime cases pass |
+| `src/rt/websocket_client.cpp`                                                          | Retry function retains itself through the pending IO handler rather than a self-capture cycle; pending-connect and synchronous-failure regressions are clean                                                                                                                             |
+| `tests/rt/fetch_connection_test.cpp`                                                   | Two regressions verify ownership starts at the call and ends after deferred or canceled IO, including weak-reference checks in plain builds                                                                                                                                              |
+| `tests/rt/websocket_lifetime_test.cpp`                                                 | Four regressions cover open cycles, discarded close completion, pending connection and synchronous Unix-endpoint failure; teardown must not emit close                                                                                                                                   |
+| `tests/rt/fs_test.cpp`, `tests/rt/process_test.cpp`                                    | Preserve Bun's architecture-dependent constants and use the assigned scratch filesystem; Bun evidence above proves why the AArch64-only assumptions failed                                                                                                                               |
+| `tests/rt/kv_test.cpp`, `tests/rt/number_test.cpp`, `tests/rt/websocket_test.cpp`      | Explicit unsigned promotion for base64 shifts and Latin-1 header bytes, and an ASCII-typed hash loop; fix Clang conversion diagnostics without changing recorded outputs                                                                                                                 |
+| `tests/rt/run_checks.py`                                                               | Reproducible external builds, complete Links closures, clean environments, process-group timeouts, retained per-run logs, source fingerprints and clean-commit acceptance receipts. It built and ran every binary in both profiles                                                       |
+| `docs/findings/cppgw-asan-rt-20261117.md`                                              | This report, including original failures, exact commands, dependency hashes, final results and delivery limits                                                                                                                                                                           |
+
+Additional checks passed:
+
+```sh
+bun --no-env-file run size:check
+python3 cpp/gateway/tools/links.py --check \
+  cpp/gateway/tests/rt/fetch_connection_test.cpp \
+  cpp/gateway/tests/rt/websocket_lifetime_test.cpp
+python3 -c 'import ast,pathlib; ast.parse(pathlib.Path("cpp/gateway/tests/rt/run_checks.py").read_text())'
+bun --no-env-file run format:check cpp/gateway/docs/findings/cppgw-asan-rt-20261117.md
+git diff --check
+```
+
+## Review and delivery limits
+
+Actual local review mode completed with:
+
+```sh
+timeout 180s codex review -c 'review_model="codex-auto-review"' --uncommitted
+```
+
+Its HEAD and base were both `09d44bd5b94fd6fb6d44c9c1bc9c3ebe15a48494`,
+with the then-uncommitted runtime changes. The CLI announced
+`model: ubiquity/deepseek-flash`, `provider: uos`, despite the requested
+`review_model`. Preserve this identity discrepancy; no official review-backlog
+receipt or exact reviewer-model match is claimed. The exact log is
+`/tmp/cppgw-asan-rt-review.log`, SHA-256
+`58a43be611f75b33b4b0ff03c33c215ebbcc2c91bd725411e0ae26de35b77aeb`.
+No findings were ingested into an official backlog. The returned P2 was fixed
+and the later clean-commit sweeps above replaced the earlier dirty receipts.
+Original finding text (the CLI printed the same finding twice):
+
+> [P2] Record the tree that the checks actually compile — /home/runner/work/_temp/agent-jobs/cppgw-asan-rt-20261117/checkout/cpp/gateway/tests/rt/run_checks.py:115-117
+>
+> When this runner is invoked on the current dirty checkout, it compiles the working-tree sources but records `HEAD` and `HEAD^{tree}` as the provenance. The resulting receipt therefore identifies the base commit rather than the tested changes, making it impossible to bind a pass to the actual compiled tree; record the working-tree content/tree (or fail unless the checkout is committed). This conflicts with [AGENTS.md:183](AGENTS.md#L183).
+
+Manual publication was attempted after both committed-source gates passed:
+
+```sh
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false \
+  git push --set-upstream origin test/cppgw-asan-rt-20261117
+```
+
+It failed with exit 128: `fatal: could not read Username for 'https://github.com': terminal prompts disabled`.
+GitHub CLI also returned exit 4 asking for `GH_TOKEN`. No credential was printed,
+written, replaced or refreshed. The task remains on the clean owned branch
+`test/cppgw-asan-rt-20261117` for the runner's promised publication on exit.
+Independent push verification, PR creation, merge and a `development` handoff
+could not be completed from this unauthenticated checkout. The parent port owner /
+runner publisher owns that next step. The base includes two pre-existing port
+commits outside `development`, including production-build work marked in progress;
+this task does not accept or merge that unrelated work. No hosted workflow was
+triggered manually and no production or Mac service was activated.
+
+No new defects were found outside the owned paths. The 34 original runtime
+binaries and the two new regression binaries were all built and tested. The
+larger gateway suite and other compiler/platform/deployment qualifications remain
+with their existing owners.
+
+Final result: Clang 21 ASan/UBSan and plain `-O2` both pass 36 binaries / 452 cases.
+Fixed the pending fetch read UAF, WebSocket teardown cycles, retry self-reference
+and unpublished-handshake cleanup; six new lifetime cases pass. Native host
+expectations are backed by Bun 1.4.0. Exact reproduction commands, every changed
+source, initial failures and final receipts are above. Publication/integration is
+pending the runner publisher; there are no remaining runtime test failures or
+outside-owned-path defects to report.
