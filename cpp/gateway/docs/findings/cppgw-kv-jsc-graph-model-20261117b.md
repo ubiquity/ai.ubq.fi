@@ -35,3 +35,31 @@ runner or fixture blocker recorded against the exact attempted scope.
 ## Status
 
 Toolchain and oracle setup started. No implementation or acceptance results yet.
+
+## Continuation at `a705abda`
+
+The inherited commit contains the graph model, the sparse reader and the first
+13 sparse-array vectors. The strict Clang 21.1.8 release build passed the
+three focused binaries (17 cases). This run included the existing 86-row
+serialized corpus and the typed interchange differential. The portable runner
+needed `--system-header-prefix=third_party/` for Clang to treat the vendored
+simdutf header as a system header, as the sanitizer driver already does.
+
+The continued work uses contract v1 with the same file and behavior scope.
+The acceptance surface includes numeric keys in JSC's array property block.
+Bun 1.4.0 accepts the valid index 4,294,967,293 in that block because its raw
+index word is reserved as the block marker. The inherited reader rejects it
+as a named property, and its writer would write the raw marker. The reader
+and writer must handle that index while retaining the existing named-property
+refusal. Bun observations used the unchanged TypeScript `encodeTypedValue`
+to check length, ordered present entries, explicit undefined and a hole read.
+All 13 inherited sparse vectors matched. The numeric property-block probe
+adds coverage beyond those vectors.
+
+The test closures all include `src/rt`; the release and sanitizer sweeps
+therefore select the full standalone registry. The separate synthetic proof
+uses the pinned Deno 2.9.7 ARM64 binary with SHA-256
+`5ecc9a6b862d61d4cf8cae3ac5f29488ffc839d675cfd60c11d908121dfe5bf1`.
+Both runs use isolated scratch state with explicit, provider-free environments.
+The benchmark compares the original and current trees on the committed KV
+fixture inputs. Compilation reuses objects per profile.
