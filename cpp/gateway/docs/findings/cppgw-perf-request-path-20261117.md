@@ -24,4 +24,9 @@ request-path performance, the two profile scenarios, and any build or fixture in
 - Verified the official Boost 1.92.0 archive SHA-256
   `5c1d40cb8e19adbf740a4ec2da35b3e58f3f5804b1dce44deb53df72193cbc6c` and installed the Bun lockfile in a detached
   scratch source copy with dotenv and install scripts disabled.
-- Benchmark, build, and profile results pending.
+- GCC 14.2 completed all 369 application and runtime translation units, two vendored archives, startup and three
+  packaged executables with the strict port warning flags. The packager needed the benchmark-only multiarch lookup
+  described below. The native entrypoint and confinement checks ran unchanged.
+- The first paired smoke passed all 12 scenario/runtime combinations, with 96 measured and 24 warm-up requests.
+  Both gateways relayed all eight individually gated SSE deltas before the upstream could send the next frame.
+- The three-repetition benchmark and profiles are pending.
