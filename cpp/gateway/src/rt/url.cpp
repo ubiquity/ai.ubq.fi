@@ -9,9 +9,6 @@
 #include <charconv>
 #include <limits>
 #include <ranges>
-#ifdef UOS_GATEWAY_NATIVE_LIBRARIES
-#include <unicode/uchar.h>
-#endif
 
 namespace uos::rt {
   namespace {
@@ -21,105 +18,66 @@ namespace uos::rt {
       return storage;
     }
 
-#ifdef UOS_GATEWAY_NATIVE_LIBRARIES
-    bool validJoiners(std::u32string_view label) {
-      auto joiningType = [](char32_t c) { return u_getIntPropertyValue(static_cast<UChar32>(c), UCHAR_JOINING_TYPE); };
-      auto nearestJoiningType = [&](auto neighbors) {
-        for (const char32_t c : neighbors)
-          if (const auto type = joiningType(c); type != U_JT_TRANSPARENT) return type;
-        return static_cast<int32_t>(U_JT_NON_JOINING);
+    bool unsupportedBidiCodePoint(char32_t point) {
+      // Unicode 17.0 R/AL/AN code points that Ada 4.0.0 accepts inside "a…b",
+      // where RFC 5893 forbids them. Recheck these ranges when upgrading Ada.
+      constexpr std::pair<char32_t, char32_t> missingDirections[] = {
+          {0x061d, 0x061d}, {0x0870, 0x088f}, {0x08b5, 0x08b5}, {0x08c8, 0x08c9},
+          {0xfbc2, 0xfbc2}, {0x10940, 0x10959}, {0x10d40, 0x10d4f}, {0x10d6f, 0x10d85},
+          {0x10d8e, 0x10d8f}, {0x10ec2, 0x10ec7}, {0x10f70, 0x10f81}, {0x10f86, 0x10f89},
       };
-      for (std::size_t i = 0; i < label.size(); ++i) {
-        if (label[i] != U'\u200c' && label[i] != U'\u200d') continue;
-        if (i != 0 && u_getCombiningClass(static_cast<UChar32>(label[i - 1])) == 9) continue;
-        if (label[i] == U'\u200d') return false;
-        const auto before = nearestJoiningType(label.substr(0, i) | std::views::reverse);
-        const auto after = nearestJoiningType(label.substr(i + 1));
-        if ((before != U_JT_LEFT_JOINING && before != U_JT_DUAL_JOINING) ||
-            (after != U_JT_RIGHT_JOINING && after != U_JT_DUAL_JOINING)) return false;
-      }
-      return true;
+      return std::ranges::any_of(missingDirections, [point](const auto& range) {
+        return range.first <= point && point <= range.second;
+      });
     }
 
-    constexpr unsigned bidiMask(std::initializer_list<UCharDirection> directions) {
-      unsigned mask = 0;
-      for (const auto direction : directions) mask |= 1u << direction;
-      return mask;
+    bool asciiBidiCompanion(std::string_view label) {
+      if (label.empty()) return true;
+      auto letter = [](char c) { return c >= 'a' && c <= 'z'; };
+      auto alphanumeric = [letter](char c) { return letter(c) || (c >= '0' && c <= '9'); };
+      return letter(label.front()) && alphanumeric(label.back()) &&
+             std::ranges::all_of(label, [alphanumeric](char c) { return alphanumeric(c) || c == '-'; });
     }
-
-    // RFC 5893 applies to every label if any label contains RTL text.
-    struct BidiDomain {
-      bool rtl = false;
-      bool valid = true;
-
-      void add(std::u32string_view label) {
-        if (label.empty()) return;
-        constexpr unsigned rtlTypes = bidiMask({U_RIGHT_TO_LEFT, U_RIGHT_TO_LEFT_ARABIC, U_ARABIC_NUMBER});
-        constexpr unsigned neutral = bidiMask({U_EUROPEAN_NUMBER, U_EUROPEAN_NUMBER_SEPARATOR, U_COMMON_NUMBER_SEPARATOR,
-                                               U_EUROPEAN_NUMBER_TERMINATOR, U_OTHER_NEUTRAL, U_BOUNDARY_NEUTRAL, U_DIR_NON_SPACING_MARK});
-        unsigned types = 0;
-        UCharDirection last = U_DIR_NON_SPACING_MARK;
-        for (const char32_t c : label) {
-          const auto direction = u_charDirection(static_cast<UChar32>(c));
-          types |= 1u << direction;
-          if (direction != U_DIR_NON_SPACING_MARK) last = direction;
-        }
-        rtl = rtl || (types & rtlTypes) != 0;
-        const auto first = u_charDirection(static_cast<UChar32>(label.front()));
-        if (first == U_LEFT_TO_RIGHT) {
-          valid = valid && (types & ~(neutral | bidiMask({U_LEFT_TO_RIGHT}))) == 0 &&
-                  (last == U_LEFT_TO_RIGHT || last == U_EUROPEAN_NUMBER);
-        } else {
-          valid = valid && (first == U_RIGHT_TO_LEFT || first == U_RIGHT_TO_LEFT_ARABIC) &&
-                  (types & ~(neutral | rtlTypes)) == 0 &&
-                  (bidiMask({last}) & (rtlTypes | bidiMask({U_EUROPEAN_NUMBER}))) != 0 &&
-                  !((types & bidiMask({U_ARABIC_NUMBER})) && (types & bidiMask({U_EUROPEAN_NUMBER})));
-        }
-      }
-    };
-#endif
 
     bool validHost(const ada::url_aggregator& url) {
       if (!url.is_special()) return true;
       const auto host = url.get_hostname();
       if (host.find("xn--") == std::string_view::npos) return true;
 
-      // Ada's ASCII fast path skips A-label validation. Validate through
-      // ToUnicode and check the domain-wide rules that its label parser omits.
-      std::u32string codePoints;
-#ifdef UOS_GATEWAY_NATIVE_LIBRARIES
-      BidiDomain bidi;
-#endif
+      // Ada's ASCII fast path skips A-label validation. ToUnicode leaves an
+      // invalid A-label untouched.
+      std::u32string prefixed;
+      bool hasRtl = false;
+      bool hasUnsafeCompanion = false;
       for (const auto part : host | std::views::split('.')) {
         const std::string_view label(part.begin(), part.end());
-        if (label.starts_with("xn--")) {
-          const std::string decoded = ada::idna::to_unicode(label);
-          if (decoded == label || decoded.find('.') != std::string::npos) return false;
-          if (std::ranges::any_of(decoded, [](char c) {
-                return static_cast<unsigned char>(c) < 0x80 &&
-                       ada::idna::contains_forbidden_domain_code_point(std::string_view(&c, 1));
-              })) return false;
-          codePoints.resize(decoded.size());
-          codePoints.resize(ada::idna::utf8_to_utf32(decoded.data(), decoded.size(), codePoints.data()));
-          if (codePoints.empty()) return false;
-#ifdef UOS_GATEWAY_NATIVE_LIBRARIES
-          if (!validJoiners(codePoints)) return false;
-#else
-          // The SDK comparison profile has no Unicode property library.
-          if (std::ranges::any_of(codePoints, [](char32_t c) { return c > 0xff; })) return false;
-#endif
-        } else {
-          codePoints.assign(label.begin(), label.end());
+        if (!label.starts_with("xn--")) {
+          hasUnsafeCompanion |= !asciiBidiCompanion(label);
+          continue;
         }
-#ifdef UOS_GATEWAY_NATIVE_LIBRARIES
-        bidi.add(codePoints);
-#endif
+        const std::string decoded = ada::idna::to_unicode(label);
+        if (decoded == label || decoded.find('.') != std::string::npos) return false;
+        if (std::ranges::any_of(decoded, [](char c) {
+              return static_cast<unsigned char>(c) < 0x80 &&
+                     ada::idna::contains_forbidden_domain_code_point(std::string_view(&c, 1));
+            })) return false;
+        prefixed.resize(decoded.size() + 1);
+        prefixed.front() = U'a';
+        const auto length = ada::idna::utf8_to_utf32(decoded.data(), decoded.size(), prefixed.data() + 1);
+        if (length == 0) return false;
+        prefixed.resize(length + 1);
+        // Ada can stop at the first joiner, before checking the rest of the
+        // label. Refuse joiners and code points with missing direction data.
+        if (std::ranges::any_of(prefixed, [](char32_t point) {
+              return point == U'\u200c' || point == U'\u200d' || unsupportedBidiCodePoint(point);
+            })) return false;
+        // A leading L character makes the validated label fail Ada's check
+        // exactly when it contains RTL text. Ada validates those labels in
+        // isolation, so require ordinary DNS labels for their LTR companions.
+        if (ada::idna::is_label_valid(prefixed)) hasUnsafeCompanion = true;
+        else hasRtl = true;
       }
-#ifdef UOS_GATEWAY_NATIVE_LIBRARIES
-      return !bidi.rtl || bidi.valid;
-#else
-      return true;
-#endif
+      return !hasRtl || !hasUnsafeCompanion;
     }
 
     ada::result<ada::url_aggregator> parseUrl(std::string_view input, const ada::url_aggregator* base = nullptr) {

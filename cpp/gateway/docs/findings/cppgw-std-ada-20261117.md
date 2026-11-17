@@ -43,3 +43,25 @@ report are complete, or record the exact partial counts and blockers if the runn
 ## Verification
 
 Pending implementation and runs.
+
+## Continuation and contract v2
+
+The incoming job tip was `602a7840bf54cd44fb7817848d38327edbcda1a9`, tree
+`4bf0d4acebb6030847dae104c6b254c727d75071`. It already contained the Ada assets, registry, URL adapter, and
+fuzz target. Their production objects and both URL test binaries compiled. The unchanged Bun assertions passed
+1 of 6 URL cases and 1 of 2 IDNA cases. The Ada asset hashes and all 441 Links closures resolved.
+
+The continued adapter removes ICU from the URL component. Ada owns URL parsing, IDNA mapping and serialization,
+and form-urlencoded operations. A small fail-closed guard validates special-host A-labels using Ada's ToUnicode,
+rejects ContextJ characters because Ada can stop before checking later characters, and checks the rest of a
+right-to-left host. Comparison with Unicode 17.0 `DerivedBidiClass.txt`, including its defaults, found 132
+R/AL/AN code points Ada accepts in an LTR label. The guard rejects those code points until the pinned Ada lookup
+can classify them. The corpus and scalar sweep contain the same inputs as before this change.
+
+Out-of-tree verification uses apt.llvm.org Clang 21.1.8 and LLD, GCC 14.2 for a separate strict component compile,
+Bun 1.4.0, Boost 1.92.0 JSON and Container static archives, and SQLite 3.54.0 with `SQLITE_DQS=3`.
+Plain and sanitized compile-once sweeps run on four ARM64 cores. Fixture processes receive a fresh home and temp
+directory, a credential-free environment and a loopback-only network namespace. A first filesystem run showed
+that the runner's ext4 volume clamps extreme timestamps. The retry puts fixture scratch on tmpfs.
+
+[Unicode 17.0 Bidi data](https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedBidiClass.txt)

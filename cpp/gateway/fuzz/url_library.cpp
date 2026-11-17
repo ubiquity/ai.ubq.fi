@@ -15,7 +15,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     (void)fileURLToPath(url);
   });
   uos::fuzz::malformed([&] {
-    URL url(input, "https://fixture.invalid/base/path?a=1");
+    URL url("https://fixture.invalid/base/path?a=1");
     auto& params = url.searchParams();
     url.host(input);
     url.hostname(input);
@@ -34,6 +34,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     (void)params.entries();
   });
   uos::fuzz::malformed([&] {
+    const auto relative = URL::parse(input, "https://fixture.invalid/base/path?a=1");
+    if (relative) (void)relative->searchParams().toString();
+    (void)URL::canParse(input);
     (void)URL::canParse(value, name);
     (void)URL::parse(value, name);
     (void)fileURLToPath(pathToFileURL(input));
