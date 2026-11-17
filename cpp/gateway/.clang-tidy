@@ -1,0 +1,38 @@
+---
+# Hazard discovery, not a style policy. See docs/findings/cppgw-clang-tidy-audit-20261117.md.
+InheritParentConfig: false
+Checks: >-
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  cppcoreguidelines-avoid-capturing-lambda-coroutines,
+  cppcoreguidelines-avoid-reference-coroutine-parameters,
+  misc-coroutine-hostile-raii,
+  cert-*,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  performance-*,
+  -performance-avoid-endl,
+  -performance-enum-size,
+  concurrency-*,
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  clang-analyzer-optin.cplusplus.*,
+  clang-analyzer-security.*,
+  clang-analyzer-unix.*
+# Adjacent same-type parameters are deliberate module-for-module TS API translations.
+# Reserved identifiers are naming/style issues outside this lifetime audit (cert-dcl37/51).
+# endl and enum storage size are micro-style suggestions, not hot-path copy hazards.
+WarningsAsErrors: ''
+HeaderFilterRegex: '(^|/)cpp/gateway/(include|src|tests)/'
+SystemHeaders: false
+FormatStyle: none
+CheckOptions:
+  bugprone-dangling-handle.HandleClasses: 'std::basic_string_view;std::span'
+  bugprone-unchecked-optional-access.IgnoreSmartPointerDereference: 'false'
+  bugprone-exception-escape.CheckDestructors: 'true'
+  bugprone-exception-escape.CheckMoveMemberFunctions: 'true'
+  bugprone-narrowing-conversions.WarnOnIntegerNarrowingConversion: 'true'
+  bugprone-narrowing-conversions.WarnOnIntegerToFloatingPointNarrowingConversion: 'true'
+  bugprone-narrowing-conversions.WarnOnFloatingPointNarrowingConversion: 'true'
+  performance-unnecessary-value-param.AllowedTypes: ''
