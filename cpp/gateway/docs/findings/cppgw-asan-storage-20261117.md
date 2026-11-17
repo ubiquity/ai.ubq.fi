@@ -59,7 +59,7 @@ User updates report state changes at least once per minute during active work.
   the prior reports; no versioned expected value was changed.
 - External CMake/Ninja driver resolves all 62 Links closures. Their union is
   44 runtime and 278 additional source objects, plus 62 test objects (384
-  compilations and 62 links per initial profile). Normal build is in progress.
+  compilations and 62 links per initial profile). Both profiles completed.
 - Normal discovery profile: **62/62 binaries, 814/814 cases passed**, zero
   failures/timeouts, 13.317 seconds total runtime. Consumed inputs stayed unchanged.
 - Normal run: `plain/runs/1794915453515505207` under the external build root.
@@ -72,8 +72,9 @@ User updates report state changes at least once per minute during active work.
 - No C++ sources, headers, tests, vectors or expectations required edits.
   The only repository change is this report, including the external runner.
 - Added an exclusive external-driver lock after discovery to reject concurrent
-  writers before they can damage Ninja metadata. Final committed-tree runs
-  will verify the retained driver as well as all 62 binaries.
+  writers before they can damage Ninja metadata. The embedded driver matches
+  the executed script, parses successfully and rejects a concurrent invocation.
+  Final clean-commit sweeps pass all 62 binaries in both profiles.
 
 The first normal build's compilation reached all source/test objects without a
 C++ diagnostic. A malformed documentation-command heredoc accidentally started
@@ -81,8 +82,13 @@ a second Ninja writer; it was stopped. The interrupted duplicate removed two
 objects and damaged Ninja dependency metadata. The first link reported
 `clang++: error: no such file or directory` for the `codex/banked_reset.cpp.o`
 and `codex/banked_reset_provider.cpp.o` outputs. This is a runner incident,
-not a product defect. A single-writer rebuild regenerated the missing objects and dependency
-records and subsequently passed all tests. Original diagnostics remain in
+not a product defect. A single-writer rebuild regenerated the missing objects and linked all
+binaries, then passed all tests. The old plain Ninja dependency log remained
+non-authoritative and tried to rebuild unchanged objects again at the final
+checkpoint. That redundant build was stopped; final execution reused the
+complete, fingerprinted binaries after checking every C++ input against the
+original compilation/run manifests. The ASan build was a clean single-writer
+build. Fresh reproduction directories avoid the damaged disposable cache. Original diagnostics remain in
 `plain/build.log`; no runtime pass is claimed for that interrupted build.
 
 Compiler executable: `/usr/lib/llvm-21/bin/clang`, SHA-256
@@ -401,15 +407,87 @@ bun --no-env-file --no-install /tmp/cppgw-asan-storage-20261117/lint/node_module
 git diff --check
 ```
 
-Both repository lockfiles remain unchanged. Final committed-tree sweeps, local
-review and publication receipts will be recorded below. GitHub CLI currently has
-no authenticated host; no connector providing GitHub writes is available.
+Both repository lockfiles remain unchanged. Document formatting and whitespace
+checks pass. The exact clean-commit, review and publication receipts follow.
+GitHub CLI has no authenticated host; no connector providing GitHub writes is
+available.
 
 No defects were found outside the owned paths. The entire requested shard ran;
 there are no remaining C++ test failures or unbuilt shard binaries. Runtime,
 other-shard, real legacy-Deno conversion, other-platform and deployment acceptance
 remain outside this qualification. No production state, provider credentials or
 live inference provider was accessed.
+
+## Committed-source acceptance receipt
+
+- Commit: `833d743a28c7805ee730dc8d338650e5a765e298`.
+- Tree: `684d26b4101d1562b7f55f21bccf85f3265b4093`.
+- Base: `141cb4d482a3b0d8624ce0411cbd3b93e45873e6`.
+- Both final profiles: **62 binaries, 814 run / 814 passed / 0 failed**.
+- Zero timeouts, sanitizer reports, skipped binaries or suppressions.
+- Both receipts: `worktree_clean`, `inputs_unchanged`, and `identity_unchanged`
+  are true. All 1,356 C++ inputs match the original build/run manifests; all
+  124 binary hashes were checked before and after the committed-tree runs.
+- This documentation follow-up adds receipts only; no compiled C++ input changes
+  after the checkpoint. `plain-reuse.json` / `asan-reuse.json` retain the input
+  and binary hashes under the external root.
+
+Exact acceptance command (the complete normal and sanitizer builds are recorded
+above; this command reuses those verified binaries):
+
+```sh
+python3 /tmp/cppgw-asan-storage-20261117/run_checks.py --profile both --jobs 4 --run-only --require-clean
+```
+
+- `plain` run: `/tmp/cppgw-asan-storage-20261117/plain/runs/1794916908492472811`, 12.815 seconds total runtime.
+  Results SHA-256: `59a59887844e7323b822320e30b917398467100f19c2810e085ab910178e0663`.
+  Provenance SHA-256: `fe99bc95678b0e4cd4d991270ec419b883136dd4353320680e7fb8b33a9b1f9b`.
+- `asan` run: `/tmp/cppgw-asan-storage-20261117/asan/runs/1794916924503040428`, 75.338 seconds total runtime.
+  Results SHA-256: `c87b67d426780264eaa9c2ddb8163a4a495a4dd90b9f7e432a644650d9da31e1`.
+  Provenance SHA-256: `7852f7f83496c137d0273d4f35bc62a35b7a46eaf03640d150d8b59de3bad582`.
+
+## Local review and publication limits
+
+Actual local review mode, Codex CLI 0.169.0:
+
+```sh
+codex -c 'review_model="codex-auto-review"' review --commit 833d743a28c7805ee730dc8d338650e5a765e298
+```
+
+The exact reviewed head and base are the checkpoint and base above. The command
+exited 0 in 83.393 seconds. Its banner announced `model: ubiquity/deepseek-flash`,
+`provider: uos`, instead of confirming `codex-auto-review`. **Model identity is
+unverified; reject this receipt for official review ingestion.** No finding was
+ingested and no failed or identity-mismatched review was marked complete. Review
+status did not gate the local qualification or publication attempt.
+
+The credential-safe transcript is `/tmp/cppgw-asan-storage-20261117/review.log`,
+SHA-256 `ae087a58fb074dfc39ac29f53bf5be8ce47ef5d94aed82d2bc2f3b5a23552f9e`.
+No credential appeared in its output. Original final text (printed twice):
+
+> The commit adds only a documented sanitizer qualification report and embedded reproducibility driver. No definite correctness or regression issues were identified.
+
+Publication command:
+
+```sh
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false \
+  git push --set-upstream origin test/cppgw-asan-storage-20261117
+git fetch origin refs/heads/development:refs/remotes/origin/development
+git merge-base --is-ancestor 833d743a28c7805ee730dc8d338650e5a765e298 origin/development
+```
+
+Push exited 128: `fatal: could not read Username for 'https://github.com': terminal
+prompts disabled`. No credential was printed, persisted, replaced or refreshed.
+Fetching the explicit remote ref succeeded; `origin/development` is
+`002fe15fa926674c97f0169355d24929bf529710`; the ancestry check exited 1.
+This checkout has no local `development` branch and does not have GitHub write
+credentials. No push, PR, merge, hosted CI or development handoff is claimed.
+
+The runner publisher / enclosing port owner owns authenticated publication,
+bounded PR integration with an ancestry-preserving merge, and the clean
+`development` handoff. Preserve the clean owned task branch; do not merge the
+base's unknown production-build work merely to satisfy this shard's handoff.
+No hosted workflow was dispatched and no production or Mac service was activated.
 
 ## Final handoff summary
 
@@ -418,4 +496,6 @@ shard binaries in both normal and ASan/UBSan profiles. Both execute 814/814 pass
 cases, with zero failures, timeouts, sanitizer reports or suppressions. Commands,
 dependency hashes and the complete isolated runner are above. No C++ sources or
 expected values changed; this report is the only repository change. No defects
-were found outside ownership. Publication/integration evidence remains pending.
+were found outside ownership. GitHub authentication blocks publication and
+development integration; the clean committed task branch is preserved for the
+runner publisher. The review receipt is rejected for its unverified model identity.
