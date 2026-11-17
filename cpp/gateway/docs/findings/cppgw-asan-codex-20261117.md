@@ -95,9 +95,10 @@ Exit 128: `fatal: could not read Username for 'https://github.com': No such devi
 
 ## Findings
 
-| Test                           | Tool                        | Cause                                                                                  | Fix or disposition                                                                        |
-| ------------------------------ | --------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `codex_supervisor_secret_test` | Clang 21 `-Werror,-Wshadow` | Explicit lambda init-captures shadow their structured-binding source names at line 106 | Rename the two capture bindings; every generated case, fixture and assertion is unchanged |
+| Test                           | Tool                        | Cause                                                                                  | Fix or disposition                                                                                                                          |
+| ------------------------------ | --------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `codex_supervisor_secret_test` | Clang 21 `-Werror,-Wshadow` | Explicit lambda init-captures shadow their structured-binding source names at line 106 | Rename the two capture bindings; every generated case, fixture and assertion is unchanged                                                   |
+| Shard runner                   | Local preflight audit       | Direct invocation could inherit the host network namespace                             | Fail closed before building/running tests unless the Linux namespace exposes only `lo`; host invocation exits 1 before launching any binary |
 
 Initial plain compilation: 385/386 translation units passed; the one failing unit
 reported two instances of `error: declaration shadows a structured binding
@@ -132,6 +133,39 @@ to it and refuse a missing tool. A separate network-namespace preflight observed
 now running; no sanitized execution result is claimed yet. Based on the measured
 plain compile phase, budget 30–55 minutes for its instrumented cold build, with
 the same four-worker limit and incremental recovery if a command fails.
+
+## Local review checkpoint
+
+Actual local Codex review mode ran to exit 0 in 97.726 s:
+
+```sh
+timeout 180s codex -c 'review_model="codex-auto-review"' review --base 141cb4d482a3b0d8624ce0411cbd3b93e45873e6
+```
+
+Reviewed head: `0cccb394efe8a43366ca56020bf6281159d9d2aa`.
+Exact base is in the command. CLI 0.169.0 reported `model: ubiquity/deepseek-flash`,
+`provider: uos`, rather than confirming the requested review model. Reject this
+receipt for official review ingestion: no finding is ingested, and no matching
+review identity or official review completion is claimed. Review is not a gate.
+The transcript was checked for environment credential values before writing;
+none is printed or persisted. Log `/tmp/cppgw-asan-codex-20261117/review.log`,
+SHA-256 `94876d1973a3ff6159eb3e3f63d19e07c2cb27643b4669e82a359ce41cdec0ce`.
+
+Original returned findings (the CLI repeated both in its final output):
+
+```text
+- [P2] Enforce network isolation before launching tests — /home/runner/work/_temp/agent-jobs/cppgw-asan-codex-20261117/checkout/cpp/gateway/tests/helpers/codex_sanitizer_checks.py:164-165
+  When this helper is invoked directly, its child test processes inherit the caller's network namespace; `network_namespace` is only recorded, not validated or changed. The documented `unshare --net` wrapper is used for one plain run but is not enforced by the helper, so a normal invocation can violate the credential-free, no-external-network isolation contract. Fail closed unless the process is in an isolated namespace, or create the namespace before launching each test.
+
+- [P1] Complete the sanitizer execution before finalizing the report — /home/runner/work/_temp/agent-jobs/cppgw-asan-codex-20261117/checkout/cpp/gateway/docs/findings/cppgw-asan-codex-20261117.md:128-134
+  The added report explicitly states that sanitized execution has not been run and leaves the final handoff marked "Work is in progress." This does not satisfy the stated objective of running all selected binaries under ASan/UBSan, so the change cannot provide the promised sanitizer acceptance evidence until the ASan/UBSan run and final receipts are recorded.
+```
+
+The independently reproduced network weakness is fixed in the runner, which now
+records the checked interface list and refuses the host namespace before launching
+tests. This preserves the already-used kernel isolation and makes it mandatory.
+The incomplete-run observation describes this intentional checkpoint; the
+instrumented build continues, and final sanitizer acceptance remains pending.
 
 ## Final handoff
 

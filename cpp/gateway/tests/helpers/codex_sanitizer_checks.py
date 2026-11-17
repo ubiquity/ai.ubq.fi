@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import shlex
 import signal
+import socket
 import subprocess
 import tempfile
 import time
@@ -39,6 +40,17 @@ def clean_env():
 
 def quote(path):
     return '"' + str(path).replace("\\", "/").replace('"', '\\"') + '"'
+
+
+def network_isolation():
+    namespace_path = Path("/proc/self/ns/net")
+    if not namespace_path.exists():
+        raise SystemExit("Test execution requires a Linux network namespace")
+    interfaces = sorted(name for _, name in socket.if_nameindex())
+    if interfaces != ["lo"]:
+        raise SystemExit("Test execution requires an isolated network namespace with only loopback; "
+                         "use sudo -n unshare --net, enable lo, and drop to the runner UID/GID")
+    return dict(network_namespace=os.readlink(namespace_path), network_interfaces=interfaces)
 
 
 def identity():
@@ -142,7 +154,7 @@ def run(args, profile, root, targets, tests, before, source_identity):
     provenance = source_identity | dict(profile=profile, inputs=before,
         compiler=subprocess.check_output([args.compiler, "--version"], env=clean_env(), text=True),
         flags=BASE_FLAGS + (SAN_FLAGS if profile == "asan" else []), timeout=args.timeout,
-        symbolizer=symbolizer, network_namespace=os.readlink("/proc/self/ns/net"))
+        symbolizer=symbolizer, **network_isolation())
     (run_root / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     for target in targets:
         started = time.monotonic()
@@ -213,6 +225,8 @@ def main():
     args.build_root = args.build_root.resolve()
     if args.build_root == REPOSITORY or REPOSITORY in args.build_root.parents:
         parser.error("Build root must be outside the repository")
+    if not args.build_only:
+        network_isolation()
     tests = sorted(path for path in (GATEWAY / "tests").glob("*_test.cpp")
                    if path.name.startswith(("codex_", "banked_reset", "cluster_")))
     links = closures(tests)
