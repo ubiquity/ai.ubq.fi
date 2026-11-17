@@ -2,8 +2,9 @@
 
 This port now compiles natively on an Apple Silicon Mac. The 2026-11-17 job builds all **369 production
 translation units** (325 modules and 44 runtime sources) with Apple Clang and libc++, with every port
-warning fatal, and archives them as `libuos_gateway.a`. All 36 runtime binaries pass 456 cases. The larger gateway execution receipts are being collected;
-the table below distinguishes compilation from execution.
+warning fatal, and archives them as `libuos_gateway.a`. The complete suite passes **441/441 binaries
+and 5,029/5,029 cases**: 36 runtime binaries / 457 cases, then 405 application binaries / 4,572 cases.
+All 463 test/support translation units also compile. There are no failed, skipped or timed-out targets.
 
 This is an offline development qualification. Production packaging, the Mac service, live database
 conversion, credentials, upstream inference and deployment are separate acceptance surfaces.
@@ -19,13 +20,13 @@ See [the exact job findings](findings/cppgw-macos-native-20261117.md) for source
 | Boost             | Homebrew 1.92.0_1, JSON and Container, libc++ ABI                          |
 | OpenSSL           | Homebrew openssl@3 3.5.9                                                   |
 | SQLite            | Separate official 3.54.0 dylib, matching the versioned native fixture      |
-| Other C libraries | zlib 1.4, ICU 78.3, Brotli 1.2.1, Zstd 1.5.7                               |
-| Tools             | Homebrew 7.0.13, CMake 4.4.5, Ninja 1.13.2, Python 3.15.2                  |
+| Other C libraries | zlib 1.3.2, ICU 78.3, Brotli 1.2.1, Zstd 1.5.7                             |
+| Tools             | Homebrew 7.0.11, CMake 4.4.5, Ninja 1.13.2, Python 3.15.2                  |
 | Oracle            | Bun 1.4.0, revision 34cbb9a40b4bd1bd767d134a7065e66c2432a676               |
 
 Homebrew SQLite 3.54.1 is installed but the qualified fixture run selects the separate **3.54.0**
 header and dylib explicitly. The system SQLite is not selected. Bun 1.4.0 on this Mac reports its
-own bundled SQLite as 3.51.0; the C++ native-library fixture already has separate native-version
+SQLite as 3.51.0; the C++ native-library fixture already has separate native-version
 expectations. Do not change its recorded 3.54.0 expectation to make another dependency pass.
 
 ICU 79.1 failed the exhaustive IDNA data gate; Bun on this Mac matches all 1088 original scalar
@@ -83,9 +84,9 @@ Run from the repository root with a clean committed checkout:
 
 ```sh
 cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
-  --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 4 --suite rt --require-clean
+  --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite rt --require-clean
 cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
-  --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 4 --suite all --require-clean
+  --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite all --require-clean
 ```
 
 The script compiles every production source once, creates the complete archive, then compiles,
@@ -110,7 +111,8 @@ The driver bypasses host-specific Linux wrappers/presets only for an authorized 
 
 Every binary gets empty private HOME, fresh TMPDIR/cwd, an environment allowlist with no provider
 or credential variables, a new process group and a 180-second timeout. Unix paths use short `/tmp`
-scratch directories. A real Seatbelt network boundary permits loopback/Unix fixtures and rejects
+scratch directories, canonicalized before assigning HOME/TMPDIR/cwd so native `/private/tmp` cwd
+checks agree with the wrapper. A real Seatbelt network boundary permits loopback/Unix fixtures and rejects
 external networking; a failed positive/negative boundary preflight stops execution. Descendant
 groups are killed after execution or timeout. No fixture reads a live database or auth directory.
 The driver sets `DYLD_LIBRARY_PATH` through `env` after `sandbox-exec`, because macOS strips it
@@ -134,23 +136,34 @@ The fallback bindings can be checked separately, using the same prepared depende
 ```sh
 cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
   --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --suite rt \
-  --filter gzip,sqlite,fetch_transport --legacy-loaders --require-clean
+  --jobs 3 --filter gzip,sqlite,fetch_transport --legacy-loaders --require-clean
 ```
 
 This recompiles only `gzip.cpp`, `sqlite.cpp` and `fetch_transport_codec.cpp` without the direct-library
 define, while keeping the native-version test fixtures and ICU path. It exercises `libz.1.dylib`,
 `libsqlite3.dylib`, `libbrotlidec.1.dylib` and `libzstd.1.dylib` through Darwin's loader. A subsequent
-normal invocation restores the three native objects before creating the primary archive.
+normal invocation restores the three native objects before creating the primary archive:
+
+```sh
+cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
+  --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite none --require-clean
+```
 
 ## Native results
 
-| Gate                    | Result                         |
-| ----------------------- | ------------------------------ |
-| Full production compile | 369/369 passed                 |
-| Static archive          | 369 members, built             |
-| Runtime tests           | 36 binaries / 456 cases passed |
-| Other standalone tests  | Pending                        |
-| Darwin fallback loaders | Pending                        |
+| Gate                    | Result                              |
+| ----------------------- | ----------------------------------- |
+| Full production compile | 369/369 passed                      |
+| Static archive          | 369 members, built                  |
+| Test/support compile    | 463/463 passed                      |
+| Runtime tests           | 36/36 binaries, 457/457 cases       |
+| Application tests       | 405/405 binaries, 4,572/4,572 cases |
+| Whole suite             | 441/441 binaries, 5,029/5,029 cases |
+| Darwin fallback loaders | Execution receipt pending           |
+
+The complete primary receipt binds clean commit `c6cd29f9e9743e37c4eca1a0313194fd3279ba9e` and
+tree `8599a3a0bc292a66a664832f01ca1404d2192e3d`, with unchanged identity and every input hash.
+The findings file records the exact run, artifact/receipt hashes and subsequent documentation changes.
 
 ## Proven Darwin behavior and remaining boundaries
 
@@ -163,6 +176,13 @@ normal invocation restores the three native objects before creating the primary 
   saturate signed 64-bit total nanoseconds, with exact minimum/maximum endpoint checks.
 - Asio 1.92 enables `SO_NOSIGPIPE` both when creating and accepting Darwin sockets. A dedicated native
   TCP/Unix check verifies the actual option, half-close behavior and `EPIPE` delivery without SIGPIPE.
+- Bun's Darwin SQLite binding retains WAL sidecars by default and enables URI names; the native KV
+  addon uses bundled SQLite and drains/removes sidecars on close. The port preserves both policies.
+  Readonly SQLite connections prevent creation of a missing WAL through the underlying VFS while
+  retaining SQLite's normal SQL timing. Stopped, sidecar-free snapshots use Bun's immutable URI form;
+  live WAL inspections retain the ordinary connection. Schema, typed rows, revisions, expiry, queue,
+  CAS, crash recovery and the real readonly timestamp/sidecar fences pass. Bun probes prove the
+  platform expectations; the published SDK lifecycle control does not qualify the patched Mac artifact.
 - TLS uses Homebrew OpenSSL default verification paths plus the existing public PEM fallback files;
   it does not import user keychain trust settings. Bun's default/bundled list contains 121 roots on
   this runner; `getCACertificates('system')` returns a different two-entry list. Local TLS fixture

@@ -335,6 +335,48 @@ contains no finding. Exact credential-redacted transcript: `/tmp/cppgw-macos-nat
 SHA-256 `81fc366bdb794bf94e8021e34ad0a9a1bc75facebdfef40a482497c80edf6424`.
 This review does not cover the later fixture placement correction and does not gate delivery.
 
+## Complete passing native receipt
+
+The final full primary run is `native/runs/1794929084815645000`, using the exact `--suite all`
+command above. It exits **0**, with no source edits during compilation or execution:
+
+- Commit: `c6cd29f9e9743e37c4eca1a0313194fd3279ba9e`.
+- Tree: `8599a3a0bc292a66a664832f01ca1404d2192e3d`.
+- Clean checkout, unchanged input hashes and unchanged commit/tree identity: all true.
+- Production: **369/369 compiled** and 369-member static archive.
+- Tests/support: **463/463 compiled** (36 runtime plus 427 application/support).
+- Runtime: **36/36 binaries, 457/457 cases passed**.
+- Application: **405/405 binaries, 4,572/4,572 cases passed**.
+- Total: **441/441 binaries, 5,029/5,029 cases passed**; zero failures, aborts, skips or timeouts.
+- Archive SHA-256: `d9bf7a5ee258372de222994df788bc0a01746f3ab676268f0da3918b12c91d9f`.
+- `results.json` SHA-256: `bc6ed250e624ede717ec929f9fba0adc17e27f786a72f7e41aed998a673dae9f`.
+- `provenance.json` SHA-256: `09cea71e9bb03188f17ff50d4d24859c1374fd15066a25dd1563584e27ca2db6`.
+
+Every application target ran, including the three cluster targets. The earlier guarded capture
+correction and canonical wrapper paths are verified without reapplying their existing changes.
+The final suite covers native child exit/kill/pipes/reaping, signals, TCP/Unix HTTP and WebSockets,
+SO_NOSIGPIPE/half-close/EPIPE, local TLS certificates, all 2,228,224 IDNA records, exact gzip bytes,
+filesystem precision, durable SQLite state and actual handler delivery/settlement fixtures.
+
+Every continuation source change (all under `cpp/gateway`; v1 changes remain documented above):
+
+| Path                                | Change, reason and evidence                                                                                                                                                             |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/rt/sqlite.cpp`                 | Darwin persistence default, readonly VFS selection and guarded direct/dlopen VFS bindings; Bun proves lifecycle, URI and SQL timing; 30 SQLite cases plus the entire suite pass.        |
+| `src/rt/sqlite_darwin.hpp`          | Retain inherited URI/readonly-SHM adapter; add readonly WAL VFS and scoped C-header macro handling. Failed schema access leaves no sidecar, while schema-free SQL keeps Bun behavior.   |
+| `src/rt/kv_sqlite.cpp`              | Darwin native-KV connection explicitly disables Bun-style WAL persistence, matching the checksum-verified SDK lifecycle control; original drain/reopen/CAS/queue/crash assertions pass. |
+| `tests/rt/sqlite_test.cpp`          | Two exact Bun-on-Darwin URI expectations and one persistence/readonly-SQL regression; all Linux values remain.                                                                          |
+| `tests/rt/kv_sqlite_test.cpp`       | Darwin stopped-snapshot readonly URI, immutable connection's Bun-proven `delete` mode plus physical WAL-header assertions; no original schema/value/expiry/queue assertion removed.     |
+| `tests/kv_durable_interop_test.cpp` | Darwin immutable URI only for four readonly snapshot inspections with no sidecars; writable setup and live WAL reads retain ordinary paths. All seven cases pass.                       |
+| `tests/sqlite_readonly_test.cpp`    | Darwin URI success/codec/no-sidecar assertions alongside the original Linux error branch. All seven cases, including both immutable fences, pass.                                       |
+| `tests/permissions_linux_test.cpp`  | Five guarded Darwin refusal variants, including forked-child refusal; twelve actual TypeScript probes prove the exact unsupported-platform error. All Linux assertions remain.          |
+
+`docs/MACOS.md` now records verified versions, complete counts and reproducible external build/test
+commands. `tools/macos-build.sh` is unchanged in this continuation and is qualified by the full sweep.
+Darwin fallback loader syntax checks pass for all three loader sources; execution is the remaining
+qualification step before restoring the primary native archive. Documentation-only changes after the
+primary receipt do not alter its consumed source inputs.
+
 ## Final handoff
 
 Continuation in progress; complete application counts, corrected-source receipts and remaining
