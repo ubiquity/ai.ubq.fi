@@ -28,6 +28,7 @@
 #include "uos/rt/url.hpp"
 #include "uos/utils.hpp"
 #include <algorithm>
+#include <memory>
 #include <tuple>
 #include <variant>
 
@@ -71,6 +72,18 @@ namespace {
   const rt::KvValue& publicKeyAppId(const rt::KvValue& value) {
     if (value.isNullish()) throw rt::TypeError(std::string(value.isNull() ? "null" : "undefined") + " is not an object (evaluating 'p.app_id')");
     return value["app_id"];
+  }
+  rt::Task<void> readQueuedOwnerPolicy(std::shared_ptr<rt::Kv> store, std::shared_ptr<rt::OrderedSet<std::string>> output, std::string owner) {
+    const auto key = qv::kernelOrgLimitKey(owner);
+    auto reading = store->get(key);
+    const auto entry = co_await std::move(reading);
+    if (entry.value.truthy()) output->add(owner);
+  }
+  rt::Task<void> readQueuedRepoPolicy(std::shared_ptr<rt::Kv> store, std::shared_ptr<rt::OrderedSet<std::string>> output, ::uos::types::KernelPolicyQueueItem record) {
+    const auto key = qv::kernelLimitKey(record.owner, record.repo);
+    auto reading = store->get(key);
+    const auto entry = co_await std::move(reading);
+    if (entry.value.truthy()) output->add(record.owner + "/" + record.repo);
   }
 }
 rt::Task<rt::Response> handleAdminKernelPubKeysList() {
@@ -124,22 +137,35 @@ rt::Task<rt::Response> handleAdminKernelPolicyQueueList() {
   if (records->empty()) co_return http::json(200, json::object{{"data", json::value_from(*records)}});
   const auto kv = co_await databaseForRequest();
   if (!kv) co_return http::openaiError(500, "Deno KV is not available", "server_error");
-  rt::OrderedSet<std::string> orgPolicyOwners; rt::OrderedSet<std::string> owners;
+  auto orgPolicyOwners = std::make_shared<rt::OrderedSet<std::string>>(); rt::OrderedSet<std::string> owners;
   for (const auto& record : *records) owners.add(record.owner);
   std::vector<rt::Promise<void>> pendingOwners;
-  auto readOwner = [kv, &orgPolicyOwners](std::string owner) -> rt::Task<void> { const auto entry = co_await kv->get(qv::kernelOrgLimitKey(owner)); if (entry.value.truthy()) orgPolicyOwners.add(owner); };
-  for (const auto& owner : owners) pendingOwners.emplace_back(readOwner(owner));
+  for (const auto& owner : owners) pendingOwners.emplace_back(readQueuedOwnerPolicy(kv, orgPolicyOwners, owner));
   co_await rt::all(std::move(pendingOwners)).wait();
-  rt::OrderedSet<std::string> repoPolicyPairs; std::vector<rt::Promise<void>> pendingRepos;
-  auto readRepo = [kv, &repoPolicyPairs](::uos::types::KernelPolicyQueueItem record) -> rt::Task<void> { const auto entry = co_await kv->get(qv::kernelLimitKey(record.owner, record.repo)); if (entry.value.truthy()) repoPolicyPairs.add(record.owner + "/" + record.repo); };
-  for (const auto& record : *records) if (!orgPolicyOwners.has(record.owner)) pendingRepos.emplace_back(readRepo(record));
+  auto repoPolicyPairs = std::make_shared<rt::OrderedSet<std::string>>(); std::vector<rt::Promise<void>> pendingRepos;
+  for (const auto& record : *records) if (!orgPolicyOwners->has(record.owner)) pendingRepos.emplace_back(readQueuedRepoPolicy(kv, repoPolicyPairs, record));
   co_await rt::all(std::move(pendingRepos)).wait();
   json::array pending;
-  for (const auto& record : *records) if (!orgPolicyOwners.has(record.owner) && !repoPolicyPairs.has(record.owner + "/" + record.repo)) pending.push_back(json::value_from(record));
+  for (const auto& record : *records) if (!orgPolicyOwners->has(record.owner) && !repoPolicyPairs->has(record.owner + "/" + record.repo)) pending.push_back(json::value_from(record));
   co_return http::json(200, json::object{{"data", pending}});
 }
 namespace {
   constexpr double KERNEL_USAGE_DAILY_DAYS = 30;
+  using OrgUsageRows = rt::OrderedMap<std::string, std::optional<ku::KernelOrgUsageWithDaily>>;
+  using RepoUsageRows = rt::OrderedMap<std::string, std::optional<ku::KernelAuthUsageWithDaily>>;
+  rt::Task<void> readOrgUsageRow(std::shared_ptr<OrgUsageRows> output, std::string owner) {
+    ku::KernelUsageReadOptions options{.includeDaily = true, .dailyDays = KERNEL_USAGE_DAILY_DAYS};
+    auto task = ku::getKernelOrgUsage(owner, options);
+    auto usage = co_await std::move(task);
+    output->set(owner, std::move(usage));
+  }
+  rt::Task<void> readRepoUsageRow(std::shared_ptr<RepoUsageRows> output, ::uos::types::KernelAuthLimitRecord record) {
+    const auto key = record.owner + "/" + record.repo;
+    ku::KernelUsageReadOptions options{.includeDaily = true, .dailyDays = KERNEL_USAGE_DAILY_DAYS};
+    auto task = ku::getKernelUsage(record.owner, record.repo, options);
+    auto usage = co_await std::move(task);
+    output->set(key, std::move(usage));
+  }
   rt::Task<rt::Response> kernelUsageInventoryResponse(std::string scope) {
     ku::KernelUsageReadOptions options{.includeDaily = true, .dailyDays = KERNEL_USAGE_DAILY_DAYS};
     if (scope == "org") {
@@ -154,29 +180,29 @@ namespace {
   rt::Task<rt::Response> kernelOrgUsageLimitsResponse(std::string scope, bool includeUsage) {
     const auto limits = co_await qv::listKernelOrgUsageLimits();
     if (!limits) co_return http::openaiError(500, "Failed to load kernel org usage limits", "server_error");
-    rt::OrderedMap<std::string, std::optional<ku::KernelOrgUsageWithDaily>> usageByOwner;
+    std::shared_ptr<OrgUsageRows> usageByOwner;
     if (includeUsage) {
+      usageByOwner = std::make_shared<OrgUsageRows>();
       std::vector<rt::Promise<void>> pending;
-      auto readUsage = [&usageByOwner](std::string owner) -> rt::Task<void> { ku::KernelUsageReadOptions options{.includeDaily = true, .dailyDays = KERNEL_USAGE_DAILY_DAYS}; auto task = ku::getKernelOrgUsage(owner, options); auto usage = co_await std::move(task); usageByOwner.set(owner, std::move(usage)); };
-      for (const auto& record : *limits) pending.emplace_back(readUsage(record.owner));
+      for (const auto& record : *limits) pending.emplace_back(readOrgUsageRow(usageByOwner, record.owner));
       co_await rt::all(std::move(pending)).wait();
     }
     json::array rows;
-    for (const auto& record : *limits) { auto row = json::value_from(record).as_object(); if (includeUsage) { const auto* usage = usageByOwner.get(record.owner); row["usage"] = usage ? orNullJson(*usage) : json::value(nullptr); } rows.push_back(std::move(row)); }
+    for (const auto& record : *limits) { auto row = json::value_from(record).as_object(); if (includeUsage) { const auto* usage = usageByOwner->get(record.owner); row["usage"] = usage ? orNullJson(*usage) : json::value(nullptr); } rows.push_back(std::move(row)); }
     co_return http::json(200, json::object{{"ok", true}, {"scope", scope}, {"limits", rows}});
   }
   rt::Task<rt::Response> kernelRepoUsageLimitsResponse(std::string scope, bool includeUsage) {
     const auto limits = co_await qv::listKernelUsageLimits();
     if (!limits) co_return http::openaiError(500, "Failed to load kernel usage limits", "server_error");
-    rt::OrderedMap<std::string, std::optional<ku::KernelAuthUsageWithDaily>> usageByRepo;
+    std::shared_ptr<RepoUsageRows> usageByRepo;
     if (includeUsage) {
+      usageByRepo = std::make_shared<RepoUsageRows>();
       std::vector<rt::Promise<void>> pending;
-      auto readUsage = [&usageByRepo](::uos::types::KernelAuthLimitRecord record) -> rt::Task<void> { const auto key = record.owner + "/" + record.repo; ku::KernelUsageReadOptions options{.includeDaily = true, .dailyDays = KERNEL_USAGE_DAILY_DAYS}; auto task = ku::getKernelUsage(record.owner, record.repo, options); auto usage = co_await std::move(task); usageByRepo.set(key, std::move(usage)); };
-      for (const auto& record : *limits) pending.emplace_back(readUsage(record));
+      for (const auto& record : *limits) pending.emplace_back(readRepoUsageRow(usageByRepo, record));
       co_await rt::all(std::move(pending)).wait();
     }
     json::array rows;
-    for (const auto& record : *limits) { auto row = json::value_from(record).as_object(); if (includeUsage) { const auto* usage = usageByRepo.get(record.owner + "/" + record.repo); row["usage"] = usage ? orNullJson(*usage) : json::value(nullptr); } rows.push_back(std::move(row)); }
+    for (const auto& record : *limits) { auto row = json::value_from(record).as_object(); if (includeUsage) { const auto* usage = usageByRepo->get(record.owner + "/" + record.repo); row["usage"] = usage ? orNullJson(*usage) : json::value(nullptr); } rows.push_back(std::move(row)); }
     co_return http::json(200, json::object{{"ok", true}, {"scope", scope}, {"limits", rows}});
   }
   rt::Task<rt::Response> kernelUsageListResponse(std::string scope, bool includeUsage) {

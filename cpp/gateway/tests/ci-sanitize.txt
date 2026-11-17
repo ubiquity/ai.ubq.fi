@@ -1,0 +1,29 @@
+# Tests the sanitizer workflow (.github/workflows/cpp-gateway-sanitizers.yml) builds and runs with
+# AddressSanitizer + UndefinedBehaviorSanitizer + LeakSanitizer. One path per line, relative to cpp/gateway.
+# Changing this file on the branch starts a run.
+# Post-fix verification: coroutine-lambda lifetime (admin/kernel) and HTTP server shutdown ownership.
+tests/admin_kernel_coroutine_lifetime_test.cpp
+tests/runtime_http_lifetime_test.cpp
+tests/codex_serial_routing_http_test.cpp
+tests/runtime_http_test.cpp
+tests/runtime_http_body_test.cpp
+tests/runtime_http_differential_test.cpp
+tests/runtime_http_sse_headers_test.cpp
+tests/runtime_early_sse_test.cpp
+tests/passkeys_part1_test.cpp
+tests/chart_source_proxy_test.cpp
+tests/failover_stress_http_test.cpp
+tests/jev_compaction_fallback_quota_test.cpp
+tests/live_calls_http_test.cpp
+tests/live_sideband_http_test.cpp
+tests/serve_delivery_http_test.cpp
+tests/systemone_test.cpp
+tests/claude_header_meter_test.cpp
+tests/lithos_tier_windows_test.cpp
+tests/lithos_wiring_test.cpp
+tests/openai_compat_part11_test.cpp
+tests/oss_gateway_http_test.cpp
+tests/oss_stream_lifecycle_test.cpp
+tests/responses_conformance_http_test.cpp
+tests/responses_native_headers_test.cpp
+tests/responses_stream_http_test.cpp

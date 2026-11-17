@@ -162,7 +162,8 @@ def main():
         for row in document["libraries"]:
             if runtime.digest(Path(row["path"])) != row["sha256"]:
                 raise ValueError("A host runtime library changed after ELF closure inspection")
-        entries = [f"{runtime.digest(path)}  {path.relative_to(stage).as_posix()}\n" for path in sorted(stage.rglob("*")) if path.is_file()]
+        ordered_files = sorted((path for path in stage.rglob("*") if path.is_file()), key=lambda path: path.relative_to(stage).as_posix())
+        entries = [f"{runtime.digest(path)}  {path.relative_to(stage).as_posix()}\n" for path in ordered_files]
         (stage / "manifest.sha256").write_text("".join(entries))
         (stage / "manifest.sha256").chmod(0o644)
         for path in sorted(stage.rglob("*"), reverse=True):

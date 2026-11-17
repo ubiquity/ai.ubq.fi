@@ -72,18 +72,22 @@ namespace {
       .proof = AccountProof{.kind = "quota_exhausted", .model = "fixture", .fingerprint = "fp", .observedAtMs = 1, .validUntilMs = 10'000},
     };
     auto store = std::make_shared<FixtureStore>();
-    store->state = saved ? *saved
-                         : createAuthorityState(scope, {account},
-                                                {PrincipalPolicy{
-                                                  .principalId = "p",
-                                                  .version = 1,
-                                                  .deleted = false,
-                                                  .windowResetAtMs = 10'000,
-                                                  .requestLimit = 10,
-                                                  .kernelLimit = 10,
-                                                  .concurrencyLimit = 10,
-                                                  .paidLimitMicrocredits = 100,
-                                                }});
+    if (saved) {
+      store->state = *saved;
+    } else {
+      AuthorityState initialState = createAuthorityState(scope, {account},
+                                                       {PrincipalPolicy{
+                                                         .principalId = "p",
+                                                         .version = 1,
+                                                         .deleted = false,
+                                                         .windowResetAtMs = 10'000,
+                                                         .requestLimit = 10,
+                                                         .kernelLimit = 10,
+                                                         .concurrencyLimit = 10,
+                                                         .paidLimitMicrocredits = 100,
+                                                       }});
+      store->state = std::move(initialState);
+    }
     return Fixture{.authority = std::make_shared<PortableAuthority>(store, scope), .store = store};
   }
 

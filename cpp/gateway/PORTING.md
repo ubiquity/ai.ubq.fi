@@ -81,6 +81,14 @@ run time (double free), not at compile time. In every coroutine:
 - A member coroutine needs its object alive until it completes: never call one on a
   temporary (`co_await Client(x).call()`); hold the object in a named variable.
 
+## Coroutine closure ownership
+
+A capturing coroutine lambda stores its captures in the closure object, not in the coroutine frame. When a returned Task or Promise can outlive that object, use a free function or captureless coroutine with owning parameters passed by value. Shared mutable results and dependencies must be shared owners in each child frame; never borrow a handler-local container across an asynchronous suspension.
+
+`rt::all`, `allSettled`, `race` and `any` retain the TypeScript cancellation contract: rejection or selection does not implicitly cancel siblings. A parent may finish while another child is pending, so that child must own everything it will access. Do not add cancellation, drain-before-rejection or another await to hide a lifetime defect. `rt::async` can own a closure but does not extend objects captured by reference; audit the referents as well as the closure. A member coroutine likewise needs an explicit owner for its object.
+
+A noncoroutine callback that returns another Task has a different lifetime: verify that the callee owns its parameters and that any callback owner survives its actual asynchronous use. Classify each site from the reached ownership path; catching ordinary dependency errors alone is not an ownership proof. Add a post-fix functional regression for early rejection plus a pending sibling that later completes, and verify the fixed code with a bounded sanitizer gate.
+
 ## Type mapping
 
 | TypeScript                                                                                                                                          | C++                                                                                                                                                                                                                                                                                                                                                                                                                                               |

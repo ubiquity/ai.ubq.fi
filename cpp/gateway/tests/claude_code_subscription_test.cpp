@@ -154,28 +154,52 @@ namespace {
 }
 
 TEST("credential and allowlist reads are explicit and empty by default") {
-  EXPECT(!credentials::readClaudeCodeEnvCredential(envLookup({})).has_value());
-  EXPECT(!credentials::readClaudeCodeEnvCredential(envLookup({{"CLAUDE_CODE_OAUTH_TOKEN", "  "}})).has_value());
-  const auto token = credentials::readClaudeCodeEnvCredential(envLookup({{"CLAUDE_CODE_OAUTH_TOKEN", " token-1 "}}));
+  const std::vector<std::pair<std::string, std::string>> emptyValues;
+  const auto emptyLookup = envLookup(emptyValues);
+  EXPECT(!credentials::readClaudeCodeEnvCredential(emptyLookup).has_value());
+  const std::vector<std::pair<std::string, std::string>> blankValues{{"CLAUDE_CODE_OAUTH_TOKEN", "  "}};
+  const auto blankLookup = envLookup(blankValues);
+  EXPECT(!credentials::readClaudeCodeEnvCredential(blankLookup).has_value());
+  const std::vector<std::pair<std::string, std::string>> tokenValues{{"CLAUDE_CODE_OAUTH_TOKEN", " token-1 "}};
+  const auto tokenLookup = envLookup(tokenValues);
+  const auto token = credentials::readClaudeCodeEnvCredential(tokenLookup);
   ASSERT(token.has_value());
   EXPECT_EQ(token->secret, std::string("token-1"));
   EXPECT_EQ(token->kind, std::string("oauth"));
   EXPECT_EQ(token->source, std::string("CLAUDE_CODE_OAUTH_TOKEN"));
-  EXPECT(setItems(cc::parseClaudeCodeAllowedKeyIds(std::nullopt)).empty());
-  EXPECT(setItems(cc::parseClaudeCodeAllowedKeyIds(std::string("  "))).empty());
-  EXPECT(setItems(cc::parseClaudeCodeAllowedKeyIds(std::string("a, b\n c"))) == (std::vector<std::string>{"a", "b", "c"}));
-  EXPECT(setItems(cc::readClaudeCodeAllowedKeyIds(envLookup({{"CLAUDE_CODE_ALLOWED_KEY_IDS", "owner-key"}}))) == (std::vector<std::string>{"owner-key"}));
+  const auto absentIds = cc::parseClaudeCodeAllowedKeyIds(std::nullopt);
+  const auto absentItems = setItems(absentIds);
+  EXPECT(absentItems.empty());
+  const auto blankIds = cc::parseClaudeCodeAllowedKeyIds(std::string("  "));
+  const auto blankItems = setItems(blankIds);
+  EXPECT(blankItems.empty());
+  const auto parsedIds = cc::parseClaudeCodeAllowedKeyIds(std::string("a, b\n c"));
+  const auto parsedItems = setItems(parsedIds);
+  const std::vector<std::string> expectedParsedItems{"a", "b", "c"};
+  EXPECT(parsedItems == expectedParsedItems);
+  const std::vector<std::pair<std::string, std::string>> allowedValues{{"CLAUDE_CODE_ALLOWED_KEY_IDS", "owner-key"}};
+  const auto allowedLookup = envLookup(allowedValues);
+  const auto allowedIds = cc::readClaudeCodeAllowedKeyIds(allowedLookup);
+  const auto allowedItems = setItems(allowedIds);
+  const std::vector<std::string> expectedAllowedItems{"owner-key"};
+  EXPECT(allowedItems == expectedAllowedItems);
 }
 
 TEST("CLAUDE_API_KEY is the primary environment credential and wins over the legacy OAuth token") {
-  const auto apiKey = credentials::readClaudeCodeEnvCredential(envLookup({{"CLAUDE_API_KEY", " sk-ant-usr-1A6exampleBwAA "}}));
+  const std::vector<std::pair<std::string, std::string>> apiValues{{"CLAUDE_API_KEY", " sk-ant-usr-1A6exampleBwAA "}};
+  const auto apiLookup = envLookup(apiValues);
+  const auto apiKey = credentials::readClaudeCodeEnvCredential(apiLookup);
   ASSERT(apiKey.has_value());
   EXPECT_EQ(apiKey->kind, std::string("api_key"));
   EXPECT_EQ(apiKey->secret, std::string("sk-ant-usr-1A6exampleBwAA"));
   EXPECT_EQ(apiKey->source, std::string("CLAUDE_API_KEY"));
-  const auto both = credentials::readClaudeCodeEnvCredential(envLookup({{"CLAUDE_API_KEY", "sk-ant-usr-key"}, {"CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-token"}}));
+  const std::vector<std::pair<std::string, std::string>> bothValues{{"CLAUDE_API_KEY", "sk-ant-usr-key"}, {"CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-token"}};
+  const auto bothLookup = envLookup(bothValues);
+  const auto both = credentials::readClaudeCodeEnvCredential(bothLookup);
   EXPECT(both.has_value() && both->source == "CLAUDE_API_KEY");
-  const auto oauthOnly = credentials::readClaudeCodeEnvCredential(envLookup({{"CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-token"}}));
+  const std::vector<std::pair<std::string, std::string>> oauthValues{{"CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-token"}};
+  const auto oauthLookup = envLookup(oauthValues);
+  const auto oauthOnly = credentials::readClaudeCodeEnvCredential(oauthLookup);
   EXPECT(oauthOnly.has_value() && oauthOnly->kind == "oauth");
 }
 

@@ -125,7 +125,13 @@ class Upstream:
                             owner.redirect_status = None
                         if redirect:
                             call["response_status"] = redirect
-                            self.json_response(redirect, {"synthetic_redirect": redirect}, {"location": owner.origin + "/redirected-sink"})
+                            self.send_response(redirect)
+                            self.send_header("location", owner.origin + "/redirected-sink")
+                            self.send_header("content-length", "0")
+                            self.send_header("connection", "close")
+                            self.end_headers()
+                            self.wfile.flush()
+                            self.close_connection = True
                         else:
                             self.chat(body, call)
                     else:

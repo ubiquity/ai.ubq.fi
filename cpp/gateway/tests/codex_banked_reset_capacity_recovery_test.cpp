@@ -106,7 +106,9 @@ namespace {
     if (kind(selection) != "eligible") throw rt::JsError("expected eligible selection");
     const auto account = accounts(selection)[0];
     const double freshDeadline = now + 7 * DAY_MS; RUN(markCodexQuotaBlocked(account, httpDateQuotaResponse(freshDeadline), now + 1));
-    const auto persisted = state(kv); const auto& blocks = required(persisted.slots[0].quota_blocks_by_class, "class blocks");
+    const auto persisted = state(kv);
+    const std::string classBlocksMessage = "class blocks";
+    const auto& blocks = required(persisted.slots[0].quota_blocks_by_class, classBlocksMessage);
     const auto classBlock = required(blocks.get("standard"), "standard class block"); co_return FreshBlock{account, freshDeadline, classBlock};
   }
   routing::CodexQuotaClassBlock standardBlock(const std::shared_ptr<RoutingKv>& kv, std::size_t index) {

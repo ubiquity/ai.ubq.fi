@@ -168,7 +168,9 @@ ASYNC_TEST("differential: display credits keep available ones ordered by expiry,
     {"CodexUsageResetProviderConfigurationError: Reset-credit inventory response was invalid.", {"[]", 200}},
   };
   for (const auto& [expected, response] : failures) {
-    const auto [body, status] = response;
+    const auto responseFields = response;
+    const auto& body = std::get<0>(responseFields);
+    const auto& status = std::get<1>(responseFields);
     rt::Task<std::vector<CodexResetCreditDiagnostic>> failing =
       readCodexResetCredits(opts([body, status](rt::RequestInfo, rt::RequestInit) { return respond(body, status); }), signal());
     rt::Task<std::string> observing = outcome(std::move(failing));

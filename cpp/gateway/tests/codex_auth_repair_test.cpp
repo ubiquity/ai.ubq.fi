@@ -183,7 +183,8 @@ TEST("planCodexAuthRepair leaves an authenticating account untouched") {
 
   EXPECT_EQ(plan.selections.size(), std::size_t{0});
   EXPECT_EQ(plan.unrepairable.size(), std::size_t{0});
-  EXPECT(plan.healthy == (std::vector<CodexAuthRepairPlan::Healthy>{{.slot = 1, .account_id = "acct-a", .refresh_diverged = std::nullopt}}));
+  const std::vector<CodexAuthRepairPlan::Healthy> expectedHealthy{{.slot = 1, .account_id = "acct-a", .refresh_diverged = std::nullopt}};
+  EXPECT(plan.healthy == expectedHealthy);
 }
 
 TEST("planCodexAuthRepair treats a probe-valid but already expired local token as broken") {
@@ -323,7 +324,8 @@ TEST("planCodexAuthRepair decides each slot independently") {
   std::vector<double> slots;
   for (const CodexAuthRepairSelection& entry : plan.selections) slots.push_back(entry.slot);
   EXPECT_EQ(slots, (std::vector<double>{2}));
-  EXPECT(plan.healthy == (std::vector<CodexAuthRepairPlan::Healthy>{{.slot = 1, .account_id = "acct-a", .refresh_diverged = true}}));
+  const std::vector<CodexAuthRepairPlan::Healthy> expectedHealthy{{.slot = 1, .account_id = "acct-a", .refresh_diverged = true}};
+  EXPECT(plan.healthy == expectedHealthy);
 }
 
 TEST("applyCodexAuthPlan replaces only the affected account and preserves the rest") {

@@ -1,0 +1,47 @@
+name: C++ gateway sanitizer tests
+run-name: C++ gateway sanitizer tests ${{ github.sha }}
+
+# Builds the tests listed in cpp/gateway/tests/ci-sanitize.txt with AddressSanitizer,
+# UndefinedBehaviorSanitizer and LeakSanitizer and runs them on a disposable runner.
+# Logs and results are uploaded as an artifact; nothing is pushed back.
+on:
+  push:
+    branches: [claude/cpp-gateway-port]
+    paths:
+      - .github/workflows/cpp-gateway-sanitizers.yml
+      - cpp/gateway/tests/ci-sanitize.txt
+      - cpp/gateway/tools/ci_sanitize.py
+
+concurrency:
+  group: cpp-gateway-sanitizers-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sanitize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang libboost-json-dev libboost-container-dev libbrotli-dev \
+            libssl-dev libsqlite3-dev zlib1g-dev libzstd-dev libicu-dev
+          clang++ --version
+      - name: Build and run
+        run: python3 cpp/gateway/tools/ci_sanitize.py --list cpp/gateway/tests/ci-sanitize.txt --out "$RUNNER_TEMP/sanitize"
+      - name: Upload logs and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitizer-results
+          path: |
+            ${{ runner.temp }}/sanitize/logs
+            ${{ runner.temp }}/sanitize/results.json
+          if-no-files-found: ignore
+          retention-days: 14

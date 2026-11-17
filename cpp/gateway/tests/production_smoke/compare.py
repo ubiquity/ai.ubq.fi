@@ -11,13 +11,18 @@ TERMINAL_FIELDS = ("route", "status", "stream", "provider", "model", "delivery_o
                    "upstream_event_kinds", "response_created_observed", "synthetic_terminal_type", "attempted_providers")
 
 
-def normalize(value, key=None, identities=None):
+def normalize(value, key=None, identities=None, origin_ms=None):
     if identities is None:
         identities = {}
     if isinstance(value, dict):
-        return {name: normalize(item, name, identities) for name, item in value.items()}
+        return {name: normalize(item, name, identities, origin_ms) for name, item in value.items()}
     if isinstance(value, list):
-        return [normalize(item, key, identities) for item in value]
+        return [normalize(item, key, identities, origin_ms) for item in value]
+    if origin_ms is not None and isinstance(value, (int, float)):
+        if key in ("expires_at_ms", "reset_at_ms", "usage_reset_at_ms") and value > 1000000000:
+            return {"delta_from_key_creation_ms": value - origin_ms}
+        if key == "created" and abs(value - origin_ms / 1000) < 60:
+            return "[fresh clock]"
     if key in CLOCK_FIELDS and isinstance(value, (int, float)) and value > 1000000000:
         return "[clock]"
     if isinstance(value, str) and (UUID.fullmatch(value) or value.startswith(("resp_", "msg_"))):
@@ -48,7 +53,7 @@ def projection(trial):
         rows = [entry["value"] for entry in trial.get("terminals", []) if entry["value"].get("request_id") == request_id]
         if rows:
             result["terminals"][name] = [{field: row[field] for field in TERMINAL_FIELDS if field in row} for row in rows]
-    return normalize(result)
+    return normalize(result, origin_ms=trial["captures"]["create_key"]["json"]["created_at_ms"])
 
 
 def differences(left, right, path="$"):

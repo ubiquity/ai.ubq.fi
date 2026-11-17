@@ -114,11 +114,15 @@ namespace {
     try {
       auto serving = serve::importMetaMain(options);
       co_await std::move(serving);
+    } catch (const rt::JsError& error) {
+      failure = error.message;
     } catch (const std::exception& error) {
       failure = error.what();
     }
-    const std::string lower = rt::toLowerCase(failure);
-    require(rt::includes(lower, "address already in use") || rt::includes(lower, "eaddrinuse"), "Typed entry did not propagate the real bind collision");
+    const std::string expectedFailure = "Failed to start server. Is port " + std::to_string(collision.port) + " in use?";
+    if (failure != expectedFailure)
+      std::fprintf(stderr, "observed_entry_failure=%s\n", failure.c_str());
+    require(failure == expectedFailure, "Typed entry did not propagate the exact source-compatible bind collision");
     if (*closes != 1) {
       std::fprintf(stderr, "observed_kv_close_count=%d\n", *closes);
       throw std::runtime_error("Typed entry must close the real durable KV exactly once before propagating listen failure");
@@ -130,7 +134,7 @@ namespace {
       const auto ignored = co_await std::move(probing);
       (void)ignored;
     } catch (const rt::JsError& error) {
-      closed = rt::includes(rt::toLowerCase(error.message), "closed");
+      closed = error.message == "Cannot call '.get' after '.close' is called";
     }
     require(closed, "The underlying real SQLite store remained open after listener failure");
     kv::resetKvForTest();

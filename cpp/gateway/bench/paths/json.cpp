@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
   try {
     if (argc != 5) throw std::runtime_error("usage: uos-json-bench input.json parse|stringify iterations samples");
     const std::string operation(argv[2]);
-    if (operation != "parse" && operation != "stringify") throw std::runtime_error("Unknown benchmark operation");
+    if (operation != "parse" && operation != "stringify" && operation != "bytes") throw std::runtime_error("Unknown benchmark operation");
     const int iterations = bounded(argv[3], 200000);
     const int samples = bounded(argv[4], 31);
     std::ifstream input(argv[1], std::ios::binary);
@@ -45,6 +45,10 @@ int main(int argc, char** argv) {
     const auto coldParseFinished = std::chrono::steady_clock::now();
     const std::string canonical = uos::rt::jsonStringify(initial);
     const auto coldStringifyFinished = std::chrono::steady_clock::now();
+    if (operation == "bytes") {
+      if (std::fwrite(canonical.data(), 1, canonical.size(), stdout) != canonical.size()) throw std::runtime_error("Cannot write canonical JSON bytes");
+      return 0;
+    }
     const auto coldElapsed = operation == "parse" ? coldParseFinished - coldParseStarted : coldStringifyFinished - coldParseFinished;
     const double coldOperationUs = std::chrono::duration<double, std::micro>(coldElapsed).count();
     std::uint64_t consumed = 0;

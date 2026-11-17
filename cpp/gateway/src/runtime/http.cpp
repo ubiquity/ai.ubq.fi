@@ -2006,8 +2006,10 @@ namespace uos::runtime::http {
     }
     (void)state->finished
       .finally_([weak] {
-        auto live = weak.lock();
-        if (live && live->options.signal) live->options.signal->removeEventListener("abort", live->abort);
+        if (auto live = weak.lock()) {
+          if (live->options.signal) live->options.signal->removeEventListener("abort", live->abort);
+          live->abort = rt::EventListener{};
+        }
       })
       .catch_(rt::ignoreRejection);
     HttpServer server;

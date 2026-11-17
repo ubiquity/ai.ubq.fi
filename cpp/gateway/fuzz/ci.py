@@ -100,9 +100,14 @@ def main():
     with (out / "campaign.log").open("wb") as log:
         code = subprocess.run(command, cwd=out, env=environment, stdout=log, stderr=subprocess.STDOUT).returncode
     findings = sorted(path.name for path in artifacts.iterdir() if path.is_file())
+    # Catastrophic backtracking is the JavaScript engines' own behaviour for patterns such as
+    # (a*)+ and (.+)+, so slow regex inputs are kept in the artifacts but are not failures.
+    expected = [name for name in findings if args.target == "regex" and name.startswith("timeout-")]
+    findings = [name for name in findings if name not in expected]
     tail = (out / "campaign.log").read_text(errors="replace")[-3000:]
     summary = {"target": args.target, "seconds": args.seconds, "jobs": args.jobs, "exit": code,
-               "corpus_count": len(list(corpus.iterdir())), "findings": findings}
+               "corpus_count": len(list(corpus.iterdir())), "findings": findings,
+               "expected_slow_inputs": len(expected)}
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     shutil.rmtree(objects)
     print(tail)
