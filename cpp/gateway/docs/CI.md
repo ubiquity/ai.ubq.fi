@@ -78,7 +78,7 @@ These seven controls cover successful parallel environment isolation, failure co
 
 ## Runner measurements
 
-Measured on 2026-11-17: Ubuntu 26.04.1, x86_64, 4 CPUs, approximately 15 GiB RAM; GCC 15.2.0, Clang 21.1.8, Boost 1.90, OpenSSL 3.5.5, SQLite 3.54.0 (prepared from source; distribution version was 3.46.1), ICU 78.2, zlib 1.3.1, Brotli 1.2.0, Zstd 1.5.7 and mold 2.40.4. Bun 1.4.0 is the unchanged behavior oracle.
+Measured on 2026-11-17: Ubuntu 26.04.1, x86_64, 4 CPUs, approximately 15 GiB RAM; GCC 15.2.0 (debug), GCC 14.3.0 (release), Clang 21.1.8, Boost 1.90, OpenSSL 3.5.5, SQLite 3.54.0 (prepared from source; distribution version was 3.46.1), ICU 78.2, zlib 1.3.1, Brotli 1.2.0, Zstd 1.5.7 and mold 2.40.4. Bun 1.4.0 is the unchanged behavior oracle.
 
 | Configuration / gate                | Object build wall time | Link/test wall time | Outcome                                                                              |
 | ----------------------------------- | ---------------------- | ------------------- | ------------------------------------------------------------------------------------ |
@@ -89,6 +89,8 @@ Measured on 2026-11-17: Ubuntu 26.04.1, x86_64, 4 CPUs, approximately 15 GiB RAM
 | Clang ASan/UBSan v4 driver controls | Included in total      | 9.047 s total       | 7/7 passed                                                                           |
 | Full Clang / full ASan/UBSan suites | Not run                | Not run             | No full-suite acceptance claimed                                                     |
 | arm64 / macOS                       | Not run                | Not run             | Proposed CI only                                                                     |
+
+GCC 15 optimized compilation also reports unresolved libstdc++ variant-copy and direct awaited structured-binding diagnostics. This runner uses the permitted GCC 14.3 compiler for the complete release run; it passed strict comparison probes for the same failing modules. The GCC 15 optimized attempts remain diagnostic evidence, not successful release receipts.
 
 Exact commands, original failures, source changes, limitations and terminal counts are maintained in [the runner findings](findings/cppgw-ci-build-x86-20261117.md). An incremental build must not be described as a cold-build measurement.
 

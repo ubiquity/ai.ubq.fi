@@ -2,13 +2,15 @@
 
 Status: discovery in progress. This file is maintained during the run; no full-suite acceptance claimed yet.
 
-## Work contract v5
+## Work contract v6
 
 Objective: add a portable, compiler-selectable CI driver, compile all gateway runtime/module sources once per configuration, and run every standalone test on this disposable x86_64 runner in GCC debug and release configurations. Provide sanitizer support, deterministic sharding, isolated test environments, a final result table, and a documented workflow proposal.
 
 Non-goals: deployment/service activation, live databases, provider requests, credential changes, application redesign, changing Bun-recorded expected values, or fixing defects outside the owned paths. Existing production-host build wrappers and presets remain separate.
 
 Invariants: C++20; `-Wall -Wextra -Wshadow -Wconversion -Werror`; Boost JSON/Container/System no-autolink definitions; every runtime object in each test; exact per-test Links closure; existing coroutine/lifetime rules and AArch64 behavior; no credentials inherited by tests; all build artifacts outside the checkout. No test skipped or weakened to obtain success.
+
+Contract v6 compiler matrix: final debug qualification uses GCC 15.2; final optimized qualification uses the user-permitted GCC 14.3 toolchain. GCC 15 optimized diagnostics in libstdc++ variant copying and direct awaited structured bindings are retained as unresolved findings. The representative `src/admin/index.cpp` and `src/api_key_policy.cpp` both compile warning-free with GCC 14.3 using the same strict `-O2` flags and standard Asio allocation mode. No compiler warning flag is weakened. A complete GCC 14 release run is required.
 
 Contract v5 allocator amendment: release and sanitizer configurations use standard coroutine frame allocation with `BOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING`, a supported Asio mode already used by the SDK profile. GCC 15/Boost 1.90 optimized compilation diagnosed the recycling allocator as mismatched new/delete; disabling that allocator compiles the same failing module warning-free with every required warning still fatal. Debug retains its existing allocator mode. Earlier optimized objects are not reused across this flag change.
 
@@ -72,3 +74,11 @@ Local review of the v3 task diff completed with `codex-auto-review`, exact head 
 - GitHub CLI has no authenticated GitHub session on this runner. Delivery will be attempted through the configured Git remote; credentials will not be read or repurposed.
 - Debug supervisor-secret failures are the original 2-second wall-clock assertions at test lines 167 and 239; 39/41 cases pass. The assertions are unchanged. Await release evidence before deciding whether optimized performance still fails.
 - No production or Mac acceptance is claimed.
+
+## Additional GCC 15 optimized findings
+
+The second GCC 15 release attempt (standard Asio allocation, `/tmp/uos-gateway-build/g++-fbd8c177c74c/release`) produced additional fatal diagnostics and was stopped before tests to select the permitted GCC 14 compiler for full optimized execution. Logs are preserved in `/tmp/cppgw-release-gcc15-standard-allocator.log` and per-object logs in that output tree.
+
+- `src/admin/index.cpp`, `src/api_keys.cpp`, `src/authority/native_api_key_audit.cpp`, `src/authority/native_kernel.cpp`, `src/cache/prompt_analytics.cpp` and `src/codex/manual_reset_state.cpp` instantiate a libstdc++ `std::variant` copy-assignment path through `KvKeyPart`. First diagnostic: `/usr/include/c++/15/bits/new_allocator.h:172:66: error: void operator delete(void*, std::size_t) called on unallocated object <anonymous> [-Werror=free-nonheap-object]`; the note points to the temporary variant at `/usr/include/c++/15/variant:679`. Those standard-library files are outside the owned paths and are untouched. No warning suppression or broad change to KV value semantics was applied.
+- `src/api_key_policy.cpp` (four direct awaited tuple bindings), `src/cache/kv_migration.cpp`, `src/cache/scope_experiment.cpp` and `src/cache/scope_experiment_targets.cpp` emit `-Werror=maybe-uninitialized` on the unnamed result of structured bindings from `co_await`. The GCC 15 optimized profile is not qualified; these require a separate compiler-focused lifetime investigation rather than an unproved semantic change. Debug execution of their existing cases is recorded above.
+- Exact strict comparison probes: `g++-14 -std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion -Werror -DBOOST_JSON_NO_LIB -DBOOST_CONTAINER_NO_LIB -DBOOST_SYSTEM_NO_LIB -DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING -DUOS_GATEWAY_NATIVE_LIBRARIES=1 -I cpp/gateway/include -I cpp/gateway -I /usr/local/include -c cpp/gateway/src/admin/index.cpp -o /tmp/cppgw-gcc14-variant-probe.o` and the same flags with `src/api_key_policy.cpp -o /tmp/cppgw-gcc14-policy-probe.o`. Both exit 0 with empty logs `/tmp/cppgw-gcc14-{variant,policy}-probe.log`. GCC 14.3 was already installed on the runner.
