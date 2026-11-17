@@ -8,6 +8,9 @@
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/weak.hpp"
 
+#include <boost/asio/execution_context.hpp>
+#include <boost/asio/io_context.hpp>
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -56,6 +59,28 @@ namespace uos::provider::stream_relay {
       }
     };
 
+    // Abort callbacks remain callable after completion. Release their signal cycles only
+    // when the loop can no longer dispatch an abort, without invoking the callbacks.
+    class PendingCancellationRegistry : public boost::asio::execution_context::service {
+    public:
+      static boost::asio::execution_context::id id;
+      explicit PendingCancellationRegistry(boost::asio::execution_context& context) : service(context) {}
+      void add(const std::shared_ptr<PendingCancellation>& pending) {
+        std::erase_if(pending_, [](const auto& weak) { return weak.expired(); });
+        pending_.push_back(pending);
+      }
+    private:
+      void shutdown() override {
+        auto pending = std::move(pending_);
+        pending_.clear();
+        for (const auto& weak : pending) {
+          if (const auto live = weak.lock()) live->callback = {};
+        }
+      }
+      std::vector<std::weak_ptr<PendingCancellation>> pending_;
+    };
+    boost::asio::execution_context::id PendingCancellationRegistry::id;
+
     struct RelayState {
       ProviderChatStreamAdapter adapter;
       std::optional<rt::Response> upstream;
@@ -98,6 +123,10 @@ namespace uos::provider::stream_relay {
     };
 
     template <class State> void ownPending(const std::shared_ptr<State>& state) {
+      if (state->pendingCancellation->callback) {
+        auto& registry = boost::asio::use_service<PendingCancellationRegistry>(rt::loop().context());
+        registry.add(state->pendingCancellation);
+      }
       const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = state->downstreamSignal.state();
       rt::EventListener cancelPendingOnDownstreamAbort([pending = state->pendingCancellation, weakSignal] {
         if (const auto signal = weakSignal.lock()) pending->cancel(rt::AbortSignal(signal).reason());
