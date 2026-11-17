@@ -3,6 +3,7 @@
 // is the test's temporary directory.
 #include "uos/rt/date.hpp"
 #include "uos/rt/fs.hpp"
+#include "uos/rt/process.hpp"
 #include "uos/rt/test.hpp"
 #include <dirent.h>
 #include <sys/stat.h>
@@ -25,7 +26,7 @@ namespace fs = uos::rt::fs;
 
 namespace {
   struct TempDir {
-    std::string path = fs::mkdtempSync("/tmp/uos-rt-fs-test-");
+    std::string path = fs::mkdtempSync(rt::os::tmpdir() + "/uos-rt-fs-test-");
     ~TempDir() {
       ::chmod((path + "/noperm").c_str(), 0600);
       fs::rmSync(path, {.recursive = true, .force = true});
@@ -508,7 +509,12 @@ TEST("fs error objects: descriptors, create flags, copy and link (fs1 probe)") {
   fs::closeSync(twice);
   EXPECT_EQ(errorOf([&] { fs::closeSync(twice); }), "Error|EBADF: bad file descriptor, close|EBADF|-9|close|-|-|" + std::to_string(twice));
   EXPECT_EQ(fs::constants::O_RDONLY_, 0);
+  // Bun 1.4.0 reports the native Linux constant on each architecture.
+#if defined(__x86_64__)
+  EXPECT_EQ(fs::constants::O_NOFOLLOW_, 131072);
+#else
   EXPECT_EQ(fs::constants::O_NOFOLLOW_, 32768);
+#endif
   EXPECT_EQ(fs::constants::COPYFILE_EXCL, 1);
   EXPECT_EQ(fs::constants::O_CREAT_, 64);
   EXPECT_EQ(fs::constants::O_EXCL_, 128);

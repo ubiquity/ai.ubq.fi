@@ -204,6 +204,7 @@ namespace uos::rt::detail::fetch {
     bool hasBufferedInput() const;
 
   private:
+    Task<ReadStatus> readSome();
     Task<bool> flushTls();
     // Restarts the idle countdown.
     void touch();
@@ -239,7 +240,6 @@ namespace uos::rt::detail::fetch {
     void sweep();
     void arm();
     std::vector<std::shared_ptr<Connection>>& slots(bool secure) { return secure ? secure_ : plain_; }
-    std::size_t capacity_;
     double timeoutMs_;
     std::vector<std::shared_ptr<Connection>> plain_;
     std::vector<std::shared_ptr<Connection>> secure_;

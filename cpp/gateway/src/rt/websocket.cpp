@@ -8,14 +8,58 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 
+#include <boost/asio/io_context.hpp>
+
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 namespace uos::rt::ws {
   namespace detail {
+    // IO normally keeps open WebSockets alive. Dropped completion handlers at loop
+    // teardown cannot emit close, so release the remaining callback cycles there.
+    class WebSocketRegistry : public boost::asio::execution_context::service {
+    public:
+      static boost::asio::execution_context::id id;
+      explicit WebSocketRegistry(boost::asio::execution_context& context) : service(context) {}
+      void add(const std::shared_ptr<WebSocket>& websocket) { sockets_[websocket.get()] = websocket; }
+      void remove(WebSocket* websocket) { sockets_.erase(websocket); }
+
+    private:
+      void shutdown() override {
+        auto sockets = std::move(sockets_);
+        sockets_.clear();
+        for (const auto& [pointer, weak] : sockets) {
+          (void)pointer;
+          auto websocket = weak.lock();
+          if (!websocket) continue;
+          WebSocket::State& state = websocket->state();
+          state.registry = nullptr;
+          auto request = std::exchange(state.req, nullptr);
+          if (request) {
+            request->abort();
+            if (request->socket) request->socket->shutdown();
+          }
+          if (state.socket) state.socket->shutdown();
+          if (state.receiver) state.receiver->removeAllListeners();
+          websocket->removeAllListeners();
+        }
+      }
+      std::unordered_map<WebSocket*, std::weak_ptr<WebSocket>> sockets_;
+    };
+
+    boost::asio::execution_context::id WebSocketRegistry::id;
+
+    void trackWebSocket(const std::shared_ptr<WebSocket>& websocket) {
+      if (websocket->state().registry) return;
+      auto& registry = boost::asio::use_service<WebSocketRegistry>(static_cast<boost::asio::execution_context&>(rt::loop().context()));
+      registry.add(websocket);
+      websocket->state().registry = &registry;
+    }
+
     void reportUncaught(Reason reason) noexcept {
       try {
         rt::detail::reportUncaught(std::move(reason), false);
@@ -284,6 +328,7 @@ namespace uos::rt::ws {
     }
 
     void setSocket(const std::shared_ptr<WebSocket>& websocket, std::shared_ptr<Socket> socket, Bytes head, double maxPayload, bool skipUTF8Validation) {
+      trackWebSocket(websocket);
       WebSocket::State& state = websocket->state();
       auto receiver = std::make_shared<Receiver>(Receiver::Options{.isServer = state.isServer, .maxPayload = maxPayload, .skipUTF8Validation = skipUTF8Validation});
       state.receiver = receiver;
@@ -391,11 +436,20 @@ namespace uos::rt::ws {
 
   WebSocket::WebSocket(PrivateTag) : state_(std::make_unique<State>()) { state_->isServer = false; }
 
-  WebSocket::~WebSocket() = default;
+  WebSocket::~WebSocket() {
+    if (state_->registry) state_->registry->remove(this);
+  }
 
   std::shared_ptr<WebSocket> WebSocket::create(std::string address, ClientOptions options) {
     auto websocket = std::make_shared<WebSocket>(PrivateTag{});
-    detail::initAsClient(websocket, address, std::move(options));
+    detail::trackWebSocket(websocket);
+    try {
+      detail::initAsClient(websocket, address, std::move(options));
+    } catch (...) {
+      auto request = std::exchange(websocket->state().req, nullptr);
+      if (request) request->abort();
+      throw;
+    }
     return websocket;
   }
 

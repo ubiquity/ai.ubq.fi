@@ -68,7 +68,8 @@ namespace uos::rt::detail::tls {
       if (hostParts.size() != patternParts.size()) return false;
       for (const std::string& part : patternParts) {
         if (part.empty()) return false;
-        for (const unsigned char c : part) {
+        for (const char byte : part) {
+          const auto c = static_cast<unsigned char>(byte);
           if (c < 0x21 || c > 0x7f) return false;
         }
       }

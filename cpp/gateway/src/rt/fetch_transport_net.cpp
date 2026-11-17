@@ -139,6 +139,11 @@ namespace uos::rt::detail::fetch {
   }
 
   Task<ReadStatus> Connection::fill() {
+    // Cancelling a body releases its connection before the socket completion runs.
+    return rt::detail::keepAlive<ReadStatus>(shared_from_this(), readSome());
+  }
+
+  Task<ReadStatus> Connection::readSome() {
     if (!open_) co_return ReadStatus::aborted;
     if (!ssl_) {
       boost::system::error_code error;
@@ -259,7 +264,7 @@ namespace uos::rt::detail::fetch {
 
   // ---- pool -------------------------------------------------------------------------
 
-  Pool::Pool(std::size_t capacity, double keepAliveTimeoutMs) : capacity_(capacity), timeoutMs_(keepAliveTimeoutMs), plain_(capacity), secure_(capacity) {}
+  Pool::Pool(std::size_t capacity, double keepAliveTimeoutMs) : timeoutMs_(keepAliveTimeoutMs), plain_(capacity), secure_(capacity) {}
 
   Pool::~Pool() { closeAll(); }
 

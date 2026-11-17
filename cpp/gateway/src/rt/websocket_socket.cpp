@@ -299,6 +299,22 @@ namespace uos::rt::ws::detail {
       if (auto listener = onError) guarded([&] { listener(error); });
     }
     if (auto listener = onClose) guarded([&] { listener(); });
+    releaseListeners();
+  }
+
+  void Socket::shutdown() {
+    destroyed_ = true;
+    boost::system::error_code ignored;
+    stream_.close(ignored);
+    queue_.clear();
+    if (tls_) {
+      tls_->done = nullptr;
+      tls_->plain.clear();
+    }
+    releaseListeners();
+  }
+
+  void Socket::releaseListeners() {
     onData = nullptr;
     onEnd = nullptr;
     onError = nullptr;

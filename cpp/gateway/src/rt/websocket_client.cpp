@@ -213,14 +213,17 @@ namespace uos::rt::ws::detail {
     }
     // Connects to each address in turn, like net.connect with several records.
     auto attempt = std::make_shared<std::function<void(std::vector<asio::ip::tcp::endpoint>, std::size_t)>>();
-    *attempt = [self, attempt](std::vector<asio::ip::tcp::endpoint> endpoints, std::size_t index) {
+    const std::weak_ptr<std::function<void(std::vector<asio::ip::tcp::endpoint>, std::size_t)>> weakAttempt = attempt;
+    *attempt = [self, weakAttempt](std::vector<asio::ip::tcp::endpoint> endpoints, std::size_t index) {
+      auto nextAttempt = weakAttempt.lock();
+      if (!nextAttempt) return;
       auto tcp = std::make_shared<asio::ip::tcp::socket>(rt::executor());
       self->cancel_ = [tcp] {
         boost::system::error_code ignored;
         tcp->close(ignored);
       };
       const asio::ip::tcp::endpoint endpoint = endpoints[index];
-      tcp->async_connect(endpoint, [self, attempt, tcp, endpoints, index, endpoint](const boost::system::error_code& error) {
+      tcp->async_connect(endpoint, [self, attempt = std::move(nextAttempt), tcp, endpoints, index, endpoint](const boost::system::error_code& error) {
         guarded([&] {
           self->cancel_ = nullptr;
           if (self->aborted || self->finished_) {
