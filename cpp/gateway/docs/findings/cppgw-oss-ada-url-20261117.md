@@ -28,10 +28,12 @@ A separate baseline conflict prevents satisfying both oracles for arbitrary inpu
 
 ## Results
 
-| Unchanged native test        |     Baseline `-O2` |        Baseline ASan/UBSan | Ada adapter trial `-O2` |
-| ---------------------------- | -----------------: | -------------------------: | ----------------------: |
-| `tests/rt/url_test.cpp`      | 6 passed, 0 failed |         6 passed, 0 failed |      2 passed, 4 failed |
-| `tests/rt/url_idna_test.cpp` | 2 passed, 0 failed | Running at this checkpoint |      0 passed, 2 failed |
+| Unchanged native test        |     Baseline `-O2` |           Baseline ASan/UBSan | Ada adapter trial `-O2` |
+| ---------------------------- | -----------------: | ----------------------------: | ----------------------: |
+| `tests/rt/url_test.cpp`      | 6 passed, 0 failed |   6 passed, 0 failed (GCC 14) |      2 passed, 4 failed |
+| `tests/rt/url_idna_test.cpp` | 2 passed, 0 failed | 2 passed, 0 failed (Clang 18) |      0 passed, 2 failed |
+
+The GCC-sanitized IDNA binary reached the scalar test and was stopped after 12 minutes once the Clang retry had passed the full suite in 47.18 seconds. A separate GCC run with `malloc_context_size=1` timed out at 120 seconds. The sanitized successes had zero sanitizer reports. The strict release builds for both suites and the trial used GCC 14.2.0.
 
 The IDNA test includes 1,260 curated rows and 2,228,224 scalar observations in 1,088 blocks. Live Bun and the baseline produced identical accepted URL output byte for byte in the scalar sweep. Their shared SHA-256 was `10f60d88344eb5530adaf8775005928f7ce385c07663eb8b58e32689d79c0bde`. Raw Ada accepted all 313,554 of those inputs with identical hrefs and accepted 411 additional inputs across 401 distinct code points. The Ada adapter trial differed in 17 scalar blocks and 72 curated IDNA rows.
 
@@ -147,7 +149,13 @@ g++-14 "${strict[@]}" "${san[@]}" "${sections[@]}" cpp/gateway/src/rt/{url,strin
 isolated "$work/direct/url_test"
 isolated "$work/direct/url_idna_test"
 isolated "$work/asan/url_test"
-isolated "$work/asan/url_idna_test"
+isolated timeout 120 env ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:malloc_context_size=1 \
+  "$work/asan/url_idna_test"
+clang++-18 "${strict[@]}" -O1 -gline-tables-only -fsanitize=address,undefined \
+  -fno-omit-frame-pointer -fno-sanitize-recover=all "${sections[@]}" \
+  cpp/gateway/src/rt/{url,string}.cpp cpp/gateway/tests/rt/url_idna_test.cpp \
+  "${libs[@]}" -o "$work/asan/url_idna_clang18"
+isolated timeout 90 "$work/asan/url_idna_clang18"
 ```
 
 The source of the baseline `url.cpp` had SHA-256 `1ad477bba4c8b1a8e70eae45daddb9434af88027931b96a3cdc3af6242e41af5`. The IDNA fixture had SHA-256 `931ef0c33715ac686fffb08af389f19c738a0e3ecae8a69df151e07386f7046f`.
@@ -215,3 +223,5 @@ diff --old-line-format='old %L' --new-line-format='ada %L' --unchanged-line-form
 ```
 
 For the recorded-vector comparison, the temporary probe read the `kUrlVectors`, `kIdnaLimitVectors`, `kSetterVectors`, and `kIdnaVectors` definitions verbatim and compared the corresponding Ada getters with the fixture strings. For the adapter trial, the temporary `url.cpp` copy used `ada::parse` to fill the existing URL record, then used `ada::url_search_params` for form parsing and serialization. Both trial binaries used the same first-party flags as the `-O2` baseline, with `-isystem "$work/ada"` and `$work/ada.o` added. The benchmark built each version with those same compiler settings and ran `isolated taskset -c 2 "$work/bench-old"`, `isolated taskset -c 2 "$work/bench-candidate"`, and `isolated taskset -c 2 "$work/bench-old" direct`, in that order.
+
+The committed delta contains only this report. `bun --no-env-file run format:check cpp/gateway/docs/findings/cppgw-oss-ada-url-20261117.md` ran in a temporary copy with the committed formatter configuration and both frozen dependency installs. `git diff --check claude/cpp-gateway-port..HEAD` passed in the job checkout.
