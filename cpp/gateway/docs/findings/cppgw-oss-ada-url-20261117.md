@@ -18,4 +18,10 @@ printf '%s\n' \
   '1c722f8f5355d6bf2bf3601870684edc875aa8f56b4d4735440d96263dd0207c  ada.cpp' | sha256sum --check
 ```
 
-Parity, performance, and the closure build are pending. No production lines have changed.
+## Qualification checkpoint
+
+The unchanged port with ICU 78.3 passed `rt/url_test.cpp` (6/6) and `rt/url_idna_test.cpp` (2/2) under GCC 14.2.0. The latter includes 1,260 curated rows and 2,228,224 scalar observations. For the same scalar inputs, a live Bun run and the unchanged port produced identical accepted URL output byte for byte. Their shared SHA-256 was `10f60d88344eb5530adaf8775005928f7ce385c07663eb8b58e32689d79c0bde`.
+
+Raw Ada agreed with the Bun constructor fixture on 2,072 of 2,081 rows, and with the curated IDNA fixture on 1,180 of 1,260 rows. The scalar run had 411 extra acceptances across 401 code points, with identical hrefs on all 313,554 accepted Bun inputs. Examples include leading U+1AC1 and U+0870 inside a Latin label. Rejecting either character wherever it occurs would discard valid Bun URLs. Ada also accepts invalid ASCII ACE labels and some invalid bidirectional domains and joiner sequences. The corresponding baseline and live Bun results agree on those inputs.
+
+Ada 4.0.0 deliberately passes ASCII domains through without validating ACE labels. Its Unicode validity checks operate per label and its ContextJ loop can return success before checking the remainder of a label. Full Bun parity therefore needs version-specific Unicode data and validation across labels in addition to URL-level adaptation. The remaining work is to document reproducible controls, performance, and the shipping decision. No production lines have changed.
