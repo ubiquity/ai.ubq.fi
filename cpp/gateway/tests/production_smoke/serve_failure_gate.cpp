@@ -1,0 +1,145 @@
+// Focused native lifecycle gate. Invoke in the production-smoke OS namespace with a genuine
+// artifact binding and private TMPDIR; no fake backend, MemoryKv, listener replacement or provider.
+#include "uos/kv.hpp"
+#include "uos/rt/async.hpp"
+#include "uos/rt/error.hpp"
+#include "uos/rt/fs.hpp"
+#include "uos/rt/json.hpp"
+#include "uos/rt/kv.hpp"
+#include "uos/rt/process.hpp"
+#include "uos/rt/string.hpp"
+#include "uos/serve.hpp"
+#include "uos/storage/kv.hpp"
+#include "uos/storage/native_addon.hpp"
+
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <cstdio>
+#include <exception>
+#include <memory>
+#include <stdexcept>
+#include <string>
+
+namespace {
+  void require(bool condition, const char* message) {
+    if (!condition) throw std::runtime_error(message);
+  }
+
+  class CountedStore final : public uos::rt::ForwardingKv {
+  public:
+    CountedStore(std::shared_ptr<uos::rt::Kv> store, std::shared_ptr<int> count)
+        : ForwardingKv(*store), owner(std::move(store)), closes(std::move(count)) {}
+
+    void close() override {
+      ++*closes;
+      owner->close();
+    }
+
+  private:
+    std::shared_ptr<uos::rt::Kv> owner;
+    std::shared_ptr<int> closes;
+  };
+
+  class OccupiedPort {
+  public:
+    OccupiedPort() {
+      descriptor = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+      require(descriptor >= 0, "Could not create the loopback bind-collision fixture");
+      sockaddr_in address{};
+      address.sin_family = AF_INET;
+      address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+      require(::bind(descriptor, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0, "Could not bind the collision fixture");
+      require(::listen(descriptor, 1) == 0, "Could not listen on the collision fixture");
+      socklen_t size = sizeof(address);
+      require(::getsockname(descriptor, reinterpret_cast<sockaddr*>(&address), &size) == 0, "Could not observe the assigned collision port");
+      port = static_cast<int>(ntohs(address.sin_port));
+      require(port != 7999 && port != 8000, "OS assigned a prohibited fixture port");
+    }
+    OccupiedPort(const OccupiedPort&) = delete;
+    OccupiedPort& operator=(const OccupiedPort&) = delete;
+    ~OccupiedPort() { if (descriptor >= 0) ::close(descriptor); }
+    int port = 0;
+
+  private:
+    int descriptor = -1;
+  };
+
+  uos::rt::Task<void> gate(std::string bindingPath) {
+    using namespace uos;
+    const serve::ServeStartupOptions unprepared{"127.0.0.1", 0};
+    bool refused = false;
+    try {
+      auto serving = serve::importMetaMain(unprepared);
+      co_await std::move(serving);
+    } catch (const rt::JsError& error) {
+      refused = rt::includes(error.message, "must be prepared");
+    }
+    require(refused, "Unprepared typed entry did not fail before storage/listener effects");
+
+    const auto raw = rt::jsonParse(rt::fs::readFileSync(bindingPath, "utf8"));
+    require(raw.is_object(), "Genuine native-KV binding must be an object");
+    const auto artifact = rt::getString(raw, "artifactDirectory");
+    const auto provenance = rt::getString(raw, "expectedProvenanceSha256");
+    const auto inputs = rt::getString(raw, "inputsManifest");
+    require(artifact.has_value() && provenance.has_value() && inputs.has_value(), "Native-KV binding fields are missing");
+    storage::native_addon::NativeKvArtifactBinding binding;
+    binding.artifactDirectory = std::string(*artifact);
+    binding.expectedProvenanceSha256 = std::string(*provenance);
+    binding.inputsManifest = std::string(*inputs);
+    storage::native_addon::prepareNativeKvBackend(binding);
+    const std::string directory = rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "uos-serve-failure-"));
+    const std::string databasePath = directory + "/synthetic-state.sqlite3";
+    auto opening = storage::kv::openKv(databasePath);
+    auto store = co_await std::move(opening);
+    const auto closes = std::make_shared<int>(0);
+    const auto counted = std::make_shared<CountedStore>(store, closes);
+    kv::initializeKv(counted);
+    const OccupiedPort collision;
+    const serve::ServeStartupOptions options{"127.0.0.1", collision.port};
+    std::string failure;
+    try {
+      auto serving = serve::importMetaMain(options);
+      co_await std::move(serving);
+    } catch (const std::exception& error) {
+      failure = error.what();
+    }
+    const std::string lower = rt::toLowerCase(failure);
+    require(rt::includes(lower, "address already in use") || rt::includes(lower, "eaddrinuse"), "Typed entry did not propagate the real bind collision");
+    if (*closes != 1) {
+      std::fprintf(stderr, "observed_kv_close_count=%d\n", *closes);
+      throw std::runtime_error("Typed entry must close the real durable KV exactly once before propagating listen failure");
+    }
+    bool closed = false;
+    const rt::KvKey probeKey{"synthetic", "closed-store-probe"};
+    try {
+      auto probing = store->get(probeKey);
+      const auto ignored = co_await std::move(probing);
+      (void)ignored;
+    } catch (const rt::JsError& error) {
+      closed = rt::includes(rt::toLowerCase(error.message), "closed");
+    }
+    require(closed, "The underlying real SQLite store remained open after listener failure");
+    kv::resetKvForTest();
+    std::printf("{\"cases\":3,\"passed\":3,\"failed\":0,\"kv_close_count\":%d,\"real_bind_error\":true}\n", *closes);
+  }
+}
+
+int main(int argc, char** argv) {
+  if (argc != 2) {
+    std::fprintf(stderr, "usage: uos-serve-failure-gate genuine-native-kv-binding.json\n");
+    return 2;
+  }
+  uos::rt::process::setArgv(argc, argv);
+  uos::rt::loop().setUncaughtPolicy(uos::rt::UncaughtPolicy::report);
+  try {
+    const std::string bindingPath(argv[1]);
+    auto running = gate(bindingPath);
+    uos::rt::blockOn(std::move(running));
+    return 0;
+  } catch (const std::exception& error) {
+    std::fprintf(stderr, "%s\n", error.what());
+    return 1;
+  }
+}

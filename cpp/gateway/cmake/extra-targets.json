@@ -1,0 +1,31 @@
+{
+  "targets": [
+    {
+      "target": "uos_bench_regex",
+      "sources": [
+        "bench/regex/regex_bench.cpp",
+        "src/codex/supervisor_secret.cpp",
+        "src/rt/json.cpp",
+        "src/rt/number.cpp",
+        "src/rt/string.cpp",
+        "src/rt/regex.cpp",
+        "src/rt/regex_compile.cpp",
+        "src/rt/regex_match.cpp",
+        "src/rt/regex_tables.cpp"
+      ]
+    },
+    {
+      "target": "uos-json-bench",
+      "sources": [
+        "bench/paths/json.cpp",
+        "src/rt/json.cpp",
+        "src/rt/number.cpp",
+        "src/rt/string.cpp",
+        "src/rt/regex.cpp",
+        "src/rt/regex_compile.cpp",
+        "src/rt/regex_match.cpp",
+        "src/rt/regex_tables.cpp"
+      ]
+    }
+  ]
+}

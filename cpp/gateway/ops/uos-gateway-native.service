@@ -1,0 +1,23 @@
+# UNINSTALLED DRAFT. No install/enable/reload/start is authorized by this file.
+# Replace every /srv/uos-native path only in a separately reviewed cutover.
+[Unit]
+Description=Uninstalled native ai.ubq.fi gateway candidate
+After=network-online.target
+
+[Service]
+Type=simple
+User=codex
+Group=codex
+WorkingDirectory=/srv/uos-native/state
+# Explicit operator-owned environment only; no dotenv discovery in the binary.
+EnvironmentFile=/srv/uos-native/operator.env
+ExecStart=/srv/uos-native/package/ops/launch-native.sh /srv/uos-native/launch.json
+Restart=no
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/srv/uos-native/package
+ReadWritePaths=/srv/uos-native/state/.data
+# The binary independently requires Landlock ABI8+ and seccomp TSYNC.

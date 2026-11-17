@@ -1,0 +1,158 @@
+// src/runtime/permissions-linux.ts has no bun test of its own (tests/codex-supervisor-inventory-coverage.test.ts
+// only applies it as the fixture of unrelated cases). These cases cover its checks on the manifest and
+// the artifact, the support query, the refusals before the irreversible step, and the confinement
+// itself in a forked child (the parent is never confined).
+#include "uos/runtime/permissions_linux.hpp"
+
+#include "uos/rt/crypto.hpp"
+#include "uos/rt/error.hpp"
+#include "uos/rt/fs.hpp"
+#include "uos/rt/process.hpp"
+#include "uos/rt/test.hpp"
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include <cctype>
+#include <cerrno>
+#include <cstdio>
+#include <functional>
+#include <optional>
+#include <stdexcept>
+#include <string>
+
+namespace rt = uos::rt;
+using namespace uos::runtime::permissions_linux;
+
+namespace {
+  struct Fixture {
+    std::string root = rt::fs::mkdtempSync(rt::os::tmpdir() + "/uos-permissions-");
+    std::string artifactPath = root + "/linux-arm64.node";
+    LinuxPermissionsArtifact artifact;
+    Fixture() {
+      rt::fs::writeFileSync(artifactPath, std::string_view("fixture artifact bytes"));
+      artifact = {artifactPath, rt::crypto::createHash("sha256").update(rt::fs::readFileSync(artifactPath)).digest("hex")};
+    }
+    ~Fixture() { rt::fs::rmSync(root, {.recursive = true, .force = true}); }
+  };
+
+  std::string messageOf(const std::function<void()>& call) {
+    try {
+      call();
+    } catch (const rt::JsError& error) {
+      return error.message;
+    }
+    return "<no error>";
+  }
+}
+
+TEST("the default artifact comes from the release manifest beside the executable") {
+  // Under tools/unit.sh the executable is the SDK's dynamic loader, whose directory has no manifest.
+  bool threw = false;
+  try {
+    getLinuxPermissionsSupport();
+  } catch (const rt::fs::ErrnoError& error) {
+    threw = true;
+    EXPECT_EQ(error.code, "ENOENT");
+    EXPECT_EQ(error.syscall, "lstat");
+    EXPECT(error.path && error.path->ends_with("/.uos-permissions/manifest.json"));
+  }
+  EXPECT(threw);
+}
+
+TEST("the artifact must be a regular file whose sha256 matches") {
+  const Fixture fixture;
+  bool missing = false;
+  try {
+    getLinuxPermissionsSupport(LinuxPermissionsArtifact{fixture.root + "/absent.node", fixture.artifact.sha256});
+  } catch (const rt::fs::ErrnoError& error) {
+    missing = error.code == "ENOENT";
+  }
+  EXPECT(missing);
+  EXPECT_EQ(messageOf([&] { getLinuxPermissionsSupport(LinuxPermissionsArtifact{fixture.root, fixture.artifact.sha256}); }), "Native confinement artifact is invalid");
+  ASSERT(::symlink(fixture.artifactPath.c_str(), (fixture.root + "/link.node").c_str()) == 0);
+  EXPECT_EQ(messageOf([&] { getLinuxPermissionsSupport(LinuxPermissionsArtifact{fixture.root + "/link.node", fixture.artifact.sha256}); }),
+            "Native confinement artifact is invalid");
+  std::string upper = fixture.artifact.sha256;
+  for (char& character : upper) character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+  EXPECT_EQ(messageOf([&] { getLinuxPermissionsSupport(LinuxPermissionsArtifact{fixture.artifactPath, upper}); }), "Native confinement artifact is invalid");
+  EXPECT_EQ(messageOf([&] { getLinuxPermissionsSupport(LinuxPermissionsArtifact{fixture.artifactPath, std::string(64, '0')}); }),
+            "Native confinement artifact integrity check failed");
+}
+
+TEST("the support query reports the kernel's Landlock ABI and seccomp availability") {
+  const Fixture fixture;
+  const LinuxPermissionsSupport support = getLinuxPermissionsSupport(fixture.artifact);
+  EXPECT_EQ(support.architecture, "arm64");
+  EXPECT_EQ(support.kernel, rt::os::release());
+  EXPECT(support.landlockAbi >= 1);
+  EXPECT_EQ(support.landlockThreadSync, support.landlockAbi >= 8);
+  EXPECT(support.seccomp);
+  std::printf("     host: landlockAbi %g, seccomp %s\n", support.landlockAbi, support.seccomp ? "true" : "false");
+  const LinuxPermissionsSupport again = getLinuxPermissionsSupport(fixture.artifact);
+  EXPECT_EQ(again.landlockAbi, support.landlockAbi);
+}
+
+TEST("refusals before the irreversible step leave the process unconfined") {
+  const Fixture fixture;
+  const LinuxPermissionsSupport support = getLinuxPermissionsSupport(fixture.artifact);
+  if (!support.landlockThreadSync || !support.seccomp) {
+    EXPECT_EQ(messageOf([&] { applyLinuxPermissions(LinuxPermissions{{fixture.root}, {fixture.root}}, fixture.artifact); }),
+              "Linux confinement requires Landlock ABI8+ and seccomp thread synchronization");
+    return;
+  }
+  EXPECT_EQ(messageOf([&] { applyLinuxPermissions(LinuxPermissions{{"relative/path"}, {fixture.root}}, fixture.artifact); }), "Linux confinement paths must be absolute");
+  rt::fs::mkdirSync(fixture.root + "/immutable");
+  EXPECT_EQ(messageOf([&] { applyLinuxPermissions(LinuxPermissions{{fixture.root}, {fixture.root}, std::vector<std::string>{fixture.root + "/immutable"}}, fixture.artifact); }),
+            "Immutable path below writable parent requires a read-only mount");
+  // Still unconfined: a file outside every grant opens.
+  const int fd = ::open("/etc/hostname", O_RDONLY);
+  EXPECT(fd >= 0);
+  if (fd >= 0) ::close(fd);
+}
+
+TEST("a confined child reads and writes only its grants and cannot change modes") {
+  const Fixture fixture;
+  const LinuxPermissionsSupport support = getLinuxPermissionsSupport(fixture.artifact);
+  if (!support.landlockThreadSync || !support.seccomp) return;
+  const std::string readable = fixture.root + "/readable";
+  const std::string writable = fixture.root + "/writable";
+  const std::string outside = fixture.root + "/outside";
+  rt::fs::mkdirSync(readable);
+  rt::fs::mkdirSync(writable);
+  rt::fs::mkdirSync(outside);
+  rt::fs::writeFileSync(readable + "/granted.txt", std::string_view("granted"));
+  rt::fs::writeFileSync(outside + "/secret.txt", std::string_view("secret"));
+  std::fflush(nullptr);
+  const pid_t child = ::fork();
+  ASSERT(child >= 0);
+  if (child == 0) {
+    int code = 0;
+    try {
+      const LinuxPermissionsReceipt receipt = applyLinuxPermissions(LinuxPermissions{{readable, fixture.artifactPath}, {writable}}, fixture.artifact);
+      if (!receipt.filesystemThreadSync || !receipt.processThreadSync || !receipt.immutableMounts.empty() || receipt.landlockAbi != support.landlockAbi) code |= 1;
+      int fd = ::open((outside + "/secret.txt").c_str(), O_RDONLY);
+      if (fd >= 0 || errno != EACCES) code |= 2;
+      fd = ::open((readable + "/granted.txt").c_str(), O_RDONLY);
+      if (fd < 0) code |= 4;
+      fd = ::open((readable + "/new.txt").c_str(), O_CREAT | O_WRONLY, 0600);
+      if (fd >= 0 || errno != EACCES) code |= 8;
+      fd = ::open((writable + "/new.txt").c_str(), O_CREAT | O_WRONLY, 0600);
+      if (fd < 0) code |= 16;
+      if (::fchmodat(AT_FDCWD, (writable + "/new.txt").c_str(), 0644, 0) == 0 || errno != EPERM) code |= 32;
+    } catch (...) {
+      code |= 64;
+    }
+    ::_exit(code);
+  }
+  int status = 0;
+  ASSERT(::waitpid(child, &status, 0) == child);
+  EXPECT(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+  // The parent stays unconfined.
+  const int fd = ::open((outside + "/secret.txt").c_str(), O_RDONLY);
+  EXPECT(fd >= 0);
+  if (fd >= 0) ::close(fd);
+}

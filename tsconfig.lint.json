@@ -6,6 +6,7 @@
     "src/**/*.ts",
     "tests/**/*.ts",
     "cpp/tests/**/*.ts",
+    "cpp/gateway/**/*.ts",
     "scripts/**/*.ts",
     "benchmarks/**/*.ts",
     "ops/**/*.ts",
