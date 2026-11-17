@@ -60,7 +60,7 @@ cpp/gateway/tools/ci-build.sh --config release --shard 1/4
 | release       | `-O2`                                                         |
 | asan          | `-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer` |
 
-All configurations retain `-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror` and the Boost JSON/Container/System no-autolink definitions. Sanitizers also apply during linkage; runtime sanitizer errors are fatal. `UOS_CI_CXXFLAGS` and `UOS_CI_LDFLAGS` can supply additional dependency include/library paths. `UOS_CI_TIMEOUT` sets the per-binary run timeout in seconds (default 300); links are bounded at 900 seconds. Timeouts and interruption kill the owned process group, including namespace descendants. At most `UOS_CI_JOBS` test binaries exist at once; binaries and scratch directories are deleted after execution while objects and logs remain reusable.
+All configurations retain `-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror` and the Boost JSON/Container/System no-autolink definitions. Release and sanitizer configurations additionally define `BOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING` to use standard coroutine frame allocation. This avoids GCC 15/Boost.Asio 1.90 optimized allocator diagnostics without disabling any warning. Debug exercises Asio's recycling mode. Sanitizers also apply during linkage; runtime sanitizer errors are fatal. `UOS_CI_CXXFLAGS` and `UOS_CI_LDFLAGS` can supply additional dependency include/library paths. `UOS_CI_TIMEOUT` sets the per-binary run timeout in seconds (default 300); links are bounded at 900 seconds. Timeouts and interruption kill the owned process group, including namespace descendants. At most `UOS_CI_JOBS` test binaries exist at once; binaries and scratch directories are deleted after execution while objects and logs remain reusable.
 
 The final table lists every selected test, `PASS`, `FAIL`, `BUILD_FAIL` or `TIMEOUT`, and the harness's run/passed/failed case counts. A crash or missing summary cannot pass. Compilation continues after individual failures to collect complete diagnostics; any failed production compilation, test build, run or timeout makes the command exit nonzero. A crashed binary without a flushed harness summary has zero reported cases, not an invented count.
 
@@ -80,15 +80,15 @@ These seven controls cover successful parallel environment isolation, failure co
 
 Measured on 2026-11-17: Ubuntu 26.04.1, x86_64, 4 CPUs, approximately 15 GiB RAM; GCC 15.2.0, Clang 21.1.8, Boost 1.90, OpenSSL 3.5.5, SQLite 3.54.0 (prepared from source; distribution version was 3.46.1), ICU 78.2, zlib 1.3.1, Brotli 1.2.0, Zstd 1.5.7 and mold 2.40.4. Bun 1.4.0 is the unchanged behavior oracle.
 
-| Configuration / gate        | Object build wall time | Link/test wall time | Outcome                                    |
-| --------------------------- | ---------------------- | ------------------- | ------------------------------------------ |
-| GCC debug, complete suite   | In progress            | Pending             | Pending                                    |
-| GCC release, complete suite | Pending                | Pending             | Pending                                    |
-| GCC driver controls         | Included in total      | 9.484 s total       | 6/6 passed                                 |
-| Clang driver controls       | Included in total      | 10.517 s total      | 6/6 passed                                 |
-| Clang ASan driver controls  | Included in total      | 12.850 s total      | 6/6 passed                                 |
-| Full ASan/UBSan suite       | Not run                | Not run             | No full-suite sanitizer acceptance claimed |
-| arm64 / macOS               | Not run                | Not run             | Proposed CI only                           |
+| Configuration / gate                | Object build wall time | Link/test wall time | Outcome                                                                              |
+| ----------------------------------- | ---------------------- | ------------------- | ------------------------------------------------------------------------------------ |
+| GCC debug cold v3 (historical)      | 1,429.959 s            | 288.155 s           | 432 PASS / 4 FAIL / 1 BUILD_FAIL; later inventory edit invalidated acceptance        |
+| GCC debug final-tree rerun          | Pending                | Pending             | Required after v4 inventory amendment                                                |
+| GCC release, complete suite         | In progress            | Pending             | Restarting with the v5 standard coroutine allocator after the v4 compiler diagnostic |
+| GCC v4 driver controls              | Included in total      | 6.653 s total       | 7/7 passed                                                                           |
+| Clang ASan/UBSan v4 driver controls | Included in total      | 9.047 s total       | 7/7 passed                                                                           |
+| Full Clang / full ASan/UBSan suites | Not run                | Not run             | No full-suite acceptance claimed                                                     |
+| arm64 / macOS                       | Not run                | Not run             | Proposed CI only                                                                     |
 
 Exact commands, original failures, source changes, limitations and terminal counts are maintained in [the runner findings](findings/cppgw-ci-build-x86-20261117.md). An incremental build must not be described as a cold-build measurement.
 

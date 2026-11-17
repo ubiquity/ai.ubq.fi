@@ -24,8 +24,10 @@ import links
 
 CONFIGS = {
     "debug": ["-O0"],
-    "release": ["-O2"],
-    "asan": ["-O1", "-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"],
+    # Standard coroutine frame allocation avoids GCC 15's mismatched-new-delete
+    # diagnostic in Boost.Asio's inlined recycling allocator. Warnings stay fatal.
+    "release": ["-O2", "-DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING"],
+    "asan": ["-O1", "-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING"],
 }
 SUMMARY = re.compile(r"^(\d+) run, (\d+) passed, (\d+) failed$", re.M)
 PRINT_LOCK = threading.Lock()
