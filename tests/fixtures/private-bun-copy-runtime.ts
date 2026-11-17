@@ -47,8 +47,9 @@ print(json.dumps({"selected":sys.executable,"base":sys._base_executable,"termina
     const info = lstatSync(path);
     assert(info.isFile() && !info.isSymbolicLink() && info.uid === 0 && (info.mode & 0o777) === 0o755);
     const expected = index === 0 ? "com.apple.dt.xcode_select.tool-shim-public" : "com.apple.python3";
-    // Verify the requirement semantically: codesign's display order is not a signature contract.
-    inspect(["/usr/bin/codesign", "--verify", "--strict", "-R", '=identifier "' + expected + '" and anchor apple', path]);
+    inspect(["/usr/bin/codesign", "--verify", "--strict", path]);
+    const identity = inspect(["/usr/bin/codesign", "--display", "--verbose=4", path]);
+    assert(identity.split("\n").includes("Identifier=" + expected) && identity.includes("Authority=Apple Root CA"));
     return { path, bytes: info.size, sha256: createHash("sha256").update(readFileSync(path)).digest("hex"), designated_identity: expected };
   });
   assert.equal(realpathSync(inspect(["/usr/bin/xcrun", "--find", "python3"]).trim()), canonical);

@@ -506,7 +506,6 @@ fn read_epoch(directory: &File) -> Result<Option<Epoch>, GatewayError> {
     }
     serde_json::from_slice(&bytes).map(Some).map_err(|_| fail())
 }
-
 #[cfg(all(test, target_os = "macos"))]
 pub(super) fn fixture_stop(
     runtime: &mut OwnedRuntime,
@@ -514,7 +513,6 @@ pub(super) fn fixture_stop(
 ) -> Result<(), GatewayError> {
     runtime.stop_owned(deadline)
 }
-
 #[cfg(all(test, target_os = "macos"))]
 #[test]
 fn fixture_sandbox_keeps_four_exact_identities_and_full_fixed_executable_verification() {

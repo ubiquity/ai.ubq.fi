@@ -26,7 +26,6 @@ const LS_SHA256S: [&str; 4] = [
 const OUTPUT_LIMIT: usize = 1024;
 #[cfg(target_os = "macos")]
 const HEADER_LIMIT: usize = 256;
-
 /// The sole parameterless helper entry. stdin must already be an anchored directory.
 pub fn entry() -> Result<(), GatewayError> {
     if std::env::args_os().len() != 1 {
@@ -58,7 +57,6 @@ pub fn entry() -> Result<(), GatewayError> {
         Err(fail())
     }
 }
-
 pub(super) fn observe(
     directory: &File,
     inspector: &PinnedExecutable,
@@ -227,7 +225,6 @@ pub(super) fn parse(output: &[u8], facts: &Facts) -> Result<(), GatewayError> {
     }
     Ok(())
 }
-
 #[cfg(all(test, target_os = "macos"))]
 mod pin_tests {
     use super::LS_SHA256S;
