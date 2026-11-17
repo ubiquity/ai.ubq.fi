@@ -51,6 +51,7 @@ def main():
     objects, binaries, logs = out / "obj", out / "bin", out / "logs"
     for directory in (objects, binaries, logs):
         directory.mkdir(parents=True, exist_ok=True)
+    runtime = sorted(str(path.relative_to(GATEWAY)) for path in (GATEWAY / "src/rt").glob("*.cpp"))
     closures = {}
     for test in tests:
         listed = subprocess.run([sys.executable, str(GATEWAY / "tools/links.py"), "--with-test", test],
@@ -58,7 +59,8 @@ def main():
         if listed.returncode:
             print("LINK LIST FAILED " + test + "\n" + listed.stderr[-2000:], file=sys.stderr)
             return 3
-        closures[test] = [source for source in listed.stdout.split() if source.endswith(".cpp")]
+        # links.py lists the application sources; every runtime source links into every test.
+        closures[test] = list(dict.fromkeys([source for source in listed.stdout.split() if source.endswith(".cpp")] + runtime))
     sources = sorted({source for closure in closures.values() for source in closure})
     print("tests: %d, distinct translation units: %d" % (len(tests), len(sources)), flush=True)
     built, failed = {}, []
