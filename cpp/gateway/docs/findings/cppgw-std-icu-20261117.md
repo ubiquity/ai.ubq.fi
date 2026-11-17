@@ -42,17 +42,17 @@ The live Bun replay regenerated the four existing digests `756211308`, `28286952
 
 ## Measurements
 
-Linux ARM64 Neoverse-N2, Clang 21.1.8 `-O2`, and ICU 78.3. The benchmark linked the original and current `string.cpp` as separate namespaces in one executable. After 2,000 warm-up operations, it alternated old-first and new-first across seven wall-time samples on CPU 3 while suite builds were running. The table reports medians. Separate 10,000-operation samples counted glibc `malloc`, `calloc`, `realloc` and `aligned_alloc` calls, including those through libstdc++ and ICU. Input setup and one-time ICU initialization are outside the samples.
+Linux ARM64 Neoverse-N2, Clang 21.1.8 `-O2`, and ICU 78.3. The benchmark linked the original and current `string.cpp` as separate namespaces in one executable. After 2,000 warm-up operations, it alternated old-first and new-first across seven wall-time samples, pinned to CPU 3 with `nice -n -12` to give it priority over the concurrent compilers. The table reports medians. Separate 10,000-operation samples counted glibc `malloc`, `calloc`, `realloc` and `aligned_alloc` calls, including those through libstdc++ and ICU. Input setup and one-time ICU initialization are outside the samples.
 
 | Workload                                       | Old ns/op | ICU ns/op | Old allocations/op | ICU allocations/op |
 | ---------------------------------------------- | --------: | --------: | -----------------: | -----------------: |
-| Lowercase `Content-Type`                       |     23.48 |    116.15 |                  0 |                  0 |
-| Uppercase `patch`                              |     11.76 |     46.18 |                  0 |                  0 |
-| Lowercase `İSTANBUL ΟΔΥΣΣΕΎΣ`                  |    467.30 |    324.81 |                  2 |                  2 |
-| Uppercase 24 repetitions of `Straße `          |  5,932.63 |  2,884.90 |                  2 |                  3 |
-| Compare `gpt-6.2-sol` and `gpt-6.2-sol-fast`   |    864.82 |    156.82 |                  4 |                  2 |
-| Compare `é` and `e` plus U+0301                |    250.99 |    118.53 |                  4 |                  0 |
-| Stable sort eight mixed-case model identifiers | 11,900.40 |  2,327.97 |                 65 |                 33 |
+| Lowercase `Content-Type`                       |     11.19 |     58.06 |                  0 |                  0 |
+| Uppercase `patch`                              |     10.81 |     46.01 |                  0 |                  0 |
+| Lowercase `İSTANBUL ΟΔΥΣΣΕΎΣ`                  |    365.57 |    262.38 |                  2 |                  2 |
+| Uppercase 24 repetitions of `Straße `          |  3,776.34 |  2,153.53 |                  2 |                  3 |
+| Compare `gpt-6.2-sol` and `gpt-6.2-sol-fast`   |    714.98 |    141.61 |                  4 |                  2 |
+| Compare `é` and `e` plus U+0301                |    249.60 |    118.69 |                  4 |                  0 |
+| Stable sort eight mixed-case model identifiers | 11,415.69 |  2,229.21 |                 65 |                 33 |
 
 The short ASCII calls cost more after adopting ICU. The direct UTF-8 call eliminates the extra allocation that the initial UTF-16-only implementation needed for `Content-Type`. The long expansion allocates an extra output buffer and takes less time. Both representative comparisons and the model sort use fewer allocations.
 
@@ -123,10 +123,11 @@ Source and test identity `ef1128617bc38571dad784a2361a0b129e7e0cc9`, tree `cf579
 
 | Profile             | Passing binaries / selected | Passing cases / run | Failures |
 | ------------------- | --------------------------: | ------------------: | -------: |
+| Clang 21 release    |                   296 / 442 |       2,947 / 2,947 |        0 |
+| Clang 21 ASan/UBSan |                   216 / 442 |       1,722 / 1,722 |        0 |
 | Clang 21 release    |                   168 / 442 |       1,338 / 1,338 |        0 |
-| Clang 21 ASan/UBSan |                    88 / 442 |           764 / 764 |        0 |
 
-The 442-target sweeps remain in progress. The final libFuzzer run completed 3,036,331 inputs in 121 seconds, reached 154 instrumented edges and 622 features, and exited with zero findings or artifacts. Peak RSS was 445 MiB.
+At 2026-11-17 23:14 UTC, release had 146 binaries pending and ASan/UBSan had 226. The incremental receipts captured `sweep-release/rows.jsonl` SHA-256 `bf3e1da2c5f0f4e2c48d1069beeb4143624a6a7617b3ce5a681d6e165e255677` and `sweep-asan/rows.jsonl` SHA-256 `1bf50452211fd6a04d4c7cf95c5f127e98ea4090be6cc6c917aca4bf318b861e`. The final libFuzzer run completed 3,036,331 inputs in 121 seconds, reached 154 instrumented edges and 622 features, and exited with zero findings or artifacts. Peak RSS was 445 MiB.
 
 The SDK CMake registration found ICU 78.3, generated a 442-test registry and built the string object using the runner's compiler. The historical SDK sysroot and macOS were unavailable on this runner. The old `tools/unit.sh` SDK wrapper still lists only Boost and OpenSSL, and `docs/rt/text.md` still describes the old implicit order. Both are outside this lane's ownership.
 
