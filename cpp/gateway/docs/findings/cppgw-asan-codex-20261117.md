@@ -95,9 +95,15 @@ Exit 128: `fatal: could not read Username for 'https://github.com': No such devi
 
 ## Findings
 
-| Test      | Tool | Cause                     | Fix or disposition                   |
-| --------- | ---- | ------------------------- | ------------------------------------ |
-| Discovery | —    | Execution not yet started | Pending plain and sanitizer receipts |
+| Test                           | Tool                        | Cause                                                                                  | Fix or disposition                                                                        |
+| ------------------------------ | --------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `codex_supervisor_secret_test` | Clang 21 `-Werror,-Wshadow` | Explicit lambda init-captures shadow their structured-binding source names at line 106 | Rename the two capture bindings; every generated case, fixture and assertion is unchanged |
+
+Initial plain compilation: 385/386 translation units passed; the one failing unit
+reported two instances of `error: declaration shadows a structured binding
+[-Werror,-Wshadow]` on `[wrap = wrap, value = value]`. No other compile error
+occurred. No source warning or test assertion was disabled. Incremental rebuild
+and all execution receipts are pending.
 
 ## Final handoff
 
