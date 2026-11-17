@@ -95,10 +95,15 @@ Exit 128: `fatal: could not read Username for 'https://github.com': No such devi
 
 ## Findings
 
-| Test                           | Tool                        | Cause                                                                                  | Fix or disposition                                                                                                                          |
-| ------------------------------ | --------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `codex_supervisor_secret_test` | Clang 21 `-Werror,-Wshadow` | Explicit lambda init-captures shadow their structured-binding source names at line 106 | Rename the two capture bindings; every generated case, fixture and assertion is unchanged                                                   |
-| Shard runner                   | Local preflight audit       | Direct invocation could inherit the host network namespace                             | Fail closed before building/running tests unless the Linux namespace exposes only `lo`; host invocation exits 1 before launching any binary |
+| Test                                               | Tool                                 | Cause                                                                                         | Fix or disposition                                                                                                                          |
+| -------------------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `codex_supervisor_secret_test`                     | Clang 21 `-Werror,-Wshadow`          | Explicit lambda init-captures shadow their structured-binding source names at line 106        | Rename the two capture bindings; every generated case, fixture and assertion is unchanged                                                   |
+| Shard runner                                       | Local preflight audit                | Direct invocation could inherit the host network namespace                                    | Fail closed before building/running tests unless the Linux namespace exposes only `lo`; host invocation exits 1 before launching any binary |
+| `codex_supervisor_brief_handler_differential_test` | LSan, 30,848 bytes / 456 allocations | Socket event listeners retain `ConnectionState`, which owns the socket                        | Replace the three strong event captures with weak captures; regression and sanitizer reruns pending                                         |
+| `codex_supervisor_followups_test`                  | LSan, 9,317 bytes / 126 allocations  | Same supervisor transport ownership cycle                                                     | Same owned root fix; rerun pending                                                                                                          |
+| `codex_supervisor_handlers_differential_test`      | LSan, 23,188 bytes / 340 allocations | Same cycle on successful close and failed socket opening                                      | Two new native lifetime regressions fail before the fix; rerun pending                                                                      |
+| `codex_supervisor_inventory_coverage_test`         | LSan, 48,679 bytes / 843 allocations | Same cycle retains scripted sockets, frames, callbacks and handshake promises                 | Same owned root fix; rerun pending                                                                                                          |
+| `codex_serial_routing_http_test`                   | LSan, 5,824 bytes / 45 allocations   | `runtime/http.cpp` stores an abort callback capturing its own `ServeState` through `shutdown` | Outside owned paths: report only; no suppression or fixture workaround                                                                      |
 
 Initial plain compilation: 385/386 translation units passed; the one failing unit
 reported two instances of `error: declaration shadows a structured binding
@@ -133,6 +138,77 @@ to it and refuse a missing tool. A separate network-namespace preflight observed
 now running; no sanitized execution result is claimed yet. Based on the measured
 plain compile phase, budget 30–55 minutes for its instrumented cold build, with
 the same four-worker limit and incremental recovery if a command fails.
+
+## Initial sanitizer sweep and root-cause checkpoint
+
+All 386 instrumented translation units and 71 links passed. The first unsuppressed
+ASan/UBSan run executed all 71 binaries: **66 PASS, five LSan failures**, zero
+UBSan diagnostics, invalid-access reports, or timeouts. The passing binaries
+reported **779/779 cases**. The five LSan exits occurred before buffered harness
+summaries were flushed; no passing-case count is inferred for those processes.
+
+```sh
+sudo -n unshare --net -- /bin/sh -c 'ip link set lo up && exec setpriv --reuid=1001 --regid=1001 --clear-groups env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/python3 /home/runner/work/_temp/agent-jobs/cppgw-asan-codex-20261117/checkout/cpp/gateway/tests/helpers/codex_sanitizer_checks.py --profile asan --run-only --require-clean'
+```
+
+Receipt: `/tmp/cppgw-asan-codex-20261117/asan/runs/1794917514646346783`.
+Commit `73437d33fae1b2f39468b0b10e669c0c0c0f25d5`, tree
+`607d7c88dd63e9b18d5a908f189a9b819d75171c`; inputs and identity stayed unchanged.
+`results.json` SHA-256 `2143b8c3935ca6ac20ff38aab5288b075f81e11c1962d251245023483bf19ec3`;
+`provenance.json` SHA-256 `84833c97b49595081e795ababc06e04193a11baebdb7d4210ef5556104393c53`.
+The five full allocation reports remain in that receipt's `logs/` directory.
+
+All four supervisor reports allocate retained listeners at original
+`src/codex/supervisor_transport.cpp:193–195`, with socket construction at 191.
+`ConnectionState -> socket -> listener -> ConnectionState` is an ordinary C++
+ownership defect, not a documented JavaScript model limit. The three callbacks
+now lock weak state owners per invocation; connection objects and in-flight
+coroutines continue to retain state strongly. No await, callback order, payload,
+error text, or expected vector changes. No LSan suppression is justified.
+
+Two native lifetime cases were added to the matching handlers differential test:
+release after normal close, and release when opening emits an error. Before the
+production fix, the focused plain run printed **2 run, 0 passed, 2 failed**, both
+at `EXPECT(socket.expired())`. Receipt:
+`/tmp/cppgw-asan-codex-20261117/plain/runs/1794917701992770366` (dirty discovery
+receipt with null commit/tree). Its reproducing commands are:
+
+```sh
+python3 cpp/gateway/tests/helpers/codex_sanitizer_checks.py --profile plain --build-only --jobs 4 --filter codex_supervisor_handlers_differential_test
+sudo -n unshare --net -- /bin/sh -c 'ip link set lo up && exec setpriv --reuid=1001 --regid=1001 --clear-groups env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/python3 /home/runner/work/_temp/agent-jobs/cppgw-asan-codex-20261117/checkout/cpp/gateway/tests/helpers/codex_sanitizer_checks.py --profile plain --run-only --filter codex_supervisor_handlers_differential_test --case "supervisor transport releases"'
+python3 cpp/gateway/tests/helpers/codex_sanitizer_checks.py --profile both --build-only --jobs 4
+```
+
+This production source edit invalidates affected previous passing receipts;
+source-matching plain and sanitized reruns are pending.
+
+## Outside-owned HTTP defect
+
+`codex_serial_routing_http_test` already awaits shutdown of both its loopback
+provider and gateway (`Fixture::stop()`); changing its assertions or cleanup
+would hide a production ownership defect. `src/runtime/http.cpp:2002` stores
+`state->abort = EventListener([shutdown] { ... })`, while the `shutdown` closure
+at 1996 retains `state`. The callback is stored even when no abort signal was
+supplied. Thus `ServeState -> abort callback -> shutdown -> ServeState` survives
+normal shutdown and retains both server states, listeners and settled promises.
+
+First report lines, with the template allocator frames omitted here but preserved
+in the full log:
+
+```text
+ERROR: LeakSanitizer: detected memory leaks
+Indirect leak of 608 byte(s) in 1 object(s) allocated from:
+  uos::runtime::http::serveHttp(...) src/runtime/http.cpp:1914:18
+  Fixture::start() tests/codex_serial_routing_http_test.cpp:106:13
+Indirect leak of 608 byte(s) in 1 object(s) allocated from:
+  uos::runtime::http::serveHttp(...) src/runtime/http.cpp:1914:18
+  Fixture::start() tests/codex_serial_routing_http_test.cpp:95:14
+SUMMARY: AddressSanitizer: 5824 byte(s) leaked in 45 allocation(s).
+```
+
+Reproduce after the instrumented build with the full sanitizer command above plus
+`--filter codex_serial_routing_http_test`. Exit is 1. The source is outside
+`src/codex`/`src/models`, so it remains unchanged and unsuppressed for its owner.
 
 ## Local review checkpoint
 

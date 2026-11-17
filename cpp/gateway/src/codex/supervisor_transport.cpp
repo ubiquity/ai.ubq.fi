@@ -190,9 +190,17 @@ namespace uos::codex::supervisor_transport {
       auto state = std::make_shared<ConnectionState>();
       state->socket = constructor("ws+unix://" + socketPath + ":/", options);
 
-      state->socket->on("message", [state](const ws::EventArgs& event) { state->handleMessage(event.data); });
-      state->socket->on("close", [state] { state->failPending("app-server connection closed"); });
-      state->socket->on("error", [state] { state->failPending("app-server connection failed"); });
+      // Connections and pending calls own the state; socket listeners must not own their socket through it.
+      const std::weak_ptr<ConnectionState> weak = state;
+      state->socket->on("message", [weak](const ws::EventArgs& event) {
+        if (auto live = weak.lock()) live->handleMessage(event.data);
+      });
+      state->socket->on("close", [weak] {
+        if (auto live = weak.lock()) live->failPending("app-server connection closed");
+      });
+      state->socket->on("error", [weak] {
+        if (auto live = weak.lock()) live->failPending("app-server connection failed");
+      });
 
       const rt::Promise<void> opening = rt::newPromise<void>([&](const rt::Resolve<void>& resolve, const rt::Reject& reject) {
         auto opened = std::make_shared<bool>(false);
