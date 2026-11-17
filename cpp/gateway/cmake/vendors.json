@@ -1,4 +1,5 @@
 {
   "simdjson": ["src/rt/json.cpp"],
-  "simdutf": ["src/rt/base64.cpp"]
+  "simdutf": ["src/rt/base64.cpp"],
+  "llhttp": ["src/rt/fetch_transport_http.cpp"]
 }
