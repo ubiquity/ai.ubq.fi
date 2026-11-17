@@ -35,6 +35,7 @@
 #include "uos/rt/console.hpp"
 #include "uos/rt/test_async.hpp"
 #include <algorithm>
+#include <memory>
 namespace rt=uos::rt;namespace json=uos::json;namespace client=uos::tests::helpers::responses_conformance_client;namespace fixture=uos::tests::helpers::responses_conformance_fixture;
 using Fixture=std::shared_ptr<fixture::ResponsesConformanceFixture>;using Capture=client::ConformanceWireCapture;
 namespace {
@@ -94,4 +95,21 @@ rt::Task<int> exerciseMockDispatchBound(std::optional<double> maximum=std::nullo
 }
 ASYNC_TEST("warm source fixture permits more than four text dispatches with a finite override and preserves the default bound"){
   auto ordinary=exerciseMockDispatchBound();const auto normal=co_await std::move(ordinary);EXPECT_EQ(normal,3);auto expanded=exerciseMockDispatchBound(6);const auto extra=co_await std::move(expanded);EXPECT_EQ(extra,5);
+}
+
+ASYNC_TEST("stopped conformance fixture releases its owner after transport drain") {
+  std::weak_ptr<fixture::ResponsesConformanceFixture> released;
+  {
+    auto starting = fixture::startResponsesConformanceFixture(options());
+    auto value = co_await std::move(starting);
+    released = value;
+    auto stopping = value->stop();
+    co_await std::move(stopping);
+    const auto reopened = value->verifyReopenedLedger();
+    EXPECT_EQ(rt::getString(reopened, "outcome"), std::optional<std::string_view>("verified"));
+    EXPECT(value->calls.empty());
+    value.reset();
+  }
+  co_await rt::microtask();
+  EXPECT(released.expired());
 }

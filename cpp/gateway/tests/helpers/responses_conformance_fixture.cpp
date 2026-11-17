@@ -149,6 +149,7 @@ namespace uos::tests::helpers::responses_conformance_fixture {
     try {
       rt::Promise<void> stopUpstream(upstream->stop());const auto stopGateway=state->gateway->shutdown();std::vector<rt::Promise<void>> pending{stopUpstream,stopGateway};auto settled=rt::allSettled(pending);const auto results=co_await settled.wait();auto telemetry=::uos::serve::shutdownOptionalTelemetry();co_await std::move(telemetry);
       for(const auto& result:results)if(result.status=="rejected")std::rethrow_exception(result.reason);
+      state->gateway.reset();
       journal->add("transport_drained");auto reading=accountingFor(self,state->database);state->accounting=co_await std::move(reading);state->database->close();state->kvClosed=true;journal->add("kv_closed");
       const auto before=state->accounting;const auto dispatchesBefore=calls.size();const auto quotaCommits=[this]{return std::count_if(journal->entries.begin(),journal->entries.end(),[](const auto& entry){return entry.kind=="quota_commit";});};const auto quotaCommitsBefore=quotaCommits();
       auto opening=storage::kv::openKv(std::string(*rt::getString(storage,"databasePath")));auto reopened=co_await std::move(opening);const auto close=rt::scopeExit([reopened]{reopened->close();});auto observing=std::make_shared<ObservedKv>(reopened,journal);auto rereading=accountingFor(self,observing);state->accounting=co_await std::move(rereading);
