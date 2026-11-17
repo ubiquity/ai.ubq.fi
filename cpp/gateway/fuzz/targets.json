@@ -89,6 +89,12 @@
       "entry": "Receiver::write / end",
       "max_len": 16384
     },
+    "websocket_library": {
+      "harness": "fuzz/websocket_library.cpp",
+      "entry": "uos::rt::ws::WebSocketServer::handleUpgrade / WebSocket::send",
+      "extra_sources": [],
+      "max_len": 16384
+    },
     "passkeys": {
       "harness": "fuzz/passkeys.cpp",
       "included_implementation": "src/auth/passkeys.cpp",
