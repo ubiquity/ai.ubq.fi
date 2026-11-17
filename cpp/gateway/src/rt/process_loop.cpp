@@ -26,7 +26,11 @@
 #include <map>
 #include <stdexcept>
 
+#if defined(__APPLE__)
+#include <crt_externs.h>
+#else
 extern char** environ;
+#endif
 
 namespace uos::rt::process {
   namespace {
@@ -464,7 +468,12 @@ namespace uos::rt::process {
     posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
 
     pid_t child = -1;
-    const int status = ::posix_spawn(&child, file.c_str(), &actions, &attributes, args.data(), options.env ? envp.data() : environ);
+#if defined(__APPLE__)
+    char** inheritedEnvironment = *_NSGetEnviron();
+#else
+    char** inheritedEnvironment = environ;
+#endif
+    const int status = ::posix_spawn(&child, file.c_str(), &actions, &attributes, args.data(), options.env ? envp.data() : inheritedEnvironment);
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attributes);
     closeFd(in.read);

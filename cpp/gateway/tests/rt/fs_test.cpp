@@ -24,6 +24,27 @@ using namespace std::literals;
 namespace fs = uos::rt::fs;
 
 namespace {
+  const timespec& accessTime(const struct stat& info) {
+#if defined(__APPLE__)
+    return info.st_atimespec;
+#else
+    return info.st_atim;
+#endif
+  }
+  const timespec& modificationTime(const struct stat& info) {
+#if defined(__APPLE__)
+    return info.st_mtimespec;
+#else
+    return info.st_mtim;
+#endif
+  }
+  const timespec& changeTime(const struct stat& info) {
+#if defined(__APPLE__)
+    return info.st_ctimespec;
+#else
+    return info.st_ctim;
+#endif
+  }
   struct TempDir {
     std::string path = fs::mkdtempSync("/tmp/uos-rt-fs-test-");
     ~TempDir() {
@@ -508,7 +529,11 @@ TEST("fs error objects: descriptors, create flags, copy and link (fs1 probe)") {
   fs::closeSync(twice);
   EXPECT_EQ(errorOf([&] { fs::closeSync(twice); }), "Error|EBADF: bad file descriptor, close|EBADF|-9|close|-|-|" + std::to_string(twice));
   EXPECT_EQ(fs::constants::O_RDONLY_, 0);
+#if defined(__linux__) && defined(__x86_64__)
+  EXPECT_EQ(fs::constants::O_NOFOLLOW_, 131072);
+#else
   EXPECT_EQ(fs::constants::O_NOFOLLOW_, 32768);
+#endif
   EXPECT_EQ(fs::constants::COPYFILE_EXCL, 1);
   EXPECT_EQ(fs::constants::O_CREAT_, 64);
   EXPECT_EQ(fs::constants::O_EXCL_, 128);
@@ -707,10 +732,10 @@ TEST("Stats fields: Stats numbers and BigIntStats integers (fs2 probe)") {
   EXPECT_EQ(stat.blksize, std::int64_t(raw.st_blksize));
   EXPECT_EQ(stat.blocks, std::int64_t(raw.st_blocks));
   EXPECT_EQ(stat.rdev, std::uint64_t(0));
-  EXPECT_EQ(stat.mtimeNs, std::int64_t(raw.st_mtim.tv_sec) * 1000000000 + raw.st_mtim.tv_nsec);
-  EXPECT_EQ(stat.mtimeMs, static_cast<double>(raw.st_mtim.tv_sec) * 1e3 + static_cast<double>(raw.st_mtim.tv_nsec) / 1e6);
+  EXPECT_EQ(stat.mtimeNs, std::int64_t(modificationTime(raw).tv_sec) * 1000000000 + modificationTime(raw).tv_nsec);
+  EXPECT_EQ(stat.mtimeMs, static_cast<double>(modificationTime(raw).tv_sec) * 1e3 + static_cast<double>(modificationTime(raw).tv_nsec) / 1e6);
   EXPECT_EQ(std::floor(stat.mtimeMs), static_cast<double>(stat.mtimeNs / 1000000));
-  EXPECT_EQ(stat.ctimeNs, std::int64_t(raw.st_ctim.tv_sec) * 1000000000 + raw.st_ctim.tv_nsec);
+  EXPECT_EQ(stat.ctimeNs, std::int64_t(changeTime(raw).tv_sec) * 1000000000 + changeTime(raw).tv_nsec);
   EXPECT(stat.isFile() && !stat.isDirectory() && !stat.isSymbolicLink() && !stat.isFIFO() && !stat.isSocket() && !stat.isBlockDevice() && !stat.isCharacterDevice());
   EXPECT(fs::statSync(dir.path).isDirectory());
   ASSERT(::symlink(file.c_str(), (dir.path + "/link").c_str()) == 0);
@@ -732,8 +757,8 @@ namespace {
   std::string rawTimesOf(const std::string& path) {
     struct stat raw;
     if (::stat(path.c_str(), &raw) != 0) return "stat failed";
-    return std::to_string(raw.st_atim.tv_sec) + "." + std::to_string(raw.st_atim.tv_nsec) + " " + std::to_string(raw.st_mtim.tv_sec) + "." +
-           std::to_string(raw.st_mtim.tv_nsec);
+    return std::to_string(accessTime(raw).tv_sec) + "." + std::to_string(accessTime(raw).tv_nsec) + " " + std::to_string(modificationTime(raw).tv_sec) + "." +
+           std::to_string(modificationTime(raw).tv_nsec);
   }
 
   std::string typeErrorCodeOf(const std::function<void()>& body) {
@@ -835,13 +860,13 @@ TEST("utimesSync sets both times as Bun does: seconds kept to the nanosecond, Da
   fs::utimesSync(file, -1, 5);
   struct stat raw;
   ASSERT(::stat(file.c_str(), &raw) == 0);
-  EXPECT(raw.st_atim.tv_sec >= before - 1 && raw.st_atim.tv_sec <= static_cast<long long>(std::time(nullptr)) + 1);
-  EXPECT_EQ(static_cast<long long>(raw.st_mtim.tv_sec), 5LL);
-  EXPECT_EQ(static_cast<long long>(raw.st_mtim.tv_nsec), 0LL);
+  EXPECT(accessTime(raw).tv_sec >= before - 1 && accessTime(raw).tv_sec <= static_cast<long long>(std::time(nullptr)) + 1);
+  EXPECT_EQ(static_cast<long long>(modificationTime(raw).tv_sec), 5LL);
+  EXPECT_EQ(static_cast<long long>(modificationTime(raw).tv_nsec), 0LL);
   fs::utimesSync(file, -1, -2.5);
   ASSERT(::stat(file.c_str(), &raw) == 0);
-  EXPECT(raw.st_atim.tv_sec == raw.st_mtim.tv_sec && raw.st_atim.tv_nsec == raw.st_mtim.tv_nsec);
-  EXPECT(raw.st_atim.tv_sec >= before - 1);
+  EXPECT(accessTime(raw).tv_sec == modificationTime(raw).tv_sec && accessTime(raw).tv_nsec == modificationTime(raw).tv_nsec);
+  EXPECT(accessTime(raw).tv_sec >= before - 1);
 
   // Validation comes first (atime, then mtime), then the call follows symlinks.
   const double nan = std::nan("");

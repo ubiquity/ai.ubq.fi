@@ -332,7 +332,7 @@ namespace {
           std::string value = line.substr(colon + 1);
           while (!value.empty() && value.front() == ' ') value.erase(0, 1);
           std::string latin;
-          for (const unsigned char c : value) rt::appendCodePoint(latin, c);
+          for (const char c : value) rt::appendCodePoint(latin, static_cast<unsigned char>(c));
           request.rawHeaders.emplace_back(line.substr(0, colon), latin);
         }
         ws::Bytes rest(received->begin() + static_cast<std::ptrdiff_t>(end + 4), received->end());

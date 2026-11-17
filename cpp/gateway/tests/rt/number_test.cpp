@@ -2353,7 +2353,8 @@ TEST("BigInt compound assignment as used by the FNV-1a hash") {
   // harmony/reliability/hash.ts: hash = BigInt.asUintN(64, (hash ^ byte) * prime) over "abc".
   rt::BigInt hash = rt::BigInt::fromString("0xcbf29ce484222325");
   const rt::BigInt prime = rt::BigInt::fromString("0x100000001b3");
-  for (const unsigned char byte : std::string_view("abc")) {
+  for (const char character : std::string_view("abc")) {
+    const auto byte = static_cast<unsigned char>(character);
     hash ^= rt::BigInt(byte);
     hash = rt::BigInt::asUintN(64, hash * prime);
   }

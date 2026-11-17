@@ -13,6 +13,7 @@
 #include "uos/storage/native_addon.hpp"
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -45,8 +46,19 @@ namespace {
   class OccupiedPort {
   public:
     OccupiedPort() {
+#if defined(__APPLE__)
+      descriptor = ::socket(AF_INET, SOCK_STREAM, 0);
+#else
       descriptor = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#endif
       require(descriptor >= 0, "Could not create the loopback bind-collision fixture");
+#if defined(__APPLE__)
+      if (::fcntl(descriptor, F_SETFD, FD_CLOEXEC) < 0) {
+        ::close(descriptor);
+        descriptor = -1;
+        throw std::runtime_error("Could not mark the collision socket close-on-exec");
+      }
+#endif
       sockaddr_in address{};
       address.sin_family = AF_INET;
       address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);

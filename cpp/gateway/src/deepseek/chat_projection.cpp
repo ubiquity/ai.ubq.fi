@@ -301,7 +301,7 @@ namespace {
       if (isSealedAgentPayload(*encrypted)) { ++unreadable; continue; }
       texts.push_back(*encrypted);
     }
-    const auto notice = unreadable ? "\n[gateway: " + rt::numberToString(unreadable) + " sealed agent-message part(s) were not readable and omitted]" : "";
+    const auto notice = unreadable != 0 ? "\n[gateway: " + rt::numberToString(unreadable) + " sealed agent-message part(s) were not readable and omitted]" : "";
     const auto content = "[agent message] " + author + " -> " + recipient + ":\n" + rt::join(texts, "\n") + notice;
     const auto bytes = forwardedByteLength(content);
     if (bytes <= FORWARDED_PAYLOAD_POLICY.perMessageLimit) return good(json::object{{"role", "user"}, {"content", content}});

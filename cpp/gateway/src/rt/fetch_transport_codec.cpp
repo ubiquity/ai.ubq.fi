@@ -125,7 +125,11 @@ namespace uos::rt::detail::fetch {
       return &api;
 #else
       static const std::optional<BrotliApi> api = []() -> std::optional<BrotliApi> {
+#if defined(__APPLE__)
+        void* library = ::dlopen("libbrotlidec.1.dylib", RTLD_NOW | RTLD_LOCAL);
+#else
         void* library = ::dlopen("libbrotlidec.so.1", RTLD_NOW | RTLD_LOCAL);
+#endif
         if (!library) return std::nullopt;
         BrotliApi loaded;
         if (!resolveSymbol(library, loaded.createInstance, "BrotliDecoderCreateInstance") || !resolveSymbol(library, loaded.destroyInstance, "BrotliDecoderDestroyInstance") ||
@@ -221,7 +225,11 @@ namespace uos::rt::detail::fetch {
       return &api;
 #else
       static const std::optional<ZstdApi> api = []() -> std::optional<ZstdApi> {
+#if defined(__APPLE__)
+        void* library = ::dlopen("libzstd.1.dylib", RTLD_NOW | RTLD_LOCAL);
+#else
         void* library = ::dlopen("libzstd.so.1", RTLD_NOW | RTLD_LOCAL);
+#endif
         if (!library) return std::nullopt;
         ZstdApi loaded;
         if (!resolveSymbol(library, loaded.createDStream, "ZSTD_createDStream") || !resolveSymbol(library, loaded.freeDStream, "ZSTD_freeDStream") ||

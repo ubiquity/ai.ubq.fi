@@ -601,7 +601,7 @@ namespace uos::auth::passkeys {
           case Cbor::Kind::number: encodeNumber(output, data.number); return;
           case Cbor::Kind::string: {
             // The length prefix counts UTF-16 code units (`data.length`), the payload is UTF-8.
-            encodeLength(output, MAJOR_TYPE_TEXT_STRING, rt::length(data.text));
+            encodeLength(output, MAJOR_TYPE_TEXT_STRING, static_cast<std::uint64_t>(rt::length(data.text)));
             const Bytes encoded = rt::encodeUtf8(data.text);
             output.insert(output.end(), encoded.begin(), encoded.end());
             return;
@@ -823,7 +823,7 @@ namespace uos::auth::passkeys {
           if (differencePosition != -1) {
             differenceString = rt::substring(timeString, differencePosition + 1);
             timeString = rt::substring(timeString, 0, differencePosition);
-            const std::size_t differenceLength = rt::length(differenceString);
+            const auto differenceLength = rt::length(differenceString);
             if (differenceLength != 2 && differenceLength != 4) wrong();
             double number = rt::parseInt(rt::substring(differenceString, 0, 2), 10);
             if (std::isnan(number)) wrong();

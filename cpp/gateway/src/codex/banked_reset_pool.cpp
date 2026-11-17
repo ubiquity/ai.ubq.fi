@@ -235,19 +235,19 @@ namespace uos::codex::banked_reset_pool {
     // `Readonly<{ kind: "ordered"; ordered } > | Readonly<{ kind: "failure"; reason: string }>` and the other
     // `{ kind: "failure"; reason }` / `{ kind: "outcome"; outcome }` unions of the evaluator.
     struct PoolFailure {
-      static constexpr std::string_view kind = "failure";
+      [[maybe_unused]] static constexpr std::string_view kind = "failure";
       std::string reason;
     };
     struct PoolStepOutcome {
-      static constexpr std::string_view kind = "outcome";
+      [[maybe_unused]] static constexpr std::string_view kind = "outcome";
       CodexBankedResetPoolOutcome outcome;
     };
     struct OrderedPool {
-      static constexpr std::string_view kind = "ordered";
+      [[maybe_unused]] static constexpr std::string_view kind = "ordered";
       std::vector<CodexBankedResetPoolCandidate> ordered;
     };
     struct PoolConfig {
-      static constexpr std::string_view kind = "config";
+      [[maybe_unused]] static constexpr std::string_view kind = "config";
       CodexBankedResetConfig config;
     };
 
@@ -359,7 +359,7 @@ namespace uos::codex::banked_reset_pool {
     }
 
     struct PoolEpisode {
-      static constexpr std::string_view kind = "episode";
+      [[maybe_unused]] static constexpr std::string_view kind = "episode";
       std::vector<ResolvedPoolCandidate> complete;
       std::vector<ResolvedPoolCandidate> eligible;
       std::vector<rt::KvEntryMaybe<>> settingsEntries;
@@ -515,7 +515,7 @@ namespace uos::codex::banked_reset_pool {
     bool hasPoolInventory(const PoolInventoryObservation& observation) { return observation.inventory.has_value(); }
 
     struct PoolObserved {
-      static constexpr std::string_view kind = "observed";
+      [[maybe_unused]] static constexpr std::string_view kind = "observed";
       std::vector<PoolInventoryObservation> inventoryResults;
       double nowMs;
     };
@@ -556,7 +556,7 @@ namespace uos::codex::banked_reset_pool {
     }
 
     struct PoolSelection {
-      static constexpr std::string_view kind = "selection";
+      [[maybe_unused]] static constexpr std::string_view kind = "selection";
       std::optional<SelectedPoolCredit> selected;
       std::string decisionReason;
     };
@@ -600,7 +600,7 @@ namespace uos::codex::banked_reset_pool {
     }
 
     struct ShadowDecisionBuilt {
-      static constexpr std::string_view kind = "decision";
+      [[maybe_unused]] static constexpr std::string_view kind = "decision";
       CodexResetShadowDecisionRecord decision;
     };
 

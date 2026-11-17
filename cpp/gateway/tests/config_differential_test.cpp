@@ -49,6 +49,9 @@ namespace {
 
   // How this binary was started (the SDK loader, its arguments and the binary).
   std::vector<std::string> selfCommand() {
+#if defined(__APPLE__)
+    return {uos::rt::process::execPath()};
+#else
     const std::vector<std::uint8_t> bytes = rt::fs::readFileSync("/proc/self/cmdline");
     std::vector<std::string> argv;
     std::string current;
@@ -64,6 +67,7 @@ namespace {
     const std::size_t keep = viaLoader ? 4 : 1;
     argv.resize(std::min(argv.size(), keep));
     return argv;
+#endif
   }
 }
 

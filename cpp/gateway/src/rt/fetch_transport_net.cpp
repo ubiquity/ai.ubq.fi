@@ -259,7 +259,7 @@ namespace uos::rt::detail::fetch {
 
   // ---- pool -------------------------------------------------------------------------
 
-  Pool::Pool(std::size_t capacity, double keepAliveTimeoutMs) : capacity_(capacity), timeoutMs_(keepAliveTimeoutMs), plain_(capacity), secure_(capacity) {}
+  Pool::Pool(std::size_t capacity, double keepAliveTimeoutMs) : capacity_(capacity), timeoutMs_(keepAliveTimeoutMs), plain_(capacity_), secure_(capacity_) {}
 
   Pool::~Pool() { closeAll(); }
 

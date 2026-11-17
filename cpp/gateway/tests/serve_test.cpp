@@ -45,7 +45,7 @@ TEST("serve module publishes inert application callables without invoking its gu
   EXPECT(static_cast<bool>(serve::application.fetch));
   EXPECT(static_cast<bool>(serve::application.upgrade));
   EXPECT(static_cast<bool>(serve::application.onListen));
-  auto volatile entry=&serve::importMetaMain;
+  rt::Task<void> (*volatile entry)()=&serve::importMetaMain;
   EXPECT(entry!=nullptr);
   EXPECT(!rt::fs::existsSync(".data"));
 }

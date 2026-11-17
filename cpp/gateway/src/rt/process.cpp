@@ -5,6 +5,7 @@
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #include <signal.h>
+#include <sys/param.h>
 #endif
 #include <unistd.h>
 #include <cerrno>
@@ -133,7 +134,11 @@ namespace uos::rt::process {
 
 namespace uos::rt::os {
   std::string hostname() {
+#if defined(__APPLE__)
+    char buffer[MAXHOSTNAMELEN + 1] = {};
+#else
     char buffer[HOST_NAME_MAX + 1] = {};
+#endif
     if (::gethostname(buffer, sizeof buffer - 1) != 0) return std::string();
     return buffer;
   }
