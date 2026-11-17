@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2014-2026 Pavel Kalvoda <me@pavelkalvoda.com>
+# SPDX-License-Identifier: MIT
+
+set(CBOR_VERSION @PROJECT_VERSION@)
+
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/libcborTargets.cmake")
+
+# legacy
+set_and_check(CBOR_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+set_and_check(CBOR_INCLUDE_DIRS "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+
+check_required_components(libcbor)

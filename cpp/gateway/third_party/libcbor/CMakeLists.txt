@@ -1,0 +1,126 @@
+# SPDX-FileCopyrightText: 2014-2026 Pavel Kalvoda <me@pavelkalvoda.com>
+# SPDX-License-Identifier: MIT
+
+set(SOURCES
+    cbor.c
+    allocators.c
+    cbor/streaming.c
+    cbor/internal/encoders.c
+    cbor/internal/builder_callbacks.c
+    cbor/internal/loaders.c
+    cbor/internal/memory_utils.c
+    cbor/internal/stack.c
+    cbor/internal/unicode.c
+    cbor/encoding.c
+    cbor/serialization.c
+    cbor/arrays.c
+    cbor/common.c
+    cbor/floats_ctrls.c
+    cbor/bytestrings.c
+    cbor/callbacks.c
+    cbor/strings.c
+    cbor/maps.c
+    cbor/tags.c
+    cbor/ints.c)
+
+include(JoinPaths)
+set(CMAKE_SKIP_BUILD_RPATH FALSE)
+
+if(NOT DEFINED CMAKE_MACOSX_RPATH)
+  set(CMAKE_MACOSX_RPATH 0)
+endif()
+
+add_library(cbor ${SOURCES})
+
+target_compile_definitions(cbor
+  PRIVATE
+    $<$<BOOL:${BIG_ENDIAN}>:IS_BIG_ENDIAN>
+    $<$<BOOL:${MSVC}>:_CRT_SECURE_NO_WARNINGS>
+  PUBLIC
+    $<$<BOOL:${HAS_NODISCARD_ATTRIBUTE}>:CBOR_HAS_NODISCARD_ATTRIBUTE>
+    $<$<BOOL:${HAS_BUILTIN_UNREACHABLE}>:CBOR_HAS_BUILTIN_UNREACHABLE>)
+
+# Compile options set directly (not via cbor_project_options INTERFACE library)
+# because the cbor target is exported and PRIVATE INTERFACE library deps cause
+# install(EXPORT ...) errors in CMake < 3.15.
+if(MINGW)
+  target_compile_options(cbor PRIVATE -std=gnu99)
+elseif(NOT MSVC)
+  target_compile_options(cbor PRIVATE -pedantic)
+endif()
+if(MSVC)
+  target_compile_options(cbor PRIVATE $<$<CONFIG:Debug>:/sdl>)
+else()
+  target_compile_options(cbor PRIVATE
+    $<$<CONFIG:Debug>:-O0 -Wall -Wextra -g -ggdb>
+    $<$<CONFIG:Release>:-O3 -Wall -Wextra>)
+  target_compile_definitions(cbor PRIVATE $<$<CONFIG:Debug>:DEBUG=true>)
+endif()
+
+target_include_directories(cbor PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+  $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+set_target_properties(cbor PROPERTIES EXPORT_NAME libcbor)
+# For vendored builds
+add_library(libcbor::libcbor ALIAS cbor)
+
+include(GenerateExportHeader)
+generate_export_header(cbor EXPORT_FILE_NAME
+                       ${CMAKE_CURRENT_BINARY_DIR}/cbor/cbor_export.h)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/cbor/cbor_export.h
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/cbor)
+
+if(NOT ${PROJECT_VERSION_MAJOR} EQUAL 0)
+  message(
+    FATAL_ERROR
+      "Change the shared library version scheme to reflect https://github.com/PJK/libcbor/issues/52."
+  )
+endif()
+
+set_target_properties(
+  cbor
+  PROPERTIES VERSION ${PROJECT_VERSION}
+             MACHO_COMPATIBILITY_VERSION
+             ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.0
+             SOVERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR})
+
+join_paths(libdir_for_pc_file "\${prefix}" "${CMAKE_INSTALL_LIBDIR}")
+join_paths(includedir_for_pc_file "\${prefix}" "${CMAKE_INSTALL_INCLUDEDIR}")
+configure_file(libcbor.pc.in libcbor.pc @ONLY)
+
+# http://www.cmake.org/Wiki/CMake:Install_Commands
+install(
+  TARGETS cbor
+  EXPORT libcborTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+install(
+  DIRECTORY cbor
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  FILES_MATCHING
+  PATTERN "*.h")
+
+install(FILES cbor.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/libcbor.pc"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
+
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+  libcborConfig.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/libcborConfig.cmake
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libcbor
+  PATH_VARS CMAKE_INSTALL_INCLUDEDIR)
+write_basic_package_version_file(
+  ${CMAKE_CURRENT_BINARY_DIR}/libcborConfigVersion.cmake
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/libcborConfig.cmake
+              ${CMAKE_CURRENT_BINARY_DIR}/libcborConfigVersion.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libcbor)
+install(EXPORT libcborTargets
+        NAMESPACE libcbor::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libcbor)

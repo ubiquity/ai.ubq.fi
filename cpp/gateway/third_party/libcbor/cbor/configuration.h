@@ -1,0 +1,20 @@
+/*
+ * SPDX-FileCopyrightText: 2014-2026 Pavel Kalvoda <me@pavelkalvoda.com>
+ * SPDX-License-Identifier: MIT
+ */
+
+#ifndef LIBCBOR_CONFIGURATION_H
+#define LIBCBOR_CONFIGURATION_H
+
+#define CBOR_MAJOR_VERSION 0
+#define CBOR_MINOR_VERSION 15
+#define CBOR_PATCH_VERSION 0
+
+#define CBOR_BUFFER_GROWTH 2
+#define CBOR_MAX_STACK_SIZE 64
+#define CBOR_MAX_UNCHECKED_DECLARED_SIZE 0
+#define CBOR_PRETTY_PRINTER 0
+
+#define CBOR_RESTRICT_SPECIFIER restrict
+
+#endif //LIBCBOR_CONFIGURATION_H

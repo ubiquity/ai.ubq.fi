@@ -1,0 +1,166 @@
+/*
+ * SPDX-FileCopyrightText: 2014-2026 Pavel Kalvoda <me@pavelkalvoda.com>
+ * SPDX-License-Identifier: MIT
+ */
+
+#include "maps.h"
+#include "internal/map_utils.h"
+#include "internal/memory_utils.h"
+
+size_t cbor_map_size(const cbor_item_t* item) {
+  CBOR_ASSERT(cbor_isa_map(item));
+  return item->metadata.map_metadata.end_ptr;
+}
+
+size_t cbor_map_allocated(const cbor_item_t* item) {
+  CBOR_ASSERT(cbor_isa_map(item));
+  return item->metadata.map_metadata.allocated;
+}
+
+cbor_item_t* cbor_new_definite_map(size_t size) {
+  cbor_item_t* item = _cbor_malloc(sizeof(cbor_item_t));
+  _CBOR_NOTNULL(item);
+
+  // malloc(0) may legitimately return NULL, so do not allocate (or check) for
+  // an empty map. The data pointer is never dereferenced while size == 0.
+  unsigned char* data = NULL;
+  if (size > 0) {
+    data = _cbor_alloc_multiple(sizeof(struct cbor_pair), size);
+    _CBOR_DEPENDENT_NOTNULL(item, data);
+  }
+
+  *item = (cbor_item_t){
+      .refcount = 1,
+      .type = CBOR_TYPE_MAP,
+      .metadata = {.map_metadata = {.allocated = size,
+                                    .type = _CBOR_METADATA_DEFINITE,
+                                    .end_ptr = 0}},
+      .data = data};
+
+  return item;
+}
+
+cbor_item_t* cbor_new_indefinite_map(void) {
+  cbor_item_t* item = _cbor_malloc(sizeof(cbor_item_t));
+  _CBOR_NOTNULL(item);
+
+  *item = (cbor_item_t){
+      .refcount = 1,
+      .type = CBOR_TYPE_MAP,
+      .metadata = {.map_metadata = {.allocated = 0,
+                                    .type = _CBOR_METADATA_INDEFINITE,
+                                    .end_ptr = 0}},
+      .data = NULL};
+
+  return item;
+}
+
+bool _cbor_map_add_key(cbor_item_t* item, cbor_item_t* key) {
+  CBOR_ASSERT(cbor_isa_map(item));
+  struct _cbor_map_metadata* metadata =
+      (struct _cbor_map_metadata*)&item->metadata;
+  if (cbor_map_is_definite(item)) {
+    struct cbor_pair* data = cbor_map_handle(item);
+    if (metadata->end_ptr >= metadata->allocated) {
+      /* Don't realloc definite preallocated map */
+      return false;
+    }
+
+    data[metadata->end_ptr].key = key;
+    data[metadata->end_ptr++].value = NULL;
+  } else {
+    if (metadata->end_ptr >= metadata->allocated) {
+      /* Exponential realloc */
+      // Check for overflows first
+      if (!_cbor_safe_to_multiply(CBOR_BUFFER_GROWTH, metadata->allocated)) {
+        return false;
+      }
+
+      size_t new_allocation = metadata->allocated == 0
+                                  ? 1
+                                  : CBOR_BUFFER_GROWTH * metadata->allocated;
+
+      unsigned char* new_data = _cbor_realloc_multiple(
+          item->data, sizeof(struct cbor_pair), new_allocation);
+
+      if (new_data == NULL) {
+        return false;
+      }
+
+      item->data = new_data;
+      metadata->allocated = new_allocation;
+    }
+    struct cbor_pair* data = cbor_map_handle(item);
+    data[metadata->end_ptr].key = key;
+    data[metadata->end_ptr++].value = NULL;
+  }
+  cbor_incref(key);
+  return true;
+}
+
+bool _cbor_map_grow_definite(cbor_item_t* item, size_t limit) {
+  CBOR_ASSERT(cbor_isa_map(item));
+  CBOR_ASSERT(cbor_map_is_definite(item));
+  struct _cbor_map_metadata* metadata = &item->metadata.map_metadata;
+  CBOR_ASSERT(metadata->end_ptr == metadata->allocated);
+  size_t new_allocation = _cbor_grown_capacity(metadata->allocated, limit);
+  unsigned char* new_data = _cbor_realloc_multiple(
+      item->data, sizeof(struct cbor_pair), new_allocation);
+  if (new_data == NULL) {
+    return false;
+  }
+  item->data = new_data;
+  metadata->allocated = new_allocation;
+  return true;
+}
+
+bool _cbor_map_add_value(cbor_item_t* item, cbor_item_t* value) {
+  CBOR_ASSERT(cbor_isa_map(item));
+  // _cbor_map_add_key must have left a pair with no value yet
+  CBOR_ASSERT(cbor_map_size(item) > 0);
+  CBOR_ASSERT(cbor_map_handle(item)[cbor_map_size(item) - 1].value == NULL);
+  cbor_incref(value);
+  cbor_map_handle(item)[
+      /* Move one back since we are assuming _add_key (which increased the ptr)
+       * was the previous operation on this object */
+      item->metadata.map_metadata.end_ptr - 1]
+      .value = value;
+  return true;
+}
+
+// TODO: Add a more convenient API like add(item, key, val)
+bool cbor_map_add(cbor_item_t* item, struct cbor_pair pair) {
+  CBOR_ASSERT(cbor_isa_map(item));
+  CBOR_ASSERT(pair.key != NULL);
+  CBOR_ASSERT(pair.value != NULL);
+  if (!_cbor_map_add_key(item, pair.key)) return false;
+  return _cbor_map_add_value(item, pair.value);
+}
+
+bool cbor_map_is_definite(const cbor_item_t* item) {
+  CBOR_ASSERT(cbor_isa_map(item));
+  return item->metadata.map_metadata.type == _CBOR_METADATA_DEFINITE;
+}
+
+bool cbor_map_is_indefinite(const cbor_item_t* item) {
+  return !cbor_map_is_definite(item);
+}
+
+struct cbor_pair* cbor_map_handle(const cbor_item_t* item) {
+  CBOR_ASSERT(cbor_isa_map(item));
+  return (struct cbor_pair*)item->data;
+}
+
+cbor_item_t* cbor_map_get(const cbor_item_t* map, const cbor_item_t* key,
+                          bool (*eq)(const cbor_item_t*, const cbor_item_t*)) {
+  CBOR_ASSERT(cbor_isa_map(map));
+  CBOR_ASSERT(key != NULL);
+  CBOR_ASSERT(eq != NULL);
+  struct cbor_pair* pairs = cbor_map_handle(map);
+  for (size_t i = 0; i < cbor_map_size(map); i++) {
+    if (eq(pairs[i].key, key)) {
+      return cbor_incref(pairs[i].value);
+    }
+  }
+  return NULL;
+}

@@ -1,0 +1,96 @@
+/*
+ * SPDX-FileCopyrightText: 2014-2026 Pavel Kalvoda <me@pavelkalvoda.com>
+ * SPDX-License-Identifier: MIT
+ */
+
+#ifndef LIBCBOR_H_
+#define LIBCBOR_H_
+
+#include "cbor/common.h"
+#include "cbor/data.h"
+
+#include "cbor/arrays.h"
+#include "cbor/bytestrings.h"
+#include "cbor/floats_ctrls.h"
+#include "cbor/ints.h"
+#include "cbor/maps.h"
+#include "cbor/strings.h"
+#include "cbor/tags.h"
+
+#include "cbor/callbacks.h"
+#include "cbor/cbor_export.h"
+#include "cbor/encoding.h"
+#include "cbor/serialization.h"
+#include "cbor/streaming.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/*
+ * ============================================================================
+ * High level decoding
+ * ============================================================================
+ */
+
+/** Loads data item from a buffer
+ *
+ * Memory use is bounded in proportion to \p source_size, plus up to
+ * `CBOR_MAX_UNCHECKED_DECLARED_SIZE` slots per open container: definite arrays
+ * and maps declaring more items are only preallocated for as many as the rest
+ * of the input can hold.
+ *
+ * @param source The buffer
+ * @param source_size
+ * @param[out] result Result indicator. #CBOR_ERR_NONE on success
+ * @return Decoded CBOR item. The item's reference count is initialized to one
+ * and must be released using `cbor_decref`.
+ * @return `NULL` on failure. In that case, \p result contains the location and
+ * description of the error.
+ */
+_CBOR_NODISCARD CBOR_EXPORT cbor_item_t* cbor_load(
+    cbor_data source, size_t source_size, struct cbor_load_result* result);
+
+/** Take a deep copy of an item
+ *
+ * All items this item points to (array and map members, string chunks, tagged
+ * items) will be copied recursively using #cbor_copy. The new item doesn't
+ * alias or point to any items from the original \p item. All the reference
+ * counts in the new structure are set to one.
+ *
+ * @param item item to copy. Its reference count is not modified.
+ * @return Reference to the new item. The item's reference count is initialized
+ * to one and must be released using `cbor_decref`.
+ * @return `NULL` if memory allocation fails
+ */
+_CBOR_NODISCARD CBOR_EXPORT cbor_item_t* cbor_copy(cbor_item_t* item);
+
+/** Copy the item with all items converted to definite length equivalents
+ *
+ * Deep copy semantics follow #cbor_copy
+ *
+ * @param item item to copy. Its reference count is not modified.
+ * @return Reference to the new item. The item's reference count is initialized
+ * to one and must be released using `cbor_decref`.
+ * @return `NULL` if memory allocation fails
+ */
+_CBOR_NODISCARD CBOR_EXPORT cbor_item_t* cbor_copy_definite(cbor_item_t* item);
+
+#if CBOR_PRETTY_PRINTER
+#include <stdio.h>
+
+/** Pretty-print an item to a stream for debugging
+ *
+ * Traverses \p item recursively without modifying any reference counts.
+ *
+ * @param item The item to describe
+ * @param out Output stream
+ */
+CBOR_EXPORT void cbor_describe(cbor_item_t* item, FILE* out);
+#endif
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif  // LIBCBOR_H_

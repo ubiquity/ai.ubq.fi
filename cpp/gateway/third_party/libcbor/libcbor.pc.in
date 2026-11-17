@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2014-2026 Pavel Kalvoda <me@pavelkalvoda.com>
+# SPDX-License-Identifier: MIT
+
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=@libdir_for_pc_file@
+includedir=@includedir_for_pc_file@
+
+Name: @PROJECT_NAME@
+Description: @PROJECT_NAME@ - CBOR protocol implementation
+URL: https://github.com/PJK/libcbor
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lcbor
+Cflags: -I${includedir}

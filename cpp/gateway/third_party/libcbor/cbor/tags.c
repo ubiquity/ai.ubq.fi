@@ -1,0 +1,51 @@
+/*
+ * SPDX-FileCopyrightText: 2014-2026 Pavel Kalvoda <me@pavelkalvoda.com>
+ * SPDX-License-Identifier: MIT
+ */
+
+#include "tags.h"
+
+cbor_item_t* cbor_new_tag(uint64_t value) {
+  cbor_item_t* item = _cbor_malloc(sizeof(cbor_item_t));
+  _CBOR_NOTNULL(item);
+
+  *item = (cbor_item_t){
+      .refcount = 1,
+      .type = CBOR_TYPE_TAG,
+      .metadata = {.tag_metadata = {.value = value, .tagged_item = NULL}},
+      .data = NULL /* Never used */
+  };
+  return item;
+}
+
+cbor_item_t* cbor_tag_item(const cbor_item_t* tag) {
+  CBOR_ASSERT(cbor_isa_tag(tag));
+  if (tag->metadata.tag_metadata.tagged_item == NULL) {
+    return NULL;
+  }
+  return cbor_incref(tag->metadata.tag_metadata.tagged_item);
+}
+
+uint64_t cbor_tag_value(const cbor_item_t* tag) {
+  CBOR_ASSERT(cbor_isa_tag(tag));
+  return tag->metadata.tag_metadata.value;
+}
+
+void cbor_tag_set_item(cbor_item_t* tag, cbor_item_t* tagged_item) {
+  CBOR_ASSERT(cbor_isa_tag(tag));
+  CBOR_ASSERT(tagged_item != NULL);
+  if (tag->metadata.tag_metadata.tagged_item != NULL) {
+    cbor_intermediate_decref(tag->metadata.tag_metadata.tagged_item);
+  }
+  cbor_incref(tagged_item);
+  tag->metadata.tag_metadata.tagged_item = tagged_item;
+}
+
+cbor_item_t* cbor_build_tag(uint64_t value, cbor_item_t* item) {
+  cbor_item_t* res = cbor_new_tag(value);
+  if (res == NULL) {
+    return NULL;
+  }
+  cbor_tag_set_item(res, item);
+  return res;
+}
