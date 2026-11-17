@@ -78,7 +78,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 Dragonbox (Boost Software License 1.0)
-Source: simdjson.cpp, simdjson/internal dtoa_impl
+Source: simdjson.cpp, embedded to_chars.cpp, simdjson::internal::dtoa_impl
 https://github.com/jk-jeon/dragonbox
 Copyright 2020-2025 Junekey Jeon (and contributors).
 

@@ -1,6 +1,6 @@
 # C++ gateway build
 
-The accepted Linux ARM64 build passed 441/441 test binaries and 5,023/5,023 cases. These receipts bind the packaged gateway described below. Deployment targets are ARM64. Apple Silicon has a separate native receipt. Raspberry Pi qualification depends on its OS, loader, library closure and measured service memory. See [open stages](OPEN-STAGES.md).
+The selected Linux ARM64 release with simdjson 5.2.0 DOM and simdutf 9.4.0 Base64 encoding passed 441/441 freshly linked and run binaries and 5,024/5,024 cases. The same sealed package passed startup, paired loopback smoke and quiet measurements. Deployment targets are ARM64. See [open stages](OPEN-STAGES.md) for platform and cutover requirements.
 
 ## Build profiles
 
@@ -66,32 +66,32 @@ A target that can run once memory recovers waits 30 seconds between checks for u
 
 Sanitizer runtimes use sampled physical memory and an owned process boundary. AddressSanitizer requires a shadow address range larger than the ordinary fixture virtual-memory limit. Run the sanitizer tests serially and record every explicit skip, failure or interruption.
 
-## Accepted Linux ARM64 build
+## Selected Linux ARM64 release
 
 The GCC 16 primary profile uniformly disables Asio awaitable frame recycling. The actual default passkeys compile emitted a fatal allocation diagnostic, and the configured variant compiled successfully. Both native lifetime controls completed 1,000 paths with identical counts and no live frames at exit. Clang and sanitizer profiles keep their own recorded flags. The strict compiler fixes preserve existing values and evaluation order when GCC requires more explicit ownership of variants and coroutine results. The native frame control receipt is `.data/cpp-gateway-evidence/native-controls-v7/bound-terminal.json`.
 
-The strict GCC 16 suite passed 441/441 binaries and 5,023/5,023 cases with zero failures or skips. The final runtime continuation executed 185 binaries and retained 256 earlier input-matched passes. A final content reconciliation verified all 441 receipts when CMake refreshed its generated files with identical bytes. The suite receipt SHA-256 is `a318d623185bf31bb3565ecc0fbfe76adde7396e9f8e20cb2615b70a0aa5672b`. [Suite result and input binding](/tmp/claude-1002/prod/tests/resume-v25/GCC16-SUITE-HANDOFF.json)
+GCC 16.1.1 at `-O2 -g0` with fatal warnings produced 441 fresh test binaries. All 5,024 cases passed with zero failures or skips, including the added JSON regression. Each test links both selected vendor archives. The suite SHA-256 is `d63e8d62445ad5defc8b527c629150387f093bb00d17114c5ecf01f629d27b0d`. [Selected full suite](../../../.data/cpp-gateway-evidence/full-native-gcc16-selected-vendors-1794950578188873969/suite/suite.json)
 
-The current-at-measurement archive contains 369 objects. Configure took 13.899 s and the incremental build took 103.909 s, with a reported maximum process RSS of 869,840 KiB in the build phase. The bounded refresh including benchmark artifacts took 139.753 s. The graph reused its qualified cache. Across that refresh ccache recorded 253 additional direct hits and six additional misses. [Build commands, resource measurements and hashes](/tmp/claude-1002/prod/build/quiet-v25/run-1794945647148835996/terminal.json)
+| Artifact                   | Size in bytes | SHA-256                                                            |
+| -------------------------- | ------------: | ------------------------------------------------------------------ |
+| `libuos_gateway.a`         |   169,976,650 | `636a44ce322096bc42c0666d1e321040aae3e928ae3ad4f4feb7cc189bd8ea51` |
+| `uos-gateway`              |    40,780,848 | `58cd26cca3b8c40ac08c5ad09a3e4be87adfc8f0a0cd900e0b6fd42a18f5fa22` |
+| `uos-kv-convert`           |    40,781,160 | `d58d711ba34878b8c997578999bac3e34df08b43d8823f6c06c7c279affd5c2a` |
+| `uos-kv-proof`             |    40,781,512 | `0b2610ccc9515c682dd538a4182079e315ae67d10f407430d23be427aa269c56` |
+| `libuos_vendor_simdjson.a` |       239,588 | `353d35f61d716715e63efdf16aab40b460afa84cf0796cf67412d822304c7524` |
+| `libuos_vendor_simdutf.a`  |       616,550 | `ad401e0720174f9697a383db7727dd2dd42eaefc57f080382327e52b1cda3d6a` |
 
-| Artifact           | Size in bytes | SHA-256                                                            |
-| ------------------ | ------------: | ------------------------------------------------------------------ |
-| `libuos_gateway.a` |   169,959,484 | `36c47a2153f86fd259f7ff9dfe74b631b67ce5411ed7fa906e24ea104891fde7` |
-| `uos-gateway`      |    40,205,232 | `1b3f81123f7b6c81ee114a7dffb94df5d33c4ae89c05f7caff8dacc4cabbcf03` |
-| `uos-kv-convert`   |    40,205,480 | `2b24e4d9de94178df31164765f54b8ab9366e176a25b5e72f43cc40bed81ea50` |
-| `uos-kv-proof`     |    40,205,832 | `3329d9ba13a622df462a37010035e5a8829be8cd8820d023c7a2e6549050b34c` |
+The CMake package target and independent producer pass reproduced 63 files with identical bytes, modes and timestamps under umasks 077 and 022. The manifest lists 62 files, including both vendor license and notice pairs. Its SHA-256 is `8c0600e80ccecbbc6cdcf8f471ffe340de64e6c7c2f8bb850ee8a50d7187cbd1`. The package passed 21/21 startup and offline CLI controls and a four-row acyclic conversion in both directions, with independent key, value, revision and expiry readback. [Package receipt](/tmp/claude-1002/prod/runtime/final-package-v32/package-terminal.json) and [runtime controls](/tmp/claude-1002/prod/runtime/final-package-v32/runtime-terminal.json)
 
-The real CMake package target and independent producer pass reproduced 59 files with identical bytes, modes and timestamps under umasks 077 and 022. The sorted manifest lists the other 58 files and has SHA-256 `636ccd35ad984fac8280b7599d885bd4bed6d3abd964bcb7ab0ca81d64ce05c0`. The packaged binaries passed 21/21 startup and offline CLI controls and converted four supported synthetic rows in each direction with separate key, value, revision and expiry readback. [Package receipt](/tmp/claude-1002/prod/runtime/final-package-v25/package-terminal.json) and [runtime controls](/tmp/claude-1002/prod/runtime/final-package-v25/runtime-terminal.json)
-
-The smoke, RSS and quiet baseline timings use these exact package bytes. Subsequent Boost.JSON work has its own source-bound qualification. [Measured performance and library follow-up](PERFORMANCE.md) and [release repair ledger](RELEASE-REPAIRS.md)
+Four interleaved smoke trials passed, two with the selected gateway and two with Bun. The quiet measurements also bind these package bytes. The preceding 5,023-case build is the earlier performance and ABI control. [Performance and comparison](PERFORMANCE.md) and [release repair ledger](RELEASE-REPAIRS.md)
 
 ## Selected static runtime libraries
 
 `cmake/vendors.json` selects simdjson 5.2.0 for `src/rt/json.cpp` and simdutf 9.4.0 for `src/rt/base64.cpp`. The JSON source alone receives `UOS_GATEWAY_SIMDJSON` and the vendor system-header path. It tries the DOM parser with the existing default Boost storage and retains its exact-semantics fallback. The base64 source calls simdutf for inputs of at least three bytes. The vendor targets build separate static archives at the profile’s optimization and instrumentation settings. First-party code keeps its fatal warning set. The gateway and two CLIs link both archives after the whole-archive application group. The JSON and regex benchmarks link only simdjson. The build validates the supplied implementation, header and license hashes and records the archive digests in the consuming build receipts.
 
-The selected GCC 16 incremental build took 46.147 seconds and reached 554,184 KiB reported maximum child RSS before the focused test phase. The measured build, tool-view and evidence footprint peaked at 550,948,864 allocated bytes. The gateway link took 1.007 seconds and grew by 575,616 bytes to 40,780,848 bytes compared with the separately accepted package above. The simdjson and simdutf archives occupy 239,588 and 616,550 bytes. Comparison of the native compilation databases found 846 unchanged commands, the one JSON command with its scoped options and two added vendor commands. Both benchmark targets and the focused JSON CTest built. The focused CTest passed 25/25 cases. The full suite and a new package and smoke receipt for this source remain separate checks. [Native build and link receipt](/tmp/claude-1002/prod/build/vendor-v32/selected-native-terminal.json)
+The selected GCC 16 incremental build took 46.147 seconds and reached 554,184 KiB reported maximum child RSS before the focused test phase. The build, tool-view and evidence footprint peaked at 550,948,864 allocated bytes. The gateway link took 1.007 seconds and grew by 575,616 bytes to 40,780,848 bytes compared with the pre-library control. Native compilation databases retained 846 first-party commands, changed the JSON command’s scoped options and added two vendor commands. Both benchmark targets and the focused JSON CTest built. [Native build and link receipt](/tmp/claude-1002/prod/build/vendor-v32/selected-native-terminal.json)
 
-The selected gateway keeps the same AArch64 interpreter, shared-library names and maximum directly required GLIBC version of 2.38. Its libstdc++ requirement adds `GLIBCXX_3.4.32`. Verify that symbol on any older ARM64 Linux target before using this native binary. The baseline package above and the earlier Apple Silicon and SDK receipts retain their original source and runtime identities.
+All three selected executables use `/lib/ld-linux-aarch64.so.1` and directly require up to `GLIBC_2.38`, `CXXABI_1.3.15` and `GLIBCXX_3.4.32`. The pre-library executables required through `GLIBCXX_3.4.31`. The 16-library host closure includes GLIBC 2.43 and the package binds the exact DSO bytes. [ELF and package closure](/tmp/claude-1002/prod/runtime/final-package-v32/package-terminal.json)
 
 ## Build measurements
 
@@ -108,7 +108,7 @@ The cache and mold receipts are `.data/cpp-gateway-cache-lane-proof/terminal.jso
 ## Platform receipts
 
 - Apple Silicon passed 369/369 production compilations, 441/441 test binaries and 5,029/5,029 cases on macOS 26.7.2 with Apple Clang 21.0.0 and libc++. The full run binds commit `c6cd29f9e9743e37c4eca1a0313194fd3279ba9e` and tree `8599a3a0bc292a66a664832f01ca1404d2192e3d`. The separate Darwin fallback loader run passed 4/4 binaries and 91/91 cases. [macOS build and evidence](MACOS.md)
-- Linux ARM64 targeted ASan, UBSan and LeakSanitizer passed 25/25 binaries and 291/291 cases on Ubuntu 26.04, Clang 21 and Boost 1.90, at commit `e800a36b1`. The full local sanitizer and independent Clang release profiles remain open. [GitHub run 44131343367](https://github.com/ubiquity/ai.ubq.fi/actions/runs/44131343367)
-- The measured Linux executables request `/lib/ld-linux-aarch64.so.1` and reference GLIBC symbols through 2.38. Their package binds 16 canonical Linux host libraries and the selected closure reaches GLIBC 2.43. A Raspberry Pi target needs a compatible 64-bit OS, loader, full dependency closure, Landlock ABI 8 or newer with filesystem threading support, seccomp and verified headroom under its own workload. Compare `uname -m` and `getconf GNU_LIBC_VERSION` on the target, then verify its dependency and confinement contracts from the package manifest. Keep the SDK as a comparison artifact. The x86_64 runs are portability evidence. [Measured ELF and package closure](/tmp/claude-1002/prod/runtime/final-package-v25/package-terminal.json) and [portable CI results](CI.md)
+- The supervisor’s Linux ARM64 sanitizer run passed 25/25 selected binaries under ASan, UBSan and LeakSanitizer at commit `5b4a66941`, consuming both vendor libraries. [GitHub run 44183482817](https://github.com/ubiquity/ai.ubq.fi/actions/runs/44183482817) The earlier pre-library run passed 25/25 selected binaries and 291/291 cases at `e800a36b1`. Independent Clang 23 and the local whole-suite sanitizer profile remain separate. [Earlier run 44131343367](https://github.com/ubiquity/ai.ubq.fi/actions/runs/44131343367)
+- Raspberry Pi qualification needs a 64-bit ARM OS and compatible loader, the required GLIBC and libstdc++ symbols, the complete library closure, Landlock ABI 8 or newer with thread synchronization, seccomp and measured headroom on the target workload. Check `uname -m` and `getconf GNU_LIBC_VERSION` on the target and inspect the target DSOs for the required versions. The x86_64 runs and GCC 12 SDK remain comparison evidence. [Portable CI results](CI.md)
 
 Bind every new receipt to the exact command, profile, consumed source and configuration, exit status, test totals, elapsed time, peak memory and artifact hashes. Reconcile affected evidence after any consumed input changes. See [open stages](OPEN-STAGES.md) for the order of release qualification.

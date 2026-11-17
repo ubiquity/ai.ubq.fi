@@ -97,7 +97,9 @@ def copy_vendor_licenses(stage):
     for library in vendor_sources.required(vendor_sources.selected(GATEWAY), production_sources):
         destination = stage / "licenses" / library.name
         copy_file(GATEWAY / "third_party" / library.name / "LICENSE", destination / "LICENSE")
-        copy_file(GATEWAY / "docs/licenses" / library.name / "NOTICE", destination / "NOTICE")
+        notice = GATEWAY / "docs/licenses" / library.name / "NOTICE"
+        if library.name in ("simdjson", "simdutf") or notice.exists():
+            copy_file(notice, destination / "NOTICE")
 
 
 def write_json(path, value):
