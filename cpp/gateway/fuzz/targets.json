@@ -84,6 +84,12 @@
       "entry": "parseResponseHead / responseFraming / ChunkedDecoder::decode",
       "max_len": 16384
     },
+    "fetch_response_library": {
+      "harness": "fuzz/fetch_response_library.cpp",
+      "extra_sources": ["third_party/llhttp/llhttp.c", "third_party/llhttp/api.c", "third_party/llhttp/http.c"],
+      "entry": "ResponseParser::readHead / readBody / finish / WebSocket parseResponseHead",
+      "max_len": 16384
+    },
     "websocket": {
       "harness": "fuzz/websocket.cpp",
       "entry": "Receiver::write / end",
