@@ -361,11 +361,17 @@ def source_of(header):
     return candidate if exists(candidate) else None
 
 
-def input_paths(test, sources):
+def input_paths(test, sources, vendors=None):
     """Build inputs under cpp/gateway, including the runtime unit.sh always links."""
     queue = [test] + list(sources)
     queue += sorted(rel(p) for p in glob.glob(os.path.join(GATEWAY, "src", "rt", "*.cpp")))
-    seen = set()
+    import vendor_sources
+
+    if vendors is None:
+        vendors = tuple(vendor_sources.selected())
+    vendor_inputs = vendor_sources.required(vendors, queue)
+    queue.extend(relative for library in vendor_inputs for relative in library.inputs)
+    seen = {"tools/vendor_sources.py", vendor_sources.REGISTRY.as_posix()}
     while queue:
         current = queue.pop()
         if current in seen:

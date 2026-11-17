@@ -40,6 +40,11 @@ if args.jobs < 1 or args.timeout < 1:
     parser.error("jobs and timeout must be positive")
 gateway = Path(os.environ["UOS_MACOS_GATEWAY"]).resolve()
 repo = gateway.parent.parent
+sys.path.insert(0, str(gateway / "tools"))
+import vendor_sources
+
+vendors = tuple(vendor_sources.selected(gateway))
+simdjson_sources = vendor_sources.simdjson_consumers(vendors)
 build = args.build_root.resolve()
 if build == repo or repo in build.parents:
     parser.error("Build output must be outside the checkout")
@@ -70,6 +75,8 @@ if args.require_clean and not source_identity["worktree_clean"]:
 inputs = {str(p.relative_to(gateway)): hashlib.sha256(p.read_bytes()).hexdigest()
           for directory in ["include", "src", "tests", "tools"]
           for p in sorted((gateway / directory).rglob("*")) if p.is_file()}
+for relative in [vendor_sources.REGISTRY, *(relative for library in vendors for relative in library.inputs)]:
+    inputs[str(relative)] = hashlib.sha256((gateway / relative).read_bytes()).hexdigest()
 brew = shutil.which("brew")
 if not brew:
     parser.error("Homebrew is required; see docs/MACOS.md")
@@ -127,10 +134,12 @@ def digest(path):
 def obj(source):
     return build / "obj" / source.with_suffix(".o")
 
-def compile_one(source):
+def compile_one(source, selected_flags=None):
     target = obj(source)
     target.parent.mkdir(parents=True, exist_ok=True)
-    source_flags = flags
+    source_flags = flags if selected_flags is None else selected_flags
+    if str(source) in simdjson_sources:
+        source_flags = source_flags + vendor_sources.simdjson_flags(gateway)
     if args.legacy_loaders and str(source) in {"src/rt/gzip.cpp", "src/rt/sqlite.cpp", "src/rt/fetch_transport_codec.cpp"}:
         source_flags = [f for f in flags if f != "-DUOS_GATEWAY_NATIVE_LIBRARIES"]
     command = source_flags + ["-MMD", "-MF", str(target.with_suffix(".d")), "-c", str(gateway / source), "-o", str(target)]
@@ -145,6 +154,8 @@ def compile_one(source):
     result["source"] = str(source)
     if result["status"] == 0:
         deps = shlex.split(target.with_suffix(".d").read_text().replace("\\\n", " ").split(":", 1)[1])
+        if str(source) in simdjson_sources:
+            deps.append(str(gateway / vendor_sources.SIMDJSON_HEADER))
         result["inputs"] = {p: digest(p) for p in deps}
     receipt.write_text(json.dumps(result, indent=2) + "\n")
     return result
@@ -176,6 +187,20 @@ members = [name for name in capture(["/usr/bin/ar", "-t", archive_path]).splitli
 if len(members) != len(runtime + modules):
     raise SystemExit("Archive member census does not match production sources")
 archive_path.replace(build / "libuos_gateway.a")
+vendor_archives = {}
+for library in vendor_sources.required(vendors, runtime + modules):
+    relative = Path(library.source)
+    compiled = compile_one(relative, vendor_sources.vendor_flags(flags))
+    if compiled["status"]:
+        raise SystemExit("Vendor compile failed: " + compiled["log"])
+    archive_path = run / library.archive
+    archived = invoke(["/usr/bin/ar", "rcs", archive_path, obj(relative)], run / (library.archive + ".log"))
+    if archived["status"]:
+        raise SystemExit("Vendor archive failed: " + archived["log"])
+    target = build / library.archive
+    archive_path.replace(target)
+    vendor_archives[library.archive] = target
+provenance["vendor_archives"] = {name: digest(path) for name, path in vendor_archives.items()}
 if args.suite == "none":
     provenance["archive_sha256"] = digest(build / "libuos_gateway.a")
     provenance["identity_unchanged"] = identity() == source_identity
@@ -228,7 +253,8 @@ for phase, selected in [("runtime", [t for t in tests if t.parent == Path("tests
         if any(str(s) in failures for s in source_list):
             row = dict(test=str(test), status="BUILD_FAIL", log=str(log))
         else:
-            linked = invoke([compiler, "-stdlib=libc++", "-pthread", *map(obj, source_list), *libs, "-o", binary], log)
+            selected_archives = [vendor_archives[library.archive] for library in vendor_sources.required(vendors, source_list)]
+            linked = invoke([compiler, "-stdlib=libc++", "-pthread", *map(obj, source_list), *selected_archives, *libs, "-o", binary], log)
             if linked["status"]:
                 row = dict(test=str(test), status="LINK_FAIL", **{k: v for k, v in linked.items() if k != "status"})
             else:

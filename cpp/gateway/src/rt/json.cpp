@@ -2,6 +2,16 @@
 
 #include "uos/rt/error.hpp"
 
+#if defined(UOS_GATEWAY_SIMDJSON)
+#include "json_simdjson.hpp"
+#else
+#include <boost/version.hpp>
+#if BOOST_VERSION == 109200
+#include <boost/json/basic_parser_impl.hpp>
+#include <boost/json/value_stack.hpp>
+#endif
+#endif
+
 #include <algorithm>
 #include <charconv>
 #include <limits>
@@ -374,6 +384,142 @@ namespace uos::rt {
       const std::u16string units = toUtf16(gap);
       return fromUtf16(std::u16string_view(units).substr(0, 10));
     }
+
+#if !defined(UOS_GATEWAY_SIMDJSON) && BOOST_VERSION == 109200
+    constexpr std::size_t kBoostParseDepth = 32;
+
+    // The scanner validates the grammar and decodes strings. Build the same
+    // DOM type as Boost's parser while retaining raw member counts and numbers.
+    class BoostJsonHandler {
+    public:
+      static constexpr std::size_t max_array_size = json::array::max_size();
+      static constexpr std::size_t max_object_size = json::object::max_size();
+      static constexpr std::size_t max_string_size = json::string::max_size();
+      static constexpr std::size_t max_key_size = json::string::max_size();
+
+      bool on_document_begin(boost::system::error_code&) noexcept {
+        values_.reset();
+        return true;
+      }
+      bool on_document_end(boost::system::error_code&) noexcept { return true; }
+      bool on_array_begin(boost::system::error_code&) noexcept { return true; }
+      bool on_object_begin(boost::system::error_code&) noexcept { return true; }
+
+      bool on_array_end(std::size_t count, boost::system::error_code&) {
+        values_.push_array(count);
+        return true;
+      }
+      bool on_object_end(std::size_t count, boost::system::error_code&) {
+        // Each counted member consumes at least two distinct source bytes.
+        members_ += count;
+        values_.push_object(count);
+        return true;
+      }
+      bool on_string_part(json::string_view text, std::size_t, boost::system::error_code&) {
+        values_.push_chars(text);
+        return true;
+      }
+      bool on_string(json::string_view text, std::size_t, boost::system::error_code&) {
+        values_.push_string(text);
+        return true;
+      }
+      bool on_key_part(json::string_view text, std::size_t, boost::system::error_code&) {
+        values_.push_chars(text);
+        return true;
+      }
+      bool on_key(json::string_view text, std::size_t, boost::system::error_code&) {
+        values_.push_key(text);
+        return true;
+      }
+      bool on_bool(bool value, boost::system::error_code&) {
+        values_.push_bool(value);
+        return true;
+      }
+      bool on_null(boost::system::error_code&) {
+        values_.push_null();
+        return true;
+      }
+
+      // This adapter supplies one final buffer. Abort the attempt if a number
+      // is delivered in parts so the callbacks below only see whole lexemes.
+      bool on_number_part(json::string_view, boost::system::error_code& error) noexcept { return refuse(error); }
+
+      bool on_int64(std::int64_t, json::string_view lexeme, boost::system::error_code& error) {
+        const std::string_view text = view(lexeme);
+        if (text.empty()) return refuse(error);
+        const char* end = text.data() + text.size();
+        std::int64_t integer = 0;
+        const auto parsed = std::from_chars(text.data(), end, integer);
+        if (parsed.ec == std::errc{} && parsed.ptr == end && integer >= -kMaxSafeInt64 && integer <= kMaxSafeInt64 &&
+            (integer != 0 || text.front() != '-')) {
+          values_.push_int64(integer);
+          return true;
+        }
+        return pushNumber(lexeme, error);
+      }
+      bool on_uint64(std::uint64_t, json::string_view lexeme, boost::system::error_code& error) {
+        return pushNumber(lexeme, error);
+      }
+      bool on_double(double, json::string_view lexeme, boost::system::error_code& error) {
+        return pushNumber(lexeme, error);
+      }
+      bool on_comment_part(json::string_view, boost::system::error_code& error) noexcept { return refuse(error); }
+      bool on_comment(json::string_view, boost::system::error_code& error) noexcept { return refuse(error); }
+
+      std::size_t memberCount() const noexcept { return members_; }
+      json::value release() noexcept { return values_.release(); }
+
+    private:
+      static bool refuse(boost::system::error_code& error) noexcept {
+        error = json::error::syntax;
+        return false;
+      }
+      bool pushNumber(json::string_view lexeme, boost::system::error_code& error) {
+        if (lexeme.empty()) return refuse(error);
+        const json::value number = makeNumber(stringToNumber(view(lexeme)));
+        if (number.is_int64()) values_.push_int64(number.get_int64());
+        else values_.push_double(number.get_double());
+        return true;
+      }
+
+      alignas(json::value) unsigned char scratch_[1024];
+      json::value_stack values_{json::storage_ptr{}, scratch_, sizeof scratch_};
+      std::size_t members_ = 0;
+    };
+
+    // Recursion is bounded by kBoostParseDepth. Every stored member corresponds
+    // to one source member. A missing member means a duplicate was collapsed.
+    bool countBoostMembers(const json::value& value, std::size_t& remaining) noexcept {
+      if (const auto* object = value.if_object()) {
+        if (object->size() > remaining) return false;
+        remaining -= object->size();
+        for (const auto& member : *object) {
+          const std::string_view key = view(member.key());
+          if (key == "__proto__" || isArrayIndex(key) || !countBoostMembers(member.value(), remaining)) return false;
+        }
+      } else if (const auto* array = value.if_array()) {
+        for (const auto& element : *array)
+          if (!countBoostMembers(element, remaining)) return false;
+      }
+      return true;
+    }
+
+    std::optional<json::value> tryParseBoost(std::string_view text) {
+      if (text.empty()) return std::nullopt;
+      json::parse_options options;
+      options.max_depth = kBoostParseDepth;
+      options.numbers = json::number_precision::none;
+      json::basic_parser<BoostJsonHandler> parser(options);
+      boost::system::error_code error;
+      const std::size_t consumed = parser.write_some(false, text.data(), text.size(), error);
+      if (error || !parser.done() || consumed != text.size()) return std::nullopt;
+
+      std::size_t members = parser.handler().memberCount();
+      json::value value = parser.handler().release();
+      if (members != 0 && (!countBoostMembers(value, members) || members != 0)) return std::nullopt;
+      return std::optional<json::value>{std::move(value)};
+    }
+#endif
 
     // ---- JSON.parse: JavaScriptCore's LiteralParser in StrictJSON mode -----------------------
     enum class Token : std::uint8_t {
@@ -1191,6 +1337,11 @@ namespace uos::rt {
   }
 
   json::value jsonParse(std::string_view text) {
+#if defined(UOS_GATEWAY_SIMDJSON)
+    if (auto value = detail::tryParseSimdJson(text)) return std::move(*value);
+#elif BOOST_VERSION == 109200
+    if (auto value = tryParseBoost(text)) return std::move(*value);
+#endif
     if (isAscii(text)) return Parser<char>(text).parse();
     const std::u16string units = toUtf16(text);
     return Parser<char16_t>(units).parse();

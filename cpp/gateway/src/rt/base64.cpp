@@ -3,6 +3,11 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 
+#include "third_party/simdutf/simdutf.h"
+
+#include <limits>
+#include <stdexcept>
+
 namespace uos::rt {
   namespace {
     using Byte = std::uint8_t;
@@ -34,30 +39,25 @@ namespace uos::rt {
     }
     bool isAsciiWhitespace(Byte value) { return value == 0x09 || value == 0x0A || value == 0x0C || value == 0x0D || value == 0x20; }
 
-    std::string encode(std::span<const std::uint8_t> bytes, const char* alphabet, bool pad) {
-      std::string out;
-      out.reserve((bytes.size() + 2) / 3 * 4);
-      std::size_t index = 0;
-      for (; index + 3 <= bytes.size(); index += 3) {
-        const std::uint32_t group = (static_cast<std::uint32_t>(bytes[index]) << 16) | (static_cast<std::uint32_t>(bytes[index + 1]) << 8) | bytes[index + 2];
-        out.push_back(alphabet[(group >> 18) & 0x3F]);
-        out.push_back(alphabet[(group >> 12) & 0x3F]);
-        out.push_back(alphabet[(group >> 6) & 0x3F]);
-        out.push_back(alphabet[group & 0x3F]);
+    std::string encode(std::span<const Byte> bytes, simdutf::base64_options options) {
+      if (bytes.empty()) return {};
+      if (bytes.size() < 3) {
+        const bool padded = options == simdutf::base64_default;
+        const char* alphabet = padded ? STANDARD_ALPHABET : URL_ALPHABET;
+        const auto first = static_cast<unsigned>(bytes[0]);
+        const auto second = bytes.size() == 2 ? static_cast<unsigned>(bytes[1]) : 0;
+        const char tail[] = {
+          alphabet[first >> 2],
+          alphabet[((first & 3) << 4) | (second >> 4)],
+          bytes.size() == 2 ? alphabet[(second & 15) << 2] : '=',
+          '=',
+        };
+        return {tail, padded ? sizeof(tail) : bytes.size() + 1};
       }
-      const std::size_t rest = bytes.size() - index;
-      if (rest == 1) {
-        const std::uint32_t group = static_cast<std::uint32_t>(bytes[index]) << 16;
-        out.push_back(alphabet[(group >> 18) & 0x3F]);
-        out.push_back(alphabet[(group >> 12) & 0x3F]);
-        if (pad) out += "==";
-      } else if (rest == 2) {
-        const std::uint32_t group = (static_cast<std::uint32_t>(bytes[index]) << 16) | (static_cast<std::uint32_t>(bytes[index + 1]) << 8);
-        out.push_back(alphabet[(group >> 18) & 0x3F]);
-        out.push_back(alphabet[(group >> 12) & 0x3F]);
-        out.push_back(alphabet[(group >> 6) & 0x3F]);
-        if (pad) out.push_back('=');
-      }
+      // The upstream encoded length is calculated in size_t before std::string checks its capacity.
+      if (bytes.size() > std::numeric_limits<std::size_t>::max() / 4 * 3) throw std::length_error("Base64 output is too large");
+      std::string out(simdutf::base64_length_from_binary(bytes.size(), options), '\0');
+      simdutf::binary_to_base64(reinterpret_cast<const char*>(bytes.data()), bytes.size(), out.data(), options);
       return out;
     }
 
@@ -152,9 +152,9 @@ namespace uos::rt {
     return out;
   }
 
-  std::string toBase64(std::span<const std::uint8_t> bytes) { return encode(bytes, STANDARD_ALPHABET, true); }
+  std::string toBase64(std::span<const std::uint8_t> bytes) { return encode(bytes, simdutf::base64_default); }
 
-  std::string toBase64Url(std::span<const std::uint8_t> bytes) { return encode(bytes, URL_ALPHABET, false); }
+  std::string toBase64Url(std::span<const std::uint8_t> bytes) { return encode(bytes, simdutf::base64_url); }
 
   std::string toHex(std::span<const std::uint8_t> bytes) {
     std::string out;

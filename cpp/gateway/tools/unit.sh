@@ -19,17 +19,24 @@ while [ $# -gt 0 ]; do
 done
 common=(-s -f "$UOS_GATEWAY_ROOT/tools/unit.mk" ROOT="$UOS_GATEWAY_ROOT" OUT="$UOS_OUT" TOKEN="$$" \
   CXX_WRAPPER="$UOS_GATEWAY_ROOT/tools/cxx.sh" CXXFLAGS="$UOS_CXXFLAGS" LDLIBS="$UOS_LDLIBS")
+if [ "$name" != "--check" ] && [ "${UOS_UNIT_NO_RT:-0}" != 1 ]; then
+  shopt -s nullglob
+  for runtime in "$UOS_GATEWAY_ROOT"/src/rt/*.cpp; do
+    relative="src/rt/$(basename "$runtime")"
+    case " ${sources[*]} " in *" $relative "*) ;; *) sources+=("$relative") ;; esac
+  done
+fi
+vendor_inputs=$(python3 -B "$UOS_GATEWAY_ROOT/tools/vendor_sources.py" unit "${sources[@]}")
+{
+  IFS= read -r simdjson_sources
+  IFS= read -r vendor_sources || true
+} <<< "$vendor_inputs"
+common+=(SIMDJSON_SOURCES="$simdjson_sources" VENDORS="$vendor_sources")
 if [ "$name" = "--check" ]; then
   targets=()
   for source in "${sources[@]}"; do targets+=("$UOS_OUT/obj/${source%.cpp}.o"); done
   exec make "${common[@]}" SOURCES="${sources[*]}" NAME=check "${targets[@]}"
 fi
-shopt -s nullglob
-[ "${UOS_UNIT_NO_RT:-0}" = 1 ] && runtimes=() || runtimes=("$UOS_GATEWAY_ROOT"/src/rt/*.cpp)
-for runtime in "${runtimes[@]}"; do
-  relative="src/rt/$(basename "$runtime")"
-  case " ${sources[*]} " in *" $relative "*) ;; *) sources+=("$relative") ;; esac
-done
 make "${common[@]}" SOURCES="${sources[*]}" NAME="$name" "$UOS_OUT/bin/$name"
 [ "$link_only" = 1 ] && exit 0
 exec nice -n 10 timeout 300 "$UOS_LOADER" --library-path "$UOS_LOADER_PATH" "$UOS_OUT/bin/$name" "${arguments[@]}"

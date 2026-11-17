@@ -37,8 +37,30 @@ def extra_sources(name, target, common):
     return [source for source in listed if source.startswith("src/") and source not in skip]
 
 
+def third_party():
+    """Vendored libraries that first-party code includes: (include flags, sources)."""
+    root = GATEWAY / "third_party"
+    if not root.is_dir():
+        return [], []
+    used = subprocess.run(["grep", "-rhoE", r"#include [<\"][^>\"]+[>\"]", str(GATEWAY / "src"), str(GATEWAY / "include")],
+                          capture_output=True, text=True).stdout
+    flags, sources = [], []
+    for library in sorted(path for path in root.iterdir() if path.is_dir()):
+        headers = [path.name for path in library.rglob("*.h")] + [path.name for path in library.rglob("*.hpp")]
+        if not any(name in used for name in headers):
+            continue
+        flags.append("-isystem" + str(library))
+        sources += sorted(str(path.relative_to(GATEWAY)) for path in library.rglob("*")
+                          if path.suffix in (".cpp", ".c", ".cc"))
+    return flags, sources
+
+
 def compile_one(compiler, flags, source, objects):
     output = objects / (source.replace("/", "_") + ".o")
+    if source.endswith(".c"):
+        # Vendored C libraries: the C driver, without the C++ language flag.
+        compiler = "clang" if compiler.endswith("clang++") else compiler.replace("g++", "gcc")
+        flags = [flag for flag in flags if not flag.startswith("-std=c++")]
     done = subprocess.run([compiler, *flags, "-c", str(GATEWAY / source), "-o", str(output)],
                           capture_output=True, text=True)
     return source, output, done.returncode, done.stderr[-6000:]
@@ -63,6 +85,11 @@ def main():
     flags = ["-std=c++20", "-pthread", "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY)]
     flags += ["-D" + define for define in DEFINES] + policy["compile_options"]
     sources = policy["common_sources"] + extra_sources(args.target, target, policy["common_sources"])
+    # A target may list further sources itself (for example vendored third_party libraries).
+    sources += [source for source in target.get("extra_sources", []) if source not in sources]
+    library_flags, library_sources = third_party()
+    flags += library_flags
+    sources += [source for source in library_sources if source not in sources]
     sources.append(target["harness"])
     failed = []
     built = []

@@ -1,0 +1,41 @@
+# Only libraries selected by a source closure are declared or linked.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/vendors.json"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/vendor_sources.py")
+execute_process(COMMAND /usr/bin/python3 -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/vendor_sources.py" cmake
+  RESULT_VARIABLE vendor_status OUTPUT_VARIABLE vendor_targets ERROR_VARIABLE vendor_error)
+if(NOT vendor_status EQUAL 0)
+  message(FATAL_ERROR "Vendor declarations failed: ${vendor_error}")
+endif()
+function(uos_register_vendor name source)
+  set(target "uos_vendor_${name}")
+  add_library("${target}" STATIC EXCLUDE_FROM_ALL "${source}")
+  target_compile_options("${target}" PRIVATE ${UOS_VENDOR_PROFILE_OPTIONS})
+  if(UOS_GATEWAY_LIBCXX)
+    target_compile_options("${target}" PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-stdlib=libc++>")
+  endif()
+  set_property(GLOBAL APPEND PROPERTY UOS_VENDOR_TARGETS "${target}")
+  set_property(TARGET "${target}" PROPERTY UOS_VENDOR_CONSUMERS "${ARGN}")
+  if(name STREQUAL "simdjson")
+    set_property(GLOBAL PROPERTY UOS_SIMDJSON_CONSUMERS "${ARGN}")
+  endif()
+  get_filename_component(directory "${source}" DIRECTORY)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${directory}/SHA256SUMS" "${directory}/LICENSE" "${directory}/PROVENANCE.md"
+    "${directory}/${name}.h" "${source}")
+endfunction()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/vendor-targets.cmake" "${vendor_targets}")
+include("${CMAKE_CURRENT_BINARY_DIR}/vendor-targets.cmake")
+
+function(uos_link_vendors target)
+  get_property(vendors GLOBAL PROPERTY UOS_VENDOR_TARGETS)
+  foreach(vendor IN LISTS vendors)
+    get_property(consumers TARGET "${vendor}" PROPERTY UOS_VENDOR_CONSUMERS)
+    foreach(consumer IN LISTS consumers)
+      if(consumer IN_LIST ARGN)
+        target_link_libraries("${target}" PRIVATE "${vendor}")
+        break()
+      endif()
+    endforeach()
+  endforeach()
+endfunction()

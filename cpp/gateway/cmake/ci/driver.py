@@ -21,6 +21,7 @@ sys.dont_write_bytecode = True
 GATEWAY = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(GATEWAY / "tools"))
 import links
+import vendor_sources
 
 CONFIGS = {
     "debug": ["-O0"],
@@ -164,17 +165,36 @@ def cpp_inventory(directory, *, recursive=False):
                   if not any(part.startswith(".") for part in path.relative_to(GATEWAY).parts))
 
 
-def write_ninja(build, sources, compiler, flags):
+def ninja_compile_rule(name, argv, description):
+    command = shlex.join(argv).replace("$", "$$")
+    return ["rule " + name, "  command = rm -f $out && " + command +
+            " -MMD -MF $out.d -MT $out -c $in -o $out > $out.log 2>&1 || { cat $out.log; exit 1; }",
+            "  depfile = $out.d", "  deps = gcc", "  description = " + description + " $in"]
+
+
+def write_ninja(build, sources, compiler, flags, vendors=()):
     # Ninja's depfiles track transitive headers; a failed rebuild removes stale output.
-    command = shlex.join(compiler + flags).replace("$", "$$")
-    lines = ["ninja_required_version = 1.10", "rule cxx",
-             "  command = rm -f $out && " + command +
-             " -MMD -MF $out.d -MT $out -c $in -o $out > $out.log 2>&1 || { cat $out.log; exit 1; }",
-             "  depfile = $out.d", "  deps = gcc", "  description = CXX $in"]
+    lines = ["ninja_required_version = 1.10", *ninja_compile_rule("cxx", compiler + flags, "CXX")]
+    json_sources = vendor_sources.simdjson_consumers(vendors)
+    if json_sources:
+        lines += ninja_compile_rule("selected_json", compiler + flags + vendor_sources.simdjson_flags(), "CXX")
+    if vendors:
+        archive = shutil.which("ar")
+        if not archive:
+            raise RuntimeError("ar is required for the selected vendors")
+        lines += ninja_compile_rule("vendor_cxx", compiler + vendor_sources.vendor_flags(flags), "Vendor CXX")
+        lines += ["rule vendor_archive", "  command = rm -f $out && " + shlex.quote(archive).replace("$", "$$") + " rcs $out $in"]
     for source in sources:
         target = object_path(build, source)
         target.parent.mkdir(parents=True, exist_ok=True)
-        lines.append("build " + ninja_escape(target) + ": cxx " + ninja_escape(GATEWAY / source))
+        rule = "selected_json" if source in json_sources else "cxx"
+        dependency = " | " + ninja_escape(GATEWAY / vendor_sources.SIMDJSON_HEADER) if source in json_sources else ""
+        lines.append("build " + ninja_escape(target) + ": " + rule + " " + ninja_escape(GATEWAY / source) + dependency)
+    for library in vendors:
+        target = object_path(build, library.source)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        lines += ["build " + ninja_escape(target) + ": vendor_cxx " + ninja_escape(GATEWAY / library.source),
+                  "build " + ninja_escape(build / library.archive) + ": vendor_archive " + ninja_escape(target)]
     (build / "build.ninja").write_text("\n".join(lines) + "\n")
 
 
@@ -182,9 +202,11 @@ def result(test, status, note="", **extra):
     return dict(test=test, status=status, run=0, passed=0, failed=0, note=note, **extra)
 
 
-def input_digest():
+def input_digest(vendors=()):
     digest = hashlib.sha256()
     paths = [GATEWAY / "tools" / name for name in ("ci-build.sh", "links.py")]
+    paths.extend([GATEWAY / "tools/vendor_sources.py", GATEWAY / vendor_sources.REGISTRY])
+    paths.extend(GATEWAY / relative for library in vendors for relative in library.inputs)
     for directory in ("src", "include", "tests", "cmake/ci"):
         paths.extend(path for path in (GATEWAY / directory).rglob("*") if path.is_file())
     for path in sorted(paths):
@@ -192,7 +214,7 @@ def input_digest():
     return digest.hexdigest()
 
 
-def run_test(selected, runtime, build, compiler, flags, libraries, environment, timeout, boundary):
+def run_test(selected, runtime, build, compiler, flags, libraries, environment, timeout, boundary, vendors=()):
     test = selected.test
     identity = test.removeprefix("tests/").removesuffix(".cpp").replace("/", "__")
     log_dir = build / "logs" / identity
@@ -202,7 +224,8 @@ def run_test(selected, runtime, build, compiler, flags, libraries, environment, 
     if missing:
         return result(test, "BUILD_FAIL", "compile failed: " + ", ".join(missing), log=str(log_dir))
     binary = build / "bin" / identity
-    command = compiler + flags + [str(object_path(build, source)) for source in sources] + libraries + ["-o", str(binary)]
+    archives = [str(build / library.archive) for library in vendor_sources.required(vendors, sources)]
+    command = compiler + flags + [str(object_path(build, source)) for source in sources] + archives + libraries + ["-o", str(binary)]
     code, expired, link_s = execute(command, log_dir / "build.log", cwd=build,
                                     environment=environment, timeout=900)
     if code:
@@ -334,11 +357,12 @@ def main():
             sources.update([test] + resolved.sources)
         except links.LinkError as error:
             rows.append(result(test, "BUILD_FAIL", str(error)))
-    source_hash = input_digest()
+    vendors = vendor_sources.required(tuple(vendor_sources.selected()), sources)
+    source_hash = input_digest(vendors)
     git_identity = subprocess.check_output(["git", "-C", str(GATEWAY), "rev-parse", "HEAD", "HEAD^{tree}"], text=True).splitlines()
     announce("Compiler: " + version.splitlines()[0])
     announce("Build: %s; %d production sources (%d runtime), %d tests, jobs=%d" % (build, len(production), len(runtime), len(tests), jobs))
-    write_ninja(build, sorted(sources), compiler, flags)
+    write_ninja(build, sorted(sources), compiler, flags, vendors)
     environment = clean_environment()
     boundary = find_boundary(build, environment)
     environment["NINJA_STATUS"] = "[%f/%t %es] "
@@ -368,7 +392,7 @@ def main():
         for row in rows:
             incremental.write("\t".join(str(row.get(key, "")) for key in ("test", "status", "run", "passed", "failed", "build_seconds", "seconds", "note")) + "\n")
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-            pending = {pool.submit(run_test, item, runtime, build, compiler, flags, libraries, environment, timeout, boundary): item.test for item in selected}
+            pending = {pool.submit(run_test, item, runtime, build, compiler, flags, libraries, environment, timeout, boundary, vendors): item.test for item in selected}
             for future in concurrent.futures.as_completed(pending):
                 try:
                     row = future.result()
@@ -380,9 +404,11 @@ def main():
                 announce("%s %s (%d/%d cases)" % (row["status"], row["test"], row["passed"], row["run"]))
     rows.sort(key=lambda row: row["test"])
     statuses = {name: sum(row["status"] == name for row in rows) for name in ("PASS", "FAIL", "BUILD_FAIL", "TIMEOUT")}
-    after_hash = input_digest()
+    after_hash = input_digest(vendors)
+    vendor_archives = {library.archive: hashlib.sha256((build / library.archive).read_bytes()).hexdigest()
+                       for library in vendors if (build / library.archive).is_file()}
     receipt = dict(config=options.config, compiler=compiler, compiler_version=version, flags=flags,
-                   libraries=libraries, source_sha256=source_hash, after_source_sha256=after_hash,
+                   libraries=libraries, vendor_archives=vendor_archives, source_sha256=source_hash, after_source_sha256=after_hash,
                    inputs_unchanged=source_hash == after_hash, git_commit=git_identity[0], git_tree=git_identity[1], selected=tests,
                    production_sources=len(production), runtime_sources=len(runtime),
                    production_compile_failures=missing_production, compile_exit=compile_code,

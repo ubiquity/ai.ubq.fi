@@ -6,7 +6,13 @@
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 mkdir -p "$UOS_OUT/locks"
+compiler="$UOS_COMPILER"
+compiler_options=(--sysroot="$UOS_SYSROOT" "-B$UOS_SDK/host-tools/bin/")
 mode=link
+case "${1-}" in
+  --vendor-archive) compiler="$UOS_SDK/host-tools/bin/ar"; compiler_options=(); mode=archive; shift ;;
+esac
+[ -x "$compiler" ] || { echo "cpp/gateway: SDK tool missing: $compiler" >&2; exit 2; }
 for argument in "$@"; do
   case "$argument" in -c|-E|-S|-fsyntax-only) mode=compile ;; esac
 done
@@ -53,4 +59,4 @@ if [ "$mode" = link ]; then
   echo "cpp/gateway: linker admission slots=1+2 MemAvailable=${available_kb}KiB address_space=${address_limit}" >&2
 fi
 # shellcheck disable=SC2086
-exec nice -n 19 ionice -c 3 prlimit --as="$address_limit" -- "$UOS_COMPILER" --sysroot="$UOS_SYSROOT" "-B$UOS_SDK/host-tools/bin/" "$@"
+exec nice -n 19 ionice -c 3 prlimit --as="$address_limit" -- "$compiler" "${compiler_options[@]}" "$@"

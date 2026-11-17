@@ -8,6 +8,7 @@ import sys
 
 sys.dont_write_bytecode = True
 import links
+import vendor_sources
 
 GATEWAY = Path(links.GATEWAY)
 SUPPORT = ("tools/generate-tests.py", "tools/ctest-run.py", "tools/ctest_support.py", "tools/ctest-network.py")
@@ -17,13 +18,13 @@ def target_name(test):
     return "uos_test_" + hashlib.sha256(test.encode()).hexdigest()[:16]
 
 
-def resolve_test(test, registry=None):
+def resolve_test(test, registry=None, vendors=None):
     registry = links.read_registry() if registry is None else registry
     runtime = sorted(path.relative_to(GATEWAY).as_posix() for path in (GATEWAY / "src/rt").glob("*.cpp")
                      if not path.name.startswith("."))
     selected = links.resolve(test, registry)
     sources = list(dict.fromkeys([test] + selected.sources + runtime))
-    inputs = sorted(set(links.input_paths(test, selected.sources)) | set(SUPPORT) | {"tests/LINKS.txt"})
+    inputs = sorted(set(links.input_paths(test, selected.sources, vendors)) | set(SUPPORT) | {"tests/LINKS.txt"})
     for relative in sources + inputs:
         path = Path(relative)
         if path.is_absolute() or ".." in path.parts or not (GATEWAY / path).is_file():
@@ -35,9 +36,10 @@ def resolve_test(test, registry=None):
 
 def inventory():
     registry = links.read_registry()
+    vendors = tuple(vendor_sources.selected())
     tests = []
     for test in links.all_tests():
-        tests.append(resolve_test(test, registry))
+        tests.append(resolve_test(test, registry, vendors))
     stale = sorted(set(registry) - {item["test"] for item in tests})
     if stale:
         raise RuntimeError("Stale Links registry entries: " + ", ".join(stale))
@@ -58,6 +60,7 @@ def cmake_text(registry):
              "    list(APPEND objects \"$<TARGET_OBJECTS:${object}>\")", "  endforeach()",
              "  add_executable(\"${target}\" EXCLUDE_FROM_ALL ${objects})",
              "  target_link_libraries(\"${target}\" PRIVATE uos_gateway_settings)",
+             "  uos_link_vendors(\"${target}\" ${ARGN})",
              "  add_test(NAME \"${test}\" COMMAND /usr/bin/python3",
              "    \"${CMAKE_CURRENT_SOURCE_DIR}/tools/ctest-run.py\" run",
              "    --registry \"${CMAKE_CURRENT_BINARY_DIR}/tests-registry.json\" --target \"${target}\"",

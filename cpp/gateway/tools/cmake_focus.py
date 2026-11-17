@@ -35,7 +35,8 @@ def main():
     for source in selected["sources"]:
         lines += ['uos_object_for_source(object "' + source + '")', 'list(APPEND focused_objects "$<TARGET_OBJECTS:${object}>")']
     lines += ["add_executable(" + selected["target"] + " EXCLUDE_FROM_ALL ${focused_objects})",
-              "target_link_libraries(" + selected["target"] + " PRIVATE uos_gateway_settings)", ""]
+              "target_link_libraries(" + selected["target"] + " PRIVATE uos_gateway_settings)",
+              "uos_link_vendors(" + selected["target"] + " " + " ".join('"' + source + '"' for source in selected["sources"]) + ")", ""]
     Path(sys.argv[2]).write_text("\n".join(lines))
     print(json.dumps(selected))
 

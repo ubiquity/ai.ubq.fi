@@ -2227,3 +2227,34 @@ TEST("rt::get with an integer index reads the element: a literal 0 is index 0, n
   EXPECT(rt::getNumber(rt::get(object, "x")) == std::optional<double>(1.0));
   EXPECT(rt::get(object, std::string("0"))->as_string() == "zero");
 }
+
+TEST("JSON.parse preserves decoded duplicates, physical key order and number bits across parser paths") {
+  const json::value duplicate = rt::jsonParse(R"({"a":{"gone":[{"leaf":1}]},"b":{"k":1,"\u006b":2},"a":null})");
+  EXPECT_EQ(rt::jsonStringify(duplicate), R"({"a":null,"b":{"k":2}})");
+  const auto& duplicateObject = duplicate.get_object();
+  EXPECT_EQ(std::string(duplicateObject.begin()->key()), "a");
+
+  const json::value indexed = rt::jsonParse(R"({"outer":{"ordinary":true,"2":2,"\u0031":1,"__pr\u006fto__":null}})");
+  const auto* nested = rt::getObject(indexed, "outer");
+  ASSERT(nested != nullptr);
+  std::string storage;
+  for (const auto& member : *nested) {
+    storage += std::string(member.key());
+    storage += ',';
+  }
+  EXPECT_EQ(storage, "1,2,ordinary,__proto__,");
+  EXPECT(rt::hasOwn(*nested, "__proto__"));
+
+  const json::value numeric = rt::jsonParse(R"({"n":[-0e7,9007199254740993,1.0,5e-324]})");
+  const auto* values = rt::getArray(numeric, "n");
+  ASSERT(values != nullptr);
+  ASSERT(values->size() == 4);
+  ASSERT((*values)[0].is_double());
+  ASSERT((*values)[1].is_double());
+  ASSERT((*values)[2].is_int64());
+  ASSERT((*values)[3].is_double());
+  EXPECT_EQ(std::bit_cast<std::uint64_t>((*values)[0].get_double()), 0x8000000000000000ULL);
+  EXPECT_EQ(std::bit_cast<std::uint64_t>((*values)[1].get_double()), 0x4340000000000000ULL);
+  EXPECT_EQ((*values)[2].get_int64(), 1);
+  EXPECT_EQ(std::bit_cast<std::uint64_t>((*values)[3].get_double()), 1ULL);
+}

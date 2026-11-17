@@ -13,6 +13,7 @@ import time
 
 sys.dont_write_bytecode = True
 from build_support import GATEWAY, SDK_MANIFEST_SHA256, WORKSPACE, admission, atomic_json, bind_instruction_snapshot, digest, local_inputs, measured, supervisor
+import vendor_sources
 
 
 def arguments():
@@ -88,6 +89,8 @@ def tool_view(sdk, view):
 
 
 def input_identity(targets):
+    vendors = tuple(vendor_sources.selected())
+    vendor_targets = {library.target for library in vendors}
     paths = [GATEWAY / "PORT-MANIFEST.json", GATEWAY / "CMakeLists.txt", GATEWAY / "CMakePresets.json"]
     sources = [path for path in (GATEWAY / "src").rglob("*.cpp") if not path.name.startswith(".")]
     if not targets or any(target in targets for target in ("uos_gateway", "uos_kv_convert", "uos_kv_proof")):
@@ -97,7 +100,9 @@ def input_identity(targets):
     for target, entry in (("uos_kv_convert", "kv-convert.cpp"), ("uos_kv_proof", "kv-proof.cpp")):
         if not targets or target in targets:
             sources.append(GATEWAY / "entrypoints" / entry)
-    if targets and all(target.startswith("uos_obj_") for target in targets):
+    if targets and set(targets) <= vendor_targets:
+        sources = []
+    elif targets and all(target.startswith("uos_obj_") for target in targets):
         sources += list((GATEWAY / "entrypoints").glob("*.cpp")) + list((GATEWAY / "runtime").glob("*.cpp"))
         for directory in ("tests", "bench", "fuzz"):
             sources += list((GATEWAY / directory).rglob("*.cpp"))
@@ -123,9 +128,12 @@ def input_identity(targets):
         if any(extra[target].get("archive") for target in targets):
             sources += [path for path in (GATEWAY / "src").rglob("*.cpp") if not path.name.startswith(".")]
         paths += [registry]
+    used = vendor_sources.required(vendors, [path.relative_to(GATEWAY).as_posix() for path in sources], targets)
+    for library in used:
+        paths.extend(GATEWAY / relative for relative in library.inputs)
     paths.extend((GATEWAY / "cmake").glob("*.cmake"))
     paths.extend((GATEWAY / "cmake").glob("*.json"))
-    paths.extend(GATEWAY / "tools" / name for name in ("build.py", "build_support.py", "build_profiles.py", "compiler-limit.py", "cmake-sources.py", "cmake_focus.py"))
+    paths.extend(GATEWAY / "tools" / name for name in ("build.py", "build_support.py", "build_profiles.py", "compiler-limit.py", "cmake-sources.py", "cmake_focus.py", "vendor_sources.py"))
     result = {str(path.relative_to(GATEWAY)) if GATEWAY in path.parents else str(path): digest(path) for path in sorted(set(paths))}
     for path in sources:
         result.update(local_inputs(path))
@@ -149,6 +157,7 @@ def main():
         raise RuntimeError("trial requires --source")
     # Admission precedes SDK reads or process creation. No SDK download/repair exists.
     before = admission("driver", options.supervisor_log)
+    vendors = tuple(vendor_sources.selected())
     native = str(options.sdk) == "native"
     if native:
         from build_profiles import native as native_profile
@@ -256,6 +265,7 @@ def main():
         changed = sorted(path for path in inputs.keys() | after.keys() if inputs.get(path) != after.get(path))
         artifact_paths = [build / name for name in ("libuos_gateway.a", "uos_gateway", "uos_kv_convert", "uos_kv_proof")]
         artifact_paths += [build / target for target in selected]
+        artifact_paths += [build / library.archive for library in vendors if library.source in after]
         artifacts = {path.name: {"sha256": digest(path), "bytes": path.stat().st_size}
                      for path in artifact_paths if path.is_file()}
         atomic_json(evidence / ("result-" + stamp + ".json"), {"run_id": stamp, "phase": options.phase, "artifacts": artifacts,

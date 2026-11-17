@@ -26,14 +26,26 @@ permissions:
   contents: read
 
 jobs:
+  targets:
+    runs-on: ubuntu-26.04-arm
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: list
+        # Every target registered in targets.json is fuzzed; new harnesses need no workflow change.
+        run: echo "matrix=$(python3 -c "import json;print(json.dumps(sorted(json.load(open('cpp/gateway/fuzz/targets.json'))['targets'])))")" >> "$GITHUB_OUTPUT"
   fuzz:
     name: fuzz (${{ matrix.target }})
+    needs: targets
     runs-on: ubuntu-26.04-arm
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        target: [json, url, regex, sse, kv_jsc, http_request, fetch_response, websocket, passkeys]
+        target: ${{ fromJSON(needs.targets.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
         with:

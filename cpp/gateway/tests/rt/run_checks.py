@@ -14,11 +14,15 @@ import re
 import shlex
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
 
 GATEWAY = Path(__file__).resolve().parents[2]
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(GATEWAY / "tools"))
+import vendor_sources
 BASE_FLAGS = [
     "-std=c++20", "-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror",
     "-DBOOST_JSON_NO_LIB", "-DBOOST_CONTAINER_NO_LIB", "-DBOOST_SYSTEM_NO_LIB",
@@ -42,7 +46,9 @@ def quote(path):
 def inputs():
     files = sorted(path for directory in ["src/rt", "include/uos/rt", "tests/rt"]
                    for path in (GATEWAY / directory).rglob("*") if path.is_file())
-    return {str(path.relative_to(GATEWAY)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
+    files.extend([GATEWAY / "tools/vendor_sources.py", GATEWAY / vendor_sources.REGISTRY])
+    files.extend(GATEWAY / relative for library in vendor_sources.selected() for relative in library.inputs)
+    return {path.relative_to(GATEWAY).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
 
 
 def identity():
@@ -70,16 +76,26 @@ def build(args, profile, tests):
     source = root / "driver"
     source.mkdir(parents=True, exist_ok=True)
     flags = BASE_FLAGS + (SAN_FLAGS if profile == "asan" else ["-O2"])
+    runtime = sorted((GATEWAY / "src/rt").glob("*.cpp"))
+    vendors = vendor_sources.required(tuple(vendor_sources.selected()), (path.relative_to(GATEWAY) for path in runtime))
+    json_sources = vendor_sources.simdjson_consumers(vendors)
     lines = [
         "cmake_minimum_required(VERSION 3.25)",
         "project(uos_rt_checks LANGUAGES CXX)",
         "set(CMAKE_EXPORT_COMPILE_COMMANDS ON)",
-        "add_compile_options(" + " ".join(flags) + ")",
         "include_directories(" + quote(GATEWAY / "include") + " " + quote(GATEWAY) + ")",
         "add_library(runtime OBJECT",
-        *[quote(path) for path in sorted((GATEWAY / "src/rt").glob("*.cpp"))],
+        *[quote(path) for path in runtime],
         ")",
+        "target_compile_options(runtime PRIVATE " + " ".join(flags) + ")",
     ]
+    for library in vendors:
+        lines += [f"add_library({library.target} STATIC {quote(GATEWAY / library.source)})",
+                  f"target_compile_options({library.target} PRIVATE " + " ".join(vendor_sources.vendor_flags(flags)) + ")"]
+    for source_path in sorted(json_sources):
+        source_path = quote(GATEWAY / source_path)
+        options = " ".join(map(quote, vendor_sources.simdjson_flags(GATEWAY)))
+        lines.append(f"set_property(SOURCE {source_path} APPEND PROPERTY COMPILE_OPTIONS {options})")
     if profile == "asan":
         lines.append("add_link_options(-fsanitize=address,undefined)")
     sqlite_library = "sqlite3"
@@ -100,7 +116,8 @@ def build(args, profile, tests):
             raise SystemExit(f"Unexpected non-runtime Links closure for {test}: {extras}")
         lines += [
             f"add_executable({test.stem} {quote(test)} $<TARGET_OBJECTS:runtime>)",
-            f"target_link_libraries({test.stem} PRIVATE boost_json boost_container ssl crypto pthread dl {sqlite_library} z brotlidec zstd icuuc)",
+            f"target_compile_options({test.stem} PRIVATE " + " ".join(flags) + ")",
+            f"target_link_libraries({test.stem} PRIVATE " + " ".join(library.target for library in vendors) + " boost_json boost_container ssl crypto pthread dl {sqlite_library} z brotlidec zstd icuuc)",
         ]
     content = "\n".join(lines) + "\n"
     cmake_file = source / "CMakeLists.txt"

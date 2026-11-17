@@ -26,13 +26,39 @@ FLAGS = ["-std=c++20", "-pthread", "-O1", "-g", "-fno-omit-frame-pointer",
          "-DBOOST_JSON_NO_LIB", "-DBOOST_CONTAINER_NO_LIB", "-DBOOST_SYSTEM_NO_LIB",
          "-DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING", "-DUOS_GATEWAY_NATIVE_LIBRARIES=1",
          "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY)]
+LIBRARY_FLAGS = []
 LIBRARIES = ["boost_json", "boost_container", "ssl", "crypto", "z", "sqlite3", "brotlidec", "zstd",
              "icuuc", "icui18n", "dl", "pthread"]
 
 
+def third_party():
+    """Vendored libraries that first-party code includes: (include flags, sources)."""
+    root = GATEWAY / "third_party"
+    if not root.is_dir():
+        return [], []
+    used = subprocess.run(["grep", "-rhoE", r"#include [<\"][^>\"]+[>\"]", str(GATEWAY / "src"), str(GATEWAY / "include")],
+                          capture_output=True, text=True).stdout
+    flags, sources = [], []
+    for library in sorted(path for path in root.iterdir() if path.is_dir()):
+        headers = [path.name for path in library.rglob("*.h")] + [path.name for path in library.rglob("*.hpp")]
+        if not any(name in used for name in headers):
+            continue
+        flags.append("-isystem" + str(library))
+        sources += sorted(str(path.relative_to(GATEWAY)) for path in library.rglob("*")
+                          if path.suffix in (".cpp", ".c", ".cc"))
+    return flags, sources
+
+
 def compile_one(compiler, source, objects):
     output = objects / (hashlib.sha256(source.encode()).hexdigest()[:16] + ".o")
-    done = subprocess.run([compiler, *FLAGS, "-c", str(GATEWAY / source), "-o", str(output)],
+    flags = FLAGS + LIBRARY_FLAGS
+    if source.startswith("third_party/"):
+        # Vendored code is not held to the port's warning set; C sources use the C driver.
+        flags = [flag for flag in flags if not flag.startswith("-W")]
+        if source.endswith(".c"):
+            compiler = "clang" if compiler.endswith("clang++") else compiler.replace("g++", "gcc")
+            flags = [flag for flag in flags if not flag.startswith("-std=c++")]
+    done = subprocess.run([compiler, *flags, "-c", str(GATEWAY / source), "-o", str(output)],
                           capture_output=True, text=True)
     return source, output, done.returncode, done.stderr[-4000:]
 
@@ -52,6 +78,9 @@ def main():
     for directory in (objects, binaries, logs):
         directory.mkdir(parents=True, exist_ok=True)
     runtime = sorted(str(path.relative_to(GATEWAY)) for path in (GATEWAY / "src/rt").glob("*.cpp"))
+    library_flags, library_sources = third_party()
+    LIBRARY_FLAGS.extend(library_flags)
+    runtime += library_sources
     closures = {}
     for test in tests:
         listed = subprocess.run([sys.executable, str(GATEWAY / "tools/links.py"), "--with-test", test],
