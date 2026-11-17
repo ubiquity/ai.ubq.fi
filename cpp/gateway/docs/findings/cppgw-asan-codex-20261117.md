@@ -440,6 +440,22 @@ handoff is claimed. Preserve the clean owned `agent-job` branch for the enclosin
 runner's promised publisher and the port owner's ancestry-preserving integration;
 do not merge its pre-existing production-build work as accepted task work.
 
+Final manual publication was attempted on documentation tip
+`e099c63d075a8cc773adf96ca3e7ed4bbae2f7de` (tree
+`605677143af14f5de39b907c22fdc3308e5764ba`) with:
+
+```sh
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false git -c credential.helper= push origin HEAD:refs/heads/test/cppgw-asan-codex-20261117
+```
+
+It exited 128: `fatal: could not read Username for 'https://github.com': terminal prompts disabled`.
+The following fetch succeeded; all seven then-created task tips remain outside
+`origin/development`. No local `development` branch exists. Checkout status was
+clean on `agent-job`. The terminal commands and proof are retained in
+`/tmp/cppgw-asan-codex-20261117/handoff.json`. This documentation follow-up adds
+only that receipt and the short reproduction command below; all 986 tested
+source/driver/vector inputs remain unchanged.
+
 ## Final handoff summary
 
 Built 71 Codex/banked-reset/cluster test binaries with Clang 21.1.8, strict C++20
@@ -455,4 +471,11 @@ invalid-access diagnostic remains, and no suppression was used.
 
 The runtime/server owner must fix the reported HTTP cycle. Local work is committed;
 manual GitHub publication/integration requires the enclosing authenticated runner.
-Exact build/run commands, counts, source identities and review receipts are above.
+Exact counts, source identities and review receipts are above. Reproduce both
+profiles with the same isolated runner (from the repository root):
+
+```sh
+UOS_CODEX_CHECKS="$PWD/cpp/gateway/tests/helpers/codex_sanitizer_checks.py"
+python3 "$UOS_CODEX_CHECKS" --profile both --build-only --jobs 4
+sudo -n unshare --net -- /bin/sh -c 'ip link set lo up && exec setpriv --reuid=1001 --regid=1001 --clear-groups env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/python3 "$1" --profile both --run-only --require-clean' sh "$UOS_CODEX_CHECKS"
+```
