@@ -95,7 +95,7 @@
         "UOS_GATEWAY_FRAME_RECYCLING_DISABLED": "OFF",
         "CMAKE_FIND_USE_PACKAGE_REGISTRY": "OFF",
         "CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY": "OFF",
-        "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O1 -g1",
+        "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O1 -gline-tables-only -fno-sanitize-recover=all",
         "UOS_GATEWAY_SANITIZER": "address,undefined",
         "UOS_GATEWAY_FUZZ": "ON"
       }

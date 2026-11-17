@@ -15,7 +15,9 @@
 #include <signal.h>
 #include <spawn.h>
 #include <sys/stat.h>
+#if defined(__linux__) && !defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
 #include <sys/syscall.h>
+#endif
 #include <sys/wait.h>
 #include <unistd.h>
 #include <algorithm>
@@ -31,6 +33,37 @@ namespace uos::rt::process {
     namespace asio = boost::asio;
     using Bytes = std::vector<std::uint8_t>;
     using Descriptor = asio::posix::stream_descriptor;
+
+#if defined(__APPLE__) || defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
+    int closeOnExecPipe(int fds[2]) {
+      if (::pipe(fds) != 0) return -1;
+      if (::fcntl(fds[0], F_SETFD, FD_CLOEXEC) == 0 && ::fcntl(fds[1], F_SETFD, FD_CLOEXEC) == 0) return 0;
+      const int failure = errno;
+      ::close(fds[0]);
+      ::close(fds[1]);
+      errno = failure;
+      return -1;
+    }
+
+    Task<int> waitForChildExit(int child, std::shared_ptr<asio::signal_set> notifications) {
+      for (;;) {
+        boost::system::error_code error;
+        auto token = asio::redirect_error(asio::use_awaitable, error);
+        // Registration precedes spawn; Asio queues a signal until a wait is armed.
+        // Await before reaping so even an immediate exit is observed asynchronously.
+        co_await notifications->async_wait(std::move(token));
+        if (error) throw fs::errnoError(error.value(), "signal");
+        int status = 0;
+        pid_t result;
+        do {
+          result = ::waitpid(child, &status, WNOHANG);
+        } while (result < 0 && errno == EINTR);
+        if (result < 0) throw fs::errnoError(errno, "waitpid");
+        if (result == child) co_return status;
+        // Another child, a stop or a continue can signal; await the next event.
+      }
+    }
+#endif
 
     // ---- signal listeners
 
@@ -278,6 +311,25 @@ namespace uos::rt::process {
   };
 
   namespace {
+#if defined(__APPLE__) || defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
+    Task<void> watchExit(std::shared_ptr<Subprocess::State> state, std::shared_ptr<asio::signal_set> notifications) {
+      auto observation = waitForChildExit(state->pid, notifications);
+      const int status = co_await std::move(observation);
+      int code = 0;
+      if (WIFSIGNALED(status)) {
+        const int number = WTERMSIG(status);
+        const auto name = signalName(number);
+        state->signalCode = name ? std::string(*name) : "SIG" + std::to_string(number);
+        code = 128 + number;
+      } else {
+        state->exitCode = WEXITSTATUS(status);
+        code = *state->exitCode;
+      }
+      state->observed = true;
+      (*state->resolveExited)(code);
+      state->resolveExited.reset();
+    }
+#else
     Task<void> watchExit(std::shared_ptr<Subprocess::State> state, int pidfd) {
       Descriptor descriptor(rt::executor(), pidfd);
       boost::system::error_code error;
@@ -300,6 +352,7 @@ namespace uos::rt::process {
       (*state->resolveExited)(code);
       state->resolveExited.reset();
     }
+#endif
   }
 
   Subprocess::Subprocess(std::shared_ptr<State> state) : state_(std::move(state)) {}
@@ -361,6 +414,10 @@ namespace uos::rt::process {
     for (auto& argument : cmd) args.push_back(argument.data());
     args.push_back(nullptr);
 
+#if defined(__APPLE__) || defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
+    // The signal handler is installed before the child can exit.
+    auto childExit = std::make_shared<asio::signal_set>(rt::executor(), SIGCHLD);
+#endif
     Pipe in, out, err;
     auto release = [&] {
       for (Pipe* pipe : {&in, &out, &err}) {
@@ -370,7 +427,12 @@ namespace uos::rt::process {
     };
     auto makePipe = [&](Pipe& pipe) {
       int fds[2];
-      if (::pipe2(fds, O_CLOEXEC) != 0) {
+#if defined(__APPLE__) || defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
+      const int pipeStatus = closeOnExecPipe(fds);
+#else
+      const int pipeStatus = ::pipe2(fds, O_CLOEXEC);
+#endif
+      if (pipeStatus != 0) {
         const int error = errno;
         release();
         throw fs::errnoError(error, "pipe");
@@ -425,10 +487,15 @@ namespace uos::rt::process {
     if (options.stdout == Stdio::pipe) state->stdoutStream.emplace(pipeStream(std::exchange(out.read, -1)));
     if (options.stderr == Stdio::pipe) state->stderrStream.emplace(pipeStream(std::exchange(err.read, -1)));
 
+#if defined(__APPLE__) || defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
+    auto observation = watchExit(state, childExit);
+    rt::spawn(std::move(observation));
+#else
     const int pidfd = static_cast<int>(::syscall(SYS_pidfd_open, child, 0));
     if (pidfd < 0) throw fs::errnoError(errno, "pidfd_open");
     ::fcntl(pidfd, F_SETFD, FD_CLOEXEC);
     rt::spawn(watchExit(state, pidfd));
+#endif
     return Subprocess(state);
   }
 }

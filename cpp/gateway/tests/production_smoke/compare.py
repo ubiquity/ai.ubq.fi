@@ -6,7 +6,9 @@ import re
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 CLOCK_FIELDS = {"created_at", "created_at_ms", "updated_at_ms", "usage_reset_at_ms", "window_reset_at_ms", "fetched_at_ms", "access_token_expires_at_ms"}
 TERMINAL_FIELDS = ("route", "status", "stream", "provider", "model", "delivery_outcome", "usage_observed", "usage_telemetry_status",
-                   "input_tokens", "output_tokens", "total_tokens", "terminal_type", "failure_kind", "terminal_stage")
+                   "input_tokens", "output_tokens", "total_tokens", "cached_input_tokens", "cache_write_input_tokens", "reasoning",
+                   "output_token_allowance", "stream_terminal_type", "failure_kind", "admission_stage", "semantic_output_observed",
+                   "upstream_event_kinds", "response_created_observed", "synthetic_terminal_type", "attempted_providers")
 
 
 def normalize(value, key=None, identities=None):
@@ -42,7 +44,7 @@ def projection(trial):
         if "text" in capture and capture["text"]:
             record["text"] = capture["text"]
         result["captures"][name] = record
-        request_id = capture.get("headers", {}).get("x-request-id")
+        request_id = capture.get("headers", {}).get("x-uos-request-id")
         rows = [entry["value"] for entry in trial.get("terminals", []) if entry["value"].get("request_id") == request_id]
         if rows:
             result["terminals"][name] = [{field: row[field] for field in TERMINAL_FIELDS if field in row} for row in rows]

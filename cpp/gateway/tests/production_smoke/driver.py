@@ -25,6 +25,7 @@ def parser():
     result.add_argument("--runtime-template", type=Path, help="Reviewed runtime fixture document whose inputs stay task-scoped")
     result.add_argument("--bun", type=Path)
     result.add_argument("--bun-binding", type=Path)
+    result.add_argument("--bun-only", action="store_true", help="Prequalify only the actual Bun source fixture; never native acceptance")
     result.add_argument("--benchmark", action="store_true")
     result.add_argument("--json-benchmark", type=Path, help="Run only the qualified production JSON hot-path target")
     result.add_argument("--timeout", type=int, default=180)
@@ -107,6 +108,11 @@ def main():
         if not arguments.json_benchmark.is_relative_to(WORKTREE / ".data"):
             raise RuntimeError("JSON target must be the worktree's qualified build output")
         arguments.bun = arguments.bun.resolve(strict=True)
+    elif arguments.bun_only:
+        if not arguments.bun or not arguments.bun_binding:
+            raise RuntimeError("Bun source fixture requires an explicit runtime and verified genuine native-KV binding")
+        arguments.bun = arguments.bun.resolve(strict=True)
+        arguments.bun_binding = require_task_path(arguments.bun_binding).resolve(strict=True)
     elif not (arguments.preflight or arguments.fixture_self_test):
         if not arguments.gateway or not arguments.gateway_sha256 or not arguments.fixture_flag or not arguments.runtime_template or not arguments.build_receipt:
             raise RuntimeError("Runtime launch requires binary/hash, reviewed fixture flag and runtime template")

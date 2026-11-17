@@ -6,7 +6,8 @@ if test "$#" -ne 1; then
   exit 64
 fi
 case "$1" in /*) ;; *) echo 'Native runtime manifest must be absolute' >&2; exit 64 ;; esac
-uos_package=$(CDPATH= cd -P -- "$(dirname -- "$0")/.." && pwd)
+case "$0" in */*) uos_script_directory=${0%/*} ;; *) echo 'Invoke the native launcher by its path' >&2; exit 64 ;; esac
+uos_package=$(CDPATH= cd -P -- "$uos_script_directory/.." && pwd)
 if ! test -f "$uos_package/bin/uos-gateway" || test -L "$uos_package/bin/uos-gateway"; then
   echo 'Native gateway executable is unavailable or linked' >&2
   exit 78

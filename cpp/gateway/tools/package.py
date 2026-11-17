@@ -114,6 +114,7 @@ def main():
     verify_permissions(args.permissions)
     binaries = {"bin/uos-gateway": build / "uos_gateway", "bin/uos-kv-convert": build / "uos_kv_convert", "bin/uos-kv-proof": build / "uos_kv_proof"}
     document = runtime.closure(binaries)
+    operators = runtime.closure({name: Path(name).resolve(strict=True) for name in ("/bin/sh", "/usr/bin/env")}, host_programs=True)
     required = {"libsqlite3.so.0", "libz.so.1", "libbrotlidec.so.1", "libzstd.so.1"}
     needed = {name for row in document["executables"] for name in row["needed"]}
     if not required.issubset(needed):
@@ -146,6 +147,7 @@ def main():
         copy_file(args.profile_manifest, stage / "build-profile.json")
         copy_file(GATEWAY / "runtime/launch-schema.json", stage / "runtime/launch-schema.json")
         write_json(stage / "runtime-closure.json", document)
+        write_json(stage / "operator-closure.json", operators)
         write_json(stage / "package.json", {"schema": "uos-native-package-v1", "nativeKvProvenanceSha256": args.native_kv_provenance_sha256,
                                           "platform": "linux", "architecture": "arm64", "profileSha256": runtime.digest(args.profile_manifest)})
         for row in document["executables"]:

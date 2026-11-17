@@ -24,6 +24,7 @@ class GatewayProcess:
         self.samples = []
         self.phase = "startup"
         self.failure = None
+        self.shutdown_signalled = False
         self.ready = queue.Queue()
         self.stop_monitor = threading.Event()
         self.started_ns = time.perf_counter_ns()
@@ -92,14 +93,16 @@ class GatewayProcess:
         return {"sample_count": len(values), "median_rss_bytes": statistics.median(values), "peak_rss_bytes": max(values)}
 
     def signal(self, selected):
+        if selected in (signal.SIGTERM, signal.SIGINT):
+            self.shutdown_signalled = True
         self.child.send_signal(selected)
 
     def close(self, force=False):
         if force:
             settle(self.child)
         else:
-            if self.child.poll() is None:
-                self.child.send_signal(signal.SIGTERM)
+            if self.child.poll() is None and not self.shutdown_signalled:
+                self.signal(signal.SIGTERM)
             try:
                 self.child.wait(timeout=15)
             except subprocess.TimeoutExpired:

@@ -2,6 +2,7 @@
 """Run unchanged Links tests with credential, network, process and memory isolation."""
 import argparse
 import collections
+import contextlib
 import datetime
 import importlib.util
 import json
@@ -99,7 +100,7 @@ def run_test(selected, binary, owner_path, registry_path, evidence, options):
     owner = profile_identity(owner_path)
     if binary.resolve().parent != owner_path.resolve().parent or binary.name != selected["target"]:
         raise RuntimeError("Test binary does not match its registered target and profile directory")
-    admission("driver", options.supervisor_log)
+    admission("driver", options.supervisor_log, options.notes_hash)
     profile_hash = digest(owner_path)
     configuration = configuration_for(owner_path)
     record = {"schema": 1, "test": selected["test"], "target": selected["target"], "profile": owner,
@@ -117,7 +118,7 @@ def run_test(selected, binary, owner_path, registry_path, evidence, options):
         raise RuntimeError("Links registration changed; reconfigure before running " + selected["test"])
     if not binary.is_file() or binary.resolve().parent != owner_path.resolve().parent:
         raise RuntimeError("Missing test binary or binary outside its owned profile: " + str(binary))
-    accepted = supervisor(options.supervisor_log) if options.supervisor_log else None
+    accepted = supervisor(options.supervisor_log, options.notes_hash) if options.supervisor_log else None
     admitted = admission("driver", options.supervisor_log, accepted["notes_sha256"] if accepted else None)
     if admitted["mem_available_bytes"] < 4 * GIB:
         raise RuntimeError("Test runtime requires 4 GiB MemAvailable before its sampled 2 GiB RSS guard")
@@ -181,16 +182,23 @@ def suite(options, registry):
     selected = [item for item in registry["tests"] if not options.target or item["target"] in options.target]
     if options.target and len(selected) != len(set(options.target)):
         raise RuntimeError("Suite selection contains an unknown test target")
+    if options.incremental_scope and (not options.target or len(selected) >= len(registry["tests"])):
+        raise RuntimeError("Incremental scope requires a strict explicit subset; a full suite must hold the release lock")
     evidence = options.evidence or WORKSPACE / ".data/cpp-gateway-evidence" / ("suite-" + owner["profile"] + "-" + str(time.time_ns()))
     evidence.mkdir(parents=True, exist_ok=False)
     record = {"schema": 1, "profile": owner, "selected": len(selected), "registry_sha256": digest(options.registry),
-              "execution": "fresh", "records": [], "started": time.time(), "settled": False}
+              "selected_targets": [item["target"] for item in selected], "execution": "fresh", "records": [],
+              "scope": "focused incremental subset" if options.incremental_scope else "full-release lock",
+              "supervisor_notes_sha256": options.notes_hash, "started": time.time(), "settled": False}
+    atomic_json(evidence / "suite.json", record)
     previous = {}
     if options.reuse_suite:
         prior = json.loads(options.reuse_suite.read_text())
         previous = {item["target"]: item for item in prior["records"] if item["status"] == "PASS"}
-    with lock(options.release_lock, "gateway-tests-" + owner["profile"]):
+    scope = contextlib.nullcontext() if options.incremental_scope else lock(options.release_lock, "gateway-tests-" + owner["profile"])
+    with scope:
         for number, item in enumerate(selected, 1):
+            admission("driver", options.supervisor_log, options.notes_hash)
             print(json.dumps({"suite": owner["profile"], "index": number, "selected": len(selected), "test": item["test"]}), flush=True)
             prior = previous.get(item["target"])
             if prior and prior.get("settled") and prior.get("binary_unchanged") and prior.get("registration") == item and \
@@ -213,6 +221,8 @@ def suite(options, registry):
                 prefix = ["native"] if owner["profile"] != "sdk-release" else [owner["sdk"]["path"]]
                 command = ["/usr/bin/python3", str(GATEWAY / "tools/build.py")] + prefix + [owner["profile"], "build", "--incremental",
                            "--target", item["target"], "--jobs", "2"]
+                if owner.get("lane"):
+                    command += ["--lane", owner["lane"]]
                 if options.supervisor_log:
                     command += ["--supervisor-log", str(options.supervisor_log)]
                 target_evidence.mkdir(parents=True)
@@ -273,11 +283,13 @@ def main():
     parser.add_argument("--rss-limit-mib", type=int, default=2048)
     parser.add_argument("--prune", action="store_true")
     parser.add_argument("--no-build", action="store_true")
+    parser.add_argument("--incremental-scope", action="store_true", help="Explicit focused subset only; retain per-profile/global compiler locks without claiming full-release lock")
     parser.add_argument("--reuse-suite", type=Path, help="Reuse only prior passing receipts with identical consumed inputs/profile and a verified original log")
     parser.add_argument("--keep-scratch", action="store_true")
     options = parser.parse_args()
     if options.timeout <= 0 or options.rss_limit_mib <= 0:
         raise RuntimeError("Runtime and RSS bounds must be positive")
+    options.notes_hash = supervisor(options.supervisor_log)["notes_sha256"] if options.supervisor_log else None
     registry = load_registry(options.registry)
     if options.mode == "suite":
         return suite(options, registry)

@@ -39,8 +39,8 @@ def environment(auth):
 
 
 def manifest(template, state, upstream):
-    value = json.loads(Path(template).read_text())
-    value.update({"schema": "uos-gateway-launch-v1", "stateRoot": str(state), "hostname": "127.0.0.1", "port": 0,
+    value = json.loads(Path(template).read_text()) if template else {"schema": "uos-gateway-bun-source-fixture-v1"}
+    value.update({"stateRoot": str(state), "hostname": "127.0.0.1", "port": 0,
                   "fixture": {"syntheticOrigin": upstream.origin}})
     destination = state / "runtime-manifest.json"
     write_json(destination, value)
@@ -234,11 +234,11 @@ def one_runtime(arguments, runtime, trial):
         events = terminals(gateway.lines)
         result["terminals"] = events
         for name in ("chat_buffered", "chat_stream", "responses_buffered", "responses_stream", "shutdown_stream"):
-            request_id = captures[name]["headers"].get("x-request-id")
+            request_id = captures[name]["headers"].get("x-uos-request-id")
             matched = [entry for entry in events if entry["value"].get("request_id") == request_id]
             if not request_id or len(matched) != 1 or matched[0]["value"].get("delivery_outcome") != "delivered":
                 raise RuntimeError("Expected one physical delivery terminal for " + name)
-        shutdown_id = captures["shutdown_stream"]["headers"]["x-request-id"]
+        shutdown_id = captures["shutdown_stream"]["headers"]["x-uos-request-id"]
         terminal = next(entry for entry in events if entry["value"].get("request_id") == shutdown_id)
         telemetry = [entry for entry in gateway.lines if "[ai.ubq.fi] optional_telemetry_shutdown " in entry["line"]]
         if telemetry and telemetry[-1]["at_ns"] < terminal["at_ns"]:
@@ -268,15 +268,19 @@ def one_runtime(arguments, runtime, trial):
 
 
 def run(arguments):
-    result = {"gateway": {"path": str(arguments.gateway), "sha256": sha256(arguments.gateway)},
-              "runtime_template_sha256": sha256(arguments.runtime_template), "trials": []}
+    result = {"surface": "Bun source fixture only" if arguments.bun_only else "same primary release gateway",
+              "trials": []}
+    if arguments.gateway:
+        result["gateway"] = {"path": str(arguments.gateway), "sha256": sha256(arguments.gateway)}
+    if arguments.runtime_template:
+        result["runtime_template_sha256"] = sha256(arguments.runtime_template)
     if arguments.bun:
         result["bun"] = {"path": str(arguments.bun), "sha256": sha256(arguments.bun)}
     for trial in range(2 if arguments.benchmark else 1):
         order = ("native", "bun") if trial % 2 == 0 else ("bun", "native")
-        for runtime in order if arguments.bun else ("native",):
+        for runtime in ("bun",) if arguments.bun_only else order if arguments.bun else ("native",):
             result["trials"].append(one_runtime(arguments, runtime, trial))
-    if arguments.bun:
+    if arguments.bun and not arguments.bun_only:
         from compare import compare
         result["comparison"] = compare(result["trials"])
         write_json(arguments.output / "runtime-comparison.json", result["comparison"])

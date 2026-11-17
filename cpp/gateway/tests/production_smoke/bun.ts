@@ -9,7 +9,7 @@ const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 if (
   !object(manifest) ||
-  manifest.schema !== "uos-gateway-launch-v1" ||
+  !["uos-gateway-launch-v1", "uos-gateway-bun-source-fixture-v1"].includes(String(manifest.schema)) ||
   manifest.hostname !== "127.0.0.1" ||
   manifest.port !== 0 ||
   typeof manifest.stateRoot !== "string" ||

@@ -118,6 +118,8 @@ def input_identity(targets):
         if any(target not in extra for target in targets):
             raise RuntimeError("Target has no consumed-input contract yet: " + ", ".join(targets))
         sources = [GATEWAY / source for target in targets for source in extra[target]["sources"]]
+        if any(extra[target].get("archive") for target in targets):
+            sources += [path for path in (GATEWAY / "src").rglob("*.cpp") if not path.name.startswith(".")]
         paths += [registry]
     paths.extend((GATEWAY / "cmake").glob("*.cmake"))
     paths.extend((GATEWAY / "cmake").glob("*.json"))

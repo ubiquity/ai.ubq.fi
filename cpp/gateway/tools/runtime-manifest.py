@@ -66,13 +66,13 @@ def find_library(name):
     raise ValueError(f"Required host runtime library is unavailable: {name}")
 
 
-def closure(binaries):
+def closure(binaries, host_programs=False):
     executables = []
     libraries = {}
     pending = []
     machine = None
     for label, path in sorted(binaries.items()):
-        info = inspect(path)
+        info = inspect(path, system_library=host_programs)
         if machine is not None and machine != info["machine"]:
             raise ValueError("Package ELF machine identities differ")
         machine = info["machine"]

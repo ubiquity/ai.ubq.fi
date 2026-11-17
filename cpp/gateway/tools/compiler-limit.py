@@ -16,7 +16,7 @@ def main():
         argv = argv[1:]
     if not argv:
         raise RuntimeError("Missing qualified compiler/tool command")
-    source = next((arg for arg in argv if arg.endswith((".cpp", ".cxx", ".cc"))), None)
+    source = next((arg for arg in argv if arg.endswith((".cpp", ".cxx", ".cc", ".c", ".C", ".c++"))), None)
     if source is None and any(arg == "--version" or arg.startswith(("-dump", "-print")) for arg in argv):
         kind = "query"
     from build_support import acquire_slots

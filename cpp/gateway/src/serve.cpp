@@ -177,13 +177,48 @@ namespace uos::serve {
       rt::process::exit(0);
     }
 
+    // The native launcher follows scripts/serve-vps.ts, including its failure cleanup.
     rt::Task<void> servePrepared(std::string hostname, int port) {
       if (!storage::native_addon::nativeKvBackendIsPrepared()) throw rt::JsError("Native KV backend must be prepared before starting the gateway");
       const std::vector<std::string> args;
       rt::Promise<void> configured(configureLoopbackServeRuntime(args));
       co_await configured.wait();
-      auto serving = serveConfigured(std::move(hostname), port);
-      co_await std::move(serving);
+      auto opening = kv::getKv();
+      auto store = co_await opening.wait();
+      if (!store) throw rt::JsError("Native KV must be initialized before starting the gateway");
+      rt::Reason failure;
+      std::optional<rt::process::Listener> shutdown;
+      try {
+        (void)initializeModule();
+        runtime::http::ServeHttpOptions options{.hostname = std::move(hostname), .port = static_cast<double>(port), .onListen = application.onListen, .upgrade = application.upgrade};
+        const auto server = runtime::http::serveHttp(options, application.fetch);
+        shutdown.emplace([server] {
+          server.shutdown().catch_([](rt::Reason) { rt::console::error("[ai.ubq.fi] HTTP shutdown failed"); });
+        });
+        rt::process::once("SIGINT", *shutdown);
+        rt::process::once("SIGTERM", *shutdown);
+        co_await server.ready.wait();
+        co_await server.finished.wait();
+      } catch (...) {
+        failure = std::current_exception();
+      }
+      if (shutdown) {
+        rt::process::removeListener("SIGINT", *shutdown);
+        rt::process::removeListener("SIGTERM", *shutdown);
+      }
+      try {
+        rt::Promise<void> drained(shutdownOptionalTelemetry());
+        co_await drained.wait();
+      } catch (...) {
+        failure = std::current_exception();
+      }
+      try {
+        store->close();
+      } catch (...) {
+        failure = std::current_exception();
+      }
+      if (failure) std::rethrow_exception(failure);
+      rt::process::exit(0);
     }
   }
 

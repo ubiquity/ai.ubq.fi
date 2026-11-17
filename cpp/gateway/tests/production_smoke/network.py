@@ -83,6 +83,12 @@ def admit():
         raise RuntimeError("Smoke admission requires at least 2500 MiB MemAvailable")
     if measured["disk_free_bytes"] < 8 * 1024 * 1024 * 1024:
         raise RuntimeError("Smoke admission requires at least 8 GiB free disk")
+    row = Path("/tmp/claude-1002/codex/resources.log").read_text().splitlines()[-1]
+    if " gateway=200:" not in row:
+        raise RuntimeError("Supervisor gateway health is not 200; fixture launch refused")
+    measured["supervisor_row"] = row
+    marker = row.split("supervisor_notes=", 1)[1].split()[0]
+    measured["supervisor_notes_sha256"] = sha256(marker.rsplit("@", 1)[0])
     return measured
 
 
