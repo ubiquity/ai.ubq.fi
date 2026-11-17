@@ -103,8 +103,13 @@ namespace {
     };
     for (const auto& [position, wrap] : positions) {
       for (const auto& [kind, value] : kinds) {
+#if defined(__APPLE__)
+        rt::test::registry().push_back({"Perl " + position + " redacts " + kind + " credentials", [wrapCase = wrap, valueCase = value] {
+                                          const std::string text = wrapCase(valueCase);
+#else
         rt::test::registry().push_back({"Perl " + position + " redacts " + kind + " credentials", [wrap = wrap, value = value] {
                                           const std::string text = wrap(value);
+#endif
                                           const RedactedText redacted = redactSupervisorSecrets(text);
                                           EXPECT_MESSAGE(!rt::includes(redacted.text, "zq"), text);
                                           EXPECT_MESSAGE(redacted.redactions > 0, text);

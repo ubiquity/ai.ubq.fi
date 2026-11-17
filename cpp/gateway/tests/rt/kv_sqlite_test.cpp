@@ -492,7 +492,11 @@ ASYNC_TEST("operations queued when the handle closes fail with the native closed
   EXPECT_EQ(failure, std::string("Error: Database is closed."));
 }
 
+#if defined(__APPLE__)
+TEST("a writer follows Bun's Darwin busy wait when a six-second lock is released") {
+#else
 TEST("a writer waits five seconds for another connection's lock, then reports it locked") {
+#endif
   const Directory directory;
   const sqlite::Database holder(directory.file());
   std::optional<std::thread> releaser;
@@ -520,9 +524,45 @@ TEST("a writer waits five seconds for another connection's lock, then reports it
   releaser->join();
   holder.close();
   EXPECT_EQ(readOutcome, std::string("resolved"));
+#if defined(__APPLE__)
+  // Bun 1.4.0's busy_timeout=5000 also succeeds after a six-second lock on this
+  // host: Darwin coalesces the busy handler's sleeps (measured 6251 ms).
+  EXPECT_EQ(writeOutcome, std::string("resolved"));
+  EXPECT(waited >= 6'000 && waited < 7'000);
+#else
   EXPECT_EQ(writeOutcome, std::string("Error: database is locked"));
   EXPECT(waited >= 4'900 && waited < 5'900);
+#endif
 }
+
+#if defined(__APPLE__)
+TEST("Darwin busy timeout still rejects a lock held beyond the coalesced deadline") {
+  const Directory directory;
+  const sqlite::Database holder(directory.file());
+  std::optional<std::thread> releaser;
+  std::string writeOutcome;
+  std::int64_t waited = 0;
+  blockOn(async([&]() -> Task<void> {
+    SqliteKv kv(directory.file(), steps());
+    co_await kv.set(KvKey{"a"}, KvValue(0));
+    holder.run("BEGIN IMMEDIATE");
+    releaser.emplace([holder] {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10'000));
+      holder.run("ROLLBACK");
+    });
+    const auto started = std::chrono::steady_clock::now();
+    auto writing = outcome(kv.set(KvKey{"a"}, KvValue(1)));
+    writeOutcome = co_await std::move(writing);
+    waited = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+    kv.close();
+  }));
+  releaser->join();
+  holder.close();
+  // Bun 1.4.0 reports database-is-locked after 7816 ms for this control.
+  EXPECT_EQ(writeOutcome, std::string("Error: database is locked"));
+  EXPECT(waited >= 5'000 && waited < 10'000);
+}
+#endif
 
 ASYNC_TEST("two handles on one file share CAS fencing and monotonic versions") {
   const Directory directory;

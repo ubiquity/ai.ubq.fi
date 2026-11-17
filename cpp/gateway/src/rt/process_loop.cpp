@@ -39,6 +39,27 @@ namespace uos::rt::process {
     using Descriptor = asio::posix::stream_descriptor;
 
 #if defined(__APPLE__) || defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
+#if defined(__APPLE__)
+    // Bun 1.4.0's subprocess API uses its Linux signal table even on Darwin.
+    // process.on listeners, unlike Bun.spawn, use the native signal constants.
+    constexpr std::string_view SPAWN_SIGNALS[] = {
+      "SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGTRAP", "SIGABRT", "SIGBUS", "SIGFPE", "SIGKILL", "SIGUSR1", "SIGSEGV",
+      "SIGUSR2", "SIGPIPE", "SIGALRM", "SIGTERM", "SIG16", "SIGCHLD", "SIGCONT", "SIGSTOP", "SIGTSTP", "SIGTTIN", "SIGTTOU",
+      "SIGURG", "SIGXCPU", "SIGXFSZ", "SIGVTALRM", "SIGPROF", "SIGWINCH", "SIGIO", "SIGPWR", "SIGSYS"
+    };
+
+    std::optional<std::string_view> spawnSignalName(int number) {
+      if (number < 1 || number > static_cast<int>(std::size(SPAWN_SIGNALS))) return std::nullopt;
+      return SPAWN_SIGNALS[number - 1];
+    }
+
+    std::optional<int> spawnSignalNumber(std::string_view name) {
+      for (int index = 0; index < static_cast<int>(std::size(SPAWN_SIGNALS)); ++index)
+        if (name == SPAWN_SIGNALS[index]) return index + 1;
+      return std::nullopt;
+    }
+#endif
+
     int closeOnExecPipe(int fds[2]) {
       if (::pipe(fds) != 0) return -1;
       if (::fcntl(fds[0], F_SETFD, FD_CLOEXEC) == 0 && ::fcntl(fds[1], F_SETFD, FD_CLOEXEC) == 0) return 0;
@@ -170,7 +191,11 @@ namespace uos::rt::process {
       std::string out = "signal must be one of ";
       for (int number = 1; number <= 31; ++number) {
         if (number > 1) out += number == 31 ? " or " : ", ";
+#if defined(__APPLE__)
+        out += "'" + std::string(*spawnSignalName(number)) + "'";
+#else
         out += "'" + std::string(*signalName(number)) + "'";
+#endif
       }
       return out;
     }
@@ -322,7 +347,11 @@ namespace uos::rt::process {
       int code = 0;
       if (WIFSIGNALED(status)) {
         const int number = WTERMSIG(status);
+#if defined(__APPLE__)
+        const auto name = spawnSignalName(number);
+#else
         const auto name = signalName(number);
+#endif
         state->signalCode = name ? std::string(*name) : "SIG" + std::to_string(number);
         code = 128 + number;
       } else {
@@ -386,7 +415,11 @@ namespace uos::rt::process {
   void Subprocess::kill(std::variant<std::string_view, int> signal) const {
     int number;
     if (const auto* name = std::get_if<std::string_view>(&signal)) {
+#if defined(__APPLE__)
+      const auto found = spawnSignalNumber(*name);
+#else
       const auto found = signalNumber(*name);
+#endif
       if (!found) throw TypeError(signalList());
       number = *found;
     } else {
@@ -456,7 +489,11 @@ namespace uos::rt::process {
     else if (options.stdout == Stdio::ignore) posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
     if (options.stderr == Stdio::pipe) posix_spawn_file_actions_adddup2(&actions, err.write, 2);
     else if (options.stderr == Stdio::ignore) posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+#if defined(__APPLE__) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 260000
+    if (options.cwd) posix_spawn_file_actions_addchdir(&actions, options.cwd->c_str());
+#else
     if (options.cwd) posix_spawn_file_actions_addchdir_np(&actions, options.cwd->c_str());
+#endif
 
     posix_spawnattr_t attributes;
     posix_spawnattr_init(&attributes);

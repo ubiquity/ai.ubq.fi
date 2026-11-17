@@ -1151,8 +1151,13 @@ ASYNC_TEST("connection failures carry Node's system errors") {
   auto absent = ws::WebSocket::create("ws+unix://" + missing + ":/x", noDeflate());
   record(log, "absent", absent);
   WAIT_UNTIL(refused->readyState() == ws::WebSocket::CLOSED && absent->readyState() == ws::WebSocket::CLOSED);
+#if defined(__APPLE__)
   EXPECT_EQ(side(log, "refused"), R"j([["refused","error",{"error":"Error","message":"connect ECONNREFUSED 127.0.0.1:)j" + std::to_string(port) +
-                                    R"j(","code":"ECONNREFUSED","errno":-111,"syscall":"connect"},2],["refused","close",1006,{"buffer":""},3]])j");
+              R"j(","code":"ECONNREFUSED","errno":-61,"syscall":"connect"},2],["refused","close",1006,{"buffer":""},3]])j");
+#else
+  EXPECT_EQ(side(log, "refused"), R"j([["refused","error",{"error":"Error","message":"connect ECONNREFUSED 127.0.0.1:)j" + std::to_string(port) +
+              R"j(","code":"ECONNREFUSED","errno":-111,"syscall":"connect"},2],["refused","close",1006,{"buffer":""},3]])j");
+#endif
   EXPECT_EQ(side(log, "absent"), R"j([["absent","error",{"error":"Error","message":"connect ENOENT )j" + missing + R"j(","code":"ENOENT","errno":-2,"syscall":"connect"},2],["absent","close",1006,{"buffer":""},3]])j");
 }
 

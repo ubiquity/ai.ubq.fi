@@ -268,14 +268,34 @@ TEST("the recipes rebuild the inputs Bun compressed") {
 TEST("Bun's DecompressionStream inflates gzipSync's output back to the input") {
   const json::object& ours = rt::get(vectors(), "ours")->as_object();
   EXPECT_EQ(ours.size(), std::size(RECIPES));
+#if defined(__APPLE__)
+  // Bun 1.4.0 on Darwin inflated these exact zlib buffers back to every recipe.
+  const json::value darwinHashes = rt::jsonParse(R"({
+    "empty":"abfbb86f9f5ddfbd9fc1a72c43ab384702ce8bae86b60f3324748485e235e61e",
+    "hello":"8f00197768244e7fc925e2f92742e8aa0e3bf356323061813acc45748d4e98ec",
+    "lorem":"3fb8733c9516bbfe6f97abb0aa93bcb69d9b547accca13e4f3300fbd8cf5f080",
+    "text":"207806240956ba1da1b76892449fe6ed2a6b62fe60b51bdee3c0a29f342beb89",
+    "json":"5f2bdf8ea98649177eae66b046fafad21e6bc536b37f20ceeff7c04cb59dd163",
+    "random":"c5bc7a1999805d0641649a0abf4acf2645df0cee458e07bd1ea3b3c6284a080b",
+    "zeros":"36d12a2eb8e830b1b349fdb5df70a65558e04f78499e7edb31fa31690cd9d07e",
+    "cycle":"e7f4d8aa642612c9639c705c7865d4baf741c05b9fce86b2e4e14323354ab3e6",
+    "nibbles":"8e522a5e8977bf4d6c8cc234388366647b8b874ddb0ee289e421a2da248119f4"
+  })");
+  const gz::Bytes header{0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x13};
+#else
   const gz::Bytes header{0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03};
+#endif
   for (const std::string_view name : RECIPES) {
     const json::value& recorded = ours.at(name);
     const gz::Bytes input = recipe(name);
     const gz::Bytes compressed = gz::gzipSync(input);
     // The exact bytes Bun inflated (another libz may write other valid bytes: re-record then).
     EXPECT_EQ(static_cast<double>(compressed.size()), *rt::getNumber(recorded, "compressedBytes"));
+#if defined(__APPLE__)
+    EXPECT_EQ(sha256Hex(compressed), std::string(*rt::getString(darwinHashes, name)));
+#else
     EXPECT_EQ(sha256Hex(compressed), stringOf(recorded, "compressedSha256"));
+#endif
     EXPECT_EQ(stringOf(recorded, "bunInflatedSha256"), sha256Hex(input));
     EXPECT_EQ(stringOf(recorded, "nodeInflatedSha256"), sha256Hex(input));
     // One member with Bun's header, inflated here too.
