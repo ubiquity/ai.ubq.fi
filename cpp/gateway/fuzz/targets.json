@@ -52,6 +52,16 @@
       "entry": "uos::rt::jsonParse",
       "max_len": 16384
     },
+    "base64": {
+      "harness": "fuzz/base64.cpp",
+      "entry": "uos::rt::atobBytes / btoa / fromBase64 / fromHex",
+      "max_len": 16384
+    },
+    "utf8": {
+      "harness": "fuzz/utf8.cpp",
+      "entry": "uos::rt::decodeUtf8 / TextDecoder / UTF-16 and WTF-8 conversion",
+      "max_len": 16384
+    },
     "url": {
       "harness": "fuzz/url.cpp",
       "entry": "uos::rt::URL / URLSearchParams",

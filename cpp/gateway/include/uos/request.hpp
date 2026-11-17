@@ -1,6 +1,7 @@
 #pragma once
 #include "uos/rt/async.hpp"
 #include "uos/rt/http.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/prelude.hpp"
 
 #include <cstdint>
@@ -46,7 +47,10 @@ namespace uos::request {
    */
   bool rejectRawBodyOnce(const rt::Request& req, const std::string& reason);
 
-  [[nodiscard]] rt::Task<JsonBodyReadResult> readJsonBodyWithLimit(rt::Request req, double maxBytes);
+  // The body limit counts wire bytes. The document limit counts decoded JSON bytes.
+  [[nodiscard]] rt::Task<JsonBodyReadResult> readJsonBodyWithLimit(
+      rt::Request req, double maxBodyBytes, std::size_t maxDocumentBytes = rt::limits::kJsonDocumentBytes);
 
-  [[nodiscard]] rt::Task<json::value> readJsonBody(rt::Request req, double maxBytes = MAX_ACCEPTED_JSON_BODY_BYTES);
+  [[nodiscard]] rt::Task<json::value> readJsonBody(
+      rt::Request req, double maxBodyBytes = rt::limits::kHttpBodyBytes, std::size_t maxDocumentBytes = rt::limits::kJsonDocumentBytes);
 }

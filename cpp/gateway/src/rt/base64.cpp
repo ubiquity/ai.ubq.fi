@@ -5,59 +5,31 @@
 
 #include "third_party/simdutf/simdutf.h"
 
+#include <boost/algorithm/hex.hpp>
 #include <limits>
+#include <optional>
 #include <stdexcept>
+#include <utility>
 
 namespace uos::rt {
   namespace {
     using Byte = std::uint8_t;
 
-    constexpr char STANDARD_ALPHABET[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    constexpr char URL_ALPHABET[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    constexpr char HEX_DIGITS[] = "0123456789abcdef";
-
-    // The forgiving-base64 alphabet (atob): -1 outside it.
-    int standardSextet(Byte value) {
-      if (value >= 'A' && value <= 'Z') return value - 'A';
-      if (value >= 'a' && value <= 'z') return value - 'a' + 26;
-      if (value >= '0' && value <= '9') return value - '0' + 52;
-      if (value == '+') return 62;
-      if (value == '/') return 63;
-      return -1;
-    }
-    // Buffer's decoder accepts both alphabets.
-    int anySextet(Byte value) {
-      if (value == '-') return 62;
-      if (value == '_') return 63;
-      return standardSextet(value);
-    }
-    int hexValue(Byte value) {
-      if (value >= '0' && value <= '9') return value - '0';
-      if (value >= 'a' && value <= 'f') return value - 'a' + 10;
-      if (value >= 'A' && value <= 'F') return value - 'A' + 10;
-      return -1;
-    }
-    bool isAsciiWhitespace(Byte value) { return value == 0x09 || value == 0x0A || value == 0x0C || value == 0x0D || value == 0x20; }
-
     std::string encode(std::span<const Byte> bytes, simdutf::base64_options options) {
       if (bytes.empty()) return {};
-      if (bytes.size() < 3) {
-        const bool padded = options == simdutf::base64_default;
-        const char* alphabet = padded ? STANDARD_ALPHABET : URL_ALPHABET;
-        const auto first = static_cast<unsigned>(bytes[0]);
-        const auto second = bytes.size() == 2 ? static_cast<unsigned>(bytes[1]) : 0;
-        const char tail[] = {
-          alphabet[first >> 2],
-          alphabet[((first & 3) << 4) | (second >> 4)],
-          bytes.size() == 2 ? alphabet[(second & 15) << 2] : '=',
-          '=',
-        };
-        return {tail, padded ? sizeof(tail) : bytes.size() + 1};
-      }
-      // The upstream encoded length is calculated in size_t before std::string checks its capacity.
       if (bytes.size() > std::numeric_limits<std::size_t>::max() / 4 * 3) throw std::length_error("Base64 output is too large");
       std::string out(simdutf::base64_length_from_binary(bytes.size(), options), '\0');
       simdutf::binary_to_base64(reinterpret_cast<const char*>(bytes.data()), bytes.size(), out.data(), options);
+      return out;
+    }
+
+    std::optional<std::vector<Byte>> decode(std::string_view text, simdutf::base64_options options) {
+      if (text.empty()) return std::vector<Byte>{};
+      std::vector<Byte> out(simdutf::maximal_binary_length_from_base64(text.data(), text.size()));
+      std::size_t written = out.size();
+      const auto result = simdutf::base64_to_binary_safe(text.data(), text.size(), reinterpret_cast<char*>(out.data()), written, options);
+      if (result.error != simdutf::SUCCESS) return std::nullopt;
+      out.resize(written);
       return out;
     }
 
@@ -71,54 +43,6 @@ namespace uos::rt {
       return out;
     }
 
-    // The bytes of a binary string; false when a code unit is above U+00FF.
-    bool binaryBytes(std::string_view data, std::vector<Byte>& out) {
-      out.reserve(data.size());
-      const auto* p = reinterpret_cast<const Byte*>(data.data());
-      const Byte* end = p + data.size();
-      while (p < end) {
-        if (*p < 0x80) {
-          out.push_back(*p++);
-          continue;
-        }
-        if ((p[0] == 0xC2 || p[0] == 0xC3) && p + 1 < end && (p[1] & 0xC0) == 0x80) {
-          out.push_back(static_cast<Byte>(((p[0] & 0x1F) << 6) | (p[1] & 0x3F)));
-          p += 2;
-          continue;
-        }
-        return false;
-      }
-      return true;
-    }
-
-    std::vector<Byte> forgivingBase64(std::string_view data) {
-      std::string cleaned;
-      cleaned.reserve(data.size());
-      for (const char value : data) {
-        if (!isAsciiWhitespace(static_cast<Byte>(value))) cleaned.push_back(value);
-      }
-      if (cleaned.size() % 4 == 0) {
-        if (cleaned.size() >= 2 && cleaned.compare(cleaned.size() - 2, 2, "==") == 0) cleaned.resize(cleaned.size() - 2);
-        else if (!cleaned.empty() && cleaned.back() == '=') cleaned.pop_back();
-      }
-      if (cleaned.size() % 4 == 1) throw InvalidCharacterError();
-      std::vector<Byte> out;
-      out.reserve(cleaned.size() / 4 * 3 + 2);
-      std::uint32_t buffer = 0;
-      int bits = 0;
-      for (const char value : cleaned) {
-        const int sextet = standardSextet(static_cast<Byte>(value));
-        if (sextet < 0) throw InvalidCharacterError();
-        buffer = (buffer << 6) | static_cast<std::uint32_t>(sextet);
-        bits += 6;
-        if (bits >= 8) {
-          bits -= 8;
-          out.push_back(static_cast<Byte>((buffer >> bits) & 0xFF));
-        }
-      }
-      return out;
-    }
-
     std::string lowered(std::string_view name) {
       std::string out(name);
       for (char& value : out) {
@@ -129,26 +53,27 @@ namespace uos::rt {
   }
 
   std::string btoa(std::string_view data) {
-    std::vector<Byte> bytes;
-    if (!binaryBytes(data, bytes)) throw InvalidCharacterError();
-    return toBase64(bytes);
+    if (data.empty()) return {};
+    std::vector<Byte> bytes(data.size());
+    const auto written = simdutf::convert_utf8_to_latin1(data.data(), data.size(), reinterpret_cast<char*>(bytes.data()));
+    if (written == 0) throw InvalidCharacterError();
+    return toBase64(std::span(bytes).first(written));
   }
 
-  std::string atob(std::string_view data) { return binaryString(forgivingBase64(data)); }
+  std::string atob(std::string_view data) { return binaryString(atobBytes(data)); }
 
-  std::vector<std::uint8_t> atobBytes(std::string_view data) { return forgivingBase64(data); }
+  std::vector<std::uint8_t> atobBytes(std::string_view data) {
+    auto bytes = decode(data, simdutf::base64_default);
+    if (!bytes) throw InvalidCharacterError();
+    return std::move(*bytes);
+  }
 
   std::string binaryString(std::span<const std::uint8_t> bytes) {
-    std::string out;
-    out.reserve(bytes.size());
-    for (const Byte value : bytes) {
-      if (value < 0x80) {
-        out.push_back(static_cast<char>(value));
-      } else {
-        out.push_back(static_cast<char>(0xC0 | (value >> 6)));
-        out.push_back(static_cast<char>(0x80 | (value & 0x3F)));
-      }
-    }
+    if (bytes.empty()) return {};
+    if (bytes.size() > std::numeric_limits<std::size_t>::max() / 2) throw std::length_error("Binary string is too large");
+    const auto* input = reinterpret_cast<const char*>(bytes.data());
+    std::string out(simdutf::utf8_length_from_latin1(input, bytes.size()), '\0');
+    out.resize(simdutf::convert_latin1_to_utf8(input, bytes.size(), out.data()));
     return out;
   }
 
@@ -158,44 +83,22 @@ namespace uos::rt {
 
   std::string toHex(std::span<const std::uint8_t> bytes) {
     std::string out;
-    out.reserve(bytes.size() * 2);
-    for (const Byte value : bytes) {
-      out.push_back(HEX_DIGITS[value >> 4]);
-      out.push_back(HEX_DIGITS[value & 0x0F]);
-    }
+    if (bytes.size() > out.max_size() / 2) throw std::length_error("Hex output is too large");
+    out.resize(bytes.size() * 2);
+    boost::algorithm::hex_lower(bytes.begin(), bytes.end(), out.begin());
     return out;
   }
 
   std::vector<std::uint8_t> fromBase64(std::string_view text) {
-    const std::vector<Byte> units = lowBytes(text);
-    std::vector<Byte> out;
-    out.reserve(units.size() / 4 * 3 + 2);
-    std::uint32_t buffer = 0;
-    int bits = 0;
-    for (const Byte unit : units) {
-      if (unit == '=') break;
-      const int sextet = anySextet(unit);
-      if (sextet < 0) continue;
-      buffer = (buffer << 6) | static_cast<std::uint32_t>(sextet);
-      bits += 6;
-      if (bits >= 8) {
-        bits -= 8;
-        out.push_back(static_cast<Byte>((buffer >> bits) & 0xFF));
-      }
-    }
-    return out;
+    if (!isAscii(text)) return {};
+    return decode(text, simdutf::base64_default_or_url_accept_garbage).value_or(std::vector<Byte>{});
   }
 
   std::vector<std::uint8_t> fromHex(std::string_view text) {
-    const std::vector<Byte> units = lowBytes(text);
-    std::vector<Byte> out;
-    out.reserve(units.size() / 2);
-    for (std::size_t index = 0; index + 1 < units.size(); index += 2) {
-      const int high = hexValue(units[index]);
-      const int low = hexValue(units[index + 1]);
-      if (high < 0 || low < 0) break;
-      out.push_back(static_cast<Byte>((high << 4) | low));
-    }
+    text = text.substr(0, text.find_first_not_of("0123456789abcdefABCDEF"));
+    text.remove_suffix(text.size() % 2);
+    std::vector<Byte> out(text.size() / 2);
+    boost::algorithm::unhex(text.begin(), text.end(), out.begin());
     return out;
   }
 

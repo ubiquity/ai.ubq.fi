@@ -79,6 +79,11 @@
       "fuzzer": true
     },
     {
+      "target": "uos_fuzz_utf8",
+      "sources": ["fuzz/utf8.cpp", "src/rt/string.cpp", "src/rt/text_codec.cpp"],
+      "fuzzer": true
+    },
+    {
       "target": "uos_fuzz_url",
       "sources": [
         "fuzz/url.cpp",

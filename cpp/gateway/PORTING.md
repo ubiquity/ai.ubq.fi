@@ -1,16 +1,10 @@
 # TypeScript to C++ gateway port: rules for every porter
 
-This tree (`cpp/gateway/`) is a module-for-module C++20 port of the first-party
-TypeScript runtime (`src/`, `serve.ts`, `lib/jev_compaction/`). The TypeScript is the
-oracle. The port is a translation, not a redesign: preserve behaviour, including
-quirks, error text, status codes, field order, and log shapes. The bounded pilot in
-`cpp/` (everything outside `cpp/gateway/`) is a separately qualified artifact: read
-it for idioms, never edit it.
+This tree (`cpp/gateway/`) ports the first-party TypeScript gateway (`src/`, `serve.ts`, `lib/jev_compaction/`) to C++20. The TypeScript and the gateway's fixtures define required application behavior. Use pinned standard or mature open-source libraries for generic runtime operations. The bounded pilot elsewhere under `cpp/` has its own qualification and ownership.
 
 Runtime references, mandatory reading before porting: `docs/rt/values.md`, `text.md`,
 `async.md`, `web.md`, `regex.md`, `kv.md`, `platform.md`, `record.md`, `websocket.md`, `sqlite.md` and `gzip.md` (when your modules use WebSocket, SQLite or gzip), and `docs/PORT-NOTES.md`
-(conventions fixed by earlier porters). They give the C++ call for
-every JavaScript construct; use `uos::rt`, never reinvent it.
+(current conventions and historical port notes). Use the `uos::rt` interfaces for shared runtime operations. This document governs new generic-library substitutions. [Replacement plan](docs/OSS-REPLACEMENT-PLAN.md)
 
 `PORT-MANIFEST.json` (regenerate with `python3 cpp/gateway/tools/manifest.py` from
 the repository root) lists every module, its imports, its direct tests, and its
@@ -24,8 +18,7 @@ C++ paths.
 - Two cores, about 2 GiB of spare memory, about 2 GiB of spare disk. Compile
   **only** through `cpp/gateway/tools/` wrappers, which serialise compiler runs,
   lower their priority and cap their memory. Never run `g++`, `cmake`, `ninja`,
-  `bun test` over the whole suite, `tsc`, or `bun install` directly. Running one
-  focused bun test file to learn the oracle's behaviour is fine.
+  `bun test` over the whole suite, `tsc`, or `bun install` directly. Use a focused Bun test where application readback needs it, under the existing isolation rules.
 - No debug info, no sanitizer builds, no extra build directories. Keep scratch
   under the per-agent directory the wrappers give you and delete it when done.
 - No downloads or package installs. No git commands that write (no commit,
@@ -52,11 +45,9 @@ C++ paths.
   keyword gets a trailing `_`.
 - Module-private TS helpers go in an anonymous namespace in the `.cpp`, in source
   order. Exported symbols are declared in the header, in source order.
-- One TS module per header/impl pair. Do not merge, split, or re-export modules.
-  A TS `export { x } from "./y"` becomes a `using` declaration in the header.
+- Keep one TS application module per header/impl pair. A TS `export { x } from "./y"` becomes a `using` declaration in the header. Generic library integration may replace the underlying implementation while preserving its application-facing API.
 - Headers include what they use; `#pragma once`; no `using namespace` in headers.
-- The qualified compiler is GCC 12.2 in C++20 mode: no C++23 library or language
-  features (`std::expected`, `std::print`, deducing `this`, `std::ranges::to`).
+- Use C++20 across the primary GCC 16.1 release profile, the retained GCC 12.2 comparison SDK and supported Clang/libc++ profiles. [Build profiles](docs/BUILD.md)
 
 ## GCC 12.2 coroutine miscompile (mandatory rule)
 
@@ -91,57 +82,35 @@ A noncoroutine callback that returns another Task has a different lifetime: veri
 
 ## Type mapping
 
-| TypeScript                                                                                                                                          | C++                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `string`                                                                                                                                            | `std::string` holding UTF-8. JS string operations count UTF-16 code units: wherever `.length`, `slice`, `substring`, `charCodeAt`, `padStart`, index access, or a regex can observe non-ASCII text, use the `uos::rt` UTF-16 helpers.                                                                                                                                                                                                             |
-| `number`                                                                                                                                            | `double` unless the value is provably an integer in every path, then `std::int64_t`. Number-to-string and JSON number output must match JavaScript; use the `uos::rt` formatters, never `std::to_string` or iostreams for doubles.                                                                                                                                                                                                                |
-| `boolean`, `bigint`                                                                                                                                 | `bool`, `std::int64_t`/`rt::BigInt` as the range requires                                                                                                                                                                                                                                                                                                                                                                                         |
-| `unknown`, `any`, `Record<string, unknown>`, parsed JSON                                                                                            | `boost::json::value` / `boost::json::object` (alias `uos::json`). Objects keep insertion order like JS; integer-like keys are the documented exception, handle them where the TS can observe it.                                                                                                                                                                                                                                                  |
-| `interface` / type alias of an object                                                                                                               | `struct` with the same field names and order, when the TS constructs and reads it as a typed value. If it is only ever a view over wire JSON, keep it as `json::object` and access by key.                                                                                                                                                                                                                                                        |
-| `T \| undefined`, optional field                                                                                                                    | `std::optional<T>`                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `T \| null`                                                                                                                                         | `std::optional<T>` only when `undefined` cannot also occur; when both occur and the TS distinguishes them, use `rt::Nullable<T>`                                                                                                                                                                                                                                                                                                                  |
-| string literal union                                                                                                                                | `enum class` plus `toString`/`parse` helpers when exhaustively switched; otherwise `std::string`                                                                                                                                                                                                                                                                                                                                                  |
-| discriminated union                                                                                                                                 | `std::variant` of structs, or a struct with a kind enum when variants share most fields                                                                                                                                                                                                                                                                                                                                                           |
-| `T[]`, `Map`, `Set`                                                                                                                                 | `std::vector<T>`; `rt::OrderedMap`/`rt::OrderedSet` when iteration order is observable (it is insertion order in JS), otherwise `std::unordered_map`/`std::unordered_set`                                                                                                                                                                                                                                                                         |
-| `Uint8Array`, `ArrayBuffer`                                                                                                                         | `std::vector<std::uint8_t>` / `std::span<const std::uint8_t>`                                                                                                                                                                                                                                                                                                                                                                                     |
-| `Promise<T>`, `async`                                                                                                                               | `rt::Task<T>` (`boost::asio::awaitable<T>`) for async functions, `rt::Promise<T>` for promises held as values, on the single gateway IO thread (see `docs/rt/async.md`; its sections 3 and 4 on coroutine and lifetime rules are mandatory reading). JS is single-threaded; the port stays single-threaded, so no mutexes for state the TS guards only by run-to-completion. Preserve every suspension point's position relative to side effects. |
-| `AbortSignal`, timers, `Date.now()`, `crypto`, `fetch`, `Request`/`Response`/`Headers`, `ReadableStream`, `TextEncoder`, `URL`, env access, Deno KV | the matching `uos::rt` type. Never call the OS clock, random source, environment, sockets or filesystem directly from a ported module unless the TS module itself does through `node:*`; then use the `uos::rt` wrapper for that Node API.                                                                                                                                                                                                        |
-| `throw new Error(m)` / custom error classes                                                                                                         | exception types deriving from `rt::JsError` carrying `name` and `message` with the same text; `catch` sites translate one for one                                                                                                                                                                                                                                                                                                                 |
-| closures, callbacks                                                                                                                                 | `std::function` or templates; capture lifetimes explicitly (no dangling references across `co_await`)                                                                                                                                                                                                                                                                                                                                             |
-| regular expressions                                                                                                                                 | `rt::Regex` where provided; otherwise a hand-written matcher with the same accepted language. `std::regex` is forbidden (performance, locale, no UTF-16 semantics).                                                                                                                                                                                                                                                                               |
+| TypeScript                                                                                                                                          | C++                                                                                                                                                                                                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `string`                                                                                                                                            | `std::string` holds UTF-8 or canonical WTF-8 where the storage contract requires it. Use the `uos::rt` UTF-16 helpers when required limits or offsets count code units.                                                                    |
+| `number`                                                                                                                                            | `double` unless all paths prove an integer that fits `std::int64_t`. Use `uos::rt` formatting where callers require a defined wire or storage representation.                                                                              |
+| `boolean`, `bigint`                                                                                                                                 | `bool`, `std::int64_t`/`rt::BigInt` as the range requires                                                                                                                                                                                  |
+| `unknown`, `any`, `Record<string, unknown>`, parsed JSON                                                                                            | `boost::json::value` / `boost::json::object` (alias `uos::json`). Use the required ordering helper at the caller when a protocol observes member order.                                                                                    |
+| `interface` / type alias of an object                                                                                                               | `struct` with the same field names and order, when the TS constructs and reads it as a typed value. If it is only ever a view over wire JSON, keep it as `json::object` and access by key.                                                 |
+| `T \| undefined`, optional field                                                                                                                    | `std::optional<T>`                                                                                                                                                                                                                         |
+| `T \| null`                                                                                                                                         | `std::optional<T>` only when `undefined` cannot also occur; when both occur and the TS distinguishes them, use `rt::Nullable<T>`                                                                                                           |
+| string literal union                                                                                                                                | `enum class` plus `toString`/`parse` helpers when exhaustively switched; otherwise `std::string`                                                                                                                                           |
+| discriminated union                                                                                                                                 | `std::variant` of structs, or a struct with a kind enum when variants share most fields                                                                                                                                                    |
+| `T[]`, `Map`, `Set`                                                                                                                                 | `std::vector<T>`; `rt::OrderedMap`/`rt::OrderedSet` when iteration order is observable (it is insertion order in JS), otherwise `std::unordered_map`/`std::unordered_set`                                                                  |
+| `Uint8Array`, `ArrayBuffer`                                                                                                                         | `std::vector<std::uint8_t>` / `std::span<const std::uint8_t>`                                                                                                                                                                              |
+| `Promise<T>`, `async`                                                                                                                               | `rt::Task<T>` (`boost::asio::awaitable<T>`) for async functions and `rt::Promise<T>` for held promises. Preserve ordering of application side effects, cancellation and ownership across suspensions. [Async contracts](docs/rt/async.md)  |
+| `AbortSignal`, timers, `Date.now()`, `crypto`, `fetch`, `Request`/`Response`/`Headers`, `ReadableStream`, `TextEncoder`, `URL`, env access, Deno KV | the matching `uos::rt` type. Never call the OS clock, random source, environment, sockets or filesystem directly from a ported module unless the TS module itself does through `node:*`; then use the `uos::rt` wrapper for that Node API. |
+| `throw new Error(m)` / custom error classes                                                                                                         | Use `rt::JsError` carriers where callers read a type, code, cause or message. Map boundary failures to the ordinary error specified by the application or protocol.                                                                        |
+| closures, callbacks                                                                                                                                 | `std::function` or templates; capture lifetimes explicitly (no dangling references across `co_await`)                                                                                                                                      |
+| regular expressions                                                                                                                                 | Use `rt::Regex` with the selected library after qualification. Preserve the validation match and limits the caller requires.                                                                                                               |
 
-When JS semantics leak (truthiness of `""`/`0`/`NaN`, `??` versus `||`, `==` coercion,
-`Number()` parsing, `JSON.stringify` skipping `undefined`, sort stability and
-comparator coercion, `toFixed`, `Math.round` on halves, integer overflow past 2^53,
-property enumeration order, `Date` parsing/formatting), reproduce the JS result
-exactly. If in doubt, run a three-line bun script to see what the oracle does.
+## Runtime libraries and application requirements
 
-## Fidelity rules
-
-- Translate every branch. No `TODO`, stub, placeholder, "simplified", or silently
-  dropped path. If something cannot be ported yet because a dependency is not
-  ported, declare the dependency's interface in its own correct header location
-  (declaration only), use it, and list it in your report.
-- Do not fix bugs you find in the TS. Port them and list them in your report.
-- Comments from the TS are carried over when they explain a constraint. Do not add
-  comments that narrate the translation.
-- User-visible strings, error codes, header names, JSON keys, log event names and
-  numeric constants are copied byte for byte.
+- Replace generic parsing, encoding, text, math and protocol primitives with the pinned library or standard-library implementation. Retain the smallest adapter for required policy, value ownership and wire or storage representation. Remove quirk-only fallback parsers and formatting shims.
+- Preserve gateway API schemas, statuses, required headers and signed bytes, authentication and authorization decisions, persistence codecs and schema, delivery receipts, durable accounting and settlement. Use the repository's codec-safe migration and rollback procedures for any storage change.
+- Preserve limits and fail-closed validation for untrusted input. Apply shared defaults from `include/uos/rt/limits.hpp` at each qualified boundary. Keep smaller existing bounds on the same operation and use a documented larger exception only for a proven application flow. Keep ordinary status, close code or error mappings. [Runtime limits](docs/RUNTIME.md#input-limits)
+- Preserve existing application paths and cite any unimplemented dependency. Keep the established coroutine ownership rules and the source comments that explain constraints.
 
 ## Tests
 
-- Port every bun test that directly targets your modules (see the manifest's
-  `tests` lists) into `cpp/gateway/tests/`, one C++ file per TS test file, same
-  test names, same assertions, using the `uos::rt::test` harness. A test file that
-  targets several modules is ported by whoever ports the last module it needs;
-  until then port the cases your modules can satisfy and list the rest.
-- Where the TS has no direct tests, write differential cases: run the TS module
-  under bun on chosen inputs, record the outputs as literals in the C++ test.
-- A module is done only when its C++ compiles warning-free under the wrapper's
-  flags and its ported tests pass.
-
-## Reporting
-
-End with a short report: files written, tests ported and their pass/fail counts
-(real output, not expectation), dependencies you declared but did not implement,
-TS bugs preserved, `rt` gaps you hit, and anything you could not port and why.
+- Keep application fixtures and run affected real entry points against the candidate. Preserve contract-sensitive assertions, stored bytes, client/provider framing, validation decisions and one admission and settlement lifetime.
+- Retain valid generic coverage and update expected values for documented standard-library differences. Record the behavior, an example, why the application still works, and its verification receipt. [Deviations from Bun](docs/DEVIATIONS-FROM-BUN.md)
+- For each newly adopted parsing or library boundary, add a bounded robustness harness and coordinate registry changes with the build owner. Prove each new input limit with a boundary case and the relevant ordinary error.
+- Use the approved wrappers, warning settings and fixture isolation. Hand off focused results with exact inputs, commands, outcomes, paths, line deltas and remaining gaps. [Testing](docs/TESTING.md)

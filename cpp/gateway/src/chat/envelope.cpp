@@ -44,11 +44,11 @@ namespace {
     if (value.is_array()) for (std::size_t i = 0; i < value.as_array().size(); ++i) rt::objectDefine(object, rt::numberToString(static_cast<double>(i)), value.as_array()[i]);
     return object;
   }
-  struct Envelope { json::object body; json::object rawRecord; std::vector<std::string> warnings; std::optional<json::object> jsonObjectTextFormat; std::optional<sel::ProviderSelection> selection; };
+  struct Envelope { json::object rawRecord; std::vector<std::string> warnings; std::optional<json::object> jsonObjectTextFormat; std::optional<sel::ProviderSelection> selection; };
   rt::Task<Step<Envelope>> parseChatCompletionsEnvelope(rt::Request req) {
-    rt::Promise<json::value> bodyPromise(request::readJsonBody(req)); const auto body = co_await bodyPromise.wait();
+    rt::Promise<json::value> bodyPromise(request::readJsonBody(req)); auto body = co_await bodyPromise.wait();
     if (!rt::truthy(body) || !utils::isRecord(body)) co_return NotOk{invalid("Invalid JSON body")};
-    const auto raw = recordOf(body);
+    auto raw = body.is_object() ? std::move(body.as_object()) : recordOf(body);
     rt::Promise<std::optional<sel::ProviderSelection>> selected(sel::loadProviderSelectionCached()); const auto selection = co_await selected.wait();
     const auto requested = deepseek::index::deepSeekUpstreamModelFor(rt::trim(utils::getString(rt::get(raw, "model")).value_or("")));
     const bool enabled = sel::isProviderEnabled("deepseek", selection);
@@ -65,7 +65,8 @@ namespace {
     if (utils::isRecord(format) && recordOf(*format).size() == 1 && utils::getString(rt::get(*format, "type")) == "json_object") jsonFormat = json::object{{"type", "json_object"}};
     rt::OrderedSet<std::string> handled{"messages", "model", "stream", "reasoning_effort", "max_completion_tokens", "tools", "tool_choice", "parallel_tool_calls", "prompt_cache_key", "prompt_cache_options", "prompt_cache_retention", "stream_options"};
     if (jsonFormat) handled.add("response_format");
-    co_return Envelope{raw, raw, policy::buildIgnoredWarnings(raw, handled), jsonFormat, selection};
+    auto warnings = policy::buildIgnoredWarnings(raw, handled);
+    co_return Envelope{std::move(raw), std::move(warnings), jsonFormat, selection};
   }
   struct Model { std::string modelRaw; std::string model; std::optional<double> maxCompletionTokens; };
   rt::Task<Step<Model>> resolveChatCompletionsModel(json::object raw, const tel::UsageContext* context) {
@@ -80,15 +81,15 @@ namespace {
     co_return Model{modelRaw, model, std::get<policy::ParseMaxCompletionTokensFieldOk>(allowance).value};
   }
   struct Options { policy::CodexModelMetadata modelMetadata; json::array messagesRaw; std::optional<defaults::ReasoningEffort> reasoningEffort; bool stream; bool includeUsage; };
-  rt::Task<Step<Options>> validateChatCompletionsOptions(std::string model, std::string modelRaw, json::object raw, json::object body) {
+  rt::Task<Step<Options>> validateChatCompletionsOptions(std::string model, std::string modelRaw, json::object raw) {
     rt::Promise<policy::CodexModelMetadata> pending(policy::getCodexModelMetadata(model, "chat.completions")); const auto metadata = co_await pending.wait();
     const auto unavailable = policy::validateCodexModelAvailable(modelRaw, "chat.completions", metadata); if (unavailable) co_return NotOk{*unavailable};
     const auto capability = openai::temporaryFreeSurplusCapabilityError(model, raw); if (capability) co_return NotOk{*capability};
-    const auto* messages = rt::getArray(body, "messages"); if (!messages) co_return NotOk{invalid("messages must be an array")};
+    const auto* messages = rt::getArray(raw, "messages"); if (!messages) co_return NotOk{invalid("messages must be an array")};
     if (messages->empty()) co_return NotOk{invalid("messages must be a non-empty array")};
-    const auto reasoning = policy::parseReasoningEffortField(rt::get(body, "reasoning_effort"), "reasoning_effort");
+    const auto reasoning = policy::parseReasoningEffortField(rt::get(raw, "reasoning_effort"), "reasoning_effort");
     if (const auto* error = std::get_if<policy::ParseFieldNotOk>(&reasoning)) co_return NotOk{invalid(error->message, "reasoning_effort")};
-    const auto stream = policy::parseStreamField(rt::get(body, "stream"));
+    const auto stream = policy::parseStreamField(rt::get(raw, "stream"));
     if (const auto* error = std::get_if<policy::ParseFieldNotOk>(&stream)) co_return NotOk{invalid(error->message, "stream")};
     const auto streamOptions = policy::parseChatStreamOptions(rt::get(raw, "stream_options"));
     if (const auto* error = std::get_if<policy::ParseFieldNotOk>(&streamOptions)) co_return NotOk{invalid(error->message, "stream_options")};
@@ -197,14 +198,14 @@ namespace {
   }
   rt::Task<rt::Response> handleInternal(rt::Request req, std::optional<tel::UsageContext> usageContext) {
     const auto* context = usageContext ? &*usageContext : nullptr;
-    rt::Promise<Step<Envelope>> envelopePending(parseChatCompletionsEnvelope(req)); const auto envelopeResult = co_await envelopePending.wait(); if (const auto* error = std::get_if<NotOk>(&envelopeResult)) co_return error->response; const auto envelope = std::get<Envelope>(envelopeResult);
+    rt::Promise<Step<Envelope>> envelopePending(parseChatCompletionsEnvelope(req)); auto envelopeResult = co_await envelopePending.wait(); if (const auto* error = std::get_if<NotOk>(&envelopeResult)) co_return error->response; auto& envelope = std::get<Envelope>(envelopeResult);
     auto modelTask = resolveChatCompletionsModel(envelope.rawRecord, context); rt::Promise<Step<Model>> modelPending(std::move(modelTask)); const auto modelResult = co_await modelPending.wait(); if (const auto* error = std::get_if<NotOk>(&modelResult)) co_return error->response; const auto model = std::get<Model>(modelResult);
     const auto cerebras = provider::cerebras::cerebrasUpstreamModelFor(model.model);
     if (sel::isProviderEnabled("cerebras", envelope.selection) && cerebras) { auto task = provider::cerebras_handlers::handleCerebrasChatCompletions(req, envelope.rawRecord, model.modelRaw, context, *cerebras); rt::Promise<rt::Response> pending(std::move(task)); auto response = co_await pending.wait(); co_return response; }
-    if (sel::isProviderEnabled("deepseek", envelope.selection) && deepseek::index::deepSeekUpstreamModelFor(model.model)) { auto task = deepseek::handlers::handleDeepSeekChatCompletions(req, envelope.rawRecord, model.modelRaw, context); rt::Promise<rt::Response> pending(std::move(task)); auto response = co_await pending.wait(); co_return response; }
+    if (sel::isProviderEnabled("deepseek", envelope.selection) && deepseek::index::deepSeekUpstreamModelFor(model.model)) { auto task = deepseek::handlers::handleDeepSeekChatCompletions(req, std::move(envelope.rawRecord), model.modelRaw, context); rt::Promise<rt::Response> pending(std::move(task)); auto response = co_await pending.wait(); co_return response; }
     if (sel::isProviderEnabled("lithos", envelope.selection) && provider::lithos::lithosUpstreamModelFor(model.model)) { auto task = provider::lithos_handlers::handleLithosChatCompletions(req, envelope.rawRecord, model.modelRaw, context); rt::Promise<rt::Response> pending(std::move(task)); auto response = co_await pending.wait(); co_return response; }
     if (sel::isProviderEnabled("openrouter", envelope.selection)) { rt::Promise<std::optional<std::string>> lookup(provider::openrouter::resolveOpenRouterUpstreamModel(model.model)); const auto upstream = co_await lookup.wait(); if (upstream) { auto task = provider::openrouter_handlers::handleOpenRouterChatCompletions(req, envelope.rawRecord, model.model, context); rt::Promise<rt::Response> pending(std::move(task)); auto response = co_await pending.wait(); co_return response; } }
-    auto optionsTask = validateChatCompletionsOptions(model.model, model.modelRaw, envelope.rawRecord, envelope.body); rt::Promise<Step<Options>> optionsPending(std::move(optionsTask)); const auto optionsResult = co_await optionsPending.wait(); if (const auto* error = std::get_if<NotOk>(&optionsResult)) co_return error->response; const auto options = std::get<Options>(optionsResult);
+    auto optionsTask = validateChatCompletionsOptions(model.model, model.modelRaw, envelope.rawRecord); rt::Promise<Step<Options>> optionsPending(std::move(optionsTask)); const auto optionsResult = co_await optionsPending.wait(); if (const auto* error = std::get_if<NotOk>(&optionsResult)) co_return error->response; const auto options = std::get<Options>(optionsResult);
     const auto inputResult = normalizeChatCompletionsInput(options.messagesRaw, model, options, envelope.rawRecord); if (const auto* error = std::get_if<NotOk>(&inputResult)) co_return error->response; const auto input = std::get<Input>(inputResult);
     auto buildTask = buildChatCompletionsCodexBody(model, input, options, envelope); rt::Promise<Built> builtPending(std::move(buildTask)); const auto built = co_await builtPending.wait(); const auto reasoning = policy::resolveReasoningLabelFromEffort(options.reasoningEffort, built.defaultReasoningLabel);
     if (context && context->responseTelemetry) { context->responseTelemetry->reasoning = reasoning; context->responseTelemetry->outputTokenAllowance = model.maxCompletionTokens; context->responseTelemetry->semanticOutputObserved = false; }

@@ -4099,3 +4099,18 @@ TEST("join is Array.prototype.join over strings") {
   EXPECT_EQ(rt::join(xy, "\xED\xB8\x80\xED\xA0\xBD"), std::string("x\xED\xB8\x80\xED\xA0\xBD" "y"));
   EXPECT(rt::isCanonicalWtf8(rt::join(around, "\xED\xB8\x80")));
 }
+
+TEST("Long UTF runs preserve UTF-16 length and WTF-8 storage") {
+  const std::string prefix(4095, 'a');
+  const std::string pair = "\xF0\x9F\x98\x80";
+  const std::string split = "\xED\xA0\xBD\xED\xB8\x80";
+  const std::string lone = "\xED\xA0\xBD";
+  EXPECT(rt::isAscii(prefix));
+  EXPECT(!rt::isAscii(prefix + pair));
+  EXPECT_EQ(rt::length(prefix + pair), std::int64_t{4097});
+  EXPECT_EQ(rt::fromUtf16(rt::toUtf16(prefix + pair)), prefix + pair);
+  EXPECT(rt::isWtf8(prefix + split));
+  EXPECT(!rt::isCanonicalWtf8(prefix + split));
+  EXPECT(rt::isCanonicalWtf8(prefix + lone + "x"));
+  EXPECT_EQ(rt::fromUtf16(rt::toUtf16(prefix + split + lone + "\xFF")), prefix + pair + lone + "\xEF\xBF\xBD");
+}

@@ -1,7 +1,7 @@
 #pragma once
-// btoa / atob (WHATWG forgiving-base64) and node Buffer's string encodings with Bun 1.4's
-// results. Strings are canonical WTF-8 (docs/rt/text.md); a "binary string" is a JS
-// string whose code units are all <= U+00FF, one per byte.
+// btoa / atob (WHATWG forgiving-base64) and Buffer string encodings. Strings are
+// canonical WTF-8 (docs/rt/text.md); a "binary string" is a JS string whose code
+// units are all <= U+00FF, one per byte.
 #include "uos/rt/error.hpp"
 #include <cstdint>
 #include <span>
@@ -37,13 +37,10 @@ namespace uos::rt {
   std::string toBase64Url(std::span<const std::uint8_t> bytes);
   // `buf.toString("hex")`, and the `byte.toString(16).padStart(2, "0")` join: lowercase.
   std::string toHex(std::span<const std::uint8_t> bytes);
-  // `Buffer.from(text, "base64")` and `Buffer.from(text, "base64url")` (identical in
-  // Bun): never throws. Each UTF-16 code unit is truncated to its low byte; decoding
-  // stops at the first '=' (0x3D); both alphabets are accepted; other bytes are skipped;
-  // leftover bits are dropped.
+  // Buffer base64 and base64url accept both alphabets in ASCII input, skip other
+  // ASCII bytes, and stop at the first '='. Non-ASCII input yields an empty result.
   std::vector<std::uint8_t> fromBase64(std::string_view text);
-  // `Buffer.from(text, "hex")`: code units in pairs (low bytes), stopping at the first
-  // pair that is not two hex digits; an odd last unit is ignored. Never throws.
+  // Buffer hex decodes the complete byte pairs in the leading ASCII hex prefix.
   std::vector<std::uint8_t> fromHex(std::string_view text);
 
   // Node's Buffer encodings. Names are matched ASCII case-insensitively: utf8/utf-8,

@@ -1,4 +1,5 @@
 #include "uos/rt/string.hpp"
+#include "third_party/simdutf/simdutf.h"
 
 #include <algorithm>
 #include <array>
@@ -114,20 +115,23 @@ namespace uos::rt {
     // Ascii: every byte < 0x80. Utf8: well-formed UTF-8 without encoded surrogates (so
     // byte search and byte slicing at code point boundaries are exact). Other: anything else.
     Shape shapeOf(std::string_view text) {
-      const Byte* p = bytes(text);
-      const Byte* end = p + text.size();
-      while (p < end && *p < 0x80) ++p;
-      if (p == end) return Shape::Ascii;
-      while (p < end) {
-        if (*p < 0x80) {
-          ++p;
-          continue;
-        }
-        const Element element = decodeUnit(p, end);
-        if (!element.verbatim || isSurrogate(element.value)) return Shape::Other;
-        p += element.size;
+      if (isAscii(text)) return Shape::Ascii;
+      return simdutf::validate_utf8(text.data(), text.size()) ? Shape::Utf8 : Shape::Other;
+    }
+
+    // The UTF-8 validator rejects every surrogate. WTF-8 admits only an encoded surrogate here.
+    bool validWtf8(std::string_view text, bool canonical) noexcept {
+      bool afterHigh = false;
+      while (!text.empty()) {
+        const auto prefix = simdutf::validate_utf8_with_errors(text.data(), text.size());
+        if (prefix.is_ok()) return true;
+        if (prefix.error != simdutf::SURROGATE) return false;
+        const bool high = static_cast<Byte>(text[prefix.count + 1]) < 0xB0;
+        if (canonical && !high && afterHigh && prefix.count == 0) return false;
+        afterHigh = high;
+        text.remove_prefix(prefix.count + 3);
       }
-      return Shape::Utf8;
+      return true;
     }
 
     // ---- ToIntegerOrInfinity and friends -------------------------------------------------
@@ -1776,46 +1780,38 @@ namespace uos::rt {
 
   // ---- Encoding layer --------------------------------------------------------------------
   bool isAscii(std::string_view text) noexcept {
-    for (const char byte : text) {
-      if (static_cast<Byte>(byte) >= 0x80) return false;
-    }
-    return true;
+    return text.empty() || simdutf::validate_ascii(text.data(), text.size());
   }
 
   std::u16string toUtf16(std::string_view text) {
     std::u16string units;
     units.reserve(text.size());
-    const Byte* p = bytes(text);
-    const Byte* end = p + text.size();
-    while (p < end) {
-      if (*p < 0x80) {
-        units.push_back(static_cast<char16_t>(*p));
-        ++p;
-        continue;
+    while (!text.empty()) {
+      const auto prefix = simdutf::validate_utf8_with_counts(text.data(), text.size());
+      if (prefix.input_count != 0) {
+        const auto start = units.size();
+        units.resize(start + prefix.utf16_length());
+        units.resize(start + simdutf::convert_valid_utf8_to_utf16(text.data(), prefix.input_count, units.data() + start));
+        text.remove_prefix(prefix.input_count);
       }
-      const Element element = decodeUnit(p, end);
-      if (element.value >= 0x10000) {
-        units.push_back(static_cast<char16_t>(0xD800 + ((element.value - 0x10000) >> 10)));
-        units.push_back(static_cast<char16_t>(0xDC00 + ((element.value - 0x10000) & 0x3FF)));
-      } else {
-        units.push_back(static_cast<char16_t>(element.value));
-      }
-      p += element.size;
+      if (text.empty()) break;
+      const Element element = decodeUnit(bytes(text), bytes(text) + text.size());
+      // The valid prefix already handled every scalar value. This is a surrogate or U+FFFD.
+      units.push_back(static_cast<char16_t>(element.value));
+      text.remove_prefix(element.size);
     }
     return units;
   }
 
   std::string fromUtf16(std::u16string_view units) {
+    if (units.empty()) return {};
     std::string out;
-    out.reserve(units.size());
-    for (std::size_t index = 0; index < units.size(); ++index) {
-      const std::uint32_t unit = units[index];
-      if (isHighSurrogate(unit) && index + 1 < units.size() && isLowSurrogate(units[index + 1])) {
-        encodeUtf8(out, 0x10000 + ((unit - 0xD800) << 10) + (static_cast<std::uint32_t>(units[index + 1]) - 0xDC00));
-        ++index;
-      } else {
-        encodeUtf8(out, unit);
-      }
+    if (simdutf::validate_utf16(units.data(), units.size())) {
+      out.resize(simdutf::utf8_length_from_utf16(units.data(), units.size()));
+      out.resize(simdutf::convert_valid_utf16_to_utf8(units.data(), units.size(), out.data()));
+    } else {
+      out.reserve(units.size());
+      for (const char16_t unit : units) appendCodePoint(out, unit);
     }
     return out;
   }
@@ -1850,39 +1846,9 @@ namespace uos::rt {
     return out;
   }
 
-  bool isWtf8(std::string_view text) noexcept {
-    const Byte* p = bytes(text);
-    const Byte* end = p + text.size();
-    while (p < end) {
-      if (*p < 0x80) {
-        ++p;
-        continue;
-      }
-      const Element element = decodeUnit(p, end);
-      if (!element.verbatim) return false;
-      p += element.size;
-    }
-    return true;
-  }
+  bool isWtf8(std::string_view text) noexcept { return validWtf8(text, false); }
 
-  bool isCanonicalWtf8(std::string_view text) noexcept {
-    const Byte* p = bytes(text);
-    const Byte* end = p + text.size();
-    bool afterHigh = false;
-    while (p < end) {
-      if (*p < 0x80) {
-        ++p;
-        afterHigh = false;
-        continue;
-      }
-      const Element element = decodeUnit(p, end);
-      if (!element.verbatim) return false;
-      if (afterHigh && isLowSurrogate(element.value)) return false;
-      afterHigh = isHighSurrogate(element.value);
-      p += element.size;
-    }
-    return true;
-  }
+  bool isCanonicalWtf8(std::string_view text) noexcept { return validWtf8(text, true); }
 
   std::string canonicalWtf8(std::string_view text) {
     if (isCanonicalWtf8(text)) return std::string(text);
@@ -1929,15 +1895,12 @@ namespace uos::rt {
 
   // ---- Length, access, slicing ---------------------------------------------------------------
   std::int64_t length(std::string_view text) noexcept {
-    const Byte* p = bytes(text);
-    const Byte* end = p + text.size();
-    std::int64_t units = 0;
+    if (text.empty()) return 0;
+    const auto prefix = simdutf::validate_utf8_with_counts(text.data(), text.size());
+    const Byte* p = bytes(text) + prefix.input_count;
+    const Byte* end = bytes(text) + text.size();
+    auto units = static_cast<std::int64_t>(prefix.utf16_length());
     while (p < end) {
-      if (*p < 0x80) {
-        ++p;
-        ++units;
-        continue;
-      }
       const Element element = decodeUnit(p, end);
       units += element.value >= 0x10000 ? 2 : 1;
       p += element.size;

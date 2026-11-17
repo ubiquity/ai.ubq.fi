@@ -1858,3 +1858,17 @@ TEST("TextDecoder accepts only the UTF-8 labels (documented bound)") {
   EXPECT_THROWS_MESSAGE(rt::TextDecoder("latin1"), rt::RangeError, "Unsupported encoding label \"latin1\"");
   EXPECT_THROWS_MESSAGE(rt::TextDecoder("utf-16le"), rt::RangeError, "Unsupported encoding label \"utf-16le\"");
 }
+
+TEST("Long UTF-8 runs preserve maximal subparts and streamed tails") {
+  for (const std::size_t size : {63U, 64U, 65U, 4095U, 4096U}) {
+    const std::string prefix(size, 'a');
+    const std::string malformed = prefix + "\xE2\x82!\xED\xA0\x80";
+    EXPECT(!rt::isUtf8(malformed));
+    EXPECT_EQ(rt::decodeUtf8(malformed), prefix + "\xEF\xBF\xBD!\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD");
+    EXPECT_THROWS(rt::decodeUtf8(malformed, {.fatal = true}), rt::TypeError);
+    rt::TextDecoder decoder({.fatal = true});
+    EXPECT_EQ(decoder.decode(prefix + "\xF0\x9F\x98", {.stream = true}), prefix);
+    EXPECT_EQ(decoder.decode("\x80"sv), std::string("\xF0\x9F\x98\x80"));
+    EXPECT_THROWS(decoder.decode(prefix + "\xE0\x80", {.stream = true}), rt::TypeError);
+  }
+}

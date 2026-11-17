@@ -1,6 +1,7 @@
 #include "uos/rt/crypto.hpp"
 
 #include "uos/rt/abort.hpp"
+#include "uos/rt/base64.hpp"
 #include "uos/rt/number.hpp"
 #include <openssl/bn.h>
 #include <openssl/core_names.h>
@@ -64,18 +65,6 @@ namespace uos::rt::crypto {
     }
 
     // ---- small codecs
-
-    constexpr char HEX[] = "0123456789abcdef";
-
-    std::string toHex(BytesView bytes) {
-      std::string out;
-      out.reserve(bytes.size() * 2);
-      for (std::uint8_t byte : bytes) {
-        out += HEX[byte >> 4];
-        out += HEX[byte & 15];
-      }
-      return out;
-    }
 
     std::string toBase64(BytesView bytes, bool url) {
       const char* alphabet = url ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -1117,7 +1106,7 @@ namespace uos::rt::crypto {
     if (name != "hex" && name != "base64" && name != "base64url" && name != "latin1" && name != "binary")
       throw std::invalid_argument("uos::rt::crypto::Hash::digest: unsupported encoding " + std::string(encoding));
     const Bytes bytes = digest();
-    if (name == "hex") return toHex(bytes);
+    if (name == "hex") return rt::toHex(bytes);
     if (name == "base64") return toBase64(bytes, false);
     if (name == "base64url") return toBase64(bytes, true);
     std::string out;

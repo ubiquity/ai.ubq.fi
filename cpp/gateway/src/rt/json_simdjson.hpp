@@ -1,122 +1,94 @@
 #pragma once
 
+#include "uos/rt/error.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 
 #include <simdjson.h>
 
-#include <cfenv>
-#include <cstring>
-#include <memory>
-
 namespace uos::rt::detail {
-  namespace simdDom = simdjson::dom;
+  namespace simd = simdjson::ondemand;
 
-  inline constexpr std::size_t kSimdJsonMaxDepth = 32;
-  inline constexpr std::size_t kSimdJsonMaxInput = 2 * 1024 * 1024;
-
-  class SimdJsonInput {
+  class JsonInput {
   public:
-    bool parse(std::string_view text, simdDom::element& root) {
-      // Reject potential negative zero before parsing because the tape can lose its sign.
-      if (text.empty() || text.size() > kSimdJsonMaxInput || text.starts_with("\xef\xbb\xbf") ||
-          text.find("-0") != std::string_view::npos || std::fegetround() != FE_TONEAREST)
-        return false;
-      if (parser_.capacity() < text.size() && parser_.allocate(text.size(), kSimdJsonMaxDepth + 1)) return false;
-      const std::size_t size = text.size() + simdjson::SIMDJSON_PADDING;
-      if (capacity_ < size) {
-        buffer_ = std::make_unique_for_overwrite<char[]>(size);
-        capacity_ = size;
+    json::value parse(std::string_view text) {
+      buffer_.assign(text);
+      buffer_.append(simdjson::SIMDJSON_PADDING, '\0');
+      if (parser_.capacity() < text.size()) {
+        if (const auto error = parser_.allocate(text.size(), limits::kJsonDepth + 2)) throw simdjson::simdjson_error(error);
       }
-      std::memcpy(buffer_.get(), text.data(), text.size());
-      std::memset(buffer_.get() + text.size(), 0, simdjson::SIMDJSON_PADDING);
-      const simdjson::padded_string_view payload(buffer_.get(), text.size(), size);
-      return !parser_.parse(payload).get(root);
+      simd::document document = parser_.iterate(buffer_.data(), text.size(), buffer_.size()).value();
+      json::value result = read(document, 0);
+      if (!document.at_end()) throw SyntaxError("Invalid JSON");
+      return result;
     }
 
   private:
-    simdDom::parser parser_{kSimdJsonMaxInput};
-    std::unique_ptr<char[]> buffer_;
-    std::size_t capacity_ = 0;
+    template <class Node>
+    json::value read(Node& node, std::size_t depth) {
+      const auto type = node.type().value();
+      if (depth >= limits::kJsonDepth && (type == simd::json_type::array || type == simd::json_type::object))
+        throw SyntaxError("Invalid JSON");
+      switch (type) {
+        case simd::json_type::array: {
+          json::array output;
+          auto array = node.get_array().value();
+          for (auto element : array) {
+            auto child = std::move(element).value();
+            output.push_back(read(child, depth + 1));
+          }
+          return output;
+        }
+        case simd::json_type::object: {
+          json::object output;
+          auto object = node.get_object().value();
+          for (auto entry : object) {
+            std::string_view key = entry.escaped_key().value();
+            if (key.find('\\') != std::string_view::npos) {
+              keyBuffer_.resize(key.size() + simdjson::SIMDJSON_PADDING);
+              auto* destination = reinterpret_cast<std::uint8_t*>(keyBuffer_.data());
+              key = parser_.unescape_wobbly(entry.key().value(), destination).value();
+            }
+            auto& child = output[key];
+            auto fieldValue = entry.value().value();
+            child = read(fieldValue, depth + 1);
+          }
+          return output;
+        }
+        case simd::json_type::number: {
+          const double number = node.get_double().value();
+          if (!std::isfinite(number)) throw SyntaxError("Invalid JSON");
+          return makeNumber(number);
+        }
+        case simd::json_type::string:
+          return json::string(node.get_wobbly_string().value());
+        case simd::json_type::boolean:
+          return node.get_bool().value();
+        case simd::json_type::null:
+          if (node.is_null().value()) return nullptr;
+          break;
+        case simd::json_type::unknown:
+          break;
+      }
+      throw SyntaxError("Invalid JSON");
+    }
+
+    simd::parser parser_;
+    std::string buffer_;
+    std::string keyBuffer_;
   };
 
-  inline void putSimdNumber(json::value& output, double number) {
-    constexpr double maxSafeInteger = 9007199254740991.0;
-    if (number >= -maxSafeInteger && number <= maxSafeInteger && std::trunc(number) == number &&
-        !(number == 0 && std::signbit(number)))
-      output.emplace_int64() = static_cast<std::int64_t>(number);
-    else
-      output.emplace_double() = number;
-  }
-
-  inline bool convertSimdJson(simdDom::element node, json::value& output, std::size_t depth) {
-    switch (node.type()) {
-      case simdDom::element_type::ARRAY: {
-        if (depth >= kSimdJsonMaxDepth) return false;
-        simdDom::array input;
-        if (node.get_array().get(input)) return false;
-        auto& array = output.emplace_array();
-        array.reserve(input.size());
-        for (const auto element : input) {
-          if (!convertSimdJson(element, array.emplace_back(nullptr), depth + 1)) return false;
-        }
-        return true;
+  inline json::value parseSimdJson(std::string_view text, std::size_t maxInput) {
+    constexpr std::size_t maxReusableInput = 2 * 1024 * 1024;
+    if (text.empty() || text.size() > maxInput || text.starts_with("\xef\xbb\xbf")) throw SyntaxError("Invalid JSON");
+    try {
+      if (text.size() <= maxReusableInput) {
+        thread_local JsonInput input;
+        return input.parse(text);
       }
-      case simdDom::element_type::OBJECT: {
-        if (depth >= kSimdJsonMaxDepth) return false;
-        simdDom::object input;
-        if (node.get_object().get(input)) return false;
-        auto& object = output.emplace_object();
-        object.reserve(input.size());
-        for (const auto member : input) {
-          if (member.key == "__proto__" || isArrayIndex(member.key)) return false;
-          // The tape retains occurrences of each decoded key in input order.
-          const auto [position, inserted] = object.emplace(member.key, nullptr);
-          if (!inserted || !convertSimdJson(member.value, position->value(), depth + 1)) return false;
-        }
-        return true;
-      }
-      case simdDom::element_type::INT64: {
-        constexpr std::int64_t maxSafeInteger = 9007199254740991;
-        std::int64_t value;
-        if (node.get_int64().get(value) || value < -maxSafeInteger || value > maxSafeInteger) return false;
-        output.emplace_int64() = value;
-        return true;
-      }
-      case simdDom::element_type::DOUBLE: {
-        double value;
-        // The exact parser handles decimal underflow and other range edges
-        // using the literal spelling, which the DOM does not retain.
-        if (node.get_double().get(value) || !std::isnormal(value)) return false;
-        putSimdNumber(output, value);
-        return true;
-      }
-      case simdDom::element_type::STRING: {
-        std::string_view text;
-        if (node.get_string().get(text)) return false;
-        output.emplace_string().assign(text);
-        return true;
-      }
-      case simdDom::element_type::BOOL: {
-        bool value;
-        if (node.get_bool().get(value)) return false;
-        output.emplace_bool() = value;
-        return true;
-      }
-      case simdDom::element_type::NULL_VALUE:
-        return true;
-      case simdDom::element_type::UINT64:
-      case simdDom::element_type::BIGINT:
-        return false;
+      return JsonInput().parse(text);
+    } catch (const simdjson::simdjson_error&) {
+      throw SyntaxError("Invalid JSON");
     }
-    return false;
-  }
-
-  inline std::optional<json::value> tryParseSimdJson(std::string_view text) {
-    thread_local SimdJsonInput input;
-    simdDom::element root;
-    if (!input.parse(text, root)) return std::nullopt;
-    json::value value;
-    if (!convertSimdJson(root, value, 0)) return std::nullopt;
-    return value;
   }
 }

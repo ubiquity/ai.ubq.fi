@@ -1,16 +1,10 @@
-#include "uos/rt/json.hpp"
+#include "uos/rt/json_document.hpp"
 
 #include "uos/rt/error.hpp"
 
-#if defined(UOS_GATEWAY_SIMDJSON)
 #include "json_simdjson.hpp"
-#else
-#include <boost/version.hpp>
-#if BOOST_VERSION == 109200
-#include <boost/json/basic_parser_impl.hpp>
-#include <boost/json/value_stack.hpp>
-#endif
-#endif
+
+#include <boost/json/serializer.hpp>
 
 #include <algorithm>
 #include <charconv>
@@ -83,21 +77,6 @@ namespace uos::rt {
       return members;
     }
 
-    bool hasIndexKey(const json::object& object) noexcept {
-      for (const auto& member : object)
-        if (isArrayIndex(view(member.key()))) return true;
-      return false;
-    }
-
-    // Rewrites the storage order of an object into JS order.
-    void restoreOrder(json::object& object) {
-      const auto members = orderedMembers<json::key_value_pair>(object);
-      json::object rebuilt(object.storage());
-      rebuilt.reserve(object.size());
-      for (auto* member : members) rebuilt.emplace(member->key(), std::move(member->value()));
-      object = std::move(rebuilt);
-    }
-
     void defineMember(json::object& object, std::string_view key, json::value value) {
       canonicalizeTop(value);
       if (const auto found = object.find(key); found != object.end()) {
@@ -149,784 +128,105 @@ namespace uos::rt {
       out += kHexDigits[unit & 0xF];
     }
 
-    // The escape of a code unit below 0x100, or 0 when it is written as is.
-    char shortEscape(std::uint32_t unit) noexcept {
-      switch (unit) {
-        case 0x08:
-          return 'b';
-        case 0x09:
-          return 't';
-        case 0x0A:
-          return 'n';
-        case 0x0C:
-          return 'f';
-        case 0x0D:
-          return 'r';
-        case '"':
-          return '"';
-        case '\\':
-          return '\\';
-        default:
-          return unit < 0x20 ? 'u' : '\0';
+    void appendQuoted(std::string& out, json::serializer& writer, std::string_view text) {
+      if (simdjson::validate_utf8(text.data(), text.size())) {
+        writer.reset(json::string_view(text.data(), text.size()));
+        char buffer[4096];
+        while (!writer.done()) out += view(writer.read(buffer));
+        return;
       }
+
+      // Runtime strings can hold lone UTF-16 code units. Escape their WTF-8
+      // form so durable and wire JSON carries the original code unit.
+      const std::string normalized = fromUtf16(toUtf16(text));
+      const std::string quoted = json::serialize(json::string_view(normalized.data(), normalized.size()));
+      std::size_t start = 0;
+      for (std::size_t offset = 0; offset + 2 < quoted.size(); ++offset) {
+        const auto first = static_cast<unsigned char>(quoted[offset]);
+        const auto second = static_cast<unsigned char>(quoted[offset + 1]);
+        if (first != 0xed || second < 0xa0 || second > 0xbf) continue;
+        const auto third = static_cast<unsigned char>(quoted[offset + 2]);
+        out.append(quoted, start, offset - start);
+        appendUnicodeEscape(out, ((first & 0x0fu) << 12) | ((second & 0x3fu) << 6) | (third & 0x3fu));
+        offset += 2;
+        start = offset + 1;
+      }
+      out.append(quoted, start);
     }
 
-    void appendEscapedUnit(std::string& out, std::uint32_t unit) {
-      const char escape = shortEscape(unit);
-      if (escape == 'u') {
-        appendUnicodeEscape(out, unit);
-      } else {
-        out += '\\';
-        out += escape;
-      }
-    }
-
-    // WTF::appendQuotedJSONString over the UTF-16 code units of the string.
-    void appendQuoted(std::string& out, std::string_view text) {
-      out += '"';
-      if (isAscii(text)) {
-        std::size_t runStart = 0;
-        for (std::size_t index = 0; index < text.size(); ++index) {
-          const auto unit = static_cast<unsigned char>(text[index]);
-          if (unit >= 0x20 && unit != '"' && unit != '\\') continue;
-          out.append(text.substr(runStart, index - runStart));
-          appendEscapedUnit(out, unit);
-          runStart = index + 1;
-        }
-        out.append(text.substr(runStart));
-      } else {
-        const std::u16string units = toUtf16(text);
-        std::size_t runStart = 0;
-        const auto flush = [&](std::size_t until) {
-          if (until > runStart) out += fromUtf16(std::u16string_view(units).substr(runStart, until - runStart));
-        };
-        for (std::size_t index = 0; index < units.size(); ++index) {
-          const char16_t unit = units[index];
-          if (unit < 0x100) {
-            if (!shortEscape(unit)) continue;
-            flush(index);
-            appendEscapedUnit(out, unit);
-            runStart = index + 1;
-            continue;
-          }
-          if (unit < 0xD800 || unit > 0xDFFF) continue;
-          if (unit <= 0xDBFF && index + 1 < units.size() && units[index + 1] >= 0xDC00 && units[index + 1] <= 0xDFFF) {
-            ++index;
-            continue;
-          }
-          flush(index);
-          appendUnicodeEscape(out, unit);
-          runStart = index + 1;
-        }
-        flush(units.size());
-      }
-      out += '"';
-    }
-
-    // JSON.stringify with an explicit stack of open arrays and objects (no recursion).
-    class Serializer {
-    public:
-      Serializer(std::string gap, const JsonReplacer* replacer) : gap_(std::move(gap)), replacer_(replacer) {}
-
-      // SerializeJSONProperty of the root (key ""): false when the result is undefined.
-      bool root(const json::value& value) {
-        if (!replacer_) {
-          emit(value, nullptr);
-        } else {
-          std::optional<json::value> replaced = (*replacer_)("", value);
-          if (!replaced) return false;
-          emitOwned(std::move(*replaced));
-        }
-        run();
-        return true;
-      }
-
-      std::string out;
-
-    private:
+    // Boost.JSON writes strings. The traversal handles indentation, the
+    // replacer and numeric spellings used by the gateway's byte contracts.
+    std::string writeJson(const json::value& root, std::string_view gap, const JsonReplacer& replacer = {}) {
       struct Frame {
-        const json::array* array = nullptr;
-        const json::object* object = nullptr;
-        std::vector<const json::key_value_pair*> ordered;  // objects with array-index keys
-        std::size_t index = 0;
-        std::size_t start = 0;  // output size before '{'
-        bool any = false;
-        std::unique_ptr<json::value> holder;  // a replacer result being serialised
+        const json::value* value;
+        std::size_t next = 0;
+        bool wroteChild = false;
+        std::unique_ptr<json::value> owned;
       };
 
-      void newline() {
-        if (gap_.empty()) return;
+      std::string out;
+      json::serializer writer;
+      std::vector<Frame> stack;
+      const auto newline = [&](std::size_t depth) {
+        if (gap.empty()) return;
         out += '\n';
-        out += indent_;
-      }
-
-      // Writes a primitive, or opens a frame for a non-empty array or an object.
-      void emit(const json::value& value, std::unique_ptr<json::value> holder) {
-        switch (value.kind()) {
-          case json::kind::null:
-            out += "null";
-            return;
-          case json::kind::bool_:
-            out += value.get_bool() ? "true" : "false";
-            return;
-          case json::kind::int64:
-          case json::kind::uint64:
-          case json::kind::double_:
-            appendNumber(out, value);
-            return;
-          case json::kind::string:
-            appendQuoted(out, view(value.get_string()));
-            return;
-          case json::kind::array:
-          case json::kind::object:
-            break;
-        }
-        if (frames_.size() >= kJsonMaxDepth) throwStackOverflow();
-        if (value.is_array() && value.get_array().empty()) {
-          out += "[]";
-          return;
-        }
-        Frame frame;
-        frame.holder = std::move(holder);
-        frame.start = out.size();
-        if (value.is_array()) {
-          frame.array = &value.get_array();
-          out += '[';
+        for (std::size_t level = 0; level < depth; ++level) out += gap;
+      };
+      const auto emit = [&](const json::value& value, std::unique_ptr<json::value> owned = {}) {
+        if (value.is_array() || value.is_object()) {
+          if (stack.size() >= kJsonMaxDepth) throwStackOverflow();
+          out += value.is_array() ? '[' : '{';
+          stack.push_back({&value, 0, false, std::move(owned)});
+        } else if (value.is_string()) {
+          appendQuoted(out, writer, view(value.get_string()));
+        } else if (isNumber(value)) {
+          appendNumber(out, value);
         } else {
-          frame.object = &value.get_object();
-          if (hasIndexKey(*frame.object)) frame.ordered = orderedMembers<const json::key_value_pair>(*frame.object);
-          out += '{';
+          out += value.is_null() ? "null" : value.get_bool() ? "true" : "false";
         }
-        indent_ += gap_;
-        frames_.push_back(std::move(frame));
-      }
+      };
 
-      void emitOwned(json::value value) {
-        if (!value.is_array() && !value.is_object()) {
-          emit(value, nullptr);
-          return;
+      emit(root);
+      while (!stack.empty()) {
+        Frame& frame = stack.back();
+        const json::object* object = frame.value->if_object();
+        const json::array* array = frame.value->if_array();
+        const std::size_t size = object ? object->size() : array->size();
+        if (frame.next == size) {
+          if (frame.wroteChild) newline(stack.size() - 1);
+          out += object ? '}' : ']';
+          stack.pop_back();
+          continue;
         }
-        auto holder = std::make_unique<json::value>(std::move(value));
-        const json::value* owned = holder.get();
-        emit(*owned, std::move(holder));
-      }
 
-      void close(char bracket) {
-        indent_.resize(indent_.size() - gap_.size());
-        newline();
-        out += bracket;
-        frames_.pop_back();
-      }
-
-      void run() {
-        while (!frames_.empty()) {
-          Frame& frame = frames_.back();
-          if (frame.array) {
-            if (frame.index == frame.array->size()) {
-              close(']');
-              continue;
-            }
-            const std::size_t index = frame.index++;
-            if (index) out += ',';
-            newline();
-            const json::value& element = (*frame.array)[index];
-            if (!replacer_) {
-              emit(element, nullptr);
-              continue;
-            }
-            std::optional<json::value> replaced = (*replacer_)(std::to_string(index), element);
-            if (!replaced) out += "null";
-            else emitOwned(std::move(*replaced));
-            continue;
-          }
-          const std::size_t count = frame.ordered.empty() ? frame.object->size() : frame.ordered.size();
-          if (frame.index == count) {
-            if (frame.any) {
-              close('}');
-            } else {
-              indent_.resize(indent_.size() - gap_.size());
-              out.resize(frame.start);
-              out += "{}";
-              frames_.pop_back();
-            }
-            continue;
-          }
-          const json::key_value_pair& member = frame.ordered.empty() ? frame.object->begin()[frame.index] : *frame.ordered[frame.index];
-          ++frame.index;
-          const std::size_t mark = out.size();
-          if (frame.any) out += ',';
-          newline();
-          appendQuoted(out, view(member.key()));
-          out += gap_.empty() ? ":" : ": ";
-          if (!replacer_) {
-            frame.any = true;
-            emit(member.value(), nullptr);
-            continue;
-          }
-          std::optional<json::value> replaced = (*replacer_)(view(member.key()), member.value());
-          if (!replaced) {
-            out.resize(mark);
-            continue;
-          }
-          frame.any = true;
-          emitOwned(std::move(*replaced));
+        const std::size_t index = frame.next++;
+        const auto* member = object ? object->begin() + index : nullptr;
+        const json::value& child = member ? member->value() : (*array)[index];
+        std::unique_ptr<json::value> replacement;
+        if (replacer) {
+          auto value = replacer(member ? view(member->key()) : std::string_view(std::to_string(index)), child);
+          if (!value && member) continue;
+          replacement = std::make_unique<json::value>(value ? std::move(*value) : json::value(nullptr));
         }
-      }
 
-      std::string gap_;
-      std::string indent_;
-      const JsonReplacer* replacer_;
-      std::vector<Frame> frames_;
-    };
+        if (frame.wroteChild) out += ',';
+        frame.wroteChild = true;
+        newline(stack.size());
+        if (member) {
+          appendQuoted(out, writer, view(member->key()));
+          out += gap.empty() ? ":" : ": ";
+        }
+        const json::value& selected = replacement ? *replacement : child;
+        emit(selected, std::move(replacement));
+      }
+      return out;
+    }
 
     std::string gapFromString(std::string_view gap) {
       if (isAscii(gap)) return std::string(gap.substr(0, 10));
       const std::u16string units = toUtf16(gap);
       return fromUtf16(std::u16string_view(units).substr(0, 10));
     }
-
-#if !defined(UOS_GATEWAY_SIMDJSON) && BOOST_VERSION == 109200
-    constexpr std::size_t kBoostParseDepth = 32;
-
-    // The scanner validates the grammar and decodes strings. Build the same
-    // DOM type as Boost's parser while retaining raw member counts and numbers.
-    class BoostJsonHandler {
-    public:
-      static constexpr std::size_t max_array_size = json::array::max_size();
-      static constexpr std::size_t max_object_size = json::object::max_size();
-      static constexpr std::size_t max_string_size = json::string::max_size();
-      static constexpr std::size_t max_key_size = json::string::max_size();
-
-      bool on_document_begin(boost::system::error_code&) noexcept {
-        values_.reset();
-        return true;
-      }
-      bool on_document_end(boost::system::error_code&) noexcept { return true; }
-      bool on_array_begin(boost::system::error_code&) noexcept { return true; }
-      bool on_object_begin(boost::system::error_code&) noexcept { return true; }
-
-      bool on_array_end(std::size_t count, boost::system::error_code&) {
-        values_.push_array(count);
-        return true;
-      }
-      bool on_object_end(std::size_t count, boost::system::error_code&) {
-        // Each counted member consumes at least two distinct source bytes.
-        members_ += count;
-        values_.push_object(count);
-        return true;
-      }
-      bool on_string_part(json::string_view text, std::size_t, boost::system::error_code&) {
-        values_.push_chars(text);
-        return true;
-      }
-      bool on_string(json::string_view text, std::size_t, boost::system::error_code&) {
-        values_.push_string(text);
-        return true;
-      }
-      bool on_key_part(json::string_view text, std::size_t, boost::system::error_code&) {
-        values_.push_chars(text);
-        return true;
-      }
-      bool on_key(json::string_view text, std::size_t, boost::system::error_code&) {
-        values_.push_key(text);
-        return true;
-      }
-      bool on_bool(bool value, boost::system::error_code&) {
-        values_.push_bool(value);
-        return true;
-      }
-      bool on_null(boost::system::error_code&) {
-        values_.push_null();
-        return true;
-      }
-
-      // This adapter supplies one final buffer. Abort the attempt if a number
-      // is delivered in parts so the callbacks below only see whole lexemes.
-      bool on_number_part(json::string_view, boost::system::error_code& error) noexcept { return refuse(error); }
-
-      bool on_int64(std::int64_t, json::string_view lexeme, boost::system::error_code& error) {
-        const std::string_view text = view(lexeme);
-        if (text.empty()) return refuse(error);
-        const char* end = text.data() + text.size();
-        std::int64_t integer = 0;
-        const auto parsed = std::from_chars(text.data(), end, integer);
-        if (parsed.ec == std::errc{} && parsed.ptr == end && integer >= -kMaxSafeInt64 && integer <= kMaxSafeInt64 &&
-            (integer != 0 || text.front() != '-')) {
-          values_.push_int64(integer);
-          return true;
-        }
-        return pushNumber(lexeme, error);
-      }
-      bool on_uint64(std::uint64_t, json::string_view lexeme, boost::system::error_code& error) {
-        return pushNumber(lexeme, error);
-      }
-      bool on_double(double, json::string_view lexeme, boost::system::error_code& error) {
-        return pushNumber(lexeme, error);
-      }
-      bool on_comment_part(json::string_view, boost::system::error_code& error) noexcept { return refuse(error); }
-      bool on_comment(json::string_view, boost::system::error_code& error) noexcept { return refuse(error); }
-
-      std::size_t memberCount() const noexcept { return members_; }
-      json::value release() noexcept { return values_.release(); }
-
-    private:
-      static bool refuse(boost::system::error_code& error) noexcept {
-        error = json::error::syntax;
-        return false;
-      }
-      bool pushNumber(json::string_view lexeme, boost::system::error_code& error) {
-        if (lexeme.empty()) return refuse(error);
-        const json::value number = makeNumber(stringToNumber(view(lexeme)));
-        if (number.is_int64()) values_.push_int64(number.get_int64());
-        else values_.push_double(number.get_double());
-        return true;
-      }
-
-      alignas(json::value) unsigned char scratch_[1024];
-      json::value_stack values_{json::storage_ptr{}, scratch_, sizeof scratch_};
-      std::size_t members_ = 0;
-    };
-
-    // Recursion is bounded by kBoostParseDepth. Every stored member corresponds
-    // to one source member. A missing member means a duplicate was collapsed.
-    bool countBoostMembers(const json::value& value, std::size_t& remaining) noexcept {
-      if (const auto* object = value.if_object()) {
-        if (object->size() > remaining) return false;
-        remaining -= object->size();
-        for (const auto& member : *object) {
-          const std::string_view key = view(member.key());
-          if (key == "__proto__" || isArrayIndex(key) || !countBoostMembers(member.value(), remaining)) return false;
-        }
-      } else if (const auto* array = value.if_array()) {
-        for (const auto& element : *array)
-          if (!countBoostMembers(element, remaining)) return false;
-      }
-      return true;
-    }
-
-    std::optional<json::value> tryParseBoost(std::string_view text) {
-      if (text.empty()) return std::nullopt;
-      json::parse_options options;
-      options.max_depth = kBoostParseDepth;
-      options.numbers = json::number_precision::none;
-      json::basic_parser<BoostJsonHandler> parser(options);
-      boost::system::error_code error;
-      const std::size_t consumed = parser.write_some(false, text.data(), text.size(), error);
-      if (error || !parser.done() || consumed != text.size()) return std::nullopt;
-
-      std::size_t members = parser.handler().memberCount();
-      json::value value = parser.handler().release();
-      if (members != 0 && (!countBoostMembers(value, members) || members != 0)) return std::nullopt;
-      return std::optional<json::value>{std::move(value)};
-    }
-#endif
-
-    // ---- JSON.parse: JavaScriptCore's LiteralParser in StrictJSON mode -----------------------
-    enum class Token : std::uint8_t {
-      LBracket,
-      RBracket,
-      LBrace,
-      RBrace,
-      Comma,
-      Colon,
-      String,
-      Identifier,
-      Number,
-      True,
-      False,
-      Null,
-      End,
-      Dot,
-      Error,
-      LParen,
-      RParen,
-      Assign,
-      Semi,
-    };
-
-    // TokenTypesOfLatin1Characters.
-    Token latin1TokenType(std::uint32_t c) noexcept {
-      if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '$' || c == '_') return Token::Identifier;
-      if ((c >= '0' && c <= '9') || c == '-') return Token::Number;
-      switch (c) {
-        case '"':
-        case '\'':
-          return Token::String;
-        case '(':
-          return Token::LParen;
-        case ')':
-          return Token::RParen;
-        case ',':
-          return Token::Comma;
-        case '.':
-          return Token::Dot;
-        case ':':
-          return Token::Colon;
-        case ';':
-          return Token::Semi;
-        case '=':
-          return Token::Assign;
-        case '[':
-          return Token::LBracket;
-        case ']':
-          return Token::RBracket;
-        case '{':
-          return Token::LBrace;
-        case '}':
-          return Token::RBrace;
-        default:
-          return Token::Error;
-      }
-    }
-
-    bool isAsciiDigit(std::uint32_t c) noexcept { return c >= '0' && c <= '9'; }
-    bool isAsciiHexDigit(std::uint32_t c) noexcept { return isAsciiDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
-    std::uint32_t hexValue(std::uint32_t c) noexcept { return isAsciiDigit(c) ? c - '0' : (c | 0x20u) - 'a' + 10; }
-
-    template <class Unit>
-    class Parser {
-    public:
-      explicit Parser(std::basic_string_view<Unit> text) : cursor_(text.data()), end_(text.data() + text.size()) {}
-
-      json::value parse() {
-        next();
-        json::value result = parseValue();
-        if (type_ != Token::End) fail("Unable to parse JSON string");
-        return result;
-      }
-
-    private:
-      struct Frame {
-        json::value container;
-        std::string key;
-        bool hasIndexKey = false;
-      };
-
-      static std::uint32_t unit(Unit value) noexcept {
-        if constexpr (std::is_same_v<Unit, char>) return static_cast<unsigned char>(value);
-        else return static_cast<std::uint32_t>(value);
-      }
-
-      // The code units [start, start + count) as a JS string.
-      static std::string units(const Unit* start, std::size_t count) {
-        if constexpr (std::is_same_v<Unit, char>) return std::string(start, count);
-        else return fromUtf16(std::u16string_view(start, count));
-      }
-
-      [[noreturn]] static void fail(std::string_view message) { throw SyntaxError("JSON Parse error: " + std::string(message)); }
-
-      Token next() {
-        while (cursor_ < end_ && (*cursor_ == ' ' || *cursor_ == '\t' || *cursor_ == '\n' || *cursor_ == '\r')) ++cursor_;
-        start_ = cursor_;
-        if (cursor_ == end_) return type_ = Token::End;
-        const std::uint32_t c = unit(*cursor_);
-        if (c < 0x100) {
-          const Token type = latin1TokenType(c);
-          switch (type) {
-            case Token::String:
-              if (c == '\'') fail("Single quotes (') are not allowed in JSON");
-              return lexString();
-            case Token::Identifier:
-              return lexIdentifier(c);
-            case Token::Number:
-              return lexNumber();
-            case Token::Error:
-              break;
-            default:
-              ++cursor_;
-              return type_ = type;
-          }
-        }
-        fail("Unrecognized token '" + units(cursor_, 1) + "'");
-      }
-
-      bool matches(std::string_view word) const noexcept {
-        if (static_cast<std::size_t>(end_ - cursor_) < word.size()) return false;
-        for (std::size_t index = 1; index < word.size(); ++index)
-          if (unit(cursor_[index]) != static_cast<unsigned char>(word[index])) return false;
-        return true;
-      }
-
-      Token lexIdentifier(std::uint32_t first) {
-        if (first == 't' && matches("true")) {
-          cursor_ += 4;
-          return type_ = Token::True;
-        }
-        if (first == 'f' && matches("false")) {
-          cursor_ += 5;
-          return type_ = Token::False;
-        }
-        if (first == 'n' && matches("null")) {
-          cursor_ += 4;
-          return type_ = Token::Null;
-        }
-        while (cursor_ < end_) {
-          const std::uint32_t c = unit(*cursor_);
-          if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || isAsciiDigit(c) || c == '_' || c == '$')) break;
-          ++cursor_;
-        }
-        return type_ = Token::Identifier;
-      }
-
-      // -?(0 | [1-9][0-9]*) ('.' [0-9]+)? ([eE][+-]?[0-9]+)?; an exponent marker that is not
-      // followed by digits is left for the next token.
-      Token lexNumber() {
-        if (cursor_ < end_ && *cursor_ == '-') ++cursor_;
-        if (cursor_ < end_ && *cursor_ == '0') {
-          ++cursor_;
-        } else if (cursor_ < end_ && unit(*cursor_) >= '1' && unit(*cursor_) <= '9') {
-          ++cursor_;
-          while (cursor_ < end_ && isAsciiDigit(unit(*cursor_))) ++cursor_;
-        } else {
-          fail("Invalid number");
-        }
-        if (cursor_ < end_ && *cursor_ == '.') {
-          ++cursor_;
-          if (cursor_ >= end_ || !isAsciiDigit(unit(*cursor_))) fail("Invalid digits after decimal point");
-          ++cursor_;
-          while (cursor_ < end_ && isAsciiDigit(unit(*cursor_))) ++cursor_;
-        }
-        if (cursor_ < end_ && (*cursor_ == 'e' || *cursor_ == 'E')) {
-          const Unit* marker = cursor_;
-          ++cursor_;
-          if (cursor_ < end_ && (*cursor_ == '-' || *cursor_ == '+')) ++cursor_;
-          if (cursor_ >= end_ || !isAsciiDigit(unit(*cursor_))) {
-            cursor_ = marker;
-          } else {
-            ++cursor_;
-            while (cursor_ < end_ && isAsciiDigit(unit(*cursor_))) ++cursor_;
-          }
-        }
-        std::string literal;
-        literal.reserve(static_cast<std::size_t>(cursor_ - start_));
-        for (const Unit* digit = start_; digit < cursor_; ++digit) literal += static_cast<char>(unit(*digit));
-        number_ = stringToNumber(literal);
-        return type_ = Token::Number;
-      }
-
-      static bool isSafeStringUnit(std::uint32_t c) noexcept { return c >= 0x100 || (c >= 0x20 && c != '"' && c != '\\'); }
-
-      void append(const Unit* from, const Unit* to) {
-        if constexpr (std::is_same_v<Unit, char>) builder_.append(from, static_cast<std::size_t>(to - from));
-        else wideBuilder_.append(from, static_cast<std::size_t>(to - from));
-      }
-
-      void appendUnit(std::uint32_t value) {
-        if constexpr (std::is_same_v<Unit, char>) appendCodePoint(builder_, value);
-        else wideBuilder_.push_back(static_cast<char16_t>(value));
-      }
-
-      bool builderEmpty() const noexcept {
-        if constexpr (std::is_same_v<Unit, char>) return builder_.empty();
-        else return wideBuilder_.empty();
-      }
-
-      Token lexString() {
-        ++cursor_;
-        const Unit* runStart = cursor_;
-        while (cursor_ < end_ && isSafeStringUnit(unit(*cursor_))) ++cursor_;
-        if (cursor_ < end_ && *cursor_ == '"') {
-          string_ = units(runStart, static_cast<std::size_t>(cursor_ - runStart));
-          ++cursor_;
-          return type_ = Token::String;
-        }
-        builder_.clear();
-        wideBuilder_.clear();
-        bool first = true;
-        do {
-          if (!first) {
-            runStart = cursor_;
-            while (cursor_ < end_ && isSafeStringUnit(unit(*cursor_))) ++cursor_;
-            if (!builderEmpty()) append(runStart, cursor_);
-          }
-          first = false;
-          if (cursor_ < end_ && *cursor_ == '\\') {
-            if (builderEmpty() && runStart < cursor_) append(runStart, cursor_);
-            ++cursor_;
-            if (cursor_ >= end_) fail("Unterminated string");
-            switch (unit(*cursor_)) {
-              case '"':
-                appendUnit('"');
-                ++cursor_;
-                break;
-              case '\\':
-                appendUnit('\\');
-                ++cursor_;
-                break;
-              case '/':
-                appendUnit('/');
-                ++cursor_;
-                break;
-              case 'b':
-                appendUnit('\b');
-                ++cursor_;
-                break;
-              case 'f':
-                appendUnit('\f');
-                ++cursor_;
-                break;
-              case 'n':
-                appendUnit('\n');
-                ++cursor_;
-                break;
-              case 'r':
-                appendUnit('\r');
-                ++cursor_;
-                break;
-              case 't':
-                appendUnit('\t');
-                ++cursor_;
-                break;
-              case 'u': {
-                if (end_ - cursor_ < 5) fail("\\u must be followed by 4 hex digits");
-                std::uint32_t value = 0;
-                for (int index = 1; index < 5; ++index) {
-                  if (!isAsciiHexDigit(unit(cursor_[index]))) fail("\"\\" + units(cursor_, 5) + "\" is not a valid unicode escape");
-                  value = value * 16 + hexValue(unit(cursor_[index]));
-                }
-                appendUnit(value);
-                cursor_ += 5;
-                break;
-              }
-              default:
-                fail("Invalid escape character " + units(cursor_, 1));
-            }
-          }
-        } while (cursor_ != runStart && cursor_ < end_ && *cursor_ != '"');
-        if (cursor_ >= end_ || *cursor_ != '"') fail("Unterminated string");
-        if constexpr (std::is_same_v<Unit, char>) string_ = std::move(builder_);
-        else string_ = fromUtf16(wideBuilder_);
-        ++cursor_;
-        return type_ = Token::String;
-      }
-
-      std::string identifierMessage() const {
-        constexpr std::size_t kMaxLength = 200;
-        const auto length = static_cast<std::size_t>(cursor_ - start_);
-        std::string text;
-        for (std::size_t index = 0; index < std::min(length, kMaxLength); ++index) text += static_cast<char>(unit(start_[index]));
-        return "Unexpected identifier \"" + text + (length > kMaxLength ? "..." : "") + "\"";
-      }
-
-      static void enter(const std::vector<Frame>& stack) {
-        if (stack.size() >= kJsonMaxDepth) throwStackOverflow();
-      }
-
-      json::value parseValue() {
-        std::vector<Frame> stack;
-        json::value last;
-        while (true) {
-          switch (type_) {
-            case Token::LBracket:
-              enter(stack);
-              if (next() == Token::RBracket) {
-                next();
-                last = json::array();
-                break;
-              }
-              stack.push_back({json::array(), std::string(), false});
-              continue;
-            case Token::LBrace: {
-              enter(stack);
-              const Token type = next();
-              if (type == Token::String) {
-                std::string key = std::move(string_);
-                if (next() != Token::Colon) fail("Expected ':' before value in object property definition");
-                next();
-                stack.push_back({json::object(), std::move(key), false});
-                continue;
-              }
-              if (type != Token::RBrace) fail("Expected '}'");
-              next();
-              last = json::object();
-              break;
-            }
-            case Token::String:
-              last = json::string(string_);
-              next();
-              break;
-            case Token::Number:
-              last = makeNumber(number_);
-              next();
-              break;
-            case Token::Null:
-              next();
-              last = nullptr;
-              break;
-            case Token::True:
-              next();
-              last = true;
-              break;
-            case Token::False:
-              next();
-              last = false;
-              break;
-            case Token::RBracket:
-              fail("Unexpected token ']'");
-            case Token::LParen:
-              fail("Unexpected token '('");
-            case Token::RParen:
-              fail("Unexpected token ')'");
-            case Token::RBrace:
-              fail("Unexpected token '}'");
-            case Token::Colon:
-              fail("Unexpected token ':'");
-            case Token::Comma:
-              fail("Unexpected token ','");
-            case Token::Dot:
-              fail("Unexpected token '.'");
-            case Token::Assign:
-              fail("Unexpected token '='");
-            case Token::Semi:
-              fail("Unexpected token ';'");
-            case Token::End:
-              fail("Unexpected EOF");
-            case Token::Identifier:
-              fail(identifierMessage());
-            case Token::Error:
-              fail("Could not parse value expression");
-          }
-          // A value is complete: hand it to the enclosing array or object.
-          while (true) {
-            if (stack.empty()) return last;
-            Frame& frame = stack.back();
-            if (frame.container.is_array()) {
-              frame.container.get_array().push_back(std::move(last));
-              if (type_ == Token::Comma) {
-                if (next() == Token::RBracket) fail("Unexpected comma at the end of array expression");
-                break;
-              }
-              if (type_ != Token::RBracket) fail("Expected ']'");
-            } else {
-              json::object& object = frame.container.get_object();
-              if (!frame.hasIndexKey && isArrayIndex(frame.key)) frame.hasIndexKey = true;
-              object.insert_or_assign(frame.key, std::move(last));
-              if (type_ == Token::Comma) {
-                if (next() != Token::String) fail("Property name must be a string literal");
-                frame.key = std::move(string_);
-                if (next() != Token::Colon) fail("Expected ':' before value in object property definition");
-                next();
-                break;
-              }
-              if (type_ != Token::RBrace) fail("Expected '}'");
-              if (frame.hasIndexKey) restoreOrder(object);
-            }
-            next();
-            last = std::move(frame.container);
-            stack.pop_back();
-          }
-        }
-      }
-
-      const Unit* cursor_;
-      const Unit* end_;
-      const Unit* start_ = nullptr;
-      Token type_ = Token::Error;
-      std::string string_;
-      double number_ = 0;
-      std::string builder_;
-      std::u16string wideBuilder_;
-    };
 
     // `depth` counts the arrays and objects already entered; entering one more must stay
     // within kJsonMaxDepth.
@@ -1305,47 +605,31 @@ namespace uos::rt {
     return out;
   }
 
-  std::string jsonStringify(const json::value& value) {
-    Serializer serializer({}, nullptr);
-    serializer.root(value);
-    return std::move(serializer.out);
-  }
+  std::string jsonStringify(const json::value& value) { return writeJson(value, {}); }
 
   std::string jsonStringify(const json::value& value, int space) {
-    Serializer serializer(std::string(static_cast<std::size_t>(std::clamp(space, 0, 10)), ' '), nullptr);
-    serializer.root(value);
-    return std::move(serializer.out);
+    return writeJson(value, std::string(static_cast<std::size_t>(std::clamp(space, 0, 10)), ' '));
   }
 
-  std::string jsonStringify(const json::value& value, std::string_view gap) {
-    Serializer serializer(gapFromString(gap), nullptr);
-    serializer.root(value);
-    return std::move(serializer.out);
-  }
+  std::string jsonStringify(const json::value& value, std::string_view gap) { return writeJson(value, gapFromString(gap)); }
 
   std::optional<std::string> jsonStringify(const json::value& value, const JsonReplacer& replacer, std::string_view gap) {
-    Serializer serializer(gapFromString(gap), replacer ? &replacer : nullptr);
-    if (!serializer.root(value)) return std::nullopt;
-    return std::move(serializer.out);
+    if (!replacer) return writeJson(value, gapFromString(gap));
+    auto root = replacer("", value);
+    if (!root) return std::nullopt;
+    return writeJson(*root, gapFromString(gap), replacer);
   }
 
   std::string jsonQuote(std::string_view text) {
     std::string out;
-    out.reserve(text.size() + 2);
-    appendQuoted(out, text);
+    json::serializer writer;
+    appendQuoted(out, writer, text);
     return out;
   }
 
-  json::value jsonParse(std::string_view text) {
-#if defined(UOS_GATEWAY_SIMDJSON)
-    if (auto value = detail::tryParseSimdJson(text)) return std::move(*value);
-#elif BOOST_VERSION == 109200
-    if (auto value = tryParseBoost(text)) return std::move(*value);
-#endif
-    if (isAscii(text)) return Parser<char>(text).parse();
-    const std::u16string units = toUtf16(text);
-    return Parser<char16_t>(units).parse();
-  }
+  json::value jsonParse(std::string_view text) { return jsonParseWithLimit(text, limits::kJsonDocumentBytes); }
+
+  json::value jsonParseWithLimit(std::string_view text, std::size_t maxDocumentBytes) { return detail::parseSimdJson(text, maxDocumentBytes); }
 
   json::value jsonParseBody(std::string_view text, bool emptyBody) {
     if (emptyBody) throw SyntaxError("Unexpected end of JSON input");

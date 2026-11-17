@@ -9,6 +9,7 @@
 #include "uos/responses_handler.hpp"
 #include "uos/rt/clock.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/ordered.hpp"
 #include "uos/rt/regex.hpp"
@@ -31,12 +32,12 @@ namespace {
   constexpr double IMAGE_MAX_EDIT_INPUTS = 16;
   constexpr double IMAGE_MAX_PROMPT_CHARS = 32'000;
   constexpr double IMAGE_MAX_REFERENCE_URL_CHARS = 20'971'520;
-  constexpr double IMAGE_MAX_FILE_BYTES = 50 * 1'024 * 1'024;
+  constexpr double IMAGE_MAX_FILE_BYTES = static_cast<double>(rt::limits::kImageEditInputBytes);
   constexpr double IMAGE_MAX_MASK_FILE_BYTES = IMAGE_MAX_FILE_BYTES;
-  constexpr double IMAGE_MAX_MULTIPART_INPUT_BYTES = 50 * 1'024 * 1'024;
-  constexpr double IMAGE_MAX_MULTIPART_BODY_BYTES = 64 * 1'024 * 1'024;
-  constexpr double IMAGE_MAX_FANOUT_INPUT_BYTES = 50 * 1'024 * 1'024;
-  constexpr double IMAGE_MAX_JSON_BODY_BYTES = rt::Math::ceil(IMAGE_MAX_FANOUT_INPUT_BYTES / 3) * 4 + 1'024 * 1'024;
+  constexpr double IMAGE_MAX_MULTIPART_INPUT_BYTES = IMAGE_MAX_FILE_BYTES;
+  constexpr double IMAGE_MAX_MULTIPART_BODY_BYTES = static_cast<double>(rt::limits::kImageEditMultipartBytes);
+  constexpr double IMAGE_MAX_FANOUT_INPUT_BYTES = IMAGE_MAX_FILE_BYTES;
+  constexpr double IMAGE_MAX_JSON_BODY_BYTES = static_cast<double>(rt::limits::kImageEditJsonBytes);
   const std::array<std::pair<std::string_view, std::string_view>, 4> IMAGE_MEDIA_TYPE_BY_EXTENSION{{
     {".jpeg", "image/jpeg"}, {".jpg", "image/jpeg"}, {".png", "image/png"}, {".webp", "image/webp"}}};
   const std::array<std::pair<std::string_view, std::string_view>, 5> IMAGE_MEDIA_TYPE_ALIASES{{
@@ -347,7 +348,9 @@ namespace {
       if (const auto* failure = std::get_if<ImageRequestFailure>(&multipart)) co_return *failure;
       const auto& value = std::get<ParsedImageRequestOk>(multipart); co_return finalizeImageRequest(value.body, kind, value.inputBytes, true);
     }
-    auto task = request::readJsonBody(req, kind == "edits" ? IMAGE_MAX_JSON_BODY_BYTES : static_cast<double>(request::MAX_ACCEPTED_JSON_BODY_BYTES));
+    auto task = kind == "edits"
+        ? request::readJsonBody(req, IMAGE_MAX_JSON_BODY_BYTES, rt::limits::kImageEditJsonBytes)
+        : request::readJsonBody(req);
     rt::Promise<json::value> pending(std::move(task)); const auto raw = co_await pending.wait();
     if (raw.is_null()) co_return imageRequestError(kind == "edits" ? "Image edits must use a JSON object or multipart form-data body." : "Image generation requests must use a JSON object body.");
     co_return finalizeImageRequest(raw, kind, 0, false);

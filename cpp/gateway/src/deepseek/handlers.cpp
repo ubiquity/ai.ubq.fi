@@ -216,32 +216,32 @@ namespace uos::deepseek::handlers {
     options.onHeaders = [usageContext] { recordFirstProviderHeaders(usageContext); };
     if (usageContext) options.sentinelUpstreamRecorder = usageContext->sentinelUpstreamRecorder;
     std::optional<rt::Response> upstream; rt::Reason failure;
-    try { auto task = fetchDeepSeekChatCompletions(body, modelRaw, options); upstream = co_await std::move(task); } catch (...) { failure = std::current_exception(); }
+    try { auto task = fetchDeepSeekChatCompletions(std::move(body), modelRaw, options); upstream = co_await std::move(task); } catch (...) { failure = std::current_exception(); }
     if (failure) { auto task = respondDeepSeekChatDispatchFailure(failure, downstreamSignal, usageContext); auto response = co_await std::move(task); co_return DeepSeekResponseNotOk{std::move(response)}; }
     auto providerRequestId = getDeepSeekProviderRequestId(*upstream);
     if (usageContext && usageContext->responseTelemetry) usageContext->responseTelemetry->providerRequestId = providerRequestId;
     if (!upstream->ok()) { auto task = respondDeepSeekChatUpstreamHttpFailure(*upstream, requestSignal, providerRequestId, usageContext, *bodyDiagnostic); auto response = co_await std::move(task); co_return DeepSeekResponseNotOk{std::move(response)}; }
     co_return DeepSeekDispatchOk{*upstream, providerRequestId, requestSignal, downstreamSignal};
   }
-  rt::Task<rt::Response> handleDeepSeekChatCompletions(rt::Request req, json::object rawRecord, std::string modelRaw, const UsageContext* usageContext) {
-    auto parsed = validateDeepSeekChatRequestFields(rawRecord);
+  rt::Task<rt::Response> handleDeepSeekChatCompletions(rt::Request req, json::object body, std::string modelRaw, const UsageContext* usageContext) {
+    auto parsed = validateDeepSeekChatRequestFields(body);
     if (auto* refusal = std::get_if<DeepSeekResponseNotOk>(&parsed)) co_return refusal->response;
     const auto fields = std::get<DeepSeekChatRequestOk>(parsed).value; json::value effort(fields.reasoning);
-    auto conflict = deepSeekThinkingToolChoiceConflict(&effort, rt::get(rawRecord, "thinking"), rt::get(rawRecord, "tool_choice"));
+    auto conflict = deepSeekThinkingToolChoiceConflict(&effort, rt::get(body, "thinking"), rt::get(body, "tool_choice"));
     if (conflict) co_return http::openaiError(400, deepSeekToolChoiceThinkingConflictMessage(*conflict, "reasoning_effort"), "invalid_request_error", {.param = "tool_choice"});
     auto upstreamModel = deepSeekUpstreamModelFor(modelRaw).value_or(std::string(DEEPSEEK_FLASH_MODEL));
     // thinking is an input to effort resolution, not a second wire representation.
-    auto body = rawRecord; body["reasoning_effort"] = fields.reasoning; body["stream"] = fields.clientWantsStream; rt::objectDelete(body, "thinking");
+    body["reasoning_effort"] = fields.reasoning; body["stream"] = fields.clientWantsStream; rt::objectDelete(body, "thinking");
     if (fields.clientWantsStream) { if (!utils::isRecord(rt::get(body, "stream_options"))) body["stream_options"] = json::object{{"include_usage", true}}; }
     else rt::objectDelete(body, "stream_options");
     if (usageContext && usageContext->responseTelemetry) {
       usageContext->responseTelemetry->provider = "deepseek"; usageContext->responseTelemetry->reasoning = fields.reasoning;
       // Observability only: an omitted client cap stays omitted on the upstream wire.
-      auto allowance = deepSeekChatClientOutputAllowance(rawRecord); if (!allowance) allowance = deepSeekDefaultOutputAllowance(fields.reasoning);
+      auto allowance = deepSeekChatClientOutputAllowance(body); if (!allowance) allowance = deepSeekDefaultOutputAllowance(fields.reasoning);
       usageContext->responseTelemetry->outputTokenAllowance = allowance;
     }
     RecordRequestUsageDetails details{modelRaw, "chat.completions", fields.clientWantsStream, fields.reasoning}; auto requestUsage = recordRequestUsage(usageContext, details); co_await requestUsage.wait();
-    auto dispatchTask = dispatchDeepSeekUpstream(req, body, modelRaw, usageContext); auto dispatched = co_await std::move(dispatchTask);
+    auto dispatchTask = dispatchDeepSeekUpstream(req, std::move(body), modelRaw, usageContext); auto dispatched = co_await std::move(dispatchTask);
     if (auto* refusal = std::get_if<DeepSeekResponseNotOk>(&dispatched)) co_return refusal->response;
     auto value = std::get<DeepSeekDispatchOk>(dispatched); auto providerRequestId = value.providerRequestId;
     if (fields.clientWantsStream) co_return streamDeepSeekChatCompletion(value.upstream, providerRequestId, usageContext, value.downstreamSignal, value.requestSignal, upstreamModel);

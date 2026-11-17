@@ -43,6 +43,7 @@
 #include "uos/request.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/test_async.hpp"
@@ -276,11 +277,22 @@ ASYNC_TEST("image fan-out creates isolated JSON child requests") {
   for(const auto& h:headers) { EXPECT_EQ(h.entries().size(),std::size_t{1}); EXPECT_EQ(h.get("content-type"),std::optional<std::string>("application/json")); }
 }
 ASYNC_TEST("image JSON ingress rejects declared and chunked oversized bodies before dispatch") {
-  ImageScope scope; int calls=0; const auto options=countingDispatch(calls); auto declared=imagesRequest(R"({"prompt":"never dispatch"})"); declared.headers().set("content-length",rt::numberToString(request::MAX_ACCEPTED_JSON_BODY_BYTES+1));
+  ImageScope scope; int calls=0; const auto options=countingDispatch(calls); auto declared=imagesRequest(R"({"prompt":"never dispatch"})"); declared.headers().set("content-length",rt::numberToString(rt::limits::kHttpBodyBytes + 1));
   AWAIT(response,im::handleImages(declared,"generations",nullptr,options)); EXPECT_EQ(response.status(),400);
-  rt::UnderlyingSource<rt::ByteChunk> source; source.start=[](auto controller) { controller.enqueue(rt::Bytes(static_cast<std::size_t>(request::MAX_ACCEPTED_JSON_BODY_BYTES-1))); controller.enqueue(rt::Bytes(2)); controller.close(); };
+  rt::UnderlyingSource<rt::ByteChunk> source; source.start=[](auto controller) { controller.enqueue(rt::Bytes(rt::limits::kHttpBodyBytes - 1)); controller.enqueue(rt::Bytes(2)); controller.close(); };
   rt::RequestInit init; init.method="POST"; init.headers=rt::Headers{{"content-type","application/json"}}; init.body=rt::ByteStream(source); const rt::Request chunked("http://127.0.0.1/v1/images/generations",init);
   AWAIT(chunkedResponse,im::handleImages(chunked,"generations",nullptr,options)); EXPECT_EQ(chunkedResponse.status(),400); EXPECT_EQ(calls,0);
+}
+ASYNC_TEST("inline image edits dispatch a valid JSON body above the ordinary size limit") {
+  ImageScope scope;
+  int calls = 0;
+  const auto options = countingDispatch(calls);
+  const std::string reference = "data:image/png;base64," + std::string(rt::limits::kJsonDocumentBytes, 'A');
+  const json::value body = json::object{{"prompt", "edit the source"}, {"images", json::array{json::object{{"image_url", reference}}}}};
+  const auto request = imagesRequest(body, "/v1/images/edits");
+  AWAIT(response, im::handleImages(request, "edits", nullptr, options));
+  EXPECT_EQ(response.status(), 200);
+  EXPECT_EQ(calls, 1);
 }
 ASYNC_TEST("fan-out dispatch coordination never refunds after a sibling transport starts") {
   auto gate=rt::withResolvers<void>(); int admissions=0,starts=0,cancellations=0;

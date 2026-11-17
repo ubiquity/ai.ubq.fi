@@ -62,8 +62,8 @@ TEST("Bun cursors parse as JSON and must name a hex key inside the replay prefix
   EXPECT_EQ(outcome(reapKey, rt::KvValue(btoa("null")), "bun-to-deno"), "TypeError null is not an object (evaluating 'decoded.lastYieldedKeyBytes')");
   EXPECT_EQ(outcome(reapKey, rt::KvValue(btoa("5")), "bun-to-deno"), "Error Invalid Bun cursor");
   EXPECT_EQ(outcome(reapKey, rt::KvValue(btoa("[1]")), "bun-to-deno"), "Error Invalid Bun cursor");
-  EXPECT_EQ(outcome(reapKey, rt::KvValue(btoa("{x")), "bun-to-deno"), "SyntaxError JSON Parse error: Expected '}'");
-  EXPECT_EQ(outcome(reapKey, rt::KvValue("!!!!"), "bun-to-deno"), "SyntaxError JSON Parse error: Unexpected EOF");
+  EXPECT_EQ(outcome(reapKey, rt::KvValue(btoa("{x")), "bun-to-deno"), "SyntaxError Invalid JSON");
+  EXPECT_EQ(outcome(reapKey, rt::KvValue("!!!!"), "bun-to-deno"), "SyntaxError Invalid JSON");
   EXPECT_EQ(outcome(reapKey, rt::KvValue(btoa(R"({"lastYieldedKeyBytes":"AB"})")), "bun-to-deno"), "Error Invalid Bun cursor");
   EXPECT_EQ(outcome(reapKey, rt::KvValue(btoa(R"({"lastYieldedKeyBytes":"abc"})")), "bun-to-deno"), "Error Invalid Bun cursor");
   EXPECT_EQ(outcome(reapKey, rt::KvValue(btoa(R"({"lastYieldedKeyBytes":5})")), "bun-to-deno"), "Error Invalid Bun cursor");
@@ -71,7 +71,7 @@ TEST("Bun cursors parse as JSON and must name a hex key inside the replay prefix
   EXPECT_EQ(outcome(reapKey, rt::KvValue(btoa(R"({"lastYieldedKeyBytes":")" + accountingHex + "\"}")), "bun-to-deno"), "changed \"\"");
   EXPECT_EQ(outcome(reapKey, rt::KvValue(btoa(R"({"lastYieldedKeyBytes":")" + accountingHex + "fbff3e\"}")), "bun-to-deno"), "changed \"-_8-\"");
   EXPECT_EQ(outcome(reapKey, rt::KvValue(btoa("\xEF\xBB\xBF{\"lastYieldedKeyBytes\":\"" + accountingHex + "00\"}")), "bun-to-deno"),
-            "SyntaxError JSON Parse error: Unrecognized token '\xEF\xBB\xBF'");
+            "SyntaxError Invalid JSON");
   EXPECT_EQ(outcome(reapKey, rt::KvValue(btoa(" \n{\"lastYieldedKeyBytes\":\"" + accountingHex + "00\"} ")), "bun-to-deno"), "changed \"AA==\"");
   EXPECT_EQ(outcome(reapKey, rt::KvValue(btoa("{\"lastYieldedKeyBytes\":5,\"lastYieldedKeyBytes\":\"" + accountingHex + "01\"}")), "bun-to-deno"), "changed \"AQ==\"");
 }

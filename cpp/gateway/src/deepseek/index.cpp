@@ -623,10 +623,10 @@ namespace uos::deepseek::index {
 
   rt::Task<rt::Response> fetchDeepSeekChatCompletions(json::object body, std::string requestedModel, DeepSeekChatCompletionsOptions options) {
     std::string encodedBody;
-    json::object projectedBody;
+    json::value projectedBody;
     try {
-      projectedBody = projectDeepSeekRequest(body, requestedModel);
-      encodedBody = rt::jsonStringify(json::value(projectedBody));
+      projectedBody = json::value(projectDeepSeekRequest(body, requestedModel));
+      encodedBody = rt::jsonStringify(projectedBody);
     } catch (const DeepSeekError&) {
       throw;
     } catch (...) {
@@ -635,7 +635,7 @@ namespace uos::deepseek::index {
     // The TS also refuses a `JSON.stringify` result that is not a string (a body whose
     // `toJSON` yields undefined); a json::object has no toJSON, so its text always exists.
 
-    if (options.onProjectedBody) options.onProjectedBody(projectedBody);
+    if (options.onProjectedBody) options.onProjectedBody(projectedBody.as_object());
 
     const std::string apiKey = requireDeepSeekApiKey(options.apiKey);
     const rt::Headers headers{
@@ -676,7 +676,7 @@ namespace uos::deepseek::index {
       rt::RequestInit init;
       init.method = "POST";
       init.headers = headers;
-      init.body = rt::BodyInit(encodedBody);
+      init.body = rt::BodyInit(std::move(encodedBody));
       init.redirect = "manual";
       init.signal = signal;
       const DeepSeekFetch fetcher = options.fetcher ? options.fetcher : rt::globalFetch();

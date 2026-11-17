@@ -1,8 +1,7 @@
 #include "uos/rt/text_codec.hpp"
 
 #include "uos/rt/string.hpp"
-
-#include <array>
+#include "third_party/simdutf/simdutf.h"
 
 namespace uos::rt {
   namespace {
@@ -29,42 +28,8 @@ namespace uos::rt {
       return position == 1 ? value >= lead.lower && value <= lead.upper : value >= 0x80 && value <= 0xBF;
     }
 
-    // One step of the decoder at `p`: a complete sequence (size bytes, copied as is), an
-    // ill-formed subpart (size bytes, read as one U+FFFD), or a valid prefix cut by `end`.
-    enum class StepKind { Valid, Invalid, Truncated };
-    struct Step {
-      StepKind kind;
-      std::size_t size;
-    };
-    Step step(const Byte* p, const Byte* end) {
-      if (*p < 0x80) return {StepKind::Valid, 1};
-      const Lead lead = leadOf(*p);
-      if (lead.needed == 0) return {StepKind::Invalid, 1};
-      for (std::size_t position = 1; position <= lead.needed; ++position) {
-        if (p + position >= end) return {StepKind::Truncated, position};
-        if (!acceptsAt(lead, position, p[position])) return {StepKind::Invalid, position};
-      }
-      return {StepKind::Valid, lead.needed + 1};
-    }
-
-    // End of the longest prefix of complete well-formed sequences.
-    const Byte* validPrefix(const Byte* p, const Byte* end) {
-      while (p < end) {
-        if (*p < 0x80) {
-          ++p;
-          continue;
-        }
-        const Step next = step(p, end);
-        if (next.kind != StepKind::Valid) break;
-        p += next.size;
-      }
-      return p;
-    }
-
     inline const Byte* bytesOf(std::string_view text) { return reinterpret_cast<const Byte*>(text.data()); }
     inline std::span<const Byte> spanOf(std::string_view text) { return {bytesOf(text), text.size()}; }
-
-    void appendBytes(std::string& out, const Byte* from, const Byte* to) { out.append(reinterpret_cast<const char*>(from), static_cast<std::size_t>(to - from)); }
 
     bool isAsciiWhitespace(char value) { return value == '\t' || value == '\n' || value == '\f' || value == '\r' || value == ' '; }
 
@@ -87,20 +52,21 @@ namespace uos::rt {
     template <class Fail>
     std::size_t decodeRun(std::string& out, const Byte* p, const Byte* end, bool fatal, bool stream, Fail&& fail) {
       while (p < end) {
-        const Byte* valid = validPrefix(p, end);
-        appendBytes(out, p, valid);
-        p = valid;
+        const auto prefix = simdutf::validate_utf8_with_errors(
+          reinterpret_cast<const char*>(p), static_cast<std::size_t>(end - p));
+        out.append(reinterpret_cast<const char*>(p), prefix.count);
+        p += prefix.count;
         if (p == end) break;
-        const Step next = step(p, end);
-        if (next.kind == StepKind::Truncated) {
-          if (stream) return static_cast<std::size_t>(end - p);
-          if (fatal) fail();
-          out += REPLACEMENT;
-          break;
-        }
+
+        // Inspect only the rejected sequence. A valid incomplete prefix is held
+        // when streaming; other maximal subparts are replaced or rejected.
+        const Lead lead = leadOf(*p);
+        std::size_t consumed = 1;
+        while (consumed <= lead.needed && p + consumed < end && acceptsAt(lead, consumed, p[consumed])) ++consumed;
+        if (stream && consumed <= lead.needed && p + consumed == end) return consumed;
         if (fatal) fail();
         out += REPLACEMENT;
-        p += next.size;
+        p += consumed;
       }
       return 0;
     }
@@ -115,8 +81,7 @@ namespace uos::rt {
   std::size_t utf8ByteLength(std::string_view text) { return isUtf8(text) ? text.size() : toWellFormed(text).size(); }
 
   bool isUtf8(std::span<const std::uint8_t> bytes) noexcept {
-    const Byte* end = bytes.data() + bytes.size();
-    return validPrefix(bytes.data(), end) == end;
+    return bytes.empty() || simdutf::validate_utf8(reinterpret_cast<const char*>(bytes.data()), bytes.size());
   }
   bool isUtf8(std::string_view bytes) noexcept { return isUtf8(spanOf(bytes)); }
 

@@ -16,6 +16,7 @@
 #include "uos/utils.hpp"
 #include "uos/rt/clock.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
 
@@ -230,7 +231,7 @@ namespace uos::decisions::handlers {
     }
 
     rt::Task<rt::Response> handleDecisionsImpl(rt::Request req, std::optional<telemetry::UsageContext> usageContext, DecisionsHandlerDeps deps) {
-      rt::Promise<request::JsonBodyReadResult> reading(request::readJsonBodyWithLimit(req, request::MAX_ACCEPTED_JSON_BODY_BYTES));
+      rt::Promise<request::JsonBodyReadResult> reading(request::readJsonBodyWithLimit(req, rt::limits::kHttpBodyBytes));
       const auto read = co_await reading.wait();
       if (const auto* failure = std::get_if<request::JsonBodyReadResultNotOk>(&read))
         co_return failure->kind == "too_large" ? http::openaiError(413, "The Decisions request body is too large", "decisions_request_too_large") :

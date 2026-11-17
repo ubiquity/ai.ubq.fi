@@ -1,6 +1,8 @@
-# Cross-module conventions fixed by earlier porters (binding for later ones)
+# Cross-module conventions and port receipts
 
-Maintained by the orchestrator from chunk reports. Read before porting.
+Use pinned libraries for generic operations and retain the gateway's application, wire, validation, security, storage and settlement contracts. The conventions and wave notes below record the earlier implementation and fixture results. Current changes follow [PORTING.md](../PORTING.md) and record deliberate generic differences in [Deviations from Bun](DEVIATIONS-FROM-BUN.md).
+
+Keep application-specific field order, coercion, status, error code and log shape where consumers rely on them. Use explicit runtime helpers for those requirements. Preserve established coroutine ownership, cancellation and receipt semantics. Promote library changes using focused application tests and robustness checks against the exact candidate. [Replacement plan](OSS-REPLACEMENT-PLAN.md) [Input limits](RUNTIME.md#input-limits)
 
 ## Records and unions (from src/types.ts and the authority contract modules)
 
@@ -28,7 +30,7 @@ Maintained by the orchestrator from chunk reports. Read before porting.
   zeroing), use `std::shared_ptr<rt::Bytes>` (request.hpp does). `.fill(0)` on secrets:
   `OPENSSL_cleanse`, not `std::fill`.
 
-## Known rt divergences from Bun (do not pin them in tests)
+## Historical buffered-body observations
 
 - A Response built from another Response's buffered body marks the source `bodyUsed` only
   after the stream is read. After an empty buffered Request body is read to its end, rt
@@ -692,14 +694,14 @@ co_await p.wait();`. A bare `rt::Fetch` call returns a lazy Task whose body woul
 
 ## Wave 5 chunk 6 (scope targets, DeepSeek payload/projection/stream/aliases, Lithos models)
 
-- `PROMPT_ADMISSION_PROFILE_WINDOWS()` is an accessor to avoid static initialization dependencies. Stream translator copies share callback-owned state. Preserve existing Flash date/classifier quirks.
+- `PROMPT_ADMISSION_PROFILE_WINDOWS()` is an accessor to avoid static initialization dependencies. Stream translator copies share callback-owned state. The wave retained the existing Flash date and classifier results.
 - Keep KV selection branches separate from `co_await`: a shared_ptr ternary across await caused GCC12.2 ownership corruption; the scope-target loader now has an explicit-branch lifetime regression.
 - Fourteen suites pin complete owned API outputs and argument mutations. Handler/Codex assembly assertions, upstream-wire predicates and scope-experiment harness integration remain named in test headers for their final-module owners.
 
 ## Wave 5 chunk 2 (scope experiment model, OpenRouter, Claude access)
 
 - OpenRouter options are `OpenRouterDispatchInit` and `OpenRouterDecisionInput`; `apiKey` uses `rt::Nullable<std::string>`. Scope results are `ReadSampleResultSample` / `ReadSampleResultInconclusive`; stored guards preserve optional versus present undefined.
-- Preserve the source quirk where an empty first unknown cache_control key suppresses unknown-key rejection. Use explicit vectors for multi-variable `ScopedEnvironment` fixtures to avoid nested-brace string-constructor ambiguity. The documented localeCompare Unicode limits remain.
+- The source fixture recorded that an empty first unknown cache_control key suppresses unknown-key rejection. Use explicit vectors for multi-variable `ScopedEnvironment` fixtures to avoid nested-brace string-constructor ambiguity. The documented localeCompare Unicode limits remain.
 - The Sentinel OpenRouter literal is replaced with the real route; capture and zero-attempt quota assertions pass on both wires. Higher handler/catalog/admin and complete replay-export cases remain deferred in test headers.
 
 ## Wave 5 chunk 3 (auth/admin, native authority contracts and RPC)
@@ -822,7 +824,7 @@ co_await p.wait();`. A bare `rt::Fetch` call returns a lazy Task whose body woul
 
 ## Wave 9 chunks 1 and 3 (images and terminal logging)
 
-- Images use owning context copies, shared telemetry/raw-body state and named Promises with the real Responses handler. Preserve empty-first-unknown-field, exact unnamed-file TypeError and Codex-only fallback behavior. Real file-limit refusals pass; JS prototype read-count instrumentation and inherited IDNA limits remain explicit.
+- Images use owning context copies, shared telemetry/raw-body state and named Promises with the real Responses handler. This wave recorded empty-first-unknown-field behavior, the unnamed-file TypeError and the Codex-only fallback policy. Real file-limit refusals pass; JS prototype read-count instrumentation and inherited IDNA limits remain explicit.
 - Terminal wrappers return rt::Promise<rt::Response>; await .wait(). Callback seams start synchronously and may accept Task-returning lambdas. Heterogeneous discarded allSettled values use a local adapter. Eventual telemetry retention waits bounded queue flush where native crypto timing differs; original nonblocking/cancellation semantics remain separately checked. True final handler ingress stays with w10c1.
 
 ## Wave 9 chunk 4 (chat envelope and deferred Lithos lifetime)

@@ -1,7 +1,7 @@
 #include "uos/request.hpp"
 
 #include "uos/rt/error.hpp"
-#include "uos/rt/json.hpp"
+#include "uos/rt/json_document.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/stream.hpp"
@@ -131,17 +131,17 @@ namespace uos::request {
     }
   }
 
-  rt::Task<JsonBodyReadResult> readJsonBodyWithLimit(rt::Request req, double maxBytes) {
+  rt::Task<JsonBodyReadResult> readJsonBodyWithLimit(rt::Request req, double maxBodyBytes, std::size_t maxDocumentBytes) {
     std::shared_ptr<rt::Bytes> bytes;
     bool captured = false;
     std::optional<JsonBodyReadResult> result;
     rt::Reason error;
     try {
-      bytes = co_await readBoundedRequestBody(req, maxBytes);
+      bytes = co_await readBoundedRequestBody(req, maxBodyBytes);
       if (bytes->empty()) {
         result = JsonBodyReadResultNotOk{"empty"};
       } else {
-        json::value parsed = rt::jsonParse(rt::decodeUtf8(*bytes));
+        json::value parsed = rt::jsonParseWithLimit(rt::decodeUtf8(*bytes), maxDocumentBytes);
         // Replay capture has its own fixed 32 MiB storage contract even when a
         // route permits a larger JSON body for protocol-specific payloads.
         captured = captureRawBodyOnce(req, bytes);
@@ -167,8 +167,8 @@ namespace uos::request {
     co_return std::move(*result);
   }
 
-  rt::Task<json::value> readJsonBody(rt::Request req, double maxBytes) {
-    JsonBodyReadResult result = co_await readJsonBodyWithLimit(req, maxBytes);
+  rt::Task<json::value> readJsonBody(rt::Request req, double maxBodyBytes, std::size_t maxDocumentBytes) {
+    JsonBodyReadResult result = co_await readJsonBodyWithLimit(req, maxBodyBytes, maxDocumentBytes);
     if (JsonBodyReadResultOk* ok = std::get_if<JsonBodyReadResultOk>(&result)) co_return std::move(ok->value);
     co_return json::value(nullptr);
   }

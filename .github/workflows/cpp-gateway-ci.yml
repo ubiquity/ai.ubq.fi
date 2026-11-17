@@ -1,0 +1,66 @@
+name: C++ gateway CI
+run-name: C++ gateway CI ${{ github.sha }}
+
+# Builds the whole C++ gateway in release mode on ARM64 and runs the full test
+# suite in four shards, using the portable driver in cpp/gateway/tools/ci-build.sh.
+# This is the build-and-test gate for branches produced off the production host.
+on:
+  push:
+    branches: [claude/cpp-gateway-port, "pool-merge/**"]
+    paths:
+      - .github/workflows/cpp-gateway-ci.yml
+      - cpp/gateway/**
+  workflow_dispatch:
+
+concurrency:
+  group: cpp-gateway-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: release suite (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang ninja-build pkg-config mold util-linux libboost-json-dev libboost-container-dev \
+            libssl-dev libsqlite3-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev
+          clang++ --version
+      - name: Build SQLite 3.54.0 (the suite's pinned version)
+        run: |
+          mkdir -p "$RUNNER_TEMP/sqlite" && cd "$RUNNER_TEMP/sqlite"
+          curl --fail --silent --show-error --location https://www.sqlite.org/2026/sqlite-autoconf-3540000.tar.gz -o sqlite.tar.gz
+          echo "134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed  sqlite.tar.gz" | sha256sum --check
+          tar -xzf sqlite.tar.gz && cd sqlite-autoconf-3540000
+          ./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3' > /dev/null
+          make -j4 > /dev/null && sudo make install > /dev/null && sudo ldconfig
+          pkg-config --modversion sqlite3
+      - name: Build and test
+        env:
+          CXX: clang++
+          UOS_CI_JOBS: 4
+          UOS_CI_BUILD_DIR: ${{ runner.temp }}/uos-gateway-build
+          SHARD: ${{ matrix.shard }}
+        run: cpp/gateway/tools/ci-build.sh --config release --shard "$SHARD/4"
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-release-shard-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/uos-gateway-build/**/results*.json
+            ${{ runner.temp }}/uos-gateway-build/**/*.log
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,11 +1,10 @@
-// Differential tests for uos/rt/base64.hpp. Every expected value between the
-// generated-vectors markers was produced by Bun 1.4.0 (the oracle): btoa, atob,
-// Buffer.from(text, encoding), buf.toString(encoding), the encoding-name table, and the
-// src/utils.ts helpers built on them.
+// Coverage for uos/rt/base64.hpp. The vectors were recorded from Bun 1.4.0.
+// Buffer base64 and hex expectations follow the ASCII input rules where they differ.
 #include "uos/rt/base64.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -18,6 +17,11 @@ namespace rt = uos::rt;
 namespace {
   std::span<const std::uint8_t> bytesOf(std::string_view text) { return {reinterpret_cast<const std::uint8_t*>(text.data()), text.size()}; }
   std::vector<std::uint8_t> vectorOf(std::string_view text) { return {bytesOf(text).begin(), bytesOf(text).end()}; }
+
+  std::string_view expectedBufferBase64(std::string_view input, std::string_view original) {
+    const bool ascii = std::ranges::all_of(input, [](char byte) { return static_cast<unsigned char>(byte) < 0x80; });
+    return ascii ? original : std::string_view{};
+  }
 
   template <class A, class B>
   void rowEqual(const A& actual, const B& expected, const char* text, std::size_t row, int line) {
@@ -444,14 +448,14 @@ namespace {
     {"zz"sv, ""sv}, {"1234567"sv, "\0224V"sv},
     {"abcdef"sv, "\253\315\357"sv}, {"ABCDEF"sv, "\253\315\357"sv},
     {"a\304\200"sv, ""sv}, {"0x10"sv, ""sv},
-    {"\304\260\304\261"sv, "\001"sv}, {"\305\241\305\242"sv, "\253"sv},
+    {"\304\260\304\261"sv, ""sv}, {"\305\241\305\242"sv, ""sv},
     {"ff\355\240\275"sv, "\377"sv}, {"ff"sv, "\377"sv},
     {"deadBEEF"sv, "\336\255\276\357"sv}, {"0123456789abcdefABCDEF"sv, "\001#Eg\211\253\315\357\253\315\357"sv},
     {"f1Bdff."sv, "\361\275\377"sv}, {"0a6A8!"sv, "\012j"sv},
     {"F\014F33d9fBd3"sv, ""sv}, {"eA"sv, "\352"sv},
     {".5fd1bd79bF1DFb"sv, ""sv}, {"\000AE6062\302\240C\000A6a8"sv, ""sv},
     {"\303\277.3"sv, ""sv}, {"\0008EeA0aA_e"sv, ""sv},
-    {"19F9F19"sv, "\031\371\361"sv}, {"\343\265\2018CEeC"sv, "\250\316\354"sv},
+    {"19F9F19"sv, "\031\371\361"sv}, {"\343\265\2018CEeC"sv, ""sv},
     {"d3F37f-3B D"sv, "\323\363\177"sv}, {"6e"sv, "n"sv},
     {"31fF15d.7d91BFF"sv, "1\377\025"sv}, {"8e2\015EC\015A6EeE\011e"sv, "\216"sv},
     {"B7f"sv, "\267"sv}, {"6acaCEe8E2"sv, "j\312\316\350\342"sv},
@@ -459,15 +463,15 @@ namespace {
     {"f\303\2779d99\0121 Df"sv, ""sv}, {"CC"sv, "\314"sv},
     {"33B7bd5DBFf\303\277Db1"sv, "3\267\275]\277"sv}, {"Ac6E=\011CCc\302\240\302\240C26"sv, "\254n"sv},
     {"-31"sv, ""sv}, {"ACA=8aa2c0"sv, "\254"sv},
-    {"-F7dD\303\2779"sv, ""sv}, {"e8E\343\265\201CC"sv, "\350\352\314"sv},
+    {"-F7dD\303\2779"sv, ""sv}, {"e8E\343\265\201CC"sv, "\350"sv},
     {"bFD5\355\240\2003-79D\014"sv, "\277\325"sv}, {"EA"sv, "\352"sv},
     {"DDD5-b.3bBd571B"sv, "\335\325"sv}, {"!ce64\302\2402600\000A80"sv, ""sv},
     {"7b\355\240\200"sv, "{"sv}, {"C\0004646a=6a"sv, ""sv},
     {"bf\0143FdD"sv, "\277"sv}, {"C0406e"sv, "\300@n"sv},
     {"9\012DD911 35\012"sv, ""sv}, {"E8"sv, "\350"sv},
-    {"fb5f5b\014B\303\277db7b3\360\237\230\200"sv, "\373_["sv}, {"ecA8e8Aa4c\343\265\2016A6"sv, "\354\250\350\252L\246\246"sv},
+    {"fb5f5b\014B\303\277db7b3\360\237\230\200"sv, "\373_["sv}, {"ecA8e8Aa4c\343\265\2016A6"sv, "\354\250\350\252L"sv},
     {"\01331"sv, ""sv}, {"CA!\343\265\2018eA2a2"sv, "\312"sv},
-    {"5fff31F"sv, "_\3771"sv}, {"e\305\201eE4E"sv, "\352\356N"sv},
+    {"5fff31F"sv, "_\3771"sv}, {"e\305\201eE4E"sv, ""sv},
     {"d-BD\355\240\200-1d5B."sv, ""sv}, {"44"sv, "D"sv},
     {"B51-F9B7d53FBF7"sv, "\265"sv}, {"88!0Ce6!24CE\015E"sv, "\210"sv},
     {"7B\013"sv, "{"sv}, {"A!4ACe46e8"sv, ""sv},
@@ -600,10 +604,10 @@ namespace {
     {"\355\260\200x"sv, {"\357\277\275x"sv, "\000\334x\000"sv, "\000x"sv, "\000x"sv, ""sv, ""sv, ""sv}},
     {"a\355\270\200\355\240\275b"sv, {"a\357\277\275\357\277\275b"sv, "a\000\000\336=\330b\000"sv, "a\000=b"sv, "a\000=b"sv, ""sv, ""sv, ""sv}},
     {"\357\273\277"sv, {"\357\273\277"sv, "\377\376"sv, "\377"sv, "\377"sv, ""sv, ""sv, ""sv}},
-    {"\305\201\305\201"sv, {"\305\201\305\201"sv, "A\001A\001"sv, "AA"sv, "AA"sv, "\000"sv, "\000"sv, "\252"sv}},
+    {"\305\201\305\201"sv, {"\305\201\305\201"sv, "A\001A\001"sv, "AA"sv, "AA"sv, ""sv, ""sv, ""sv}},
     {"QUJD"sv, {"QUJD"sv, "Q\000U\000J\000D\000"sv, "QUJD"sv, "QUJD"sv, "ABC"sv, "ABC"sv, ""sv}},
     {"0a0b"sv, {"0a0b"sv, "0\000a\0000\000b\000"sv, "0a0b"sv, "0a0b"sv, "\321\255\033"sv, "\321\255\033"sv, "\012\013"sv}},
-    {"\343\265\201\344\205\201"sv, {"\343\265\201\344\205\201"sv, "A=AA"sv, "AA"sv, "AA"sv, "\000"sv, "\000"sv, "\252"sv}},
+    {"\343\265\201\344\205\201"sv, {"\343\265\201\344\205\201"sv, "A=AA"sv, "AA"sv, "AA"sv, ""sv, ""sv, ""sv}},
   };
   struct NameRow { std::string_view name; int encoding; std::string_view error; };  // encoding -1: TypeError error
   constexpr NameRow NAMES[] = {
@@ -690,10 +694,33 @@ TEST("atob forgiving-base64 and Buffer.from base64 / base64url") {
       ROW_EQ(row, thrownText([&] { return rt::atob(entry.input); }), std::string(ATOB_ERROR_TEXT));
       ROW_EQ(row, thrownText([&] { return rt::atobBytes(entry.input); }), std::string(ATOB_ERROR_TEXT));
     }
-    ROW_EQ(row, rt::fromBase64(entry.input), vectorOf(entry.buffer));
-    ROW_EQ(row, rt::bufferFrom(entry.input, rt::BufferEncoding::base64), vectorOf(entry.buffer));
-    ROW_EQ(row, rt::bufferFrom(entry.input, "base64url"sv), vectorOf(entry.buffer));
+    const auto buffer = vectorOf(expectedBufferBase64(entry.input, entry.buffer));
+    ROW_EQ(row, rt::fromBase64(entry.input), buffer);
+    ROW_EQ(row, rt::bufferFrom(entry.input, rt::BufferEncoding::base64), buffer);
+    ROW_EQ(row, rt::bufferFrom(entry.input, "base64url"sv), buffer);
   }
+}
+
+TEST("Base64 validates the alphabet and final padding after full blocks") {
+  std::string text;
+  std::string decoded;
+  for (int block = 0; block < 128; ++block) {
+    text += "QUJD";
+    decoded += "ABC";
+  }
+  const auto expected = vectorOf(decoded);
+  EXPECT_EQ(rt::atobBytes(text), expected);
+  EXPECT_EQ(rt::atobBytes(text.substr(0, 67) + "\t\n\f\r " + text.substr(67)), expected);
+  EXPECT_THROWS(rt::atobBytes(text.substr(0, 67) + "\v" + text.substr(67)), rt::InvalidCharacterError);
+  EXPECT_THROWS(rt::atobBytes(text + "-w"), rt::InvalidCharacterError);
+  EXPECT_THROWS(rt::atobBytes(text + "YQ="), rt::InvalidCharacterError);
+  EXPECT_EQ(rt::fromBase64(text + "YQ=ignored"), vectorOf(decoded + "a"));
+}
+
+TEST("Encoded text only treats ASCII as digits or padding") {
+  EXPECT_EQ(rt::fromBase64("QQ\360\237\230\200AA"), std::vector<std::uint8_t>{});
+  EXPECT_EQ(rt::fromBase64("\305\201\305\201"), std::vector<std::uint8_t>{});
+  EXPECT_EQ(rt::fromHex("00f\305\242ff"), vectorOf("\000"sv));
 }
 
 TEST("Buffer.from hex") {

@@ -1,14 +1,16 @@
 # Native macOS Apple Silicon build
 
-This port now compiles natively on an Apple Silicon Mac. The 2026-11-17 job builds all **369 production
+The 2026-11-17 Apple Silicon job built all **369 production
 translation units** (325 modules and 44 runtime sources) with Apple Clang and libc++, with every port
-warning fatal, and archives them as `libuos_gateway.a`. The complete suite passes **441/441 binaries
+warning fatal, and archives them as `libuos_gateway.a`. The complete suite passed **441/441 binaries
 and 5,029/5,029 cases**: 36 runtime binaries / 457 cases, then 405 application binaries / 4,572 cases.
-All 463 test/support translation units also compile. There are no failed, skipped or timed-out targets.
+All 463 test/support translation units compiled with zero failed, skipped or timed-out test targets.
 
 This is an offline development qualification. Production packaging, the Mac service, live database
 conversion, credentials, upstream inference and deployment are separate acceptance surfaces.
 See [the exact job findings](findings/cppgw-macos-native-20261117.md) for source changes and failures.
+
+Assignment 3 JSON and UTF receipts currently cover Linux ARM64. A new Darwin receipt must identify its source/tree and vendored inputs, native compiler and library versions, affected cases and any Darwin-specific boundary behavior. The QCBOR and v40 input-limit integrations also need evidence on their own inputs. [Build checkpoints](BUILD.md#assignment-3-library-checkpoints) [Runtime limits](RUNTIME.md#input-limits)
 
 ## Verified host and dependency selection
 
@@ -22,7 +24,7 @@ See [the exact job findings](findings/cppgw-macos-native-20261117.md) for source
 | SQLite            | Separate official 3.54.0 dylib, matching the versioned native fixture      |
 | Other C libraries | zlib 1.3.2, ICU 78.3, Brotli 1.2.1, Zstd 1.5.7                             |
 | Tools             | Homebrew 7.0.11, CMake 4.4.5, Ninja 1.13.2, Python 3.15.2                  |
-| Oracle            | Bun 1.4.0, revision 34cbb9a40b4bd1bd767d134a7065e66c2432a676               |
+| Fixture reference | Bun 1.4.0, revision 34cbb9a40b4bd1bd767d134a7065e66c2432a676               |
 
 Homebrew SQLite 3.54.1 is installed but the qualified fixture run selects the separate **3.54.0**
 header and dylib explicitly. The system SQLite is not selected. Bun 1.4.0 on this Mac reports
@@ -43,7 +45,7 @@ With Xcode Command Line Tools already available, install dependencies explicitly
 HOMEBREW_NO_AUTO_UPDATE=1 brew install boost openssl@3 sqlite zlib icu4c@78 brotli zstd cmake ninja python pkgconf
 xcrun clang++ --version
 sw_vers
-bun --version # must be 1.4.0 for oracle checks
+bun --version # must be 1.4.0 for the Bun comparison fixtures
 ```
 
 The build driver never installs or downloads dependencies. Bun was already pinned on the job runner.
@@ -169,8 +171,7 @@ The findings file records the exact run, artifact/receipt hashes and subsequent 
 
 - `process.platform` is `darwin`, architecture `arm64`; `/tmp` resolves to `/private/tmp` in cwd and
   realpaths. All 317 path expressions were evaluated under Bun; 41 host-dependent literals differ.
-- Native signals are Darwin constants for `process` listeners. Bun 1.4.0's subprocess signal table
-  still uses Linux names: preserve that observable quirk separately from native listener numbers.
+- The fixture observed Darwin constants for `process` listeners and Linux names in Bun 1.4.0's subprocess signal table. Preserve signal delivery and required child exit status mappings.
 - Open flags and errno numbers differ. Expectations contain the exact Bun-observed Darwin values,
   retaining the prior Linux literals. Fractional `utimes` precision agrees; extreme Darwin values
   saturate signed 64-bit total nanoseconds, with exact minimum/maximum endpoint checks.
