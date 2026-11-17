@@ -90,6 +90,10 @@ namespace uos::rt::sqlite {
       decltype(&::sqlite3_last_insert_rowid) last_insert_rowid = &::sqlite3_last_insert_rowid;
       decltype(&::sqlite3_get_autocommit) get_autocommit = &::sqlite3_get_autocommit;
       decltype(&::sqlite3_file_control) file_control = &::sqlite3_file_control;
+#if defined(__APPLE__)
+      decltype(&::sqlite3_vfs_find) vfs_find = &::sqlite3_vfs_find;
+      decltype(&::sqlite3_vfs_register) vfs_register = &::sqlite3_vfs_register;
+#endif
       decltype(&::sqlite3_config) config = &::sqlite3_config;
       decltype(&::sqlite3_libversion) libversion = &::sqlite3_libversion;
 #else
@@ -125,6 +129,10 @@ namespace uos::rt::sqlite {
       long long (*last_insert_rowid)(Connection3*) = nullptr;
       int (*get_autocommit)(Connection3*) = nullptr;
       int (*file_control)(Connection3*, const char*, int, void*) = nullptr;
+#if defined(__APPLE__)
+      decltype(&::sqlite3_vfs_find) vfs_find = nullptr;
+      decltype(&::sqlite3_vfs_register) vfs_register = nullptr;
+#endif
       int (*config)(int, ...) = nullptr;
       const char* (*libversion)() = nullptr;
 #endif
@@ -181,6 +189,10 @@ namespace uos::rt::sqlite {
       resolve(library, api.last_insert_rowid, "sqlite3_last_insert_rowid");
       resolve(library, api.get_autocommit, "sqlite3_get_autocommit");
       resolve(library, api.file_control, "sqlite3_file_control");
+#if defined(__APPLE__)
+      resolve(library, api.vfs_find, "sqlite3_vfs_find");
+      resolve(library, api.vfs_register, "sqlite3_vfs_register");
+#endif
       resolve(library, api.config, "sqlite3_config");
       resolve(library, api.libversion, "sqlite3_libversion");
 #endif
@@ -634,12 +646,17 @@ namespace uos::rt::sqlite {
       if (anonymous && (flags & constants::SQLITE_OPEN_READONLY) != 0) throw JsError("Cannot open an anonymous database in read-only mode.");
       const Api& sqlite = api();
 #if defined(__APPLE__)
-      const std::string path = anonymous ? std::string(":memory:") : detail::darwinDatabasePath(toSqlite(filename), flags);
+      bool readonly = false;
+      const std::string path = anonymous ? std::string(":memory:") : detail::darwinDatabasePath(toSqlite(filename), flags, readonly);
 #else
       const std::string path = anonymous ? std::string(":memory:") : toSqlite(filename);
 #endif
       Connection3* handle = nullptr;
+#if defined(__APPLE__)
+      const int status = sqlite.open_v2(path.c_str(), &handle, flags, readonly ? detail::darwinReadonlyVfs(sqlite) : nullptr);
+#else
       const int status = sqlite.open_v2(path.c_str(), &handle, flags, nullptr);
+#endif
       if (status != SQLITE_OK) {
         if (!handle) throw SQLiteError(fromSqlite(sqlite.errstr(status)), resultCodeName(status), status, -1);
         SQLiteError error = connectionError(handle);

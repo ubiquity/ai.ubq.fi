@@ -245,6 +245,62 @@ terminal prompts disabled`. Public fetch succeeds; `origin/development` is
 `002fe15fa926674c97f0169355d24929bf529710`, and the continuation tip is not its ancestor.
 No authenticated push, PR or development handoff is claimed.
 
+## Complete diagnostic sweep and resolved engine matrix
+
+The first complete sweep finished all **441 targets**: runtime **34/36** binaries, **449/456** cases;
+application **395/405** binaries, **4,539/4,562 reported cases**. Three application processes aborted
+without harness summaries; their partial output is preserved and is not included in the case totals.
+All **832 translation units** compiled: 369 production, 36 runtime tests and 427 application/support.
+There were no build/link failures, skips or timeouts. The canonical wrapper paths eliminated all
+previous `/tmp` spelling failures. Ten application targets failed: Claude capacity analytics, accounts,
+header meter, usage meters/retry, durable interop, Linux permissions, Responses HTTP conformance,
+SQLite readonly and storage Bun KV. The nine storage-related targets share readonly-WAL failures;
+the other target expects Linux confinement on Darwin. This run has changed inputs/identity and is
+diagnostic, never final acceptance.
+
+The complete Bun-on-this-Mac engine matrix is now observed:
+
+- Bun `bun:sqlite` retains sidecars by default, honors explicit persistence disabling, rejects schema
+  access to drained WAL without SHM, and leaves **no new sidecar** after that failed readonly access.
+  Construction itself succeeds; schema-free `PRAGMA busy_timeout=5000` returns `{timeout:5000}`;
+  comment-only SQL throws `Statement has finalized`. Rejecting every readonly prepare would be wrong.
+- The root-lock-verified published `@deno/kv@0.14.0` Darwin ARM64 addon, run under Bun with explicit
+  JSC serialization on a fresh private database, removes both sidecars on close. Its lifecycle control
+  does not qualify the separately patched release artifact, native budgets or packaging. Both npm
+  archives were verified against their existing SHA-512 entries in `bun.lock`; no lock was changed.
+- Bun's immutable readonly connection reads the drained snapshot without changing it and reports
+  `PRAGMA journal_mode` as `delete`; both physical database header bytes remain 2 (WAL format).
+- Running the actual TypeScript `inspectSqliteReadOnly` on this Mac returns `bun-jsc-v1` without
+  changing bytes, refuses each newly introduced sidecar, and rejects a changed source timestamp.
+
+Final correction strategy preserves those distinct contracts. Darwin `rt::sqlite` defaults to persistent
+WAL and uses a small SQLite VFS copy for readonly connections: its real `xOpen` removes CREATE only
+for WAL opens. SQLite still decides when SQL accesses the schema; a failed readonly query cannot leave
+an empty WAL that would poison the TypeScript fallback. Existing readonly-SHM restrictions remain.
+The VFS and its C declarations/symbol bindings are Darwin-only and support both direct and dlopen paths.
+`rt::SqliteKv` explicitly disables persistence on Darwin, matching the native SDK's drained-close policy.
+
+The two runtime/interop test inspectors use immutable URIs only for private sidecar-free stopped
+snapshots, retaining ordinary reads for live WAL. The original no-WAL, schema, queue, bytes, CAS,
+revision, expiry and crash-recovery assertions stay intact. The Darwin immutable journal-mode assertion
+uses Bun's `delete` and also checks the physical WAL header bytes. The readonly application test has
+its exact Darwin URI-success branch alongside the untouched Linux refusal branch.
+
+Focused verification of the final VFS approach passes **3 binaries / 55 cases**: SQLite 30, durable
+SQLite KV 18, readonly inspection 7. The new runtime regression also checks schema-free pragmas,
+comment-only SQL, deferred schema failure and absence of sidecars. Earlier focused diagnostic rounds
+are preserved under `focused-sqlite-round{1,2,3}`; the verifier and logs are external.
+
+All five `permissions_linux_test` cases retain their Linux assertions and gain guarded Darwin
+expectations for the exact TypeScript early refusal. Twelve Bun source probes cover default, absent
+and malformed artifacts, support queries, apply, relative paths and immutable grants; every result is
+`Linux confinement requires Linux ARM64`. The Darwin child test asserts refusal, never fake success.
+
+Changed-surface gates for the next committed-tree run: strict native compilation plus all runtime and
+application tests for `src/rt/{sqlite.cpp,sqlite_darwin.hpp,kv_sqlite.cpp}`; the exact changed standalone
+tests for SQLite, KV, readonly snapshots, durable interop and permissions; document Prettier, shell and
+embedded-Python syntax and `git diff --check`. No TypeScript type/import surface changed.
+
 ## Final handoff
 
 Continuation in progress; complete application counts, corrected-source receipts and remaining

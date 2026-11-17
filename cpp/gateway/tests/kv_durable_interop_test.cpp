@@ -27,6 +27,9 @@
 #include "uos/rt/sqlite.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
+#if defined(__APPLE__)
+#include "uos/rt/url.hpp"
+#endif
 #include "uos/storage/kv.hpp"
 #include "tests/helpers/linked_native_kv.hpp"
 
@@ -40,6 +43,15 @@ using namespace uos;
 using namespace uos::rt;
 
 namespace {
+#if defined(__APPLE__)
+  std::string darwinSnapshotFile(const std::string& file) {
+    // Stopped snapshots need Apple's immutable readonly form; live WAL reads
+    // must keep their ordinary connection and observe the sidecars.
+    if (!fs::existsSync(file + "-wal") && !fs::existsSync(file + "-shm") && !fs::existsSync(file + "-journal"))
+      return pathToFileURL(file).href() + "?immutable=1";
+    return file;
+  }
+#endif
   constexpr double INF = std::numeric_limits<double>::infinity();
   const double NAN_ = std::numeric_limits<double>::quiet_NaN();
 
@@ -157,7 +169,11 @@ namespace {
     sqlite::DatabaseOptions options;
     options.readonly = true;
     options.safeIntegers = true;
+#if defined(__APPLE__)
+    const sqlite::Database database(darwinSnapshotFile(file), options);
+#else
     const sqlite::Database database(file, options);
+#endif
     std::vector<std::string> lines;
     for (const char* table : {"data_version", "migration_state", "uos_kv_metadata", "kv", "queue", "queue_running"}) {
       for (const sqlite::Row& row : database.query(std::string("SELECT * FROM ") + table).all()) {
@@ -486,7 +502,11 @@ ASYNC_TEST("a database the TypeScript store wrote reads back in C++ as TypeScrip
   {
     sqlite::DatabaseOptions options;
     options.safeIntegers = true;
+#if defined(__APPLE__)
+    const sqlite::Database database(darwinSnapshotFile(file), options);
+#else
     const sqlite::Database database(file, options);
+#endif
     database.run("DELETE FROM data_version");
     database.run("INSERT INTO data_version (k, version, seq) VALUES (0, ?, 0)", RECORDED_DATA_VERSION);
     const sqlite::Statement insertKv = database.query("INSERT INTO kv (k, v, v_encoding, version, seq, expiration_ms) VALUES (?, ?, ?, ?, ?, ?)");
@@ -556,7 +576,11 @@ ASYNC_TEST("a database the TypeScript store wrote reads back in C++ as TypeScrip
     sqlite::DatabaseOptions inspect;
     inspect.readonly = true;
     inspect.safeIntegers = true;
+#if defined(__APPLE__)
+    const sqlite::Database database(darwinSnapshotFile(file), inspect);
+#else
     const sqlite::Database database(file, inspect);
+#endif
     EXPECT_EQ(*sqlite::getBigInt(database.query("SELECT version FROM data_version WHERE k = 0").get()->get(std::string_view("version"))), RECORDED_DATA_VERSION + 1);
     database.close();
   }
@@ -643,7 +667,11 @@ ASYNC_TEST("two C++ processes alternate and contend on one file through cursors,
   kv->close();
   sqlite::DatabaseOptions inspect;
   inspect.readonly = true;
+#if defined(__APPLE__)
+  const sqlite::Database database(darwinSnapshotFile(file), inspect);
+#else
   const sqlite::Database database(file, inspect);
+#endif
   EXPECT_EQ(*sqlite::getNumber(database.query("SELECT count(*) AS n FROM queue").get()->get(std::string_view("n"))), 2.0 * rounds);
   EXPECT_EQ(*sqlite::getString(database.query("PRAGMA integrity_check").get()->get(std::string_view("integrity_check"))), std::string("ok"));
   database.close();

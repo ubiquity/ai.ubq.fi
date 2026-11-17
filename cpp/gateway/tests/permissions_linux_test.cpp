@@ -49,6 +49,9 @@ namespace {
 }
 
 TEST("the default artifact comes from the release manifest beside the executable") {
+#if defined(__APPLE__)
+  EXPECT_EQ(messageOf([] { getLinuxPermissionsSupport(); }), "Linux confinement requires Linux ARM64");
+#else
   // Under tools/unit.sh the executable is the SDK's dynamic loader, whose directory has no manifest.
   bool threw = false;
   try {
@@ -60,10 +63,17 @@ TEST("the default artifact comes from the release manifest beside the executable
     EXPECT(error.path && error.path->ends_with("/.uos-permissions/manifest.json"));
   }
   EXPECT(threw);
+#endif
 }
 
 TEST("the artifact must be a regular file whose sha256 matches") {
   const Fixture fixture;
+#if defined(__APPLE__)
+  for (const std::string& path : {fixture.root + "/absent.node", fixture.root, fixture.artifactPath}) {
+    EXPECT_EQ(messageOf([&] { getLinuxPermissionsSupport(LinuxPermissionsArtifact{path, fixture.artifact.sha256}); }), "Linux confinement requires Linux ARM64");
+    EXPECT_EQ(messageOf([&] { getLinuxPermissionsSupport(LinuxPermissionsArtifact{path, std::string(64, '0')}); }), "Linux confinement requires Linux ARM64");
+  }
+#else
   bool missing = false;
   try {
     getLinuxPermissionsSupport(LinuxPermissionsArtifact{fixture.root + "/absent.node", fixture.artifact.sha256});
@@ -80,10 +90,15 @@ TEST("the artifact must be a regular file whose sha256 matches") {
   EXPECT_EQ(messageOf([&] { getLinuxPermissionsSupport(LinuxPermissionsArtifact{fixture.artifactPath, upper}); }), "Native confinement artifact is invalid");
   EXPECT_EQ(messageOf([&] { getLinuxPermissionsSupport(LinuxPermissionsArtifact{fixture.artifactPath, std::string(64, '0')}); }),
             "Native confinement artifact integrity check failed");
+#endif
 }
 
 TEST("the support query reports the kernel's Landlock ABI and seccomp availability") {
   const Fixture fixture;
+#if defined(__APPLE__)
+  EXPECT_EQ(messageOf([&] { getLinuxPermissionsSupport(fixture.artifact); }), "Linux confinement requires Linux ARM64");
+  EXPECT_EQ(messageOf([&] { getLinuxPermissionsSupport(fixture.artifact); }), "Linux confinement requires Linux ARM64");
+#else
   const LinuxPermissionsSupport support = getLinuxPermissionsSupport(fixture.artifact);
   EXPECT_EQ(support.architecture, "arm64");
   EXPECT_EQ(support.kernel, rt::os::release());
@@ -93,10 +108,19 @@ TEST("the support query reports the kernel's Landlock ABI and seccomp availabili
   std::printf("     host: landlockAbi %g, seccomp %s\n", support.landlockAbi, support.seccomp ? "true" : "false");
   const LinuxPermissionsSupport again = getLinuxPermissionsSupport(fixture.artifact);
   EXPECT_EQ(again.landlockAbi, support.landlockAbi);
+#endif
 }
 
 TEST("refusals before the irreversible step leave the process unconfined") {
   const Fixture fixture;
+#if defined(__APPLE__)
+  EXPECT_EQ(messageOf([&] { applyLinuxPermissions(LinuxPermissions{{"relative/path"}, {fixture.root}}, fixture.artifact); }), "Linux confinement requires Linux ARM64");
+  EXPECT_EQ(messageOf([&] { applyLinuxPermissions(LinuxPermissions{{fixture.root}, {fixture.root}, std::vector<std::string>{fixture.root}}, fixture.artifact); }),
+            "Linux confinement requires Linux ARM64");
+  rt::fs::writeFileSync(fixture.root + "/unconfined", std::string_view("unchanged"));
+  const auto bytes = rt::fs::readFileSync(fixture.root + "/unconfined");
+  EXPECT_EQ(std::string(bytes.begin(), bytes.end()), "unchanged");
+#else
   const LinuxPermissionsSupport support = getLinuxPermissionsSupport(fixture.artifact);
   if (!support.landlockThreadSync || !support.seccomp) {
     EXPECT_EQ(messageOf([&] { applyLinuxPermissions(LinuxPermissions{{fixture.root}, {fixture.root}}, fixture.artifact); }),
@@ -111,10 +135,24 @@ TEST("refusals before the irreversible step leave the process unconfined") {
   const int fd = ::open("/etc/hostname", O_RDONLY);
   EXPECT(fd >= 0);
   if (fd >= 0) ::close(fd);
+#endif
 }
 
 TEST("a confined child reads and writes only its grants and cannot change modes") {
   const Fixture fixture;
+#if defined(__APPLE__)
+  std::fflush(nullptr);
+  const pid_t child = ::fork();
+  ASSERT(child >= 0);
+  if (child == 0) {
+    const auto refusal = messageOf([&] { applyLinuxPermissions(LinuxPermissions{{fixture.root}, {fixture.root}}, fixture.artifact); });
+    ::_exit(refusal == "Linux confinement requires Linux ARM64" ? 0 : 1);
+  }
+  int status = 0;
+  ASSERT(::waitpid(child, &status, 0) == child);
+  EXPECT(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+#else
   const LinuxPermissionsSupport support = getLinuxPermissionsSupport(fixture.artifact);
   if (!support.landlockThreadSync || !support.seccomp) return;
   const std::string readable = fixture.root + "/readable";
@@ -155,4 +193,5 @@ TEST("a confined child reads and writes only its grants and cannot change modes"
   const int fd = ::open((outside + "/secret.txt").c_str(), O_RDONLY);
   EXPECT(fd >= 0);
   if (fd >= 0) ::close(fd);
+#endif
 }

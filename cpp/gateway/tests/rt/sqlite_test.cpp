@@ -2532,8 +2532,15 @@ TEST("Darwin WAL sidecars survive close unless persistence is explicitly disable
   reset.close(true);
   EXPECT(!rt::fs::existsSync(file + "-wal"));
   EXPECT(!rt::fs::existsSync(file + "-shm"));
+  const Database readonly(file, {.readonly = true});
+  LINE(R"(readonly-pragma	{"ok":{"$row":[["timeout",5000]],"proto":"Object"}})", "readonly-pragma", return enc(readonly.query("PRAGMA busy_timeout=5000").get());)
+  LINE(R"(readonly-comment	{"threw":{"$error":{"ctor":"Error","name":"Error","message":"Statement has finalized","keys":[],"string":"Error: Statement has finalized","isSQLiteError":false}}})",
+       "readonly-comment", return enc(readonly.query("-- comment").get());)
   LINE(R"(reset-readonly	{"threw":{"$error":{"ctor":"Error","name":"SQLiteError","message":"unable to open database file","code":"SQLITE_CANTOPEN","errno":14,"byteOffset":-1,"keys":["code","errno","byteOffset"],"string":"SQLiteError: unable to open database file","isSQLiteError":true}}})",
-       "reset-readonly", { const Database readonly(file, {.readonly = true}); return enc(readonly.query("SELECT a FROM t").get()); })
+       "reset-readonly", return enc(readonly.query("SELECT a FROM t").get());)
+  readonly.close(true);
+  EXPECT(!rt::fs::existsSync(file + "-wal"));
+  EXPECT(!rt::fs::existsSync(file + "-shm"));
 }
 #endif
 
