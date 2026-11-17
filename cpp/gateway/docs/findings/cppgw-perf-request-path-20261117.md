@@ -89,8 +89,8 @@ run --out "$scratch/comparison"
 python3 -I "$bench/summarize.py" "$scratch/comparison/results.json"
 run --out "$scratch/profile-large-final" --profile large --requests 2600 --sudo-perf
 run --out "$scratch/profile-reject-final" --profile reject --requests 45000 --sudo-perf
-python3 -I "$bench/profile.py" "$scratch/profile-large-final/01-large-native/perf.data" --top 60
-python3 -I "$bench/profile.py" "$scratch/profile-reject-final/01-reject-native/perf.data" --top 60
+python3 -I "$bench/profile.py" "$scratch/profile-large-final/01-large-native/perf.data" --symbolizer llvm-symbolizer-18 --top 150
+python3 -I "$bench/profile.py" "$scratch/profile-reject-final/01-reject-native/perf.data" --symbolizer llvm-symbolizer-18 --top 150
 ```
 
 The runner added `libbrotli-dev`, `valgrind` and `mold` with `apt-get`. `perf` 7.0.14 was available, so neither
@@ -117,7 +117,112 @@ weighted by its recorded period, with recursive occurrences of a function counte
 inclusive cost. A source line is a representative sampled location, weighted by period within that function.
 The measurement includes all gateway threads and excludes kernel cycles and the mock or client processes.
 
-<!-- PROFILE_TABLES -->
+Large chat recorded 17,092 samples over 16.08 s and 44.95 billion weighted cycles in two threads. Rejection
+recorded 14,935 samples over 14.98 s and 32.23 billion weighted cycles in the listener thread. Unresolved
+leaves accounted for 0.58% and 1.02% of sampled cycles, respectively, and remain in the denominators. The
+large profile validated 2,600 timed inference requests and 2,620 delivered terminals including warm-up. The
+rejection profile validated 45,000 timed 401 responses and zero mock calls.
+
+**Port** identifies port-layer work, including calls into existing platform libraries. **App** identifies
+application logic. **Generic** identifies a candidate for library replacement or a library fast path under
+the plan. The inclusive lists share ranks 1–14. Each percentage includes descendants and several rows
+describe the same stack, so the percentages are not additive. CRT and outlined atomic locations are the
+source entry or call instruction matched to the disassembly, using glibc 2.39 and GCC 13.3/14.2 source. The
+remaining locations came from DWARF. [Replacement plan](../OSS-REPLACEMENT-PLAN.md)
+[glibc AArch64 startup](https://github.com/bminor/glibc/blob/glibc-2.39/sysdeps/aarch64/start.S#L98)
+[GCC 13.3 atomics](https://github.com/gcc-mirror/gcc/blob/releases/gcc-13.3.0/libgcc/config/aarch64/lse.S#L192)
+[GCC 14.2 atomics](https://github.com/gcc-mirror/gcc/blob/releases/gcc-14.2.0/libgcc/config/aarch64/lse.S#L302)
+
+### Inclusive cost, ranks 1–14 for both scenarios
+
+| Rank | Function                         | File:line                                      | Large % | Reject % | Class                    |
+| ---: | -------------------------------- | ---------------------------------------------- | ------: | -------: | ------------------------ |
+|    1 | `_start`                         | `glibc/sysdeps/aarch64/start.S:98`             |   95.34 |   100.00 | Port, CRT ancestry       |
+|    2 | `__libc_start_main`              | `glibc/csu/libc-start.c:360`                   |   95.34 |   100.00 | Port, CRT ancestry       |
+|    3 | `__libc_start_call_main`         | `glibc/sysdeps/nptl/libc_start_call_main.h:58` |   95.34 |   100.00 | Port, CRT ancestry       |
+|    4 | `main`                           | `cpp/gateway/entrypoints/gateway.cpp:16`       |   95.34 |   100.00 | App, entrypoint ancestry |
+|    5 | `rt::blockOn<void>(Task)`        | `cpp/gateway/include/uos/rt/async.hpp:586`     |   95.34 |   100.00 | Port, loop ancestry      |
+|    6 | `rt::blockOn<void>(Loop&, Task)` | `cpp/gateway/include/uos/rt/async.hpp:582`     |   95.34 |   100.00 | Port, loop ancestry      |
+|    7 | `rt::detail::runUntilSettled`    | `cpp/gateway/src/rt/async.cpp:454`             |   95.34 |   100.00 | Port, loop ancestry      |
+|    8 | `Loop::Impl::runLoop`            | `cpp/gateway/src/rt/async.cpp:373`             |   95.34 |   100.00 | Port, loop ancestry      |
+|    9 | `Loop::Impl::turn`               | `cpp/gateway/src/rt/async.cpp:324`             |   95.09 |    99.97 | Port, loop ancestry      |
+|   10 | `awaitable_thread::pump`         | `boost/asio/impl/awaitable.hpp:776`            |   88.33 |    82.02 | Port, Asio #36           |
+|   11 | `awaitable_frame_base::resume`   | `boost/asio/impl/awaitable.hpp:508`            |   88.18 |    81.28 | Port, Asio #36           |
+|   12 | `coroutine_handle<void>::resume` | `libstdc++/coroutine:137`                      |   87.82 |    80.41 | Port, coroutine ancestry |
+|   13 | `Loop::Impl::checkpoint`         | `cpp/gateway/src/rt/async.cpp:293`             |   86.91 |    74.15 | Port, microtask ancestry |
+|   14 | `rt::detail::Job::operator()`    | `cpp/gateway/include/uos/rt/async.hpp:118`     |   86.78 |    73.92 | Port, job ancestry       |
+
+### Inclusive cost, large chat ranks 15–20
+
+| Rank | Function                                 | File:line                                          | Large % | Class                                 |
+| ---: | ---------------------------------------- | -------------------------------------------------- | ------: | ------------------------------------- |
+|   15 | `fetchDeepSeekChatCompletions` coroutine | `cpp/gateway/src/deepseek/index.cpp:629`           |   34.38 | App, provider projection and dispatch |
+|   16 | `rt::jsonStringify`                      | `cpp/gateway/src/rt/json.cpp:1310`                 |   22.37 | Port, JSON stringify KEEP #17         |
+|   17 | `Serializer::root`                       | `cpp/gateway/src/rt/json.cpp:240`                  |   22.35 | Port, JSON stringify KEEP #17         |
+|   18 | `Serializer::run`                        | `cpp/gateway/src/rt/json.cpp:363`                  |   22.31 | Port, JSON stringify KEEP #17         |
+|   19 | `appendQuoted`                           | `cpp/gateway/src/rt/json.cpp:189`                  |   21.97 | Port, JSON stringify KEEP #17         |
+|   20 | `__memcpy_sve`                           | `glibc/sysdeps/aarch64/multiarch/memcpy_sve.S:126` |   21.63 | Port, byte and string copies          |
+
+### Inclusive cost, rejected chat ranks 15–20
+
+| Rank | Function                                      | File:line                                    | Reject % | Class                            |
+| ---: | --------------------------------------------- | -------------------------------------------- | -------: | -------------------------------- |
+|   15 | `executor_function::operator()`               | `boost/asio/detail/executor_function.hpp:62` |    53.19 | Port, type-erased dispatch #36   |
+|   16 | `any_executor_base::execute_ex<LoopExecutor>` | `boost/asio/execution/any_executor.hpp:901`  |    51.12 | Port, type-erased dispatch #36   |
+|   17 | `LoopExecutor::execute<executor_function>`    | `cpp/gateway/src/rt/async.cpp:200`           |    51.01 | Port, executor dispatch ancestry |
+|   18 | `rt::detail::start`                           | `cpp/gateway/src/rt/async.cpp:438`           |    43.66 | Port, coroutine startup ancestry |
+|   19 | `co_spawn` from `rt::detail::start`           | `boost/asio/impl/co_spawn.hpp:382`           |    43.62 | Port, Asio #36                   |
+|   20 | `async_initiate` from `rt::detail::start`     | `boost/asio/async_result.hpp:683`            |    43.53 | Port, Asio #36                   |
+
+### Exclusive cost, large chat
+
+| Rank | Function                   | File:line                                             | Large % | Class                               |
+| ---: | -------------------------- | ----------------------------------------------------- | ------: | ----------------------------------- |
+|    1 | `__memcpy_sve`             | `glibc/sysdeps/aarch64/multiarch/memcpy_sve.S:126`    |   21.40 | Port, byte and string copies        |
+|    2 | `validPrefix`              | `cpp/gateway/src/rt/text_codec.cpp:54`                |   15.25 | Generic, simdutf 9.4.0 FAST-PATH #2 |
+|    3 | `appendQuoted`             | `cpp/gateway/src/rt/json.cpp:189`                     |   14.11 | Port, JSON stringify KEEP #17       |
+|    4 | `rt::isAscii`              | `cpp/gateway/src/rt/string.cpp:1779`                  |    6.25 | Generic, simdutf 9.4.0 FAST-PATH #2 |
+|    5 | `_int_malloc`              | `glibc/malloc/malloc.c:4009`                          |    3.95 | Port, allocation                    |
+|    6 | `vorrq_u8`                 | `GCC/arm_neon.h:1234`                                 |    2.76 | Port, existing SIMD parse #1        |
+|    7 | `OPENSSL_cleanse`          | `OpenSSL/crypto/arm64cpuid.S:90`                      |    2.44 | Port, required buffer clearing      |
+|    8 | `cfree`                    | `glibc/malloc/malloc.c:3375`                          |    1.31 | Port, allocation                    |
+|    9 | `parse_string`             | `cpp/gateway/third_party/simdjson/simdjson.cpp:21125` |    1.15 | Port, existing simdjson #1          |
+|   10 | `unlink_chunk.isra.0`      | `glibc/malloc/malloc.c:1616`                          |    1.07 | Port, allocation                    |
+|   11 | `_int_free`                | `glibc/malloc/malloc.c:4622`                          |    0.91 | Port, allocation                    |
+|   12 | `__memchr_generic`         | `glibc/sysdeps/aarch64/memchr.S:99`                   |    0.79 | Port, byte scanning                 |
+|   13 | `tcache_get_n`             | `glibc/malloc/malloc.c:3190`                          |    0.78 | Port, allocation                    |
+|   14 | `__aarch64_swp4_rel`       | `GCC-13.3/libgcc/config/aarch64/lse.S:254`            |    0.71 | Port, allocator synchronization     |
+|   15 | `__aarch64_ldadd4_acq_rel` | `GCC-14.2/libgcc/config/aarch64/lse.S:302`            |    0.69 | Port, shared ownership atomics      |
+|   16 | `malloc`                   | `glibc/malloc/malloc.c:3318`                          |    0.68 | Port, allocation                    |
+|   17 | `malloc_consolidate`       | `glibc/malloc/malloc.c:4874`                          |    0.62 | Port, allocation                    |
+|   18 | `tcache_put`               | `glibc/malloc/malloc.c:3165`                          |    0.51 | Port, allocation                    |
+|   19 | `vandq_u8`                 | `GCC/arm_neon.h:1122`                                 |    0.44 | Port, existing SIMD parse #1        |
+|   20 | `__memset_zva64`           | `glibc/sysdeps/aarch64/memset.S:127`                  |    0.43 | Port, buffer initialization         |
+
+### Exclusive cost, rejected chat
+
+| Rank | Function                              | File:line                                           | Reject % | Class                           |
+| ---: | ------------------------------------- | --------------------------------------------------- | -------: | ------------------------------- |
+|    1 | `__aarch64_ldadd4_acq_rel`            | `GCC-14.2/libgcc/config/aarch64/lse.S:302`          |     4.13 | Port, shared ownership atomics  |
+|    2 | `_int_malloc`                         | `glibc/malloc/malloc.c:3954`                        |     3.44 | Port, allocation                |
+|    3 | `_int_free`                           | `glibc/malloc/malloc.c:4518`                        |     2.72 | Port, allocation                |
+|    4 | `malloc`                              | `glibc/malloc/malloc.c:3311`                        |     2.48 | Port, allocation                |
+|    5 | `cfree`                               | `glibc/malloc/malloc.c:3375`                        |     2.22 | Port, allocation                |
+|    6 | `__memcpy_sve`                        | `glibc/sysdeps/aarch64/multiarch/memcpy_sve.S:76`   |     2.07 | Port, byte and string copies    |
+|    7 | `_Sp_counted_base::_M_release`        | `libstdc++/bits/shared_ptr_base.h:337`              |     1.43 | Port, shared ownership          |
+|    8 | `boost::json::detail::digest`         | `boost/json/detail/digest.hpp:50`                   |     1.34 | Port, JSON object lookup #19    |
+|    9 | `__aarch64_swp4_rel`                  | `GCC-13.3/libgcc/config/aarch64/lse.S:254`          |     1.21 | Port, allocator synchronization |
+|   10 | `tcache_get_n`                        | `glibc/malloc/malloc.c:3190`                        |     1.20 | Port, allocation                |
+|   11 | `__strlen_asimd`                      | `glibc/sysdeps/aarch64/multiarch/strlen_asimd.S:97` |     1.15 | Port, string conversions        |
+|   12 | `basic_string::_M_is_local`           | `libstdc++/bits/basic_string.h:269`                 |     1.02 | Port, string lifetime           |
+|   13 | `malloc_consolidate`                  | `glibc/malloc/malloc.c:4874`                        |     0.97 | Port, allocation                |
+|   14 | `unlink_chunk.isra.0`                 | `glibc/malloc/malloc.c:1610`                        |     0.83 | Port, allocation                |
+|   15 | `__aarch64_cas4_acq`                  | `GCC-13.3/libgcc/config/aarch64/lse.S:192`          |     0.83 | Port, synchronization           |
+|   16 | `tag_new_usable`                      | `glibc/malloc/malloc.c:1461`                        |     0.77 | Port, allocation                |
+|   17 | `basicParse`                          | `cpp/gateway/src/rt/url.cpp:774`                    |     0.77 | Generic, Ada 4.0.0 REPLACE #4   |
+|   18 | `char_traits<char>::copy`             | `libstdc++/bits/char_traits.h:427`                  |     0.75 | Port, string copies             |
+|   19 | `boost::json::detail::find_in_object` | `boost/json/impl/object.ipp:54`                     |     0.75 | Port, JSON object lookup #19    |
+|   20 | `appendQuoted`                        | `cpp/gateway/src/rt/json.cpp:189`                   |     0.71 | Port, JSON stringify KEEP #17   |
 
 ## Out-of-scope findings and limits
 
@@ -129,10 +234,34 @@ The measurement includes all gateway threads and excludes kernel cycles and the 
   one prompt shape, one provider and four local clients. It does not estimate real upstream latency, broader
   production traffic, or an upper throughput bound. Frame pointers were kept in the timed executable to
   measure the same binary that was profiled.
-- Git origin permits fetches but rejected the authenticated push preflight. The task branch is committed
-  locally, based on the C++ port branch for the maintainer's integration. Production deployment was outside
-  the task.
+- Git fetch succeeded. The noninteractive push preflight could not authenticate, so the task branch is
+  committed locally on top of the C++ port branch for the maintainer's integration.
 
 ## Ranked performance work
 
-<!-- RANKED_ACTIONS -->
+1. **Carry owned byte buffers and JSON values through the large request path.** `__memcpy_sve` alone took
+   21.40% of sampled user cycles. Its largest callers were string copies and byte-vector copies.
+   Boost.JSON's storage-aware object copy reached 16.75% inclusive and the large process high-water mark
+   was 103 MiB. Measure moving the admitted body through decode, projection and dispatch while retaining
+   the caps, replay ownership and buffer-clearing semantics. [Bounded body read](../../src/request.cpp#L81)
+   [DeepSeek projection](../../src/deepseek/index.cpp#L600)
+2. **Qualify simdutf 9.4.0 for long UTF-8 and ASCII inputs.** `validPrefix` and `isAscii` together consumed
+   21.50% of exclusive large-chat cycles. The profiler reached the validator from both UTF-8 decode and
+   `isUtf8`. Use the library's bulk validators on proven well-formed input, with the current scalar
+   handling for incomplete, malformed and surrogate cases as specified by plan row 2. [Text codec](../../src/rt/text_codec.cpp#L50)
+   [Replacement plan](../OSS-REPLACEMENT-PLAN.md#ranked-component-inventory)
+3. **Reduce repeated JSON serialization and quote work.** `appendQuoted` took 14.11% of exclusive cycles
+   in large chat, and `jsonStringify` reached 22.37% inclusive. Admission and dispatch each serialize the
+   projected Chat body. Measure reuse where the projected bytes match, and scan long ordinary string runs
+   in bulk while retaining exact `JSON.stringify` ordering, escapes and lone-surrogate behavior under
+   plan row 17. [Admission serialization](../../src/deepseek/forwarded_payload_policy.cpp#L28)
+   [Wire serialization](../../src/deepseek/index.cpp#L624) [Quoting](../../src/rt/json.cpp#L184)
+4. **Serialize terminal records with fewer intermediate objects.** Rejection's `logTerminalRequest` reached
+   21.68% inclusive. Eight allocator leaves accounted for 14.63% exclusive across the rejection path.
+   Start by measuring a typed terminal record built once for the existing ordered serializer. Preserve
+   emitted fields and the settlement triggered by actual delivery. [Terminal record](../../src/handler/terminal_log.cpp#L128)
+5. **Reduce shared ownership churn in request and delivery callbacks.** The rejection run spent 4.13% exclusive
+   in the outlined atomic add, led by `std::__shared_count` callers, plus 1.43% exclusive in `_M_release`.
+   `LoopExecutor::execute` carried 51.01% inclusive, much of it downstream work. Measure callback allocations
+   and frame lifetimes while retaining the Asio scheduler, promise ordering and safe cancellation specified
+   by plan row 36. [Executor](../../src/rt/async.cpp#L193) [Replacement plan](../OSS-REPLACEMENT-PLAN.md#ranked-component-inventory)
