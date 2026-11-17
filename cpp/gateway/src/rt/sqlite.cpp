@@ -15,6 +15,9 @@
 #undef SQLITE_OPEN_READWRITE
 #undef SQLITE_OPEN_CREATE
 #undef SQLITE_PREPARE_PERSISTENT
+#if defined(__APPLE__)
+#undef SQLITE_FCNTL_PERSIST_WAL
+#endif
 #else
 #include <dlfcn.h>
 #endif
