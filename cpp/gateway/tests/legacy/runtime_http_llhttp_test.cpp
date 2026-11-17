@@ -107,5 +107,3 @@ TEST("llhttp bounds a fragmented header and chunk extension") {
   progress = chunked.connection->decodeChunked(chunk);
   EXPECT(!progress);
 }
-
-int main(int argc, char** argv) { return uos::rt::test::run(argc, argv); }
