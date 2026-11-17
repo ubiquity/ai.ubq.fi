@@ -124,11 +124,9 @@ Source and test identity `ef1128617bc38571dad784a2361a0b129e7e0cc9`, tree `cf579
 | Profile             | Passing binaries / selected | Passing cases / run | Failures |
 | ------------------- | --------------------------: | ------------------: | -------: |
 | Clang 21 release    |                   312 / 442 |       3,142 / 3,142 |        0 |
-| Clang 21 ASan/UBSan |                   216 / 442 |       1,722 / 1,722 |        0 |
-| Clang 21 release    |                   296 / 442 |       2,947 / 2,947 |        0 |
-| Clang 21 release    |                   168 / 442 |       1,338 / 1,338 |        0 |
+| Clang 21 ASan/UBSan |                   232 / 442 |       1,913 / 1,913 |        0 |
 
-At 2026-11-17 23:16 UTC, release had 130 binaries pending and ASan/UBSan had 226. The incremental receipts captured `sweep-release/rows-20261117T231630.jsonl` SHA-256 `ddbf0970afa9510057ee6c419da636eb12b1666bf3438db0df420ab407cdcb43` and `sweep-asan/rows-20261117T231630.jsonl` SHA-256 `1bf50452211fd6a04d4c7cf95c5f127e98ea4090be6cc6c917aca4bf318b861e`. The final libFuzzer run completed 3,036,331 inputs in 121 seconds, reached 154 instrumented edges and 622 features, and exited with zero findings or artifacts. Peak RSS was 445 MiB.
+At 2026-11-17 23:17 UTC, release had 130 binaries pending and ASan/UBSan had 210. The incremental receipts captured `sweep-release/rows-20261117T231704.jsonl` SHA-256 `ddbf0970afa9510057ee6c419da636eb12b1666bf3438db0df420ab407cdcb43` and `sweep-asan/rows-20261117T231704.jsonl` SHA-256 `4540f04650b98320596c3c2b7aedfeade3b886fd22e3f0fd9feadb013f428dbe`. The final libFuzzer run completed 3,036,331 inputs in 121 seconds, reached 154 instrumented edges and 622 features, and exited with zero findings or artifacts. Peak RSS was 445 MiB.
 
 The SDK CMake registration found ICU 78.3, generated a 442-test registry and built the string object using the runner's compiler. The historical SDK sysroot and macOS were unavailable on this runner. The old `tools/unit.sh` SDK wrapper still lists only Boost and OpenSSL, and `docs/rt/text.md` still describes the old implicit order. Both are outside this lane's ownership.
 
