@@ -103,7 +103,35 @@ Initial plain compilation: 385/386 translation units passed; the one failing uni
 reported two instances of `error: declaration shadows a structured binding
 [-Werror,-Wshadow]` on `[wrap = wrap, value = value]`. No other compile error
 occurred. No source warning or test assertion was disabled. Incremental rebuild
-and all execution receipts are pending.
+then passed all 386 translation units and all 71 links.
+
+## Plain execution checkpoint
+
+The first complete plain run passed **71/71 binaries, 829/829 cases**, zero
+failures, skips, crashes, or timeouts. The summed per-binary runtime was 6.724 s.
+All 41 cases of the mechanically changed supervisor-secret suite passed.
+
+```sh
+sudo -n unshare --net -- /bin/sh -c 'ip link set lo up && exec setpriv --reuid=1001 --regid=1001 --clear-groups env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/python3 /home/runner/work/_temp/agent-jobs/cppgw-asan-codex-20261117/checkout/cpp/gateway/tests/helpers/codex_sanitizer_checks.py --profile plain --run-only --require-clean'
+python3 cpp/gateway/tests/helpers/codex_sanitizer_checks.py --profile asan --build-only --jobs 4
+```
+
+Plain receipt: `/tmp/cppgw-asan-codex-20261117/plain/runs/1794915532175469780`.
+Commit `83d8a088a3f229b887b633866fc1296f6fab5dde`, tree
+`8aa234f654ca8b1ff9991691b52cc9e0443a81a4`. All 986 fingerprinted inputs and
+checkout identity stayed unchanged; `worktree_clean` was true.
+`results.json` SHA-256:
+`331e2997683aaca39f43d0da12983b3e47b7810866daa26db2da294bb3e5c203`.
+`provenance.json` SHA-256:
+`1588ea5b0389337d500b6b3ba05d3f4093a852aeca069abed0bc38cd255c0caf`.
+
+The compiler's explicit `-print-prog-name=llvm-symbolizer` selects
+`/usr/lib/llvm-21/bin/llvm-symbolizer`; sanitizer runs set `ASAN_SYMBOLIZER_PATH`
+to it and refuse a missing tool. A separate network-namespace preflight observed
+`connect_ex(("192.0.2.1", 443)) == 101` (`ENETUNREACH`). The sanitizer build is
+now running; no sanitized execution result is claimed yet. Based on the measured
+plain compile phase, budget 30–55 minutes for its instrumented cold build, with
+the same four-worker limit and incremental recovery if a command fails.
 
 ## Final handoff
 
