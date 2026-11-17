@@ -28,8 +28,9 @@ def record(pid, root, use_sudo):
         def send(message):
             os.write(command_fd, message + b"\n")
             ready, _, _ = select.select([ack_fd], [], [], 10)
-            if not ready or os.read(ack_fd, 32) != b"ack\n":
-                raise RuntimeError(f"perf did not acknowledge {message.decode()}, see {log}")
+            reply = os.read(ack_fd, 32) if ready else b""
+            if reply.rstrip(b"\0\r\n") != b"ack":
+                raise RuntimeError(f"perf replied {reply!r} to {message.decode()}, see {log}")
 
         try:
             send(b"enable")
