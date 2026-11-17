@@ -61,7 +61,11 @@ namespace uos::rt::gzip {
     // The layout above is zlib 1.x's: zlib compares the major version digit and the size.
     constexpr const char* ZLIB_VERSION = "1.2.13";
 #endif
+#if defined(__APPLE__)
+    constexpr const char* DEFAULT_LIBRARY = "libz.1.dylib";
+#else
     constexpr const char* DEFAULT_LIBRARY = "libz.so.1";
+#endif
     // zlib counts input and output in 32 bits: hand it at most this much per call.
     constexpr std::size_t MAX_SLICE = std::size_t{1} << 30;
     // The output room the compressor asks for per call.

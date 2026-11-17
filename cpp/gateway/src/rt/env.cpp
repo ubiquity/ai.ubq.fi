@@ -6,7 +6,11 @@
 #include <cstdint>
 #include <cstring>
 
+#if defined(__APPLE__)
+#include <crt_externs.h>
+#else
 extern char** environ;
+#endif
 
 namespace uos::rt::env {
   // The view: name/value pairs in insertion order.
@@ -31,7 +35,12 @@ namespace uos::rt::env {
     // The OS environment, first position kept and a later duplicate's value winning.
     std::unique_ptr<Store> fromEnviron() {
       auto store = std::make_unique<Store>();
-      for (char** cursor = environ; cursor && *cursor; ++cursor) {
+#if defined(__APPLE__)
+      char** environment = *_NSGetEnviron();
+#else
+      char** environment = environ;
+#endif
+      for (char** cursor = environment; cursor && *cursor; ++cursor) {
         const std::string_view entry = *cursor;
         const auto separator = entry.find('=');
         if (separator == std::string_view::npos) continue;

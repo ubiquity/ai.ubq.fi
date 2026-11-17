@@ -346,7 +346,7 @@ TEST("native kernel pure lifecycle preserves duplicate refusal, committed intent
     EXPECT(released->window.has_value() && released->window->usage_requests == 0);
     EXPECT_EQ(released->reservation.release_reason, std::optional<std::string>("request_incomplete"));
   } else {
-    EXPECT(!"Release must write its terminal row");
+    EXPECT(false && "Release must write its terminal row");
   }
   EXPECT(result.longReleaseReason.has_value() && rt::length(*result.longReleaseReason) == 120);
   const std::vector<std::optional<std::string>> reclaim = {std::nullopt, std::string("released"), std::string("committed"), std::nullopt};
@@ -454,7 +454,7 @@ ASYNC_TEST("native kernel wrapper re-reads a racing default and checks the absen
   if (const auto* admitted = std::get_if<quota_v2::KernelQuotaReservationDecisionOk>(&decision)) {
     rt::Promise<void> cleanup = admitted->reservation.release(std::string("test_cleanup"));
     co_await cleanup.wait();
-    ASSERT(!"Racing zero default must refuse");
+    ASSERT(false && "Racing zero default must refuse");
   }
   EXPECT_EQ(std::get<quota_v2::KernelQuotaReservationDecisionNotOk>(decision).response.status(), 429);
   ASSERT(!kv->checkedKeys.empty());
@@ -484,7 +484,7 @@ ASYNC_TEST("native kernel wrapper retains three CAS attempts and leaves all rows
   if (const auto* admitted = std::get_if<quota_v2::KernelQuotaReservationDecisionOk>(&decision)) {
     rt::Promise<void> cleanup = admitted->reservation.release(std::string("test_cleanup"));
     co_await cleanup.wait();
-    ASSERT(!"Exhausted CAS must refuse");
+    ASSERT(false && "Exhausted CAS must refuse");
   }
   EXPECT_EQ(std::get<quota_v2::KernelQuotaReservationDecisionNotOk>(decision).response.status(), 503);
   EXPECT_EQ(kv->checkedKeys.size(), std::size_t{3});

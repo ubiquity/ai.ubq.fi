@@ -65,15 +65,15 @@ namespace uos::authority::authority_rpc {
     }
 
     const Guard scope = fields({{"namespace", text}, {"epoch", integer}});
-    const Guard handle = fields({{"scope", scope}, {"requestId", text}, {"fence", integer}});
-    const Guard proof = fields({
+    const Guard handleGuard = fields({{"scope", scope}, {"requestId", text}, {"fence", integer}});
+    const Guard proofGuard = fields({
       {"kind", oneOf({"quota_exhausted", "credential_invalid", "transient"})},
       {"model", text},
       {"fingerprint", text},
       {"observedAtMs", integer},
       {"validUntilMs", integer},
     });
-    const Guard account = fields({
+    const Guard accountGuard = fields({
       {"accountId", text},
       {"fingerprint", text},
       {"credentialGeneration", integer},
@@ -83,10 +83,10 @@ namespace uos::authority::authority_rpc {
       {"overageEnabled", boolean},
       {"enabled", boolean},
       {"models", array(text)},
-      {"proof", nullable(proof)},
+      {"proof", nullable(proofGuard)},
     });
     const Guard attempt =
-      fields({{"attemptId", text}, {"provider", oneOf({"codex", "surplus", "openlux"})}, {"maximumExposureMicrocredits", integer}, {"account", nullable(account)}});
+      fields({{"attemptId", text}, {"provider", oneOf({"codex", "surplus", "openlux"})}, {"maximumExposureMicrocredits", integer}, {"account", nullable(accountGuard)}});
     const Guard terminal = fields({
       {"outcome", oneOf({"completed", "incomplete", "failed", "cancelled"})},
       {"providerRequestId", nullable(text)},
@@ -104,24 +104,24 @@ namespace uos::authority::authority_rpc {
                   {"model", text},
                   {"nowMs", integer},
                 })})},
-      {"reserveAttempt", tuple({handle, attempt, integer})},
-      {"beginDispatch", tuple({handle, text, integer})},
-      {"selection", tuple({handle})},
-      {"reselectSubscription", tuple({handle, integer})},
-      {"confirmDispatched", tuple({handle, text})},
-      {"releaseBeforeDispatch", tuple({handle, text})},
-      {"observeProof", tuple({handle, text, proof})},
+      {"reserveAttempt", tuple({handleGuard, attempt, integer})},
+      {"beginDispatch", tuple({handleGuard, text, integer})},
+      {"selection", tuple({handleGuard})},
+      {"reselectSubscription", tuple({handleGuard, integer})},
+      {"confirmDispatched", tuple({handleGuard, text})},
+      {"releaseBeforeDispatch", tuple({handleGuard, text})},
+      {"observeProof", tuple({handleGuard, text, proofGuard})},
       {"observeTerminal",
        [](const json::value* value) {
-         static const Guard three = tuple({handle, text, terminal});
-         static const Guard four = tuple({handle, text, terminal, [](const json::value* flag) { return flag == nullptr || boolean(flag); }});
+         static const Guard three = tuple({handleGuard, text, terminal});
+         static const Guard four = tuple({handleGuard, text, terminal, [](const json::value* flag) { return flag == nullptr || boolean(flag); }});
          return three(value) || four(value);
        }},
-      {"observeDelivery", tuple({handle, oneOf({"delivered", "interrupted", "unobserved"})})},
-      {"observeUsage", tuple({handle, text, fields({{"providerRequestId", providerRequestId}, {"spendMicrocredits", integer}})})},
-      {"resetEligible", tuple({handle, integer})},
-      {"settle", tuple({handle})},
-      {"cancelUndispatched", tuple({handle})},
+      {"observeDelivery", tuple({handleGuard, oneOf({"delivered", "interrupted", "unobserved"})})},
+      {"observeUsage", tuple({handleGuard, text, fields({{"providerRequestId", providerRequestId}, {"spendMicrocredits", integer}})})},
+      {"resetEligible", tuple({handleGuard, integer})},
+      {"settle", tuple({handleGuard})},
+      {"cancelUndispatched", tuple({handleGuard})},
     };
 
     const Guard* argumentsGuard(std::string_view operation) {

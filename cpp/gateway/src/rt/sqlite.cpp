@@ -125,9 +125,14 @@ namespace uos::rt::sqlite {
     };
 
 #if !defined(UOS_GATEWAY_NATIVE_LIBRARIES)
+#if defined(__APPLE__)
+    constexpr const char* DEFAULT_LIBRARY = "libsqlite3.dylib";
+#else
+    constexpr const char* DEFAULT_LIBRARY = "libsqlite3.so.0";
+#endif
     template <class Function> void resolve(void* library, Function& slot, const char* name) {
       void* symbol = ::dlsym(library, name);
-      if (!symbol) throw std::runtime_error(std::string("bun:sqlite: libsqlite3.so.0 lacks ") + name);
+      if (!symbol) throw std::runtime_error(std::string("bun:sqlite: ") + DEFAULT_LIBRARY + " lacks " + name);
       std::memcpy(&slot, &symbol, sizeof slot);
     }
 
@@ -136,8 +141,8 @@ namespace uos::rt::sqlite {
     Api load() {
       Api api;
 #if !defined(UOS_GATEWAY_NATIVE_LIBRARIES)
-      void* library = ::dlopen("libsqlite3.so.0", RTLD_NOW | RTLD_LOCAL);
-      if (!library) throw std::runtime_error(std::string("bun:sqlite: cannot load libsqlite3.so.0: ") + ::dlerror());
+      void* library = ::dlopen(DEFAULT_LIBRARY, RTLD_NOW | RTLD_LOCAL);
+      if (!library) throw std::runtime_error(std::string("bun:sqlite: cannot load ") + DEFAULT_LIBRARY + ": " + ::dlerror());
       resolve(library, api.open_v2, "sqlite3_open_v2");
       resolve(library, api.close, "sqlite3_close");
       resolve(library, api.close_v2, "sqlite3_close_v2");

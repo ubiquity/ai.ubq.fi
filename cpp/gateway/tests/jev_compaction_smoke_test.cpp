@@ -32,10 +32,14 @@
 // The owner approved including the real private implementation in this standalone test TU.
 // Its .cpp is deliberately excluded from Links; no production test-only API is exported.
 // Owner-approved test-context exception: GCC12.2 warns on anonymous coroutine types only when the real .cpp is included; standalone source remains strict.
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wsubobject-linkage"
+#endif
 #include "../src/lib/jev_compaction/jev_compaction_smoke.cpp"
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
+#endif
 #include "uos/rt/crypto.hpp"
 #include "uos/rt/test_async.hpp"
 #include "uos/rt/fs.hpp"

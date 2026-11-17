@@ -121,6 +121,9 @@ namespace {
 
   // How this binary was started (the SDK loader, its arguments and the binary).
   std::vector<std::string> selfCommand() {
+#if defined(__APPLE__)
+    return {uos::rt::process::execPath()};
+#else
     const std::vector<std::uint8_t> bytes = fs::readFileSync("/proc/self/cmdline");
     std::vector<std::string> argv;
     std::string current;
@@ -135,6 +138,7 @@ namespace {
     const bool viaLoader = !argv.empty() && includes(argv[0], "ld-linux");
     argv.resize(std::min(argv.size(), viaLoader ? std::size_t{4} : std::size_t{1}));
     return argv;
+#endif
   }
 
   // The schema of a database the TypeScript store created, sqlite_master in rowid order

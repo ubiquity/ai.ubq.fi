@@ -57,24 +57,24 @@ namespace uos::codex::banked_reset_submission {
     // `Readonly<{ kind: "ready"; nowMs: number }> | Readonly<{ kind: "outcome"; outcome: CodexBankedResetOutcome }>` and the
     // other `{ kind: "outcome" }` unions of this module.
     struct StepReady {
-      static constexpr std::string_view kind = "ready";
+      [[maybe_unused]] static constexpr std::string_view kind = "ready";
       double nowMs;
     };
     struct StepOutcome {
-      static constexpr std::string_view kind = "outcome";
+      [[maybe_unused]] static constexpr std::string_view kind = "outcome";
       CodexBankedResetOutcome outcome;
     };
     struct StepSelected {
-      static constexpr std::string_view kind = "selected";
+      [[maybe_unused]] static constexpr std::string_view kind = "selected";
       ResetInventoryCredit credit;
       double nowMs;
     };
     struct StepPrepared {
-      static constexpr std::string_view kind = "prepared";
+      [[maybe_unused]] static constexpr std::string_view kind = "prepared";
       CodexResetRedemptionRecord record;
     };
     struct StepAllow {
-      static constexpr std::string_view kind = "allow";
+      [[maybe_unused]] static constexpr std::string_view kind = "allow";
       bool allowNewSubmission;
     };
     using ReadyStep = std::variant<StepReady, StepOutcome>;

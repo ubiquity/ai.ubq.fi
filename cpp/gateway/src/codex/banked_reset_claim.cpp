@@ -445,12 +445,12 @@ namespace uos::codex::banked_reset_claim {
 
   namespace {
     struct DailySubmissionBudgetOk {
-      static constexpr std::string_view kind = "ok";
+      [[maybe_unused]] static constexpr std::string_view kind = "ok";
       rt::KvEntryMaybe<> entry;
       double submissionCount;
     };
     struct DailySubmissionBudgetFailure {
-      static constexpr std::string_view kind = "failure";
+      [[maybe_unused]] static constexpr std::string_view kind = "failure";
       std::string code;
     };
     using DailySubmissionBudget = std::variant<DailySubmissionBudgetOk, DailySubmissionBudgetFailure>;
@@ -572,11 +572,11 @@ namespace uos::codex::banked_reset_claim {
 
   namespace {
     struct RenewalCommitGateReady {
-      static constexpr std::string_view kind = "ready";
+      [[maybe_unused]] static constexpr std::string_view kind = "ready";
       double nowMs;
     };
     struct RenewalCommitGateFailure {
-      static constexpr std::string_view kind = "failure";
+      [[maybe_unused]] static constexpr std::string_view kind = "failure";
       std::string code;
     };
     using RenewalCommitGate = std::variant<RenewalCommitGateReady, RenewalCommitGateFailure>;

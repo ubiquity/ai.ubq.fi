@@ -534,11 +534,11 @@ namespace uos::provider::lithos {
 
     // `Readonly<{ kind: "chunk"; value: Record<string, unknown> }> | Readonly<{ kind: "done" }>`
     struct LithosStreamFrameChunk {
-      static constexpr std::string_view kind = "chunk";
+      [[maybe_unused]] static constexpr std::string_view kind = "chunk";
       json::object value;
     };
     struct LithosStreamFrameDone {
-      static constexpr std::string_view kind = "done";
+      [[maybe_unused]] static constexpr std::string_view kind = "done";
     };
     using LithosStreamFrame = std::variant<LithosStreamFrameChunk, LithosStreamFrameDone>;
 

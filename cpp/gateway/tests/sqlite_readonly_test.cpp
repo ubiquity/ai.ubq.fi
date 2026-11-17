@@ -206,7 +206,7 @@ TEST("bun:sqlite on Linux opens an immutable file: URI as a plain path, which do
 }
 
 namespace {
-  const bool darwinCases = [] {
+  [[maybe_unused]] const bool darwinCases = [] {
     if (rt::process::platform != "darwin") return false;
     rt::test::registry().push_back({"immutable readonly inspection refuses every sidecar appearing during its fence", [] {
                                       for (const char* suffix : {"-wal", "-shm", "-journal"}) {

@@ -107,7 +107,7 @@ namespace uos::cache::kv_migration_projection {
       }
       if (value.isString()) {
         const std::string& text = value.asString();
-        const std::size_t length = rt::length(text);
+        const auto length = static_cast<std::size_t>(rt::length(text));
         if (key == "length") return rt::KvValue(static_cast<double>(length));
         const std::optional<std::size_t> index = canonicalIndex(key);
         if (index && *index < length) return rt::KvValue(rt::charAt(text, static_cast<double>(*index)));

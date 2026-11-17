@@ -4,11 +4,11 @@
 
 namespace uos::authority::native_codex_contracts {
   namespace { using rt::record::Reader; using rt::record::Writer; }
-  static void tag_invoke(const json::value_from_tag&, json::value& out, const CodexActiveAccountSelection& value) { out = toJson(value); }
+  [[maybe_unused]] static void tag_invoke(const json::value_from_tag&, json::value& out, const CodexActiveAccountSelection& value) { out = toJson(value); }
   static CodexActiveAccountSelection tag_invoke(const json::value_to_tag<CodexActiveAccountSelection>&, const json::value& value) {
     const auto parsed = parseCodexActiveAccountSelection(value); if (!parsed) throw rt::TypeError("Invalid CodexActiveAccountSelection"); return *parsed;
   }
-  static void tag_invoke(const json::value_from_tag&, json::value& out, const CodexAccountRoutingState& value) { out = toJson(value); }
+  [[maybe_unused]] static void tag_invoke(const json::value_from_tag&, json::value& out, const CodexAccountRoutingState& value) { out = toJson(value); }
   static CodexAccountRoutingState tag_invoke(const json::value_to_tag<CodexAccountRoutingState>&, const json::value& value) {
     const auto parsed = parseCodexAccountRoutingState(value); if (!parsed) throw rt::TypeError("Invalid CodexAccountRoutingState"); return *parsed;
   }
@@ -89,7 +89,7 @@ namespace uos::authority::native_codex_contracts {
     result.capacity = in.orNull<std::string>("capacity");
     return result;
   }
-  static void tag_invoke(const json::value_from_tag&, json::value& out, const CodexCapacityRoutingWindow& value) {
+  [[maybe_unused]] static void tag_invoke(const json::value_from_tag&, json::value& out, const CodexCapacityRoutingWindow& value) {
     out = Writer().orNull("limit_window_seconds", value.limit_window_seconds).orNull("used_percent", value.used_percent).orNull("reset_at_ms", value.reset_at_ms).done();
   }
   static CodexCapacityRoutingWindow tag_invoke(const json::value_to_tag<CodexCapacityRoutingWindow>&, const json::value& value) {
@@ -100,7 +100,7 @@ namespace uos::authority::native_codex_contracts {
     result.reset_at_ms = in.orNull<double>("reset_at_ms");
     return result;
   }
-  static void tag_invoke(const json::value_from_tag&, json::value& out, const CodexCapacityRoutingWindows& value) {
+  [[maybe_unused]] static void tag_invoke(const json::value_from_tag&, json::value& out, const CodexCapacityRoutingWindows& value) {
     out = Writer().orNull("primary", value.primary).orNull("secondary", value.secondary).done();
   }
   static CodexCapacityRoutingWindows tag_invoke(const json::value_to_tag<CodexCapacityRoutingWindows>&, const json::value& value) {
@@ -110,7 +110,7 @@ namespace uos::authority::native_codex_contracts {
     result.secondary = in.orNull<CodexCapacityRoutingWindow>("secondary");
     return result;
   }
-  static void tag_invoke(const json::value_from_tag&, json::value& out, const CodexCapacityRoutingAdditionalRateLimit& value) {
+  [[maybe_unused]] static void tag_invoke(const json::value_from_tag&, json::value& out, const CodexCapacityRoutingAdditionalRateLimit& value) {
     out = Writer().required("limit_name", value.limit_name).orNull("metered_feature", value.metered_feature).required("windows", value.windows).done();
   }
   static CodexCapacityRoutingAdditionalRateLimit tag_invoke(const json::value_to_tag<CodexCapacityRoutingAdditionalRateLimit>&, const json::value& value) {
@@ -121,7 +121,7 @@ namespace uos::authority::native_codex_contracts {
     result.windows = in.required<CodexCapacityRoutingWindows>("windows");
     return result;
   }
-  static void tag_invoke(const json::value_from_tag&, json::value& out, const CodexCapacityRoutingObservation& value) {
+  [[maybe_unused]] static void tag_invoke(const json::value_from_tag&, json::value& out, const CodexCapacityRoutingObservation& value) {
     out = Writer().required("slot", value.slot).required("account_id_hash", value.account_id_hash).required("state", value.state).orNull("source_observed_at_ms", value.source_observed_at_ms).required("snapshot_at_ms", value.snapshot_at_ms).required("windows", value.windows).required("additional_rate_limits", value.additional_rate_limits).done();
   }
   static CodexCapacityRoutingObservation tag_invoke(const json::value_to_tag<CodexCapacityRoutingObservation>&, const json::value& value) {

@@ -64,11 +64,11 @@ namespace uos::kernel::quota_reserve {
 
     // `Readonly<{ kind: "decision"; decision }> | Readonly<{ kind: "eligible"; target }>`
     struct KernelQuotaEligibilityDecision {
-      static constexpr std::string_view kind = "decision";
+      [[maybe_unused]] static constexpr std::string_view kind = "decision";
       KernelQuotaReservationDecision decision;
     };
     struct KernelQuotaEligibilityEligible {
-      static constexpr std::string_view kind = "eligible";
+      [[maybe_unused]] static constexpr std::string_view kind = "eligible";
       KernelQuotaReservationTarget target;
     };
     using KernelQuotaEligibility = std::variant<KernelQuotaEligibilityDecision, KernelQuotaEligibilityEligible>;
@@ -76,11 +76,11 @@ namespace uos::kernel::quota_reserve {
     // `reclaimedCapacity` distinguishes a reclaimed expired lease from a lost
     // compare-and-set: only a reclaim must stop the next attempt from reclaiming twice.
     struct KernelQuotaCapacityOutcomeDecision {
-      static constexpr std::string_view kind = "decision";
+      [[maybe_unused]] static constexpr std::string_view kind = "decision";
       KernelQuotaReservationDecision decision;
     };
     struct KernelQuotaCapacityOutcomeRetry {
-      static constexpr std::string_view kind = "retry";
+      [[maybe_unused]] static constexpr std::string_view kind = "retry";
       bool reclaimedCapacity;
     };
     using KernelQuotaCapacityOutcome = std::variant<KernelQuotaCapacityOutcomeDecision, KernelQuotaCapacityOutcomeRetry>;

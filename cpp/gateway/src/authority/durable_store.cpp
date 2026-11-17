@@ -187,11 +187,11 @@ namespace uos::authority::durable_store {
     if (revision == nullptr || !rt::isNumber(*revision) || !rt::Number::isSafeInteger(*revision) || rt::toNumber(*revision) < 0 || stateJson == nullptr ||
         !stateJson->is_string())
       throw AuthorityError("invalid_authority_record", 503);
-    const std::string text(stateJson->get_string());
-    _bounded(text);
+    const std::string encodedState(stateJson->get_string());
+    _bounded(encodedState);
     json::value state;
     try {
-      state = rt::jsonParse(text);
+      state = rt::jsonParse(encodedState);
     } catch (...) {
       throw AuthorityError("invalid_authority_state", 503);
     }

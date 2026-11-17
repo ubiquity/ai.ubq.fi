@@ -11,6 +11,9 @@
 #include <signal.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #include <unistd.h>
 #include <climits>
 #include <string>
@@ -66,18 +69,30 @@ namespace {
 }
 
 TEST("platform, arch, pid, uid, cwd, execPath and Bun constants") {
-  EXPECT_EQ(std::string(process::platform), "linux");
-#if defined(__x86_64__)
-  EXPECT_EQ(std::string(process::arch), "x64");  // Bun 1.4.0 on the x86_64 sanitizer runner.
+#if defined(__APPLE__)
+  EXPECT_EQ(std::string(process::platform), "darwin");
 #else
+  EXPECT_EQ(std::string(process::platform), "linux");
+#endif
+#if defined(__aarch64__)
   EXPECT_EQ(std::string(process::arch), "arm64");
+#else
+  EXPECT_EQ(std::string(process::arch), "x64");
 #endif
   EXPECT_EQ(process::pid(), static_cast<int>(::getpid()));
   EXPECT_EQ(process::getuid(), static_cast<std::uint32_t>(::getuid()));
   EXPECT_EQ(process::cwd(), rt::fs::realpathSync("."));
+#if defined(__APPLE__)
+  std::vector<char> executable(PATH_MAX);
+  auto size = static_cast<std::uint32_t>(executable.size());
+  if (::_NSGetExecutablePath(executable.data(), &size) != 0) executable.resize(size);
+  ASSERT_EQ(::_NSGetExecutablePath(executable.data(), &size), 0);
+  EXPECT_EQ(process::execPath(), rt::fs::realpathSync(executable.data()));
+#else
   // Under tools/unit.sh the binary runs through the SDK's dynamic loader, which
   // is then what /proc/self/exe names.
   EXPECT_EQ(process::execPath(), rt::fs::realpathSync("/proc/self/exe"));
+#endif
   EXPECT(rt::path::isAbsolute(process::execPath()));
   EXPECT_EQ(std::string(rt::bun::version), "1.4.0");
   EXPECT_EQ(std::string(rt::bun::revision), "34cbb9a40b4bd1bd767d134a7065e66c2432a676");

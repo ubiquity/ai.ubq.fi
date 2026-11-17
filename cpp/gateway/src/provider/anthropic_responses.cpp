@@ -577,11 +577,11 @@ namespace uos::provider::anthropic_responses {
 
     // MessagesFrame: Readonly<{ kind: "event"; value }> | Readonly<{ kind: "comment" }>.
     struct MessagesFrameEvent {
-      static constexpr std::string_view kind = "event";
+      [[maybe_unused]] static constexpr std::string_view kind = "event";
       JsonRecord value;
     };
     struct MessagesFrameComment {
-      static constexpr std::string_view kind = "comment";
+      [[maybe_unused]] static constexpr std::string_view kind = "comment";
     };
     using MessagesFrame = std::variant<MessagesFrameEvent, MessagesFrameComment>;
 

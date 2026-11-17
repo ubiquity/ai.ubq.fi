@@ -201,16 +201,16 @@ namespace {
     std::string out;
     std::size_t index = 0;
     for (; index + 2 < text.size(); index += 3) {
-      const unsigned chunk = (static_cast<unsigned char>(text[index]) << 16) | (static_cast<unsigned char>(text[index + 1]) << 8) | static_cast<unsigned char>(text[index + 2]);
+      const unsigned chunk = (static_cast<unsigned>(static_cast<unsigned char>(text[index])) << 16) | (static_cast<unsigned>(static_cast<unsigned char>(text[index + 1])) << 8) | static_cast<unsigned>(static_cast<unsigned char>(text[index + 2]));
       for (int shift = 18; shift >= 0; shift -= 6) out += alphabet[(chunk >> shift) & 63];
     }
     if (text.size() - index == 1) {
-      const unsigned chunk = static_cast<unsigned char>(text[index]) << 16;
+      const unsigned chunk = static_cast<unsigned>(static_cast<unsigned char>(text[index])) << 16;
       out += alphabet[(chunk >> 18) & 63];
       out += alphabet[(chunk >> 12) & 63];
       out += "==";
     } else if (text.size() - index == 2) {
-      const unsigned chunk = (static_cast<unsigned char>(text[index]) << 16) | (static_cast<unsigned char>(text[index + 1]) << 8);
+      const unsigned chunk = (static_cast<unsigned>(static_cast<unsigned char>(text[index])) << 16) | (static_cast<unsigned>(static_cast<unsigned char>(text[index + 1])) << 8);
       out += alphabet[(chunk >> 18) & 63];
       out += alphabet[(chunk >> 12) & 63];
       out += alphabet[(chunk >> 6) & 63];

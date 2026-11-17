@@ -210,7 +210,7 @@ namespace uos::codex::auth_refresh {
       rt::Reason unreachable;
       try {
         rt::RequestInit init = refreshTokenRequest(current.auth.refresh_token);
-        const rt::RequestInfo input(std::string(auth::CODEX_REFRESH_TOKEN_URL));
+        const rt::RequestInfo input{std::string(auth::CODEX_REFRESH_TOKEN_URL)};
         auto fetching = rt::fetch(input, std::move(init));
         response = co_await std::move(fetching);
       } catch (...) {
@@ -559,7 +559,7 @@ namespace uos::codex::auth_refresh {
     rt::Reason unreachable;
     try {
       rt::RequestInit init = refreshTokenRequest(authState.refresh_token);
-      const rt::RequestInfo input(std::string(auth::CODEX_REFRESH_TOKEN_URL));
+      const rt::RequestInfo input{std::string(auth::CODEX_REFRESH_TOKEN_URL)};
       auto fetching = rt::fetch(input, std::move(init));
       response = co_await std::move(fetching);
     } catch (...) {

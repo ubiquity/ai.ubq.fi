@@ -329,7 +329,7 @@ ASYNC_TEST("Anthropic Responses JSON preserves tool IDs and arguments without ex
   const JsonRecord native = message(val(R"([{"type":"thinking","thinking":"Use the requested tool.","signature":"provider-private-signature"},{"type":"tool_use","id":"toolu_123","name":"weather","input":{"city":"Paris"}}])")
                                       .as_array(),
                                     obj(R"({"input_tokens":5,"output_tokens":10})"), "tool_use");
-  const rt::Response upstream(rt::BodyInit(rt::jsonStringify(json::value(native))));
+  const rt::Response upstream{rt::BodyInit(rt::jsonStringify(json::value(native)))};
   const json::value payload = co_await normalizedJson(upstream);
   std::vector<std::string> types;
   for (const json::value& item : at(payload, "output").as_array()) types.push_back(stringAt(item, "type").value_or(""));
@@ -351,7 +351,7 @@ ASYNC_TEST("Anthropic Responses redacted thinking stays opaque rather than being
   const CredentialIsolation isolation;
   const JsonRecord native =
     message(val(R"([{"type":"redacted_thinking","data":"opaque"},{"type":"text","text":"OK"}])").as_array(), obj(R"({"input_tokens":5,"output_tokens":4})"));
-  const rt::Response upstream(rt::BodyInit(rt::jsonStringify(json::value(native))));
+  const rt::Response upstream{rt::BodyInit(rt::jsonStringify(json::value(native)))};
   const json::value payload = co_await normalizedJson(upstream);
   EXPECT_EQ(at(payload, "output").as_array().size(), std::size_t{1});
   EXPECT_EQ(stringAt(at(at(payload, "output"), 0), "type"), std::optional<std::string>("message"));
@@ -362,7 +362,7 @@ ASYNC_TEST("Anthropic Responses respects an explicit reasoning summary none") {
   const CredentialIsolation isolation;
   const JsonRecord native = message(val(R"([{"type":"thinking","thinking":"Do not expose this.","signature":"private"},{"type":"text","text":"OK"}])").as_array(),
                                     obj(R"({"input_tokens":5,"output_tokens":4})"));
-  const rt::Response upstream(rt::BodyInit(rt::jsonStringify(json::value(native))));
+  const rt::Response upstream{rt::BodyInit(rt::jsonStringify(json::value(native)))};
   AnthropicResponsesOptions options = modelOnly();
   options.reasoningSummary = "none";
   const json::value payload = co_await normalizedJson(upstream, std::move(options));

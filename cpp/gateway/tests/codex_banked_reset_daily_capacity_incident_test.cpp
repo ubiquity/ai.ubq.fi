@@ -94,14 +94,14 @@ ASYNC_TEST("a capacity-blocked live episode consumes exactly once without an arm
   Fixture fixture; const auto kv = std::make_shared<banked::MemoryKv>(); const auto clock = std::make_shared<banked::TestClock>();
   const auto reset = banked::candidate(banked::CandidateOverrides{.accountId = "incident-account-a", .routingGeneration = 7}); RUN(banked::seedFences(kv, reset));
   const auto provider = std::make_shared<banked::FakeCodexUsageResetProvider>(); provider->inventory = banked::inventory("incident-credit-a", clock->nowMs + 20'000);
-  const std::vector<uos::codex::banked_reset::CodexBankedResetPoolCandidate> pool{{0, reset, provider}};
+  const std::vector<uos::codex::banked_reset::CodexBankedResetPoolCandidate> bankedPool{{0, reset, provider}};
   const auto deps = banked::dependencies(kv, provider, clock, liveIncidentConfig());
-  AWAIT(consumed, banked::evaluateCodexBankedResetPool(pool, deps)); EXPECT_EQ(consumed.kind, "verified"); ASSERT(consumed.selected); EXPECT_EQ(consumed.selected->slot, 0);
+  AWAIT(consumed, banked::evaluateCodexBankedResetPool(bankedPool, deps)); EXPECT_EQ(consumed.kind, "verified"); ASSERT(consumed.selected); EXPECT_EQ(consumed.selected->slot, 0);
   ASSERT_EQ(provider->redeemInputs.size(), std::size_t{1}); EXPECT_EQ(provider->redeemInputs[0].creditId, "incident-credit-a"); EXPECT_EQ(provider->commitCount, 1);
   AWAIT(firstCount, accountDayCount(kv, "incident-account-a", utcDay(clock->nowMs))); EXPECT_EQ(firstCount, 1); ASSERT(consumed.reset);
   const auto redemptionKey = banked::codexResetRedemptionKey(banked::requiredHash(consumed.reset->accountIdHash), banked::requiredHash(consumed.reset->quotaGeneration));
   const auto redemption = kv->redemptionRecord(redemptionKey); ASSERT(redemption); EXPECT_EQ(rt::getString(*redemption, "state"), "verified");
-  AWAIT(repeated, banked::evaluateCodexBankedResetPool(pool, deps)); EXPECT_EQ(repeated.kind, "verified"); EXPECT_EQ(provider->redeemInputs.size(), std::size_t{1}); EXPECT_EQ(provider->commitCount, 1);
+  AWAIT(repeated, banked::evaluateCodexBankedResetPool(bankedPool, deps)); EXPECT_EQ(repeated.kind, "verified"); EXPECT_EQ(provider->redeemInputs.size(), std::size_t{1}); EXPECT_EQ(provider->commitCount, 1);
   AWAIT(repeatedCount, accountDayCount(kv, "incident-account-a", utcDay(clock->nowMs))); EXPECT_EQ(repeatedCount, 1);
 }
 
@@ -132,8 +132,8 @@ ASYNC_TEST("the live banked-reset policy requires an exact per-account daily cap
   EXPECT_EQ(uos::codex::banked_reset::providerPolicyReason(invalidConfig, terminalProvider.get()), "terminal_outcome_account_day_limit_must_be_one");
   const auto kv = std::make_shared<banked::MemoryKv>(); const auto clock = std::make_shared<banked::TestClock>(); const auto reset = banked::candidate(banked::CandidateOverrides{.accountId = "incident-terminal-account"});
   RUN(banked::seedFences(kv, reset));
-  const std::vector<uos::codex::banked_reset::CodexBankedResetPoolCandidate> pool{{0, reset, terminalProvider}};
+  const std::vector<uos::codex::banked_reset::CodexBankedResetPoolCandidate> bankedPool{{0, reset, terminalProvider}};
   const auto configured = banked::config(banked::ConfigOverrides{.mode = "live", .maxPerAccountPerDay = 2}); const auto deps = banked::dependencies(kv, terminalProvider, clock, configured);
-  AWAIT(refused, banked::evaluateCodexBankedResetPool(pool, deps)); EXPECT_EQ(refused.kind, "skipped");
+  AWAIT(refused, banked::evaluateCodexBankedResetPool(bankedPool, deps)); EXPECT_EQ(refused.kind, "skipped");
   EXPECT_EQ(refused.reason, "terminal_outcome_account_day_limit_must_be_one"); EXPECT_EQ(terminalProvider->callCount(), 0);
 }
