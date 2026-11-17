@@ -146,6 +146,7 @@ must use the enclosing job's authorized delivery mechanism unless write access a
 | 200/830 | 0 | 0 | 1720 | 1342.68 | 845964 | yes |
 | 300/830 | 0 | 0 | 2447 | 2079.729 | 906484 | yes |
 | 400/830 | 0 | 0 | 3797 | 3056.977 | 906484 | yes |
+| 500/830 | 0 | 0 | 6500 | 4328.626 | 906484 | yes |
 
 The baseline remains explicitly incomplete until all 830 receipts reconcile. This table
 records persisted runner checkpoints, not extrapolated pass counts. All units analyzed so far
@@ -406,6 +407,28 @@ is applied. Test verdicts describe fixture lifetimes, not runtime test-pass clai
 | `tests/chat_completions_differential_test.cpp:129` | Real but benign fixture: AsyncGenerator owns remaining/finished; its scope guard only increments the owned completion counter. |
 | `tests/claude_capacity_analytics_test.cpp:84` | Real but benign fixture: fetcher/configured options remain in the loop's parent frame while refresh is awaited; KV/account/change captures are owned values. |
 | `tests/claude_code_accounts_test.cpp:424` | Real but benign fixture: the provider-dispatch seam explicitly wraps its owning store/counter closure in rt::async. |
+| `tests/claude_header_meter_test.cpp:131` | Real but benign fixture: server ServeState owns the handler and is retained by handleRequest while awaiting it; captured reply state is a shared owner. |
+| `tests/codex_account_routing_part2_test.cpp:264` | Real but benign fixture: every parallel probe passes attempt through rt::async before constructing its Promise, retaining the copied expiry closure after the loop iteration. |
+| `tests/codex_account_routing_part3_test.cpp:95` | Real but benign fixture: returned rt::Fetch owns the marker/dispatch callable; its fetch invocation retains that callable through the awaited cloned body read. |
+| `tests/codex_auth_cache_part1_test.cpp:92` | Real but benign fixture: SourceAlgorithm owns the closure; cancellationStarted is accessed only before the permanent suspension, and the pending remainder never reads that reference. |
+| `tests/codex_auth_cache_part1_test.cpp:210` | Real but benign fixture: Fetch::keepAlive retains the callback, and the parent awaits all requests while providerCalls remains in scope. |
+| `tests/codex_auth_cache_part1_test.cpp:498` | Real but benign fixture: Fetch::keepAlive retains the gated callback; referenced gates/counters remain in the parent until requests are released/awaited, with cleanup releasing gates. |
+| `tests/codex_auth_cache_part2_test.cpp:173` | Real but benign fixture: Fetch::keepAlive owns the coroutine callback; the test retains its counters/status through the awaited outer and nested requests. |
+| `tests/codex_auth_cache_part3_test.cpp:90` | Real but benign fixture: beforeDispatch is retained in options/request state; its referenced counters/KV remain live until the awaited fenced dispatch completes. |
+| `tests/codex_auth_cache_part3_test.cpp:179` | Real but benign fixture: the scripted reset provider retains onInventory and its copied rotated account while the awaited reset/inventory call runs. |
+| `tests/codex_banked_reset_part2_test.cpp:243` | Real but benign fixture: rt::async owns the inner callback independently of the replacement slot it clears/restores; referenced Fixture/gates remain live until both pool requests are released and awaited. |
+| `tests/codex_banked_reset_part2_test.cpp:277` | Real but benign fixture: rt::async owns the key-capturing child; referenced settings/KV state stays in the parent while duplicate evaluation is awaited. |
+| `tests/codex_banked_reset_provider_test.cpp:198` | Real but benign fixture: named body is passed to the awaited step helper by value, retaining the copied case through redemption checks. |
+| `tests/codex_banked_reset_provider_test.cpp:228` | Real but benign fixture: the awaited step helper retains body and its copied response until redemption completes. |
+| `tests/codex_banked_reset_provider_test.cpp:281` | Real but benign fixture: the awaited step helper retains the body/payload through the expected inventory rejection. |
+| `tests/codex_catalog_test.cpp:443` | Real but benign fixture: Fetch::keepAlive retains the callback; counter/Promise references are used while the test is live, and its pending refresh is released before case completion. |
+| `tests/codex_catalog_test.cpp:444` | Real but benign fixture: Fetch::keepAlive retains the callback; the referenced surplus gate is released in the parent case and no reference is accessed after its wait. |
+| `tests/codex_manual_reset_test.cpp:57` | Real but benign fixture: return conversion builds an owning rt::Fetch, whose keepAlive retains the copied underlying fetcher/modifier across both awaits. |
+| `tests/codex_manual_reset_test.cpp:104` | Real but benign fixture: copied reset dependencies retain the callback and its shared fixture/fetcher through the awaited preflight mutation and request. |
+| `tests/codex_manual_reset_test.cpp:133` | Real but benign fixture: retained reset callback owns its fixture/fetcher across the post-consumption KV write and awaited reset outcome. |
+| `tests/codex_responses_error_test.cpp:45` | Real but benign fixture: ResponsesStreamIterator/AsyncGenerator owns the events-capturing body through every yield. |
+| `tests/codex_serial_routing_http_test.cpp:95` | Real but benign fixture: ServeState retains the handler; the captured Fixture stays alive through awaited HTTP calls and shuts down its servers during teardown. |
+| `tests/codex_serial_routing_http_test.cpp:105` | Real but benign fixture: rt::Fetch keeps the copied providerOrigin closure alive across the forwarded loopback fetch. |
 
 ## Ranked confirmed defect classes
 

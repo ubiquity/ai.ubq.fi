@@ -17,15 +17,16 @@
         "src/images.cpp": 1,
         "src/rt/url.cpp": 1
       },
-      "tu_emissions": 605,
+      "tu_emissions": 775,
       "unique": 8
     },
     "bugprone-derived-method-shadowing-base-method": {
       "files": {
-        "tests/helpers/admin_auth_harness.hpp": 1
+        "tests/helpers/admin_auth_harness.hpp": 1,
+        "tests/helpers/passkeys_harness.hpp": 2
       },
-      "tu_emissions": 7,
-      "unique": 1
+      "tu_emissions": 9,
+      "unique": 3
     },
     "bugprone-empty-catch": {
       "files": {
@@ -134,10 +135,21 @@
         "src/serve.cpp": 2,
         "src/types.cpp": 1,
         "src/upstream_wire.cpp": 10,
-        "src/worker/entrypoint.cpp": 2
+        "src/worker/entrypoint.cpp": 2,
+        "tests/anthropic_responses_test.cpp": 1,
+        "tests/codex_account_routing_part3_test.cpp": 1,
+        "tests/codex_auth_coverage_test.cpp": 1,
+        "tests/codex_auth_parse_differential_test.cpp": 1,
+        "tests/codex_catalog_observation_test.cpp": 2,
+        "tests/codex_dispatch_differential_test.cpp": 2,
+        "tests/codex_experiment_differential_test.cpp": 1,
+        "tests/codex_models_fetch_differential_test.cpp": 1,
+        "tests/codex_responses_differential_test.cpp": 1,
+        "tests/codex_responses_operations_differential_test.cpp": 1,
+        "tests/codex_selection_differential_test.cpp": 1
       },
-      "tu_emissions": 1999,
-      "unique": 256
+      "tu_emissions": 2629,
+      "unique": 269
     },
     "bugprone-exception-copy-constructor-throws": {
       "files": {
@@ -189,10 +201,14 @@
         "src/sentinel/incident_outbox.cpp": 2,
         "src/sentinel/replay_read.cpp": 2,
         "src/sentinel/replay_retention.cpp": 7,
-        "src/sentinel/replay_store.cpp": 1
+        "src/sentinel/replay_store.cpp": 1,
+        "tests/banked_reset_branch_coverage_test.cpp": 2,
+        "tests/codex_banked_reset_part2_test.cpp": 3,
+        "tests/codex_catalog_test.cpp": 1,
+        "tests/codex_model_availability_test.cpp": 1
       },
-      "tu_emissions": 79,
-      "unique": 74
+      "tu_emissions": 87,
+      "unique": 81
     },
     "bugprone-implicit-widening-of-multiplication-result": {
       "files": {
@@ -207,10 +223,16 @@
         "src/rt/regex_match.cpp": 6,
         "src/rt/websocket_client.cpp": 1,
         "src/rt/websocket_frame.cpp": 1,
-        "src/rt/websocket_socket.cpp": 1
+        "src/rt/websocket_socket.cpp": 1,
+        "tests/capacity_observation_sync_test.cpp": 1,
+        "tests/claude_code_models_differential_test.cpp": 1,
+        "tests/codex_account_routing_part1_test.cpp": 1,
+        "tests/codex_account_routing_part2_test.cpp": 1,
+        "tests/codex_catalog_observation_test.cpp": 2,
+        "tests/codex_context_admission_test.cpp": 1
       },
-      "tu_emissions": 210,
-      "unique": 22
+      "tu_emissions": 275,
+      "unique": 29
     },
     "bugprone-macro-parentheses": {
       "files": {
@@ -223,10 +245,43 @@
         "tests/admin_index_harness_test.cpp": 1,
         "tests/admin_kernel_coverage_test.cpp": 1,
         "tests/admin_native_owner_test.cpp": 1,
-        "tests/agent_messages_test.cpp": 1
+        "tests/agent_messages_test.cpp": 1,
+        "tests/auth_responses_branch_coverage_test.cpp": 1,
+        "tests/banked_reset_branch_coverage_test.cpp": 1,
+        "tests/chart_source_proxy_test.cpp": 1,
+        "tests/claude_capacity_analytics_test.cpp": 1,
+        "tests/claude_code_accounts_test.cpp": 1,
+        "tests/claude_code_models_test.cpp": 1,
+        "tests/claude_code_request_policy_test.cpp": 1,
+        "tests/claude_code_route_test.cpp": 1,
+        "tests/claude_header_meter_test.cpp": 1,
+        "tests/claude_subscription_admin_test.cpp": 1,
+        "tests/claude_usage_retry_test.cpp": 1,
+        "tests/codex_account_routing_part1_test.cpp": 1,
+        "tests/codex_account_routing_part2_test.cpp": 1,
+        "tests/codex_account_routing_part3_test.cpp": 1,
+        "tests/codex_auth_cache_part1_test.cpp": 1,
+        "tests/codex_auth_cache_part2_test.cpp": 1,
+        "tests/codex_auth_cache_part3_test.cpp": 1,
+        "tests/codex_auth_cache_part4_test.cpp": 1,
+        "tests/codex_banked_reset_account_day_cap_test.cpp": 1,
+        "tests/codex_banked_reset_capacity_recovery_test.cpp": 1,
+        "tests/codex_banked_reset_daily_capacity_incident_test.cpp": 1,
+        "tests/codex_banked_reset_differential_test.cpp": 1,
+        "tests/codex_banked_reset_part1_test.cpp": 1,
+        "tests/codex_banked_reset_part2_test.cpp": 1,
+        "tests/codex_banked_reset_part3_test.cpp": 1,
+        "tests/codex_catalog_metered_enrichment_test.cpp": 1,
+        "tests/codex_catalog_reasoning_order_test.cpp": 1,
+        "tests/codex_catalog_stale_while_revalidate_test.cpp": 1,
+        "tests/codex_manual_reset_test.cpp": 1,
+        "tests/codex_overage_fallback_test.cpp": 1,
+        "tests/codex_overage_usage_settings_test.cpp": 1,
+        "tests/codex_reset_settings_migration_test.cpp": 1,
+        "tests/codex_routing_mutations_branch_coverage_test.cpp": 1
       },
-      "tu_emissions": 10,
-      "unique": 10
+      "tu_emissions": 43,
+      "unique": 43
     },
     "bugprone-misplaced-widening-cast": {
       "files": {
@@ -260,16 +315,20 @@
         "src/provider/cerebras_responses.cpp": 1,
         "src/provider/surplus_claude_chat_request.cpp": 1,
         "src/rt/crypto.cpp": 1,
-        "src/sentinel/replay_envelope.cpp": 1
+        "src/sentinel/replay_envelope.cpp": 1,
+        "tests/claude_code_credentials_differential_test.cpp": 1,
+        "tests/claude_code_quota_differential_test.cpp": 3,
+        "tests/codex_dispatch_differential_test.cpp": 1,
+        "tests/codex_supervisor_brief_handler_differential_test.cpp": 1
       },
-      "tu_emissions": 21,
-      "unique": 20
+      "tu_emissions": 27,
+      "unique": 26
     },
     "bugprone-reserved-identifier": {
       "files": {
         "include/uos/provider/stream_relay.hpp": 1
       },
-      "tu_emissions": 10,
+      "tu_emissions": 12,
       "unique": 1
     },
     "bugprone-return-const-ref-from-parameter": {
@@ -278,7 +337,7 @@
         "src/auth/passkeys.cpp": 1,
         "src/provider/claude_code_quota.cpp": 1
       },
-      "tu_emissions": 256,
+      "tu_emissions": 340,
       "unique": 3
     },
     "bugprone-signed-bitwise": {
@@ -322,10 +381,16 @@
         "src/runtime/http.cpp": 7,
         "src/runtime/native_kv_bootstrap.cpp": 3,
         "src/runtime/permissions_linux.cpp": 1,
-        "src/sentinel/replay_envelope.cpp": 8
+        "src/sentinel/replay_envelope.cpp": 8,
+        "tests/catalog_store_differential_test.cpp": 1,
+        "tests/claude_code_credentials_differential_test.cpp": 1,
+        "tests/claude_code_differential_test.cpp": 1,
+        "tests/claude_code_models_differential_test.cpp": 1,
+        "tests/claude_code_quota_differential_test.cpp": 1,
+        "tests/codex_catalog_test.cpp": 1
       },
-      "tu_emissions": 1672,
-      "unique": 532
+      "tu_emissions": 1974,
+      "unique": 538
     },
     "bugprone-std-exception-baseclass": {
       "files": {
@@ -339,7 +404,7 @@
         "src/responses_stream.cpp": 1,
         "src/rt/fetch_transport.cpp": 1
       },
-      "tu_emissions": 1007,
+      "tu_emissions": 1385,
       "unique": 12
     },
     "bugprone-suspicious-missing-comma": {
@@ -485,22 +550,123 @@
         "tests/anthropic_chat_stream_differential_test.cpp": 4,
         "tests/anthropic_replay_test.cpp": 23,
         "tests/anthropic_response_wire_test.cpp": 3,
+        "tests/anthropic_responses_test.cpp": 30,
         "tests/api_key_policy_differential_test.cpp": 1,
         "tests/api_key_policy_dispatch_reuse_test.cpp": 7,
         "tests/api_keys_test.cpp": 4,
         "tests/auth_relay_differential_test.cpp": 1,
         "tests/auth_relay_test.cpp": 3,
+        "tests/auth_responses_branch_coverage_test.cpp": 23,
         "tests/authority_admission_test.cpp": 11,
         "tests/authority_differential_test.cpp": 6,
         "tests/authority_durable_test.cpp": 14,
         "tests/authority_publication_test.cpp": 6,
         "tests/authority_settlement_test.cpp": 5,
+        "tests/banked_reset_branch_coverage_test.cpp": 25,
+        "tests/bounded_response_body_test.cpp": 6,
+        "tests/c1_provider_handlers_differential_test.cpp": 1,
+        "tests/cache_kv_migration_differential_test.cpp": 3,
+        "tests/cache_kv_migration_usage_coverage_test.cpp": 45,
+        "tests/cache_scope_experiment_model_coverage_test.cpp": 20,
+        "tests/cache_usage_normalization_test.cpp": 4,
+        "tests/capacity_observation_route_test.cpp": 6,
+        "tests/capacity_observation_sync_test.cpp": 20,
+        "tests/catalog_promotion_test.cpp": 13,
+        "tests/catalog_store_differential_test.cpp": 11,
+        "tests/catalog_types_differential_test.cpp": 3,
+        "tests/cerebras_differential_test.cpp": 13,
+        "tests/cerebras_rate_limits_differential_test.cpp": 1,
+        "tests/cerebras_responses_test.cpp": 18,
+        "tests/cerebras_usage_test.cpp": 3,
+        "tests/chart_source_proxy_test.cpp": 23,
+        "tests/chat_completions_differential_test.cpp": 43,
+        "tests/claude_capacity_analytics_test.cpp": 3,
+        "tests/claude_capacity_differential_test.cpp": 4,
+        "tests/claude_code_accounts_test.cpp": 35,
+        "tests/claude_code_credentials_differential_test.cpp": 8,
+        "tests/claude_code_differential_test.cpp": 10,
+        "tests/claude_code_models_differential_test.cpp": 8,
+        "tests/claude_code_models_test.cpp": 3,
+        "tests/claude_code_quota_differential_test.cpp": 5,
+        "tests/claude_code_request_policy_test.cpp": 17,
+        "tests/claude_code_route_test.cpp": 12,
+        "tests/claude_code_subscription_test.cpp": 21,
+        "tests/claude_code_usage_schema_test.cpp": 3,
+        "tests/claude_code_usage_test.cpp": 5,
+        "tests/claude_header_meter_test.cpp": 5,
+        "tests/claude_subscription_admin_test.cpp": 20,
+        "tests/claude_usage_meters_test.cpp": 4,
+        "tests/claude_usage_retry_test.cpp": 3,
+        "tests/cluster_w04c1/PA1_headers_test.cpp": 1,
+        "tests/cluster_w04c1/PA2_headers_test.cpp": 1,
+        "tests/cluster_w04c1/PA3_headers_test.cpp": 1,
+        "tests/cluster_w04c1_headers_test.cpp": 1,
+        "tests/cluster_w04c1_link_test.cpp": 5,
+        "tests/cluster_w04c1_recorder_without_capacity_test.cpp": 1,
+        "tests/codex_account_affinity_test.cpp": 4,
+        "tests/codex_account_email_test.cpp": 2,
+        "tests/codex_account_routing_part1_test.cpp": 26,
+        "tests/codex_account_routing_part2_test.cpp": 31,
+        "tests/codex_account_routing_part3_test.cpp": 23,
+        "tests/codex_auth_cache_part1_test.cpp": 26,
+        "tests/codex_auth_cache_part2_test.cpp": 20,
+        "tests/codex_auth_cache_part3_test.cpp": 20,
+        "tests/codex_auth_cache_part4_test.cpp": 5,
+        "tests/codex_auth_coverage_test.cpp": 34,
+        "tests/codex_auth_parse_differential_test.cpp": 1,
+        "tests/codex_auth_repair_test.cpp": 19,
+        "tests/codex_banked_reset_account_day_cap_test.cpp": 5,
+        "tests/codex_banked_reset_capacity_recovery_test.cpp": 13,
+        "tests/codex_banked_reset_daily_capacity_incident_test.cpp": 5,
+        "tests/codex_banked_reset_differential_test.cpp": 34,
+        "tests/codex_banked_reset_part1_test.cpp": 36,
+        "tests/codex_banked_reset_part2_test.cpp": 26,
+        "tests/codex_banked_reset_part3_test.cpp": 1,
+        "tests/codex_banked_reset_provider_differential_test.cpp": 6,
+        "tests/codex_banked_reset_provider_test.cpp": 7,
+        "tests/codex_capacity_routing_coverage_test.cpp": 20,
+        "tests/codex_catalog_metered_enrichment_test.cpp": 1,
+        "tests/codex_catalog_observation_test.cpp": 10,
+        "tests/codex_catalog_reasoning_order_test.cpp": 6,
+        "tests/codex_catalog_stale_while_revalidate_test.cpp": 1,
+        "tests/codex_catalog_test.cpp": 30,
+        "tests/codex_context_admission_test.cpp": 19,
+        "tests/codex_dispatch_differential_test.cpp": 13,
+        "tests/codex_experiment_differential_test.cpp": 4,
+        "tests/codex_external_auth_differential_test.cpp": 4,
+        "tests/codex_external_native_auth_test.cpp": 10,
+        "tests/codex_manual_reset_state_differential_test.cpp": 4,
+        "tests/codex_manual_reset_state_test.cpp": 4,
+        "tests/codex_manual_reset_test.cpp": 13,
+        "tests/codex_metered_routing_matrix_test.cpp": 7,
+        "tests/codex_model_availability_test.cpp": 28,
+        "tests/codex_model_switch_replay_test.cpp": 3,
+        "tests/codex_models_availability_differential_test.cpp": 4,
+        "tests/codex_models_branch_coverage_test.cpp": 30,
+        "tests/codex_models_differential_test.cpp": 11,
+        "tests/codex_models_fetch_differential_test.cpp": 6,
+        "tests/codex_overage_fallback_test.cpp": 8,
+        "tests/codex_overage_usage_settings_test.cpp": 7,
+        "tests/codex_quota_differential_test.cpp": 3,
+        "tests/codex_reset_settings_migration_test.cpp": 10,
+        "tests/codex_responses_differential_test.cpp": 3,
+        "tests/codex_responses_error_differential_test.cpp": 1,
+        "tests/codex_responses_error_test.cpp": 7,
+        "tests/codex_responses_operations_differential_test.cpp": 1,
+        "tests/codex_retry_after_test.cpp": 3,
+        "tests/codex_routing_mutations_branch_coverage_test.cpp": 9,
+        "tests/codex_routing_mutations_differential_test.cpp": 1,
+        "tests/codex_routing_state_differential_test.cpp": 9,
+        "tests/codex_selection_differential_test.cpp": 1,
+        "tests/codex_session_test.cpp": 3,
+        "tests/codex_supervisor_brief_handler_differential_test.cpp": 1,
         "tests/helpers/admin_auth_harness.hpp": 4,
+        "tests/helpers/codex_auth_cache_harness.hpp": 1,
         "tests/helpers/prompt_cache_scope_experiment_harness.hpp": 3,
         "tests/helpers/responses_conformance_client.hpp": 4
       },
-      "tu_emissions": 4038,
-      "unique": 597
+      "tu_emissions": 6782,
+      "unique": 1724
     },
     "bugprone-unchecked-optional-access": {
       "files": {
@@ -692,17 +858,92 @@
         "tests/anthropic_chat_stream_differential_test.cpp": 5,
         "tests/anthropic_replay_test.cpp": 5,
         "tests/anthropic_response_wire_test.cpp": 6,
+        "tests/anthropic_responses_test.cpp": 25,
         "tests/api_key_policy_differential_test.cpp": 2,
-        "tests/authority_admission_test.cpp": 1
+        "tests/auth_responses_branch_coverage_test.cpp": 7,
+        "tests/authority_admission_test.cpp": 1,
+        "tests/banked_reset_branch_coverage_test.cpp": 4,
+        "tests/c1_provider_handlers_differential_test.cpp": 4,
+        "tests/cache_kv_migration_differential_test.cpp": 4,
+        "tests/cache_kv_migration_usage_coverage_test.cpp": 3,
+        "tests/cache_scope_experiment_model_coverage_test.cpp": 17,
+        "tests/cache_usage_normalization_test.cpp": 7,
+        "tests/capacity_observation_route_test.cpp": 3,
+        "tests/capacity_observation_sync_test.cpp": 4,
+        "tests/catalog_promotion_test.cpp": 6,
+        "tests/catalog_store_differential_test.cpp": 12,
+        "tests/cerebras_differential_test.cpp": 13,
+        "tests/cerebras_responses_test.cpp": 35,
+        "tests/chart_source_proxy_test.cpp": 3,
+        "tests/chat_completions_differential_test.cpp": 6,
+        "tests/claude_capacity_analytics_test.cpp": 9,
+        "tests/claude_code_accounts_test.cpp": 103,
+        "tests/claude_code_credentials_differential_test.cpp": 1,
+        "tests/claude_code_differential_test.cpp": 2,
+        "tests/claude_code_models_test.cpp": 3,
+        "tests/claude_code_quota_differential_test.cpp": 4,
+        "tests/claude_code_request_policy_test.cpp": 14,
+        "tests/claude_code_route_test.cpp": 25,
+        "tests/claude_code_subscription_test.cpp": 46,
+        "tests/claude_code_usage_schema_test.cpp": 1,
+        "tests/claude_code_usage_test.cpp": 4,
+        "tests/claude_header_meter_test.cpp": 5,
+        "tests/claude_subscription_admin_test.cpp": 14,
+        "tests/claude_usage_meters_test.cpp": 14,
+        "tests/claude_usage_retry_test.cpp": 17,
+        "tests/cluster_w04c1_link_test.cpp": 4,
+        "tests/codex_account_routing_part1_test.cpp": 31,
+        "tests/codex_account_routing_part2_test.cpp": 30,
+        "tests/codex_account_routing_part3_test.cpp": 9,
+        "tests/codex_auth_cache_part1_test.cpp": 2,
+        "tests/codex_auth_cache_part2_test.cpp": 6,
+        "tests/codex_auth_cache_part3_test.cpp": 6,
+        "tests/codex_auth_cache_part4_test.cpp": 22,
+        "tests/codex_auth_coverage_test.cpp": 30,
+        "tests/codex_auth_parse_differential_test.cpp": 1,
+        "tests/codex_auth_repair_test.cpp": 15,
+        "tests/codex_banked_reset_account_day_cap_test.cpp": 1,
+        "tests/codex_banked_reset_capacity_recovery_test.cpp": 10,
+        "tests/codex_banked_reset_daily_capacity_incident_test.cpp": 6,
+        "tests/codex_banked_reset_part1_test.cpp": 16,
+        "tests/codex_banked_reset_part2_test.cpp": 13,
+        "tests/codex_banked_reset_part3_test.cpp": 1,
+        "tests/codex_banked_reset_provider_test.cpp": 1,
+        "tests/codex_capacity_routing_coverage_test.cpp": 8,
+        "tests/codex_catalog_observation_test.cpp": 7,
+        "tests/codex_catalog_reasoning_order_test.cpp": 1,
+        "tests/codex_catalog_test.cpp": 6,
+        "tests/codex_context_admission_test.cpp": 11,
+        "tests/codex_dispatch_differential_test.cpp": 12,
+        "tests/codex_experiment_differential_test.cpp": 2,
+        "tests/codex_external_auth_differential_test.cpp": 4,
+        "tests/codex_external_native_auth_test.cpp": 7,
+        "tests/codex_manual_reset_state_differential_test.cpp": 3,
+        "tests/codex_manual_reset_state_test.cpp": 1,
+        "tests/codex_manual_reset_test.cpp": 2,
+        "tests/codex_metered_routing_matrix_test.cpp": 4,
+        "tests/codex_model_availability_test.cpp": 35,
+        "tests/codex_model_switch_replay_test.cpp": 2,
+        "tests/codex_models_availability_differential_test.cpp": 1,
+        "tests/codex_models_branch_coverage_test.cpp": 57,
+        "tests/codex_models_differential_test.cpp": 5,
+        "tests/codex_overage_fallback_test.cpp": 1,
+        "tests/codex_overage_usage_settings_test.cpp": 3,
+        "tests/codex_responses_error_test.cpp": 1,
+        "tests/codex_responses_operations_differential_test.cpp": 2,
+        "tests/codex_routing_mutations_branch_coverage_test.cpp": 27,
+        "tests/codex_routing_mutations_differential_test.cpp": 9,
+        "tests/codex_routing_state_differential_test.cpp": 2,
+        "tests/codex_supervisor_brief_handler_differential_test.cpp": 1
       },
-      "tu_emissions": 1946,
-      "unique": 866
+      "tu_emissions": 3212,
+      "unique": 1699
     },
     "bugprone-unhandled-self-assignment": {
       "files": {
         "include/uos/rt/ordered.hpp": 1
       },
-      "tu_emissions": 254,
+      "tu_emissions": 338,
       "unique": 1
     },
     "bugprone-unused-return-value": {
@@ -748,10 +989,22 @@
         "src/rt/process_loop.cpp": 1,
         "src/rt/tls.cpp": 2,
         "tests/analytics_differential_test.cpp": 1,
-        "tests/anthropic_chat_stream_differential_test.cpp": 1
+        "tests/anthropic_chat_stream_differential_test.cpp": 1,
+        "tests/catalog_store_differential_test.cpp": 2,
+        "tests/codex_auth_coverage_test.cpp": 1,
+        "tests/codex_auth_parse_differential_test.cpp": 1,
+        "tests/codex_dispatch_differential_test.cpp": 1,
+        "tests/codex_experiment_differential_test.cpp": 1,
+        "tests/codex_external_auth_differential_test.cpp": 1,
+        "tests/codex_manual_reset_state_differential_test.cpp": 1,
+        "tests/codex_models_fetch_differential_test.cpp": 1,
+        "tests/codex_responses_differential_test.cpp": 1,
+        "tests/codex_responses_error_differential_test.cpp": 1,
+        "tests/codex_responses_operations_differential_test.cpp": 1,
+        "tests/codex_supervisor_brief_handler_differential_test.cpp": 1
       },
-      "tu_emissions": 108,
-      "unique": 18
+      "tu_emissions": 421,
+      "unique": 31
     },
     "clang-analyzer-core.CallAndMessage": {
       "files": {
@@ -780,10 +1033,12 @@
     },
     "clang-analyzer-cplusplus.NewDeleteLeaks": {
       "files": {
-        "src/runtime/http.cpp": 2
+        "src/runtime/http.cpp": 2,
+        "tests/chart_source_proxy_test.cpp": 1,
+        "tests/codex_auth_coverage_test.cpp": 1
       },
-      "tu_emissions": 2,
-      "unique": 2
+      "tu_emissions": 4,
+      "unique": 4
     },
     "clang-analyzer-security.ArrayBound": {
       "files": {
@@ -825,10 +1080,14 @@
         "src/sentinel/incident_outbox.cpp": 2,
         "src/sentinel/replay_read.cpp": 2,
         "src/sentinel/replay_retention.cpp": 7,
-        "src/sentinel/replay_store.cpp": 1
+        "src/sentinel/replay_store.cpp": 1,
+        "tests/banked_reset_branch_coverage_test.cpp": 2,
+        "tests/codex_banked_reset_part2_test.cpp": 3,
+        "tests/codex_catalog_test.cpp": 1,
+        "tests/codex_model_availability_test.cpp": 1
       },
-      "tu_emissions": 74,
-      "unique": 74
+      "tu_emissions": 81,
+      "unique": 81
     },
     "concurrency-mt-unsafe": {
       "files": {
@@ -864,10 +1123,26 @@
         "tests/admin_codex_coverage_test.cpp": 1,
         "tests/admin_codex_scope_experiment_test.cpp": 2,
         "tests/admin_native_owner_test.cpp": 2,
-        "tests/api_key_policy_differential_test.cpp": 12
+        "tests/api_key_policy_differential_test.cpp": 12,
+        "tests/bounded_response_body_test.cpp": 1,
+        "tests/c1_provider_handlers_differential_test.cpp": 1,
+        "tests/chat_completions_differential_test.cpp": 3,
+        "tests/claude_capacity_analytics_test.cpp": 1,
+        "tests/claude_code_accounts_test.cpp": 1,
+        "tests/claude_header_meter_test.cpp": 1,
+        "tests/codex_account_routing_part2_test.cpp": 1,
+        "tests/codex_account_routing_part3_test.cpp": 1,
+        "tests/codex_auth_cache_part1_test.cpp": 3,
+        "tests/codex_auth_cache_part2_test.cpp": 1,
+        "tests/codex_auth_cache_part3_test.cpp": 2,
+        "tests/codex_banked_reset_part2_test.cpp": 2,
+        "tests/codex_banked_reset_provider_test.cpp": 3,
+        "tests/codex_catalog_test.cpp": 2,
+        "tests/codex_manual_reset_test.cpp": 3,
+        "tests/codex_responses_error_test.cpp": 1
       },
-      "tu_emissions": 53,
-      "unique": 46
+      "tu_emissions": 81,
+      "unique": 73
     },
     "cppcoreguidelines-avoid-reference-coroutine-parameters": {
       "files": {
@@ -892,10 +1167,13 @@
         "src/sentinel/replay_retention_schema.cpp": 8,
         "src/sentinel/replay_store.cpp": 4,
         "tests/admin_api_keys_coverage_test.cpp": 2,
-        "tests/api_key_policy_dispatch_reuse_test.cpp": 2
+        "tests/api_key_policy_dispatch_reuse_test.cpp": 2,
+        "tests/capacity_observation_sync_test.cpp": 1,
+        "tests/claude_code_request_policy_test.cpp": 2,
+        "tests/codex_metered_routing_matrix_test.cpp": 1
       },
-      "tu_emissions": 188,
-      "unique": 188
+      "tu_emissions": 192,
+      "unique": 192
     },
     "performance-expensive-value-or": {
       "files": {
@@ -925,10 +1203,25 @@
         "src/provider/stream_relay.cpp": 4,
         "src/rt/http.cpp": 1,
         "src/runtime/native_kv_bootstrap.cpp": 1,
-        "src/sentinel/replay_observation.cpp": 1
+        "src/sentinel/replay_observation.cpp": 1,
+        "tests/chart_source_proxy_test.cpp": 3,
+        "tests/claude_code_usage_test.cpp": 1,
+        "tests/codex_account_affinity_test.cpp": 2,
+        "tests/codex_account_routing_part1_test.cpp": 1,
+        "tests/codex_account_routing_part3_test.cpp": 2,
+        "tests/codex_auth_cache_part1_test.cpp": 1,
+        "tests/codex_auth_cache_part2_test.cpp": 1,
+        "tests/codex_auth_cache_part3_test.cpp": 3,
+        "tests/codex_auth_cache_part4_test.cpp": 1,
+        "tests/codex_auth_coverage_test.cpp": 1,
+        "tests/codex_banked_reset_provider_differential_test.cpp": 1,
+        "tests/codex_catalog_observation_test.cpp": 1,
+        "tests/codex_model_availability_test.cpp": 2,
+        "tests/codex_overage_fallback_test.cpp": 1,
+        "tests/codex_routing_mutations_branch_coverage_test.cpp": 1
       },
-      "tu_emissions": 50,
-      "unique": 50
+      "tu_emissions": 72,
+      "unique": 72
     },
     "performance-faster-string-find": {
       "files": {
@@ -948,10 +1241,13 @@
         "src/sentinel/replay_observation.cpp": 4,
         "src/sentinel/replay_retention.cpp": 2,
         "src/sentinel/upstream_capture.cpp": 2,
-        "src/systemone/handlers.cpp": 1
+        "src/systemone/handlers.cpp": 1,
+        "tests/codex_auth_coverage_test.cpp": 1,
+        "tests/codex_capacity_routing_coverage_test.cpp": 1,
+        "tests/codex_model_availability_test.cpp": 1
       },
-      "tu_emissions": 27,
-      "unique": 27
+      "tu_emissions": 30,
+      "unique": 30
     },
     "performance-inefficient-string-concatenation": {
       "files": {
@@ -965,10 +1261,12 @@
         "src/rt/process_loop.cpp": 1,
         "src/rt/websocket_client.cpp": 1,
         "src/runtime/http_upgrade.cpp": 2,
-        "tests/admin_api_keys_coverage_test.cpp": 1
+        "tests/admin_api_keys_coverage_test.cpp": 1,
+        "tests/cerebras_differential_test.cpp": 1,
+        "tests/helpers/deepseek_port_replay.hpp": 1
       },
-      "tu_emissions": 17,
-      "unique": 17
+      "tu_emissions": 19,
+      "unique": 19
     },
     "performance-inefficient-vector-operation": {
       "files": {
@@ -1025,10 +1323,22 @@
         "src/runtime/permissions_linux.cpp": 2,
         "src/sentinel/replay_read.cpp": 1,
         "tests/admin_error_log_test.cpp": 1,
-        "tests/anthropic_chat_stream_differential_test.cpp": 1
+        "tests/anthropic_chat_stream_differential_test.cpp": 1,
+        "tests/anthropic_responses_test.cpp": 1,
+        "tests/capacity_observation_sync_test.cpp": 3,
+        "tests/claude_code_models_differential_test.cpp": 1,
+        "tests/codex_account_routing_part3_test.cpp": 1,
+        "tests/codex_auth_cache_part1_test.cpp": 3,
+        "tests/codex_auth_cache_part2_test.cpp": 1,
+        "tests/codex_auth_repair_test.cpp": 5,
+        "tests/codex_catalog_test.cpp": 1,
+        "tests/codex_manual_reset_state_test.cpp": 1,
+        "tests/codex_model_availability_test.cpp": 1,
+        "tests/codex_models_branch_coverage_test.cpp": 1,
+        "tests/codex_overage_fallback_test.cpp": 1
       },
-      "tu_emissions": 90,
-      "unique": 90
+      "tu_emissions": 110,
+      "unique": 110
     },
     "performance-move-const-arg": {
       "files": {
@@ -1047,10 +1357,11 @@
         "src/rt/headers.cpp": 1,
         "src/rt/process_loop.cpp": 3,
         "tests/admin_native_owner_test.cpp": 1,
-        "tests/authority_durable_test.cpp": 1
+        "tests/authority_durable_test.cpp": 1,
+        "tests/codex_auth_repair_test.cpp": 2
       },
-      "tu_emissions": 53,
-      "unique": 25
+      "tu_emissions": 60,
+      "unique": 27
     },
     "performance-no-automatic-move": {
       "files": {
@@ -1102,7 +1413,7 @@
     },
     "performance-unnecessary-copy-initialization": {
       "files": {
-        "include/uos/rt/async.hpp": 55,
+        "include/uos/rt/async.hpp": 61,
         "src/admin/sentinel_incident.cpp": 1,
         "src/auth/passport.cpp": 1,
         "src/cache/scope_experiment_targets.cpp": 1,
@@ -1134,10 +1445,20 @@
         "src/runtime/http.cpp": 1,
         "src/runtime/http_upgrade.cpp": 1,
         "src/static.cpp": 2,
-        "src/worker/entrypoint.cpp": 2
+        "src/worker/entrypoint.cpp": 2,
+        "tests/claude_code_credentials_differential_test.cpp": 1,
+        "tests/claude_code_quota_differential_test.cpp": 1,
+        "tests/codex_auth_cache_part1_test.cpp": 1,
+        "tests/codex_banked_reset_part2_test.cpp": 1,
+        "tests/codex_context_admission_test.cpp": 1,
+        "tests/codex_dispatch_differential_test.cpp": 1,
+        "tests/codex_models_branch_coverage_test.cpp": 1,
+        "tests/codex_reset_settings_migration_test.cpp": 6,
+        "tests/codex_routing_mutations_branch_coverage_test.cpp": 7,
+        "tests/codex_selection_differential_test.cpp": 1
       },
-      "tu_emissions": 150,
-      "unique": 98
+      "tu_emissions": 180,
+      "unique": 125
     },
     "performance-unnecessary-value-param": {
       "files": {
@@ -1145,7 +1466,7 @@
         "include/uos/optional_telemetry_queue.hpp": 2,
         "include/uos/provider/stream_relay.hpp": 1,
         "include/uos/rt/abort.hpp": 1,
-        "include/uos/rt/async.hpp": 12,
+        "include/uos/rt/async.hpp": 14,
         "include/uos/rt/stream.hpp": 2,
         "src/admin/api_keys.cpp": 1,
         "src/admin/chart_source_proxy.cpp": 2,
@@ -1262,12 +1583,71 @@
         "tests/agent_messages_test.cpp": 5,
         "tests/anthropic_chat_responses_test.cpp": 3,
         "tests/anthropic_chat_stream_differential_test.cpp": 4,
+        "tests/anthropic_responses_test.cpp": 7,
         "tests/api_key_policy_differential_test.cpp": 6,
+        "tests/auth_responses_branch_coverage_test.cpp": 1,
         "tests/authority_durable_test.cpp": 1,
-        "tests/authority_publication_test.cpp": 2
+        "tests/authority_publication_test.cpp": 2,
+        "tests/banked_reset_branch_coverage_test.cpp": 4,
+        "tests/bounded_response_body_test.cpp": 10,
+        "tests/c1_provider_handlers_differential_test.cpp": 1,
+        "tests/cache_scope_experiment_model_coverage_test.cpp": 2,
+        "tests/capacity_observation_route_test.cpp": 2,
+        "tests/capacity_observation_sync_test.cpp": 3,
+        "tests/catalog_store_differential_test.cpp": 2,
+        "tests/cerebras_differential_test.cpp": 8,
+        "tests/cerebras_responses_test.cpp": 3,
+        "tests/chart_source_proxy_test.cpp": 30,
+        "tests/chat_completions_differential_test.cpp": 8,
+        "tests/claude_capacity_analytics_test.cpp": 6,
+        "tests/claude_code_accounts_test.cpp": 28,
+        "tests/claude_code_differential_test.cpp": 2,
+        "tests/claude_code_models_test.cpp": 7,
+        "tests/claude_code_quota_differential_test.cpp": 1,
+        "tests/claude_code_request_policy_test.cpp": 5,
+        "tests/claude_code_route_test.cpp": 11,
+        "tests/claude_code_subscription_test.cpp": 4,
+        "tests/claude_code_usage_test.cpp": 8,
+        "tests/claude_header_meter_test.cpp": 3,
+        "tests/claude_subscription_admin_test.cpp": 12,
+        "tests/claude_usage_retry_test.cpp": 12,
+        "tests/cluster_w04c1_link_test.cpp": 1,
+        "tests/codex_account_affinity_test.cpp": 6,
+        "tests/codex_account_routing_part1_test.cpp": 4,
+        "tests/codex_account_routing_part2_test.cpp": 1,
+        "tests/codex_account_routing_part3_test.cpp": 6,
+        "tests/codex_auth_cache_part1_test.cpp": 47,
+        "tests/codex_auth_cache_part2_test.cpp": 37,
+        "tests/codex_auth_cache_part3_test.cpp": 42,
+        "tests/codex_auth_cache_part4_test.cpp": 10,
+        "tests/codex_auth_coverage_test.cpp": 7,
+        "tests/codex_auth_parse_differential_test.cpp": 3,
+        "tests/codex_banked_reset_differential_test.cpp": 9,
+        "tests/codex_banked_reset_part1_test.cpp": 13,
+        "tests/codex_banked_reset_part2_test.cpp": 14,
+        "tests/codex_banked_reset_provider_differential_test.cpp": 14,
+        "tests/codex_banked_reset_provider_test.cpp": 16,
+        "tests/codex_catalog_metered_enrichment_test.cpp": 4,
+        "tests/codex_catalog_observation_test.cpp": 14,
+        "tests/codex_catalog_reasoning_order_test.cpp": 2,
+        "tests/codex_catalog_stale_while_revalidate_test.cpp": 6,
+        "tests/codex_catalog_test.cpp": 46,
+        "tests/codex_context_admission_test.cpp": 11,
+        "tests/codex_dispatch_differential_test.cpp": 1,
+        "tests/codex_experiment_differential_test.cpp": 1,
+        "tests/codex_external_native_auth_test.cpp": 7,
+        "tests/codex_manual_reset_test.cpp": 3,
+        "tests/codex_metered_routing_matrix_test.cpp": 2,
+        "tests/codex_model_availability_test.cpp": 9,
+        "tests/codex_models_fetch_differential_test.cpp": 2,
+        "tests/codex_overage_fallback_test.cpp": 2,
+        "tests/codex_responses_differential_test.cpp": 1,
+        "tests/codex_responses_error_test.cpp": 2,
+        "tests/codex_selection_differential_test.cpp": 4,
+        "tests/codex_supervisor_brief_handler_differential_test.cpp": 3
       },
-      "tu_emissions": 775,
-      "unique": 606
+      "tu_emissions": 1332,
+      "unique": 1138
     },
     "performance-use-std-move": {
       "files": {
@@ -1295,10 +1675,18 @@
         "src/runtime_config.cpp": 3,
         "src/sentinel/replay_retention_bootstrap.cpp": 1,
         "tests/anthropic_replay_test.cpp": 1,
-        "tests/authority_durable_test.cpp": 1
+        "tests/authority_durable_test.cpp": 1,
+        "tests/claude_code_accounts_test.cpp": 1,
+        "tests/claude_code_subscription_test.cpp": 1,
+        "tests/codex_auth_cache_part2_test.cpp": 1,
+        "tests/codex_auth_cache_part3_test.cpp": 1,
+        "tests/codex_auth_coverage_test.cpp": 1,
+        "tests/codex_banked_reset_part2_test.cpp": 1,
+        "tests/codex_capacity_routing_coverage_test.cpp": 1,
+        "tests/codex_routing_mutations_differential_test.cpp": 1
       },
-      "tu_emissions": 37,
-      "unique": 37
+      "tu_emissions": 45,
+      "unique": 45
     }
   },
   "complete": false,
@@ -1693,30 +2081,130 @@
     "tests/anthropic_chat_stream_differential_test.cpp",
     "tests/anthropic_replay_test.cpp",
     "tests/anthropic_response_wire_test.cpp",
+    "tests/anthropic_responses_test.cpp",
     "tests/api_key_policy_differential_test.cpp",
     "tests/api_key_policy_dispatch_reuse_test.cpp",
     "tests/api_keys_test.cpp",
     "tests/auth_relay_differential_test.cpp",
     "tests/auth_relay_test.cpp",
+    "tests/auth_responses_branch_coverage_test.cpp",
     "tests/authority_admission_test.cpp",
     "tests/authority_differential_test.cpp",
     "tests/authority_durable_test.cpp",
     "tests/authority_publication_test.cpp",
-    "tests/authority_settlement_test.cpp"
+    "tests/authority_settlement_test.cpp",
+    "tests/banked_reset_branch_coverage_test.cpp",
+    "tests/bounded_response_body_test.cpp",
+    "tests/c1_provider_handlers_differential_test.cpp",
+    "tests/cache_kv_migration_differential_test.cpp",
+    "tests/cache_kv_migration_usage_coverage_test.cpp",
+    "tests/cache_scope_experiment_model_coverage_test.cpp",
+    "tests/cache_usage_normalization_test.cpp",
+    "tests/capacity_observation_route_test.cpp",
+    "tests/capacity_observation_sync_test.cpp",
+    "tests/catalog_promotion_test.cpp",
+    "tests/catalog_store_differential_test.cpp",
+    "tests/catalog_types_differential_test.cpp",
+    "tests/cerebras_differential_test.cpp",
+    "tests/cerebras_rate_limits_differential_test.cpp",
+    "tests/cerebras_responses_test.cpp",
+    "tests/cerebras_usage_test.cpp",
+    "tests/chart_source_proxy_test.cpp",
+    "tests/chat_completions_differential_test.cpp",
+    "tests/claude_capacity_analytics_test.cpp",
+    "tests/claude_capacity_differential_test.cpp",
+    "tests/claude_code_accounts_test.cpp",
+    "tests/claude_code_credentials_differential_test.cpp",
+    "tests/claude_code_differential_test.cpp",
+    "tests/claude_code_models_differential_test.cpp",
+    "tests/claude_code_models_test.cpp",
+    "tests/claude_code_quota_differential_test.cpp",
+    "tests/claude_code_request_policy_test.cpp",
+    "tests/claude_code_route_test.cpp",
+    "tests/claude_code_subscription_test.cpp",
+    "tests/claude_code_usage_schema_test.cpp",
+    "tests/claude_code_usage_test.cpp",
+    "tests/claude_header_meter_test.cpp",
+    "tests/claude_subscription_admin_test.cpp",
+    "tests/claude_usage_meters_test.cpp",
+    "tests/claude_usage_retry_test.cpp",
+    "tests/cluster_w04c1/PA1_headers_test.cpp",
+    "tests/cluster_w04c1/PA2_headers_test.cpp",
+    "tests/cluster_w04c1/PA3_headers_test.cpp",
+    "tests/cluster_w04c1_headers_test.cpp",
+    "tests/cluster_w04c1_link_test.cpp",
+    "tests/cluster_w04c1_recorder_without_capacity_test.cpp",
+    "tests/codex_account_affinity_test.cpp",
+    "tests/codex_account_email_test.cpp",
+    "tests/codex_account_routing_part1_test.cpp",
+    "tests/codex_account_routing_part2_test.cpp",
+    "tests/codex_account_routing_part3_test.cpp",
+    "tests/codex_auth_cache_part1_test.cpp",
+    "tests/codex_auth_cache_part2_test.cpp",
+    "tests/codex_auth_cache_part3_test.cpp",
+    "tests/codex_auth_cache_part4_test.cpp",
+    "tests/codex_auth_coverage_test.cpp",
+    "tests/codex_auth_parse_differential_test.cpp",
+    "tests/codex_auth_repair_test.cpp",
+    "tests/codex_banked_reset_account_day_cap_test.cpp",
+    "tests/codex_banked_reset_capacity_recovery_test.cpp",
+    "tests/codex_banked_reset_daily_capacity_incident_test.cpp",
+    "tests/codex_banked_reset_differential_test.cpp",
+    "tests/codex_banked_reset_part1_test.cpp",
+    "tests/codex_banked_reset_part2_test.cpp",
+    "tests/codex_banked_reset_part3_test.cpp",
+    "tests/codex_banked_reset_provider_differential_test.cpp",
+    "tests/codex_banked_reset_provider_test.cpp",
+    "tests/codex_capacity_routing_coverage_test.cpp",
+    "tests/codex_catalog_metered_enrichment_test.cpp",
+    "tests/codex_catalog_observation_test.cpp",
+    "tests/codex_catalog_reasoning_order_test.cpp",
+    "tests/codex_catalog_stale_while_revalidate_test.cpp",
+    "tests/codex_catalog_test.cpp",
+    "tests/codex_context_admission_test.cpp",
+    "tests/codex_dispatch_differential_test.cpp",
+    "tests/codex_experiment_differential_test.cpp",
+    "tests/codex_external_auth_differential_test.cpp",
+    "tests/codex_external_native_auth_test.cpp",
+    "tests/codex_manual_reset_state_differential_test.cpp",
+    "tests/codex_manual_reset_state_test.cpp",
+    "tests/codex_manual_reset_test.cpp",
+    "tests/codex_metered_routing_matrix_test.cpp",
+    "tests/codex_model_availability_test.cpp",
+    "tests/codex_model_switch_replay_test.cpp",
+    "tests/codex_models_availability_differential_test.cpp",
+    "tests/codex_models_branch_coverage_test.cpp",
+    "tests/codex_models_differential_test.cpp",
+    "tests/codex_models_fetch_differential_test.cpp",
+    "tests/codex_overage_fallback_test.cpp",
+    "tests/codex_overage_usage_settings_test.cpp",
+    "tests/codex_quota_differential_test.cpp",
+    "tests/codex_reset_settings_migration_test.cpp",
+    "tests/codex_responses_differential_test.cpp",
+    "tests/codex_responses_error_differential_test.cpp",
+    "tests/codex_responses_error_test.cpp",
+    "tests/codex_responses_operations_differential_test.cpp",
+    "tests/codex_retry_after_test.cpp",
+    "tests/codex_routing_mutations_branch_coverage_test.cpp",
+    "tests/codex_routing_mutations_differential_test.cpp",
+    "tests/codex_routing_state_differential_test.cpp",
+    "tests/codex_selection_differential_test.cpp",
+    "tests/codex_session_test.cpp",
+    "tests/codex_supervisor_brief_handler_differential_test.cpp"
   ],
   "configuration_yaml": "---\n# Hazard discovery, not a style policy. See docs/findings/cppgw-clang-tidy-audit-20261117.md.\nInheritParentConfig: false\nChecks: >-\n  -*,\n  bugprone-*,\n  -bugprone-easily-swappable-parameters,\n  cppcoreguidelines-avoid-capturing-lambda-coroutines,\n  cppcoreguidelines-avoid-reference-coroutine-parameters,\n  misc-coroutine-hostile-raii,\n  cert-*,\n  -cert-dcl37-c,\n  -cert-dcl51-cpp,\n  performance-*,\n  -performance-avoid-endl,\n  -performance-enum-size,\n  concurrency-*,\n  clang-analyzer-core.*,\n  clang-analyzer-cplusplus.*,\n  clang-analyzer-optin.cplusplus.*,\n  clang-analyzer-security.*,\n  clang-analyzer-unix.*\n# Adjacent same-type parameters are deliberate module-for-module TS API translations.\n# Reserved identifiers are naming/style issues outside this lifetime audit (cert-dcl37/51).\n# endl and enum storage size are micro-style suggestions, not hot-path copy hazards.\nWarningsAsErrors: ''\nHeaderFilterRegex: '(^|/)cpp/gateway/(include|src|tests)/'\nSystemHeaders: false\nFormatStyle: none\nCheckOptions:\n  bugprone-dangling-handle.HandleClasses: 'std::basic_string_view;std::span'\n  bugprone-unchecked-optional-access.IgnoreSmartPointerDereference: 'false'\n  bugprone-exception-escape.CheckDestructors: 'true'\n  bugprone-exception-escape.CheckMoveMemberFunctions: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerToFloatingPointNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnFloatingPointNarrowingConversion: 'true'\n  performance-unnecessary-value-param.AllowedTypes: ''\n",
   "counting": "Unique (check/alias-group, gateway-relative file, line, column, message); repeated header emissions deduplicated. TU emissions also counted separately.",
   "coverage": {
-    "completed": 400,
+    "completed": 500,
     "database_units": 830,
     "failed": 0,
     "inputs_unchanged": true,
-    "ok": 400,
+    "ok": 500,
     "selected": 830,
     "source_units": 369,
     "test_support_units": 461,
     "timeouts": 0,
-    "units_with_findings": 397
+    "units_with_findings": 497
   },
   "failures": [],
   "head_commit": "33e1539d74bc3b69566875b449a01c97b0cfca3d",
@@ -3392,12 +3880,12 @@
   "resources": {
     "jobs": 4,
     "largest_process_rss_kib": 906484,
-    "sum_system_seconds": 452.14,
-    "sum_unit_seconds": 11992.689,
-    "sum_user_seconds": 11193.24,
-    "wall_seconds": 3056.977
+    "sum_system_seconds": 626.99,
+    "sum_unit_seconds": 17066.514,
+    "sum_user_seconds": 15952.7,
+    "wall_seconds": 4328.626
   },
   "schema_version": 1,
-  "tu_diagnostic_emissions": 13854,
-  "unique_diagnostics": 3797
+  "tu_diagnostic_emissions": 20631,
+  "unique_diagnostics": 6500
 }
