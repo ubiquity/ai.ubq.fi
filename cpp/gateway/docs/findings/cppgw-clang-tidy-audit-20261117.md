@@ -184,7 +184,7 @@ Real but benign resource-exhaustion risk at `src/api_key_policy.cpp:502`: throwi
 
 ### `bugprone-exception-escape`
 
-Mixed. TRUE DEFECT / P2 resource-exhaustion cleanup: the ~ScopeExit diagnostic at `include/uos/rt/async.hpp:564`, instantiated from `src/rt/fetch_transport.cpp:274-277`, has an exact exported call chain through reader.cancel -> rejected<void> -> awaitOwned frame allocation -> boost::wrapexcept<std::bad_alloc>. If abort/unwind cleanup cannot allocate that cancellation task, the exception escapes an implicitly noexcept destructor and terminates the process. This is static evidence limited to allocation/scheduling failure, not a normal-input crash reproduction. Minimal fix: catch synchronous failure around the specific best-effort cancel/spawn expression after closing the connection; leave ScopeExit's general behavior and the primary transaction error unchanged. The async rejection is already ignored. Other sampled diagnostics are false positives on type-state invariants: `src/rt/kv_js.cpp:380` checks isString/isNumber/isBigInt/isBool before std::get; `src/rt/kv_value.cpp:358,372` visits valid stored-value variants. A deliberately valueless public raw variant can terminate those noexcept APIs, but no current request path constructing that state was found. The libstdc++ never-valueless trait is false, so this is a caller invariant, not a compiler-guaranteed claim.
+Mixed benign resource-exhaustion risk and false positives. ~ScopeExit at `include/uos/rt/async.hpp:564`, instantiated from `src/rt/fetch_transport.cpp:274-277`, has an exported chain reader.cancel -> rejected<void> -> awaitOwned frame allocation -> boost::wrapexcept<std::bad_alloc>. Allocation/scheduling failure there can escape an implicitly noexcept destructor and terminate the process, but no non-allocation exception or ordinary-input failure is established. The exact LLVM 24 source (revision 51d7f08b16b6) explicitly calls Tracer.ignoreBadAlloc(true); its filter recognizes only the std::bad_alloc tag, not Boost's wrapper. Reclassify the initial P2 candidate as real but benign resource-exhaustion hardening, not a confirmed request correctness defect. Local improvement: catch synchronous failure around that specific best-effort cancel/spawn expression after closing the connection, matching its existing asynchronous ignoreRejection. Do not globally swallow ScopeExit callbacks. Other sampled diagnostics are false positives under current type-state invariants: `src/rt/kv_js.cpp:380` checks isString/isNumber/isBigInt/isBool before std::get; `src/rt/kv_value.cpp:358,372` visits valid stored-value variants. A deliberately valueless public raw variant can terminate these noexcept APIs, but no current request path constructing that state was found. The libstdc++ never-valueless trait is false, so this is a caller invariant, not a compiler guarantee.
 
 ### `bugprone-float-loop-counter`
 
@@ -399,6 +399,13 @@ is applied. Test verdicts describe fixture lifetimes, not runtime test-pass clai
 | `tests/api_key_policy_differential_test.cpp:414` | Real but benign fixture: rt::async retains the KV/policy through window reclamation. |
 | `tests/api_key_policy_differential_test.cpp:464` | Real but benign fixture: rt::async retains the closure; referenced authenticate/KV locals remain in the enclosing test while both sequential calls and replay are awaited. |
 | `tests/api_key_policy_differential_test.cpp:476` | Real but benign fixture: rt::async retains the shared KV through awaited usage deletion. |
+| `tests/bounded_response_body_test.cpp:184` | Real but benign fixture: SourceAlgorithm retains the cancellation coroutine while its Promise is stalled; copied Promise/shared counters remain owned independently of the test's stream handle. |
+| `tests/c1_provider_handlers_differential_test.cpp:104` | Real but benign fixture: registry owns the outer callback and blockOn awaits rt::async's owned row-capturing coroutine to completion on the local loop. |
+| `tests/chat_completions_differential_test.cpp:47` | Real but benign fixture: AsyncGenerator owns copied events/input/abort controllers for the full simulated stream. |
+| `tests/chat_completions_differential_test.cpp:56` | Real but benign fixture: cancel is copied into the retained source; execute and the owning completion/stream adapter keep it alive through awaited consumption/cancellation. |
+| `tests/chat_completions_differential_test.cpp:129` | Real but benign fixture: AsyncGenerator owns remaining/finished; its scope guard only increments the owned completion counter. |
+| `tests/claude_capacity_analytics_test.cpp:84` | Real but benign fixture: fetcher/configured options remain in the loop's parent frame while refresh is awaited; KV/account/change captures are owned values. |
+| `tests/claude_code_accounts_test.cpp:424` | Real but benign fixture: the provider-dispatch seam explicitly wraps its owning store/counter closure in rt::async. |
 
 ## Ranked confirmed defect classes
 
@@ -411,7 +418,7 @@ is applied. Test verdicts describe fixture lifetimes, not runtime test-pass clai
    Current-run clang-tidy warning is reproduced; the ASan witness is retained earlier-agent
    evidence, not a fresh run or real HTTP request. No source change applied.
 
-2. **P2 availability, resource-exhaustion cleanup path:**
+### Resource-exhaustion cleanup hardening (unranked)
    `src/rt/fetch_transport.cpp:274-277`, instantiated `include/uos/rt/async.hpp:564`.
    An aborted transaction closes its socket, then its ScopeExit destructor constructs
    and spawns a reader-cancellation task. The exported exception-escape trace proves that
@@ -431,13 +438,16 @@ is applied. Test verdicts describe fixture lifetimes, not runtime test-pass clai
 +        }
 ```
 
-This is an owner-applied proposal only; no source edit is applied. Do not globally
-suppress cleanup exceptions or treat a noexcept annotation as a fix.
+This is an optional owner-applied hardening proposal; no source edit is applied.
+The initial P2 candidate was downgraded after inspecting the exact LLVM 24 source:
+ExceptionEscapeCheck deliberately ignores std::bad_alloc, but the filter matches
+unqualified tag names and misses Boost's wrapexcept<std::bad_alloc>. No non-allocation
+exception is shown by this trace. Do not globally swallow ScopeExit callbacks or
+treat a noexcept annotation as a fix.
 
-Other warnings below are classified as benign real costs/conventions or false positives;
-additional true defects will be ranked here as the remaining units complete. The P2 item explicitly
-concerns resource-exhaustion termination, not ordinary request input. Unmeasured copy/allocation
-opportunities remain separate from confirmed correctness defects.
+Other warnings below are classified as benign real costs/conventions, hardening
+opportunities or false positives; additional true defects will be ranked if found.
+No additional confirmed ordinary request-path defect is established at this checkpoint.
 
 ## Current reproduction commands
 
