@@ -1,6 +1,8 @@
 # Provider sanitizer bring-up — 2026-11-17
 
-Validation checkpoints and a live-loop ownership refinement are recorded below; six outside-owned leak failures remain. Starting commit: `141cb4d482a3b0d8624ce0411cbd3b93e45873e6`.
+Normal validation passes **99 binaries / 1156 cases**. ASan/UBSan passes every case assertion,
+but **six outside-owned LSan failures leave 93/99 successful binary exits**. Owned callback
+and fixture cycles are fixed; three lifetime regressions pass. Starting commit: `141cb4d482a3b0d8624ce0411cbd3b93e45873e6`.
 
 ## Contract v1
 
@@ -51,7 +53,7 @@ phase changes and failing diagnostics. No hosted workflow will be dispatched.
 
 | Test or phase | Kind        | Cause                                                               | Fix or disposition                                                                                                                          |
 | ------------- | ----------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Discovery     | Inventory   | Exact filename-prefix selection contains 99 test binaries           | Normal: 99 binaries / 1155 cases pass; sanitizer: 93 binaries exit 0, six outside-owned LSan failures; all 1155 cases pass their assertions |
+| Discovery     | Inventory   | Exact filename-prefix selection contains 99 test binaries           | Normal: 99 binaries / 1156 cases pass; sanitizer: 93 binaries exit 0, six outside-owned LSan failures; all 1156 cases pass their assertions |
 | Dependencies  | Preparation | Boost.JSON, Boost.Container, and Brotli development packages absent | Installed distribution Boost 1.90 and Brotli 1.2.0; Clang 21.1.8 and Bun 1.4.0 already present                                              |
 
 ## Commands and receipts
@@ -689,7 +691,7 @@ git diff --check
 
 No TypeScript application, Rust, unrelated native suite, hosted workflow, or
 production/Mac deployment gate was run. Source and test expectations are unchanged
-except for the two added, oracle-backed lifetime regressions. No leak suppression
+except for the three added lifetime regressions and the documented fixture ownership repairs. No leak suppression
 is active. The weak registry preserves callbacks until abort or loop shutdown;
 unreachable cyclic signal graphs can remain during a live loop, consistent with
 the runtime's existing lifetime boundary and the late-abort contract.
@@ -798,3 +800,119 @@ All 99 binaries rebuilt successfully after this refinement. The final case
 count is 1156 (three new cases relative to the original 1153). Full clean-commit
 run receipts follow below; no pass count for this refined tree is inferred from
 the superseded 621e5e2f receipt.
+
+## Final refined-source receipt
+
+Final implementation commit: `e8ea396a523a9ffd1a95dff7fef5dbd74fbe4b3a`.
+Tree: `e3f29a9e891c404a268ed6db16fce15c0ae80275`.
+Parent: `621e5e2fb0a2047c28520f190adcb1573d6083e6`.
+The following documentation-only receipt update changes no C++ input.
+
+On this clean commit, all 417 commands per profile were reconciled against the
+required warning, C++20, optimization, debug, and sanitizer flags. All 1368
+production/header/test/helper inputs and checkout identities stayed unchanged.
+Sorted input manifest SHA-256:
+`4e135bf0adc340d03d322180c5ecf1d58790cd7ef5a464642e8840ff2f5cd9b5`.
+No C++ edit followed these gates.
+
+Exact final commands (two workers per profile, four total):
+
+```sh
+python3 /tmp/cppgw-asan-providers-20261117/checks.py build --profile plain --jobs 2
+sudo -n unshare --net -- /usr/bin/python3 /tmp/cppgw-asan-providers-20261117/checks.py run --profile plain --tty-output --require-clean --uid 1001 --gid 1001
+python3 /tmp/cppgw-asan-providers-20261117/checks.py build --profile asan --jobs 2
+sudo -n unshare --net -- /usr/bin/python3 /tmp/cppgw-asan-providers-20261117/checks.py run --profile asan --tty-output --require-clean --uid 1001 --gid 1001
+```
+
+| Profile    | Binaries | Successful exits | LSan failed exits | Cases run | Cases passed | Failed assertions | Timeouts |
+| ---------- | -------: | ---------------: | ----------------: | --------: | -----------: | ----------------: | -------: |
+| Normal     |       99 |               99 |                 0 |      1156 |         1156 |                 0 |        0 |
+| ASan/UBSan |       99 |               93 |                 6 |      1156 |         1156 |                 0 |        0 |
+
+There are zero invalid-access ASan reports and zero UBSan reports. The six
+remaining LSan byte/allocation counts exactly match the outside-owned table.
+No tests or sanitizer reports were skipped or suppressed. The three new cases
+cover loop teardown, exactly-one late abort, and release during a live loop;
+the live-loop case rejects the controlled strong-capture implementation.
+
+- `plain`: `/tmp/cppgw-asan-providers-20261117/plain/runs/1794921149515566183`.
+  `results.json` SHA-256: `806a16b0e610f2fc3131f676710f5f25f9782131dd641fefc7fbed9c32dbec72`.
+  `provenance.json` SHA-256: `4570fcd709051bdd3f14ac519d45c97ee9dc7bd298f6f538de123f00e73b9ec5`.
+- `asan`: `/tmp/cppgw-asan-providers-20261117/asan/runs/1794921149547640264`.
+  `results.json` SHA-256: `5eec6ac3080e1d8a5ffb360d7332f24c8560ea5d999d439324057e700ad630a9`.
+  `provenance.json` SHA-256: `bd241df1bb555fe4514fd79ef07643ef3512bc8e99242f34f94e6a4b99f16ca4`.
+
+The refined implementation also ran actual local review mode:
+
+```sh
+timeout 180s codex --sandbox read-only -c 'review_model="codex-auto-review"' review --commit e8ea396a523a9ffd1a95dff7fef5dbd74fbe4b3a
+```
+
+Reviewed head/base are the implementation and parent SHAs above. It exited 0
+after 84.824 seconds with zero credential redactions. Transcript:
+`/tmp/cppgw-asan-providers-20261117/review-refined.log`, SHA-256
+`addcfefca5040012afd440de6d03e7dd6f1f3b75340dd47ab6dbacda5a2fb835`.
+The banner again reports `ubiquity/deepseek-flash` / `uos`, not verified
+`codex-auto-review` identity. This receipt is also rejected for official review
+ingestion; no finding was ingested and no model mismatch marked accepted.
+Its complete final review text (printed twice in the raw log) is:
+
+```text
+The change weakens the deferred cancellation callback while retaining controller ownership in the active dispatch coroutine, preserving cancellation behavior and allowing completed dispatches to release the controller during a live loop. The added regression coverage exercises both supported response paths.
+```
+
+The first review's concern is addressed by `lithos_handlers.cpp` and the direct
+live-loop regression, with the original head/base/command/model discrepancy
+and finding text preserved above. Review status was not a merge gate.
+
+## Publication and remaining work
+
+An actual publication attempt, after the first clean source checks:
+
+```sh
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false git push --set-upstream origin test/cppgw-asan-providers-20261117
+```
+
+exited 128 with `fatal: could not read Username for 'https://github.com': terminal prompts disabled`.
+The final branch is preserved for the enclosing runner's promised publication.
+No credential was printed, stored, refreshed, or replaced. No hosted workflow
+was manually triggered and no PR merge or development integration is claimed.
+
+This single-branch clone's fetch refspec covers only the pre-existing port branch;
+refresh development explicitly with:
+
+```sh
+git fetch origin refs/heads/development:refs/remotes/origin/development
+```
+
+The refreshed `origin/development` is `002fe15fa926674c97f0169355d24929bf529710`.
+Task-created tips are not its ancestors, and there is no local `development`
+branch to prove equal. Preserve the clean owned task branch for the enclosing
+publisher; do not integrate the unrelated pre-existing production-build work
+or switch the checkout to claim a handoff that has not happened.
+
+Remaining owner work is the six shared HTTP/conformance leak failures and
+GitHub publication, pull request, ancestry-preserving merge and final development
+checkout handoff. Complete sanitizer qualification is red until those leak
+owners fix their paths and rerun. The local provider-shard runs, owned fixes,
+regressions, negative control, formatting and source receipts are complete.
+
+## Final handoff summary
+
+Built the 99-test provider shard with Clang 21, C++20, strict warnings and the
+requested `-O1 -g` ASan/UBSan flags. Normal: **99/99 binaries, 1156/1156 cases**.
+Sanitizer: **93/99 binary exits**, all **1156 cases pass their assertions**;
+six outside-owned HTTP/conformance LSan failures remain. No invalid-access ASan,
+UBSan, timeout or suppression occurred.
+
+Fixed relay callback teardown, active-coroutine ownership of deferred Lithos
+controllers, and two test-fixture self-cycles. Added three lifetime regressions;
+the live-loop test fails with the strong capture restored. Bun 1.4.0 confirms
+exactly-one late abort. Every changed source, reason, reproduction command,
+original/final leak count and receipt is recorded above.
+
+Reproduce both profiles using the embedded driver and the four exact final
+commands above. Implementation is committed as `e8ea396a`; publication and
+PR/development integration remain with the runner publisher because this clone
+has no GitHub write authentication. The shared HTTP/fixture owners must resolve
+the remaining leaks; this report does not claim a green sanitizer gate.
