@@ -18,6 +18,10 @@ target_include_directories(uos_gateway_settings INTERFACE "${CMAKE_CURRENT_SOURC
 target_compile_options(uos_gateway_settings INTERFACE -Wall -Wextra -Wshadow -Wconversion -Werror)
 target_compile_definitions(uos_gateway_settings INTERFACE BOOST_JSON_NO_LIB BOOST_CONTAINER_NO_LIB BOOST_SYSTEM_NO_LIB)
 include(cmake/Profile.cmake)
+if(UOS_GATEWAY_IS_SDK)
+  find_package(ICU 78 REQUIRED COMPONENTS uc i18n)
+  target_link_libraries(uos_gateway_settings INTERFACE ICU::uc ICU::i18n)
+endif()
 include(cmake/Vendors.cmake)
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/PORT-MANIFEST.json")
