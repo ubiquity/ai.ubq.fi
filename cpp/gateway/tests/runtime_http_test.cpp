@@ -91,6 +91,59 @@ namespace {
   }
 }
 
+ASYNC_TEST("RawClient releases self-referencing listeners after a peer closes") {
+  namespace asio = boost::asio;
+  asio::ip::tcp::acceptor acceptor(rt::executor(), asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
+  auto client = RawClient::connect(static_cast<int>(acceptor.local_endpoint().port()));
+  auto peer = acceptor.accept();
+  const std::weak_ptr<RawClient> weak = client;
+  const auto closed = rt::withResolvers<void>();
+  client->on("data", [client](const std::string&) {});
+  client->once("close", [client, resolve = closed.resolve](const std::string&) { resolve(); });
+  peer.close();
+  client.reset();
+  co_await closed.promise.wait();
+  EXPECT(weak.expired());
+}
+
+ASYNC_TEST("RawClient destroy releases listeners and preserves deferred close registration order") {
+  auto client = std::make_shared<RawClient>(boost::asio::ip::tcp::socket(rt::executor()));
+  const std::weak_ptr<RawClient> weak = client;
+  const auto closed = rt::withResolvers<void>();
+  std::vector<std::string> events;
+  client->on("data", [client](const std::string&) {});
+  client->once("close", [client, &events, resolve = closed.resolve](const std::string&) {
+    events.push_back("original");
+    resolve();
+  });
+  client->destroy();
+  client->on("close", [client, &events](const std::string&) { events.push_back("late"); });
+  client.reset();
+  co_await closed.promise.wait();
+  EXPECT_EQ(events, (std::vector<std::string>{"original", "late"}));
+  EXPECT(weak.expired());
+}
+
+TEST("RawClient loop teardown releases an abandoned close without emitting it") {
+  std::weak_ptr<RawClient> weak;
+  bool closed = false;
+  {
+    rt::FakeClock clock;
+    rt::Loop loop(clock);
+    rt::LoopScope scope(loop);
+    auto client = std::make_shared<RawClient>(boost::asio::ip::tcp::socket(rt::executor()));
+    weak = client;
+    client->on("data", [client](const std::string&) {});
+    client->once("close", [client, &closed](const std::string&) { closed = true; });
+    client->destroy();
+    client->on("close", [client, &closed](const std::string&) { closed = true; });
+    client.reset();
+    EXPECT(!weak.expired());
+  }
+  EXPECT(weak.expired());
+  EXPECT(!closed);
+}
+
 ASYNC_TEST("HTTP admin handler failures are marked no-store") {
   const ScopedLoopbackFetch loopback;
   const HttpServer server = serveHttp(loopbackOptions(), [](rt::Request, ServeHandlerInfo) -> rt::Task<rt::Response> { throw rt::JsError("fixture handler failure"); });

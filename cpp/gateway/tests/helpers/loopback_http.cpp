@@ -282,15 +282,23 @@ namespace uos::tests::helpers::loopback_http {
 
   RawClient::RawClient(asio::ip::tcp::socket socket) : socket_(std::move(socket)) {}
 
-  void RawClient::on(const std::string& event, Handler handler) { listeners_[event].push_back(Entry{std::move(handler), false}); }
-  void RawClient::once(const std::string& event, Handler handler) { listeners_[event].push_back(Entry{std::move(handler), true}); }
+  void RawClient::on(const std::string& event, Handler handler) {
+    const auto closing = closingListeners_.lock();
+    (closing ? *closing : listeners_)[event].push_back(Entry{std::move(handler), false});
+  }
+  void RawClient::once(const std::string& event, Handler handler) {
+    const auto closing = closingListeners_.lock();
+    (closing ? *closing : listeners_)[event].push_back(Entry{std::move(handler), true});
+  }
 
   void RawClient::emit(const std::string& event, const std::string& data) {
-    const std::vector<Entry> snapshot = listeners_[event];
+    const auto closing = closingListeners_.lock();
+    auto& listeners = closing ? *closing : listeners_;
+    const std::vector<Entry> snapshot = listeners[event];
     std::vector<Entry> kept;
     for (const Entry& entry : snapshot)
       if (!entry.once) kept.push_back(entry);
-    listeners_[event] = kept;
+    listeners[event] = kept;
     for (const Entry& entry : snapshot) entry.handler(data);
   }
 
@@ -351,6 +359,7 @@ namespace uos::tests::helpers::loopback_http {
     closeEmitted_ = true;
     boost::system::error_code ignored;
     socket_.close(ignored);
+    const auto cleanup = rt::scopeExit([this] { listeners_.clear(); });
     if (!error.empty()) emit("error", error);
     emit("close", "");
   }
@@ -361,9 +370,14 @@ namespace uos::tests::helpers::loopback_http {
     boost::system::error_code ignored;
     socket_.close(ignored);
     auto self = shared_from_this();
-    asio::post(rt::executor(), [self] {
+    // The pending event owns its listeners. If the loop discards that event,
+    // captures of the client must not leave a client/listener ownership cycle.
+    auto listeners = std::make_shared<Listeners>(std::move(listeners_));
+    closingListeners_ = listeners;
+    asio::post(rt::executor(), [self, listeners] {
       if (self->closeEmitted_) return;
       self->closeEmitted_ = true;
+      const auto cleanup = rt::scopeExit([self, listeners] { listeners->clear(); });
       self->emit("close", "");
     });
   }

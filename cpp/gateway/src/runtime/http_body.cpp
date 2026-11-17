@@ -21,12 +21,19 @@ namespace uos::runtime::http_body {
     std::function<void()> dispose = [] {};
     // start(controller): the controller and the listeners its closures registered.
     std::optional<rt::ReadableStreamDefaultController<rt::ByteChunk>> controller;
+    std::weak_ptr<rt::detail::StreamState<rt::ByteChunk>> streamState;
     IncomingListener dataListener;
     IncomingListener endListener;
     IncomingListener failedListener;
     rt::EventListener abortListener;
 
     State(std::shared_ptr<IncomingMessage> incoming_, rt::AbortSignal signal_) : incoming(std::move(incoming_)), signal(std::move(signal_)) {}
+
+    std::optional<rt::ReadableStreamDefaultController<rt::ByteChunk>> liveController() const {
+      if (controller) return controller;
+      if (auto liveStream = streamState.lock()) return rt::ReadableStreamDefaultController<rt::ByteChunk>(std::move(liveStream));
+      return std::nullopt;
+    }
 
     void stop() {
       closed = true;
@@ -41,19 +48,23 @@ namespace uos::runtime::http_body {
         failed(rt::makeReason(rt::TypeError("HTTP request body did not provide bytes")));
         return;
       }
-      controller->enqueue(*bytes);
-      if (controller->desiredSize().value_or(0) <= 0) incoming->pause();
+      const auto active = liveController();
+      if (!active) return;
+      active->enqueue(*bytes);
+      if (active->desiredSize().value_or(0) <= 0) incoming->pause();
     }
     void end() {
       if (closed) return;
+      const auto active = liveController();
       consumed = true;
       stop();
-      controller->close();
+      if (active) active->close();
     }
     void failed(rt::Reason reason) {
       if (closed) return;
+      const auto active = liveController();
       stop();
-      controller->error(std::move(reason));
+      if (active) active->error(std::move(reason));
     }
     void abort() { failed(signal.reason()); }
   };
@@ -132,6 +143,10 @@ namespace uos::runtime::http_body {
       state->cleanup();
     };
     rt::ReadableStream<rt::ByteChunk> stream(std::move(source), rt::QueuingStrategy{.highWaterMark = 0});
+    // The stream's algorithms own state. Keep its controller strongly only during
+    // synchronous start, so an abandoned readable stream has no ownership cycle.
+    state->streamState = stream.state();
+    state->controller.reset();
     return IncomingBody(std::move(stream), std::move(state));
   }
 }

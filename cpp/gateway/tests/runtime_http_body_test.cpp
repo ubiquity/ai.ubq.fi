@@ -138,6 +138,20 @@ namespace {
   }
 }
 
+ASYNC_TEST("an abandoned incoming body releases its unconsumed stream and message") {
+  const auto recorder = std::make_shared<Recorder>();
+  auto incoming = std::make_shared<FakeIncoming>(recorder);
+  const std::weak_ptr<IncomingMessage> weak = incoming;
+  const rt::AbortController controller;
+  {
+    const IncomingBody body = createIncomingBody(incoming, controller.signal());
+    incoming.reset();
+  }
+  co_await rt::microtask();
+  co_await rt::microtask();
+  EXPECT(weak.expired());
+}
+
 ASYNC_TEST("incoming body flows chunk by chunk and closes on end") {
   auto recorder = startRecorder();
   auto incoming = std::make_shared<FakeIncoming>(recorder);

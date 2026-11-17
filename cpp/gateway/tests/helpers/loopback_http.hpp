@@ -56,6 +56,7 @@ namespace uos::tests::helpers::loopback_http {
       Handler handler;
       bool once = false;
     };
+    using Listeners = std::map<std::string, std::vector<Entry>>;
     void emit(const std::string& event, const std::string& data);
     void startConnect(boost::asio::ip::tcp::endpoint endpoint);
     void read();
@@ -63,7 +64,8 @@ namespace uos::tests::helpers::loopback_http {
     void closeWith(const std::string& error);
 
     boost::asio::ip::tcp::socket socket_;
-    std::map<std::string, std::vector<Entry>> listeners_;
+    Listeners listeners_;
+    std::weak_ptr<Listeners> closingListeners_;
     std::vector<char> buffer_ = std::vector<char>(65536);
     std::deque<std::string> output_;
     bool connected_ = false;
