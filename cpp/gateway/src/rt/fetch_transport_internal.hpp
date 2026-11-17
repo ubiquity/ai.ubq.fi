@@ -6,6 +6,7 @@
 #include "uos/rt/clock.hpp"
 #include "uos/rt/fetch_transport.hpp"
 #include "uos/rt/http.hpp"
+#include "third_party/llhttp/llhttp.h"
 
 #include <boost/asio/execution_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -61,12 +62,20 @@ namespace uos::rt::detail::fetch {
   inline constexpr std::size_t kMaxResponseHead = 1572864;
   inline constexpr std::size_t kMaxResponseFields = 256;
 
+  enum class Framing : std::uint8_t { empty, length, chunked, close };
+  struct FramingRule {
+    Framing framing = Framing::empty;
+    std::uint64_t length = 0;
+    std::optional<std::string> error;
+  };
+
   struct ResponseHead {
     int minorVersion = 1;
     int status = 0;
     // The reason phrase and the fields as raw bytes (field values trimmed).
     std::string reason;
     std::vector<std::pair<std::string, std::string>> fields;
+    FramingRule framing;
     // Every value of a field (case-insensitive name), in order.
     std::vector<std::string> values(std::string_view lowercaseName) const;
     // The values joined with ", ", std::nullopt without any.
@@ -81,29 +90,41 @@ namespace uos::rt::detail::fetch {
     // The head's length in bytes (complete only).
     std::size_t length = 0;
     ResponseHead head;
+    llhttp_errno_t error = HPE_OK;
+    const char* errorReason = nullptr;
   };
-  // Parses a response head the way Bun's parser (picohttpparser) accepts it:
-  // "HTTP/1.<digit>", spaces, a three-digit status, an optional reason; fields
-  // "name: value" with token names; CRLF or LF line ends; no control bytes but
-  // tab; at most kMaxResponseFields fields.
-  HeadParse parseResponseHead(std::string_view data);
 
-  // ---- response body ------------------------------------------------------------
+  // Stops at the end of the head and again at the end of the message. All
+  // byte counts are relative to the input passed to that call.
+  class ResponseParser {
+  public:
+    explicit ResponseParser(std::size_t maxFields = kMaxResponseFields);
+    ResponseParser(const ResponseParser&) = delete;
+    ResponseParser& operator=(const ResponseParser&) = delete;
 
-  enum class Framing : std::uint8_t { empty, length, chunked, close };
-  struct FramingRule {
-    Framing framing = Framing::empty;
-    std::uint64_t length = 0;
-    // Bun's error code when the head's framing fields are unusable.
-    std::optional<std::string> error;
+    llhttp_errno_t readHead(std::string_view input, std::size_t& consumed);
+    ResponseHead takeHead() { return std::move(head_); }
+    const char* errorReason() const { return llhttp_get_error_reason(&parser_); }
+    void beginBody() { llhttp_resume(&parser_); }
+    llhttp_errno_t readBody(std::string_view input, std::size_t& consumed, std::string& out);
+    llhttp_errno_t finish() { return llhttp_finish(&parser_); }
+
+  private:
+    static const llhttp_settings_t settings_;
+    llhttp_errno_t execute(std::string_view input, std::size_t& consumed);
+
+    llhttp_t parser_;
+    ResponseHead head_;
+    std::string* body_ = nullptr;
+    std::size_t maxFields_;
+    bool firstHeadBytes_ = true;
+    bool startField_ = true;
   };
-  // HEAD and TRACE requests and 204/304 responses have no body; then
-  // Transfer-Encoding ending in a single "chunked", then Content-Length, then
-  // the body runs until the connection closes.
+
+  HeadParse parseResponseHead(std::string_view data, std::size_t maxBytes = kMaxResponseHead, std::size_t maxFields = kMaxResponseFields);
   FramingRule responseFraming(const std::string& method, const ResponseHead& head);
 
-  // Incremental chunked transfer decoding (sizes in any hex case with leading
-  // zeros, trailing spaces and extensions ignored, CRLF or LF, trailers skipped).
+  // Standalone entry point for decoding an already identified chunked body.
   class ChunkedDecoder {
   public:
     enum class Result : std::uint8_t { more, done, invalid };
@@ -112,9 +133,8 @@ namespace uos::rt::detail::fetch {
     Result decode(std::string_view input, std::size_t& offset, std::string& out);
 
   private:
-    enum class Step : std::uint8_t { size, data, dataEnd, trailer };
-    Step step_ = Step::size;
-    std::uint64_t remaining_ = 0;
+    ResponseParser parser_;
+    bool started_ = false;
   };
 
   // A Content-Encoding decoder. write() and finish() throw the FetchError Bun
