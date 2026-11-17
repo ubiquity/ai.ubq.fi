@@ -90,8 +90,10 @@ def tool_view(sdk, view):
 def input_identity(targets):
     paths = [GATEWAY / "PORT-MANIFEST.json", GATEWAY / "CMakeLists.txt", GATEWAY / "CMakePresets.json"]
     sources = [path for path in (GATEWAY / "src").rglob("*.cpp") if not path.name.startswith(".")]
+    if not targets or any(target in targets for target in ("uos_gateway", "uos_kv_convert", "uos_kv_proof")):
+        sources += list((GATEWAY / "runtime").glob("*.cpp"))
     if not targets or "uos_gateway" in targets:
-        sources += [GATEWAY / "entrypoints/gateway.cpp"] + list((GATEWAY / "runtime").glob("*.cpp"))
+        sources += [GATEWAY / "entrypoints/gateway.cpp"]
     for target, entry in (("uos_kv_convert", "kv-convert.cpp"), ("uos_kv_proof", "kv-proof.cpp")):
         if not targets or target in targets:
             sources.append(GATEWAY / "entrypoints" / entry)

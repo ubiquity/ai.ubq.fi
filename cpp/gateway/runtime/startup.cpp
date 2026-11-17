@@ -145,7 +145,7 @@ namespace uos::runtime::startup {
         refuse("required artifact is not a Linux ARM64 ELF file: " + path.string());
     }
 
-    void verifyPackage(const fs::path& root, const std::string& expected) {
+    void verifyPackage(const fs::path& root, const std::string& expected, std::string_view executable = "uos-gateway") {
       const fs::path manifest = root / "manifest.sha256";
       if (!hashText(expected) || sha256(manifest) != expected) refuse("package manifest integrity check failed");
       const std::string text = read(manifest);
@@ -178,10 +178,11 @@ namespace uos::runtime::startup {
       }
       for (const std::string_view required : {"bin/uos-gateway", "bin/uos-kv-convert", "bin/uos-kv-proof", "package.json", "runtime-closure.json",
                                                "native/kv/inputs.json", "native/kv/native-kv.node", "native/kv/native-kv.provenance.json",
-                                               "native/permissions/manifest.json", "native/permissions/linux-arm64.node", "static/index.html", "static/openapi.json"}) {
+                                               "native/permissions/manifest.json", "native/permissions/linux-arm64.node", "static/index.html", "static/openapi.json",
+                                               "runtime/launch-schema.json", "runtime/offline-schema.json", "src/kv-conversion/v8-helper.mjs", "src/kv-conversion/typed-value.ts"}) {
         if (!selected.contains(std::string(required))) refuse("package lacks a required file: " + std::string(required));
       }
-      if (canonical(rt::process::execPath()) != root / "bin/uos-gateway") refuse("executable is outside the selected package");
+      if (canonical(rt::process::execPath()) != root / "bin" / std::string(executable)) refuse("executable is outside the selected package");
     }
 
     void verifyClosure(const fs::path& root) {
@@ -331,6 +332,42 @@ namespace uos::runtime::startup {
     if (argc != 3 || std::string_view(argv[1]) != "--runtime-manifest" || !fs::path(argv[2]).is_absolute())
       refuse("expected exactly --runtime-manifest <absolute-path>");
     return argv[2];
+  }
+
+  void prepareOfflineCli(int argc, const char* const* argv) {
+    if (argc < 3 || std::string_view(argv[1]) != "--runtime-manifest" || !fs::path(argv[2]).is_absolute())
+      refuse("expected prefix --runtime-manifest <absolute-path> before offline CLI arguments");
+    const fs::path launchPath = canonical(argv[2]);
+    const json::object launch = object(launchPath, true);
+    keys(launch, {"schema", "packageRoot", "packageManifestSha256", "nativeKvProvenanceSha256"});
+    if (string(launch, "schema") != "uos-gateway-offline-v1") refuse("offline CLI manifest schema is unsupported");
+    const fs::path package = canonical(string(launch, "packageRoot"));
+    const std::string executable = fs::path(rt::process::execPath()).filename().string();
+    if (executable != "uos-kv-convert" && executable != "uos-kv-proof") refuse("offline preflight requires a packaged offline CLI executable");
+    verifyPackage(package, string(launch, "packageManifestSha256"), executable);
+    verifyClosure(package);
+    const json::object packageInfo = object(package / "package.json");
+    if (string(packageInfo, "schema") != "uos-native-package-v1" || string(packageInfo, "platform") != "linux" || string(packageInfo, "architecture") != "arm64")
+      refuse("package identity is unsupported");
+    const std::string provenance = string(launch, "nativeKvProvenanceSha256");
+    if (provenance != string(packageInfo, "nativeKvProvenanceSha256")) refuse("native KV provenance differs from package binding");
+    storage::native_addon::NativeKvArtifactBinding backend;
+    backend.artifactDirectory = (package / "native/kv").string();
+    backend.expectedProvenanceSha256 = provenance;
+    backend.inputsManifest = (package / "native/kv/inputs.json").string();
+    requireArm64Elf(package / "native/kv/native-kv.node");
+    storage::native_addon::prepareNativeKvBackend(backend);
+    const json::object permissionsInfo = object(package / "native/permissions/manifest.json");
+    if (string(permissionsInfo, "path") != "linux-arm64.node" || string(permissionsInfo, "architecture") != "arm64") refuse("Linux confinement manifest is invalid");
+    const fs::path permissionsPath = package / "native/permissions/linux-arm64.node";
+    requireArm64Elf(permissionsPath);
+    requireHash(permissionsInfo, "sha256", permissionsPath);
+    paths::setResourceRoot(package.string());
+    std::vector<const char*> application;
+    application.reserve(static_cast<std::size_t>(argc - 2));
+    application.push_back(argv[0]);
+    for (int index = 3; index < argc; ++index) application.push_back(argv[index]);
+    rt::process::setArgv(static_cast<int>(application.size()), application.data());
   }
 
   rt::Task<void> run(std::string manifestPath) {

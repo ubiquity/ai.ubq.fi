@@ -11,7 +11,9 @@
 #include <algorithm>
 #include <array>
 #include <exception>
+#include <functional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace uos::runtime::native_kv_bootstrap {
@@ -139,8 +141,10 @@ namespace uos::runtime::native_kv_bootstrap {
   }
 
   rt::Promise<void> prepareNativeKvForDevelopment(std::optional<std::string> repositoryRoot) {
-    return rt::Promise<void>::resolve().then([repositoryRoot] {
+    const rt::Promise<void> ready = rt::Promise<void>::resolve();
+    std::function<void()> preparation = [repositoryRoot] {
       if (!storage::native_addon::nativeKvBackendIsPrepared()) storage::native_addon::prepareNativeKvBackend(readNativeKvDevelopmentBinding(repositoryRoot));
-    });
+    };
+    return ready.then(std::move(preparation));
   }
 }

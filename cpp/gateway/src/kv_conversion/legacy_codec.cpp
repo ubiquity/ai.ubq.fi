@@ -1,4 +1,5 @@
 #include "uos/kv_conversion/legacy_codec.hpp"
+#include "runtime/paths.hpp"
 
 #include "uos/rt/base64.hpp"
 #include "uos/rt/crypto.hpp"
@@ -37,7 +38,7 @@ namespace uos::kv_conversion::legacy_codec {
     // `import.meta.url` of src/kv-conversion/legacy-codec.ts. A C++ binary has no module file:
     // it runs from the release root (ops/ai-ubq-fi.service WorkingDirectory), which holds the
     // TypeScript sources and v8-helper.mjs that the pinned Deno binary executes.
-    rt::URL moduleUrl() { return rt::pathToFileURL(rt::path::resolve("src/kv-conversion/legacy-codec.ts")); }
+    rt::URL moduleUrl() { return rt::pathToFileURL(rt::path::resolve(runtime::paths::resourceRoot(), "src/kv-conversion/legacy-codec.ts")); }
 
     // `Buffer.from(value, "base64")` for the codec's reply, which the TS casts to string
     // unchecked: Bun takes strings, arrays and array-like objects and throws for the rest.

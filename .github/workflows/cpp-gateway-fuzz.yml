@@ -1,0 +1,62 @@
+name: C++ gateway parser fuzzing
+run-name: C++ gateway parser fuzzing ${{ github.sha }}
+
+# Runs the libFuzzer harnesses in cpp/gateway/fuzz with AddressSanitizer and
+# UndefinedBehaviorSanitizer on disposable runners. Inputs that fail are
+# uploaded as artifacts; nothing is pushed back to the repository.
+on:
+  push:
+    branches: [claude/cpp-gateway-port]
+    paths:
+      - .github/workflows/cpp-gateway-fuzz.yml
+      - cpp/gateway/fuzz/**
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Fuzzing time per target in seconds
+        required: false
+        type: string
+        default: "2400"
+
+concurrency:
+  group: cpp-gateway-fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [json, url, regex, sse, kv_jsc, http_request, fetch_response, websocket, passkeys]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang libboost-json-dev libboost-container-dev libbrotli-dev \
+            libssl-dev libsqlite3-dev zlib1g-dev libzstd-dev libicu-dev
+          clang++ --version
+      - name: Build and fuzz
+        env:
+          FUZZ_SECONDS: ${{ inputs.seconds || '2400' }}
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: python3 cpp/gateway/fuzz/ci.py "$FUZZ_TARGET" --seconds "$FUZZ_SECONDS" --out "$RUNNER_TEMP/fuzz"
+      - name: Upload findings and log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/fuzz/artifacts
+            ${{ runner.temp }}/fuzz/campaign.log
+            ${{ runner.temp }}/fuzz/summary.json
+          if-no-files-found: ignore
+          retention-days: 14

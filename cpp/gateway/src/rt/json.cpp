@@ -178,7 +178,7 @@ namespace uos::rt {
         std::size_t runStart = 0;
         for (std::size_t index = 0; index < text.size(); ++index) {
           const auto unit = static_cast<unsigned char>(text[index]);
-          if (!shortEscape(unit)) continue;
+          if (unit >= 0x20 && unit != '"' && unit != '\\') continue;
           out.append(text.substr(runStart, index - runStart));
           appendEscapedUnit(out, unit);
           runStart = index + 1;

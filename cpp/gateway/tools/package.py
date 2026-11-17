@@ -151,6 +151,7 @@ def main():
         copy_file(GATEWAY / "docs/RUNTIME.md", stage / "README.md")
         copy_file(args.profile_manifest, stage / "build-profile.json")
         copy_file(GATEWAY / "runtime/launch-schema.json", stage / "runtime/launch-schema.json")
+        copy_file(GATEWAY / "runtime/offline-schema.json", stage / "runtime/offline-schema.json")
         write_json(stage / "runtime-closure.json", document)
         write_json(stage / "operator-closure.json", operators)
         write_json(stage / "package.json", {"schema": "uos-native-package-v1", "nativeKvProvenanceSha256": args.native_kv_provenance_sha256,

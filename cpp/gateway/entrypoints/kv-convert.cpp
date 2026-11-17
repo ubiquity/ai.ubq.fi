@@ -2,6 +2,7 @@
 #include "uos/rt/async.hpp"
 #include "uos/rt/fetch_transport.hpp"
 #include "uos/rt/process.hpp"
+#include "runtime/startup.hpp"
 
 #include <cstdio>
 #include <exception>
@@ -10,6 +11,7 @@ int main(int argc, char** argv) {
   uos::rt::process::setArgv(argc, argv);
   uos::rt::installHttpClientTransport();
   try {
+    uos::runtime::startup::prepareOfflineCli(argc, argv);
     uos::rt::blockOn(uos::kv_conversion::cli::importMetaMain());
     return uos::rt::process::exitStatus();
   } catch (...) {

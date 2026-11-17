@@ -12,7 +12,7 @@ else()
   target_compile_definitions(uos_gateway_settings INTERFACE UOS_GATEWAY_NATIVE_LIBRARIES=1)
   target_link_libraries(uos_gateway_settings INTERFACE /usr/lib/libboost_json.a /usr/lib/libboost_container.a
     ssl crypto sqlite3 z brotlidec zstd icuuc icui18n pthread dl)
-  target_link_options(uos_gateway_settings INTERFACE -fuse-ld=mold -Wl,--threads=2)
+  target_link_options(uos_gateway_settings INTERFACE -fuse-ld=mold -Wl,--threads=2 -Wl,--no-fork)
   if(UOS_GATEWAY_FRAME_RECYCLING_DISABLED)
     target_compile_definitions(uos_gateway_settings INTERFACE BOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING)
   endif()

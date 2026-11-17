@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Packaged offline native CLI",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "packageRoot", "packageManifestSha256", "nativeKvProvenanceSha256"],
+  "properties": {
+    "schema": { "const": "uos-gateway-offline-v1" },
+    "packageRoot": { "type": "string", "pattern": "^/" },
+    "packageManifestSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "nativeKvProvenanceSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

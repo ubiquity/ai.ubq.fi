@@ -139,11 +139,15 @@ def bind_instruction_snapshot(resource_log, evidence, run_id):
     return {**accepted, "snapshot": str(target), "review": review}
 
 
-def admission(kind, resource_log=None, notes_hash=None):
+def admission(kind, resource_log=None, notes_hash=None, memory_minimum=None):
     current = snapshot()
     if current["disk_free_bytes"] <= DISK_RESERVE:
         raise RuntimeError("Build admission refused: free disk must exceed 8 GiB")
     minimum = 6 * GIB if kind == "link" else 4 * GIB if kind in ("compile", "archive") else 2500 * 1024 ** 2
+    if memory_minimum is not None:
+        if memory_minimum < 3 * GIB:
+            raise RuntimeError("Measured link admission cannot consume the 2 GiB host reserve")
+        minimum = memory_minimum
     if current["mem_available_bytes"] < minimum:
         raise RuntimeError("Build admission deferred: %s requires %d MiB MemAvailable" % (kind, minimum // 1024 ** 2))
     current["supervisor"] = supervisor(resource_log, notes_hash)
@@ -178,6 +182,26 @@ def start_ticks(pid):
     return Path("/proc/%d/stat" % pid).read_text().rsplit(")", 1)[1].split()[19]
 
 
+def owned_process_sample(leader):
+    queue = [leader]
+    rows = []
+    while queue:
+        pid = queue.pop()
+        try:
+            stat = Path("/proc/%d/stat" % pid).read_text().rsplit(")", 1)[1].split()
+            if int(stat[2]) != leader:
+                continue
+            fields = dict(line.split(":", 1) for line in Path("/proc/%d/status" % pid).read_text().splitlines() if ":" in line)
+            row = {"pid": pid, "name": fields["Name"].strip()}
+            for key in ("VmRSS", "VmHWM", "VmSize", "VmPeak"):
+                row[key + "_bytes"] = int(fields.get(key, "0 kB").split()[0]) * 1024
+            rows.append(row)
+            queue.extend(int(value) for value in Path("/proc/%d/task/%d/children" % (pid, pid)).read_text().split())
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+    return rows
+
+
 def terminate_group(child):
     try:
         os.killpg(child.pid, signal.SIGTERM)
@@ -190,7 +214,7 @@ def terminate_group(child):
         child.wait(timeout=3)
 
 
-def measured(argv, cwd, env, evidence, label, timeout, address_limit=None, low_priority=False, output=None, footprint_paths=()):
+def measured(argv, cwd, env, evidence, label, timeout, address_limit=None, low_priority=False, output=None, footprint_paths=(), sample_interval_s=1, sample_processes=False):
     """One bounded process group; samples enforce the host reserve, not application behavior."""
     evidence = Path(evidence)
     evidence.mkdir(parents=True, exist_ok=True)
@@ -235,6 +259,8 @@ def measured(argv, cwd, env, evidence, label, timeout, address_limit=None, low_p
                 usage = child_usage
                 break
             current = snapshot()
+            if sample_processes:
+                current["owned_processes"] = owned_process_sample(child.pid)
             if footprint_paths and time.monotonic() - last_footprint >= 5:
                 current["owned_allocated_bytes"] = allocated(footprint_paths)
                 peak_bytes = max(peak_bytes, current["owned_allocated_bytes"])
@@ -255,7 +281,7 @@ def measured(argv, cwd, env, evidence, label, timeout, address_limit=None, low_p
                     raise RuntimeError("Owned build made no log progress for 600s; bounded owner termination")
             # Process completion is authoritative; the timeout exists only for
             # resource/deadline sampling, so cache hits do not pay a 1s poll delay.
-            select.select([completion_fd], [], [], 1)
+            select.select([completion_fd], [], [], sample_interval_s)
     except BaseException as error:
         failure = str(error)
         terminate_group(child)
@@ -269,7 +295,12 @@ def measured(argv, cwd, env, evidence, label, timeout, address_limit=None, low_p
                   "max_rss_kib": usage.ru_maxrss if usage else None,
                   "user_s": usage.ru_utime if usage else None, "system_s": usage.ru_stime if usage else None,
                   "measurement": "wait4 child rusage; maxRSS is maximum, not sum of concurrent children",
-                  "sample_interval_s": 1, "samples": samples, "settled": child.returncode is not None}
+                  "sample_interval_s": sample_interval_s, "samples": samples, "settled": child.returncode is not None}
+        if sample_processes:
+            rows = [row for sample in samples for row in sample.get("owned_processes", [])]
+            result["sampled_process_peak_rss_bytes_lower_bound"] = max((row["VmHWM_bytes"] for row in rows), default=0)
+            result["sampled_process_peak_vm_bytes_lower_bound"] = max((row["VmPeak_bytes"] for row in rows), default=0)
+            result["sampled_tree_peak_rss_bytes_lower_bound"] = max((sum(row["VmRSS_bytes"] for row in sample.get("owned_processes", [])) for sample in samples), default=0)
         if footprint_paths:
             final_bytes = allocated(footprint_paths)
             result.update(owned_bytes_baseline=baseline_bytes, owned_bytes_peak_lower_bound=max(peak_bytes, final_bytes),
