@@ -39,6 +39,7 @@ Run from the repository root:
 export LLVM_PREFIX="$(brew --prefix llvm)"
 export PATH="$LLVM_PREFIX/bin:$PATH"
 export CXX="$LLVM_PREFIX/bin/clang++"
+export SDKROOT="$(xcrun --show-sdk-path)"
 export UOS_LIBCXX_BUILD="$(mktemp -d /tmp/uos-libcxx.XXXXXX)"
 export PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix sqlite)/lib/pkgconfig:$(brew --prefix zlib)/lib/pkgconfig:$(brew --prefix icu4c)/lib/pkgconfig:$(brew --prefix brotli)/lib/pkgconfig:$(brew --prefix zstd)/lib/pkgconfig"
 export UOS_LIBCXX_LINK="-L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++"
@@ -60,7 +61,8 @@ export BOOST_ROOT="$UOS_LIBCXX_BUILD/boost_1_90_0"
   cd "$BOOST_ROOT"
   ./bootstrap.sh --with-toolset=clang --with-libraries=json,container
   ./b2 -j4 --layout=system toolset=clang cxxstd=20 variant=release link=static threading=multi \
-    cxxflags="-stdlib=libc++" linkflags="-stdlib=libc++ $UOS_LIBCXX_LINK" stage
+    cxxflags="-stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1" \
+    linkflags="-stdlib=libc++ $UOS_LIBCXX_LINK" stage
 )
 ```
 
@@ -79,7 +81,8 @@ int main() {
   return parsed.ec != std::errc{} || parsed.ptr != text + 4 || value != 1.25 || formatted.ec != std::errc{};
 }
 CPP
-"$CXX" -std=c++20 -stdlib=libc++ -Wall -Wextra -Wshadow -Wconversion -Werror \
+"$CXX" -std=c++20 -stdlib=libc++ -nostdinc++ -isystem "$LLVM_PREFIX/include/c++/v1" \
+  -Wall -Wextra -Wshadow -Wconversion -Werror \
   "$UOS_LIBCXX_BUILD/charconv.cpp" -L"$LLVM_PREFIX/lib/c++" -Wl,-rpath,"$LLVM_PREFIX/lib/c++" \
   -o "$UOS_LIBCXX_BUILD/charconv"
 "$UOS_LIBCXX_BUILD/charconv"
@@ -110,6 +113,7 @@ gateway = root / "cpp/gateway"
 build = Path(os.environ["UOS_LIBCXX_BUILD"])
 packages = ["openssl", "sqlite3", "zlib", "libbrotlidec", "libzstd", "icu-uc", "icu-i18n"]
 flags = [os.environ["CXX"], "-std=c++20", "-stdlib=libc++", "-O0", "-g0",
+         "-nostdinc++", "-isystem", str(Path(os.environ["LLVM_PREFIX"]) / "include/c++/v1"),
          "-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror",
          "-DBOOST_JSON_NO_LIB", "-DBOOST_CONTAINER_NO_LIB", "-DBOOST_SYSTEM_NO_LIB",
          "-DUOS_GATEWAY_NATIVE_LIBRARIES", "-pthread",

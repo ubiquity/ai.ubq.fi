@@ -364,3 +364,85 @@ The separate POSIX child-watcher control passes 10/10 overlapping process cases.
 - Push/PR/ancestry-preserving development integration must be performed by the enclosing authenticated job.
   No hosted CI run was dispatched. The checkout remains on its owned `agent-job` branch for that handoff.
 - Local review and final commit/tree receipts are recorded in the documentation follow-up below.
+
+## Final commit, checks and review receipt
+
+Implementation commit: `27ddd088c3b0a2e5ede5698a75a13b8e4ea28435`.
+Tree: `f93b36dc44ed81e03394132e45f2891b4732d257`.
+Parent/base: `09d44bd5b94fd6fb6d44c9c1bc9c3ebe15a48494`.
+The documentation follow-up changes only `docs/MACOS.md` and this report; every consumed C++ input
+remains identical to the implementation commit. Its Mac recipe explicitly selects the matching
+Homebrew libc++ headers as well as libraries, instead of relying on the compiler's default SDK search.
+
+On the committed implementation tree, the three compiler-driver gates above reconciled **44/44**,
+**327/327**, and **459/459** valid objects, zero failures. These were content-checked cache reuses;
+the earlier full compilation and runtime execution receipts remain bound to exactly those inputs.
+No source edit followed the final successful runtime run.
+
+Changed-path verification maps the 41 C++ paths in the source table to the warning-fatal object gate
+and 34 runtime binaries. The two changed Markdown paths use the locked Prettier 3.9.6 and whitespace gate.
+Quality dependencies were prepared outside the checkout, with both repository locks present and unchanged:
+
+```sh
+mkdir -p /tmp/cppgw-libcxx-20261117/lint
+cp tools/lint/package.json tools/lint/bun.lock /tmp/cppgw-libcxx-20261117/lint/
+bun --no-env-file install --frozen-lockfile --ignore-scripts --cwd /tmp/cppgw-libcxx-20261117/lint
+bun --no-env-file --no-install /tmp/cppgw-libcxx-20261117/lint/node_modules/prettier/bin/prettier.cjs --check cpp/gateway/docs/MACOS.md cpp/gateway/docs/findings/cppgw-libcxx-portability-20261117.md
+git diff --check
+```
+
+Both changed documents pass formatting; whitespace checks pass. No C++ formatter or unrelated
+TypeScript lint/check/test aggregate was run. A Python cache generated while importing the Links
+resolver was removed before staging; no generated artifact remains in the checkout.
+
+Actual local review command, Codex CLI 0.169.0:
+
+```sh
+codex -c 'review_model="codex-auto-review"' review --commit 27ddd088c3b0a2e5ede5698a75a13b8e4ea28435
+```
+
+The CLI exited 0 after 69.762 seconds, without timeout or credential redaction. However, its banner
+reported `model: ubiquity/deepseek-flash`, `provider: uos`, rather than confirming the requested
+`codex-auto-review`. **Model identity is unverified: reject this receipt for official review ingestion.**
+No finding was ingested, no failed/identity-mismatched review was marked complete, and review status
+was not used as a delivery gate. The exact transcript remains `/tmp/cppgw-libcxx-20261117/review.log`.
+Its SHA-256 is `716e3d443c17cd0117edbdb88d82f0e353fb9ea9fa779921ced041cfa611c432`.
+
+Preserved original final review text, as unaccepted evidence:
+
+```text
+The portability changes contain a platform-specific filesystem assertion that is incorrect on macOS and will fail the test suite there.
+
+Review comment:
+
+- [P1] Use the Darwin value for O_NOFOLLOW — /home/runner/work/_temp/agent-jobs/cppgw-libcxx-portability-20261117/checkout/cpp/gateway/tests/rt/fs_test.cpp:532-535
+  On macOS this falls into the `else` branch and expects the Linux ARM64 value `32768`, but Darwin defines `O_NOFOLLOW` as `256`. Since this test is now explicitly made compilable for Apple, the filesystem suite will fail on every macOS run; add a Darwin-specific expectation rather than grouping it with Linux ARM64.
+```
+
+The report already leaves Mac filesystem expectations unqualified; no Mac Bun oracle is available.
+The new Linux x86_64 expectation is proven above. Existing Darwin signal/errno/open-flag expectations
+need a real Mac oracle rather than an unobserved replacement in this compile-only job.
+
+Final publication attempt:
+
+```sh
+git push origin HEAD:refs/heads/build/cppgw-libcxx-portability-20261117
+```
+
+It exited 128 with `fatal: could not read Username for 'https://github.com': No such device or address`.
+A fresh fetch confirms `origin/development` is `002fe15fa926674c97f0169355d24929bf529710`;
+`git merge-base --is-ancestor 27ddd088c3b0a2e5ede5698a75a13b8e4ea28435 origin/development` exits 1.
+Therefore no push, PR, development merge or final development checkout handoff is claimed. Preserve
+this clean owned `agent-job` branch for the enclosing job's authenticated publication and integration.
+
+## Final handoff summary
+
+Clang/libc++ 22.1.2 passes all 830 source/test compilations and all 34 runtime links;
+34 runtime binaries pass 446 cases. Legacy-loader compilation passes 44/44 and the POSIX child-watcher
+control passes 10/10 overlapping cases. The two initial filesystem failures are explained by Bun-proven
+host constants and filesystem timestamp range, with no timestamp expectation weakened.
+
+The source table records every mechanical compiler/guarded platform change; MACOS.md contains the
+prerequisites, full build commands and platform switches. Mac execution and the out-of-scope Linux
+launcher/build-tool boundaries remain open. Changes are committed locally; GitHub authentication
+blocks publication/integration. The local review receipt is rejected for unverified model identity.
