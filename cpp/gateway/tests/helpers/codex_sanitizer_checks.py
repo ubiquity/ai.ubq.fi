@@ -135,10 +135,14 @@ def run(args, profile, root, targets, tests, before, source_identity):
     run_root = root / "runs" / str(time.time_ns())
     logs = run_root / "logs"
     logs.mkdir(parents=True)
+    symbolizer = subprocess.check_output(
+        [args.compiler, "-print-prog-name=llvm-symbolizer"], env=clean_env(), text=True).strip()
+    if profile == "asan" and not Path(symbolizer).is_file():
+        raise SystemExit("Install the compiler's llvm-symbolizer before running sanitizers")
     provenance = source_identity | dict(profile=profile, inputs=before,
         compiler=subprocess.check_output([args.compiler, "--version"], env=clean_env(), text=True),
         flags=BASE_FLAGS + (SAN_FLAGS if profile == "asan" else []), timeout=args.timeout,
-        network_namespace=os.readlink("/proc/self/ns/net"))
+        symbolizer=symbolizer, network_namespace=os.readlink("/proc/self/ns/net"))
     (run_root / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     for target in targets:
         started = time.monotonic()
@@ -149,7 +153,7 @@ def run(args, profile, root, targets, tests, before, source_identity):
             env = clean_env() | {"HOME": str(scratch / "h"), "TMPDIR": str(scratch / "t")}
             if profile == "asan":
                 env |= {"ASAN_OPTIONS": "detect_leaks=1:detect_stack_use_after_return=1:strict_string_checks=1",
-                        "UBSAN_OPTIONS": "print_stacktrace=1"}
+                        "UBSAN_OPTIONS": "print_stacktrace=1", "ASAN_SYMBOLIZER_PATH": symbolizer}
                 if args.suppressions:
                     env["LSAN_OPTIONS"] = "suppressions=" + str(args.suppressions.resolve())
             argv = [str(root / target)] + ([args.case] if args.case else [])
