@@ -15,6 +15,9 @@
 #include "uos/rt/stream.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
+#if defined(__APPLE__)
+#include "uos/rt/url.hpp"
+#endif
 #include <boost/asio/post.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
@@ -76,6 +79,13 @@ namespace {
     sqlite::DatabaseOptions options;
     options.readonly = true;
     options.safeIntegers = true;
+#if defined(__APPLE__)
+    // A stopped, checkpointed fixture has no SHM for Apple's readonly WAL
+    // reader. Use the same immutable form as the TypeScript snapshot reader;
+    // live sidecars always retain the ordinary WAL-aware connection below.
+    if (!fs::existsSync(file + "-wal") && !fs::existsSync(file + "-shm") && !fs::existsSync(file + "-journal"))
+      return sqlite::Database(pathToFileURL(file).href() + "?immutable=1", options);
+#endif
     return sqlite::Database(file, options);
   }
 
@@ -184,7 +194,16 @@ ASYNC_TEST("a new database gets the native schema, migration state and pragmas b
   const sqlite::Database database = inspect(directory.file());
   EXPECT_EQ(scalarText(database, "SELECT k || ',' || version FROM migration_state"), std::string("0,3"));
   EXPECT_EQ(scalarText(database, "SELECT k || ',' || version || ',' || seq FROM data_version"), std::string("0,0,0"));
+#if defined(__APPLE__)
+  // Bun's immutable reader reports its connection mode as delete; the stopped
+  // database itself still has both WAL-format header bytes set to 2.
+  EXPECT_EQ(scalarText(database, "PRAGMA journal_mode"), std::string("delete"));
+  const auto header = fs::readFileSync(directory.file());
+  EXPECT_EQ(header[18], 2);
+  EXPECT_EQ(header[19], 2);
+#else
   EXPECT_EQ(scalarText(database, "PRAGMA journal_mode"), std::string("wal"));
+#endif
   EXPECT_EQ(scalarText(database, "PRAGMA page_size"), std::string("4096"));
   EXPECT_EQ(scalarText(database, "PRAGMA user_version"), std::string("0"));
   EXPECT_EQ(scalarText(database, "PRAGMA application_id"), std::string("0"));

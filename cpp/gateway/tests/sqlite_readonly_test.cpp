@@ -183,6 +183,21 @@ TEST("a missing database falls back to the immutable retry and fails reading its
   EXPECT_THROWS_MESSAGE(inspectSqliteReadOnly(missing, marker), rt::fs::ErrnoError, "ENOENT: no such file or directory, lstat '" + missing + "'");
 }
 
+#if defined(__APPLE__)
+TEST("bun:sqlite on Darwin opens an immutable file: URI without creating sidecars") {
+  const AfterEach afterEach;
+  const Fixture created = fixture(false);
+  rt::URL uri = rt::pathToFileURL(created.path);
+  uri.searchParams().set("immutable", "1");
+  DatabaseOptions options;
+  options.readonly = true;
+  options.strict = true;
+  Database db(uri.href(), options);
+  EXPECT_EQ(marker(db), std::optional<std::string>("bun-jsc-v1"));
+  db.close(true);
+  for (const char* suffix : {"-wal", "-shm", "-journal"}) EXPECT_EQ(rt::fs::existsSync(created.path + suffix), false);
+}
+#else
 TEST("bun:sqlite on Linux opens an immutable file: URI as a plain path, which does not exist") {
   const AfterEach afterEach;
   const Fixture created = fixture(false);
@@ -204,6 +219,7 @@ TEST("bun:sqlite on Linux opens an immutable file: URI as a plain path, which do
   }
   EXPECT(threw);
 }
+#endif
 
 namespace {
   [[maybe_unused]] const bool darwinCases = [] {

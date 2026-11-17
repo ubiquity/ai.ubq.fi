@@ -224,6 +224,11 @@ namespace uos::rt {
     class Backend {
     public:
       Backend(const std::string& path, const SqliteKvOptions& options) : db_(path, connectionOptions()), versionIncrement_(options.versionIncrement) {
+#if defined(__APPLE__)
+        // The native KV addon uses bundled SQLite, whose close drains/removes
+        // WAL sidecars, independently of Bun's Darwin bun:sqlite default.
+        db_.fileControl(sqlite::constants::SQLITE_FCNTL_PERSIST_WAL, 0);
+#endif
         db_.run(BUSY_TIMEOUT);
         // SqliteBackend::new logs a failure to switch to WAL and carries on.
         try {
