@@ -17,7 +17,7 @@
         "src/images.cpp": 1,
         "src/rt/url.cpp": 1
       },
-      "tu_emissions": 775,
+      "tu_emissions": 919,
       "unique": 8
     },
     "bugprone-derived-method-shadowing-base-method": {
@@ -25,7 +25,7 @@
         "tests/helpers/admin_auth_harness.hpp": 1,
         "tests/helpers/passkeys_harness.hpp": 2
       },
-      "tu_emissions": 9,
+      "tu_emissions": 12,
       "unique": 3
     },
     "bugprone-empty-catch": {
@@ -146,10 +146,12 @@
         "tests/codex_models_fetch_differential_test.cpp": 1,
         "tests/codex_responses_differential_test.cpp": 1,
         "tests/codex_responses_operations_differential_test.cpp": 1,
-        "tests/codex_selection_differential_test.cpp": 1
+        "tests/codex_selection_differential_test.cpp": 1,
+        "tests/deepseek_stream_differential_test.cpp": 1,
+        "tests/kv_budget_part1_test.cpp": 1
       },
-      "tu_emissions": 2629,
-      "unique": 269
+      "tu_emissions": 3178,
+      "unique": 271
     },
     "bugprone-exception-copy-constructor-throws": {
       "files": {
@@ -205,10 +207,19 @@
         "tests/banked_reset_branch_coverage_test.cpp": 2,
         "tests/codex_banked_reset_part2_test.cpp": 3,
         "tests/codex_catalog_test.cpp": 1,
-        "tests/codex_model_availability_test.cpp": 1
+        "tests/codex_model_availability_test.cpp": 1,
+        "tests/helpers/embeddings_harness.cpp": 2,
+        "tests/helpers/kv_budget_harness.cpp": 1
       },
-      "tu_emissions": 87,
-      "unique": 81
+      "tu_emissions": 96,
+      "unique": 84
+    },
+    "bugprone-forward-declaration-namespace": {
+      "files": {
+        "include/uos/rt/http.hpp": 1
+      },
+      "tu_emissions": 1,
+      "unique": 1
     },
     "bugprone-implicit-widening-of-multiplication-result": {
       "files": {
@@ -229,10 +240,13 @@
         "tests/codex_account_routing_part1_test.cpp": 1,
         "tests/codex_account_routing_part2_test.cpp": 1,
         "tests/codex_catalog_observation_test.cpp": 2,
-        "tests/codex_context_admission_test.cpp": 1
+        "tests/codex_context_admission_test.cpp": 1,
+        "tests/codex_supervisor_brief_test.cpp": 5,
+        "tests/codex_supervisor_inventory_coverage_test.cpp": 2,
+        "tests/compaction_summary_forwarding_test.cpp": 2
       },
-      "tu_emissions": 275,
-      "unique": 29
+      "tu_emissions": 352,
+      "unique": 38
     },
     "bugprone-macro-parentheses": {
       "files": {
@@ -275,13 +289,26 @@
         "tests/codex_catalog_reasoning_order_test.cpp": 1,
         "tests/codex_catalog_stale_while_revalidate_test.cpp": 1,
         "tests/codex_manual_reset_test.cpp": 1,
+        "tests/codex_native_auth_test.cpp": 1,
         "tests/codex_overage_fallback_test.cpp": 1,
         "tests/codex_overage_usage_settings_test.cpp": 1,
         "tests/codex_reset_settings_migration_test.cpp": 1,
-        "tests/codex_routing_mutations_branch_coverage_test.cpp": 1
+        "tests/codex_routing_mutations_branch_coverage_test.cpp": 1,
+        "tests/embeddings_coverage_test.cpp": 1,
+        "tests/embeddings_differential_test.cpp": 1,
+        "tests/embeddings_part1_test.cpp": 1,
+        "tests/embeddings_part2_test.cpp": 1,
+        "tests/handler_http_differential_test.cpp": 1,
+        "tests/harmony_adapter_test.cpp": 1,
+        "tests/harmony_probes_coverage_test.cpp": 1,
+        "tests/harmony_probes_test.cpp": 1,
+        "tests/harmony_tools_router_test.cpp": 1,
+        "tests/health_test.cpp": 1,
+        "tests/kv_budget_part1_test.cpp": 1,
+        "tests/kv_budget_part2_test.cpp": 1
       },
-      "tu_emissions": 43,
-      "unique": 43
+      "tu_emissions": 56,
+      "unique": 56
     },
     "bugprone-misplaced-widening-cast": {
       "files": {
@@ -319,10 +346,11 @@
         "tests/claude_code_credentials_differential_test.cpp": 1,
         "tests/claude_code_quota_differential_test.cpp": 3,
         "tests/codex_dispatch_differential_test.cpp": 1,
-        "tests/codex_supervisor_brief_handler_differential_test.cpp": 1
+        "tests/codex_supervisor_brief_handler_differential_test.cpp": 1,
+        "tests/jev_compaction_differential_test.cpp": 2
       },
-      "tu_emissions": 27,
-      "unique": 26
+      "tu_emissions": 29,
+      "unique": 28
     },
     "bugprone-reserved-identifier": {
       "files": {
@@ -337,7 +365,7 @@
         "src/auth/passkeys.cpp": 1,
         "src/provider/claude_code_quota.cpp": 1
       },
-      "tu_emissions": 340,
+      "tu_emissions": 418,
       "unique": 3
     },
     "bugprone-signed-bitwise": {
@@ -387,10 +415,15 @@
         "tests/claude_code_differential_test.cpp": 1,
         "tests/claude_code_models_differential_test.cpp": 1,
         "tests/claude_code_quota_differential_test.cpp": 1,
-        "tests/codex_catalog_test.cpp": 1
+        "tests/codex_catalog_test.cpp": 1,
+        "tests/codex_supervisor_brief_test.cpp": 3,
+        "tests/helpers/loopback_http.cpp": 1,
+        "tests/jev_compaction_differential_test.cpp": 1,
+        "tests/kernel_attestation_differential_test.cpp": 1,
+        "tests/kv_conversion_legacy_codec_differential_test.cpp": 1
       },
-      "tu_emissions": 1974,
-      "unique": 538
+      "tu_emissions": 2271,
+      "unique": 545
     },
     "bugprone-std-exception-baseclass": {
       "files": {
@@ -404,8 +437,16 @@
         "src/responses_stream.cpp": 1,
         "src/rt/fetch_transport.cpp": 1
       },
-      "tu_emissions": 1385,
+      "tu_emissions": 1731,
       "unique": 12
+    },
+    "bugprone-suspicious-include": {
+      "files": {
+        "tests/jev_codex_smoke_test.cpp": 1,
+        "tests/jev_compaction_smoke_test.cpp": 1
+      },
+      "tu_emissions": 2,
+      "unique": 2
     },
     "bugprone-suspicious-missing-comma": {
       "files": {
@@ -645,6 +686,7 @@
         "tests/codex_models_branch_coverage_test.cpp": 30,
         "tests/codex_models_differential_test.cpp": 11,
         "tests/codex_models_fetch_differential_test.cpp": 6,
+        "tests/codex_native_auth_test.cpp": 33,
         "tests/codex_overage_fallback_test.cpp": 8,
         "tests/codex_overage_usage_settings_test.cpp": 7,
         "tests/codex_quota_differential_test.cpp": 3,
@@ -658,19 +700,111 @@
         "tests/codex_routing_mutations_differential_test.cpp": 1,
         "tests/codex_routing_state_differential_test.cpp": 9,
         "tests/codex_selection_differential_test.cpp": 1,
+        "tests/codex_serial_routing_http_test.cpp": 4,
         "tests/codex_session_test.cpp": 3,
         "tests/codex_supervisor_brief_handler_differential_test.cpp": 1,
+        "tests/codex_supervisor_brief_test.cpp": 40,
+        "tests/codex_supervisor_config_differential_test.cpp": 14,
+        "tests/codex_supervisor_followups_test.cpp": 16,
+        "tests/codex_supervisor_handlers_differential_test.cpp": 3,
+        "tests/codex_supervisor_inventory_coverage_test.cpp": 33,
+        "tests/codex_supervisor_inventory_differential_test.cpp": 1,
+        "tests/codex_supervisor_secret_test.cpp": 12,
+        "tests/codex_supervisor_test.cpp": 15,
+        "tests/compaction_summary_forwarding_test.cpp": 3,
+        "tests/compaction_summary_forwarding_vectors.inc": 1,
+        "tests/config_differential_test.cpp": 3,
+        "tests/debug_routing_differential_test.cpp": 3,
+        "tests/decisions_test.cpp": 95,
+        "tests/deepseek_catalog_branch_coverage_test.cpp": 1,
+        "tests/deepseek_flash_aliases_differential_test.cpp": 2,
+        "tests/deepseek_index_differential_test.cpp": 21,
+        "tests/deepseek_responses_differential_test.cpp": 2,
+        "tests/deepseek_responses_test.cpp": 1,
+        "tests/deepseek_sampling_controls_test.cpp": 1,
+        "tests/deepseek_stream_differential_test.cpp": 1,
+        "tests/deepseek_tool_collision_test.cpp": 1,
+        "tests/deepseek_waterfall_test.cpp": 12,
+        "tests/defaults_test.cpp": 2,
+        "tests/embeddings_coverage_test.cpp": 23,
+        "tests/embeddings_differential_test.cpp": 1,
+        "tests/embeddings_ledger_differential_test.cpp": 9,
+        "tests/embeddings_part1_test.cpp": 30,
+        "tests/embeddings_part2_test.cpp": 18,
+        "tests/failover_stress_http_test.cpp": 3,
+        "tests/forwarded_payload_unicode_test.cpp": 1,
+        "tests/handler_admission_differential_test.cpp": 3,
+        "tests/handler_http_differential_test.cpp": 6,
+        "tests/handler_replay_background_test.cpp": 4,
+        "tests/handler_terminal_admission_stage_test.cpp": 4,
+        "tests/handler_terminal_usage_rollup_test.cpp": 5,
+        "tests/harmony_adapter_test.cpp": 12,
+        "tests/harmony_classifier_test.cpp": 9,
+        "tests/harmony_conversation_test.cpp": 7,
+        "tests/harmony_differential_test.cpp": 10,
+        "tests/harmony_parse_test.cpp": 11,
+        "tests/harmony_probes_coverage_test.cpp": 25,
+        "tests/harmony_probes_test.cpp": 12,
+        "tests/harmony_render_test.cpp": 9,
+        "tests/harmony_tools_backend_differential_test.cpp": 4,
+        "tests/harmony_tools_fakes_differential_test.cpp": 4,
+        "tests/harmony_tools_result_differential_test.cpp": 4,
+        "tests/harmony_tools_router_test.cpp": 21,
+        "tests/harmony_tools_schemas_test.cpp": 9,
+        "tests/health_test.cpp": 22,
         "tests/helpers/admin_auth_harness.hpp": 4,
+        "tests/helpers/codex_account_routing_harness.cpp": 2,
+        "tests/helpers/codex_auth_cache_harness.cpp": 1,
         "tests/helpers/codex_auth_cache_harness.hpp": 1,
+        "tests/helpers/codex_banked_reset_harness.cpp": 1,
+        "tests/helpers/embeddings_harness.cpp": 1,
+        "tests/helpers/embeddings_harness.hpp": 1,
+        "tests/helpers/kv_budget_harness.cpp": 1,
+        "tests/helpers/openai_compat_harness.cpp": 1,
+        "tests/helpers/openai_compat_harness.hpp": 1,
+        "tests/helpers/prompt_cache_scope_experiment_harness.cpp": 1,
         "tests/helpers/prompt_cache_scope_experiment_harness.hpp": 3,
-        "tests/helpers/responses_conformance_client.hpp": 4
+        "tests/helpers/provider_capacity_harness.cpp": 1,
+        "tests/helpers/responses_conformance_client.hpp": 4,
+        "tests/helpers/responses_conformance_fixture.cpp": 2,
+        "tests/helpers/responses_conformance_fixture.hpp": 1,
+        "tests/http_differential_test.cpp": 5,
+        "tests/inference_deadline_differential_test.cpp": 6,
+        "tests/inference_deadline_test.cpp": 5,
+        "tests/input_normalization_logprobs_test.cpp": 5,
+        "tests/jev_codex_smoke_test.cpp": 6,
+        "tests/jev_compaction_differential_test.cpp": 12,
+        "tests/jev_compaction_fallback_quota_test.cpp": 12,
+        "tests/jev_compaction_smoke_test.cpp": 6,
+        "tests/jev_compaction_test.cpp": 26,
+        "tests/jev_hybrid_test.cpp": 11,
+        "tests/kernel_attestation_differential_test.cpp": 1,
+        "tests/kernel_coverage_test.cpp": 11,
+        "tests/kernel_policy_queue_differential_test.cpp": 2,
+        "tests/kernel_quota_admission_test.cpp": 5,
+        "tests/kernel_quota_context_differential_test.cpp": 6,
+        "tests/kernel_quota_reserve_differential_test.cpp": 17,
+        "tests/kernel_quota_values_differential_test.cpp": 6,
+        "tests/kernel_quota_write_differential_test.cpp": 25,
+        "tests/kernel_usage_coverage_test.cpp": 17,
+        "tests/key_compatibility_test.cpp": 1,
+        "tests/kv_budget_part1_test.cpp": 24,
+        "tests/kv_budget_part2_test.cpp": 24,
+        "tests/kv_consistent_snapshot_test.cpp": 3,
+        "tests/kv_conversion_cli_differential_test.cpp": 13,
+        "tests/kv_conversion_convert_differential_test.cpp": 15,
+        "tests/kv_conversion_cursors_differential_test.cpp": 12,
+        "tests/kv_conversion_legacy_codec_differential_test.cpp": 3,
+        "tests/kv_conversion_native_schema_differential_test.cpp": 4,
+        "tests/kv_conversion_proof_differential_test.cpp": 9
       },
-      "tu_emissions": 6782,
-      "unique": 1724
+      "tu_emissions": 8945,
+      "unique": 2616
     },
     "bugprone-unchecked-optional-access": {
       "files": {
         "include/uos/authority/native_authority_contracts.hpp": 1,
+        "include/uos/kv_conversion/convert.hpp": 1,
         "include/uos/provider/selection.hpp": 1,
         "include/uos/rt/async.hpp": 8,
         "include/uos/rt/nullable.hpp": 8,
@@ -927,6 +1061,7 @@
         "tests/codex_models_availability_differential_test.cpp": 1,
         "tests/codex_models_branch_coverage_test.cpp": 57,
         "tests/codex_models_differential_test.cpp": 5,
+        "tests/codex_native_auth_test.cpp": 9,
         "tests/codex_overage_fallback_test.cpp": 1,
         "tests/codex_overage_usage_settings_test.cpp": 3,
         "tests/codex_responses_error_test.cpp": 1,
@@ -934,16 +1069,67 @@
         "tests/codex_routing_mutations_branch_coverage_test.cpp": 27,
         "tests/codex_routing_mutations_differential_test.cpp": 9,
         "tests/codex_routing_state_differential_test.cpp": 2,
-        "tests/codex_supervisor_brief_handler_differential_test.cpp": 1
+        "tests/codex_serial_routing_http_test.cpp": 3,
+        "tests/codex_supervisor_brief_handler_differential_test.cpp": 1,
+        "tests/codex_supervisor_config_differential_test.cpp": 4,
+        "tests/codex_supervisor_handlers_differential_test.cpp": 1,
+        "tests/codex_supervisor_inventory_coverage_test.cpp": 21,
+        "tests/codex_supervisor_inventory_differential_test.cpp": 2,
+        "tests/codex_supervisor_test.cpp": 5,
+        "tests/config_differential_test.cpp": 2,
+        "tests/debug_routing_differential_test.cpp": 1,
+        "tests/decisions_test.cpp": 10,
+        "tests/deepseek_flash_aliases_differential_test.cpp": 1,
+        "tests/deepseek_index_differential_test.cpp": 21,
+        "tests/deepseek_stream_differential_test.cpp": 3,
+        "tests/deepseek_waterfall_test.cpp": 2,
+        "tests/embeddings_coverage_test.cpp": 5,
+        "tests/embeddings_differential_test.cpp": 8,
+        "tests/embeddings_ledger_differential_test.cpp": 2,
+        "tests/embeddings_part1_test.cpp": 7,
+        "tests/embeddings_part2_test.cpp": 34,
+        "tests/failover_stress_http_test.cpp": 4,
+        "tests/handler_http_differential_test.cpp": 22,
+        "tests/handler_replay_background_test.cpp": 3,
+        "tests/handler_terminal_usage_rollup_test.cpp": 2,
+        "tests/harmony_adapter_test.cpp": 6,
+        "tests/harmony_probes_coverage_test.cpp": 21,
+        "tests/harmony_probes_test.cpp": 19,
+        "tests/health_test.cpp": 2,
+        "tests/helpers/codex_auth_cache_harness.cpp": 1,
+        "tests/helpers/codex_banked_reset_harness.cpp": 1,
+        "tests/helpers/embeddings_harness.cpp": 1,
+        "tests/helpers/kv_budget_harness.cpp": 4,
+        "tests/helpers/loopback_http.cpp": 6,
+        "tests/helpers/manual_reset_harness.cpp": 1,
+        "tests/helpers/openai_compat_harness.cpp": 5,
+        "tests/helpers/prompt_cache_scope_experiment_harness.cpp": 4,
+        "tests/helpers/responses_conformance_fixture.cpp": 9,
+        "tests/http_differential_test.cpp": 1,
+        "tests/input_normalization_logprobs_test.cpp": 1,
+        "tests/jev_codex_smoke_test.cpp": 7,
+        "tests/jev_compaction_differential_test.cpp": 9,
+        "tests/jev_compaction_fallback_quota_test.cpp": 18,
+        "tests/jev_compaction_smoke_test.cpp": 5,
+        "tests/jev_compaction_test.cpp": 22,
+        "tests/jev_hybrid_test.cpp": 4,
+        "tests/kernel_attestation_differential_test.cpp": 2,
+        "tests/kernel_coverage_test.cpp": 17,
+        "tests/kernel_quota_admission_test.cpp": 2,
+        "tests/kernel_usage_coverage_test.cpp": 54,
+        "tests/kv_budget_part1_test.cpp": 20,
+        "tests/kv_budget_part2_test.cpp": 35,
+        "tests/kv_conversion_native_schema_differential_test.cpp": 1,
+        "tests/kv_conversion_proof_differential_test.cpp": 6
       },
-      "tu_emissions": 3212,
-      "unique": 1699
+      "tu_emissions": 4072,
+      "unique": 2156
     },
     "bugprone-unhandled-self-assignment": {
       "files": {
         "include/uos/rt/ordered.hpp": 1
       },
-      "tu_emissions": 338,
+      "tu_emissions": 416,
       "unique": 1
     },
     "bugprone-unused-return-value": {
@@ -953,10 +1139,12 @@
         "src/rt/process_loop.cpp": 4,
         "src/rt/websocket_client.cpp": 2,
         "src/rt/websocket_socket.cpp": 5,
-        "src/runtime/http.cpp": 11
+        "src/runtime/http.cpp": 11,
+        "tests/codex_supervisor_inventory_differential_test.cpp": 1,
+        "tests/helpers/loopback_http.cpp": 3
       },
-      "tu_emissions": 24,
-      "unique": 24
+      "tu_emissions": 28,
+      "unique": 28
     },
     "bugprone-use-after-move": {
       "files": {
@@ -1001,10 +1189,22 @@
         "tests/codex_responses_differential_test.cpp": 1,
         "tests/codex_responses_error_differential_test.cpp": 1,
         "tests/codex_responses_operations_differential_test.cpp": 1,
-        "tests/codex_supervisor_brief_handler_differential_test.cpp": 1
+        "tests/codex_supervisor_brief_handler_differential_test.cpp": 1,
+        "tests/codex_supervisor_brief_test.cpp": 2,
+        "tests/config_differential_test.cpp": 1,
+        "tests/debug_routing_differential_test.cpp": 1,
+        "tests/handler_admission_differential_test.cpp": 1,
+        "tests/harmony_differential_test.cpp": 1,
+        "tests/harmony_probes_test.cpp": 2,
+        "tests/harmony_tools_backend_differential_test.cpp": 2,
+        "tests/harmony_tools_fakes_differential_test.cpp": 1,
+        "tests/helpers/codex_diff_kv.cpp": 1,
+        "tests/http_differential_test.cpp": 1,
+        "tests/kernel_attestation_differential_test.cpp": 1,
+        "tests/kv_conversion_legacy_codec_differential_test.cpp": 1
       },
-      "tu_emissions": 421,
-      "unique": 31
+      "tu_emissions": 673,
+      "unique": 46
     },
     "clang-analyzer-core.CallAndMessage": {
       "files": {
@@ -1035,10 +1235,11 @@
       "files": {
         "src/runtime/http.cpp": 2,
         "tests/chart_source_proxy_test.cpp": 1,
-        "tests/codex_auth_coverage_test.cpp": 1
+        "tests/codex_auth_coverage_test.cpp": 1,
+        "tests/helpers/openai_compat_harness.cpp": 1
       },
-      "tu_emissions": 4,
-      "unique": 4
+      "tu_emissions": 5,
+      "unique": 5
     },
     "clang-analyzer-security.ArrayBound": {
       "files": {
@@ -1084,10 +1285,12 @@
         "tests/banked_reset_branch_coverage_test.cpp": 2,
         "tests/codex_banked_reset_part2_test.cpp": 3,
         "tests/codex_catalog_test.cpp": 1,
-        "tests/codex_model_availability_test.cpp": 1
+        "tests/codex_model_availability_test.cpp": 1,
+        "tests/helpers/embeddings_harness.cpp": 2,
+        "tests/helpers/kv_budget_harness.cpp": 1
       },
-      "tu_emissions": 81,
-      "unique": 81
+      "tu_emissions": 86,
+      "unique": 84
     },
     "concurrency-mt-unsafe": {
       "files": {
@@ -1139,10 +1342,29 @@
         "tests/codex_banked_reset_provider_test.cpp": 3,
         "tests/codex_catalog_test.cpp": 2,
         "tests/codex_manual_reset_test.cpp": 3,
-        "tests/codex_responses_error_test.cpp": 1
+        "tests/codex_responses_error_test.cpp": 1,
+        "tests/codex_serial_routing_http_test.cpp": 2,
+        "tests/codex_supervisor_config_differential_test.cpp": 2,
+        "tests/codex_supervisor_handlers_differential_test.cpp": 2,
+        "tests/codex_supervisor_inventory_coverage_test.cpp": 1,
+        "tests/compaction_summary_forwarding_test.cpp": 1,
+        "tests/decisions_test.cpp": 1,
+        "tests/embeddings_ledger_differential_test.cpp": 6,
+        "tests/failover_stress_http_test.cpp": 2,
+        "tests/helpers/codex_account_routing_harness.cpp": 1,
+        "tests/helpers/codex_auth_cache_harness.cpp": 1,
+        "tests/helpers/embeddings_harness.hpp": 1,
+        "tests/helpers/loopback_http.cpp": 1,
+        "tests/helpers/openai_compat_harness.cpp": 1,
+        "tests/helpers/responses_conformance_client.cpp": 1,
+        "tests/helpers/responses_conformance_fixture.cpp": 2,
+        "tests/jev_compaction_fallback_quota_test.cpp": 1,
+        "tests/kernel_coverage_test.cpp": 2,
+        "tests/kv_budget_part1_test.cpp": 1,
+        "tests/kv_consistent_snapshot_test.cpp": 2
       },
-      "tu_emissions": 81,
-      "unique": 73
+      "tu_emissions": 125,
+      "unique": 104
     },
     "cppcoreguidelines-avoid-reference-coroutine-parameters": {
       "files": {
@@ -1170,10 +1392,12 @@
         "tests/api_key_policy_dispatch_reuse_test.cpp": 2,
         "tests/capacity_observation_sync_test.cpp": 1,
         "tests/claude_code_request_policy_test.cpp": 2,
-        "tests/codex_metered_routing_matrix_test.cpp": 1
+        "tests/codex_metered_routing_matrix_test.cpp": 1,
+        "tests/jev_hybrid_test.cpp": 1,
+        "tests/kv_conversion_legacy_codec_differential_test.cpp": 3
       },
-      "tu_emissions": 192,
-      "unique": 192
+      "tu_emissions": 196,
+      "unique": 196
     },
     "performance-expensive-value-or": {
       "files": {
@@ -1218,10 +1442,18 @@
         "tests/codex_catalog_observation_test.cpp": 1,
         "tests/codex_model_availability_test.cpp": 2,
         "tests/codex_overage_fallback_test.cpp": 1,
-        "tests/codex_routing_mutations_branch_coverage_test.cpp": 1
+        "tests/codex_routing_mutations_branch_coverage_test.cpp": 1,
+        "tests/codex_supervisor_brief_test.cpp": 1,
+        "tests/harmony_adapter_test.cpp": 1,
+        "tests/harmony_probes_test.cpp": 1,
+        "tests/harmony_tools_router_test.cpp": 86,
+        "tests/helpers/responses_conformance_fixture.cpp": 1,
+        "tests/helpers/sentinel_kv_stub.cpp": 1,
+        "tests/jev_compaction_differential_test.cpp": 1,
+        "tests/kv_conversion_legacy_codec_differential_test.cpp": 1
       },
-      "tu_emissions": 72,
-      "unique": 72
+      "tu_emissions": 165,
+      "unique": 165
     },
     "performance-faster-string-find": {
       "files": {
@@ -1244,10 +1476,16 @@
         "src/systemone/handlers.cpp": 1,
         "tests/codex_auth_coverage_test.cpp": 1,
         "tests/codex_capacity_routing_coverage_test.cpp": 1,
-        "tests/codex_model_availability_test.cpp": 1
+        "tests/codex_model_availability_test.cpp": 1,
+        "tests/codex_supervisor_brief_test.cpp": 1,
+        "tests/helpers/admin_auth_harness.cpp": 2,
+        "tests/helpers/codex_diff_kv.cpp": 1,
+        "tests/helpers/counting_kv.cpp": 1,
+        "tests/helpers/passkeys_harness.cpp": 2,
+        "tests/helpers/sentinel_kv_stub.cpp": 2
       },
-      "tu_emissions": 30,
-      "unique": 30
+      "tu_emissions": 39,
+      "unique": 39
     },
     "performance-inefficient-string-concatenation": {
       "files": {
@@ -1263,10 +1501,13 @@
         "src/runtime/http_upgrade.cpp": 2,
         "tests/admin_api_keys_coverage_test.cpp": 1,
         "tests/cerebras_differential_test.cpp": 1,
-        "tests/helpers/deepseek_port_replay.hpp": 1
+        "tests/codex_supervisor_secret_test.cpp": 2,
+        "tests/deepseek_index_differential_test.cpp": 1,
+        "tests/helpers/deepseek_port_replay.hpp": 1,
+        "tests/kv_budget_part1_test.cpp": 1
       },
-      "tu_emissions": 19,
-      "unique": 19
+      "tu_emissions": 31,
+      "unique": 23
     },
     "performance-inefficient-vector-operation": {
       "files": {
@@ -1335,10 +1576,32 @@
         "tests/codex_manual_reset_state_test.cpp": 1,
         "tests/codex_model_availability_test.cpp": 1,
         "tests/codex_models_branch_coverage_test.cpp": 1,
-        "tests/codex_overage_fallback_test.cpp": 1
+        "tests/codex_overage_fallback_test.cpp": 1,
+        "tests/codex_supervisor_brief_test.cpp": 1,
+        "tests/codex_supervisor_followups_test.cpp": 1,
+        "tests/codex_supervisor_inventory_coverage_test.cpp": 5,
+        "tests/codex_supervisor_secret_test.cpp": 1,
+        "tests/codex_supervisor_test.cpp": 2,
+        "tests/embeddings_coverage_test.cpp": 2,
+        "tests/failover_stress_http_test.cpp": 1,
+        "tests/harmony_parse_test.cpp": 1,
+        "tests/health_test.cpp": 1,
+        "tests/helpers/codex_account_routing_harness.cpp": 1,
+        "tests/helpers/codex_auth_cache_harness.cpp": 1,
+        "tests/helpers/codex_banked_reset_harness.cpp": 1,
+        "tests/helpers/codex_diff_kv.cpp": 1,
+        "tests/helpers/counting_kv.cpp": 2,
+        "tests/helpers/embeddings_harness.cpp": 2,
+        "tests/helpers/manual_reset_harness.cpp": 1,
+        "tests/helpers/openai_compat_harness.cpp": 1,
+        "tests/helpers/sentinel_kv_stub.cpp": 1,
+        "tests/jev_compaction_fallback_quota_test.cpp": 1,
+        "tests/kernel_policy_queue_differential_test.cpp": 1,
+        "tests/kv_budget_part1_test.cpp": 3,
+        "tests/kv_budget_part2_test.cpp": 1
       },
-      "tu_emissions": 110,
-      "unique": 110
+      "tu_emissions": 142,
+      "unique": 142
     },
     "performance-move-const-arg": {
       "files": {
@@ -1358,10 +1621,11 @@
         "src/rt/process_loop.cpp": 3,
         "tests/admin_native_owner_test.cpp": 1,
         "tests/authority_durable_test.cpp": 1,
-        "tests/codex_auth_repair_test.cpp": 2
+        "tests/codex_auth_repair_test.cpp": 2,
+        "tests/helpers/loopback_http.cpp": 1
       },
-      "tu_emissions": 60,
-      "unique": 27
+      "tu_emissions": 80,
+      "unique": 28
     },
     "performance-no-automatic-move": {
       "files": {
@@ -1406,10 +1670,11 @@
         "src/live/upstream.cpp": 1,
         "src/openai_telemetry.cpp": 1,
         "tests/admin_api_key_audit_test.cpp": 1,
-        "tests/admin_api_keys_coverage_test.cpp": 1
+        "tests/admin_api_keys_coverage_test.cpp": 1,
+        "tests/decisions_test.cpp": 1
       },
-      "tu_emissions": 7,
-      "unique": 7
+      "tu_emissions": 10,
+      "unique": 8
     },
     "performance-unnecessary-copy-initialization": {
       "files": {
@@ -1455,14 +1720,23 @@
         "tests/codex_models_branch_coverage_test.cpp": 1,
         "tests/codex_reset_settings_migration_test.cpp": 6,
         "tests/codex_routing_mutations_branch_coverage_test.cpp": 7,
-        "tests/codex_selection_differential_test.cpp": 1
+        "tests/codex_selection_differential_test.cpp": 1,
+        "tests/codex_supervisor_followups_test.cpp": 3,
+        "tests/helpers/native_paid_conformance_vectors.cpp": 3,
+        "tests/input_normalization_logprobs_test.cpp": 1,
+        "tests/jev_compaction_fallback_quota_test.cpp": 1,
+        "tests/kernel_quota_context_differential_test.cpp": 1,
+        "tests/kv_budget_part1_test.cpp": 4,
+        "tests/kv_budget_part2_test.cpp": 1,
+        "tests/kv_conversion_legacy_codec_differential_test.cpp": 1
       },
-      "tu_emissions": 180,
-      "unique": 125
+      "tu_emissions": 200,
+      "unique": 140
     },
     "performance-unnecessary-value-param": {
       "files": {
         "include/uos/handler/index.hpp": 3,
+        "include/uos/harmony/adapter.hpp": 1,
         "include/uos/optional_telemetry_queue.hpp": 2,
         "include/uos/provider/stream_relay.hpp": 1,
         "include/uos/rt/abort.hpp": 1,
@@ -1640,14 +1914,64 @@
         "tests/codex_metered_routing_matrix_test.cpp": 2,
         "tests/codex_model_availability_test.cpp": 9,
         "tests/codex_models_fetch_differential_test.cpp": 2,
+        "tests/codex_native_auth_test.cpp": 18,
         "tests/codex_overage_fallback_test.cpp": 2,
         "tests/codex_responses_differential_test.cpp": 1,
         "tests/codex_responses_error_test.cpp": 2,
         "tests/codex_selection_differential_test.cpp": 4,
-        "tests/codex_supervisor_brief_handler_differential_test.cpp": 3
+        "tests/codex_supervisor_brief_handler_differential_test.cpp": 3,
+        "tests/codex_supervisor_brief_test.cpp": 9,
+        "tests/codex_supervisor_followups_test.cpp": 7,
+        "tests/codex_supervisor_handlers_differential_test.cpp": 2,
+        "tests/codex_supervisor_inventory_differential_test.cpp": 3,
+        "tests/codex_supervisor_test.cpp": 2,
+        "tests/debug_routing_differential_test.cpp": 1,
+        "tests/decisions_test.cpp": 27,
+        "tests/deepseek_index_differential_test.cpp": 10,
+        "tests/deepseek_stream_differential_test.cpp": 2,
+        "tests/embeddings_coverage_test.cpp": 32,
+        "tests/embeddings_differential_test.cpp": 5,
+        "tests/embeddings_ledger_differential_test.cpp": 4,
+        "tests/embeddings_part1_test.cpp": 59,
+        "tests/embeddings_part2_test.cpp": 39,
+        "tests/failover_stress_http_test.cpp": 2,
+        "tests/handler_http_differential_test.cpp": 2,
+        "tests/handler_replay_background_test.cpp": 6,
+        "tests/handler_terminal_admission_stage_test.cpp": 2,
+        "tests/handler_terminal_usage_rollup_test.cpp": 1,
+        "tests/harmony_adapter_test.cpp": 5,
+        "tests/harmony_probes_coverage_test.cpp": 2,
+        "tests/harmony_probes_test.cpp": 3,
+        "tests/harmony_tools_router_test.cpp": 3,
+        "tests/health_test.cpp": 12,
+        "tests/helpers/codex_banked_reset_harness.cpp": 2,
+        "tests/helpers/embeddings_harness.cpp": 8,
+        "tests/helpers/embeddings_harness.hpp": 1,
+        "tests/helpers/loopback_http.cpp": 4,
+        "tests/helpers/manual_reset_harness.cpp": 3,
+        "tests/helpers/native_paid_conformance_vectors.cpp": 1,
+        "tests/helpers/openai_compat_harness.cpp": 31,
+        "tests/helpers/prompt_cache_scope_experiment_harness.cpp": 3,
+        "tests/helpers/provider_capacity_harness.cpp": 8,
+        "tests/helpers/responses_conformance_client.cpp": 1,
+        "tests/helpers/responses_conformance_fixture.cpp": 3,
+        "tests/helpers/sentinel_recorded_upstream.cpp": 3,
+        "tests/helpers/terminal_log_harness.hpp": 4,
+        "tests/http_differential_test.cpp": 2,
+        "tests/inference_deadline_differential_test.cpp": 3,
+        "tests/inference_deadline_test.cpp": 3,
+        "tests/input_normalization_logprobs_test.cpp": 1,
+        "tests/jev_compaction_fallback_quota_test.cpp": 3,
+        "tests/jev_compaction_test.cpp": 13,
+        "tests/jev_hybrid_test.cpp": 23,
+        "tests/kernel_coverage_test.cpp": 5,
+        "tests/kernel_quota_admission_test.cpp": 2,
+        "tests/kv_budget_part1_test.cpp": 52,
+        "tests/kv_budget_part2_test.cpp": 32,
+        "tests/kv_conversion_legacy_codec_differential_test.cpp": 3
       },
-      "tu_emissions": 1332,
-      "unique": 1138
+      "tu_emissions": 1906,
+      "unique": 1611
     },
     "performance-use-std-move": {
       "files": {
@@ -1683,10 +2007,13 @@
         "tests/codex_auth_coverage_test.cpp": 1,
         "tests/codex_banked_reset_part2_test.cpp": 1,
         "tests/codex_capacity_routing_coverage_test.cpp": 1,
-        "tests/codex_routing_mutations_differential_test.cpp": 1
+        "tests/codex_routing_mutations_differential_test.cpp": 1,
+        "tests/embeddings_part2_test.cpp": 1,
+        "tests/helpers/loopback_http.cpp": 1,
+        "tests/helpers/openai_compat_harness.cpp": 1
       },
-      "tu_emissions": 45,
-      "unique": 45
+      "tu_emissions": 48,
+      "unique": 48
     }
   },
   "complete": false,
@@ -2176,6 +2503,7 @@
     "tests/codex_models_branch_coverage_test.cpp",
     "tests/codex_models_differential_test.cpp",
     "tests/codex_models_fetch_differential_test.cpp",
+    "tests/codex_native_auth_test.cpp",
     "tests/codex_overage_fallback_test.cpp",
     "tests/codex_overage_usage_settings_test.cpp",
     "tests/codex_quota_differential_test.cpp",
@@ -2189,22 +2517,121 @@
     "tests/codex_routing_mutations_differential_test.cpp",
     "tests/codex_routing_state_differential_test.cpp",
     "tests/codex_selection_differential_test.cpp",
+    "tests/codex_serial_routing_http_test.cpp",
     "tests/codex_session_test.cpp",
-    "tests/codex_supervisor_brief_handler_differential_test.cpp"
+    "tests/codex_supervisor_brief_handler_differential_test.cpp",
+    "tests/codex_supervisor_brief_test.cpp",
+    "tests/codex_supervisor_config_differential_test.cpp",
+    "tests/codex_supervisor_followups_test.cpp",
+    "tests/codex_supervisor_handlers_differential_test.cpp",
+    "tests/codex_supervisor_inventory_coverage_test.cpp",
+    "tests/codex_supervisor_inventory_differential_test.cpp",
+    "tests/codex_supervisor_secret_test.cpp",
+    "tests/codex_supervisor_test.cpp",
+    "tests/compaction_summary_forwarding_test.cpp",
+    "tests/config_differential_test.cpp",
+    "tests/debug_routing_differential_test.cpp",
+    "tests/decisions_test.cpp",
+    "tests/deepseek_catalog_branch_coverage_test.cpp",
+    "tests/deepseek_flash_aliases_differential_test.cpp",
+    "tests/deepseek_index_differential_test.cpp",
+    "tests/deepseek_responses_differential_test.cpp",
+    "tests/deepseek_responses_test.cpp",
+    "tests/deepseek_sampling_controls_test.cpp",
+    "tests/deepseek_stream_differential_test.cpp",
+    "tests/deepseek_tool_collision_test.cpp",
+    "tests/deepseek_waterfall_test.cpp",
+    "tests/defaults_test.cpp",
+    "tests/embeddings_coverage_test.cpp",
+    "tests/embeddings_differential_test.cpp",
+    "tests/embeddings_ledger_differential_test.cpp",
+    "tests/embeddings_part1_test.cpp",
+    "tests/embeddings_part2_test.cpp",
+    "tests/failover_stress_http_test.cpp",
+    "tests/forwarded_payload_unicode_test.cpp",
+    "tests/handler_admission_differential_test.cpp",
+    "tests/handler_http_differential_test.cpp",
+    "tests/handler_replay_background_test.cpp",
+    "tests/handler_terminal_admission_stage_test.cpp",
+    "tests/handler_terminal_usage_rollup_test.cpp",
+    "tests/harmony_adapter_test.cpp",
+    "tests/harmony_classifier_test.cpp",
+    "tests/harmony_conversation_test.cpp",
+    "tests/harmony_differential_test.cpp",
+    "tests/harmony_parse_test.cpp",
+    "tests/harmony_probes_coverage_test.cpp",
+    "tests/harmony_probes_test.cpp",
+    "tests/harmony_render_test.cpp",
+    "tests/harmony_tools_backend_differential_test.cpp",
+    "tests/harmony_tools_fakes_differential_test.cpp",
+    "tests/harmony_tools_result_differential_test.cpp",
+    "tests/harmony_tools_router_test.cpp",
+    "tests/harmony_tools_schemas_test.cpp",
+    "tests/health_test.cpp",
+    "tests/helpers/admin_auth_harness.cpp",
+    "tests/helpers/codex_account_routing_harness.cpp",
+    "tests/helpers/codex_auth_cache_harness.cpp",
+    "tests/helpers/codex_banked_reset_harness.cpp",
+    "tests/helpers/codex_diff_kv.cpp",
+    "tests/helpers/counting_kv.cpp",
+    "tests/helpers/embeddings_harness.cpp",
+    "tests/helpers/kv_budget_harness.cpp",
+    "tests/helpers/linked_native_kv.cpp",
+    "tests/helpers/loopback_http.cpp",
+    "tests/helpers/manual_reset_harness.cpp",
+    "tests/helpers/native_paid_conformance_vectors.cpp",
+    "tests/helpers/openai_compat_harness.cpp",
+    "tests/helpers/passkeys_harness.cpp",
+    "tests/helpers/prompt_cache_scope_experiment_harness.cpp",
+    "tests/helpers/provider_capacity_harness.cpp",
+    "tests/helpers/responses_conformance_client.cpp",
+    "tests/helpers/responses_conformance_fixture.cpp",
+    "tests/helpers/sentinel_kv_stub.cpp",
+    "tests/helpers/sentinel_recorded_upstream.cpp",
+    "tests/helpers/supervisor_redaction_previous.cpp",
+    "tests/http_differential_test.cpp",
+    "tests/inference_deadline_differential_test.cpp",
+    "tests/inference_deadline_test.cpp",
+    "tests/input_normalization_logprobs_test.cpp",
+    "tests/jev_codex_smoke_test.cpp",
+    "tests/jev_compaction_differential_test.cpp",
+    "tests/jev_compaction_fallback_quota_test.cpp",
+    "tests/jev_compaction_smoke_test.cpp",
+    "tests/jev_compaction_test.cpp",
+    "tests/jev_hybrid_test.cpp",
+    "tests/kernel_attestation_differential_test.cpp",
+    "tests/kernel_coverage_test.cpp",
+    "tests/kernel_policy_queue_differential_test.cpp",
+    "tests/kernel_quota_admission_test.cpp",
+    "tests/kernel_quota_context_differential_test.cpp",
+    "tests/kernel_quota_reserve_differential_test.cpp",
+    "tests/kernel_quota_values_differential_test.cpp",
+    "tests/kernel_quota_write_differential_test.cpp",
+    "tests/kernel_usage_coverage_test.cpp",
+    "tests/key_compatibility_test.cpp",
+    "tests/kv_budget_part1_test.cpp",
+    "tests/kv_budget_part2_test.cpp",
+    "tests/kv_consistent_snapshot_test.cpp",
+    "tests/kv_conversion_cli_differential_test.cpp",
+    "tests/kv_conversion_convert_differential_test.cpp",
+    "tests/kv_conversion_cursors_differential_test.cpp",
+    "tests/kv_conversion_legacy_codec_differential_test.cpp",
+    "tests/kv_conversion_native_schema_differential_test.cpp",
+    "tests/kv_conversion_proof_differential_test.cpp"
   ],
   "configuration_yaml": "---\n# Hazard discovery, not a style policy. See docs/findings/cppgw-clang-tidy-audit-20261117.md.\nInheritParentConfig: false\nChecks: >-\n  -*,\n  bugprone-*,\n  -bugprone-easily-swappable-parameters,\n  cppcoreguidelines-avoid-capturing-lambda-coroutines,\n  cppcoreguidelines-avoid-reference-coroutine-parameters,\n  misc-coroutine-hostile-raii,\n  cert-*,\n  -cert-dcl37-c,\n  -cert-dcl51-cpp,\n  performance-*,\n  -performance-avoid-endl,\n  -performance-enum-size,\n  concurrency-*,\n  clang-analyzer-core.*,\n  clang-analyzer-cplusplus.*,\n  clang-analyzer-optin.cplusplus.*,\n  clang-analyzer-security.*,\n  clang-analyzer-unix.*\n# Adjacent same-type parameters are deliberate module-for-module TS API translations.\n# Reserved identifiers are naming/style issues outside this lifetime audit (cert-dcl37/51).\n# endl and enum storage size are micro-style suggestions, not hot-path copy hazards.\nWarningsAsErrors: ''\nHeaderFilterRegex: '(^|/)cpp/gateway/(include|src|tests)/'\nSystemHeaders: false\nFormatStyle: none\nCheckOptions:\n  bugprone-dangling-handle.HandleClasses: 'std::basic_string_view;std::span'\n  bugprone-unchecked-optional-access.IgnoreSmartPointerDereference: 'false'\n  bugprone-exception-escape.CheckDestructors: 'true'\n  bugprone-exception-escape.CheckMoveMemberFunctions: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerToFloatingPointNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnFloatingPointNarrowingConversion: 'true'\n  performance-unnecessary-value-param.AllowedTypes: ''\n",
   "counting": "Unique (check/alias-group, gateway-relative file, line, column, message); repeated header emissions deduplicated. TU emissions also counted separately.",
   "coverage": {
-    "completed": 500,
+    "completed": 600,
     "database_units": 830,
     "failed": 0,
     "inputs_unchanged": true,
-    "ok": 500,
+    "ok": 600,
     "selected": 830,
     "source_units": 369,
     "test_support_units": 461,
     "timeouts": 0,
-    "units_with_findings": 497
+    "units_with_findings": 597
   },
   "failures": [],
   "head_commit": "33e1539d74bc3b69566875b449a01c97b0cfca3d",
@@ -3880,12 +4307,12 @@
   "resources": {
     "jobs": 4,
     "largest_process_rss_kib": 906484,
-    "sum_system_seconds": 626.99,
-    "sum_unit_seconds": 17066.514,
-    "sum_user_seconds": 15952.7,
-    "wall_seconds": 4328.626
+    "sum_system_seconds": 758.29,
+    "sum_unit_seconds": 20822.253,
+    "sum_user_seconds": 19471.62,
+    "wall_seconds": 5303.014
   },
   "schema_version": 1,
-  "tu_diagnostic_emissions": 20631,
-  "unique_diagnostics": 6500
+  "tu_diagnostic_emissions": 26329,
+  "unique_diagnostics": 8577
 }
