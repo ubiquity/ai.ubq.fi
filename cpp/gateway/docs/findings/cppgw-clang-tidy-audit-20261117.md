@@ -73,7 +73,7 @@ Stop condition: all units reconciled with source hashes and all reporting checks
 terminal evidence of an external blocker. No incomplete run will be labeled a complete baseline.
 
 Long-operation budget: pilot representative units first, then at most four workers; initial expected full-run
-time 15–60 minutes (the current 100-unit checkpoint suggests roughly 90–110 minutes), per-TU timeout and persistent progress/logs under `/tmp/cppgw-tidy-20261117`.
+time 15–60 minutes, revised to roughly 110–140 minutes after measuring source and test TUs, per-TU timeout and persistent progress/logs under `/tmp/cppgw-tidy-20261117`.
 Inspect a confirmed-live handle at most once per minute; retain failures and adjust only with a recorded
 reason. All builds, downloads, HOME/TMPDIR directories and raw evidence stay outside the checkout.
 
@@ -148,6 +148,7 @@ must use the enclosing job's authorized delivery mechanism unless write access a
 | 400/830 | 0 | 0 | 3797 | 3056.977 | 906484 | yes |
 | 500/830 | 0 | 0 | 6500 | 4328.626 | 906484 | yes |
 | 600/830 | 0 | 0 | 8577 | 5303.014 | 906484 | yes |
+| 700/830 | 0 | 0 | 10815 | 6524.375 | 1019216 | yes |
 
 The baseline remains explicitly incomplete until all 830 receipts reconcile. This table
 records persisted runner checkpoints, not extrapolated pass counts. All units analyzed so far
@@ -259,6 +260,10 @@ Initial sample: false positives on runtime invariants at `include/uos/rt/async.h
 ### `bugprone-unhandled-self-assignment`
 
 False positive at `include/uos/rt/ordered.hpp:182`: copy assignment attaches the incoming table before detaching the outgoing one. On self-assignment this increments then decrements the same iterator count without reclaiming the table. The final table and position remain valid.
+
+### `bugprone-unused-local-non-trivial-variable`
+
+Real but benign fixture dead local at `tests/prompt_cache_telemetry_gate_differential_test.cpp:128`: release is read from a vector but the following test intentionally uses an explicit mixed-case release string. No request behavior or expected assertion depends on this local. Removing unused scaffolding is outside this audit's source ownership; disable this cleanup/style check in the routine configuration.
 
 ### `bugprone-unused-return-value`
 
@@ -516,6 +521,51 @@ is applied. Test verdicts describe fixture lifetimes, not runtime test-pass clai
 | `tests/metered_test.cpp:276` | Real but benign fixture: owning MeteredFetch retains shared observation state while its signal-driven Promise is awaited. |
 | `tests/metered_test.cpp:381` | Real but benign fixture: owning MeteredFetch retains the shared observation state through the abort-driven request. |
 | `tests/models_metadata_differential_test.cpp:122` | Real but benign fixture: options' owning rt::Fetch retains the copied model payload through the awaited metadata refresh. |
+| `tests/openai_compat_part11_test.cpp:182` | Real but benign fixture: paidAttempt retains the responder through the owning fetch mock/request; the loop's copied index remains owned across the abort Promise. |
+| `tests/openai_telemetry_differential_test.cpp:531` | Real but benign fixture: runWithResponseTelemetry owns the run callback while awaited; its scalar/optional captures and UsageContext parameter are copied by value. |
+| `tests/openrouter_models_test.cpp:155` | Real but benign fixture: owning OpenRouterFetch retains the callback; mode/counter are read while parent scope lives, before any suspension. |
+| `tests/openrouter_models_test.cpp:190` | Real but benign fixture: owning OpenRouterFetch retains the rejection callback; calls is incremented during the awaited force refresh before scope exit. |
+| `tests/openrouter_models_test.cpp:210` | Real but benign fixture: Fetch::keepAlive retains the sleeping callback; calls is touched before suspension and the test awaits coalesced refreshes. |
+| `tests/oss_gateway_http_test.cpp:89` | Real but benign fixture: ServeState retains the handler and the parent fixture stays live through awaited HTTP calls and producer/server cleanup. |
+| `tests/oss_gateway_http_test.cpp:97` | Real but benign fixture: SourceAlgorithm retains the async start callable; its gate/cancelled state and controller parameter are owned values across suspension. |
+| `tests/oss_gateway_http_test.cpp:108` | Real but benign fixture: Fetch::keepAlive retains the copied loopback origin while forwarding the request. |
+| `tests/oss_stream_lifecycle_test.cpp:180` | Real but benign fixture: SourceAlgorithm retains the pull closure and copied shared state/producer through its awaited production step. |
+| `tests/oss_stream_lifecycle_test.cpp:426` | Real but benign fixture: AsyncGenerator owns shared produced/released counters throughout yield and return cleanup. |
+| `tests/oss_stream_lifecycle_test.cpp:535` | Real but benign fixture: forAwait owns the forward callback and its shared state/Yield captures through delegation. |
+| `tests/oss_stream_lifecycle_test.cpp:606` | Real but benign fixture: consume is copied into rt::async; cleanup gate is released and output is awaited before the parent completes. |
+| `tests/oss_telemetry_overhead_test.cpp:528` | Real but benign fixture: terminal options retain the callback and the wrapped result waits for the inline sink before sinkResults leaves scope. |
+| `tests/oss_telemetry_overhead_test.cpp:582` | Real but benign fixture: queue owns write and the test awaits queue.close before sinkResults leaves scope. |
+| `tests/oss_telemetry_overhead_test.cpp:591` | Real but benign fixture: retained terminal callback is awaited for enqueue; referenced queuedResults remains live through wrapped-response completion. |
+| `tests/oss_telemetry_overhead_test.cpp:695` | Real but benign fixture: terminal callback and queue flush complete while handlerAnalytics remains in the parent scope. |
+| `tests/paid_fallback_index_local_development_key_differential_test.cpp:295` | Real but benign fixture: rt::async owns request; referenced reservations remains live through the awaited reserve/settle step. |
+| `tests/paid_fallback_index_local_development_key_differential_test.cpp:377` | Real but benign fixture: rt::async retains the copied reservation during upstream-response recording. |
+| `tests/paid_fallback_index_local_development_key_differential_test.cpp:389` | Real but benign fixture: rt::async owns the copied reservation during awaited terminal recording. |
+| `tests/paid_fallback_index_local_development_key_differential_test.cpp:400` | Real but benign fixture: rt::async owns reservation/settlement/serialized-usage values through accounting. |
+| `tests/paid_fallback_index_local_development_key_differential_test.cpp:440` | Real but benign fixture: rt::async retains the copied reservation through the deliberately invalid settlement-id check. |
+| `tests/paid_fallback_index_local_development_key_differential_test.cpp:461` | Real but benign fixture: rt::async owns the optional reservation through cancellation and output conversion. |
+| `tests/paid_fallback_index_local_development_key_differential_test.cpp:484` | Real but benign fixture: rt::async owns the copied reservation through ambiguous-failure recording. |
+| `tests/paid_fallback_index_local_development_key_differential_test.cpp:496` | Real but benign fixture: rt::async owns the copied reservation through prefetch cancellation. |
+| `tests/paid_fallback_index_local_development_key_differential_test.cpp:634` | Real but benign fixture: rt::async retains shared target/options while ensuring the local key. |
+| `tests/paid_fallback_index_local_development_key_differential_test.cpp:641` | Real but benign fixture: rt::async retains the shared target through policy resolution. |
+| `tests/passport_differential_test.cpp:87` | Real but benign fixture: rt::Fetch owns copied issuer plan/log state across request-body reads. |
+| `tests/passport_sessions_test.cpp:154` | Real but benign fixture: Fetch::keepAlive retains shared session state while reading the request body. |
+| `tests/passport_sessions_test.cpp:322` | Real but benign fixture: replacement Fetch retains shared release/reached resolvers across the delayed response. |
+| `tests/passport_test.cpp:103` | Real but benign fixture: owning Fetch retains its callback; current requests are awaited while the captured Fixture remains live. |
+| `tests/prompt_cache_analytics_admin_test.cpp:60` | Real but benign fixture: awaited admin handler owns refusedReader; referenced unexpectedReads stays in the parent through invalid-input checks. |
+| `tests/prompt_cache_analytics_admin_test.cpp:68` | Real but benign fixture: awaited admin handler retains the copied diagnostic-string callback through expected rejection. |
+| `tests/prompt_cache_scope_experiment_part1_test.cpp:124` | Real but benign fixture: Fetch::keepAlive retains the callback; the test releases and awaits its first request while referenced counters/resolvers remain live. |
+| `tests/prompt_cache_telemetry_gate_differential_test.cpp:60` | Real but benign fixture: atomic operation retains the commit callable; the test retains its KV object through awaited counter commits, satisfying captured-this lifetime. |
+| `tests/provider_capacity_differential_test.cpp:134` | Real but benign fixture: owning Fetch retains copied shared FetchState across request processing. |
+| `tests/provider_capacity_differential_test.cpp:248` | Real but benign fixture: named reset closure is awaited sequentially while parent database/KV state remains live. |
+| `tests/provider_capacity_differential_test.cpp:290` | Real but benign fixture: named viewStep is directly awaited; referenced checker/state and literal-backed label remain live. |
+| `tests/provider_capacity_differential_test.cpp:306` | Real but benign fixture: named voidStep is directly awaited while parent checker/state persist. |
+| `tests/provider_capacity_differential_test.cpp:310` | Real but benign fixture: named responseStep is awaited through response parsing before parent checker/state leave scope. |
+| `tests/provider_capacity_history_events_differential_test.cpp:252` | Real but benign fixture: named setRaw closure remains live while directly awaited, and its copied shared KV owns the store. |
+| `tests/provider_removed_provider_circuit_differential_test.cpp:47` | Real but benign fixture: the running Promise is constructed from rt::async, which owns the shared order-vector closure. |
+| `tests/provider_selection_health_differential_test.cpp:438` | Real but benign fixture: named recordStep is awaited while parent KV/checker state and literal-backed label remain live. |
+| `tests/provider_selection_health_differential_test.cpp:444` | Real but benign fixture: named viewStep is awaited through read/list/compare before parent state leaves scope. |
+| `tests/provider_stream_usage_failure_test.cpp:50` | Real but benign fixture: AsyncGenerator retains copied usage data through microtask/yield suspension. |
+| `tests/removed_provider_differential_test.cpp:62` | Real but benign fixture: adapter starts rt::async with owned event/body/options captures before constructing its Promise. |
 
 ## Ranked confirmed defect classes
 
