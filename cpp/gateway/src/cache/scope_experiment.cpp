@@ -37,7 +37,8 @@ namespace {
   rt::Task<PersistEntries> loadPersistEntries(std::shared_ptr<rt::Kv> kv, PromptCacheScopeTargetBinding target) {
     rt::Promise<Entry> state(readEntry(kv, stateKey(target))), evidence(readEntry(kv, evidenceKey(target))),
       cycle(readEntry(kv, cycleLeaseKey(target))), campaign(readEntry(kv, campaignLeaseKey(target)));
-    auto [stateEntry, evidenceEntry, cycleEntry, campaignEntry] = co_await rt::all(state, evidence, cycle, campaign).wait();
+    auto readEntries = co_await rt::all(state, evidence, cycle, campaign).wait();
+    auto& [stateEntry, evidenceEntry, cycleEntry, campaignEntry] = readEntries;
     co_return PersistEntries{std::move(stateEntry), std::move(evidenceEntry), std::move(cycleEntry), std::move(campaignEntry)};
   }
   rt::Task<void> persistIntermediate(std::shared_ptr<rt::Kv> kv, ExperimentState state, std::string cycleOwner, CycleEvidence cycle,

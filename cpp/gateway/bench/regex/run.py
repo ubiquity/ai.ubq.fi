@@ -4,13 +4,15 @@ import argparse
 import hashlib
 import json
 import math
-import os
 from pathlib import Path
 import re
-import signal
 import statistics
-import subprocess
+import sys
 import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+from build_support import measured as native_measured
 
 
 def digest(path):
@@ -55,31 +57,24 @@ def snapshot():
 def measured(command, label, output, scratch, timeout):
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(scratch / "h"), "TMPDIR": str(scratch / "t"),
            "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TZ": "UTC"}
-    wrapped = ["/usr/bin/time", "-v", "-o", str(output / (label + ".time")), "/usr/bin/unshare", "--user", "--map-root-user", "--net", "--"] + command
+    wrapped = ["/usr/bin/unshare", "--user", "--map-root-user", "--net", "--"] + command
     before = snapshot()
     if before["memavailable_kib"] < 2500 * 1024:
         raise RuntimeError("Insufficient physical memory for benchmark admission")
     started = time.monotonic()
-    with (output / (label + ".stdout")).open("w") as stdout, (output / (label + ".stderr")).open("w") as stderr:
-        child = subprocess.Popen(wrapped, cwd=scratch / "w", env=env, stdout=stdout, stderr=stderr, start_new_session=True)
-        try:
-            code = child.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGTERM)
-            try:
-                child.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
-                child.wait()
-            code = 124
+    with (output / (label + ".log")).open("w") as log:
+        code, process_receipt = native_measured(wrapped, scratch / "w", env, output, label, timeout=timeout, output=log)
     receipt = {"command": wrapped, "cwd": str(scratch / "w"), "environment_names": list(env), "code": code,
-               "duration_s": time.monotonic() - started, "before": before, "after": snapshot()}
+               "duration_s": time.monotonic() - started, "before": before, "after": snapshot(), "process_receipt": str(process_receipt),
+               "stream_capture": "stdout and stderr combined in .log"}
     (output / (label + ".receipt.json")).write_text(json.dumps(receipt, indent=2) + "\n")
     if code:
-        raise RuntimeError(label + " failed; see retained stdout/stderr/receipt")
-    fields = dict(line.strip().split(": ", 1) for line in (output / (label + ".time")).read_text().splitlines() if ": " in line)
-    result = json.loads((output / (label + ".stdout")).read_text())
-    result["max_rss_kib"] = int(fields["Maximum resident set size (kbytes)"])
+        raise RuntimeError(label + " failed; see retained log/process receipt")
+    process = json.loads(process_receipt.read_text())
+    if not process["settled"] or process["failure"] or process["max_rss_kib"] is None:
+        raise RuntimeError(label + " lacks a successful settled wait4 receipt")
+    result = json.loads((output / (label + ".log")).read_text())
+    result["max_rss_kib"] = process["max_rss_kib"]
     return result
 
 
@@ -109,7 +104,7 @@ def main():
     manifest = args.manifest.resolve()
     oracle = Path(__file__).with_name("oracle.mjs")
     sources = [Path(__file__).resolve(), oracle, Path(__file__).with_name("regex_bench.cpp"), manifest,
-               workspace / "src/codex/supervisor-secret.ts"] + source_inputs(workspace)
+               workspace / "src/codex/supervisor-secret.ts", workspace / "cpp/gateway/tools/build_support.py"] + source_inputs(workspace)
     inputs = {str(path): digest(path) for path in sources}
     identity = {"native_binary": str(binary), "native_sha256": digest(binary), "bun_path": "/usr/local/bin/bun",
                 "bun_sha256": digest(Path("/usr/local/bin/bun")), "inputs_sha256": inputs,

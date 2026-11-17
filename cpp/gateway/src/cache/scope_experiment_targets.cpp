@@ -51,7 +51,8 @@ namespace {
     scope_targets::LoadPromptCacheScopeTargetInventoryOptions options{.kv = kv};
     rt::Promise<scope_targets::PromptCacheScopeTargetInventory> inventory(scope_targets::loadPromptCacheScopeTargetInventory(options));
     rt::Promise<std::optional<RuntimeBinding>> runtime(loadRuntimeBinding(kv));
-    auto [inventoryResult, runtimeResult] = co_await rt::all(inventory, runtime).wait();
+    auto readEntries = co_await rt::all(inventory, runtime).wait();
+    auto& [inventoryResult, runtimeResult] = readEntries;
     if (inventoryResult.status != "ready" || !runtimeResult) co_return std::nullopt;
     co_return InventoryAndRuntime{std::move(inventoryResult), *runtimeResult};
   }
@@ -60,7 +61,8 @@ namespace {
   struct TargetCampaignRecord { PromptCacheScopeTargetBinding binding; std::optional<ExperimentState> state; std::optional<StoredEvidence> evidence; };
   rt::Task<TargetCampaignRecord> readTargetCampaign(std::shared_ptr<rt::Kv> kv, PromptCacheScopeTargetBinding binding) {
     rt::Promise<Entry> stateEntry(readEntry(kv, stateKey(binding))), evidenceEntry(readEntry(kv, evidenceKey(binding)));
-    auto [stateRow, evidenceRow] = co_await rt::all(stateEntry, evidenceEntry).wait();
+    auto readEntries = co_await rt::all(stateEntry, evidenceEntry).wait();
+    auto& [stateRow, evidenceRow] = readEntries;
     const auto state = stateRow.value.isNull() ? std::nullopt : parseState(stateRow.value);
     const auto evidence = evidenceRow.value.isNull() ? std::nullopt : parseEvidence(evidenceRow.value);
     if ((!stateRow.value.isNull() && !state) || (!evidenceRow.value.isNull() && !evidence))
@@ -125,7 +127,8 @@ namespace {
   rt::Task<CycleEntries> loadCycleEntries(std::shared_ptr<rt::Kv> kv, PromptCacheScopeTargetBinding target) {
     rt::Promise<Entry> state(readEntry(kv, stateKey(target))), evidence(readEntry(kv, evidenceKey(target))),
                        campaign(readEntry(kv, campaignLeaseKey(target))), cycle(readEntry(kv, cycleLeaseKey(target)));
-    auto [stateRow, evidenceRow, campaignRow, cycleRow] = co_await rt::all(state, evidence, campaign, cycle).wait();
+    auto readEntries = co_await rt::all(state, evidence, campaign, cycle).wait();
+    auto& [stateRow, evidenceRow, campaignRow, cycleRow] = readEntries;
     co_return CycleEntries{std::move(stateRow), std::move(evidenceRow), std::move(campaignRow), std::move(cycleRow)};
   }
   struct CycleRecords { std::optional<ExperimentState> state; std::optional<StoredEvidence> evidence; };
@@ -218,7 +221,8 @@ rt::Task<void> renewLease(std::shared_ptr<rt::Kv> kv, ExperimentState state, std
   const auto cycleKey = cycleLeaseKey(state.target), campaignKey = campaignLeaseKey(state.target);
   for (int attempt = 0; attempt < 3; ++attempt) {
     rt::Promise<Entry> cycle(readEntry(kv, cycleKey)), campaign(readEntry(kv, campaignKey));
-    const auto [cycleEntry, campaignEntry] = co_await rt::all(cycle, campaign).wait();
+    const auto readEntries = co_await rt::all(cycle, campaign).wait();
+    const auto& [cycleEntry, campaignEntry] = readEntries;
     if (!ownsLease(cycleEntry.value, cycleOwner) || !ownsCampaignLease(campaignEntry.value, state))
       throw PromptCacheScopeExperimentFailedError("Prompt-cache scope experiment lost its lease.");
     const auto now = rt::dateNow();

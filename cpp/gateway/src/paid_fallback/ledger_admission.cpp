@@ -158,7 +158,8 @@ namespace uos::paid_fallback::ledger_admission {
       const rt::KvKey deletionGuardKey = native_paid::paidFallbackDeletionGuardV3Key(input->keyId);
       const rt::Promise<rt::KvEntryMaybe<>> deletionGuardRead(kv->get(deletionGuardKey, strong));
       auto reads = rt::all(requestRead, windowRead, deletionGuardRead);
-      auto [requestEntry, windowEntry, deletionGuardEntry] = co_await reads.wait();
+      auto readEntries = co_await reads.wait();
+      auto& [requestEntry, windowEntry, deletionGuardEntry] = readEntries;
       const double now = rt::dateNow();
       contracts::NativePaidAdmissionSnapshot snapshot{
         .request = typedRow(requestEntry, storedRow<PaidFallbackRequestV3>(requestEntry.value)),
@@ -243,7 +244,8 @@ namespace uos::paid_fallback::ledger_admission {
         const rt::Promise<rt::KvEntryMaybe<>> windowRead(kv->get(windowKey, strong));
         const rt::Promise<rt::KvEntryMaybe<>> gateRead(kv->get(gateKey, strong));
         auto reads = rt::all(requestRead, windowRead, gateRead);
-        auto [requestEntry, windowEntry, gateEntry] = co_await reads.wait();
+        auto readEntries = co_await reads.wait();
+        auto& [requestEntry, windowEntry, gateEntry] = readEntries;
         const double now = rt::dateNow();
         const contracts::NativePaidReleaseSnapshot snapshot{
           .request = typedRow(requestEntry, storedRow<PaidFallbackRequestV3>(requestEntry.value)),

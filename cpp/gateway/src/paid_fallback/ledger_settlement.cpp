@@ -233,7 +233,8 @@ namespace uos::paid_fallback::ledger_settlement {
       const rt::Promise<rt::KvEntryMaybe<>> pendingRead(kv->get(pendingKey, strong));
       const rt::Promise<rt::KvEntryMaybe<>> gateRead(kv->get(gateKey, strong));
       auto reads = rt::all(pendingRead, gateRead);
-      auto [pending, gateEntry] = co_await reads.wait();
+      auto readEntries = co_await reads.wait();
+      auto& [pending, gateEntry] = readEntries;
       const std::optional<PaidFallbackPendingV3> pendingValue = storedRow<PaidFallbackPendingV3>(pending.value);
       if (!pendingValue) co_return;
       const bool markerNeedsExpedite = pendingValue->next_reconciliation_at_ms > now;
@@ -267,7 +268,8 @@ namespace uos::paid_fallback::ledger_settlement {
       const rt::Promise<rt::KvEntryMaybe<>> requestRead(kv->get(requestKey, strong));
       const rt::Promise<rt::KvEntryMaybe<>> pendingRead(kv->get(pendingKey, strong));
       auto reads = rt::all(requestRead, pendingRead);
-      auto [requestEntry, pendingEntry] = co_await reads.wait();
+      auto readEntries = co_await reads.wait();
+      auto& [requestEntry, pendingEntry] = readEntries;
       const contracts::NativePaidDeferralPlan plan =
         native_paid::planPaidFallbackDeferralV3(storedRow<PaidFallbackRequestV3>(requestEntry.value), storedRow<PaidFallbackPendingV3>(pendingEntry.value), now);
       if (std::holds_alternative<contracts::NativePaidDeferralPlanNoop>(plan)) co_return std::nullopt;
@@ -322,7 +324,8 @@ namespace uos::paid_fallback::ledger_settlement {
       const rt::Promise<rt::KvEntryMaybe<>> pendingRead(kv->get(pendingKey, strong));
       const rt::Promise<rt::KvEntryMaybe<>> gateRead(kv->get(gateKey, strong));
       auto reads = rt::all(requestRead, pendingRead, gateRead);
-      auto [requestEntry, pendingEntry, gateEntry] = co_await reads.wait();
+      auto readEntries = co_await reads.wait();
+      auto& [requestEntry, pendingEntry, gateEntry] = readEntries;
       const std::optional<PaidFallbackRequestV3> request = storedRow<PaidFallbackRequestV3>(requestEntry.value);
       const std::optional<PaidFallbackPendingV3> pending = storedRow<PaidFallbackPendingV3>(pendingEntry.value);
       contracts::NativePaidSettlementMetadata metadata{

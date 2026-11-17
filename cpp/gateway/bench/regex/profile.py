@@ -32,6 +32,8 @@ def main():
     profile = output / "profile.json"
     binary_hash = hashlib.sha256(binary.read_bytes()).hexdigest()
     manifest_hash = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    sampler = output / "sampler.py"
+    sampler.write_text("import os,signal,sys,time\npid=int(sys.argv[1])\nfor number in range(400):\n time.sleep(.01)\n try:os.kill(pid,signal.SIGINT)\n except ProcessLookupError:break\n")
     script = output / "sample.gdb"
     script.write_text("""set pagination off
 set confirm off
@@ -39,24 +41,16 @@ set startup-with-shell off
 set disable-randomization off
 set debuginfod enabled off
 set auto-load safe-path /nonexistent/uos-profile-noautoload
-handle SIGINT stop noprint nopass
+handle SIGINT stop print nopass
 python
-import gdb, json, os, signal, threading
+import gdb, json, subprocess
 samples = []
 terminal = []
 gdb.events.exited.connect(lambda event: terminal.append(getattr(event, 'exit_code', None)))
-settled = threading.Event()
-gdb.execute('start', to_string=True)
+gdb.execute('start')
 inferior = gdb.selected_inferior()
 owned_pid = inferior.pid
-def interrupt_owned():
-    while not settled.wait(.01):
-        try:
-            os.kill(owned_pid, signal.SIGINT)
-        except ProcessLookupError:
-            return
-thread = threading.Thread(target=interrupt_owned, daemon=True)
-thread.start()
+sampler = subprocess.Popen(['/usr/bin/python3', """ + repr(str(sampler)) + """, str(owned_pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     for iteration in range(400):
         gdb.execute('continue', to_string=True)
@@ -69,18 +63,25 @@ try:
             frame = frame.older()
         samples.append(stack)
 finally:
-    settled.set()
-    thread.join(timeout=1)
+    if sampler.poll() is None:
+        sampler.terminate()
+    try:
+        sampler.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        sampler.kill()
+        sampler.wait()
 if inferior.pid:
     gdb.execute('continue', to_string=True)
 with open(""" + repr(str(profile)) + """, 'w') as file:
-    json.dump({'interval_ms':10,'samples':samples,'owned_pid':owned_pid,'settled':inferior.pid==0,'terminal':terminal},file,indent=2)
+    json.dump({'interval_ms':10,'samples':samples,'owned_pid':owned_pid,'settled':inferior.pid==0,'terminal':terminal,'sampler_settled':sampler.returncode is not None},file,indent=2)
 end
 quit
 """)
     env = {"PATH": "/usr/bin:/bin", "HOME": str(output / "h"), "TMPDIR": str(output / "t"), "LANG": "C.UTF-8", "TZ": "UTC"}
-    command = ["/usr/bin/unshare", "--user", "--map-root-user", "--net", "--pid", "--fork", "--kill-child", "--",
-               "/usr/bin/gdb", "-nx", "-nh", "--batch", "-x", str(script), "--args", str(binary), str(manifest), args.case, "1", "0", str(args.iterations)]
+    command = ["/usr/bin/unshare", "--user", "--map-root-user", "--net", "--mount", "--pid", "--fork", "--mount-proc",
+               "--propagation", "private", "--kill-child", "--", "/usr/bin/gdb", "-nx", "-nh", "--batch",
+               "-iex", "set auto-load off", "-iex", "set debuginfod enabled off", "-x", str(script), "--args",
+               str(binary), str(manifest), args.case, "1", "0", str(args.iterations)]
     started = time.monotonic()
     with (output / "stdout.log").open("w") as stdout, (output / "stderr.log").open("w") as stderr:
         child = subprocess.Popen(command, cwd=output / "w", env=env, stdout=stdout, stderr=stderr, start_new_session=True)
@@ -96,12 +97,13 @@ quit
             code = 124
     receipt = {"command": command, "cwd": str(output / "w"), "code": code, "duration_s": time.monotonic() - started,
                "binary_sha256": binary_hash, "manifest_sha256": manifest_hash,
-               "script_sha256": hashlib.sha256(script.read_bytes()).hexdigest(), "environment_names": list(env)}
+               "script_sha256": hashlib.sha256(script.read_bytes()).hexdigest(), "sampler_sha256": hashlib.sha256(sampler.read_bytes()).hexdigest(),
+               "environment_names": list(env)}
     (output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     print(json.dumps(receipt), flush=True)
     result = json.loads(profile.read_text()) if profile.is_file() else {}
     unchanged = hashlib.sha256(binary.read_bytes()).hexdigest() == binary_hash and hashlib.sha256(manifest.read_bytes()).hexdigest() == manifest_hash
-    if code or not result.get("settled") or result.get("terminal") != [0] or not unchanged:
+    if code or not result.get("settled") or result.get("terminal") != [0] or not result.get("samples") or not result.get("sampler_settled") or not unchanged:
         raise RuntimeError("Profiling failed; retained exact logs and receipt")
     return 0
 

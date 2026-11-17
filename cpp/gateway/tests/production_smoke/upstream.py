@@ -36,6 +36,8 @@ class Upstream:
         self.calls = []
         self.websocket_frames = []
         self.failures = []
+        self.redirect_status = None
+        self.redirected_requests = []
         self.lock = threading.Lock()
         self.hold = None
         self.hold_started = threading.Event()
@@ -43,6 +45,7 @@ class Upstream:
 
         class Handler(http.server.BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
+            disable_nagle_algorithm = True
 
             def log_message(self, *_):
                 pass
@@ -66,6 +69,7 @@ class Upstream:
                 elif urlsplit(self.path).path == "/codex/models":
                     self.json_response(200, {"models": [CATALOG_MODEL]})
                 else:
+                    owner.redirected_requests.append({"path": self.path, "method": "GET", "at_ns": time.perf_counter_ns()})
                     self.json_response(404, {"error": "unmapped synthetic route"})
 
             def upgrade(self):
@@ -116,7 +120,14 @@ class Upstream:
                         self.wfile.flush()
                         self.close_connection = True
                     elif self.path == "/chat/completions":
-                        self.chat(body, call)
+                        with owner.lock:
+                            redirect = owner.redirect_status
+                            owner.redirect_status = None
+                        if redirect:
+                            call["response_status"] = redirect
+                            self.json_response(redirect, {"synthetic_redirect": redirect}, {"location": owner.origin + "/redirected-sink"})
+                        else:
+                            self.chat(body, call)
                     else:
                         raise RuntimeError("Scripted upstream received an unmapped path")
                 except Exception as error:
@@ -176,6 +187,7 @@ class Upstream:
                 self.close_connection = True
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.socket.listen(64)
         self.server.daemon_threads = False
         self.server.block_on_close = True
         if self.server.server_port in FORBIDDEN_PORTS:
@@ -203,6 +215,14 @@ class Upstream:
             self.hold_started.clear()
             self.hold = threading.Event()
             return self.hold
+
+    def redirect_next(self, status):
+        if status not in (301, 302):
+            raise RuntimeError("Only the two approved redirect-negative fixtures are admitted")
+        with self.lock:
+            if self.redirect_status is not None:
+                raise RuntimeError("A redirect-negative fixture is already pending")
+            self.redirect_status = status
 
     def close(self):
         with self.lock:

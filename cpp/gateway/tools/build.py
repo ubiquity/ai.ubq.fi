@@ -12,7 +12,7 @@ import sys
 import time
 
 sys.dont_write_bytecode = True
-from build_support import GATEWAY, SDK_MANIFEST_SHA256, WORKSPACE, admission, atomic_json, digest, local_inputs, measured, supervisor
+from build_support import GATEWAY, SDK_MANIFEST_SHA256, WORKSPACE, admission, atomic_json, bind_instruction_snapshot, digest, local_inputs, measured, supervisor
 
 
 def arguments():
@@ -132,6 +132,9 @@ def input_identity(targets):
 
 def main():
     options = arguments()
+    inherited_snapshot = os.environ.get("UOS_GATEWAY_INSTRUCTION_SNAPSHOT")
+    inherited_notes = os.environ.get("UOS_GATEWAY_NOTES_SHA256")
+    inherited_phase = os.environ.get("UOS_GATEWAY_RUN_ID")
     if options.lane and not re.fullmatch(r"[a-z][a-z0-9-]{0,23}", options.lane):
         raise RuntimeError("Lane must be a bounded lowercase identifier")
     if options.focus_test:
@@ -219,12 +222,30 @@ def main():
     atomic_json(evidence / ("inputs-" + stamp + ".json"), {"sdk": identity, "inputs": inputs, "before": before, "runtime_prefix": runtime_prefix})
     try:
         for phase, command in phases:
+            instruction = None
+            if options.supervisor_log:
+                if inherited_snapshot and inherited_notes:
+                    # A serial suite owns one bounded reviewed phase. Descendant
+                    # target builds preserve it instead of auto-binding new text.
+                    instruction = supervisor(options.supervisor_log, inherited_notes)
+                    instruction.update(snapshot=inherited_snapshot, inherited_phase=inherited_phase)
+                else:
+                    instruction = bind_instruction_snapshot(options.supervisor_log, evidence, stamp + "-" + phase)
+                env["UOS_GATEWAY_NOTES_SHA256"] = instruction["notes_sha256"]
+                env["UOS_GATEWAY_INSTRUCTION_SNAPSHOT"] = instruction["snapshot"]
+                os.environ["UOS_GATEWAY_INSTRUCTION_SNAPSHOT"] = instruction["snapshot"]
+                os.environ["UOS_GATEWAY_BUILD_EVIDENCE"] = str(evidence)
+                os.environ["UOS_GATEWAY_RUN_ID"] = stamp
             admission("driver", options.supervisor_log, env.get("UOS_GATEWAY_NOTES_SHA256"))
             log = evidence / (phase + "-" + stamp + ".log")
             print(json.dumps({"phase": phase, "command": command, "log": str(log), "run_id": stamp}), flush=True)
             with log.open("w") as output:
                 code, receipt = measured(command, GATEWAY, env, evidence, phase, timeout=7200 if phase == "build" else 600,
                                          output=output, footprint_paths=(build, temporary, view, evidence))
+            if instruction:
+                phase_record = json.loads(receipt.read_text())
+                phase_record["reviewed_instructions"] = instruction
+                atomic_json(receipt, phase_record)
             print(json.dumps({"phase": phase, "code": code, "receipt": str(receipt), "log": str(log)}), flush=True)
             if code:
                 print("\n".join(log.read_text().splitlines()[-25:]), file=sys.stderr)

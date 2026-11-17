@@ -1,13 +1,26 @@
 # C++ gateway performance
 
-The primary GCC 16 runtime comparison is not measured yet. Gateway idle/concurrent RSS, throughput and latency versus Bun remain pending; the Raspberry Pi memory decision cannot be made from compiler RSS, a binary size, or the retained SDK build. No speedup or memory-saving percentage is established.
+A shared-host JSON component comparison is now measured below. The packaged gateway's latency/throughput and paired native-versus-Bun idle/concurrent RSS remain pending. C++ JSON warm medians were 2.85–6.09 times Bun in this baseline; this is not a whole-gateway throughput result. The Raspberry Pi memory decision cannot be made from compiler RSS, a binary size, unpaired Bun RSS, or the retained SDK build.
+
+## JSON component baseline
+
+| Input bytes | Operation | Cold C++ / Bun us  | C++ warm median / p95 us | Bun warm median / p95 us | C++ / Bun ops/s   | C++ / Bun median |
+| ----------- | --------- | ------------------ | ------------------------ | ------------------------ | ----------------- | ---------------- |
+| 1,088       | parse     | 240.60 / 103.32    | 14.53 / 25.23            | 4.91 / 7.43              | 61,280 / 201,660  | 2.96x            |
+| 1,088       | stringify | 28.64 / 28.60      | 7.93 / 8.22              | 2.00 / 3.33              | 117,898 / 451,788 | 3.97x            |
+| 15,968      | parse     | 335.96 / 155.88    | 226.42 / 234.82          | 60.73 / 71.90            | 4,384 / 16,184    | 3.73x            |
+| 15,968      | stringify | 145.00 / 79.48     | 113.79 / 137.88          | 39.90 / 94.11            | 8,423 / 20,232    | 2.85x            |
+| 1,027,878   | parse     | 14902.54 / 4041.71 | 14936.23 / 16320.59      | 3823.28 / 4334.96        | 66 / 258          | 3.91x            |
+| 1,027,878   | stringify | 8591.06 / 2214.97  | 8265.06 / 8591.82        | 1357.52 / 2414.22        | 120 / 632         | 6.09x            |
+
+This is the isolated `uos-json-bench` component, not the gateway executable. Thirty-six interleaved process trials completed with matching input/canonical checksums. Each runtime/case has three actual first-call samples (cold median), then 24 warm batch means, eight from each process after its first batch. Warm p95 is the nearest-rank percentile of batch-average microseconds per operation, not individual-operation tail latency. Throughput is the reported warm operations/second. Two compiler slots were active on the shared host; this is not an idle-host measurement. All six rows are a before-optimization baseline; profiling and any source fix remain with the assigned JSON owner.
+
+Native benchmark SHA-256: `b94ee2a374e0d64f87b163743e9b19407d9d9aac37b9a12cc450598bec763244`; Bun binary SHA-256: `086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9`. Raw receipt: `/tmp/claude-1002/prod/smoke_perf/json-interleaved-v15/json/json-results.json`, SHA-256 `2dce6197c1db6d81b52081b63aaec5b477ec5bc2b8e95a6134e768599671c74c`; summary: `/tmp/claude-1002/prod/smoke_perf/json-summary-v15.json`. The raw receipt binds actual input bytes/hashes, source hashes, commands, exits and samples. It does not establish packaged-gateway RSS, request latency or production acceptance.
 
 ## Comparison matrix
 
 | Workload                                                    | Native median / p95 | Bun median / p95 | Native / Bun throughput    | Runtime RSS                  | Status  |
 | ----------------------------------------------------------- | ------------------- | ---------------- | -------------------------- | ---------------------------- | ------- |
-| JSON parse, 1 KiB / 16 KiB / 1 MiB                          | Not measured        | Not measured     | Not measured, operations/s | Not measured                 | Pending |
-| JSON stringify, 1 KiB / 16 KiB / 1 MiB                      | Not measured        | Not measured     | Not measured, operations/s | Not measured                 | Pending |
 | Regex: six supervisor stress shapes and real redaction path | Not measured        | Not measured     | Not measured, operations/s | Not measured                 | Pending |
 | SSE relay, 64 fixed frames                                  | Not measured        | Not measured     | Not measured, relays/s     | Not measured                 | Pending |
 | Buffered / streamed chat, concurrency 1 and 8               | Not measured        | Not measured     | Not measured, requests/s   | Not measured                 | Pending |

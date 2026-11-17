@@ -84,10 +84,11 @@ class GatewayProcess:
                 break
             self.stop_monitor.wait(0.02)
 
-    def idle(self):
-        self.phase = "idle"
+    def idle(self, label):
+        first_sample = len(self.samples)
+        self.phase = label
         self.stop_monitor.wait(0.66)
-        values = [item["rss_bytes"] for item in self.samples if item["phase"] == "idle" and item["rss_bytes"]]
+        values = [item["rss_bytes"] for item in self.samples[first_sample:] if item["phase"] == label and item["rss_bytes"]]
         if len(values) < 20:
             raise RuntimeError("Insufficient post-exec idle RSS samples")
         return {"sample_count": len(values), "median_rss_bytes": statistics.median(values), "peak_rss_bytes": max(values)}

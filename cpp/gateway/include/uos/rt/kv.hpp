@@ -122,8 +122,10 @@ namespace uos::rt {
 
   private:
     template <class Part> void append(Part&& part) {
-      if constexpr (std::is_same_v<std::remove_cvref_t<Part>, KvKey>) insert(end(), part.begin(), part.end());
-      else emplace_back(std::forward<Part>(part));
+      if constexpr (std::is_same_v<std::remove_cvref_t<Part>, KvKey>) {
+        reserve(size() + part.size());
+        for (const auto& component : part) emplace_back(component);
+      } else emplace_back(std::forward<Part>(part));
     }
   };
 

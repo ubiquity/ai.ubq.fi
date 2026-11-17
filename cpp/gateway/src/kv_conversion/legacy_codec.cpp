@@ -15,6 +15,7 @@
 #include "uos/rt/url.hpp"
 #include <cmath>
 #include <optional>
+#include <tuple>
 #include <utility>
 
 namespace uos::kv_conversion::legacy_codec {
@@ -118,7 +119,9 @@ namespace uos::kv_conversion::legacy_codec {
       co_await ended.wait();
       rt::Promise<int> exited = state->child.exited();
       auto settledOutputs = rt::all(exited, state->stderrText);
-      const auto [exit, errors] = co_await settledOutputs.wait();
+      const auto settledValues = co_await settledOutputs.wait();
+      const auto& exit = std::get<0>(settledValues);
+      const auto& errors = std::get<1>(settledValues);
       state->reader.releaseLock();
       if (exit != 0) throw rt::JsError("Legacy codec exited " + std::to_string(exit) + ": " + errors);
     }
@@ -155,7 +158,10 @@ namespace uos::kv_conversion::legacy_codec {
       rt::Promise<std::string> versionErrorText(versionStderr.text());
       rt::Promise<int> versionExited = versionChild.exited();
       auto versionOutputs = rt::all(versionText, versionErrorText, versionExited);
-      const auto [version, versionError, code] = co_await versionOutputs.wait();
+      const auto versionValues = co_await versionOutputs.wait();
+      const auto& version = std::get<0>(versionValues);
+      const auto& versionError = std::get<1>(versionValues);
+      const auto& code = std::get<2>(versionValues);
       if (code != 0 || !versionError.empty() || rt::trim(version) != LEGACY_DENO_VERSION) throw rt::JsError("Unsupported pinned legacy Deno version");
       rt::process::SpawnOptions options;
       options.cwd = cwd;

@@ -8,8 +8,12 @@ if (!Number.isInteger(iterations) || iterations < 1 || iterations > 200000 || !N
 }
 const text = await Bun.file(path).text();
 if (!text.length || Buffer.byteLength(text) > 2 * 1024 * 1024) throw new Error("Benchmark input exceeds bound");
+const coldParseStarted = performance.now();
 const initial: unknown = JSON.parse(text);
+const coldParseUs = (performance.now() - coldParseStarted) * 1000;
+const coldStringifyStarted = performance.now();
 const canonical = JSON.stringify(initial);
+const coldStringifyUs = (performance.now() - coldStringifyStarted) * 1000;
 const checksum = (value: string): string => {
   let digest = 1469598103934665603n;
   for (const byte of new TextEncoder().encode(value)) digest = BigInt.asUintN(64, (digest ^ BigInt(byte)) * 1099511628211n);
@@ -37,6 +41,7 @@ console.log(
     canonical_bytes: Buffer.byteLength(canonical),
     canonical_checksum: checksum(canonical),
     iterations,
+    cold_operation_us: operation === "parse" ? coldParseUs : coldStringifyUs,
     samples_us: elapsed,
     consumed: String(consumed),
   })

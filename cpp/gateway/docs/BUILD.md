@@ -40,6 +40,10 @@ ASan runtime needs a large shadow address range and must not inherit the compile
 
 Receipts bind command, cwd, compiler/profile/tool identities, consumed source and header hashes, exit status, counts, wall time, RSS and artifacts. A later consumed-source edit invalidates its affected receipt. Task-local evidence is the approved output-scope exception to the normal home-state evidence helper. Successful compilation, a fixture response and production acceptance are distinct facts.
 
+## Native compiler compatibility
+
+The GCC 16 warning-fatal configuration exposed three optimizer-sensitive source shapes: variant copy assignment during KV-prefix range insertion, hidden tuple objects created by direct structured bindings from `co_await`, and a copied optional auth variant inside an aggregate expression. The shared key constructor now reserves and copy-constructs prefix components, including rvalue prefixes; ten observed coroutine sites use a named owning tuple before same-constness reference bindings; audit construction branches around the helper call at its original aggregate position. Class layout, key contents, await expressions/turns and actor evaluation order are preserved. The original five-line prefix probe fails and the changed probe passes under identical strict GCC 16 flags; all five changed application translation units pass targeted compilation. Unchanged runtime fixtures and the complete primary suite remain separate required evidence. No warning or assertion is disabled.
+
 ## Measured SDK comparison
 
 The accepted foundation contains 325 module implementations and 44 runtime translation units, with 369 archive members. All optimized production compilations used `-O2 -g0 -Wall -Wextra -Wshadow -Wconversion -Werror`. The full optimized suite was not run in that foundation.

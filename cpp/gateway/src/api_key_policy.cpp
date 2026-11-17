@@ -205,7 +205,8 @@ namespace uos::api_key_policy {
       const rt::Promise<rt::KvEntryMaybe<>> requestRead(kv->get(requestKey, strong));
       const rt::Promise<rt::KvEntryMaybe<>> windowRead(kv->get(windowKey, strong));
       auto reads = rt::all(requestRead, windowRead);
-      auto [requestEntry, windowEntry] = co_await reads.wait();
+      auto readEntries = co_await reads.wait();
+      auto& [requestEntry, windowEntry] = readEntries;
       contracts::ApiKeyUsageReleasePlan plan =
         native_api_key::planApiKeyUsageReservedRelease(policy, requestId, reason, snapshotOf(requestEntry, windowEntry), nowMs, expectedRoute);
       rt::Task<std::string> committing = commitUsagePlan(kv, std::move(requestKey), std::move(windowKey), requestEntry, windowEntry, std::move(plan));
@@ -221,7 +222,8 @@ namespace uos::api_key_policy {
       const rt::Promise<rt::KvEntryMaybe<>> requestRead(kv->get(requestKey, strong));
       const rt::Promise<rt::KvEntryMaybe<>> windowRead(kv->get(windowKey, strong));
       auto reads = rt::all(requestRead, windowRead);
-      auto [requestEntry, windowEntry] = co_await reads.wait();
+      auto readEntries = co_await reads.wait();
+      auto& [requestEntry, windowEntry] = readEntries;
       contracts::ApiKeyUsageReleasePlan plan =
         native_api_key::planApiKeyUsageDispatchCancellation(policy, requestId, route, provider, snapshotOf(requestEntry, windowEntry), nowMs);
       rt::Task<std::string> committing = commitUsagePlan(kv, std::move(requestKey), std::move(windowKey), requestEntry, windowEntry, std::move(plan));
@@ -345,7 +347,8 @@ namespace uos::api_key_policy {
         const rt::Promise<rt::KvEntryMaybe<>> requestRead(kv->get(requestKey, strong));
         const rt::Promise<rt::KvEntryMaybe<>> windowRead(kv->get(windowKey, strong));
         auto reads = rt::all(requestRead, windowRead);
-        auto [requestEntry, windowEntry] = co_await reads.wait();
+        auto readEntries = co_await reads.wait();
+        auto& [requestEntry, windowEntry] = readEntries;
         const contracts::ApiKeyUsageDispatchPlan plan =
           native_api_key::planApiKeyUsageDispatch(policy, requestId, route, provider, snapshotOf(requestEntry, windowEntry), rt::dateNow());
         if (std::holds_alternative<contracts::ApiKeyUsageDispatchPlanInvalid>(plan)) throw ApiKeyQuotaDispatchError();
@@ -625,7 +628,8 @@ namespace uos::api_key_policy {
       const rt::Promise<rt::KvEntryMaybe<>> windowRead(kv->get(windowKey, strong));
       const rt::Promise<rt::KvEntryMaybe<>> requestRead(kv->get(requestKey, strong));
       auto reads = rt::all(windowRead, requestRead);
-      auto [windowEntry, requestEntry] = co_await reads.wait();
+      auto readEntries = co_await reads.wait();
+      auto& [windowEntry, requestEntry] = readEntries;
       const contracts::ApiKeyUsageReservationPlan plan =
         native_api_key::planApiKeyUsageReservation(*livePolicy, requestId, route, snapshotOf(requestEntry, windowEntry), nowMs);
       if (const auto* unavailable = std::get_if<contracts::ApiKeyUsageReservationPlanUnavailable>(&plan)) {

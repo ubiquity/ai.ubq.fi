@@ -40,8 +40,13 @@ int main(int argc, char** argv) {
     if (!input) throw std::runtime_error("Cannot open benchmark input");
     const std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     if (text.empty() || text.size() > 2 * 1024 * 1024) throw std::runtime_error("Benchmark input exceeds bound");
+    const auto coldParseStarted = std::chrono::steady_clock::now();
     const auto initial = uos::rt::jsonParse(text);
+    const auto coldParseFinished = std::chrono::steady_clock::now();
     const std::string canonical = uos::rt::jsonStringify(initial);
+    const auto coldStringifyFinished = std::chrono::steady_clock::now();
+    const auto coldElapsed = operation == "parse" ? coldParseFinished - coldParseStarted : coldStringifyFinished - coldParseFinished;
+    const double coldOperationUs = std::chrono::duration<double, std::micro>(coldElapsed).count();
     std::uint64_t consumed = 0;
     std::vector<double> elapsed;
     elapsed.reserve(static_cast<std::size_t>(samples));
@@ -60,8 +65,8 @@ int main(int argc, char** argv) {
       elapsed.push_back(std::chrono::duration<double, std::micro>(finished - started).count());
     }
     std::printf("{\"runtime\":\"native\",\"operation\":\"%s\",\"input_bytes\":%zu,\"canonical_bytes\":%zu,"
-                "\"canonical_checksum\":\"%llu\",\"iterations\":%d,\"samples_us\":[",
-                operation.c_str(), text.size(), canonical.size(), static_cast<unsigned long long>(checksum(canonical)), iterations);
+                "\"canonical_checksum\":\"%llu\",\"iterations\":%d,\"cold_operation_us\":%.3f,\"samples_us\":[",
+                operation.c_str(), text.size(), canonical.size(), static_cast<unsigned long long>(checksum(canonical)), iterations, coldOperationUs);
     for (std::size_t index = 0; index < elapsed.size(); ++index) {
       std::printf("%s%.3f", index == 0 ? "" : ",", elapsed[index]);
     }

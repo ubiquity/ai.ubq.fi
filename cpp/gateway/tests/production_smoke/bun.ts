@@ -62,10 +62,11 @@ const originalFetch = globalThis.fetch;
 globalThis.fetch = Object.assign(
   async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const text = input instanceof Request ? input.url : String(input);
-    if (text === "https://api.deepseek.com/chat/completions") return originalFetch(origin.origin + "/chat/completions", init);
+    const guarded: RequestInit = { ...init, redirect: "error" };
+    if (text === "https://api.deepseek.com/chat/completions") return originalFetch(origin.origin + "/chat/completions", guarded);
     const selected = new URL(text);
     if (selected.origin === origin.origin && ["/codex/models", "/codex/responses", "/codex/realtime/calls"].includes(selected.pathname))
-      return originalFetch(input, init);
+      return originalFetch(input, guarded);
     throw new Error("Smoke fixture refused an unmapped provider destination");
   },
   { preconnect: originalFetch.preconnect }

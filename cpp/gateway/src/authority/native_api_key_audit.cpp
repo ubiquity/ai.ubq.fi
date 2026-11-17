@@ -51,7 +51,7 @@ namespace uos::authority::native_api_key_audit {
     const auto id = sources.randomUUID();
     const auto requestId = input.context && input.context->request_id ? rt::trim(*input.context->request_id) : std::string();
     return {.id = id, .at_ms = input.nowMs ? *input.nowMs : sources.now(), .action = input.action,
-      .actor = apiKeyChangeActorFromAuth(input.context ? input.context->auth : std::nullopt), .target_key_id = input.targetKeyId,
+      .actor = input.context ? apiKeyChangeActorFromAuth(input.context->auth) : apiKeyChangeActorFromAuth(), .target_key_id = input.targetKeyId,
       .target_key_name = input.targetKeyName.hasValue() && !input.targetKeyName->empty() ? std::optional(rt::slice(*input.targetKeyName, 0, 200)) : std::nullopt,
       .changed = sanitizeApiKeyChangeFields(input.changed.value_or(json::object())), .request_id = requestId.empty() ? id : requestId, .release = sources.release()};
   }

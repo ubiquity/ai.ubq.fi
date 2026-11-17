@@ -127,6 +127,7 @@ def main():
     if stage.exists():
         raise ValueError(f"An unfinished package already exists; preserve and reconcile it: {stage}")
     stage.mkdir(mode=0o755)
+    stage.chmod(0o755)
     try:
         for name, source in sorted(binaries.items()):
             copy_file(source, stage / name, True)
@@ -158,6 +159,7 @@ def main():
                 raise ValueError("A host runtime library changed after ELF closure inspection")
         entries = [f"{runtime.digest(path)}  {path.relative_to(stage).as_posix()}\n" for path in sorted(stage.rglob("*")) if path.is_file()]
         (stage / "manifest.sha256").write_text("".join(entries))
+        (stage / "manifest.sha256").chmod(0o644)
         for path in sorted(stage.rglob("*"), reverse=True):
             if path.is_dir():
                 path.chmod(0o755)

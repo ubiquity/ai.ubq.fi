@@ -173,7 +173,7 @@ def one_runtime(arguments, runtime, trial):
         result["manifest_sha256"] = sha256(startup)
         gateway = GatewayProcess(command, root, environment(auth))
         result["startup_us"] = gateway.ready_us
-        result["cold_idle"] = gateway.idle()
+        result["cold_idle"] = gateway.idle("idle_cold")
         gateway.phase = "smoke"
         captures["health"] = checked(request(gateway.origin, "/health"))
         captures["health_head"] = checked(request(gateway.origin, "/health", method="HEAD"))
@@ -201,6 +201,13 @@ def one_runtime(arguments, runtime, trial):
                         raise RuntimeError("Gateway buffered the entire progressive provider stream")
                 else:
                     captures[route + "_buffered"] = infer(gateway, route, False)
+        for status in (301, 302):
+            upstream.redirect_next(status)
+            before_redirect = len(upstream.calls)
+            captures["redirect_" + str(status)] = checked(request(gateway.origin, "/v1/chat/completions", API_TOKEN,
+                                                                inference_body("chat", False)), 502)
+            if len(upstream.calls) != before_redirect + 1 or upstream.redirected_requests:
+                raise RuntimeError("Fixture redirect followed a second destination behind its outer URL guard")
         captures["ws_unknown"] = websocket(gateway.origin, "/unknown")
         if captures["ws_unknown"]["status"] != 404:
             raise RuntimeError("Unknown WebSocket endpoint did not refuse")
@@ -216,7 +223,7 @@ def one_runtime(arguments, runtime, trial):
         captures["ws_relay"] = websocket(gateway.origin, captures["live_create"]["headers"]["location"], API_TOKEN, relay=True)
         if captures["ws_relay"]["status"] != 101:
             raise RuntimeError("Authenticated real WebSocket route did not upgrade")
-        result["warm_idle"] = gateway.idle()
+        result["warm_idle"] = gateway.idle("idle_warm")
         if arguments.benchmark:
             result["benchmark"] = benchmark(gateway, upstream)
         captures["usage_before_shutdown"], before = usage(gateway, key_id)
@@ -262,7 +269,8 @@ def one_runtime(arguments, runtime, trial):
             result["process"] = process_receipt
         upstream.close()
         result["upstream"] = {"origin": upstream.origin, "calls": upstream.calls, "websocket_frames": upstream.websocket_frames,
-                              "failures": upstream.failures, "settled": not upstream.thread.is_alive()}
+                              "failures": upstream.failures, "redirected_requests": upstream.redirected_requests,
+                              "settled": not upstream.thread.is_alive()}
         write_json(root / "raw.json", result)
     return result
 

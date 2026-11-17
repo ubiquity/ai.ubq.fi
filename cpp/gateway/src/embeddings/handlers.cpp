@@ -199,7 +199,8 @@ namespace uos::embeddings::handlers {
         std::optional<api_key_policy::ApiKeyQuotaDispatchError> quotaError;
         try { if (error) std::rethrow_exception(error); } catch (const api_key_policy::ApiKeyQuotaDispatchError& e) { quotaError.emplace(e); } catch (...) { }
         if (quotaError) { auto task = handleQuotaDispatchFailure(*quotaError); auto result = co_await jsAwait(std::move(task)); co_return result; }
-        const auto [status, retryAfterMs] = errorFields(error);
+        const auto fields = errorFields(error);
+        const auto& [status, retryAfterMs] = fields;
         const bool hasStatus = status && rt::truthy(*status);
         const bool retryable = status && rt::isNumber(*status) && EMBEDDINGS_RETRYABLE_UPSTREAM_STATUSES.has(rt::toNumber(*status));
         const auto snippet = upstream_wire::formatErrorSnippet(error);

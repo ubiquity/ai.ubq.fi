@@ -42,7 +42,8 @@ namespace uos::cache::kv_migration {
       rt::Promise<rt::KvEntryMaybe<>> idRead(kv->get(idKey, STRONG));
       rt::Promise<rt::KvEntryMaybe<>> hashRead(kv->get(hashKey, STRONG));
       auto reads = rt::all(idRead, hashRead);
-      auto [idEntry, hashEntry] = co_await reads.wait();
+      auto readEntries = co_await reads.wait();
+      auto& [idEntry, hashEntry] = readEntries;
       if (!idEntry.value.truthy() || !hashEntry.value.truthy()) throw rt::JsError("API key changed during quota V3 migration: " + id);
       if (idEntry.value["hash"] != record["hash"] || !kv_migration_paid_fallback::apiKeyHashPolicyMatches(idEntry.value, hashEntry.value)) {
         throw rt::JsError("API key changed during quota V3 migration: " + id);

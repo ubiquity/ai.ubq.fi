@@ -53,7 +53,8 @@ def run(native, bun, output):
                     samples = [value / iterations for value in measured["samples_us"]]
                     result["trials"].append({"name": name, "runtime": runtime, "command": command, "exit_code": child.returncode,
                                              "input_sha256": sha256(path), "target_bytes": target, "operation": operation,
-                                             "cold_us": samples[0], "warm": summary(samples[1:]), "raw": measured,
+                                             "cold_us": measured["cold_operation_us"], "first_batch_us": samples[0],
+                                             "warm": summary(samples[1:]), "raw": measured,
                                              "process_wall_us": (time.perf_counter_ns() - started) / 1000})
                 if comparable.get("native") != comparable.get("bun"):
                     raise RuntimeError("Native/Bun JSON canonical output or observable work mismatch")

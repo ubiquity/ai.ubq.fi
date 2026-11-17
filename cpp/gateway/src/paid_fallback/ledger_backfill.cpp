@@ -454,7 +454,8 @@ namespace uos::paid_fallback::ledger_backfill {
       const rt::Promise<rt::KvEntryMaybe<>> requestCursorRead(kv->get(native_paid::paidFallbackBackfillCursorV3Key(), strong));
       const rt::Promise<rt::KvEntryMaybe<>> windowCursorRead(kv->get(native_paid::paidFallbackBackfillWindowCursorV3Key(), strong));
       auto reads = rt::all(stateRead, requestCursorRead, windowCursorRead);
-      auto [stateEntry, requestCursorEntry, windowCursorEntry] = co_await reads.wait();
+      auto readEntries = co_await reads.wait();
+      auto& [stateEntry, requestCursorEntry, windowCursorEntry] = readEntries;
       if (native_paid::paidFallbackBackfillNeedsSweepV3(rt::storedJsonView(stateEntry.value, STORED_JSON_VIEW_OPTIONS), rt::storedJsonView(requestCursorEntry.value, STORED_JSON_VIEW_OPTIONS), rt::storedJsonView(windowCursorEntry.value, STORED_JSON_VIEW_OPTIONS))) {
         co_return true;
       }

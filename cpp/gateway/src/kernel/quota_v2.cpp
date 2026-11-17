@@ -64,7 +64,8 @@ namespace uos::kernel::quota_v2 {
         rt::Promise<rt::KvEntryMaybe<>> policyRead(kv->get(keys.policyKey, STRONG));
         rt::Promise<rt::KvEntryMaybe<>> windowRead(kv->get(keys.windowKey, STRONG));
         auto reads = rt::all(defaultsRead, policyRead, windowRead);
-        const auto [defaults, policyEntry, windowEntry] = co_await reads.wait();
+        const auto readEntries = co_await reads.wait();
+        const auto& [defaults, policyEntry, windowEntry] = readEntries;
         const KernelQuotaEffectivePolicy effective = policyFor(policyEntry, scope, owner, repo, defaults);
         const KernelQuotaWindowV2 window =
           windowForEffectivePolicy(normalizeKernelQuotaWindowV2(kernelQuotaValue(windowEntry.value), scope, owner, repo), scope, owner, repo, effective.windowMs,
@@ -170,7 +171,8 @@ namespace uos::kernel::quota_v2 {
     rt::Promise<rt::KvEntryMaybe<>> limitRead(kv->get(defaults::DEFAULT_KERNEL_POLICY_LIMIT_KEY, STRONG));
     rt::Promise<rt::KvEntryMaybe<>> windowRead(kv->get(defaults::DEFAULT_KERNEL_POLICY_WINDOW_KEY, STRONG));
     auto reads = rt::all(limitRead, windowRead);
-    auto [limitEntry, windowEntry] = co_await reads.wait();
+    auto readEntries = co_await reads.wait();
+    auto& [limitEntry, windowEntry] = readEntries;
     const json::value limitValue = kernelQuotaValue(limitEntry.value);
     const json::value windowValue = kernelQuotaValue(windowEntry.value);
     KernelDefaults loaded;

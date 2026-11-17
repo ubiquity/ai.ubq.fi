@@ -131,7 +131,8 @@ namespace uos::kernel::quota_write {
                                                                         : rt::Promise<std::optional<rt::KvEntryMaybe<>>>::resolve(std::nullopt);
       rt::Promise<rt::KvEntryMaybe<>> cutoverRead(kv->get(native_kernel::KERNEL_DEFAULT_WINDOW_CUTOVER_V2_KEY, STRONG));
       auto reads = rt::all(defaultsRead, policyRead, windowRead, orgPolicyRead, orgWindowRead, cutoverRead);
-      auto [defaults, policyEntry, windowEntry, orgPolicyEntry, orgWindowEntry, defaultCutoverEntry] = co_await reads.wait();
+      auto readEntries = co_await reads.wait();
+      auto& [defaults, policyEntry, windowEntry, orgPolicyEntry, orgWindowEntry, defaultCutoverEntry] = readEntries;
       const KernelQuotaPolicyWriteEntries entries{
         .defaults = std::move(defaults),
         .policyEntry = std::move(policyEntry),
@@ -240,7 +241,8 @@ namespace uos::kernel::quota_write {
       rt::Promise<rt::KvEntryMaybe<>> windowRead(kv->get(keys.windowKey, STRONG));
       rt::Promise<rt::KvEntryMaybe<>> cutoverRead(kv->get(native_kernel::KERNEL_DEFAULT_WINDOW_CUTOVER_V2_KEY, STRONG));
       auto reads = rt::all(defaultsRead, policyRead, windowRead, cutoverRead);
-      auto [defaults, policyEntry, windowEntry, defaultCutoverEntry] = co_await reads.wait();
+      auto readEntries = co_await reads.wait();
+      auto& [defaults, policyEntry, windowEntry, defaultCutoverEntry] = readEntries;
       const native_kernel::KernelQuotaPolicyDeleteSnapshot snapshot{.policy = quota_v2::kernelQuotaRead(policyEntry),
                                                                    .defaultCutover = quota_v2::kernelQuotaRead(defaultCutoverEntry)};
       const std::string precondition = native_kernel::decideKernelQuotaPolicyDeletePrecondition(snapshot);

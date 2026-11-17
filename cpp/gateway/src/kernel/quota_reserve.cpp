@@ -103,7 +103,8 @@ namespace uos::kernel::quota_reserve {
           : rt::Promise<std::optional<rt::KvEntryMaybe<>>>::resolve(std::nullopt);
       rt::Promise<rt::KvEntryMaybe<>> cutoverRead(kv->get(native_kernel::KERNEL_DEFAULT_WINDOW_CUTOVER_V2_KEY, STRONG));
       auto reads = rt::all(defaultsRead, policyRead, windowRead, repoGuardRead, cutoverRead);
-      auto [defaults, policyEntry, windowEntry, repoGuardEntry, defaultCutoverEntry] = co_await reads.wait();
+      auto readEntries = co_await reads.wait();
+      auto& [defaults, policyEntry, windowEntry, repoGuardEntry, defaultCutoverEntry] = readEntries;
       KernelQuotaReservationEntries entries{
         .defaults = std::move(defaults),
         .policyEntry = std::move(policyEntry),

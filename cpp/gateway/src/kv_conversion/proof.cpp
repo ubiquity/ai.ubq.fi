@@ -29,6 +29,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -509,7 +510,10 @@ const paid=await kv.get(['uos_ai','paid_fallback','v3','rollup_backfill_cursor']
       rt::Promise<std::string> stderrText(stderrResponse.text());
       rt::Promise<int> exited = child.exited();
       auto outputs = rt::all(stdoutText, stderrText, exited);
-      const auto [output, errors, code] = co_await outputs.wait();
+      const auto outputValues = co_await outputs.wait();
+      const auto& output = std::get<0>(outputValues);
+      const auto& errors = std::get<1>(outputValues);
+      const auto& code = std::get<2>(outputValues);
       strictEqual(rt::KvValue(code), rt::KvValue(0), errors);
       co_return output;
     }

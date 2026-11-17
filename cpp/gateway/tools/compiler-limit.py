@@ -22,7 +22,7 @@ def main():
     from build_support import acquire_slots
     locks = acquire_slots(kind)
     try:
-        admission(kind, os.environ.get("UOS_GATEWAY_RESOURCE_LOG"), os.environ.get("UOS_GATEWAY_NOTES_SHA256"))
+        admitted = admission(kind, os.environ.get("UOS_GATEWAY_RESOURCE_LOG"), os.environ.get("UOS_GATEWAY_NOTES_SHA256"))
         output = Path(os.environ["UOS_GATEWAY_BUILD_EVIDENCE"])
         before_inputs = local_inputs(source) if source else {}
         print("uos-build-start kind=%s pid=%d source=%s" % (kind, os.getpid(), source or "link"), file=sys.stderr, flush=True)
@@ -31,10 +31,13 @@ def main():
         code, receipt = measured(command, Path.cwd(), dict(os.environ), output / "commands", kind,
                                  timeout=600 if kind == "compile" else 300,
                                  address_limit=(3 if kind == "link" and source is None else 2) * GIB, low_priority=True)
+        import json
+        from build_support import atomic_json
+        record = json.loads(receipt.read_text())
+        record["admission"] = admitted
+        atomic_json(receipt, record)
         # The receipt itself already binds exact command; bind consumed source bytes too.
         if source:
-            import json
-            from build_support import atomic_json
             record = json.loads(receipt.read_text())
             after_inputs = local_inputs(source)
             record["inputs_sha256"] = before_inputs

@@ -239,12 +239,17 @@ namespace uos::runtime::startup {
         if (!original_) refuse("real HTTP client transport is not installed");
       }
       rt::Task<rt::Response> send(rt::Request request) override {
-        const std::string destination = request.url();
+        // The real client follows redirects internally. A fixture refuses them
+        // before any second destination can bypass this outer guard.
+        rt::RequestInit policy;
+        policy.redirect = "error";
+        rt::Request guarded(request, policy);
+        const std::string destination = guarded.url();
         if (destination == deepseek::index::DEEPSEEK_CHAT_COMPLETIONS_URL) {
-          rt::Request mapped(origin_ + "/chat/completions", request);
+          rt::Request mapped(origin_ + "/chat/completions", guarded);
           return original_->send(std::move(mapped));
         }
-        if (destination.starts_with(origin_ + "/codex/") || destination == origin_ + "/chat/completions") return original_->send(std::move(request));
+        if (destination.starts_with(origin_ + "/codex/") || destination == origin_ + "/chat/completions") return original_->send(std::move(guarded));
         refuse("fixture refused an unmapped provider destination");
       }
 

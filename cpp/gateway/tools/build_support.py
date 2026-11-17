@@ -92,9 +92,51 @@ def supervisor(path, expected_notes=None):
     marker = row.split("supervisor_notes=", 1)[1].split()[0]
     notes = Path(marker.rsplit("@", 1)[0])
     notes_hash = digest(notes)
+    pinned = os.environ.get("UOS_GATEWAY_INSTRUCTION_SNAPSHOT")
+    evidence = os.environ.get("UOS_GATEWAY_BUILD_EVIDENCE")
+    run_id = os.environ.get("UOS_GATEWAY_RUN_ID")
+    if not pinned and evidence and run_id:
+        candidate = Path(evidence) / ("instructions-" + run_id + ".md")
+        if candidate.is_file():
+            pinned = str(candidate)
+    if pinned and expected_notes:
+        snapshot_path = Path(pinned)
+        if snapshot_path.is_symlink() or WORKSPACE / ".data" not in snapshot_path.resolve().parents or digest(snapshot_path) != expected_notes:
+            raise RuntimeError("Reviewed instruction snapshot is missing, foreign or changed")
+        if notes_hash != expected_notes:
+            pending = Path(evidence) / ("instructions-pending-review-" + str(run_id) + ".json")
+            previous = json.loads(pending.read_text()) if pending.exists() else {}
+            if previous.get("live_notes_sha256") != notes_hash:
+                atomic_json(pending, {"run_id": run_id, "active_snapshot": pinned, "active_notes_sha256": expected_notes,
+                                     "live_notes": str(notes), "live_notes_sha256": notes_hash, "observed": time.time(),
+                                     "policy": "review at controller checkpoint; live resource gates remain authoritative"})
+                print("uos-build-instructions-pending-review run=" + str(run_id), flush=True)
+        return {"row": row, "notes": str(notes), "notes_sha256": expected_notes, "snapshot": pinned,
+                "live_notes_sha256": notes_hash, "pending_review": notes_hash != expected_notes}
     if expected_notes and notes_hash != expected_notes:
         raise RuntimeError("Supervisor notes changed; owner must read the new revision before build admission")
     return {"row": row, "notes": str(notes), "notes_sha256": notes_hash}
+
+
+def bind_instruction_snapshot(resource_log, evidence, run_id):
+    """Bind a human-reviewed note version; never auto-approve newly changed text."""
+    accepted = supervisor(resource_log)
+    review_path = WORKSPACE / ".data/cpp-gateway-reviewed-instructions.json"
+    review = json.loads(review_path.read_text())
+    if review.get("notes_sha256") != accepted["notes_sha256"] or review.get("notes") != accepted["notes"]:
+        raise RuntimeError("New phase requires the execution owner to read and acknowledge current supervisor notes")
+    target = Path(evidence) / ("instructions-" + str(run_id) + ".md")
+    content = Path(accepted["notes"]).read_bytes()
+    if hashlib.sha256(content).hexdigest() != accepted["notes_sha256"]:
+        raise RuntimeError("Supervisor notes changed during reviewed snapshot binding")
+    if not target.exists():
+        temporary = target.with_name(target.name + "." + str(os.getpid()) + ".tmp")
+        temporary.write_bytes(content)
+        temporary.chmod(0o400)
+        temporary.replace(target)
+    if digest(target) != accepted["notes_sha256"]:
+        raise RuntimeError("Existing phase snapshot differs from the reviewed instructions")
+    return {**accepted, "snapshot": str(target), "review": review}
 
 
 def admission(kind, resource_log=None, notes_hash=None):

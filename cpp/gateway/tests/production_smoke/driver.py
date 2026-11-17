@@ -28,6 +28,7 @@ def parser():
     result.add_argument("--bun-only", action="store_true", help="Prequalify only the actual Bun source fixture; never native acceptance")
     result.add_argument("--benchmark", action="store_true")
     result.add_argument("--json-benchmark", type=Path, help="Run only the qualified production JSON hot-path target")
+    result.add_argument("--json-sha256", help="Accepted primary JSON benchmark binary hash")
     result.add_argument("--timeout", type=int, default=180)
     return result
 
@@ -102,11 +103,23 @@ def main():
     if arguments.inside:
         return inside(arguments)
     if arguments.json_benchmark:
-        if not arguments.bun:
-            raise RuntimeError("JSON comparison requires an explicit pinned Bun executable")
+        if not arguments.bun or not arguments.build_receipt or not arguments.json_sha256:
+            raise RuntimeError("JSON comparison requires explicit Bun, primary build receipt and accepted native binary hash")
         arguments.json_benchmark = arguments.json_benchmark.resolve(strict=True)
         if not arguments.json_benchmark.is_relative_to(WORKTREE / ".data"):
             raise RuntimeError("JSON target must be the worktree's qualified build output")
+        accepted = json.loads(arguments.build_receipt.read_text())
+        expected = accepted.get("artifacts", {}).get("uos-json-bench", {}).get("sha256")
+        if accepted.get("changed_inputs") != [] or expected != arguments.json_sha256 or sha256(arguments.json_benchmark) != expected:
+            raise RuntimeError("JSON binary has no matching immutable, current-input build receipt")
+        owner_path = arguments.json_benchmark.parent / "profile-owner.json"
+        if sha256(owner_path) != accepted.get("profile_owner_sha256"):
+            raise RuntimeError("JSON build profile owner changed after qualification")
+        owner = json.loads(owner_path.read_text())
+        if owner.get("profile") != "release" or owner.get("compiler") != "/usr/bin/g++" or owner.get("sanitizer") is not None:
+            raise RuntimeError("JSON measurements require the selected native GCC release profile")
+        if sha256(owner["compiler"]) != owner.get("compiler_sha256"):
+            raise RuntimeError("Qualified JSON compiler identity changed")
         arguments.bun = arguments.bun.resolve(strict=True)
     elif arguments.bun_only:
         if not arguments.bun or not arguments.bun_binding:
