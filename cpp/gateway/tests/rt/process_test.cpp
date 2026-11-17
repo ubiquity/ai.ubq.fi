@@ -67,7 +67,11 @@ namespace {
 
 TEST("platform, arch, pid, uid, cwd, execPath and Bun constants") {
   EXPECT_EQ(std::string(process::platform), "linux");
+#if defined(__x86_64__)
+  EXPECT_EQ(std::string(process::arch), "x64");  // Bun 1.4.0 on the x86_64 sanitizer runner.
+#else
   EXPECT_EQ(std::string(process::arch), "arm64");
+#endif
   EXPECT_EQ(process::pid(), static_cast<int>(::getpid()));
   EXPECT_EQ(process::getuid(), static_cast<std::uint32_t>(::getuid()));
   EXPECT_EQ(process::cwd(), rt::fs::realpathSync("."));

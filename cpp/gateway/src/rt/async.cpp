@@ -204,7 +204,6 @@ namespace uos::rt {
       }
 
       friend bool operator==(const LoopExecutor& left, const LoopExecutor& right) noexcept { return left.impl_ == right.impl_ && left.never_ == right.never_; }
-      friend bool operator!=(const LoopExecutor& left, const LoopExecutor& right) noexcept { return !(left == right); }
 
     private:
       Loop::Impl* impl_;

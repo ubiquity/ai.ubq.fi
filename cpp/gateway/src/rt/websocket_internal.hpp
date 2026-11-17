@@ -19,6 +19,9 @@
 namespace uos::rt::ws::detail {
   using BytesView = std::span<const std::uint8_t>;
 
+  class WebSocketRegistry;
+  void trackWebSocket(const std::shared_ptr<WebSocket>& websocket);
+
   // An exception escaping a JS event listener or callback is uncaught: it goes
   // to the loop's UncaughtPolicy, and the caller carries on.
   void reportUncaught(Reason reason) noexcept;
@@ -82,6 +85,8 @@ namespace uos::rt::ws::detail {
     // `socket.destroy([error])`: closes at once and drops what is queued;
     // "error" (when given) and "close" follow as one macrotask.
     void destroy(Reason error = nullptr);
+    // Loop teardown abandons pending events and releases their captured owners.
+    void shutdown();
     bool destroyed() const noexcept { return destroyed_; }
     // `socket.readable` / `socket.writable`.
     bool readable() const noexcept;
@@ -121,6 +126,7 @@ namespace uos::rt::ws::detail {
     void finishEnd();
     void maybeDestroy();
     void emitCloseEvents(Reason error);
+    void releaseListeners();
     void pumpTls();
     void drainTlsOutput();
     void tlsHandshakeStep();
@@ -305,6 +311,7 @@ namespace uos::rt::ws::detail {
 
 namespace uos::rt::ws {
   struct WebSocket::State {
+    detail::WebSocketRegistry* registry = nullptr;
     int closeCode = 1006;
     bool closeFrameReceived = false;
     bool closeFrameSent = false;
