@@ -11,6 +11,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 SPEC = importlib.util.spec_from_file_location("ci_driver", Path(__file__).with_name("driver.py"))
@@ -89,6 +90,17 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(sorted(test for shard in shards for test in shard), all_tests)
         self.assertFalse(set(shards[0]) & set(shards[1]))
         self.assertEqual(subprocess.run([str(script), "--list", "--shard", "0/2"], capture_output=True).returncode, 2)
+
+    def test_inventory_excludes_unpublished_staging_sources(self):
+        with tempfile.TemporaryDirectory(dir="/tmp", prefix="uos-inventory-") as directory:
+            root = Path(directory)
+            for name in ("src/main.cpp", "src/rt/ready.cpp", "src/rt/.unfinished.cpp", "src/.staging/hidden.cpp"):
+                source = root / name
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("// inventory fixture\n")
+            with patch.object(driver, "GATEWAY", root):
+                self.assertEqual(driver.cpp_inventory("src/rt"), ["src/rt/ready.cpp"])
+                self.assertEqual(driver.cpp_inventory("src", recursive=True), ["src/main.cpp", "src/rt/ready.cpp"])
 
 
 if __name__ == "__main__":

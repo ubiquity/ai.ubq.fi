@@ -74,7 +74,7 @@ CXX=clang++ python3 -B cpp/gateway/cmake/ci/test_driver.py
 CXX=clang++ UOS_CI_SELFTEST_CONFIG=asan python3 -B cpp/gateway/cmake/ci/test_driver.py
 ```
 
-These six controls cover successful parallel environment isolation, failure counts, missing summaries, a timeout with descendants, link failure, and sharding. They are separate from the gateway suite.
+These seven controls cover successful parallel environment isolation, failure counts, missing summaries, a timeout with descendants, link failure, sharding, and exclusion of unpublished dot-prefixed staging sources. They are separate from the gateway suite.
 
 ## Runner measurements
 

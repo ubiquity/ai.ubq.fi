@@ -2,13 +2,15 @@
 
 Status: discovery in progress. This file is maintained during the run; no full-suite acceptance claimed yet.
 
-## Work contract v3
+## Work contract v4
 
 Objective: add a portable, compiler-selectable CI driver, compile all gateway runtime/module sources once per configuration, and run every standalone test on this disposable x86_64 runner in GCC debug and release configurations. Provide sanitizer support, deterministic sharding, isolated test environments, a final result table, and a documented workflow proposal.
 
 Non-goals: deployment/service activation, live databases, provider requests, credential changes, application redesign, changing Bun-recorded expected values, or fixing defects outside the owned paths. Existing production-host build wrappers and presets remain separate.
 
 Invariants: C++20; `-Wall -Wextra -Wshadow -Wconversion -Werror`; Boost JSON/Container/System no-autolink definitions; every runtime object in each test; exact per-test Links closure; existing coroutine/lifetime rules and AArch64 behavior; no credentials inherited by tests; all build artifacts outside the checkout. No test skipped or weakened to obtain success.
+
+Contract v4 inventory amendment: exclude dot-prefixed files and directories from both production and runtime inventories, preserving the port's unpublished staging convention. A new isolated inventory control covers this. The current checkout still selects the same 369 production sources, 44 runtime sources and 437 tests. The in-flight v3 debug receipt is historical after this driver edit; fresh final-tree runs are required.
 
 Contract v3 fixture amendment: every test uses a private, bounded 512 MiB tmpfs. The first run on the runner's ext4 scratch clamped valid large timestamps; isolated Bun probes reproduce the original recorded raw seconds exactly on tmpfs. This preserves all timestamp expectations and makes the fixture filesystem explicit. All discovery receipts remain historical; rerun the frozen source and prepared dependencies for acceptance.
 

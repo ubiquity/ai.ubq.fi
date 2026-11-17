@@ -155,6 +155,13 @@ def object_path(build, source):
     return build / "obj" / (source + ".o")
 
 
+def cpp_inventory(directory, *, recursive=False):
+    root = GATEWAY / directory
+    paths = root.rglob("*.cpp") if recursive else root.glob("*.cpp")
+    return sorted(path.relative_to(GATEWAY).as_posix() for path in paths
+                  if not any(part.startswith(".") for part in path.relative_to(GATEWAY).parts))
+
+
 def write_ninja(build, sources, compiler, flags):
     # Ninja's depfiles track transitive headers; a failed rebuild removes stale output.
     command = shlex.join(compiler + flags).replace("$", "$$")
@@ -310,9 +317,8 @@ def main():
             if (build / name).exists():
                 (build / name).rename(archive / name)
     (build / "bin").mkdir(exist_ok=True)
-    runtime = sorted(path.relative_to(GATEWAY).as_posix() for path in (GATEWAY / "src/rt").glob("*.cpp"))
-    production = sorted(path.relative_to(GATEWAY).as_posix() for path in (GATEWAY / "src").rglob("*.cpp")
-                        if not path.name.startswith("."))
+    runtime = cpp_inventory("src/rt")
+    production = cpp_inventory("src", recursive=True)
     registry = links.read_registry()
     selected, rows = [], []
     sources = set(production)
