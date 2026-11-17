@@ -72,8 +72,10 @@ namespace {
       .proof = AccountProof{.kind = "quota_exhausted", .model = "fixture", .fingerprint = "fp", .observedAtMs = 1, .validUntilMs = 10'000},
     };
     auto store = std::make_shared<FixtureStore>();
-    store->state = saved ? *saved
-                         : createAuthorityState(scope, {account},
+    if (saved) {
+      store->state = *saved;
+    } else {
+      store->state = createAuthorityState(scope, {account},
                                                 {PrincipalPolicy{
                                                   .principalId = "p",
                                                   .version = 1,
@@ -84,6 +86,7 @@ namespace {
                                                   .concurrencyLimit = 10,
                                                   .paidLimitMicrocredits = 100,
                                                 }});
+    }
     return Fixture{.authority = std::make_shared<PortableAuthority>(store, scope), .store = store};
   }
 

@@ -133,7 +133,8 @@ ASYNC_TEST("clearing a class preserves an independent unknown quota fence") {
   SELECT(selected, singlePool, now + 2, "gpt-5.6-luna");
   const auto migrated = state(kv); ASSERT(migrated.slots[0].quota_blocks_by_class);
   EXPECT(!migrated.slots[0].quota_blocks_by_class->has("standard"));
-  const auto& unknownBlock = required(migrated.slots[0].quota_blocks_by_class->get("unknown"), "unknown block");
+  const std::string unknownBlockLabel = "unknown block";
+  const auto& unknownBlock = required(migrated.slots[0].quota_blocks_by_class->get("unknown"), unknownBlockLabel);
   EXPECT_EQ(unknownBlock.blocked_until_ms, unknownDeadline); EXPECT(!unknownBlock.legacy_fallback);
 }
 
