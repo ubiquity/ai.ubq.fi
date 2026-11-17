@@ -301,6 +301,40 @@ application tests for `src/rt/{sqlite.cpp,sqlite_darwin.hpp,kv_sqlite.cpp}`; the
 tests for SQLite, KV, readonly snapshots, durable interop and permissions; document Prettier, shell and
 embedded-Python syntax and `git diff --check`. No TypeScript type/import surface changed.
 
+## Corrected-source complete sweep checkpoint
+
+Run `native/runs/1794928218517772000` completed on clean commit
+`c039f1bba7868f2e7d2b79bc3cf2af82211ed5ba`, tree `70ae08bded9401f0236c4c45fb15985164136f6d`,
+with both identity/input stability checks true. Strict compilation again passes all 832 units.
+Runtime: **36/36 binaries, 457/457 cases**. Application: **404/405 binaries, 4,571/4,572 cases**.
+No abort, build/link failure, skip or timeout remains. All nine previously failing storage/permission
+targets other than interop now pass, including full Responses HTTP conformance and storage Bun KV.
+
+The one remaining interop failure was an implementation mistake in this continuation's fixture
+adaptation: an ambiguous patch selected the writable recorded-row setup block instead of the later
+readonly queue inspector. Corrected that placement, restoring writable setup and applying the
+Darwin snapshot URI only to actual readonly inspections. No assertion or expected value changed.
+The complete committed-tree driver run is repeated after this test-source correction.
+
+Production Linux-source comparison: `/usr/bin/unifdef -t -U__APPLE__` produces byte-identical output
+for the starting `1f095000` and corrected `src/rt/{sqlite.cpp,sqlite_darwin.hpp,kv_sqlite.cpp}`.
+The default unifdef C lexer rejected existing C++ digit separators; text mode resolves the same
+platform directives without misreading those literals. This is a source-equivalence check, not Linux execution.
+
+Actual local review mode completed in 79.968 seconds, exit 0:
+
+```sh
+codex -c 'review_model="codex-auto-review"' -c 'sandbox_mode="read-only"' review --base 1f095000
+```
+
+Reviewed head/tree are the `c039f1bb` pair above; exact base is
+`1f0950006c0e8510d6efa20151825c0787ee1a6b`. The CLI banner reports
+`model: ubiquity/deepseek-flash`, `provider: uos`; reject this model-identity-mismatched receipt
+for official ingestion, ingest nothing, and do not mark official review complete. The returned text
+contains no finding. Exact credential-redacted transcript: `/tmp/cppgw-macos-native-20261117b/review.log`,
+SHA-256 `81fc366bdb794bf94e8021e34ad0a9a1bc75facebdfef40a482497c80edf6424`.
+This review does not cover the later fixture placement correction and does not gate delivery.
+
 ## Final handoff
 
 Continuation in progress; complete application counts, corrected-source receipts and remaining

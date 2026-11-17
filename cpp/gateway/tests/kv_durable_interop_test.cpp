@@ -502,11 +502,7 @@ ASYNC_TEST("a database the TypeScript store wrote reads back in C++ as TypeScrip
   {
     sqlite::DatabaseOptions options;
     options.safeIntegers = true;
-#if defined(__APPLE__)
-    const sqlite::Database database(darwinSnapshotFile(file), options);
-#else
     const sqlite::Database database(file, options);
-#endif
     database.run("DELETE FROM data_version");
     database.run("INSERT INTO data_version (k, version, seq) VALUES (0, ?, 0)", RECORDED_DATA_VERSION);
     const sqlite::Statement insertKv = database.query("INSERT INTO kv (k, v, v_encoding, version, seq, expiration_ms) VALUES (?, ?, ?, ?, ?, ?)");
@@ -552,7 +548,11 @@ ASYNC_TEST("a database the TypeScript store wrote reads back in C++ as TypeScrip
     sqlite::DatabaseOptions options;
     options.readonly = true;
     options.safeIntegers = true;
+#if defined(__APPLE__)
+    const sqlite::Database database(darwinSnapshotFile(file), options);
+#else
     const sqlite::Database database(file, options);
+#endif
     const std::vector<sqlite::Row> queue = database.query("SELECT ts, id, data, backoff_schedule, keys_if_undelivered FROM queue ORDER BY rowid").all();
     ASSERT_EQ(queue.size(), recordedQueueRows().size());
     for (std::size_t index = 0; index < queue.size(); ++index) {
