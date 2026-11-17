@@ -306,6 +306,10 @@ False positive at `src/codex/supervisor_inventory.cpp:422`: the trace initialize
 
 False positives in the sampled Boost.JSON array range loops at `src/images.cpp:112,410,552`. The latter two explicitly reject a null output array first. Exported traces take a continue branch, then invent a null __begin iterator while assuming it differs from __end, without a source mutation of the container. Valid Boost.JSON begin/end iterators cannot become null between elements this way; empty arrays have begin == end and do not enter the loop. The first trace even enters an untouched default-empty references array. This is an iterator-model limitation, not a proven malformed-image-input dereference. Later null diagnostics remain under review; no blanket safety claim.
 
+### `clang-analyzer-core.uninitialized.Assign`
+
+False positive in `tests/storage_native_kv_differential_test.cpp:63-67`, reported at `include/uos/rt/kv.hpp:567`: take moves a live Step variant out of deque.front, pops the old entry, then copies its KvCommitResult alternative into optional. KvCommitResult::ok has a false default initializer and every scripted result is constructed with an initialized bool. The trace loses the field value through deque/variant movement; it does not identify a source construction leaving ok uninitialized. No source fix proposed.
+
 ### `clang-analyzer-cplusplus.NewDeleteLeaks`
 
 False positives at `src/runtime/http.cpp:1878,1879`: both traces stop after std::function copies allocate their heap functor. IncomingListener immediately owns that callable through shared_ptr<function<...>>; listener copies share ownership and std::function's manager destroys the functor on final release. The listeners are also copied into once registrations and the owning handleRequest frame, with explicit incoming listener removal at its end. No raw allocation is dropped at these construction sites. This does not assert that every unrelated callback retention cycle is absent.
@@ -725,6 +729,23 @@ is applied. Test verdicts describe fixture lifetimes, not runtime test-pass clai
 | `tests/sentinel_replay_staging_test.cpp:304` | Real but benign fixture: shared Observation retains after callback through cleanup checks while the parent store remains in scope. |
 | `tests/sentinel_replay_staging_test.cpp:342` | Real but benign fixture: Observation retains its before callback/key copy through the awaited staging commit; parent KV remains live. |
 | `tests/sentinel_replay_staging_test.cpp:390` | Real but benign fixture: Observation owns the copied injected exception pointer through its deliberate second-batch rejection. |
+| `tests/sentinel_upstream_providers_test.cpp:385` | Real but benign fixture: Fetch::keepAlive retains the moved message capture through its deliberate rejection. |
+| `tests/sentinel_upstream_providers_test.cpp:455` | Real but benign fixture: SourceAlgorithm retains shared stream state through pull/close, including clearing algorithms. |
+| `tests/sentinel_upstream_providers_test.cpp:518` | Real but benign fixture: owning Fetch retains the no-dispatch sentinel; parent dispatchAttempts remains live through the awaited refusal. |
+| `tests/sentinel_upstream_providers_test.cpp:969` | Real but benign fixture: Fetch::keepAlive owns replay/token data; the parent replay counter stays in scope while replay requests settle. |
+| `tests/serve_delivery_http_test.cpp:71` | Real but benign fixture: createServeHandler retains the delivery-aware callback; parent cancellation/signal observations live through awaited delivery/interrupt cleanup. |
+| `tests/serve_delivery_http_test.cpp:80` | Real but benign fixture: SourceAlgorithm retains the copied pending Promise for the suspended pull. |
+| `tests/serve_delivery_http_test.cpp:247` | Real but benign fixture: SourceAlgorithm owns the pending Promise capture while cancellation/terminal handling completes. |
+| `tests/storage_bun_kv_test.cpp:1071` | Real but benign fixture: writer is wrapped in rt::async and owns its shared KV independently of fail-fast sibling completion. |
+| `tests/storage_bun_kv_test.cpp:1078` | Real but benign fixture: rt::async owns shared KV/fences/outcomes captures, so sibling failure cannot destroy referenced local state. |
+| `tests/storage_bun_kv_test.cpp:1111` | Real but benign fixture: subprocess writer uses blockOn(rt::async) with an owned database path capture. |
+| `tests/storage_bun_kv_test.cpp:1157` | Real but benign fixture: blockOn awaits rt::async's owned path-capturing transaction body. |
+| `tests/storage_native_kv_differential_test.cpp:377` | Real but benign fixture: retrySqliteBusy owns alwaysLocked by value; parent attempts counter lives through the awaited retry failure. |
+| `tests/storage_native_kv_differential_test.cpp:388` | Real but benign fixture: retrySqliteBusy owns eventually by value; parent syncAttempts remains live through the awaited success. |
+| `tests/surplus_test.cpp:263` | Real but benign fixture: the dispatch object retains cancelBeforeTransport; parent events remains live throughout the awaited authenticated fetch/cancellation contract. |
+| `tests/usage_optimization_measurement_test.cpp:150` | Real but benign fixture: Fetch::keepAlive retains the callback; referenced KV/reply queue/counters live through each awaited measurement step. |
+| `tests/usage_optimization_measurement_test.cpp:165` | Real but benign fixture: named prepare is awaited sequentially while referenced measurement state remains in parent scope; optional key data is a by-value parameter. |
+| `tests/worker_boundary_test.cpp:534` | Real but benign fixture: dispatch override starts rt::async with owned upstream/shared state/input/attempt/signal/callback copies. |
 
 ## Ranked confirmed defect classes
 

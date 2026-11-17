@@ -18,7 +18,7 @@
         "src/rt/url.cpp": 1,
         "tests/helpers/native_authority_harness.hpp": 1
       },
-      "tu_emissions": 1180,
+      "tu_emissions": 1224,
       "unique": 9
     },
     "bugprone-derived-method-shadowing-base-method": {
@@ -165,27 +165,30 @@
         "tests/rt/url_test.cpp": 1,
         "tests/rt/websocket_test.cpp": 1,
         "tests/runtime_http_differential_test.cpp": 1,
-        "tests/sentinel_replay_coverage_test.cpp": 1
+        "tests/sentinel_replay_coverage_test.cpp": 1,
+        "tests/sentinel_replay_read_coverage_test.cpp": 1
       },
-      "tu_emissions": 4238,
-      "unique": 293
+      "tu_emissions": 4405,
+      "unique": 294
     },
     "bugprone-exception-copy-constructor-throws": {
       "files": {
         "src/api_key_policy.cpp": 1,
-        "src/codex/responses_runners.cpp": 1
+        "src/codex/responses_runners.cpp": 1,
+        "tests/systemone_test.cpp": 1
       },
-      "tu_emissions": 2,
-      "unique": 2
+      "tu_emissions": 3,
+      "unique": 3
     },
     "bugprone-exception-escape": {
       "files": {
         "include/uos/rt/async.hpp": 1,
         "src/rt/kv_js.cpp": 1,
-        "src/rt/kv_value.cpp": 2
+        "src/rt/kv_value.cpp": 2,
+        "tests/usage_optimization_measurement_test.cpp": 1
       },
-      "tu_emissions": 4,
-      "unique": 4
+      "tu_emissions": 5,
+      "unique": 5
     },
     "bugprone-float-loop-counter": {
       "files": {
@@ -235,10 +238,14 @@
         "tests/sentinel_incident_index_test.cpp": 2,
         "tests/sentinel_replay_bootstrap_retry_test.cpp": 8,
         "tests/sentinel_replay_deletion_budget_test.cpp": 1,
-        "tests/sentinel_replay_differential_test.cpp": 1
+        "tests/sentinel_replay_differential_test.cpp": 1,
+        "tests/sentinel_replay_read_coverage_test.cpp": 1,
+        "tests/sentinel_replay_retention_metadata_test.cpp": 11,
+        "tests/sentinel_replay_retention_test.cpp": 4,
+        "tests/sentinel_upstream_capture_test.cpp": 1
       },
-      "tu_emissions": 120,
-      "unique": 108
+      "tu_emissions": 137,
+      "unique": 125
     },
     "bugprone-forward-declaration-namespace": {
       "files": {
@@ -278,10 +285,15 @@
         "tests/rt/websocket_test.cpp": 1,
         "tests/runtime_http_test.cpp": 1,
         "tests/sentinel_incident_index_test.cpp": 1,
-        "tests/sentinel_replay_bootstrap_retry_test.cpp": 1
+        "tests/sentinel_replay_bootstrap_retry_test.cpp": 1,
+        "tests/sentinel_replay_export_test.cpp": 1,
+        "tests/sentinel_replay_retention_test.cpp": 2,
+        "tests/sentinel_replay_staging_test.cpp": 1,
+        "tests/sentinel_upstream_capture_differential_test.cpp": 1,
+        "tests/supervisor_log_test.cpp": 1
       },
-      "tu_emissions": 477,
-      "unique": 54
+      "tu_emissions": 513,
+      "unique": 60
     },
     "bugprone-integer-division": {
       "files": {
@@ -369,10 +381,12 @@
         "tests/provider_images_branch_coverage_test.cpp": 1,
         "tests/provider_selection_test.cpp": 1,
         "tests/quota_projection_test.cpp": 1,
-        "tests/reliability_harness_test.cpp": 1
+        "tests/reliability_harness_test.cpp": 1,
+        "tests/temporary_surplus_cache_scope_test.cpp": 1,
+        "tests/usage_optimization_measurement_test.cpp": 1
       },
-      "tu_emissions": 78,
-      "unique": 78
+      "tu_emissions": 80,
+      "unique": 80
     },
     "bugprone-misplaced-widening-cast": {
       "files": {
@@ -420,10 +434,13 @@
         "tests/passport_sessions_test.cpp": 1,
         "tests/prompt_analytics_differential_test.cpp": 2,
         "tests/reliability_harness_test.cpp": 4,
-        "tests/responses_attempts_coverage_test.cpp": 1
+        "tests/responses_attempts_coverage_test.cpp": 1,
+        "tests/surplus_claude_request_test.cpp": 3,
+        "tests/systemone_test.cpp": 1,
+        "tests/transport_normalization_coverage_test.cpp": 1
       },
-      "tu_emissions": 45,
-      "unique": 43
+      "tu_emissions": 50,
+      "unique": 48
     },
     "bugprone-random-generator-seed": {
       "files": {
@@ -447,7 +464,7 @@
         "src/auth/passkeys.cpp": 1,
         "src/provider/claude_code_quota.cpp": 1
       },
-      "tu_emissions": 526,
+      "tu_emissions": 543,
       "unique": 3
     },
     "bugprone-signed-bitwise": {
@@ -529,7 +546,7 @@
         "tests/sentinel_replay_envelope_coverage_test.cpp": 7,
         "tests/sentinel_replay_limits_differential_test.cpp": 1
       },
-      "tu_emissions": 2942,
+      "tu_emissions": 3028,
       "unique": 713
     },
     "bugprone-std-exception-baseclass": {
@@ -547,7 +564,7 @@
         "tests/responses_failover_stream_test.cpp": 1,
         "tests/rt/ordered_test.cpp": 2
       },
-      "tu_emissions": 2386,
+      "tu_emissions": 2497,
       "unique": 16
     },
     "bugprone-string-constructor": {
@@ -1123,12 +1140,42 @@
         "tests/sentinel_replay_deletion_budget_test.cpp": 4,
         "tests/sentinel_replay_differential_test.cpp": 12,
         "tests/sentinel_replay_envelope_coverage_test.cpp": 16,
+        "tests/sentinel_replay_export_test.cpp": 14,
         "tests/sentinel_replay_limits_differential_test.cpp": 3,
         "tests/sentinel_replay_limits_test.cpp": 3,
-        "tests/sentinel_replay_retention_metadata_differential_test.cpp": 1
+        "tests/sentinel_replay_read_coverage_test.cpp": 19,
+        "tests/sentinel_replay_read_differential_test.cpp": 3,
+        "tests/sentinel_replay_retention_metadata_differential_test.cpp": 1,
+        "tests/sentinel_replay_retention_metadata_test.cpp": 10,
+        "tests/sentinel_replay_retention_test.cpp": 32,
+        "tests/sentinel_replay_staging_test.cpp": 8,
+        "tests/sentinel_request_capture_test.cpp": 8,
+        "tests/sentinel_upstream_capture_differential_test.cpp": 15,
+        "tests/sentinel_upstream_capture_test.cpp": 15,
+        "tests/sentinel_upstream_providers_test.cpp": 23,
+        "tests/serve_delivery_http_test.cpp": 7,
+        "tests/serve_test.cpp": 5,
+        "tests/smoke_test.cpp": 2,
+        "tests/sqlite_readonly_test.cpp": 6,
+        "tests/static_assets_test.cpp": 63,
+        "tests/static_differential_test.cpp": 2,
+        "tests/storage_bun_kv_test.cpp": 33,
+        "tests/storage_native_kv_differential_test.cpp": 3,
+        "tests/storage_value_compatibility_test.cpp": 5,
+        "tests/supervisor_log_test.cpp": 4,
+        "tests/surplus_claude_chat_request_test.cpp": 8,
+        "tests/surplus_claude_request_test.cpp": 17,
+        "tests/surplus_test.cpp": 6,
+        "tests/systemone_test.cpp": 28,
+        "tests/temporary_surplus_cache_scope_test.cpp": 4,
+        "tests/transport_normalization_coverage_test.cpp": 8,
+        "tests/types_differential_test.cpp": 10,
+        "tests/usage_optimization_measurement_test.cpp": 1,
+        "tests/utils_test.cpp": 7,
+        "tests/worker_boundary_test.cpp": 6
       },
-      "tu_emissions": 12900,
-      "unique": 4643
+      "tu_emissions": 13645,
+      "unique": 5015
     },
     "bugprone-unchecked-optional-access": {
       "files": {
@@ -1569,16 +1616,38 @@
         "tests/sentinel_replay_deletion_budget_test.cpp": 1,
         "tests/sentinel_replay_differential_test.cpp": 13,
         "tests/sentinel_replay_envelope_coverage_test.cpp": 8,
-        "tests/sentinel_replay_limits_differential_test.cpp": 1
+        "tests/sentinel_replay_export_test.cpp": 6,
+        "tests/sentinel_replay_limits_differential_test.cpp": 1,
+        "tests/sentinel_replay_read_coverage_test.cpp": 8,
+        "tests/sentinel_replay_read_differential_test.cpp": 2,
+        "tests/sentinel_replay_retention_metadata_test.cpp": 1,
+        "tests/sentinel_replay_retention_test.cpp": 12,
+        "tests/sentinel_replay_staging_test.cpp": 11,
+        "tests/sentinel_request_capture_test.cpp": 1,
+        "tests/sentinel_upstream_capture_differential_test.cpp": 7,
+        "tests/sentinel_upstream_capture_test.cpp": 3,
+        "tests/sentinel_upstream_providers_test.cpp": 9,
+        "tests/serve_delivery_http_test.cpp": 11,
+        "tests/static_assets_test.cpp": 13,
+        "tests/static_differential_test.cpp": 1,
+        "tests/storage_bun_kv_test.cpp": 7,
+        "tests/surplus_claude_chat_request_test.cpp": 16,
+        "tests/surplus_claude_request_test.cpp": 34,
+        "tests/surplus_test.cpp": 15,
+        "tests/systemone_test.cpp": 28,
+        "tests/temporary_surplus_cache_scope_test.cpp": 4,
+        "tests/transport_normalization_coverage_test.cpp": 5,
+        "tests/usage_optimization_measurement_test.cpp": 1,
+        "tests/worker_boundary_test.cpp": 4
       },
-      "tu_emissions": 5924,
-      "unique": 3107
+      "tu_emissions": 6269,
+      "unique": 3306
     },
     "bugprone-unhandled-self-assignment": {
       "files": {
         "include/uos/rt/ordered.hpp": 1
       },
-      "tu_emissions": 524,
+      "tu_emissions": 541,
       "unique": 1
     },
     "bugprone-unused-local-non-trivial-variable": {
@@ -1622,10 +1691,11 @@
         "src/rt/fs.cpp": 2,
         "src/rt/sqlite.cpp": 3,
         "src/rt/websocket_client.cpp": 2,
-        "tests/rt/error_test.cpp": 1
+        "tests/rt/error_test.cpp": 1,
+        "tests/systemone_test.cpp": 1
       },
-      "tu_emissions": 11,
-      "unique": 11
+      "tu_emissions": 12,
+      "unique": 12
     },
     "cert-err33-c": {
       "files": {
@@ -1703,10 +1773,13 @@
         "tests/rt/websocket_test.cpp": 4,
         "tests/runtime_http_differential_test.cpp": 3,
         "tests/sentinel_incident_outbox_differential_test.cpp": 2,
-        "tests/sentinel_replay_coverage_test.cpp": 1
+        "tests/sentinel_replay_coverage_test.cpp": 1,
+        "tests/sentinel_replay_read_coverage_test.cpp": 3,
+        "tests/sentinel_replay_retention_test.cpp": 1,
+        "tests/storage_bun_kv_test.cpp": 1
       },
-      "tu_emissions": 1366,
-      "unique": 134
+      "tu_emissions": 1461,
+      "unique": 139
     },
     "clang-analyzer-core.CallAndMessage": {
       "files": {
@@ -1734,6 +1807,13 @@
       "tu_emissions": 3,
       "unique": 3
     },
+    "clang-analyzer-core.uninitialized.Assign": {
+      "files": {
+        "include/uos/rt/kv.hpp": 1
+      },
+      "tu_emissions": 1,
+      "unique": 1
+    },
     "clang-analyzer-cplusplus.NewDeleteLeaks": {
       "files": {
         "src/runtime/http.cpp": 2,
@@ -1741,10 +1821,11 @@
         "tests/codex_auth_coverage_test.cpp": 1,
         "tests/helpers/openai_compat_harness.cpp": 1,
         "tests/metered_claude_cache_test.cpp": 1,
-        "tests/native_auth_verification_test.cpp": 1
+        "tests/native_auth_verification_test.cpp": 1,
+        "tests/storage_native_kv_differential_test.cpp": 1
       },
-      "tu_emissions": 7,
-      "unique": 7
+      "tu_emissions": 8,
+      "unique": 8
     },
     "clang-analyzer-cplusplus.StringChecker": {
       "files": {
@@ -1808,10 +1889,14 @@
         "tests/sentinel_incident_index_test.cpp": 2,
         "tests/sentinel_replay_bootstrap_retry_test.cpp": 4,
         "tests/sentinel_replay_deletion_budget_test.cpp": 1,
-        "tests/sentinel_replay_differential_test.cpp": 1
+        "tests/sentinel_replay_differential_test.cpp": 1,
+        "tests/sentinel_replay_read_coverage_test.cpp": 1,
+        "tests/sentinel_replay_retention_metadata_test.cpp": 11,
+        "tests/sentinel_replay_retention_test.cpp": 4,
+        "tests/sentinel_upstream_capture_test.cpp": 1
       },
-      "tu_emissions": 106,
-      "unique": 104
+      "tu_emissions": 123,
+      "unique": 121
     },
     "clang-analyzer-unix.StdCLibraryFunctions": {
       "files": {
@@ -1946,10 +2031,21 @@
         "tests/runtime_http_test.cpp": 14,
         "tests/sentinel_replay_bootstrap_retry_test.cpp": 8,
         "tests/sentinel_replay_coverage_test.cpp": 1,
-        "tests/sentinel_replay_retention_metadata_differential_test.cpp": 4
+        "tests/sentinel_replay_read_differential_test.cpp": 5,
+        "tests/sentinel_replay_retention_metadata_differential_test.cpp": 4,
+        "tests/sentinel_replay_retention_metadata_test.cpp": 4,
+        "tests/sentinel_replay_retention_test.cpp": 1,
+        "tests/sentinel_replay_staging_test.cpp": 4,
+        "tests/sentinel_upstream_providers_test.cpp": 4,
+        "tests/serve_delivery_http_test.cpp": 3,
+        "tests/storage_bun_kv_test.cpp": 4,
+        "tests/storage_native_kv_differential_test.cpp": 2,
+        "tests/surplus_test.cpp": 1,
+        "tests/usage_optimization_measurement_test.cpp": 2,
+        "tests/worker_boundary_test.cpp": 1
       },
-      "tu_emissions": 342,
-      "unique": 318
+      "tu_emissions": 373,
+      "unique": 349
     },
     "cppcoreguidelines-avoid-reference-coroutine-parameters": {
       "files": {
@@ -1990,10 +2086,17 @@
         "tests/sentinel_replay_bootstrap_retry_test.cpp": 8,
         "tests/sentinel_replay_coverage_test.cpp": 3,
         "tests/sentinel_replay_deletion_budget_test.cpp": 5,
-        "tests/sentinel_replay_retention_metadata_differential_test.cpp": 4
+        "tests/sentinel_replay_read_coverage_test.cpp": 4,
+        "tests/sentinel_replay_read_differential_test.cpp": 6,
+        "tests/sentinel_replay_retention_metadata_differential_test.cpp": 4,
+        "tests/sentinel_replay_retention_metadata_test.cpp": 12,
+        "tests/sentinel_replay_retention_test.cpp": 12,
+        "tests/sentinel_replay_staging_test.cpp": 2,
+        "tests/storage_native_kv_differential_test.cpp": 12,
+        "tests/transport_normalization_coverage_test.cpp": 1
       },
-      "tu_emissions": 228,
-      "unique": 228
+      "tu_emissions": 277,
+      "unique": 277
     },
     "performance-expensive-value-or": {
       "files": {
@@ -2056,10 +2159,12 @@
         "tests/rt/kv_jsc_deserialize_test.cpp": 1,
         "tests/rt/kv_test.cpp": 2,
         "tests/rt/sqlite_test.cpp": 2,
-        "tests/sentinel_replay_bootstrap_retry_test.cpp": 4
+        "tests/sentinel_replay_bootstrap_retry_test.cpp": 4,
+        "tests/static_assets_test.cpp": 1,
+        "tests/storage_bun_kv_test.cpp": 2
       },
-      "tu_emissions": 211,
-      "unique": 211
+      "tu_emissions": 214,
+      "unique": 214
     },
     "performance-faster-string-find": {
       "files": {
@@ -2094,10 +2199,11 @@
         "tests/rt/http_test.cpp": 1,
         "tests/rt/json_test.cpp": 1,
         "tests/rt/kv_jsc_deserialize_test.cpp": 1,
-        "tests/rt/url_test.cpp": 1
+        "tests/rt/url_test.cpp": 1,
+        "tests/storage_native_kv_differential_test.cpp": 2
       },
-      "tu_emissions": 45,
-      "unique": 45
+      "tu_emissions": 47,
+      "unique": 47
     },
     "performance-inefficient-string-concatenation": {
       "files": {
@@ -2258,10 +2364,17 @@
         "tests/sentinel_incident_index_test.cpp": 1,
         "tests/sentinel_replay_deletion_budget_test.cpp": 2,
         "tests/sentinel_replay_envelope_coverage_test.cpp": 1,
-        "tests/sentinel_replay_limits_test.cpp": 1
+        "tests/sentinel_replay_limits_test.cpp": 1,
+        "tests/sentinel_replay_read_coverage_test.cpp": 1,
+        "tests/sentinel_upstream_capture_differential_test.cpp": 1,
+        "tests/sentinel_upstream_capture_test.cpp": 4,
+        "tests/static_assets_test.cpp": 1,
+        "tests/storage_bun_kv_test.cpp": 6,
+        "tests/storage_native_kv_differential_test.cpp": 1,
+        "tests/usage_optimization_measurement_test.cpp": 1
       },
-      "tu_emissions": 205,
-      "unique": 201
+      "tu_emissions": 220,
+      "unique": 216
     },
     "performance-move-const-arg": {
       "files": {
@@ -2284,10 +2397,11 @@
         "tests/codex_auth_repair_test.cpp": 2,
         "tests/helpers/loopback_http.cpp": 1,
         "tests/provider_branch_coverage_test.cpp": 2,
-        "tests/sentinel_incident_index_test.cpp": 2
+        "tests/sentinel_incident_index_test.cpp": 2,
+        "tests/sentinel_replay_export_test.cpp": 1
       },
-      "tu_emissions": 118,
-      "unique": 32
+      "tu_emissions": 127,
+      "unique": 33
     },
     "performance-no-automatic-move": {
       "files": {
@@ -2345,7 +2459,7 @@
     },
     "performance-unnecessary-copy-initialization": {
       "files": {
-        "include/uos/rt/async.hpp": 66,
+        "include/uos/rt/async.hpp": 69,
         "src/admin/sentinel_incident.cpp": 1,
         "src/auth/passport.cpp": 1,
         "src/cache/scope_experiment_targets.cpp": 1,
@@ -2406,10 +2520,13 @@
         "tests/rt/http_test.cpp": 2,
         "tests/rt/json_test.cpp": 2,
         "tests/rt/stream_test.cpp": 2,
-        "tests/runtime_http_differential_test.cpp": 1
+        "tests/runtime_http_differential_test.cpp": 1,
+        "tests/sentinel_replay_retention_test.cpp": 1,
+        "tests/supervisor_log_test.cpp": 1,
+        "tests/utils_test.cpp": 1
       },
-      "tu_emissions": 247,
-      "unique": 160
+      "tu_emissions": 254,
+      "unique": 166
     },
     "performance-unnecessary-value-param": {
       "files": {
@@ -2738,10 +2855,31 @@
         "tests/runtime_websocket_test.cpp": 3,
         "tests/sentinel_incident_index_test.cpp": 5,
         "tests/sentinel_replay_coverage_test.cpp": 3,
-        "tests/sentinel_replay_limits_test.cpp": 1
+        "tests/sentinel_replay_export_test.cpp": 5,
+        "tests/sentinel_replay_limits_test.cpp": 1,
+        "tests/sentinel_replay_read_coverage_test.cpp": 1,
+        "tests/sentinel_replay_read_differential_test.cpp": 1,
+        "tests/sentinel_replay_retention_metadata_test.cpp": 4,
+        "tests/sentinel_replay_staging_test.cpp": 4,
+        "tests/sentinel_request_capture_test.cpp": 6,
+        "tests/sentinel_upstream_capture_differential_test.cpp": 2,
+        "tests/sentinel_upstream_capture_test.cpp": 12,
+        "tests/sentinel_upstream_providers_test.cpp": 4,
+        "tests/serve_delivery_http_test.cpp": 21,
+        "tests/static_assets_test.cpp": 2,
+        "tests/storage_bun_kv_test.cpp": 6,
+        "tests/storage_native_kv_differential_test.cpp": 2,
+        "tests/supervisor_log_test.cpp": 2,
+        "tests/surplus_claude_chat_request_test.cpp": 6,
+        "tests/surplus_test.cpp": 11,
+        "tests/systemone_test.cpp": 41,
+        "tests/temporary_surplus_cache_scope_test.cpp": 1,
+        "tests/transport_normalization_coverage_test.cpp": 3,
+        "tests/usage_optimization_measurement_test.cpp": 2,
+        "tests/worker_boundary_test.cpp": 18
       },
-      "tu_emissions": 2844,
-      "unique": 2313
+      "tu_emissions": 3045,
+      "unique": 2467
     },
     "performance-use-std-move": {
       "files": {
@@ -2792,7 +2930,7 @@
       "unique": 56
     }
   },
-  "complete": false,
+  "complete": true,
   "completed_units": [
     "src/admin/api_key_audit.cpp",
     "src/admin/api_key_mutations.cpp",
@@ -3591,23 +3729,53 @@
     "tests/sentinel_replay_deletion_budget_test.cpp",
     "tests/sentinel_replay_differential_test.cpp",
     "tests/sentinel_replay_envelope_coverage_test.cpp",
+    "tests/sentinel_replay_export_test.cpp",
     "tests/sentinel_replay_limits_differential_test.cpp",
     "tests/sentinel_replay_limits_test.cpp",
-    "tests/sentinel_replay_retention_metadata_differential_test.cpp"
+    "tests/sentinel_replay_read_coverage_test.cpp",
+    "tests/sentinel_replay_read_differential_test.cpp",
+    "tests/sentinel_replay_retention_metadata_differential_test.cpp",
+    "tests/sentinel_replay_retention_metadata_test.cpp",
+    "tests/sentinel_replay_retention_test.cpp",
+    "tests/sentinel_replay_staging_test.cpp",
+    "tests/sentinel_request_capture_test.cpp",
+    "tests/sentinel_upstream_capture_differential_test.cpp",
+    "tests/sentinel_upstream_capture_test.cpp",
+    "tests/sentinel_upstream_providers_test.cpp",
+    "tests/serve_delivery_http_test.cpp",
+    "tests/serve_test.cpp",
+    "tests/smoke_test.cpp",
+    "tests/sqlite_readonly_test.cpp",
+    "tests/static_assets_test.cpp",
+    "tests/static_differential_test.cpp",
+    "tests/storage_bun_kv_test.cpp",
+    "tests/storage_native_kv_differential_test.cpp",
+    "tests/storage_value_compatibility_test.cpp",
+    "tests/supervisor_log_test.cpp",
+    "tests/surplus_claude_chat_request_test.cpp",
+    "tests/surplus_claude_request_test.cpp",
+    "tests/surplus_test.cpp",
+    "tests/systemone_test.cpp",
+    "tests/temporary_surplus_cache_scope_test.cpp",
+    "tests/transport_normalization_coverage_test.cpp",
+    "tests/types_differential_test.cpp",
+    "tests/usage_optimization_measurement_test.cpp",
+    "tests/utils_test.cpp",
+    "tests/worker_boundary_test.cpp"
   ],
   "configuration_yaml": "---\n# Hazard discovery, not a style policy. See docs/findings/cppgw-clang-tidy-audit-20261117.md.\nInheritParentConfig: false\nChecks: >-\n  -*,\n  bugprone-*,\n  -bugprone-easily-swappable-parameters,\n  cppcoreguidelines-avoid-capturing-lambda-coroutines,\n  cppcoreguidelines-avoid-reference-coroutine-parameters,\n  misc-coroutine-hostile-raii,\n  cert-*,\n  -cert-dcl37-c,\n  -cert-dcl51-cpp,\n  performance-*,\n  -performance-avoid-endl,\n  -performance-enum-size,\n  concurrency-*,\n  clang-analyzer-core.*,\n  clang-analyzer-cplusplus.*,\n  clang-analyzer-optin.cplusplus.*,\n  clang-analyzer-security.*,\n  clang-analyzer-unix.*\n# Adjacent same-type parameters are deliberate module-for-module TS API translations.\n# Reserved identifiers are naming/style issues outside this lifetime audit (cert-dcl37/51).\n# endl and enum storage size are micro-style suggestions, not hot-path copy hazards.\nWarningsAsErrors: ''\nHeaderFilterRegex: '(^|/)cpp/gateway/(include|src|tests)/'\nSystemHeaders: false\nFormatStyle: none\nCheckOptions:\n  bugprone-dangling-handle.HandleClasses: 'std::basic_string_view;std::span'\n  bugprone-unchecked-optional-access.IgnoreSmartPointerDereference: 'false'\n  bugprone-exception-escape.CheckDestructors: 'true'\n  bugprone-exception-escape.CheckMoveMemberFunctions: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnIntegerToFloatingPointNarrowingConversion: 'true'\n  bugprone-narrowing-conversions.WarnOnFloatingPointNarrowingConversion: 'true'\n  performance-unnecessary-value-param.AllowedTypes: ''\n",
   "counting": "Unique (check/alias-group, gateway-relative file, line, column, message); repeated header emissions deduplicated. TU emissions also counted separately.",
   "coverage": {
-    "completed": 800,
+    "completed": 830,
     "database_units": 830,
     "failed": 0,
     "inputs_unchanged": true,
-    "ok": 800,
+    "ok": 830,
     "selected": 830,
     "source_units": 369,
     "test_support_units": 461,
     "timeouts": 0,
-    "units_with_findings": 797
+    "units_with_findings": 827
   },
   "failures": [],
   "head_commit": "33e1539d74bc3b69566875b449a01c97b0cfca3d",
@@ -5283,12 +5451,12 @@
   "resources": {
     "jobs": 4,
     "largest_process_rss_kib": 1019216,
-    "sum_system_seconds": 1107.87,
-    "sum_unit_seconds": 31054.437,
-    "sum_user_seconds": 29055.48,
-    "wall_seconds": 7806.283
+    "sum_system_seconds": 1167.19,
+    "sum_unit_seconds": 32610.343,
+    "sum_user_seconds": 30508.02,
+    "wall_seconds": 8222.058
   },
   "schema_version": 1,
-  "tu_diagnostic_emissions": 37403,
-  "unique_diagnostics": 13112
+  "tu_diagnostic_emissions": 39429,
+  "unique_diagnostics": 14002
 }
