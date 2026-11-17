@@ -62,6 +62,8 @@ namespace {
     {"2^31 length", "0e000000010000008080f0fa0203ffffffff", 2147483648, {{50000000, KvValue()}}},
     {"max length", "0e00000001ffffffffffffffff", 4294967295, {}},
     {"last possible index", "0e00000001fffffffffeffffff07ffffffff", 4294967295, {{4294967294, 1}}},
+    {"numeric property grows length", "0e0000000104000000fdffffff0a0000803432393439363732393307ffffffff", 4294967294, {{4294967293, 1}}},
+    {"two indices around the marker", "0e00000001fffffffffeffffff08fdffffff0a0000803432393439363732393307ffffffff", 4294967295, {{4294967293, 1}, {4294967294, false}}},
   };
 }
 

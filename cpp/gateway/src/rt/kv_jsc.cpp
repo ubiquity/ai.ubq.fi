@@ -37,6 +37,7 @@ namespace uos::rt {
     constexpr std::uint32_t CurrentVersion = 14;
     constexpr std::uint32_t TerminatorTag = 0xFFFFFFFF;
     constexpr std::uint32_t StringPoolTag = 0xFFFFFFFE;
+    constexpr std::uint32_t NonIndexPropertiesTag = 0xFFFFFFFD;
     constexpr std::uint32_t StringDataIs8BitFlag = 0x80000000;
 
     std::uint8_t errorType(std::string_view name) {
@@ -211,9 +212,18 @@ namespace uos::rt {
               record(identity);
               u8(ArrayTag);
               u32(static_cast<std::uint32_t>(item.size()));
-              for (std::size_t index = item.nextPresent(0); index < item.size(); index = item.nextPresent(index + 1)) {
+              std::size_t index = item.nextPresent(0);
+              for (; index < item.size() && index != NonIndexPropertiesTag; index = item.nextPresent(index + 1)) {
                 u32(static_cast<std::uint32_t>(index));
                 value(item[index]);
+              }
+              if (index < item.size()) {
+                // This valid index collides with the marker when written as a raw u32.
+                u32(NonIndexPropertiesTag);
+                for (; index < item.size(); index = item.nextPresent(index + 1)) {
+                  identifier(std::to_string(index));
+                  value(item[index]);
+                }
               }
               u32(TerminatorTag);
             } else if constexpr (std::is_same_v<T, KvObject>) {

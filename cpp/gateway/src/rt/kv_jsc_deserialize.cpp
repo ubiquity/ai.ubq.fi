@@ -1,7 +1,6 @@
 // The JavaScriptCore SerializedScriptValue reader (version 14) that Bun 1.4's node:v8
-// `deserialize` uses: the inverse of kvJscSerialize for every form Bun writes. Bytes are
-// parsed into a graph first (JSC's object table is what ObjectReferenceTag indexes), then
-// materialized as a KvValue tree; shared references become copies and cycles are refused.
+// `deserialize` uses. The object table indexes nodes in the stored-value graph,
+// allowing shared references and cycles to point to the original node.
 #include "kv_internal.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/regex.hpp"
@@ -342,6 +341,8 @@ namespace uos::rt {
           KvValue child = value();
           if (kind == Kind::object) {
             self.asObject().set(std::move(*key), std::move(child));
+          } else if (kind == Kind::array && isArrayIndex(*key)) {
+            self.asArray().set(static_cast<std::size_t>(stringToNumber(*key)), std::move(child));
           } else if (!unsupportedProperty_) {
             const char* name = kind == Kind::array ? "array" : kind == Kind::map ? "Map" : "Set";
             unsupportedProperty_ = std::string(name) + " property " + jsonQuote(*key);
