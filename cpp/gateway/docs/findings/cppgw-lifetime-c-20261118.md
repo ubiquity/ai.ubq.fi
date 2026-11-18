@@ -319,7 +319,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/openrouter_streams.cpp`
 - [x] `src/provider/openrouter_web_tools.cpp`
 - [x] `src/provider/presentation.cpp`
-- [ ] `src/provider/removed_provider_circuit.cpp`
+- [x] `src/provider/removed_provider_circuit.cpp`
 - [ ] `src/provider/removed_provider_telemetry.cpp`
 - [ ] `src/provider/selection.cpp`
 - [ ] `src/provider/stream_relay.cpp`
@@ -2042,3 +2042,7 @@ Tool projection uses synchronous views of live JSON and static tool names, then 
 ### `src/provider/presentation.cpp`
 
 Presentation tables and JSON conversion are synchronous and return copies.
+
+### `src/provider/removed_provider_circuit.cpp`
+
+The retired circuit returns settled promises with owned values and registers no asynchronous callbacks.

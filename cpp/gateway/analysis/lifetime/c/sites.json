@@ -3885,7 +3885,8 @@
       "sites": []
     },
     "src/provider/removed_provider_circuit.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "The retired circuit returns settled promises with owned values and registers no asynchronous callbacks.",
       "sites": []
     },
     "src/provider/removed_provider_telemetry.cpp": {
