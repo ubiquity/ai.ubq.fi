@@ -7006,8 +7006,30 @@
       ]
     },
     "include/uos/admin/chart_source_proxy.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the shared capacity-push record and the proxy dependency interface.",
+      "sites": [
+        {
+          "lines": [
+            16,
+            19,
+            23,
+            24,
+            26,
+            28,
+            29,
+            30,
+            31
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Proxy wrappers copy the dependency object, including shared push state. The detached push owns its inputs and releases the in-flight slot through its settlement callback."
+        }
+      ]
     },
     "include/uos/admin/claude_code.hpp": {
       "reviewed": false,
