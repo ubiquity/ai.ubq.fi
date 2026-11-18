@@ -4003,8 +4003,27 @@
       ]
     },
     "src/rt/tls_internal.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Checked the shared TLS declarations against Fetch and WebSocket callers in both context modes.",
+      "sites": [
+        {
+          "lines": [
+            19,
+            23,
+            25,
+            28,
+            30,
+            34
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "TLS helper API and ownership handoff",
+          "reason": "The context accessors document whether callers receive ownership. The remaining declarations borrow their inputs only synchronously and return owned result values."
+        }
+      ]
     },
     "src/rt/websocket.cpp": {
       "status": "pending",
