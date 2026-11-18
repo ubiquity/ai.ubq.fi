@@ -687,6 +687,15 @@
                 aria-label="Provider capacity history"
               ></div>
               <div id="provider-capacity-list" data-capacity-list role="list"></div>
+              <section id="gemini-quota-card" data-capacity-source="gemini" aria-labelledby="gemini-quota-title" hidden>
+                <header>
+                  <h3 id="gemini-quota-title">Gemini subscription</h3>
+                  <span id="gemini-quota-badge" data-badge></span>
+                </header>
+                <p id="gemini-quota-details" data-muted data-help></p>
+                <div id="gemini-quota-buckets" data-capacity-list></div>
+              </section>
+              <p id="gemini-quota-status" data-muted data-help hidden></p>
               <p id="provider-capacity-ledger" data-muted data-help></p>
             </div>
           </article>
@@ -1117,6 +1126,6 @@
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=claude-usage-direct-20261025"></script>
+    <script type="module" src="/admin.js?v=gemini-quota-20261118"></script>
   </body>
 </html>

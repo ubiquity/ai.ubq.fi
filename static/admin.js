@@ -41,6 +41,7 @@ const API_KEY_REQUEST_LOGS_TTL_MS = 10_000;
 const DEFAULT_FINITE_USAGE_LIMIT = 50;
 const DEFAULT_FINITE_PAID_FALLBACK_LIMIT = 1;
 const KEY_CHANGES_LIMIT = 20;
+const GEMINI_QUOTA_PATH = "/admin/providers/gemini/quota";
 const LEGACY_ADMIN_CACHE_STORAGE_KEYS = ["uos_ai.admin.defaults_snapshot", "uos_ai.admin.defaults_models"];
 const adminSnapshotCache = createAdminSnapshotCache();
 let adminCacheScope = "";
@@ -64,6 +65,7 @@ const adminCacheKeyForRequest = (input, init = {}) => {
   } catch {
     return "";
   }
+  if (url.pathname === GEMINI_QUOTA_PATH) return "";
   if (!url.pathname.startsWith("/admin/") && url.pathname !== "/health/providers") return "";
   url.hash = "";
   url.searchParams.sort();
@@ -271,6 +273,11 @@ const providerCapacityBadge = mustGet("provider-capacity-badge");
 const providerCapacityUpdated = mustGet("provider-capacity-updated");
 const providerCapacityChart = mustGet("provider-capacity-chart");
 const providerCapacityList = mustGet("provider-capacity-list");
+const geminiQuotaCard = mustGet("gemini-quota-card");
+const geminiQuotaBadge = mustGet("gemini-quota-badge");
+const geminiQuotaDetails = mustGet("gemini-quota-details");
+const geminiQuotaBuckets = mustGet("gemini-quota-buckets");
+const geminiQuotaStatus = mustGet("gemini-quota-status");
 const providerCapacityLedger = mustGet("provider-capacity-ledger");
 const claudeSubscriptionControls = mustGet("claude-subscription-controls");
 const claudeCredentialSummary = mustGet("claude-credential-summary");
@@ -1056,21 +1063,17 @@ const capacityProgressTone = (remainingPercent) => {
   return "healthy";
 };
 
-const renderCapacityWindow = (container, label, window, observedAtMs) => {
-  const card = document.createElement("section");
-  card.dataset.capacityWindow = "";
-  const title = document.createElement("h4");
-  title.textContent = label;
-  const remainingPercent = capacityRemainingPercent(window?.used_percent);
+const renderCapacityUsage = (label, remainingPercent, { text, showProgress = true } = {}) => {
   const usage = document.createElement("div");
   usage.dataset.capacityUsage = "";
   const remaining = document.createElement("div");
   remaining.dataset.capacityRemaining = "";
   const remainingValue = document.createElement("strong");
   remainingValue.textContent =
-    remainingPercent === null ? "Not reported" : `${formatCapacityPercent(remainingPercent)} remaining`;
+    text ?? (remainingPercent === null ? "Not reported" : `${formatCapacityPercent(remainingPercent)} remaining`);
   remaining.appendChild(remainingValue);
   usage.appendChild(remaining);
+  if (!showProgress) return usage;
   const progress = document.createElement("div");
   progress.dataset.capacityProgress = "";
   progress.dataset.tone = capacityProgressTone(remainingPercent);
@@ -1087,6 +1090,15 @@ const renderCapacityWindow = (container, label, window, observedAtMs) => {
     progress.setAttribute("aria-valuetext", `${formatCapacityPercent(remainingPercent)} remaining`);
   }
   usage.appendChild(progress);
+  return usage;
+};
+
+const renderCapacityWindow = (container, label, window, observedAtMs) => {
+  const card = document.createElement("section");
+  card.dataset.capacityWindow = "";
+  const title = document.createElement("h4");
+  title.textContent = label;
+  const usage = renderCapacityUsage(label, capacityRemainingPercent(window?.used_percent));
   const facts = document.createElement("dl");
   facts.dataset.capacityFacts = "";
   appendProviderFact(
@@ -1100,6 +1112,94 @@ const renderCapacityWindow = (container, label, window, observedAtMs) => {
   if (observedAtMs !== undefined) appendProviderFact(facts, "Observed", formatCapacityTimestamp(observedAtMs));
   card.append(title, usage, facts);
   container.appendChild(card);
+};
+
+const geminiQuotaAmount = new Intl.NumberFormat(undefined, { maximumSignificantDigits: 17 });
+const geminiQuotaAge = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+const formatGeminiQuotaAge = (ms) => {
+  if (ms < 1_000) return "just now";
+  if (ms >= 86_400_000) return geminiQuotaAge.format(-Math.floor(ms / 86_400_000), "day");
+  if (ms >= 3_600_000) return geminiQuotaAge.format(-Math.floor(ms / 3_600_000), "hour");
+  if (ms >= 60_000) return geminiQuotaAge.format(-Math.floor(ms / 60_000), "minute");
+  return geminiQuotaAge.format(-Math.floor(ms / 1000), "second");
+};
+
+const renderGeminiQuotaBucket = ([id, bucket], snapshot) => {
+  const card = document.createElement("section");
+  card.dataset.capacityWindow = "";
+  const title = document.createElement("h4");
+  title.textContent = id;
+  const percent = typeof bucket.remaining_fraction === "number" ? bucket.remaining_fraction * 100 : null;
+  const amount = typeof bucket.remaining_amount === "number" ? geminiQuotaAmount.format(bucket.remaining_amount) : null;
+  const usage = renderCapacityUsage(id, percent, {
+    text: amount === null ? undefined : `${amount} remaining`,
+    showProgress: percent !== null,
+  });
+  const facts = document.createElement("dl");
+  facts.dataset.capacityFacts = "";
+  const reset =
+    typeof bucket.reset_in_seconds === "number"
+      ? snapshot.observed_at_ms + bucket.reset_in_seconds * 1000
+      : Date.parse(bucket.reset_time);
+  const passed = reset <= snapshot.observed_at_ms + snapshot.age_ms;
+  appendProviderFact(facts, "Reset", `${formatCapacityTimestamp(reset)}${passed ? " · passed" : ""}`);
+  if (amount !== null) appendProviderFact(facts, "Unit", "Not reported");
+  if (bucket.disabled === true) appendProviderFact(facts, "State", "Disabled");
+  card.append(title, usage, facts);
+  return card;
+};
+
+const renderGeminiQuota = (snapshot) => {
+  const observed = snapshot?.status === "observed";
+  const buckets = observed ? Object.entries(snapshot.quota) : [];
+  const age = typeof snapshot?.age_ms === "number" ? ` · Observed ${formatGeminiQuotaAge(snapshot.age_ms)}` : "";
+  geminiQuotaCard.hidden = buckets.length === 0;
+  geminiQuotaStatus.hidden = !geminiQuotaCard.hidden || snapshot === null;
+  geminiQuotaStatus.textContent = "";
+  geminiQuotaDetails.textContent = "";
+  geminiQuotaBuckets.replaceChildren();
+  if (geminiQuotaCard.hidden) {
+    const message =
+      {
+        missing: "No local Antigravity CLI snapshot",
+        signed_out: "Antigravity CLI reports no signed-in account",
+        invalid_event: "Latest Antigravity CLI event was invalid",
+        observed: "Antigravity CLI reported no quota buckets",
+      }[snapshot?.status] ?? "Local Antigravity CLI snapshot unavailable";
+    if (snapshot !== null) geminiQuotaStatus.textContent = `Gemini subscription · ${message}${age}`;
+    return;
+  }
+  const stale = snapshot.age_ms >= 300_000;
+  setBadge(geminiQuotaBadge, stale ? "unknown" : "ok", stale ? "Stale observation" : "Local observation");
+  geminiQuotaDetails.textContent = `Antigravity CLI · Display only · ${snapshot.plan_tier ?? "Plan not reported"}${age} (${formatCapacityTimestamp(snapshot.observed_at_ms)})`;
+  geminiQuotaBuckets.append(...buckets.map((bucket) => renderGeminiQuotaBucket(bucket, snapshot)));
+};
+
+let geminiQuotaRequest = null;
+const clearGeminiQuota = () => {
+  geminiQuotaRequest?.abort();
+  geminiQuotaRequest = null;
+  renderGeminiQuota(null);
+};
+
+const loadGeminiQuota = async () => {
+  if (geminiQuotaRequest || !adminAccessState.isAdmin || !hasAdminCredential()) return;
+  const request = new AbortController();
+  geminiQuotaRequest = request;
+  let snapshot;
+  try {
+    const response = await fetch(apiUrl(GEMINI_QUOTA_PATH), {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${getAdminToken()}` },
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(8000)]),
+    });
+    if (response.ok) snapshot = await response.json();
+  } catch {
+    // A failed read clears the previous observation on this panel.
+  }
+  if (geminiQuotaRequest !== request) return;
+  geminiQuotaRequest = null;
+  renderGeminiQuota(snapshot ?? { status: "unavailable" });
 };
 
 const capacityAdditionalLimitLabel = (limit) => {
@@ -8187,6 +8287,7 @@ const loadAdminView = (view) => {
     // could neither measure the chart nor place it on the newest edge.
     scheduleProviderCapacityChartResize();
     void loadProviders();
+    void loadGeminiQuota();
     if (!providerCapacityLoadedForOpen) {
       providerCapacityLoadedForOpen = true;
       void loadProviderCapacity().then((loaded) => {
@@ -8213,6 +8314,7 @@ const setAdminAccessState = (next) => {
     isAdmin: next?.isAdmin === true,
     isSuperAdmin: next?.isSuperAdmin === true,
   };
+  if (!adminAccessState.isAdmin) clearGeminiQuota();
   document.body.dataset.authScope = adminAccessState.isAdmin ? "admin" : "none";
   updateLoadingAuthStatus();
   syncLoadingGate();
@@ -10975,6 +11077,7 @@ const refreshAnalyticsView = () => {
   // visible poll and a resume refresh can never stack duplicate requests.
   void loadProviders();
   void loadProviderCapacity();
+  void loadGeminiQuota();
 };
 
 bindForegroundRefresh(() => {

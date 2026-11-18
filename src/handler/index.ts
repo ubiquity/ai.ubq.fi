@@ -49,6 +49,7 @@ import {
 import { handleAdminErrors } from "../admin/error-log.ts";
 import { proxyAdminChartSource } from "../admin/chart-source-proxy.ts";
 import { handleCapacityObservationIngest } from "../admin/capacity-observation-sync.ts";
+import { handleAdminGeminiQuota } from "../admin/gemini-quota.ts";
 import type { ApiKeyAuditContext } from "../admin/api-key-audit.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "../agent-messages.ts";
 import { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth, type AdminAuthResult } from "../auth/index.ts";
@@ -174,6 +175,7 @@ const ADMIN_ROUTES: readonly AdminRouteEntry[] = [
   { methods: ["DELETE"], path: "/admin/providers/claude-code/auth", run: (req) => handleAdminClaudeCodeAuthDelete(req) },
   { methods: ["POST"], path: "/admin/providers/claude-code/quota/clear", run: (req) => handleAdminClaudeCodeQuotaClear(req) },
   { methods: ["POST"], path: "/admin/providers/claude-code/quota/refresh", run: (req) => handleAdminClaudeCodeQuotaRefresh(req) },
+  { methods: ["GET"], path: "/admin/providers/gemini/quota", run: () => handleAdminGeminiQuota() },
   { methods: ["GET"], path: "/admin/providers/quota-projection", run: (req) => handleAdminProvidersQuotaProjection(req) },
   { methods: ["POST"], path: "/admin/providers/quota-projection/backfill", run: (req) => handleAdminProvidersQuotaProjectionBackfill(req) },
   { methods: ["GET"], path: "/admin/prompt-cache-analytics", run: (req) => handleAdminPromptCacheAnalytics(req) },
