@@ -4834,8 +4834,29 @@
       "sites": []
     },
     "src/openai_telemetry.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed response and request telemetry WeakMaps, aggregate state, callback dispatch and usage attachment.",
+      "sites": [
+        {
+          "lines": [
+            100,
+            561,
+            562,
+            564,
+            565,
+            746,
+            759,
+            782
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The telemetry Task owns its handler callback, context copy and shared response state through the wait. The usage callbacks are invoked inline and the remaining telemetry helpers consume their pointers synchronously."
+        }
+      ]
     },
     "src/optional_telemetry_queue.cpp": {
       "reviewed": false,

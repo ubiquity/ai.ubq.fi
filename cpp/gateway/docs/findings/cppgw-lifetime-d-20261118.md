@@ -216,7 +216,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/models/openrouter_models.cpp`
 - [x] `src/openai.cpp`
 - [x] `src/openai_schema.cpp`
-- [ ] `src/openai_telemetry.cpp`
+- [x] `src/openai_telemetry.cpp`
 - [ ] `src/optional_telemetry_queue.cpp`
 - [ ] `src/quota_projection.cpp`
 - [ ] `src/recent_model_context.cpp`
@@ -1130,6 +1130,12 @@ Reviewed default model and reasoning waits and synchronous request signal and sc
 
 Reviewed static allowlists and synchronous schema accessors. Views refer to static literals and no callbacks are registered.
 
+### `src/openai_telemetry.cpp`
+
+Reviewed response and request telemetry WeakMaps, aggregate state, callback dispatch and usage attachment.
+
+- L100, 561, 562, 564, 565, 746, 759, 782 **SAFE** · The telemetry Task owns its handler callback, context copy and shared response state through the wait. The usage callbacks are invoked inline and the remaining telemetry helpers consume their pointers synchronously.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1378,4 +1384,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-109/286 files reviewed. 223 sites: 206 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+110/286 files reviewed. 224 sites: 207 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
