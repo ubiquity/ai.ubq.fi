@@ -229,8 +229,16 @@
       ]
     },
     "include/uos/codex/manual_reset.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Manual reset owns its dependency bundle through the operation.",
+      "sites": [
+        {
+          "lines": "23-26,35-37",
+          "kind": "task parameters and callbacks",
+          "verdict": "SAFE",
+          "reason": "Reset frames own the hash, dependencies, provider factory and signal used for the awaited operation."
+        }
+      ]
     },
     "include/uos/codex/manual_reset_state.hpp": {
       "status": "pending",

@@ -53,7 +53,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/experiment.hpp`
 - [x] `include/uos/codex/external_auth.hpp`
 - [x] `include/uos/codex/index.hpp`
-- [ ] `include/uos/codex/manual_reset.hpp`
+- [x] `include/uos/codex/manual_reset.hpp`
 - [ ] `include/uos/codex/manual_reset_state.hpp`
 - [ ] `include/uos/codex/native_auth.hpp`
 - [ ] `include/uos/codex/native_auth_transport.hpp`
@@ -432,3 +432,9 @@ Synchronous external-auth decision and text/JSON declarations. No suspendable de
 Codex Responses entry point overloads.
 
 - 15-16 · owning task parameters · **SAFE** · The forwarded request value and dispatch options become frame-owned inputs.
+
+### `include/uos/codex/manual_reset.hpp`
+
+Manual reset owns its dependency bundle through the operation.
+
+- 23-26,35-37 · task parameters and callbacks · **SAFE** · Reset frames own the hash, dependencies, provider factory and signal used for the awaited operation.
