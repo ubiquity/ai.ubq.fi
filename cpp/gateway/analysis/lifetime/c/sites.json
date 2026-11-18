@@ -3154,7 +3154,8 @@
       ]
     },
     "src/paid_fallback/removed_provider.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Retired provider compatibility has synchronous implementation and immutable literals.",
       "sites": []
     },
     "src/paid_fallback/rollups.cpp": {
