@@ -4104,8 +4104,25 @@
       "sites": []
     },
     "src/lib/jev_compaction/client.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed Jev client's request assembly and response consumption.",
+      "sites": [
+        {
+          "lines": [
+            24,
+            35,
+            36,
+            39
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The shared asker in askBatch retains the JevClient through ask, Fetch retains its own callable, and the response has a named owner during body parsing."
+        }
+      ]
     },
     "src/lib/jev_compaction/codex_items.cpp": {
       "reviewed": false,
