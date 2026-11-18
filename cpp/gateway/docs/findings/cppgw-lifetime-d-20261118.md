@@ -63,7 +63,7 @@ git diff --check 6d28e858e7ab8b8b1036db4a4adfdade0465ed40
 
 Each audit entry binds its source coordinates to the baseline Git blobs. `audit.py verify` reconciles the checklist, Markdown site entries and JSON, validates lines, and requires every lexical `co_await` line to have a verdict in a reviewed file. `audit.py pending` prints the restart order. Finish each file with `audit.py record`, which writes both ledgers and makes one Git commit per reviewed file.
 
-## Focused sanitizer control
+## Focused sanitizer controls
 
 A scratch harness used the production `rt::race`, `Loop` and Promise identities with 128 synthetic 64 KiB payloads per condition. With a winner and a pending private loser, 128/128 loser/payload pairs remained live on the same running loop. Rejecting the private loser after observing the winner left 0/128 pairs live. Loop teardown released all 128 original pairs. This measures retained owners before teardown, when a process-long event loop still serves requests. The two-condition run exited 0 with no ASan, UBSan or LeakSanitizer diagnostic. Compilation took 20.03 s and execution 0.02 s.
 
@@ -85,6 +85,23 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
   env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$trial/home" TMPDIR="$trial/tmp" \
   ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
   /usr/bin/time -f 'run elapsed %e s' "$trial/race_owners"
+```
+
+The queue ownership harness uses the real admission controller with one active and one queued slot. It takes a weak observer of the queued caller's abort signal. One trial aborts the caller before dropping the loop. The other drops the loop and all strong public owners with the 60,000 ms unreferenced timer still pending. The settled case released its signal, and the abandoned case retained it. LeakSanitizer reported 1,504 bytes in 17 allocations, with exit 1. Clang compilation took 31.36 s and the run took 0.06 s.
+
+```sh
+trial=/tmp/cppgw-lifetime-d.gktp0iv5/admission-asan.hVQ2zQOg
+gateway="$PWD/cpp/gateway"
+boost_dir=/tmp/cppgw-lifetime-d.gktp0iv5/boost_1_92_0
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$trial/home" TMPDIR="$trial/tmp" \
+  /usr/bin/time -f 'compile elapsed %e s' /usr/bin/clang++-21 -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+  -DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING -DBOOST_JSON_NO_LIB -pthread -I"$gateway/include" -isystem "$boost_dir" \
+  "$trial/admission_owners.cpp" "$gateway/src/inference_admission.cpp" "$gateway/src/rt/async.cpp" "$gateway/src/rt/clock.cpp" \
+  "$gateway/src/rt/number.cpp" "$gateway/src/rt/abort.cpp" "$boost_dir/stage/lib/libboost_json.a" -o "$trial/admission_owners"
+sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --no-new-privs \
+  env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$trial/home" TMPDIR="$trial/tmp" \
+  ASAN_OPTIONS=detect_leaks=1:abort_on_error=0 UBSAN_OPTIONS=halt_on_error=1 \
+  /usr/bin/time -f 'run elapsed %e s' "$trial/admission_owners"
 ```
 
 ## File checklist
@@ -1210,7 +1227,7 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 
 `src/inference_admission.cpp:149-179`. A dropped loop clears the queue-timeout timer without running its abort callback. The controller owns each waiter, and the waiter and signal own a listener that strongly captures both. No remaining action can detach it once the loop and external owners are gone.
 
-Keep the original queue deadline and the preference for a simultaneous caller abort. Make the explicit exact timer the outside owner of pending waiters. The waiter retains a clearable timer identity, with no strong path back to the closure. The caller-signal listener holds weak references, locks them inline and uses the existing settlement path.
+Keep the original queue deadline and the preference for a simultaneous caller abort. Make the explicit exact timer the outside owner of pending waiters. The runtime clears the timer callback on normal settlement and on loop teardown even when the waiter still holds a Timeout handle. The caller-signal listener holds weak references, locks them inline and uses the existing settlement path.
 
 ```diff
 -    std::optional<rt::AbortSignal> waitSignal;
@@ -1242,7 +1259,42 @@ Keep the original queue deadline and the preference for a simultaneous caller ab
 +          if (callerSignal && callerSignal->aborted()) onWaitAbort();
 ```
 
-Remove the replaced combined-signal construction and add the corresponding `uos/rt/clock.hpp` dependency if needed.
+Remove the replaced combined-signal construction. The module already includes `uos/rt/clock.hpp`.
+
+### P3 · Replacing the injected KV opener invalidates a suspended closure
+
+`src/kv.cpp:53-57,94-98`. A capturing coroutine opener suspends and the test hook replaces `selectedOpener`. The pending open resumes to a destroyed callable. The production default is a free-function opener. Keep a copy of the exact invoked callable in its awaiting frame.
+
+```diff
+-        rt::Promise<std::shared_ptr<rt::Kv>> opening(state().selectedOpener());
++        const auto opener = state().selectedOpener;
++        rt::Promise<std::shared_ptr<rt::Kv>> opening(opener());
+```
+
+### P3 · An abandoned timed compaction body leaves a weak abort listener
+
+`src/jev_compaction/compaction.cpp:238-250,385-390`. A response body can be dropped after it has buffered a chunk, while an external abort signal is reused. After the wrapper state dies, the weak timeout callback cannot unregister the listener. Later calls on the same live signal accumulate dead listeners.
+
+```diff
+     struct TimeoutFetchState {
++      ~TimeoutFetchState() {
++        try { release(); } catch (...) {}
++      }
+```
+
+### P3 · Smoke fake upstream and server retain each other
+
+`src/lib/jev_compaction/jev_codex_smoke.cpp:179-188`. The fake owns its server handle and the server owns a handler that captures the fake. Server shutdown does not release the fake's handle, so dropping the fixture leaves both and the request history alive. Use a weak fake in the server registration and a strong owner in each actual request.
+
+```diff
+-        runtime::http::ServeHandler handle = [fake](rt::Request request, runtime::http::ServeHandlerInfo) { return fake->handle(request); };
++        runtime::http::ServeHandler handle = [weak = std::weak_ptr(fake)](rt::Request request, runtime::http::ServeHandlerInfo) {
++          if (auto owner = weak.lock()) {
++            return rt::async([owner = std::move(owner), request = std::move(request)] { return owner->handle(request); });
++          }
++          return rt::fulfilledTask(rt::Response("Fixture closed", {.status = 503}));
++        };
+```
 
 ### P3 · Awaited temporary member access under GCC 12.2 rules
 
