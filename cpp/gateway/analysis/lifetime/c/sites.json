@@ -2404,8 +2404,16 @@
       ]
     },
     "src/codex/supervisor_log.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Rollout tail reads use owned input and a local fd guard across file checks and bounded reads.",
+      "sites": [
+        {
+          "lines": "154-194",
+          "kind": "file guard across microtasks",
+          "verdict": "SAFE",
+          "reason": "The read frame owns file/path handles and byte buffers. Its fd guard releases the descriptor on every exit and is unrelated to serialized shared state."
+        }
+      ]
     },
     "src/codex/supervisor_secret.cpp": {
       "status": "pending",
