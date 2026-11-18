@@ -177,3 +177,25 @@ env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/driver-home" TMPDIR="$sc
 ```
 
 The sanitizer sweep builds each closure's objects with the fatal port warning set, `-O0 -gline-tables-only -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined`, and uses the repository's portable builder and namespace runner. Lower optimization and line tables shorten the cold build. The run prioritizes the BigInt, Number and IDNA binaries, then storage, authority and other users, before completing the 442 entry registry. The driver logs progress after each batch and writes a row to `asan/results.jsonl` as each binary finishes. It checks the source digest before and after the run and writes a terminal receipt. The edited surface for this continuation is this report, so the additional file gates are pinned Prettier and `git diff --check`.
+
+### Sanitizer loader recovery
+
+The first two KV failures came from child processes exiting 127 because their explicit environments dropped `LD_LIBRARY_PATH` and the loader could not find `libicuuc.so.78`. The SQLite differential binary loaded the system's SQLite 3.45.1 via `libsqlite3.so` and failed three cases. The pinned SQLite build has no SONAME, so the unversioned name had to resolve to the new library. The runner staged the same ICU and SQLite shared libraries under a temporary loader path outside the checkout. A probe linked with the suite's SQLite flags resolved 3.54.0 in an empty environment.
+
+```bash
+prefix=/opt/$(basename "$scratch")/lib
+loader_config=/etc/ld.so.conf.d/01-$(basename "$scratch").conf
+sudo install -d -m 0755 "$prefix"
+sudo install -m 0644 "$scratch"/icu-install/lib/libicu{uc,i18n,data}.so.78.3 \
+  "$scratch/sqlite/lib/libsqlite3.so.3.54.0" "$prefix"
+sudo ln -s libsqlite3.so.3.54.0 "$prefix/libsqlite3.so"
+printf '%s\n' "$prefix" | sudo tee "$loader_config" >/dev/null
+sudo ldconfig
+ln -s libsqlite3.so.3.54.0 "$scratch/asan/bin/lib/libsqlite3.so"
+env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/driver-home" TMPDIR="$scratch/driver-tmp" \
+  LANG=C.UTF-8 python3 -B "$scratch/relink-loader-cohort.py" "$PWD/cpp/gateway" "$scratch"
+env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/driver-home" TMPDIR="$scratch/driver-tmp" \
+  LANG=C.UTF-8 python3 -B "$scratch/relink-loader-range.py" "$PWD/cpp/gateway" "$scratch" 35 67
+```
+
+Sixty-six closures were relinked and rerun using the already compiled objects. The IDNA result in the same cohort used ICU 78.3 and passed 2/2, with no SQLite calls or child processes in that test. The three affected SQLite and KV binaries passed 29/29, 17/17 and 7/7 after the recovery. At the 123-closure checkpoint, reconciling those reruns gave 122 passing binaries and 1,607 passing cases out of 1,608. The remaining failure is the documented Number parser fixture.
