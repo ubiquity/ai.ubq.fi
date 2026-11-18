@@ -45,6 +45,7 @@ def validate(data):
     if source_tree != tree:
         raise ValueError("Source tree does not match the starting commit")
     defect_ids = set()
+    related_ids = set()
     for file, entry in files.items():
         status = entry["status"]
         if status not in {"complete", "pending"} or (status == "pending" and entry["sites"]):
@@ -72,10 +73,15 @@ def validate(data):
             if site["verdict"] not in VERDICTS:
                 raise ValueError(f"Invalid verdict for {file}: {site['verdict']}")
             if site["verdict"] == "DEFECT":
+                if "related_defect" in site:
+                    related_ids.add(site["related_defect"])
+                    continue
                 defect = site["defect"]
                 if defect["id"] in defect_ids or len(defect["interleaving"]) != 2 or not defect["diff"]:
                     raise ValueError(f"Missing or duplicate defect evidence for {file}: {defect['id']}")
                 defect_ids.add(defect["id"])
+    if related_ids - defect_ids:
+        raise ValueError(f"Unknown related defects: {sorted(related_ids - defect_ids)}")
 
 
 def render(text, data):
@@ -105,7 +111,9 @@ def render(text, data):
             for key in site["classes"]:
                 kinds[key][verdict] += 1
             defect_id = ""
-            if verdict == "DEFECT":
+            if "related_defect" in site:
+                defect_id = f" ({site['related_defect']})"
+            elif verdict == "DEFECT":
                 defect = site["defect"]
                 defects.append((defect["priority"], defect["id"], site, file, anchors))
                 defect_id = f" ({defect['id']})"

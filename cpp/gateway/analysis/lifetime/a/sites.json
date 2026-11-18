@@ -641,8 +641,458 @@
       ]
     },
     "include/uos/rt/async.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed the lazy Task adapters, eager Promise combinators, callback return-type branches and generator implementation. The Promise callback defect is reachable through the public API. The production continuations checked consume by-reference inputs synchronously or use owned values.",
+      "sites": [
+        {
+          "lines": [
+            109,
+            114,
+            116,
+            117,
+            118,
+            126,
+            128,
+            129,
+            130,
+            139,
+            143,
+            152,
+            153,
+            154,
+            155,
+            164
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "One-shot jobs and waiting-list declarations",
+          "reason": "Job moves its erased callable into a local before invocation, and the intrusive list is maintained and unlinked synchronously by the loop implementation."
+        },
+        {
+          "lines": [
+            204,
+            207,
+            210,
+            211,
+            214,
+            218,
+            220,
+            221,
+            226,
+            228,
+            229,
+            319,
+            321,
+            338,
+            340,
+            345,
+            348,
+            352,
+            368,
+            369,
+            371,
+            374,
+            376,
+            377
+          ],
+          "classes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Owned awaiters and public Promise accessors",
+          "reason": "The wrappers synchronously copy the state or move the task into an owning frame, while value, reason and state accessors borrow from a live Promise in the checked callers."
+        },
+        {
+          "lines": [
+            219,
+            375
+          ],
+          "classes": [
+            "e"
+          ],
+          "verdict": "DEFECT",
+          "label": "Implicit shared_ptr conversion in Promise await expressions",
+          "reason": "Both awaiters form a shared_ptr<PromiseCore> temporary from a typed shared_ptr in the await full expression.",
+          "defect": {
+            "id": "A-PROMISE-GCC-AWAIT",
+            "priority": 91,
+            "severity": "GCC 12 portability rule",
+            "interleaving": [
+              "awaitOwned or awaitState calls awaitSettled directly with a typed state. The call converts it to an owning base shared_ptr inside co_await.",
+              "The retained GCC 12 coroutine rule rejects this expression shape because await temporaries can be destroyed twice. This occurrence has static evidence."
+            ],
+            "diff": "--- a/cpp/gateway/include/uos/rt/async.hpp\n+++ b/cpp/gateway/include/uos/rt/async.hpp\n@@ -219,1 +219,2 @@\n-      co_await awaitSettled(state);\n+      auto ready = awaitSettled(state);\n+      co_await std::move(ready);\n@@ -375,1 +376,2 @@\n-      co_await detail::awaitSettled(state);\n+      auto ready = detail::awaitSettled(state);\n+      co_await std::move(ready);"
+          }
+        },
+        {
+          "lines": [
+            233,
+            235,
+            240,
+            245,
+            248,
+            249,
+            273,
+            274,
+            277,
+            279,
+            280,
+            285,
+            579,
+            580,
+            582,
+            583
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Loop, Clock, Scope and blockOn borrowed API",
+          "reason": "The synchronous blockOn owns its stop Promise and the current-loop scope is nested inside the named Loop and Clock lifetimes in the checked callers."
+        },
+        {
+          "lines": [
+            386,
+            394,
+            395,
+            396,
+            397,
+            405,
+            407,
+            415,
+            418,
+            428,
+            429,
+            445,
+            447,
+            452,
+            453,
+            455,
+            462,
+            464,
+            466
+          ],
+          "classes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Synchronous resolver and detached-task entry points",
+          "reason": "Resolvers share their state, newPromise calls its executor synchronously, and spawn hands the Task to runInto; a Task's own borrowed inputs remain governed by its caller."
+        },
+        {
+          "lines": [
+            471,
+            472,
+            473,
+            475,
+            486,
+            487,
+            497,
+            499,
+            559,
+            561,
+            564,
+            573,
+            679,
+            682,
+            684,
+            914,
+            919,
+            921,
+            927
+          ],
+          "classes": [
+            "a",
+            "b",
+            "c",
+            "e"
+          ],
+          "verdict": "SAFE",
+          "label": "Coroutine holders and finally helpers",
+          "reason": "callHeld, keepAlive and withFinally keep the callback or explicit owner in an awaited frame; ScopeExit owns its synchronous cleanup and the helpers use named results."
+        },
+        {
+          "lines": [
+            692,
+            701,
+            704,
+            713,
+            715,
+            726,
+            731,
+            744,
+            745,
+            746,
+            758,
+            760
+          ],
+          "classes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "verdict": "DEFECT",
+          "label": "Task-returning Promise callbacks can borrow a destroyed outcome",
+          "reason": "The Task-keeping branch pins the callable, but a coroutine parameter referencing the fulfilled value or rejection reason still borrows the source state held only by the reaction.",
+          "defect": {
+            "id": "A-PROMISE-CALLBACK-INPUT",
+            "priority": 28,
+            "severity": "memory safety in the public runtime API",
+            "interleaving": [
+              "Register a then or catch callback whose Task takes a const reference to the outcome. Drop the source Promise while keeping the derived Promise.",
+              "The queued reaction starts the callback until its first suspension. The reaction finishes and releases the source, then the callback resumes with a dangling outcome reference."
+            ],
+            "diff": "--- a/cpp/gateway/include/uos/rt/async.hpp\n+++ b/cpp/gateway/include/uos/rt/async.hpp\n@@ -692,1 +692,2 @@\n-    template <class U, class Call> void settleWith(const std::shared_ptr<PromiseState<U>>& target, std::shared_ptr<void> keep, Call&& call) {\n+    template <class U, class Call> void settleWith(const std::shared_ptr<PromiseState<U>>& target, std::shared_ptr<void> keep,\n+                                                 std::shared_ptr<void> source, Call&& call) {\n@@ -701,1 +702,2 @@\n-          start(currentLoop(), keepAlive<void>(std::move(keep), runInto(inner, call())));\n+          auto owners = std::make_shared<std::pair<std::shared_ptr<void>, std::shared_ptr<void>>>(std::move(keep), std::move(source));\n+          start(currentLoop(), keepAlive<void>(std::move(owners), runInto(inner, call())));\n@@ -731,1 +733,1 @@\n-      detail::settleWith(target, callback, [&] { return detail::invokeWithValue<T>(*callback, *source); });\n+      detail::settleWith(target, callback, source, [&] { return detail::invokeWithValue<T>(*callback, *source); });\n@@ -745,2 +747,2 @@\n-      if (source->status == detail::PromiseCore::Status::rejected) detail::settleWith(target, rejected, [&] { return (*rejected)(source->error); });\n-      else detail::settleWith(target, fulfilled, [&] { return detail::invokeWithValue<T>(*fulfilled, *source); });\n+      if (source->status == detail::PromiseCore::Status::rejected) detail::settleWith(target, rejected, source, [&] { return (*rejected)(source->error); });\n+      else detail::settleWith(target, fulfilled, source, [&] { return detail::invokeWithValue<T>(*fulfilled, *source); });\n@@ -760,1 +762,1 @@\n-        detail::settleWith(target, callback, [&] { return (*callback)(source->error); });\n+        detail::settleWith(target, callback, source, [&] { return (*callback)(source->error); });"
+          }
+        },
+        {
+          "lines": [
+            397,
+            726,
+            744,
+            758,
+            780,
+            797,
+            815,
+            840,
+            860,
+            873,
+            889,
+            892
+          ],
+          "classes": [
+            "c"
+          ],
+          "verdict": "DEFECT",
+          "related_defect": "A-PROMISE-REACTION-CYCLE",
+          "label": "Typed Promise reactions retain pending sources and input tuples",
+          "reason": "These registrations repeat the self-owning reaction pattern. Apply the source ownership handoff in the ranked fix and collect fulfilled tuple slots without retaining the tuple of input Promises."
+        },
+        {
+          "lines": [
+            773,
+            781,
+            783,
+            788,
+            790,
+            792,
+            797,
+            798,
+            799
+          ],
+          "classes": [
+            "a",
+            "b"
+          ],
+          "verdict": "SAFE",
+          "label": "finally_ callable and settled source access",
+          "reason": "The synchronous branch reads the source inside its reaction, and the Task branch retains the callable through completion and the source through the after reaction."
+        },
+        {
+          "lines": [
+            519,
+            520,
+            521,
+            522,
+            529,
+            530,
+            537,
+            541,
+            542,
+            545,
+            549,
+            810,
+            820,
+            823,
+            824,
+            835,
+            841,
+            849,
+            869,
+            878,
+            890,
+            898,
+            902,
+            909,
+            910
+          ],
+          "classes": [
+            "a",
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Combinator storage and traversal across sibling completion",
+          "reason": "Registered reactions are synchronous and own their result storage and copied indices, so sibling completion cannot invalidate a borrowed iterator or closure."
+        },
+        {
+          "lines": [
+            633,
+            634,
+            636,
+            941,
+            946,
+            947,
+            948,
+            951,
+            953,
+            956,
+            960,
+            961,
+            963,
+            967,
+            976,
+            978,
+            983,
+            989,
+            990,
+            998,
+            1001,
+            1005
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Generator queue dispatch",
+          "reason": "A request is moved out before delivery, the launch callable is moved out before execution, and queued work promotes a weak core only for synchronous mutation."
+        },
+        {
+          "lines": [
+            663,
+            664,
+            666,
+            671,
+            672,
+            675,
+            677,
+            1012,
+            1013,
+            1016,
+            1017,
+            1022,
+            1026,
+            1027,
+            1029,
+            1035
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Generator yield and weak waker parking",
+          "reason": "The Yield task owns its value and holds a weak backedge while parked, and Waker moves the current waiter out before resuming it."
+        },
+        {
+          "lines": [
+            1041,
+            1043,
+            1046,
+            1049,
+            1051,
+            1058,
+            1086,
+            1088,
+            1091,
+            1093,
+            1094,
+            1095
+          ],
+          "classes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Generator body and yielding adapters",
+          "reason": "The body closure and return slot move into runGenerator's frame, and the public Yield wrappers take a value or copy the weak handle before returning a Task."
+        },
+        {
+          "lines": [
+            1041,
+            1058,
+            1061,
+            1062,
+            1063,
+            1064,
+            1099,
+            1101
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "DEFECT",
+          "label": "Pending generator step does not keep its generator alive",
+          "reason": "A returned next or return Task owns only the result, so dropping the last generator handle while the body is executing can strand an outstanding step.",
+          "defect": {
+            "id": "A-GENERATOR-STEP-OWNER",
+            "priority": 63,
+            "severity": "public runtime liveness",
+            "interleaving": [
+              "Call next on a generator whose body first yields through a microtask. Keep the step Task and release the generator handle before that microtask runs.",
+              "yieldTo finds the weak core expired and abandons the body. The outstanding step has no owner capable of fulfilling or rejecting it."
+            ],
+            "diff": "--- a/cpp/gateway/include/uos/rt/async.hpp\n+++ b/cpp/gateway/include/uos/rt/async.hpp\n@@ -1061,5 +1061,6 @@\n-    template <class T> Task<IteratorResult<T>> requestStep(const std::shared_ptr<GeneratorCore<T>>& core, bool isReturn) {\n+    template <class T> Task<IteratorResult<T>> requestStep(std::shared_ptr<GeneratorCore<T>> core, bool isReturn) {\n       auto result = std::make_shared<PromiseState<IteratorResult<T>>>();\n       core->enqueue(isReturn, result);\n-      return awaitOwned(std::move(result));\n+      auto waiting = awaitOwned(std::move(result));\n+      return keepAlive<IteratorResult<T>>(std::move(core), std::move(waiting));\n     }"
+          }
+        },
+        {
+          "lines": [
+            1067,
+            1069,
+            1073,
+            1078,
+            1082,
+            1114,
+            1118,
+            1123,
+            1124,
+            1130,
+            1136
+          ],
+          "classes": [
+            "a",
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Delegate and forAwait ownership",
+          "reason": "The frames own both generator handles or callback and the complete current IteratorResult through the body await and return cleanup."
+        },
+        {
+          "lines": [
+            1073,
+            1123,
+            1124
+          ],
+          "classes": [
+            "e"
+          ],
+          "verdict": "DEFECT",
+          "label": "Forwarded generator values constructed within await expressions",
+          "reason": "delegateTo moves a yielded T into a by-value adapter and forAwait may move it into a by-value coroutine callback in the await full expression.",
+          "defect": {
+            "id": "A-GENERATOR-GCC-AWAIT",
+            "priority": 92,
+            "severity": "GCC 12 portability rule",
+            "interleaving": [
+              "Instantiate the forwarding helpers with an owning yielded value, such as bytes, and a by-value callback. The moved parameter is materialized in the await expression.",
+              "The retained GCC 12 coroutine rules require creating that operation in a separate statement. This occurrence has static evidence."
+            ],
+            "diff": "--- a/cpp/gateway/include/uos/rt/async.hpp\n+++ b/cpp/gateway/include/uos/rt/async.hpp\n@@ -1073,1 +1073,2 @@\n-          co_await outer(std::move(*step.value));\n+          auto passing = outer(std::move(*step.value));\n+          co_await std::move(passing);\n@@ -1123,2 +1124,3 @@\n-        if constexpr (std::is_same_v<Result, Task<bool>>) proceed = co_await body(std::move(*step.value));\n-        else co_await body(std::move(*step.value));\n+        auto handling = body(std::move(*step.value));\n+        if constexpr (std::is_same_v<Result, Task<bool>>) proceed = co_await std::move(handling);\n+        else co_await std::move(handling);"
+          }
+        }
+      ]
     },
     "src/rt/process_loop.cpp": {
       "status": "pending",

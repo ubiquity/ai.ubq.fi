@@ -37,7 +37,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/clock.cpp`
 - [x] `include/uos/rt/clock.hpp`
 - [x] `src/rt/async.cpp`
-- [ ] `include/uos/rt/async.hpp`
+- [x] `include/uos/rt/async.hpp`
 - [ ] `src/rt/process_loop.cpp`
 - [ ] `include/uos/rt/process.hpp`
 - [ ] `src/rt/stream.cpp`
@@ -124,20 +124,72 @@ Read the complete loop implementation and the PromiseCore callbacks. The process
 - **SAFE** `456, 457, 458, 462, 465, 467, 470, 472, 476, 477, 478` (a/b/c/e), Waker, abandon and microtask initiations. Each initiation is named and synchronous, and the handler goes to a weakly linked slot, to the loop, or is intentionally discarded.
 - **DEFECT (A-PROMISE-REACTION-CYCLE)** `485, 490, 491, 492, 494, 497` (c/d), Pending Promise reactions self-own their source. A dropped never-settled input keeps its reaction and combinator output alive until Loop destruction, including losers of a completed combination on the permanent loop.
 
+### `include/uos/rt/async.hpp`
+
+Reviewed the lazy Task adapters, eager Promise combinators, callback return-type branches and generator implementation. The Promise callback defect is reachable through the public API. The production continuations checked consume by-reference inputs synchronously or use owned values.
+
+- **SAFE** `109, 114, 116, 117, 118, 126, 128, 129, 130, 139, 143, 152, 153, 154, 155, 164` (c/d), One-shot jobs and waiting-list declarations. Job moves its erased callable into a local before invocation, and the intrusive list is maintained and unlinked synchronously by the loop implementation.
+- **SAFE** `204, 207, 210, 211, 214, 218, 220, 221, 226, 228, 229, 319, 321, 338, 340, 345, 348, 352, 368, 369, 371, 374, 376, 377` (a/b/c), Owned awaiters and public Promise accessors. The wrappers synchronously copy the state or move the task into an owning frame, while value, reason and state accessors borrow from a live Promise in the checked callers.
+- **DEFECT (A-PROMISE-GCC-AWAIT)** `219, 375` (e), Implicit shared_ptr conversion in Promise await expressions. Both awaiters form a shared_ptr<PromiseCore> temporary from a typed shared_ptr in the await full expression.
+- **SAFE** `233, 235, 240, 245, 248, 249, 273, 274, 277, 279, 280, 285, 579, 580, 582, 583` (b/c), Loop, Clock, Scope and blockOn borrowed API. The synchronous blockOn owns its stop Promise and the current-loop scope is nested inside the named Loop and Clock lifetimes in the checked callers.
+- **SAFE** `386, 394, 395, 396, 397, 405, 407, 415, 418, 428, 429, 445, 447, 452, 453, 455, 462, 464, 466` (a/b/c), Synchronous resolver and detached-task entry points. Resolvers share their state, newPromise calls its executor synchronously, and spawn hands the Task to runInto; a Task's own borrowed inputs remain governed by its caller.
+- **SAFE** `471, 472, 473, 475, 486, 487, 497, 499, 559, 561, 564, 573, 679, 682, 684, 914, 919, 921, 927` (a/b/c/e), Coroutine holders and finally helpers. callHeld, keepAlive and withFinally keep the callback or explicit owner in an awaited frame; ScopeExit owns its synchronous cleanup and the helpers use named results.
+- **DEFECT (A-PROMISE-CALLBACK-INPUT)** `692, 701, 704, 713, 715, 726, 731, 744, 745, 746, 758, 760` (a/b/c), Task-returning Promise callbacks can borrow a destroyed outcome. The Task-keeping branch pins the callable, but a coroutine parameter referencing the fulfilled value or rejection reason still borrows the source state held only by the reaction.
+- **DEFECT (A-PROMISE-REACTION-CYCLE)** `397, 726, 744, 758, 780, 797, 815, 840, 860, 873, 889, 892` (c), Typed Promise reactions retain pending sources and input tuples. These registrations repeat the self-owning reaction pattern. Apply the source ownership handoff in the ranked fix and collect fulfilled tuple slots without retaining the tuple of input Promises.
+- **SAFE** `773, 781, 783, 788, 790, 792, 797, 798, 799` (a/b), finally_ callable and settled source access. The synchronous branch reads the source inside its reaction, and the Task branch retains the callable through completion and the source through the after reaction.
+- **SAFE** `519, 520, 521, 522, 529, 530, 537, 541, 542, 545, 549, 810, 820, 823, 824, 835, 841, 849, 869, 878, 890, 898, 902, 909, 910` (a/b/d), Combinator storage and traversal across sibling completion. Registered reactions are synchronous and own their result storage and copied indices, so sibling completion cannot invalidate a borrowed iterator or closure.
+- **SAFE** `633, 634, 636, 941, 946, 947, 948, 951, 953, 956, 960, 961, 963, 967, 976, 978, 983, 989, 990, 998, 1001, 1005` (c/d), Generator queue dispatch. A request is moved out before delivery, the launch callable is moved out before execution, and queued work promotes a weak core only for synchronous mutation.
+- **SAFE** `663, 664, 666, 671, 672, 675, 677, 1012, 1013, 1016, 1017, 1022, 1026, 1027, 1029, 1035` (b/c), Generator yield and weak waker parking. The Yield task owns its value and holds a weak backedge while parked, and Waker moves the current waiter out before resuming it.
+- **SAFE** `1041, 1043, 1046, 1049, 1051, 1058, 1086, 1088, 1091, 1093, 1094, 1095` (a/b/c), Generator body and yielding adapters. The body closure and return slot move into runGenerator's frame, and the public Yield wrappers take a value or copy the weak handle before returning a Task.
+- **DEFECT (A-GENERATOR-STEP-OWNER)** `1041, 1058, 1061, 1062, 1063, 1064, 1099, 1101` (b/c), Pending generator step does not keep its generator alive. A returned next or return Task owns only the result, so dropping the last generator handle while the body is executing can strand an outstanding step.
+- **SAFE** `1067, 1069, 1073, 1078, 1082, 1114, 1118, 1123, 1124, 1130, 1136` (a/b/d), Delegate and forAwait ownership. The frames own both generator handles or callback and the complete current IteratorResult through the body await and return cleanup.
+- **DEFECT (A-GENERATOR-GCC-AWAIT)** `1073, 1123, 1124` (e), Forwarded generator values constructed within await expressions. delegateTo moves a yielded T into a by-value adapter and forAwait may move it into a by-value coroutine callback in the await full expression.
+
 ## Ranked defects and counts
 
-Reviewed **5/30 files** and **29 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **6/30 files** and **45 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
-| a. Capturing coroutine closure | 0 | 3 | 0 |
-| b. Borrowed coroutine parameter or receiver | 0 | 11 | 1 |
-| c. Callback ownership or cycle | 3 | 24 | 2 |
-| d. Container invalidation | 2 | 8 | 0 |
-| e. GCC 12 await-expression rule | 0 | 1 | 1 |
-| **Unique site groups** | 3 | 24 | 2 |
+| a. Capturing coroutine closure | 1 | 10 | 0 |
+| b. Borrowed coroutine parameter or receiver | 2 | 20 | 1 |
+| c. Callback ownership or cycle | 6 | 32 | 2 |
+| d. Container invalidation | 2 | 12 | 0 |
+| e. GCC 12 await-expression rule | 2 | 2 | 1 |
+| **Unique site groups** | 8 | 35 | 2 |
 
-### 1. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
+### 1. A-PROMISE-CALLBACK-INPUT (memory safety in the public runtime API) — Task-returning Promise callbacks can borrow a destroyed outcome
+
+`include/uos/rt/async.hpp:692, 701, 704, 713, 715, 726, 731, 744, 745, 746, 758, 760`
+
+- Register a then or catch callback whose Task takes a const reference to the outcome. Drop the source Promise while keeping the derived Promise.
+- The queued reaction starts the callback until its first suspension. The reaction finishes and releases the source, then the callback resumes with a dangling outcome reference.
+
+```diff
+--- a/cpp/gateway/include/uos/rt/async.hpp
++++ b/cpp/gateway/include/uos/rt/async.hpp
+@@ -692,1 +692,2 @@
+-    template <class U, class Call> void settleWith(const std::shared_ptr<PromiseState<U>>& target, std::shared_ptr<void> keep, Call&& call) {
++    template <class U, class Call> void settleWith(const std::shared_ptr<PromiseState<U>>& target, std::shared_ptr<void> keep,
++                                                 std::shared_ptr<void> source, Call&& call) {
+@@ -701,1 +702,2 @@
+-          start(currentLoop(), keepAlive<void>(std::move(keep), runInto(inner, call())));
++          auto owners = std::make_shared<std::pair<std::shared_ptr<void>, std::shared_ptr<void>>>(std::move(keep), std::move(source));
++          start(currentLoop(), keepAlive<void>(std::move(owners), runInto(inner, call())));
+@@ -731,1 +733,1 @@
+-      detail::settleWith(target, callback, [&] { return detail::invokeWithValue<T>(*callback, *source); });
++      detail::settleWith(target, callback, source, [&] { return detail::invokeWithValue<T>(*callback, *source); });
+@@ -745,2 +747,2 @@
+-      if (source->status == detail::PromiseCore::Status::rejected) detail::settleWith(target, rejected, [&] { return (*rejected)(source->error); });
+-      else detail::settleWith(target, fulfilled, [&] { return detail::invokeWithValue<T>(*fulfilled, *source); });
++      if (source->status == detail::PromiseCore::Status::rejected) detail::settleWith(target, rejected, source, [&] { return (*rejected)(source->error); });
++      else detail::settleWith(target, fulfilled, source, [&] { return detail::invokeWithValue<T>(*fulfilled, *source); });
+@@ -760,1 +762,1 @@
+-        detail::settleWith(target, callback, [&] { return (*callback)(source->error); });
++        detail::settleWith(target, callback, source, [&] { return (*callback)(source->error); });
+```
+
+### 2. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
 
 `src/rt/abort.cpp:62, 69, 74, 81, 95, 228`
 
@@ -152,7 +204,7 @@ Reviewed **5/30 files** and **29 site groups**. A site group can have multiple l
 +    void signalAbort(std::shared_ptr<State> signal, Reason reason) {
 ```
 
-### 2. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
+### 3. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
 
 `src/rt/async.cpp:485, 490, 491, 492, 494, 497`
 
@@ -178,7 +230,28 @@ Reviewed **5/30 files** and **29 site groups**. A site group can have multiple l
 +      source->react([source = source.get(), out, remaining] {
 ```
 
-### 3. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
+### 4. A-GENERATOR-STEP-OWNER (public runtime liveness) — Pending generator step does not keep its generator alive
+
+`include/uos/rt/async.hpp:1041, 1058, 1061, 1062, 1063, 1064, 1099, 1101`
+
+- Call next on a generator whose body first yields through a microtask. Keep the step Task and release the generator handle before that microtask runs.
+- yieldTo finds the weak core expired and abandons the body. The outstanding step has no owner capable of fulfilling or rejecting it.
+
+```diff
+--- a/cpp/gateway/include/uos/rt/async.hpp
++++ b/cpp/gateway/include/uos/rt/async.hpp
+@@ -1061,5 +1061,6 @@
+-    template <class T> Task<IteratorResult<T>> requestStep(const std::shared_ptr<GeneratorCore<T>>& core, bool isReturn) {
++    template <class T> Task<IteratorResult<T>> requestStep(std::shared_ptr<GeneratorCore<T>> core, bool isReturn) {
+       auto result = std::make_shared<PromiseState<IteratorResult<T>>>();
+       core->enqueue(isReturn, result);
+-      return awaitOwned(std::move(result));
++      auto waiting = awaitOwned(std::move(result));
++      return keepAlive<IteratorResult<T>>(std::move(core), std::move(waiting));
+     }
+```
+
+### 5. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
 
 `src/rt/async.cpp:252, 257, 258, 261, 263, 266, 268, 367, 368, 396, 397, 400, 401, 443, 445`
 
@@ -191,4 +264,46 @@ Reviewed **5/30 files** and **29 site groups**. A site group can have multiple l
 @@ -252,1 +252,2 @@
    Loop::Impl::~Impl() {
 +    LoopScope scope(owner);
+```
+
+### 6. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
+
+`include/uos/rt/async.hpp:219, 375`
+
+- awaitOwned or awaitState calls awaitSettled directly with a typed state. The call converts it to an owning base shared_ptr inside co_await.
+- The retained GCC 12 coroutine rule rejects this expression shape because await temporaries can be destroyed twice. This occurrence has static evidence.
+
+```diff
+--- a/cpp/gateway/include/uos/rt/async.hpp
++++ b/cpp/gateway/include/uos/rt/async.hpp
+@@ -219,1 +219,2 @@
+-      co_await awaitSettled(state);
++      auto ready = awaitSettled(state);
++      co_await std::move(ready);
+@@ -375,1 +376,2 @@
+-      co_await detail::awaitSettled(state);
++      auto ready = detail::awaitSettled(state);
++      co_await std::move(ready);
+```
+
+### 7. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
+
+`include/uos/rt/async.hpp:1073, 1123, 1124`
+
+- Instantiate the forwarding helpers with an owning yielded value, such as bytes, and a by-value callback. The moved parameter is materialized in the await expression.
+- The retained GCC 12 coroutine rules require creating that operation in a separate statement. This occurrence has static evidence.
+
+```diff
+--- a/cpp/gateway/include/uos/rt/async.hpp
++++ b/cpp/gateway/include/uos/rt/async.hpp
+@@ -1073,1 +1073,2 @@
+-          co_await outer(std::move(*step.value));
++          auto passing = outer(std::move(*step.value));
++          co_await std::move(passing);
+@@ -1123,2 +1124,3 @@
+-        if constexpr (std::is_same_v<Result, Task<bool>>) proceed = co_await body(std::move(*step.value));
+-        else co_await body(std::move(*step.value));
++        auto handling = body(std::move(*step.value));
++        if constexpr (std::is_same_v<Result, Task<bool>>) proceed = co_await std::move(handling);
++        else co_await std::move(handling);
 ```
