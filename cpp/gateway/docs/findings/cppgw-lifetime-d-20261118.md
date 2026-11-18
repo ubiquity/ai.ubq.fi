@@ -243,7 +243,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [ ] `src/sentinel/replay_retention_bootstrap.cpp`
 - [ ] `src/sentinel/replay_retention_metadata.cpp`
 - [ ] `src/sentinel/replay_retention_schema.cpp`
-- [ ] `src/sentinel/replay_store.cpp`
+- [x] `src/sentinel/replay_store.cpp`
 - [ ] `src/sentinel/upstream_capture.cpp`
 - [ ] `src/serve.cpp`
 - [ ] `src/static.cpp`
@@ -1261,6 +1261,15 @@ Reviewed encrypted listing and lookup, stale references, manifest and ledger rea
 - L374, 377, 381, 384, 388, 413, 416, 420, 422, 424, 432, 449 **SAFE** · The caller retains KV while lookup tasks hold copied key, status and manifest values. The named status and tombstone entries back all borrowed views.
 - L474, 476, 486, 513, 515 **SAFE** · Decrypt owns its export, key bytes and intermediate vectors. Hash, decompression and grouping children take independent values and cleanup guards run within that frame.
 
+### `src/sentinel/replay_store.cpp`
+
+Reviewed all persistence and dedupe stages, chunk ownership, cryptographic byte cleanup, KV lookups and environment adapters.
+
+- L82, 86, 93, 99, 105, 119, 129, 133, 141, 208, 214, 220, 235, 251, 265, 267, 278, 290, 297, 309, 316, 320, 324 **SAFE** · The shared persistence dependency or awaiting caller retains borrowed KV. Stages own copied manifests, fingerprints and keys, and compression/encryption frames hold their own byte buffers through waits.
+- L422, 424, 458, 463, 466, 472, 478, 484, 485, 486, 487, 497, 503, 516, 519, 544, 547, 551, 568, 572, 573, 576, 595, 615, 621 **SAFE** · A shared immutable envelope retains store and chunks. Deletion starts independent storage-owning tasks, which may finish after a failed join. Atomic operations remain named through stage and publication commits.
+- L661, 679, 714, 716, 725, 729, 740, 751, 788, 798, 799, 821, 841, 845, 853, 860, 865, 868 **SAFE** · Dedupe and persistence retain their dependency and metadata snapshots. In-frame zeroing guards run after reads and publication finish. The reference-taking API is a plain wrapper that copies before creating a Task.
+- L905, 918, 926, 951, 959, 972, 980, 994, 999, 1009, 1015, 1020, 1024 **SAFE** · The environment wrapper constructs a Task with copied inputs. Its frame owns secret bytes, the store, incident entries and guards through ordered durable writes and settlement.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1509,4 +1518,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-131/286 files reviewed. 251 sites: 233 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+132/286 files reviewed. 255 sites: 237 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

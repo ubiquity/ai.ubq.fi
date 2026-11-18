@@ -5712,8 +5712,135 @@
       "sites": []
     },
     "src/sentinel/replay_store.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed all persistence and dedupe stages, chunk ownership, cryptographic byte cleanup, KV lookups and environment adapters.",
+      "sites": [
+        {
+          "lines": [
+            82,
+            86,
+            93,
+            99,
+            105,
+            119,
+            129,
+            133,
+            141,
+            208,
+            214,
+            220,
+            235,
+            251,
+            265,
+            267,
+            278,
+            290,
+            297,
+            309,
+            316,
+            320,
+            324
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The shared persistence dependency or awaiting caller retains borrowed KV. Stages own copied manifests, fingerprints and keys, and compression/encryption frames hold their own byte buffers through waits."
+        },
+        {
+          "lines": [
+            422,
+            424,
+            458,
+            463,
+            466,
+            472,
+            478,
+            484,
+            485,
+            486,
+            487,
+            497,
+            503,
+            516,
+            519,
+            544,
+            547,
+            551,
+            568,
+            572,
+            573,
+            576,
+            595,
+            615,
+            621
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "A shared immutable envelope retains store and chunks. Deletion starts independent storage-owning tasks, which may finish after a failed join. Atomic operations remain named through stage and publication commits."
+        },
+        {
+          "lines": [
+            661,
+            679,
+            714,
+            716,
+            725,
+            729,
+            740,
+            751,
+            788,
+            798,
+            799,
+            821,
+            841,
+            845,
+            853,
+            860,
+            865,
+            868
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Dedupe and persistence retain their dependency and metadata snapshots. In-frame zeroing guards run after reads and publication finish. The reference-taking API is a plain wrapper that copies before creating a Task."
+        },
+        {
+          "lines": [
+            905,
+            918,
+            926,
+            951,
+            959,
+            972,
+            980,
+            994,
+            999,
+            1009,
+            1015,
+            1020,
+            1024
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The environment wrapper constructs a Task with copied inputs. Its frame owns secret bytes, the store, incident entries and guards through ordered durable writes and settlement."
+        }
+      ]
     },
     "src/sentinel/upstream_capture.cpp": {
       "reviewed": false,
