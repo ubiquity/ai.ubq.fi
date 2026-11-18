@@ -61,3 +61,9 @@ Both benchmark binaries used Clang 21.1.8 `-O2` with the strict port flags on th
 The two wide operands are `(1 << 4095) + (10^1233 - 1)` and `(1 << 2047)` plus 616 decimal sevens. The 256-bit conversion uses the same 77 nines as the parser workload. `sizeof(BigInt)` is 32 bytes in each build. Boost's decimal formatting took less CPU time on the wide operand and allocated about eight times as often.
 
 The full suites are still running. The first portable-driver invocation found that `tools/ci-build.sh` is mode 0644, so the succeeding invocation used `bash` to run the script. The Boost headers are in the extracted archive and the compiled archives are in the separate `boost/lib` prefix.
+
+### Fixed-width oracle correction
+
+A fresh isolated Bun 1.4.0 probe corrected the v2 observation about full-width casts. `BigInt.asUintN(1048576, -1n).toString(2).length` returns `1048576`, and `BigInt.asUintN(1048577, -1n)` throws `RangeError`. `BigInt.asIntN(1048576, 1n << 1048575n)` returns the negative of its second argument. The Boost adapter agrees in all three cases. It also fixes the old C++ signed cast's size check on a temporary mask. The deviations section describes the stricter parser cases.
+
+The portable CI compiler applies strict warnings to `base64.cpp`, including its tree-relative simdutf header. Clang 21 reports upstream sign-conversion diagnostics there. The scratch runner uses the same `--system-header-prefix=third_party/` setting as the repository sanitizer driver for that source. The first-party warning set stays fatal.
