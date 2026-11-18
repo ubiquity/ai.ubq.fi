@@ -329,7 +329,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/images.hpp`
 - [x] `include/uos/inference_admission.hpp`
 - [x] `include/uos/inference_deadline.hpp`
-- [ ] `include/uos/input_normalization.hpp`
+- [x] `include/uos/input_normalization.hpp`
 - [ ] `include/uos/jev_compaction/compaction.hpp`
 - [ ] `include/uos/jev_compaction/hybrid.hpp`
 - [ ] `include/uos/kv.hpp`
@@ -1848,6 +1848,12 @@ Reviewed deadline handles and their timer controls.
 
 - L50, 60, 65, 66, 67, 68, 75, 82 **SAFE** · The deadline handle owns its signal and control callbacks. Each active timer owns its own controller while the caller retains the clear and abort functions.
 
+### `include/uos/input_normalization.hpp`
+
+Reviewed synchronous normalization templates and exported constants.
+
+- L25, 37, 41, 42, 43, 44, 45, 46 **SAFE** · The model constant refers to a literal. JSON input pointers and string views are used synchronously and normalization produces owned values.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2096,4 +2102,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-221/286 files reviewed. 395 sites: 373 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+222/286 files reviewed. 396 sites: 374 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
