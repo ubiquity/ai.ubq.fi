@@ -106,7 +106,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/kernel/policy_queue.hpp`
 - [x] `include/uos/kernel/quota_reservations.hpp`
 - [x] `include/uos/kernel/quota_reserve.hpp`
-- [ ] `include/uos/kernel/quota_v2.hpp`
+- [x] `include/uos/kernel/quota_v2.hpp`
 - [ ] `include/uos/kernel/quota_write.hpp`
 - [ ] `include/uos/kernel/usage.hpp`
 - [ ] `src/kernel/attestation.cpp`
@@ -726,6 +726,13 @@ Queue-record inputs are owning strings, and list has no borrowed parameters. No 
 
 The reservation overloads own each input and injected KV option. The lock callback ownership is reviewed at implementation.
 
+### `include/uos/kernel/quota_v2.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 82-88 | Kernel reservation public callback handles | **SAFE** | The signal and both functions have independently owned values. The implementation's behavior when consumers drop both functions is reviewed with the timers. |
+| 154,181-185 | Quota read task inputs | **SAFE** | Each async read takes store shared ownership or copies the owner and repository strings into the task. |
+
 
 ## Ranked defects and counts
 
@@ -931,4 +938,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-83/97 files reviewed. **DEFECT 9, SAFE 192, UNCLEAR 4.**
+84/97 files reviewed. **DEFECT 9, SAFE 194, UNCLEAR 4.**

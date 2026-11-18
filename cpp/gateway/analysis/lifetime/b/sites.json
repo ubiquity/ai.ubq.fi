@@ -2519,8 +2519,27 @@
       "note": "The reservation overloads own each input and injected KV option. The lock callback ownership is reviewed at implementation."
     },
     "include/uos/kernel/quota_v2.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "82-88",
+          "verdict": "SAFE",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Kernel reservation public callback handles",
+          "evidence": "The signal and both functions have independently owned values. The implementation's behavior when consumers drop both functions is reviewed with the timers."
+        },
+        {
+          "lines": "154,181-185",
+          "verdict": "SAFE",
+          "kinds": [
+            "b"
+          ],
+          "symbol": "Quota read task inputs",
+          "evidence": "Each async read takes store shared ownership or copies the owner and repository strings into the task."
+        }
+      ]
     },
     "include/uos/kernel/quota_write.hpp": {
       "reviewed": false,
