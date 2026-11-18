@@ -370,7 +370,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/responses_buffered.hpp`
 - [x] `include/uos/responses_failover_stream.hpp`
 - [x] `include/uos/responses_handler.hpp`
-- [ ] `include/uos/responses_native_headers.hpp`
+- [x] `include/uos/responses_native_headers.hpp`
 - [ ] `include/uos/responses_request.hpp`
 - [ ] `include/uos/responses_stream.hpp`
 - [ ] `include/uos/runtime_config.hpp`
@@ -2100,6 +2100,12 @@ Reviewed ordinary and pre-parsed request interfaces.
 
 - L5, 7, 9, 11, 13 **SAFE** · Production route and image caller frames retain their context and parsed body through the direct awaits. Stream handoff captures owned copies before the caller can finish.
 
+### `include/uos/responses_native_headers.hpp`
+
+Reviewed the early-header error Task and associated request metadata declarations.
+
+- L11 **SAFE** · The early-header recovery takes its request, response and telemetry context by value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2349,4 +2355,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-262/286 files reviewed. 445 sites: 421 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+263/286 files reviewed. 446 sites: 422 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
