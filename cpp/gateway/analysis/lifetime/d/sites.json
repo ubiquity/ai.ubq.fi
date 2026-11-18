@@ -2566,7 +2566,8 @@
       "sites": []
     },
     "src/authority/native_runtime_contracts.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed runtime verification and routing codecs. Conversion and variant visitation use input references synchronously and return owned data.",
       "sites": []
     },
     "src/bounded_response_body.cpp": {
