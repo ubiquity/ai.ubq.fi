@@ -322,7 +322,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/handler/http.hpp`
 - [x] `include/uos/handler/index.hpp`
 - [x] `include/uos/handler/serve_handler.hpp`
-- [ ] `include/uos/handler/terminal_log.hpp`
+- [x] `include/uos/handler/terminal_log.hpp`
 - [ ] `include/uos/handler/terminal_route.hpp`
 - [ ] `include/uos/health.hpp`
 - [ ] `include/uos/http.hpp`
@@ -1805,6 +1805,12 @@ Reviewed the delivery handoff closure and injected request callback.
 
 - L11, 14, 16, 18, 19, 21 **SAFE** · The returned handoff owns its delivery state and removes the request listener. Created handlers transfer the injected callback into each awaiting request Task before it starts.
 
+### `include/uos/handler/terminal_log.hpp`
+
+Reviewed terminal registration, delivery metadata and writer callback interfaces. Their multi-writer and body-delivery lifetime sites are classified in src/handler/terminal_log.cpp.
+
+- L31, 33, 34, 35, 51, 55, 62, 65 **SAFE** · Callbacks, delivery handles and signal transfer by value into the terminal state. The quota finalizer retains it through the terminal await, and the release callback itself runs synchronously.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2053,4 +2059,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-214/286 files reviewed. 387 sites: 366 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+215/286 files reviewed. 388 sites: 367 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

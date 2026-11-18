@@ -8638,8 +8638,30 @@
       ]
     },
     "include/uos/handler/terminal_log.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed terminal registration, delivery metadata and writer callback interfaces. Their multi-writer and body-delivery lifetime sites are classified in src/handler/terminal_log.cpp.",
+      "sites": [
+        {
+          "lines": [
+            31,
+            33,
+            34,
+            35,
+            51,
+            55,
+            62,
+            65
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Callbacks, delivery handles and signal transfer by value into the terminal state. The quota finalizer retains it through the terminal await, and the release callback itself runs synchronously."
+        }
+      ]
     },
     "include/uos/handler/terminal_route.hpp": {
       "reviewed": false,
