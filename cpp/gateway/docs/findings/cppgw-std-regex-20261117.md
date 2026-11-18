@@ -58,3 +58,111 @@ private `/tmp` hid `libicuuc.so.78`. The rerun stages the ICU and SQLite
 shared libraries under a separate `/var/tmp` directory and uses it as the
 binary's runtime library search path. The driver keeps its private fixture
 filesystem and loopback-only network boundary.
+
+## Focused release qualification
+
+The focused command `bash cpp/gateway/tools/ci-build.sh --config release rt/regex_test.cpp`
+passed 1/1 binaries and 20/20 cases, with a clean 369/369 production object phase
+in 577.378 seconds. It ran inside the driver's private Linux network, mount,
+and PID namespaces via the runner's `sudo` fallback. The input digest stayed
+`6f477813df431cf600bd698037a67d23044438b62e790868619c73ad86527b53`
+throughout the run. The receipt identifies commit
+`d39285b30f7e9be1959d062a5e3c51eb7d3632bc` and tree
+`2129071d979caaa78a404916dc00988b9c95116a`. That commit and the preflight
+report commit have the same executable inputs.
+
+The separate CMake vendor target also built both upstream C11 translation units
+and archived them under `uos_vendor_quickjs-libregexp`. The portable CI driver
+still passes only the first vendor source to its build graph. The local check
+uses Clang 21 in C11 mode for `libregexp.c` and passes the separately compiled
+`libunicode.c` object at link time. Both sources use the selected optimization
+and sanitizer settings. No production or shared driver changes are needed to
+perform this local qualification.
+
+## Full release sweep
+
+All four portable release shards completed on the strict Clang 21 build.
+The driver ran `bash cpp/gateway/tools/ci-build.sh --config release --shard N/4`
+for each `N` from 1 through 4 with the same compiler launcher and link inputs
+as the focused run.
+
+| Shard | Binaries passed | Cases passed | Build failures | Timeouts |
+| ----- | --------------: | -----------: | -------------: | -------: |
+| 1/4   |         111/111 |  1,290/1,290 |              0 |        0 |
+| 2/4   |         109/110 |  1,027/1,029 |              0 |        0 |
+| 3/4   |         110/110 |  1,376/1,376 |              0 |        0 |
+| 4/4   |         109/110 |  1,332/1,333 |              0 |        0 |
+| Total |         439/441 |  5,025/5,028 |              0 |        0 |
+
+The four receipts identify commit `b63fe35a798cbaf50fd0c7ea1f1ee281689af649`,
+tree `4dd8f5eb03d74dde0de4ffcab22e6bc750cb1153` and input digest
+`6f477813df431cf600bd698037a67d23044438b62e790868619c73ad86527b53`.
+The digest matched before and after each shard. All 369 production objects
+built. The regex suite passed 20/20, images passed 37/37, and the Jev
+compaction suite passed 23/23. The URL tests that failed in the earlier
+ICU 74.2 run passed with ICU 78.3.
+
+The two failing binaries are outside the owned paths.
+
+- `tests/kv_conversion_typed_value_differential_test.cpp` passes 5/7 cases.
+  The round-trip case expects `/a/v` to throw because the former C++ engine
+  lacked `v`. The malformed graph case has six regex inputs that still throw
+  `SyntaxError`, with new diagnostics for invalid flags or an unclosed group.
+- `tests/kv_conversion_profile_json_differential_test.cpp` passes 4/5 cases.
+  The three failing comparisons still reject malformed input with
+  `SyntaxError`. The new diagnostics are `unexpected end` for `/[/` and
+  `invalid regular expression flags` for `/a/zz` and `noslash`.
+
+A Bun 1.4.0 probe with `--no-env-file --no-install` confirmed that `/a/v`
+compiles and projects source `a` and flags `v`. It also confirmed the old
+diagnostics for the malformed patterns and flags. The two test files retain
+their original assertions under the job's path scope.
+
+## ASan and UBSan sweep
+
+The same portable driver ran `bash cpp/gateway/tools/ci-build.sh --config asan rt/regex_test.cpp`
+and `bash cpp/gateway/tools/ci-build.sh --config asan --shard N/4` for `N` from
+1 through 4. It compiled all 369 production translation units in both
+sanitizers at `-O1 -gline-tables-only -fno-omit-frame-pointer` with the port
+warnings. The driver enabled leak detection, aborted on ASan findings, and
+halted on UBSan findings. The focused run passed 20/20 cases. The suite has
+the same two KV assertion failures as release and no sanitizer findings.
+
+| Shard | Binaries passed | Cases passed | Build failures | Timeouts | Elapsed seconds |
+| ----- | --------------: | -----------: | -------------: | -------: | --------------: |
+| 1/4   |         111/111 |  1,290/1,290 |              0 |        0 |         400.460 |
+| 2/4   |         109/110 |  1,027/1,029 |              0 |        0 |         367.108 |
+| 3/4   |         110/110 |  1,376/1,376 |              0 |        0 |         469.387 |
+| 4/4   |         109/110 |  1,332/1,333 |              0 |        0 |         444.478 |
+| Total |         439/441 |  5,025/5,028 |              0 |        0 |       1,681.433 |
+
+Every test binary links the regex runtime. The four shard receipts cover
+441 distinct binaries and bind the same commit, tree, and unchanged input
+digest as the release sweep. The image and compaction binaries again passed
+37/37 and 23/23 cases.
+
+## Adapter and source size
+
+Against `09f9840dd1df3498d83f6f32b1987beaddbaec64`, the six owned production
+regex files have 5,668 lines deleted and 251 added. They went from 6,318 to
+901 physical lines, a net reduction of 5,417 lines. Counts exclude vendor,
+registration, tests, and documentation.
+
+Libregexp owns parsing, execution, and Unicode data. The adapter keeps the
+C++ API, source and flag projection, UTF-16 and byte offsets, named captures,
+and state and progress for exec, match-all, replace, and split. The image
+validator's anchored pattern compiles to bounded repeats with a lookahead
+that commits to the matched payload span. This keeps existing large uploads
+within the library's backtracking limits while preserving validation and the
+original projected source. The execution budget also covers large compaction
+scans. [Deviations and resource limits](../DEVIATIONS-FROM-BUN.md)
+
+## Fuzz smoke
+
+The inherited `regex_library` harness selects one public operation per input
+and catches ordinary `rt::JsError` exceptions. Its seven seeds cover captures,
+replacement, splitting, Unicode sets and offsets, embedded NUL, invalid bytes,
+and a zero-length global match. The Clang 21 libFuzzer build exercised both
+vendor translation units under ASan and UBSan. The 120-second smoke campaign
+ran for 123 seconds including shutdown, executed 901,617 inputs, retained
+2,271 corpus entries, and exited zero with no crash, timeout, or OOM artifacts.
