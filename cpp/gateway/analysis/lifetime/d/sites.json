@@ -7758,7 +7758,8 @@
       ]
     },
     "include/uos/authority/native_api_key_policy.hpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed validation and write-plan interfaces. They accept borrowed JSON and records for synchronous calls and return owning policy values; there is no escaping callback.",
       "sites": []
     },
     "include/uos/authority/native_authority.hpp": {
