@@ -3895,8 +3895,28 @@
       "sites": []
     },
     "src/provider/selection.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Provider selection reads and writes snapshots. Its in-flight token needs the same cleanup on frame destruction as on settlement.",
+      "sites": [
+        {
+          "lines": "82-96,102-107,181-204",
+          "kind": "store, hash and selection snapshot ownership",
+          "verdict": "SAFE",
+          "reason": "The frame owns KV through the joined child or virtual task. Hash and selection reads do not keep shared map entries across suspension."
+        },
+        {
+          "lines": "82-98,264-277",
+          "kind": "selection cache retains an abandoned load",
+          "verdict": "DEFECT",
+          "reason": "Destroying a fixture Loop while KV is pending destroys the load frame without executing its global reset. A later Loop can reuse the stranded Promise. Move the token-checked reset into a frame scope guard."
+        },
+        {
+          "lines": "149-176,238-252",
+          "kind": "selection views and synchronous predicate",
+          "verdict": "SAFE",
+          "reason": "Views are consumed while their caller-owned strings or KV values remain live. The predicate never leaves selectedCatalogEntryProviders."
+        }
+      ]
     },
     "src/provider/stream_relay.cpp": {
       "status": "pending",

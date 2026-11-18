@@ -321,7 +321,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/presentation.cpp`
 - [x] `src/provider/removed_provider_circuit.cpp`
 - [x] `src/provider/removed_provider_telemetry.cpp`
-- [ ] `src/provider/selection.cpp`
+- [x] `src/provider/selection.cpp`
 - [ ] `src/provider/stream_relay.cpp`
 - [ ] `src/provider/surplus.cpp`
 - [ ] `src/provider/surplus_claude_chat_request.cpp`
@@ -2050,3 +2050,11 @@ The retired circuit returns settled promises with owned values and registers no 
 ### `src/provider/removed_provider_telemetry.cpp`
 
 The retired telemetry hook returns an already settled promise without retaining its argument.
+
+### `src/provider/selection.cpp`
+
+Provider selection reads and writes snapshots. Its in-flight token needs the same cleanup on frame destruction as on settlement.
+
+- 82-96,102-107,181-204 · store, hash and selection snapshot ownership · **SAFE** · The frame owns KV through the joined child or virtual task. Hash and selection reads do not keep shared map entries across suspension.
+- 82-98,264-277 · selection cache retains an abandoned load · **DEFECT** · Destroying a fixture Loop while KV is pending destroys the load frame without executing its global reset. A later Loop can reuse the stranded Promise. Move the token-checked reset into a frame scope guard.
+- 149-176,238-252 · selection views and synchronous predicate · **SAFE** · Views are consumed while their caller-owned strings or KV values remain live. The predicate never leaves selectedCatalogEntryProviders.
