@@ -175,7 +175,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/kv.cpp`
 - [x] `src/kv_conversion/cli.cpp`
 - [x] `src/kv_conversion/convert.cpp`
-- [ ] `src/kv_conversion/cursors.cpp`
+- [x] `src/kv_conversion/cursors.cpp`
 - [ ] `src/kv_conversion/legacy_codec.cpp`
 - [ ] `src/kv_conversion/native_schema.cpp`
 - [ ] `src/kv_conversion/profile_json.cpp`
@@ -967,6 +967,10 @@ Reviewed staged SQLite source ownership, transcoding, snapshot callbacks and com
 - L456, 459, 469, 473, 478, 481, 482, 486, 488 **SAFE** · The snapshot frame holds the erased callable and reader for the entirety of its directly awaited invocation. Snapshot inputs and results are copied.
 - L509, 516, 527, 531, 538, 545, 548, 571, 573, 586, 588, 591, 658 **SAFE** · The converter's signal check only reads its own options inline. The frame keeps snapshot and output handles until the named transfer and flush complete and owns rollback targets through abort.
 
+### `src/kv_conversion/cursors.cpp`
+
+Reviewed synchronous packing, cursor migration and direction/key parsing. Input spans are used only to create owned copy data. No suspension or escaping callback.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1180,4 +1184,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-85/286 files reviewed. 187 sites: 172 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+86/286 files reviewed. 187 sites: 172 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

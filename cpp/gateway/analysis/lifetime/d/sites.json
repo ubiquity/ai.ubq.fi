@@ -3934,7 +3934,8 @@
       ]
     },
     "src/kv_conversion/cursors.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous packing, cursor migration and direction/key parsing. Input spans are used only to create owned copy data. No suspension or escaping callback.",
       "sites": []
     },
     "src/kv_conversion/legacy_codec.cpp": {
