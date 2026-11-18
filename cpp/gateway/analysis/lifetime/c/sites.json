@@ -757,7 +757,8 @@
       ]
     },
     "include/uos/harmony/reliability/hash.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous reliability hashing declarations.",
       "sites": []
     },
     "include/uos/harmony/reliability/loops.hpp": {
