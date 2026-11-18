@@ -7723,8 +7723,21 @@
       ]
     },
     "include/uos/authority/native_api_key.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed usage provider constants, window helpers and admission-plan declarations.",
+      "sites": [
+        {
+          "lines": [
+            23
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Provider views point to literals. Usage helpers consume input records synchronously and return owning plans."
+        }
+      ]
     },
     "include/uos/authority/native_api_key_audit.hpp": {
       "reviewed": false,
