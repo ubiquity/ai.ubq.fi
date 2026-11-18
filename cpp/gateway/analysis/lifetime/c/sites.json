@@ -2794,7 +2794,8 @@
       ]
     },
     "src/harmony/reliability/hash.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Reliability hashes are calculated synchronously from live input views.",
       "sites": []
     },
     "src/harmony/reliability/loops.cpp": {

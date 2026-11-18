@@ -250,7 +250,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/reliability/failure.cpp`
 - [x] `src/harmony/reliability/feedback.cpp`
 - [x] `src/harmony/reliability/harness.cpp`
-- [ ] `src/harmony/reliability/hash.cpp`
+- [x] `src/harmony/reliability/hash.cpp`
 - [ ] `src/harmony/reliability/loops.cpp`
 - [ ] `src/harmony/reliability/retry.cpp`
 - [ ] `src/harmony/reliability/state.cpp`
@@ -1600,3 +1600,7 @@ The harness joins private borrowing helpers and uses owning race branches for ca
 - 218-298 · transport, body parse, and borrowed retry parameters · **SAFE** · The joined frame retains run, opts and built. HarmonyTransport::keepAlive and Response::json separately own the work that may outlive an aborted wait.
 - 321-340,369-414 · tool annotations, retry sleep and loop references · **SAFE** · The sequential caller owns run, options, validation data, tool calls and analysis through the join. Tool routing takes an owning backend handle.
 - 465-479,511-519 · turn and run joins · **SAFE** · runReliabilityHarness owns run and options, and runHarnessTurn owns the built request and normalized result until both children complete.
+
+### `src/harmony/reliability/hash.cpp`
+
+Reliability hashes are calculated synchronously from live input views.
