@@ -251,7 +251,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/reliability/feedback.cpp`
 - [x] `src/harmony/reliability/harness.cpp`
 - [x] `src/harmony/reliability/hash.cpp`
-- [ ] `src/harmony/reliability/loops.cpp`
+- [x] `src/harmony/reliability/loops.cpp`
 - [ ] `src/harmony/reliability/retry.cpp`
 - [ ] `src/harmony/reliability/state.cpp`
 - [ ] `src/harmony/reliability/surfaces.cpp`
@@ -1604,3 +1604,7 @@ The harness joins private borrowing helpers and uses owning race branches for ca
 ### `src/harmony/reliability/hash.cpp`
 
 Reliability hashes are calculated synchronously from live input views.
+
+### `src/harmony/reliability/loops.cpp`
+
+Loop detection and ordered-map observation execute synchronously. Returned flags own their inspection results.

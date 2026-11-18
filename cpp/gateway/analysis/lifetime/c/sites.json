@@ -2799,7 +2799,8 @@
       "sites": []
     },
     "src/harmony/reliability/loops.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Loop detection and ordered-map observation execute synchronously. Returned flags own their inspection results.",
       "sites": []
     },
     "src/harmony/reliability/retry.cpp": {
