@@ -246,7 +246,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/sentinel/replay_store.cpp`
 - [x] `src/sentinel/upstream_capture.cpp`
 - [x] `src/serve.cpp`
-- [ ] `src/static.cpp`
+- [x] `src/static.cpp`
 - [ ] `src/systemone/handlers.cpp`
 - [ ] `src/types.cpp`
 - [ ] `src/upstream_wire.cpp`
@@ -1338,6 +1338,15 @@ Reviewed startup, lifecycle signal registration, Mac maintenance, and ordering o
 - L123, 124, 133, 156, 170, 174, 175, 192, 201, 216 **DEFECT** · Startup discards the migration Promise. If shutdown reaches KV close while that migration is suspended, its next read or atomic write uses a closed database even though a shared pointer retains the object. Keep the startup Promise and await it after server settlement and before closing KV, including the prepared launcher failure path.
 - L225, 229, 231, 235, 239 **SAFE** · The options wrapper copies host and port before lazy startup begins. The main coroutine constructs owned arguments from the process argv vector before starting configuration.
 
+### `src/static.cpp`
+
+Reviewed static asset-map lifetime, process-wide configuration, request content negotiation and response assembly.
+
+- L32, 140, 145, 157, 168 **SAFE** · Asset registration and path views are synchronous. The immutable process-static module owns the map, and each mapped asset has a shared owner.
+- L174, 189, 220, 222 **SAFE** · Both asset coroutines own an asset pointer. The body bytes or text and extra headers remain values in their awaiting frames through response construction.
+- L214, 215, 312, 317 **SAFE** · Header enumeration returns an owned vector. The ranking and sort callbacks consume references only inside synchronous operations on local containers.
+- L343, 344, 347, 353, 360, 368, 373, 378 **SAFE** · Static lookup copies the shared asset pointer before awaiting. Root handling holds a request value, uses immutable module data, and retains the KV handle returned by the lookup.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1586,4 +1595,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-138/286 files reviewed. 293 sites: 272 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+139/286 files reviewed. 297 sites: 276 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

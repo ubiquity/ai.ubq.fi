@@ -6607,8 +6607,72 @@
       ]
     },
     "src/static.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed static asset-map lifetime, process-wide configuration, request content negotiation and response assembly.",
+      "sites": [
+        {
+          "lines": [
+            32,
+            140,
+            145,
+            157,
+            168
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Asset registration and path views are synchronous. The immutable process-static module owns the map, and each mapped asset has a shared owner."
+        },
+        {
+          "lines": [
+            174,
+            189,
+            220,
+            222
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Both asset coroutines own an asset pointer. The body bytes or text and extra headers remain values in their awaiting frames through response construction."
+        },
+        {
+          "lines": [
+            214,
+            215,
+            312,
+            317
+          ],
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Header enumeration returns an owned vector. The ranking and sort callbacks consume references only inside synchronous operations on local containers."
+        },
+        {
+          "lines": [
+            343,
+            344,
+            347,
+            353,
+            360,
+            368,
+            373,
+            378
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Static lookup copies the shared asset pointer before awaiting. Root handling holds a request value, uses immutable module data, and retains the KV handle returned by the lookup."
+        }
+      ]
     },
     "src/systemone/handlers.cpp": {
       "reviewed": false,
