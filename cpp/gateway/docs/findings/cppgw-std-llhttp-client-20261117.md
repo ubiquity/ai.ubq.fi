@@ -205,3 +205,58 @@ ran 391,994 inputs in 121 seconds, exit 0, with no sanitizer diagnostics or find
 binary with `-max_len=16384 -timeout=3 -rss_limit_mb=768 -max_total_time=120 -print_final_stats=1` in a private
 network namespace with an empty home and fresh temporary directory. The binary's SHA-256 was
 `1ca5c39015844cb27cb1bc1e580f4905779c684d333d3efbd5d5059f7e65219f`.
+
+## Final sanitizer continuation
+
+The continuation started at `6f37825659abe01e84f98bf4e3d3b6956f57635f`, tree
+`bdbdcd15f0709a16462997d0f0715747c3aee06d`. The release graph reports `ninja: no work to do`. Recomputing the driver
+input digest matched the full release and sanitizer receipts for `93b8c4fb`, each with 369 production objects
+compiled and an unchanged source digest. The source and fixture inputs are identical to the prior verified tree.
+
+The full Clang 21 ASan/UBSan run used `-O0 -gline-tables-only` after the driver's defaults. It completed in
+1,677.940 seconds with 439/442 passing binaries, 4,995/4,997 passing cases, zero build failures and one timeout.
+The three exceptions were `codex_supervisor_secret_test` (two 2,000 ms timing assertions), `rt/json_test`
+(an ASan stack overflow in `matchesAt` during the 10,000-level JSON depth test), and
+`sentinel_replay_retention_metadata_test` (300-second process timeout). All five fetch-named binaries passed,
+and the continuation uses the passing receipts for the other binaries. The retry selects just those three
+unchanged fixtures using the driver's `-O1` sanitizer profile and real Linux fixture boundary.
+
+```sh
+scratch=/var/tmp/cppgw-llhttp-final.cIfMo7
+gate_dir="$scratch/resume-control.fWMSKkrq"
+ulimit -S -s 65536
+env -i "PATH=$scratch/bin:/usr/local/bin:/usr/bin:/bin" LC_ALL=C TZ=UTC \
+  "HOME=$gate_dir/home" "TMPDIR=$gate_dir/tmp" \
+  "PKG_CONFIG_PATH=$scratch/icu-prefix/lib/pkgconfig:$scratch/sqlite/lib/pkgconfig" \
+  "CXX=$scratch/bin/clang++-21-driver" \
+  "UOS_CI_CXXFLAGS=-isystem $scratch/boost_1_92_0 --system-header-prefix=third_party/ -gline-tables-only" \
+  "UOS_CI_LDFLAGS=-L$scratch/boost-stage/lib" "UOS_CI_BUILD_DIR=$gate_dir/out" \
+  UOS_CI_JOBS=4 UOS_CI_TIMEOUT=420 python3 -B "$gate_dir/select.py" --config asan
+```
+
+The scratch selector used the repository driver for all 44 runtime objects, the three tests and their exact Links
+closures. The sudo boundary retained its 8 MiB stack limit. The optimized retry compiled all 76 Ninja targets
+and passed 76/76 cases in 203.734 seconds with zero sanitizer diagnostics. Supervisor redaction passed 41/41 cases
+in 1.224 seconds, JSON passed 25/25 in 0.220 seconds, and Sentinel retention passed 10/10 in 64.366 seconds.
+
+The release receipt, the original sanitizer receipt and the optimized retry share driver input digest
+`c476cfb902971d23bf50fa0930adb407f03a171186a90534d1552a17adf8ac29`. Their receipt SHA-256 digests are
+`23cadf65d2c6eced7dd4451b3e707d653a682def0b398a9be435d4aa6991f174`,
+`ead139289ca13f62d0121f4b16401143fbc774fa00f73c52ae451411549c190a`, and
+`65e95427c98b7693f6473a47e5f6806509112356c18f8f3cbc4aabec06ab7894`, respectively. Reconciling the 439 original
+sanitizer passes and the three optimized passes gives **442/442 binaries and 5,032/5,032 cases** under ASan/UBSan.
+Each binary's case count matches the complete ARM64 release pass.
+
+The fetched `origin/development` at `70afb98dc1651a7a5851d8ee4f79ace5d4c836d1` lacks the C++ port baseline.
+A pull request to that branch from this tip would carry the wider port. `git push --dry-run` to the existing
+fetch follow-up branch failed because the GitHub remote requires authentication. The local task commits are
+available for the C++ integration lane.
+
+The appended Markdown passed `bun --no-env-file run format:check` with the frozen formatter in scratch.
+Whole-report formatting flags the inherited opening table. The report prefix is byte-identical to the starting
+commit and `git diff --check de4ff431` passed.
+
+The follow-up removes 206 first-party production lines and adds 181, a net reduction of 25. Short SSE responses
+measured 351.3 ns/op coalesced and 447.9 ns/op across four reads, against the original 461.8 ns/op pre-llhttp
+benchmark. The release and reconciled sanitizer gates each cover all 442 binaries. The portable driver required
+the scratch C archive adapter. Publishing the clean local branch and merging it with the C++ port remain pending.
