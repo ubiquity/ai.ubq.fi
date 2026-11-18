@@ -66,7 +66,22 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 
 ## Tool receipts
 
-Pending dependency/tool checks and finder runs.
+The restored runner is Ubuntu 24.04.5 LTS on Linux ARM64. Clang and clang-tidy
+are 21.1.8. The available dependencies are Boost 1.92.0 static JSON and Container,
+SQLite 3.54.0, OpenSSL 3.0.13, zlib 1.3, ICU 74.2, Brotli 1.1.0 and Zstd 1.5.5.
+The focused checks below do not qualify the Unicode differential suite with ICU 74.2.
+
+The retained clang-tidy run completed all **17/17** in-area source translation units
+with five selected checks, zero warnings, zero frontend failures and zero timeouts.
+The run took 38.321 seconds with two workers and peak child RSS of 471,416 KiB.
+The coroutine control emitted exactly three expected diagnostics in 0.662 seconds.
+Headers were analyzed through these translation units and reviewed directly.
+
+The retained focused sanitizer logs include two heap-use-after-free reports and one
+leak report. The repo fixture boundary used fresh network, mount and PID namespaces
+through passwordless sudo after unprivileged namespace setup failed. The probe
+verified loopback, an unreachable outside route, private `/tmp` and uid 1001.
+Detailed run receipts and remaining verification are being reconciled.
 
 ## Site verdicts
 
