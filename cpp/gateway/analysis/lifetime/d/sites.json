@@ -3851,8 +3851,87 @@
       ]
     },
     "src/kv_conversion/convert.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed staged SQLite source ownership, transcoding, snapshot callbacks and commit/rollback cleanup.",
+      "sites": [
+        {
+          "lines": [
+            133,
+            152,
+            165,
+            222,
+            231
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Snapshot and transcode operations own their paths, options, row data and codec handles. They use named task results through hashing and conversion."
+        },
+        {
+          "lines": [
+            249,
+            252,
+            253,
+            254,
+            262
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The transfer owns the source reader, destination database, statement and cursor across per-row awaits. Each row is a value snapshot, no other task touches the private staging handles, and the CLI awaits transfer before closing anything."
+        },
+        {
+          "lines": [
+            456,
+            459,
+            469,
+            473,
+            478,
+            481,
+            482,
+            486,
+            488
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The snapshot frame holds the erased callable and reader for the entirety of its directly awaited invocation. Snapshot inputs and results are copied."
+        },
+        {
+          "lines": [
+            509,
+            516,
+            527,
+            531,
+            538,
+            545,
+            548,
+            571,
+            573,
+            586,
+            588,
+            591,
+            658
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The converter's signal check only reads its own options inline. The frame keeps snapshot and output handles until the named transfer and flush complete and owns rollback targets through abort."
+        }
+      ]
     },
     "src/kv_conversion/cursors.cpp": {
       "reviewed": false,

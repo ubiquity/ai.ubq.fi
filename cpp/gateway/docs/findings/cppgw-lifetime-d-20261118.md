@@ -174,7 +174,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/jev_compaction/hybrid.cpp`
 - [x] `src/kv.cpp`
 - [x] `src/kv_conversion/cli.cpp`
-- [ ] `src/kv_conversion/convert.cpp`
+- [x] `src/kv_conversion/convert.cpp`
 - [ ] `src/kv_conversion/cursors.cpp`
 - [ ] `src/kv_conversion/legacy_codec.cpp`
 - [ ] `src/kv_conversion/native_schema.cpp`
@@ -958,6 +958,15 @@ Reviewed argument parsing, conversion dispatch and CLI error translation.
 
 - L21, 31, 51, 52, 67 **SAFE** · The CLI frame owns input flags and the local validator runs synchronously. Conversion receives named options by value and the top-level wrapper directly awaits the CLI task.
 
+### `src/kv_conversion/convert.cpp`
+
+Reviewed staged SQLite source ownership, transcoding, snapshot callbacks and commit/rollback cleanup.
+
+- L133, 152, 165, 222, 231 **SAFE** · Snapshot and transcode operations own their paths, options, row data and codec handles. They use named task results through hashing and conversion.
+- L249, 252, 253, 254, 262 **SAFE** · The transfer owns the source reader, destination database, statement and cursor across per-row awaits. Each row is a value snapshot, no other task touches the private staging handles, and the CLI awaits transfer before closing anything.
+- L456, 459, 469, 473, 478, 481, 482, 486, 488 **SAFE** · The snapshot frame holds the erased callable and reader for the entirety of its directly awaited invocation. Snapshot inputs and results are copied.
+- L509, 516, 527, 531, 538, 545, 548, 571, 573, 586, 588, 591, 658 **SAFE** · The converter's signal check only reads its own options inline. The frame keeps snapshot and output handles until the named transfer and flush complete and owns rollback targets through abort.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1171,4 +1180,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-84/286 files reviewed. 183 sites: 168 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+85/286 files reviewed. 187 sites: 172 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
