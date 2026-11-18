@@ -1449,8 +1449,16 @@
       ]
     },
     "include/uos/provider/openrouter_handlers.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Handler injection and borrowed telemetry interfaces.",
+      "sites": [
+        {
+          "lines": "6-15",
+          "kind": "borrowed transport inputs",
+          "verdict": "SAFE",
+          "reason": "Handler/dispatch frames retain the callback, body and init until the joined invocation finishes, and the relay copies the context."
+        }
+      ]
     },
     "include/uos/provider/openrouter_request_controls.hpp": {
       "status": "pending",

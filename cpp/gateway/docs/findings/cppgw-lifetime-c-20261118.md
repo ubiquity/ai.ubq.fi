@@ -170,7 +170,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/lithos_streams.hpp`
 - [x] `include/uos/provider/metered.hpp`
 - [x] `include/uos/provider/openrouter.hpp`
-- [ ] `include/uos/provider/openrouter_handlers.hpp`
+- [x] `include/uos/provider/openrouter_handlers.hpp`
 - [ ] `include/uos/provider/openrouter_request_controls.hpp`
 - [ ] `include/uos/provider/openrouter_streams.hpp`
 - [ ] `include/uos/provider/openrouter_web_tools.hpp`
@@ -1075,3 +1075,9 @@ Metered Models and Responses request declarations.
 Ref-taking public funcs are synchronous wrappers for owning tasks.
 
 - 44-49,56-57,67-68 · task factories · **SAFE** · Fetch wrappers copy the body, init or decision record before returning their coroutine; lookup frames own the model string.
+
+### `include/uos/provider/openrouter_handlers.hpp`
+
+Handler injection and borrowed telemetry interfaces.
+
+- 6-15 · borrowed transport inputs · **SAFE** · Handler/dispatch frames retain the callback, body and init until the joined invocation finishes, and the relay copies the context.
