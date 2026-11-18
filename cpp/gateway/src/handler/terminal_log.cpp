@@ -30,6 +30,11 @@ namespace uos::handler::terminal_log {
     using BodyObservation = std::optional<model::SentinelClientBodyObservation>;
     using Controller = rt::ReadableStreamDefaultController<rt::ByteChunk>;
 
+    bool skipsAdminError(const WithTerminalRequestLogInput& input, int status, std::string_view provider) {
+      // The default admin writer deliberately omits gateway authentication failures.
+      return !input.recordAdminError && status == 401 && provider == "gateway";
+    }
+
     // rt::allSettled has a homogeneous result type; this batch discards heterogeneous values.
     template <class... T> rt::Promise<void> settleWrites(const rt::Promise<T>&... writes) {
       struct Batch {
@@ -176,6 +181,11 @@ namespace uos::handler::terminal_log {
       };
       const auto usageRollupWrite = (input.recordUsageRollup ? input.recordUsageRollup(rollupInput)
         : rt::Promise(paid_fallback::rollups::recordTerminalUsageRollup(rollupInput))).catch_([](rt::Reason) { return false; });
+      if (!input.sentinelReplayInput && skipsAdminError(input, data.response.status(), provider)) {
+        const auto writes = settleWrites(telemetryWrite, cacheAnalyticsWrite, usageRollupWrite);
+        co_await writes.wait();
+        co_return;
+      }
       const model::SentinelFailureObservation replayObservation{
         .status = static_cast<double>(data.response.status()), .stream = stream, .completed = completed, .terminal_type = terminalType,
         .failure_kind = failureKind, .synthetic_terminal_type = telemetry ? telemetry->syntheticTerminalType : std::nullopt, .provider_route = provider,
@@ -497,7 +507,12 @@ namespace uos::handler::terminal_log {
     const std::string contentType = rt::toLowerCase(response.headers().get("Content-Type").value_or(""));
     const bool isSse = rt::includes(contentType, "text/event-stream");
     const auto initialTelemetry = openai_telemetry::getResponseTelemetry(state->telemetryResponse());
-    if (!isSse && response.body() && (response.status() >= 400 || response.status() == 202 || rt::startsWith(state->input.route, "embeddings.jobs.") ||
+    // Pre-admission auth refusals without diagnostic consumers need no cloned body.
+    const auto& options = state->input;
+    const bool skipAuthBody = options.admissionStage == "pre_admission" && !options.onSettled && !initialTelemetry &&
+      !response.headers().has("x-uos-upstream") && !options.sentinelReplayInput && !options.sentinelReplayOmission &&
+      skipsAdminError(options, response.status(), "gateway");
+    if (!isSse && response.body() && ((response.status() >= 400 && !skipAuthBody) || response.status() == 202 || rt::startsWith(state->input.route, "embeddings.jobs.") ||
         (initialTelemetry && !initialTelemetry->completed && (initialTelemetry->streamTerminalType || initialTelemetry->failureKind || initialTelemetry->syntheticTerminalType)))) {
       state->bufferedObservation = rt::Promise(replay::inspectSentinelBufferedResponseBody(response));
     }
