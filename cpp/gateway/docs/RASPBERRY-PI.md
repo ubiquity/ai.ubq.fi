@@ -23,7 +23,7 @@ The compiler is Clang 21 on Debian 12, with Bookworm's libstdc++ and libgcc link
 | ------------------------------ | ------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Boost.JSON and Boost.Container | 1.74 for Bookworm's Boost suite | Static 1.92.0 from the verified upstream archive                                                  |
 | simdjson and simdutf           | Vendored in this source tree    | Static 5.2.0 and 9.4.0 from the CMake vendor registry                                             |
-| llhttp                        | Vendored in this source tree    | Static 9.4.4 from the CMake vendor registry                                                      |
+| llhttp                         | Vendored in this source tree    | Static 9.4.4 from the CMake vendor registry                                                       |
 | SQLite                         | 3.40.1                          | Static 3.54.0 with `SQLITE_DQS=3`, matching the durable store's differential fixtures             |
 | ICU                            | 72.1                            | Static ICU 78.3, including data for case mapping, collation and URL IDNA                          |
 | OpenSSL                        | 3.0.x                           | Shared `libssl.so.3` and `libcrypto.so.3`. Trixie supplies the same SONAMEs through `libssl3t64`. |

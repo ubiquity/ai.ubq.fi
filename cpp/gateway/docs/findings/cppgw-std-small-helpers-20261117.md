@@ -11,13 +11,13 @@ runtime APIs, and delivery receipts are invariants. Deployment, provider
 traffic, credentials, and unrelated source and test edits are outside the
 work contract.
 
-| Step        | Standard facility                       | Compatibility surface                              |
-| ----------- | --------------------------------------- | -------------------------------------------------- |
-| Date        | `get_time`, `from_chars`, `chrono`     | ISO timestamps, offsets, UTC bytes, IMF-fixdate     |
-| Headers     | Existing normalized HTTP field name     | Validation, Cookie/Set-Cookie, delivery and spelling |
-| Environment | Boost.PropertyTree INI                  | Flat explicit files, quotes, pre-existing variables |
-| Filesystem  | `filesystem::path`, shared UTF codecs   | POSIX state paths, descriptors, text and byte reads  |
-| Console     | Boost.JSON, `charconv`                   | Operator events, structured values, captures        |
+| Step        | Standard facility                     | Compatibility surface                                |
+| ----------- | ------------------------------------- | ---------------------------------------------------- |
+| Date        | `get_time`, `from_chars`, `chrono`    | ISO timestamps, offsets, UTC bytes, IMF-fixdate      |
+| Headers     | Existing normalized HTTP field name   | Validation, Cookie/Set-Cookie, delivery and spelling |
+| Environment | Boost.PropertyTree INI                | Flat explicit files, quotes, pre-existing variables  |
+| Filesystem  | `filesystem::path`, shared UTF codecs | POSIX state paths, descriptors, text and byte reads  |
+| Console     | Boost.JSON, `charconv`                | Operator events, structured values, captures         |
 
 Each step requires fatal-warning release compilation, affected runtime and
 application tests with and without ASan/UBSan, a two-minute parser smoke run,
@@ -41,23 +41,23 @@ progress. Headers, environment, filesystem and console pending.
 
 - Ubuntu 24.04 Linux AArch64. Release used GCC 14.2.0 `-O2 -g0`. Sanitizer
   used Clang 21.1.8 `-O1 -gline-tables-only -fsanitize=address,undefined
-  -fno-sanitize-recover=all -fno-omit-frame-pointer`. Both used the requested
+-fno-sanitize-recover=all -fno-omit-frame-pointer`. Both used the requested
   fatal warnings, feature definitions and include roots.
 - Installed `clang-21 libclang-rt-21-dev` from the LLVM Noble 21 apt repository
   and `libbrotli-dev libzstd-dev libicu-dev libsqlite3-dev libssl-dev zlib1g-dev
-  mold` with apt. The preinstalled Bun reported `1.4.0` and was invoked with
+mold` with apt. The preinstalled Bun reported `1.4.0` and was invoked with
   `env -i ... TZ=UTC bun --no-env-file -e '<date probes>'`.
 - Built the official `boost-1.92.0-b2-nodocs.tar.xz` release in scratch after
   checking the GitHub-published digest
   `ea7b982002cc9dfbe59b0b217b206f470dc75f3de0bb2973d844118934d82411`.
   Commands were `./bootstrap.sh --with-toolset=gcc --with-libraries=json,container`
   and `./b2 -j2 toolset=gcc variant=release link=static threading=multi
-  --with-json --with-container stage`.
+--with-json --with-container stage`.
 - Built the documented SQLite 3.54.0 fixture dependency from
   `sqlite-autoconf-3540000.tar.gz`, SHA-256
   `134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed`,
   with `./configure --prefix="$scratch/sqlite/install" --disable-shared
-  --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'`, `make -j2` and `make install`.
+--disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'`, `make -j2` and `make install`.
 - A scratch driver reuses `cmake/ci/driver.py` for the Ninja object graph,
   vendor selection, exact `tools/links.py` closures, and per-test OS fixture
   isolation. Invocations are `python3 -B "$scratch/gate.py" PROFILE compile STEP`
@@ -67,17 +67,17 @@ progress. Headers, environment, filesystem and console pending.
   in `src/rt/base64.cpp`. The preliminary compile exposed its vendor warnings
   without that option. First-party sources retain the fatal warnings.
 - Microbenchmarks used GCC 14.2.0 `-std=c++20 -O2 -g0 -ffunction-sections
-  -fdata-sections -Wl,--gc-sections` with the parent and replacement objects
+-fdata-sections -Wl,--gc-sections` with the parent and replacement objects
   linked separately. Times are the median of seven 100,000-operation batches
   after warmup. C++ allocations are counted in a separate batch via allocation
   operator interposition. C-library allocations are outside that count.
 - Fuzz commands used `clang++-21 -O1 -gline-tables-only
-  -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all` with the port
+-fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all` with the port
   flags and a scratch corpus copy, followed by
   `sudo -n unshare --net --fork setpriv --reuid "$(id -u)" --regid "$(id -g)"
-  --clear-groups env -i PATH=/usr/bin:/bin HOME="$empty_home" TMPDIR="$fresh_tmp"
-  TZ=UTC ASAN_OPTIONS=detect_leaks=1 "$binary" -max_total_time=120 -max_len=16384
-  -timeout=3 -rss_limit_mb=768 -seed=17112026 -artifact_prefix="$out/" "$corpus"`.
+--clear-groups env -i PATH=/usr/bin:/bin HOME="$empty_home" TMPDIR="$fresh_tmp"
+TZ=UTC ASAN_OPTIONS=detect_leaks=1 "$binary" -max_total_time=120 -max_len=16384
+-timeout=3 -rss_limit_mb=768 -seed=17112026 -artifact_prefix="$out/" "$corpus"`.
 
 ## Date
 
