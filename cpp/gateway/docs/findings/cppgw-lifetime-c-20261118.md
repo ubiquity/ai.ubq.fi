@@ -182,7 +182,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/surplus.hpp`
 - [x] `include/uos/provider/surplus_claude_chat_request.hpp`
 - [x] `include/uos/provider/surplus_claude_request.hpp`
-- [ ] `src/chat/completions.cpp`
+- [x] `src/chat/completions.cpp`
 - [ ] `src/chat/envelope.cpp`
 - [ ] `src/chat/stream_translation.cpp`
 - [ ] `src/codex/account_routing.cpp`
@@ -1138,3 +1138,13 @@ Synchronous Chat projection and result type declarations.
 ### `include/uos/provider/surplus_claude_request.hpp`
 
 Synchronous Anthropic request projection declarations with owned payload results.
+
+### `src/chat/completions.cpp`
+
+Chat SSE and buffered completion use separate state owners. Stream cancellation can overlap a pull, so the member calls and the iterator copies were traced independently of terminal accounting.
+
+- 28-87,131-175,201-205,294-311,338-359 · synchronous projections and container access · **SAFE** · Event and tool references are consumed synchronously and queued tool calls own shared records.
+- 91,188,199,205,236,395 · iterator cleanup and spawn · **SAFE** · returnIterator takes an iterator value, including when spawned after controller.close releases the algorithms.
+- 179-199,207-254,256-285,364-374 · stream member tasks and registered algorithms · **SAFE** · SourceAlgorithm::runAsync owns the callable capturing shared StreamState during both pull and cancel, including nested joins after controller close. Events and usage retained over suspension are local values and the queue is accessed anew.
+- 190,275,318,398 · telemetry awaits · **SAFE** · The await chain keeps the state containing the copied UsageContext alive and the terminal callback is a value.
+- 312-335,376-403 · buffered member tasks and borrowed context · **SAFE** · The only caller joins completion with its telemetry live. The buffered frame copies the context before its first suspension and waits for each state method before destroying the state.

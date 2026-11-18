@@ -1564,8 +1564,40 @@
       "sites": []
     },
     "src/chat/completions.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Chat SSE and buffered completion use separate state owners. Stream cancellation can overlap a pull, so the member calls and the iterator copies were traced independently of terminal accounting.",
+      "sites": [
+        {
+          "lines": "28-87,131-175,201-205,294-311,338-359",
+          "kind": "synchronous projections and container access",
+          "verdict": "SAFE",
+          "reason": "Event and tool references are consumed synchronously and queued tool calls own shared records."
+        },
+        {
+          "lines": "91,188,199,205,236,395",
+          "kind": "iterator cleanup and spawn",
+          "verdict": "SAFE",
+          "reason": "returnIterator takes an iterator value, including when spawned after controller.close releases the algorithms."
+        },
+        {
+          "lines": "179-199,207-254,256-285,364-374",
+          "kind": "stream member tasks and registered algorithms",
+          "verdict": "SAFE",
+          "reason": "SourceAlgorithm::runAsync owns the callable capturing shared StreamState during both pull and cancel, including nested joins after controller close. Events and usage retained over suspension are local values and the queue is accessed anew."
+        },
+        {
+          "lines": "190,275,318,398",
+          "kind": "telemetry awaits",
+          "verdict": "SAFE",
+          "reason": "The await chain keeps the state containing the copied UsageContext alive and the terminal callback is a value."
+        },
+        {
+          "lines": "312-335,376-403",
+          "kind": "buffered member tasks and borrowed context",
+          "verdict": "SAFE",
+          "reason": "The only caller joins completion with its telemetry live. The buffered frame copies the context before its first suspension and waits for each state method before destroying the state."
+        }
+      ]
     },
     "src/chat/envelope.cpp": {
       "status": "pending",
