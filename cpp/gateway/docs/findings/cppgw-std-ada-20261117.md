@@ -249,3 +249,41 @@ for signum in (signal.SIGINT, signal.SIGTERM):
     signal.signal(signum, driver.interrupted)
 raise SystemExit(driver.main())
 ```
+
+### Production link
+
+Both profiles compiled the 369 production sources. A separate release link reused those exact objects,
+compiled `entrypoints/gateway.cpp` and `runtime/startup.cpp` with the release profile's first-party
+flags, and retained the application registrars through whole-archive linkage. The executable is an
+ARM64 ELF PIE with SHA-256 `831e6cf0da1a571e83ed6e78c66aba9e6ee067fe81b0ebffac6de37c36010e4d`.
+This is a runner build receipt.
+
+```bash
+release="$work/ci/clang++-21-fb9b4f614549/release"
+stage="$work/entry"
+mkdir -p "$stage"
+mapfile -t sources < <(cd "$root" && rg --files src -g '*.cpp' | sort)
+objects=()
+for source in "${sources[@]}"; do
+  objects+=("$release/obj/$source.o")
+done
+for unit in entrypoints/gateway.cpp runtime/startup.cpp; do
+  clang++-21 -std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion -Werror \
+    -DBOOST_JSON_NO_LIB -DBOOST_CONTAINER_NO_LIB -DBOOST_SYSTEM_NO_LIB \
+    -DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING -DUOS_GATEWAY_NATIVE_LIBRARIES=1 \
+    -I "$root/include" -I "$root" -I "$work/sqlite/include" -isystem "$work/boost_1_92_0" \
+    --system-header-prefix=third_party/ada/ -ffunction-sections -fdata-sections -pthread \
+    -c "$root/$unit" -o "$stage/${unit##*/}.o"
+done
+ar rcs "$stage/libuos_gateway.a" "${objects[@]}"
+for vendor in ada simdjson simdutf; do
+  ar rcs "$stage/libuos_vendor_$vendor.a" "$release/obj/third_party/$vendor/$vendor.cpp.o"
+done
+clang++-21 --ld-path=/usr/bin/ld.lld-21 -Wl,--threads=1 \
+  "$stage/gateway.cpp.o" "$stage/startup.cpp.o" \
+  -Wl,--whole-archive "$stage/libuos_gateway.a" -Wl,--no-whole-archive \
+  "$stage"/libuos_vendor_{ada,simdjson,simdutf}.a \
+  "$work/boost_1_92_0/stage/lib"/libboost_{json,container}.a "$work/sqlite/lib/libsqlite3.a" \
+  -lssl -lcrypto -lz -lm -lbrotlidec -lzstd -licuuc -licui18n -ldl -pthread -o "$stage/uos_gateway"
+sha256sum "$stage/uos_gateway"
+```
