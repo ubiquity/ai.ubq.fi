@@ -2526,7 +2526,8 @@
       "sites": []
     },
     "src/authority/native_codex_mutations.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous slot reset, dispatch and proof mutations. Reference-capturing lambdas are immediately called or used as inline predicates. No suspension or escaping callback.",
       "sites": []
     },
     "src/authority/native_contracts.cpp": {
