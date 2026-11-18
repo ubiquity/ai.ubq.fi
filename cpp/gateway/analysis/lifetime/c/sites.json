@@ -777,7 +777,8 @@
       "sites": []
     },
     "include/uos/harmony/reliability/surfaces.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous surface selection and policy declarations.",
       "sites": []
     },
     "include/uos/harmony/reliability/verify.hpp": {
