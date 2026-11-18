@@ -3421,7 +3421,8 @@
       ]
     },
     "src/provider/cerebras_rate_limits.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Rate-limit mapping is synchronous and returns owning values.",
       "sites": []
     },
     "src/provider/cerebras_responses.cpp": {

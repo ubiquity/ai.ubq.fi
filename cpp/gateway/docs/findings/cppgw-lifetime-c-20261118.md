@@ -293,7 +293,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/capacity_rollups.cpp`
 - [x] `src/provider/cerebras.cpp`
 - [x] `src/provider/cerebras_handlers.cpp`
-- [ ] `src/provider/cerebras_rate_limits.cpp`
+- [x] `src/provider/cerebras_rate_limits.cpp`
 - [ ] `src/provider/cerebras_responses.cpp`
 - [ ] `src/provider/claude_capacity_history.cpp`
 - [ ] `src/provider/claude_capacity_rollups.cpp`
@@ -1864,3 +1864,7 @@ Cerebras Chat wire normalization is synchronous. Its request owns options throug
 Chat reads the bounded complete upstream body before returning a buffered or replay response.
 
 - 98-148,153-215 · buffered handler, context, and callback borrows · **SAFE** · The envelope joins the handler with live telemetry, fetch options retain its callbacks, and the captured bytes/results and replay data are owned values.
+
+### `src/provider/cerebras_rate_limits.cpp`
+
+Rate-limit mapping is synchronous and returns owning values.
