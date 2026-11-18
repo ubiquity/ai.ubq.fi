@@ -46,3 +46,62 @@ The pinned llhttp archive matched its published SHA-256. All five vendored files
 The inherited focused release gate compiled 44/44 runtime objects and seven test binaries with GCC 14.2.0 and the fatal port warnings. Six binaries passed and one failed, with 74/75 cases passing. The new library test passed 8/8. The existing fetch transport binary passed 32/33. Its grouped Bun response grammar case failed on expected strict-grammar differences. Existing WebSocket runtime, lifetime and connection fixtures passed. The runner used the repository's Linux network, mount and PID fixture boundary through passwordless sudo and restored the invoking uid before each test. Inputs were unchanged across the run.
 
 The portable build driver at `cmake/ci/driver.py` currently generates a vendor archive from only `Library.source` with the C++ driver. It omits the other two llhttp C translation units. The scratch runner uses the repository's source closure, fixture boundary and test runner, with an external Ninja generation adjustment to compile all three vendor sources as C and archive them. The native CMake registration already selects all three sources. The portable driver itself is outside the assigned paths.
+
+## Candidate and source scope
+
+The checked source commit is `8c988f466cd96416877d2058156f0e4f35fb7015`, tree
+`ba45a45c30c4753daee7b825a67166c5f0e92634`. Compared with `093a9e05`, the three first-party production files add 210 lines and remove 284 lines, for a net reduction of 74 physical lines. The removed code includes the fetch status and field scanner, numeric Content-Length parser, chunked state machine, and WebSocket status and field scanner.
+
+| Production file                    | Added | Removed |
+| ---------------------------------- | ----: | ------: |
+| `fetch_transport_http.cpp`         |   148 |     223 |
+| `fetch_transport_internal.hpp`     |    40 |      20 |
+| `websocket_client.cpp`             |    22 |      41 |
+
+The client adapter pauses llhttp at the head and message boundaries. It keeps the fetch head and field quotas, HTTP/1.x and reason-phrase validation, raw field order and duplicates, and the fetch bodyless response rules. The transfer-coding guard rejects repeated or nonfinal `chunked` and catches cases such as `Transfer-Encoding: chunked,` where llhttp would otherwise stream chunk delimiters as close-delimited payload. The WebSocket adapter keeps its 16 KiB head quota and preserves bytes belonging to the first frame. It moves ASCII strings directly and converts Latin-1 values only when they contain a non-ASCII byte. Socket-level request writing, response decoding and connection lifecycle retain their existing paths.
+
+The live fetch pump uses llhttp to classify Content-Length and EOF-delimited responses, then performs the remaining fixed-length delivery and EOF completion in `src/rt/fetch_transport.cpp`. The new parser can consume those bodies and tests exercise that interface. Connecting the interface to the live pump requires ownership of the response-read and body-framing blocks in that file. The Bun-era assertion table in `tests/rt/fetch_transport_test.cpp` needs a separate scoped update. The original test remains in the registry and ran in each relevant gate. [Recorded grammar and error differences](../DEVIATIONS-FROM-BUN.md)
+
+The llhttp sources, licence, checksums, provenance and common CMake/Python registration are byte-identical to the server lane at `d0d2ed8b15725c8005671a4155abe216f727051a`. The client registry adds `src/rt/fetch_transport_http.cpp` and `src/rt/websocket_client.cpp` as consumers. The combined registry will also need the server lane's consumers.
+
+## Commands and focused verification
+
+The external scratch directory is `/tmp/cppgw-std-llhttp-client-resume`. The scratch `check.sh` invokes `python3 -B "$scratch/gateway-check.py" --config release|asan`. That adapter calls the existing portable driver's Links resolution, Ninja build and isolated fixture runner. It emits the three vendor C compilation edges and one static archive, and passes `--system-header-prefix=third_party/` to the Clang compile of the existing simdutf consumer. The latter fixed a build failure from signedness warnings in the upstream simdutf header while retaining `-Werror` for first-party code. The driver used `-O2` with GCC 14.2 for release and `-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer` with Clang 21.1.8 for sanitizers, with the fatal port warning flags and native-library defines in both profiles.
+
+```sh
+"$scratch/check.sh" release focused 4
+"$scratch/check.sh" release full 3
+"$scratch/check.sh" asan focused 2
+"$scratch/check.sh" asan runtime 1
+python3 -B cpp/gateway/tools/vendor_sources.py cmake
+cmake --build "$scratch/native-cmake" --target uos_vendor_llhttp --parallel 2
+ar t "$scratch/native-cmake/libuos_vendor_llhttp.a"
+```
+
+The native CMake build used GCC 14, Ninja, `UOS_GATEWAY_BUILD_EVIDENCE=1`, and `UOS_GATEWAY_TOOL_ROOT="$scratch"`. Its archive contains `llhttp.c.o`, `api.c.o`, and `http.c.o`. GCC 14 and Clang 21 also compiled the final WebSocket source independently with the specified strict warning flags and `-fsyntax-only`.
+
+The final candidate passed 44/44 focused runtime compilations. The Clang sanitizer gate ran seven binaries and 75 cases. Six binaries and 74 cases passed. Fetch and WebSocket parser cases passed 8/8, WebSocket client cases 17/17, and the WebSocket lifetime and application runtime tests 4/4 and 2/2. The fetch transport binary passed 32/33, with the Bun-specific expectation group failing. No address, undefined-behavior, or leak diagnostics were reported. The source digest at the end matched the initial digest.
+
+The final fuzz command was `python3 -B cpp/gateway/fuzz/ci.py fetch_response_library --seconds 120 --jobs 1 --out "$scratch/final-fuzz"`. It used Clang 21, the seven committed seed files, an empty home, a fresh temporary directory, and an isolated network namespace with no interfaces raised. The log reported 1,938,757 executions in 122 seconds, exit 0, zero crashes, timeouts or out-of-memory events, and zero finding artifacts. The resulting binary SHA-256 is `1b3937360931bd9abd0e97f5e77aca47974d307b6e50583d75ec7229168d07ec`.
+
+Bun 1.4.0 ran the deviation fixtures using `bun --no-env-file --no-install response.ts` against synthetic loopback responses in a separate network namespace. A C probe of the verified llhttp C archive checked reason-phrase spacing, parser status codes, and the numerical size of a padded chunk. All fixtures and compilation outputs stayed outside the checkout. No provider environment was passed into tests or the Bun oracle.
+
+## Measured parser costs
+
+Both benchmark binaries used GCC 14.2, `-O2 -ffunction-sections -fdata-sections`, the same driver and Boost 1.92 headers, and `mold --gc-sections`. The benchmark compiled the deployed parser entry points from the reference commit and candidate, plus the same runtime dependencies. Only the candidate linked the three llhttp C files. The allocation counter wrapped `malloc`, `calloc`, `realloc` and C++ allocation operators. Each process warmed up 500 operations per workload, then ran nine batches of 100,000 operations on the short workloads, 35,000 on split heads, and 10,000 on the 64 KiB body. Four processes ran in reference, candidate, candidate, reference order pinned to CPU 3. The table reports the mean of the two batch medians in thread CPU nanoseconds per operation. All response lengths and body sizes matched.
+
+| Workload                             | Before ns/op | After ns/op | Before allocations/op | After allocations/op |
+| ------------------------------------ | -----------: | ----------: | --------------------: | -------------------: |
+| Fetch Content-Length head            |        394.1 |       466.7 |                     7 |                    7 |
+| Fetch split head in 128-byte feeds    |      3,180.6 |     2,955.7 |                    41 |                   45 |
+| Fetch head and four 9-byte SSE chunks |        461.8 |       661.1 |                     9 |                    9 |
+| Fetch head and eight 8 KiB chunks     |      2,732.6 |     2,953.5 |                    11 |                   11 |
+| WebSocket 101 with first frame       |        652.9 |       503.4 |                     8 |                    8 |
+
+The split-head test repeats head parsing on each cumulative read, as the live fetch caller does today. The chunk tests include the synthetic head setup that the live standalone chunk decoder currently uses. The allocation count covers the parser and adapter and excludes socket, TLS and content-decoder work. The reference and candidate binaries had SHA-256 digests `8d4c92f59bf95370890798eefea02652087b9d2cf13b28d8311fe65127eee8a5` and `343451f73fdf5a2e4a4d119594438953573a1d1b4cf51cdc96454c3198a70b42`.
+
+## Build integration and branch handoff
+
+The standard portable driver and the current macOS shell builder assume one implementation source per vendor archive. The production-host `tools/unit.mk` has only a C++ vendor object rule. Those entry points need multi-source C archive support. This Linux disposable runner used all three sources and the native CMake static target verified the intended archive.
+
+The GitHub push dry run returned `could not read Username for 'https://github.com': terminal prompts disabled`. The task commits are on the local `agent-job` branch. The fetched C++ integration branch already contains the port baseline. The fetched `origin/development` does not contain it, so integrating the lane there would also bring in the broader C++ port. Publication and integration remain pending.
