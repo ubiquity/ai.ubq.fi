@@ -206,4 +206,166 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 
 ## Ranked defects and counts
 
+The ranking is provisional while the checklist is open. D01 is a native buffer
+lifetime contract violation. D02–D05 are retention failures under the stated exit paths.
+
+<a id="d01"></a>
+
+### D01. HTTP write storage released before completion, P1 request-path memory safety
+
+- A backpressured write submits an Asio buffer over the output deque's front element.
+- A disconnect or explicit destroy closes the stream and clears the deque before the
+  completion callback runs. Asio requires the caller to keep the bytes valid through
+  completion, including cancellation. An actual post-free access depends on the I/O backend.
+
+```diff
+--- a/cpp/gateway/src/runtime/http.cpp
++++ b/cpp/gateway/src/runtime/http.cpp
+@@ ConnectionState::flush, async write completion
+           self->writing = false;
+-          if (self->destroyed || failure == asio::error::operation_aborted) return;
++          if (self->destroyed) {
++            self->output.clear();
++            return;
++          }
++          if (failure == asio::error::operation_aborted) return;
+@@ ConnectionState::destroy
+-        output.clear();
++        if (!writing) output.clear();
+         outputBytes = 0;
+```
+
+<a id="d02"></a>
+
+### D02. Failed bind retains the server and full handler, P2 startup resource leak
+
+- Invalid address/port or bind failure emits error without entering the listening state.
+- The error listener rejects both promises. Shutdown cannot pass the rejected ready wait
+  and the server's stored handler/upgrade callbacks still own ServeState, which owns the server.
+
+```diff
+--- a/cpp/gateway/src/runtime/http.cpp
++++ b/cpp/gateway/src/runtime/http.cpp
+@@ serveHttp, server error listener
+       (*live->rejectReady)(args.error);
+       (*live->rejectFinished)(args.error);
++      live->server->close();
+```
+
+<a id="d03"></a>
+
+### D03. Abandoned backpressure wait retains itself, P2 response teardown leak
+
+- A response blocked on drain leaves four registrations owning DrainWait, which also owns
+  those four callback objects.
+- On abandonment of the pending coroutine, dropping the resolver reaction cannot break the
+  self-cycle. If no drain/error/close/abort event fires, the connection and signal stay retained.
+
+Give the wait coroutine ownership and make all registered callbacks weak. Its scope guard
+removes the registrations on frame destruction as well as on normal return.
+
+```diff
+--- a/cpp/gateway/src/runtime/http.cpp
++++ b/cpp/gateway/src/runtime/http.cpp
+@@
+-    rt::Promise<void> waitForDrain(std::shared_ptr<ServerResponse> outgoing, rt::AbortSignal signal) {
+-      return rt::newPromise<void>([&](const rt::Resolve<void>& resolve, const rt::Reject& reject) {
+-        auto wait = std::make_shared<DrainWait>(outgoing, signal, resolve, reject);
+-        wait->drain = IncomingListener([wait](const IncomingEvent&) {
+-          wait->cleanup();
+-          wait->resolve();
+-        });
+-        wait->failed = IncomingListener([wait](const IncomingEvent& event) { wait->fail(std::get<rt::Reason>(event)); });
+-        wait->closed = IncomingListener([wait](const IncomingEvent&) { wait->fail(interrupted()); });
+-        wait->closedOnAbort = rt::EventListener([wait] { wait->fail(interrupted()); });
+-        outgoing->once("drain", wait->drain);
+-        outgoing->once("error", wait->failed);
+-        outgoing->once("close", wait->closed);
+-        signal.addEventListener("abort", wait->closedOnAbort, {.once = true});
+-        if (signal.aborted() || outgoing->destroyed()) wait->fail(interrupted());
+-      });
++    rt::Task<void> waitForDrain(std::shared_ptr<ServerResponse> outgoing, rt::AbortSignal signal) {
++      const auto result = rt::withResolvers<void>();
++      auto wait = std::make_shared<DrainWait>(outgoing, signal, result.resolve, result.reject);
++      const rt::ScopeExit remove([&] { wait->cleanup(); });
++      const std::weak_ptr<DrainWait> weak = wait;
++      wait->drain = IncomingListener([weak](const IncomingEvent&) {
++        if (auto live = weak.lock()) {
++          live->cleanup();
++          live->resolve();
++        }
++      });
++      wait->failed = IncomingListener([weak](const IncomingEvent& event) {
++        if (auto live = weak.lock()) live->fail(std::get<rt::Reason>(event));
++      });
++      wait->closed = IncomingListener([weak](const IncomingEvent&) {
++        if (auto live = weak.lock()) live->fail(interrupted());
++      });
++      wait->closedOnAbort = rt::EventListener([weak] {
++        if (auto live = weak.lock()) live->fail(interrupted());
++      });
++      outgoing->once("drain", wait->drain);
++      outgoing->once("error", wait->failed);
++      outgoing->once("close", wait->closed);
++      signal.addEventListener("abort", wait->closedOnAbort, {.once = true});
++      if (signal.aborted() || outgoing->destroyed()) wait->fail(interrupted());
++      co_await result.promise.wait();
+@@ sendResponse
+-            const rt::Promise<void> draining = waitForDrain(outgoing, signal);
+-            co_await draining.wait();
++            auto draining = waitForDrain(outgoing, signal);
++            co_await std::move(draining);
+```
+
+<a id="d04"></a>
+
+### D04. Early SSE entry pins its weak-map key, P2 abandoned request retention
+
+- The readiness commit lambda stores the request strongly in the static registry's value.
+- If the frame disappears before the delivery wait returns, the unregister lambda is
+  dropped uncalled. The stored value keeps its key alive, including the request body.
+
+```diff
+--- a/cpp/gateway/src/runtime/http.cpp
++++ b/cpp/gateway/src/runtime/http.cpp
+@@ handleRequest
+       std::optional<ResponseReadiness> headerReadiness;
++      const rt::ScopeExit removeReadiness([&] {
++        if (headerReadiness) headerReadiness->remove();
++      });
+@@ after the real delivery receipt
+-      if (headerReadiness) headerReadiness->remove();
++      if (headerReadiness) {
++        headerReadiness->remove();
++        headerReadiness.reset();
++      }
+```
+
+<a id="d05"></a>
+
+### D05. Abandoned response read leaves an abort self-cycle, P2 stream teardown leak
+
+- A response waits for a stream read after attaching a listener with a copy of its signal.
+- Dropping the send frame before either abort dispatch or explicit listener removal
+  leaves the signal owning itself and the reader.
+
+```diff
+--- a/cpp/gateway/src/runtime/http.cpp
++++ b/cpp/gateway/src/runtime/http.cpp
+@@ sendResponse
+-      const auto cancel = [reader, signal] {
++      const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = signal.state();
++      const auto cancel = [reader, weakSignal] {
+         // Never await a pending provider pull to handle a disconnected client.
+-        rt::spawn(reader.cancel(signal.reason()), rt::ignoreRejection);
++        if (auto live = weakSignal.lock()) {
++          const rt::AbortSignal abortSignal(std::move(live));
++          rt::spawn(reader.cancel(abortSignal.reason()), rt::ignoreRejection);
++        }
+       };
+       const rt::EventListener cancelListener(cancel);
++      const rt::ScopeExit removeCancel([&] { signal.removeEventListener("abort", cancelListener); });
+```
+
+
 9/97 files reviewed. **DEFECT 5, SAFE 28, UNCLEAR 2.**
