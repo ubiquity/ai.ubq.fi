@@ -307,7 +307,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_paid_contracts.hpp`
 - [x] `include/uos/authority/native_paid_policy.hpp`
 - [x] `include/uos/authority/native_principal_contracts.hpp`
-- [ ] `include/uos/authority/native_runtime_contracts.hpp`
+- [x] `include/uos/authority/native_runtime_contracts.hpp`
 - [ ] `include/uos/bounded_response_body.hpp`
 - [ ] `include/uos/catalog/index.hpp`
 - [ ] `include/uos/catalog/models.hpp`
@@ -1716,6 +1716,12 @@ Reviewed the principal verifier, audit and provisioning callback declarations.
 
 - L163, 169, 170, 171, 172, 173, 175, 176, 177, 178, 185 **SAFE** · The native State retains the stored verifier and source callables through their direct awaits. Bound runner callbacks copy their State into work and the remaining hooks are synchronous.
 
+### `include/uos/authority/native_runtime_contracts.hpp`
+
+Reviewed runtime, routing and retained-history verifier interfaces.
+
+- L188, 189, 191, 193, 201 **SAFE** · The parent State retains all verifier callables, and arguments are passed by value. The method name views refer to static literals.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1964,4 +1970,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-199/286 files reviewed. 370 sites: 349 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+200/286 files reviewed. 371 sites: 350 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
