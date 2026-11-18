@@ -85,3 +85,13 @@ within the output limit.
 | Scalars use `to_chars`, and numeric substitutions parse complete text with `from_chars` | `%d` with `"0x10"` gives `nan`, and `%d` with `1e21` gives `1e+21`                                                   | Negative zero, infinity, exponent spelling, and numeric text follow the standard functions. Arrays and objects use JSON instead of JavaScript coercion for `%s`.              |
 | Boost.JSON writes fractional values in standard exponent notation                       | `%j` with `1.5` gives `1.5E0`                                                                                        | JSON consumers read the same number.                                                                                                                                          |
 | Projection and output are bounded                                                       | A nested value beyond depth 16 or an array beyond its first 100 elements uses `"[truncated]"`                        | The projection also charges text and nodes against 32 KiB, and the complete formatted line is capped at 256 KiB. Malformed structured UTF-8 is replaced before serialization. |
+
+## Process environment snapshot
+
+The native runtime takes its first-use snapshot from the OS environment.
+This replaces the explicit file parser described above. The native service
+receives operator-selected values through its launcher environment. A `.env`
+file in the working directory or home has no effect on the C++ view. An
+explicit empty value remains present, and scoped overrides affect only the
+view. Subprocesses without an explicit environment inherit the OS values.
+[Launch and offline tools](RUNTIME.md#launch-and-offline-tools)
