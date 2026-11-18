@@ -101,7 +101,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/probe_scenarios.hpp`
 - [x] `include/uos/harmony/probes.hpp`
 - [x] `include/uos/harmony/reliability/context.hpp`
-- [ ] `include/uos/harmony/reliability/failure.hpp`
+- [x] `include/uos/harmony/reliability/failure.hpp`
 - [ ] `include/uos/harmony/reliability/feedback.hpp`
 - [ ] `include/uos/harmony/reliability/harness.hpp`
 - [ ] `include/uos/harmony/reliability/hash.hpp`
@@ -695,3 +695,7 @@ Probe context callbacks forward to task factories.
 ### `include/uos/harmony/reliability/context.hpp`
 
 Synchronous reliability context records and projection declarations.
+
+### `include/uos/harmony/reliability/failure.hpp`
+
+Synchronous failure mapping and record declarations.

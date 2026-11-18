@@ -735,7 +735,8 @@
       "sites": []
     },
     "include/uos/harmony/reliability/failure.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous failure mapping and record declarations.",
       "sites": []
     },
     "include/uos/harmony/reliability/feedback.hpp": {
