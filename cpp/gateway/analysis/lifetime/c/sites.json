@@ -3875,7 +3875,8 @@
       ]
     },
     "src/provider/openrouter_web_tools.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Tool projection uses synchronous views of live JSON and static tool names, then returns owning JSON.",
       "sites": []
     },
     "src/provider/presentation.cpp": {
