@@ -125,7 +125,7 @@ namespace uos::rt::ws::detail {
     void handleEof();
     void queueRaw(Bytes data, std::size_t accounted, Callback callback);
     void flush();
-    void onWritten(const boost::system::error_code& error, std::size_t count);
+    void onWritten(const boost::system::error_code& error, std::size_t count, Bytes data);
     void finishEnd();
     void maybeDestroy();
     void emitCloseEvents(Reason error);

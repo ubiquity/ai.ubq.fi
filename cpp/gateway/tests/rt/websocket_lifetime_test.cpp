@@ -4,6 +4,9 @@
 #include "uos/rt/test.hpp"
 
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/local/connect_pair.hpp>
+#include <boost/asio/local/stream_protocol.hpp>
+#include <boost/asio/read.hpp>
 #include <memory>
 #include <string>
 #include <utility>
@@ -69,4 +72,42 @@ TEST("a synchronous Unix handshake exception releases the unpublished WebSocket"
   rt::LoopScope scope(loop);
   const std::string address = "ws+unix:///" + std::string(128, 'x') + ":/";
   EXPECT_THROWS(ws::WebSocket::create(address), boost::system::system_error);
+}
+
+TEST("backpressured socket writes survive partial completion and report cancellation once") {
+  rt::FakeClock clock;
+  rt::Loop loop(clock);
+  rt::LoopScope scope(loop);
+  asio::local::stream_protocol::socket client(rt::executor()), peer(rt::executor());
+  asio::local::connect_pair(client, peer);
+  client.set_option(asio::socket_base::send_buffer_size(4096));
+  auto socket = std::make_shared<ws::detail::Socket>(ws::detail::Socket::Stream(std::move(client)));
+
+  const ws::Bytes payload(128 * 1024, 0x42);
+  ws::Bytes received(payload.size());
+  int completed = 0;
+  socket->write(payload, [&](rt::Reason error) {
+    EXPECT(!error);
+    ++completed;
+  });
+  ASSERT_EQ(socket->writableLength(), payload.size());
+  asio::async_read(peer, asio::buffer(received), [&](const boost::system::error_code& error, std::size_t size) {
+    EXPECT(!error);
+    EXPECT_EQ(size, payload.size());
+  });
+  loop.run();
+  EXPECT_EQ(received, payload);
+  EXPECT_EQ(completed, 1);
+  EXPECT_EQ(socket->writableLength(), 0u);
+
+  int cancelled = 0;
+  socket->write(payload, [&](rt::Reason error) {
+    EXPECT(error);
+    ++cancelled;
+  });
+  ASSERT_EQ(socket->writableLength(), payload.size());
+  socket->destroy();
+  loop.run();
+  EXPECT_EQ(cancelled, 1);
+  EXPECT_EQ(socket->writableLength(), 0u);
 }

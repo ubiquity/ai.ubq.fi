@@ -63,9 +63,9 @@ completes, or record the precise pending work and last passing tree.
 | A-WEBSOCKET-CONTEXT (`src/rt/websocket.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-WEBSOCKET-EMIT-OWNER (`src/rt/websocket.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-WEBSOCKET-UPGRADE-OWNER (`src/rt/websocket.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
-| A-WEBSOCKET-WRITE-BUFFER (`src/rt/websocket_internal.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
+| A-WEBSOCKET-WRITE-BUFFER (`src/rt/websocket_internal.hpp`) | FIXED. The pending entry owned the only copy of native plaintext or TLS ciphertext. `onWritten` now takes back the completion's owned bytes when the queue is still active. | This commit | `rt/websocket_lifetime_test`, forced backpressure, partial writes and cancellation. |
 | A-WEBSOCKET-CONTEXT (`src/rt/websocket_internal.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
-| A-WEBSOCKET-WRITE-BUFFER (`src/rt/websocket_socket.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
+| A-WEBSOCKET-WRITE-BUFFER (`src/rt/websocket_socket.cpp`) | FIXED. `destroy` and `shutdown` clear the write queue before Asio releases its operation. Move the byte storage into the completion handler on the would-block path. | This commit | `rt/websocket_lifetime_test`. Linux's reactor cancels the wait before a userspace buffer read, so ordinary ASan cannot deterministically diagnose the baseline contract violation. |
 
 ## UNCLEAR sites
 
