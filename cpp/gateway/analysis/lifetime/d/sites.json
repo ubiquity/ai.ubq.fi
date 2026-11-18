@@ -7229,8 +7229,30 @@
       ]
     },
     "include/uos/agent_messages.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the request, KV and authentication test seam.",
+      "sites": [
+        {
+          "lines": [
+            20,
+            21,
+            22,
+            23,
+            26,
+            27,
+            29,
+            30
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The handler frames own dependencies and the request. Authentication is directly awaited with the callable retained, and the clock and ID generator run synchronously."
+        }
+      ]
     },
     "include/uos/analytics.hpp": {
       "reviewed": false,

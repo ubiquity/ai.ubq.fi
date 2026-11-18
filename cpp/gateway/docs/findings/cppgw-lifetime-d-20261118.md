@@ -264,7 +264,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/admin/index.hpp`
 - [x] `include/uos/admin/kernel.hpp`
 - [x] `include/uos/admin/sentinel_incident.hpp`
-- [ ] `include/uos/agent_messages.hpp`
+- [x] `include/uos/agent_messages.hpp`
 - [ ] `include/uos/analytics.hpp`
 - [ ] `include/uos/api_key_policy.hpp`
 - [ ] `include/uos/api_keys.hpp`
@@ -1458,6 +1458,12 @@ Reviewed the Sentinel incident administration dependency interface.
 
 - L16, 17, 22, 23 **SAFE** · The handler owns the KV opening and listing callbacks and directly awaits both. A shared KV handle remains live through the borrowed list call.
 
+### `include/uos/agent_messages.hpp`
+
+Reviewed the request, KV and authentication test seam.
+
+- L20, 21, 22, 23, 26, 27, 29, 30 **SAFE** · The handler frames own dependencies and the request. Authentication is directly awaited with the callable retained, and the clock and ID generator run synchronously.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1706,4 +1712,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-156/286 files reviewed. 324 sites: 303 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+157/286 files reviewed. 325 sites: 304 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
