@@ -792,7 +792,7 @@ const paid=await kv.get(['uos_ai','paid_fallback','v3','rollup_backfill_cursor']
     const std::string deno = argument(3);
     const std::string sha = argument(4);
     if (directory.empty() || deno.empty() || sha.empty())
-      throw rt::JsError("Usage: bun --no-env-file src/kv-conversion/proof.ts <NEW-disposable-directory> <pinned-deno> <sha256>");
+      throw rt::JsError("Usage: uos-kv-proof --runtime-manifest <absolute-path> <NEW-disposable-directory> <pinned-deno> <sha256>");
     rt::Task<LegacyRoundtripProof> proving = proveLegacyRoundtrip(directory, deno, sha);
     const LegacyRoundtripProof result = co_await std::move(proving);
     json::object summary;

@@ -26,7 +26,7 @@ namespace {
   namespace rt = uos::rt;
   namespace proof = uos::kv_conversion::proof;
 
-  const std::string USAGE = "Usage: bun --no-env-file src/kv-conversion/proof.ts <NEW-disposable-directory> <pinned-deno> <sha256>";
+  const std::string USAGE = "Usage: uos-kv-proof --runtime-manifest <absolute-path> <NEW-disposable-directory> <pinned-deno> <sha256>";
 
   struct Failure {
     std::string name;
