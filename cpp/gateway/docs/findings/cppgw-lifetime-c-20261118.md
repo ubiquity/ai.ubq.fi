@@ -107,7 +107,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/reliability/hash.hpp`
 - [x] `include/uos/harmony/reliability/loops.hpp`
 - [x] `include/uos/harmony/reliability/retry.hpp`
-- [ ] `include/uos/harmony/reliability/state.hpp`
+- [x] `include/uos/harmony/reliability/state.hpp`
 - [ ] `include/uos/harmony/reliability/surfaces.hpp`
 - [ ] `include/uos/harmony/reliability/verify.hpp`
 - [ ] `include/uos/harmony/render.hpp`
@@ -721,3 +721,7 @@ Synchronous loop detection state and method declarations.
 ### `include/uos/harmony/reliability/retry.hpp`
 
 Synchronous retry decisions and option records.
+
+### `include/uos/harmony/reliability/state.hpp`
+
+Synchronous reliability state and transition declarations.

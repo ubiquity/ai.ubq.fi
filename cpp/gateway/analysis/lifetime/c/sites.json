@@ -772,7 +772,8 @@
       "sites": []
     },
     "include/uos/harmony/reliability/state.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous reliability state and transition declarations.",
       "sites": []
     },
     "include/uos/harmony/reliability/surfaces.hpp": {
