@@ -4963,8 +4963,281 @@
       "sites": []
     },
     "src/rt/websocket_socket.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed plaintext and TLS byte storage, synchronous callback reentrancy, Asio initiation and completion, ordinary close, cancellation, and context shutdown. There are no coroutine bodies, but Asio completions suspend access to the native buffers.",
+      "sites": [
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "lines": [
+            60,
+            61,
+            66,
+            71,
+            73,
+            78,
+            82,
+            84,
+            85,
+            86,
+            87,
+            88,
+            90,
+            96,
+            99,
+            101,
+            102,
+            105,
+            106,
+            111,
+            112,
+            113,
+            117,
+            118,
+            142,
+            145,
+            147,
+            151,
+            153,
+            156,
+            157
+          ],
+          "label": "Read buffer and held-input delivery",
+          "reason": "The outstanding Asio read owns Socket and its stable readBuffer_. Deferred held-input delivery removes each entry before dispatch, while native and TLS spans are consumed synchronously."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "c"
+          ],
+          "lines": [
+            119,
+            120,
+            121,
+            122,
+            123,
+            124,
+            127,
+            131,
+            134,
+            137,
+            160,
+            163,
+            164,
+            166,
+            167
+          ],
+          "label": "EOF and read-error callbacks",
+          "reason": "The read handler pins Socket and moves or copies the active callable before invocation. EOF handling checks destroyed_ after emitting end."
+        },
+        {
+          "verdict": "DEFECT",
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "lines": [
+            188,
+            190,
+            194,
+            196,
+            199,
+            201,
+            202,
+            203,
+            226,
+            276,
+            280,
+            281,
+            284,
+            305,
+            308,
+            309
+          ],
+          "label": "Closing a WebSocket releases the native write buffer before completion",
+          "reason": "The queued bytes are the sole buffer owner, and the handler owns Socket without independently pinning the pending entry. Asio requires the storage through completion even when close cancels the operation.",
+          "defect": {
+            "id": "A-WEBSOCKET-WRITE-BUFFER",
+            "priority": 4,
+            "severity": "native write-buffer lifetime on WebSocket request paths",
+            "interleaving": [
+              "A send reaches would-block and async_write_some borrows the front item's bytes. Its completion has yet to run.",
+              "A normal terminate or loop teardown closes the descriptor and discards the queue before the completion is delivered or destroyed."
+            ],
+            "diff": "--- a/cpp/gateway/src/rt/websocket_internal.hpp\n+++ b/cpp/gateway/src/rt/websocket_internal.hpp\n@@ -114,3 +114,3 @@\n     struct Pending {\n-      Bytes data;\n+      std::shared_ptr<const Bytes> data;\n       std::size_t offset = 0;\n--- a/cpp/gateway/src/rt/websocket_socket.cpp\n+++ b/cpp/gateway/src/rt/websocket_socket.cpp\n@@ -188,4 +188,4 @@\n   void Socket::queueRaw(Bytes data, std::size_t accounted, Callback callback) {\n     queued_ += accounted;\n-    queue_.push_back(Pending{std::move(data), 0, accounted, std::move(callback)});\n+    queue_.push_back(Pending{std::make_shared<const Bytes>(std::move(data)), 0, accounted, std::move(callback)});\n     if (!writing_) flush();\n@@ -196,9 +196,13 @@\n       Pending& front = queue_.front();\n-      if (front.offset < front.data.size()) {\n+      if (front.offset < front.data->size()) {\n+        const auto buffer = asio::buffer(front.data->data() + front.offset, front.data->size() - front.offset);\n         boost::system::error_code error;\n-        const std::size_t written = stream_.write_some(asio::buffer(front.data.data() + front.offset, front.data.size() - front.offset), error);\n+        const std::size_t written = stream_.write_some(buffer, error);\n         if (error == asio::error::would_block || error == asio::error::try_again) {\n           writing_ = true;\n-          stream_.async_write_some(asio::buffer(front.data.data() + front.offset, front.data.size() - front.offset),\n-                                   [self = shared_from_this()](const boost::system::error_code& failure, std::size_t count) { guarded([&] { self->onWritten(failure, count); }); });\n+          stream_.async_write_some(buffer, [self = shared_from_this(), data = front.data](const boost::system::error_code& failure, std::size_t count) {\n+            (void)data;\n+            guarded([&] { self->onWritten(failure, count); });\n+          });\n           return;\n@@ -210,3 +214,3 @@\n         front.offset += written;\n         if (auto activity = onActivity) activity();\n-        if (front.offset < front.data.size()) continue;\n+        if (front.offset < front.data->size()) continue;\n@@ -233,3 +237,3 @@\n     Pending& front = queue_.front();\n     front.offset += count;\n-    if (front.offset == front.data.size()) {\n+    if (front.offset == front.data->size()) {"
+          }
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "c",
+            "d"
+          ],
+          "lines": [
+            140,
+            172,
+            175,
+            179,
+            182,
+            186,
+            210,
+            211,
+            214,
+            215,
+            216,
+            219,
+            224,
+            225,
+            232,
+            233,
+            236,
+            237,
+            238,
+            239,
+            240,
+            242
+          ],
+          "label": "Write progress, activity and user callbacks",
+          "reason": "The installed activity handler only refreshes the current handshake timer. User completions run after their queue entry is removed, and onWritten rechecks whether they destroyed Socket."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "c",
+            "d"
+          ],
+          "lines": [
+            245,
+            248,
+            251,
+            256,
+            258,
+            259,
+            265,
+            267,
+            268,
+            272,
+            273,
+            281,
+            284,
+            285,
+            288,
+            289,
+            291,
+            294,
+            297,
+            299,
+            301,
+            302,
+            305,
+            309,
+            311,
+            312,
+            314,
+            317,
+            318,
+            319,
+            320,
+            321,
+            322,
+            323
+          ],
+          "label": "End, destroy and listener release",
+          "reason": "Scheduled end and close operations own Socket, pending completions move out for one-shot delivery, and close/error use local listener copies before removing stored hooks."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            42,
+            48,
+            49,
+            50,
+            55,
+            56,
+            328,
+            331,
+            332,
+            337,
+            338,
+            339,
+            341,
+            342,
+            345,
+            347,
+            348,
+            349,
+            350,
+            351,
+            352,
+            355,
+            361,
+            362,
+            363,
+            375,
+            376,
+            378,
+            379,
+            384,
+            385,
+            386,
+            387,
+            394,
+            395
+          ],
+          "label": "TLS setup, certificate views and handshake completion",
+          "reason": "OpenSSL receives synchronously consumed option storage and owns its BIOs after setup, while callbacks own Tls options and the native receiver is pinned by the handshake caller or read handler."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "lines": [
+            390,
+            391,
+            392,
+            393,
+            398,
+            399,
+            400,
+            401,
+            404,
+            405,
+            407,
+            411,
+            413,
+            414,
+            416,
+            419,
+            421,
+            424,
+            426,
+            428,
+            429,
+            444,
+            445,
+            448,
+            450,
+            451,
+            452,
+            453,
+            455
+          ],
+          "label": "TLS plaintext and ciphertext buffers",
+          "reason": "The handshake moves the pending plaintext queue out before flushing it, TLS views stay in a synchronous delivery, and owned ciphertext moves into the native write queue."
+        }
+      ]
     }
   }
 }

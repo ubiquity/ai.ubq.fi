@@ -61,7 +61,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/websocket_client.cpp`
 - [x] `src/rt/websocket_frame.cpp`
 - [ ] `src/rt/websocket_internal.hpp`
-- [ ] `src/rt/websocket_socket.cpp`
+- [x] `src/rt/websocket_socket.cpp`
 
 
 ## Tool receipts
@@ -377,20 +377,84 @@ Reviewed synchronous receiver parsing, event delivery, receiver error and finish
 - **SAFE** `258, 260, 262, 264, 265, 266, 268, 269, 270, 274, 276, 279, 286, 289, 291, 294, 297, 298, 300, 303, 304, 306, 309, 310, 311, 313, 314, 315` (b/d), Sender frame assembly and data borrows. The frame serializes into owned bytes before its stack header and caller data can expire. Fragment bookkeeping is synchronous and precedes the socket write.
 - **SAFE** `258, 294, 300, 306, 315, 318` (b/c), Sender-to-socket ownership handoff. Sender holds the socket, and write receives owning frame bytes and a moved callback. The native write buffer lifetime is assessed in websocket_socket.cpp.
 
+### `src/rt/websocket_socket.cpp`
+
+Reviewed plaintext and TLS byte storage, synchronous callback reentrancy, Asio initiation and completion, ordinary close, cancellation, and context shutdown. There are no coroutine bodies, but Asio completions suspend access to the native buffers.
+
+- **SAFE** `60, 61, 66, 71, 73, 78, 82, 84, 85, 86, 87, 88, 90, 96, 99, 101, 102, 105, 106, 111, 112, 113, 117, 118, 142, 145, 147, 151, 153, 156, 157` (b/c/d), Read buffer and held-input delivery. The outstanding Asio read owns Socket and its stable readBuffer_. Deferred held-input delivery removes each entry before dispatch, while native and TLS spans are consumed synchronously.
+- **SAFE** `119, 120, 121, 122, 123, 124, 127, 131, 134, 137, 160, 163, 164, 166, 167` (c), EOF and read-error callbacks. The read handler pins Socket and moves or copies the active callable before invocation. EOF handling checks destroyed_ after emitting end.
+- **DEFECT (A-WEBSOCKET-WRITE-BUFFER)** `188, 190, 194, 196, 199, 201, 202, 203, 226, 276, 280, 281, 284, 305, 308, 309` (b/c/d), Closing a WebSocket releases the native write buffer before completion. The queued bytes are the sole buffer owner, and the handler owns Socket without independently pinning the pending entry. Asio requires the storage through completion even when close cancels the operation.
+- **SAFE** `140, 172, 175, 179, 182, 186, 210, 211, 214, 215, 216, 219, 224, 225, 232, 233, 236, 237, 238, 239, 240, 242` (c/d), Write progress, activity and user callbacks. The installed activity handler only refreshes the current handshake timer. User completions run after their queue entry is removed, and onWritten rechecks whether they destroyed Socket.
+- **SAFE** `245, 248, 251, 256, 258, 259, 265, 267, 268, 272, 273, 281, 284, 285, 288, 289, 291, 294, 297, 299, 301, 302, 305, 309, 311, 312, 314, 317, 318, 319, 320, 321, 322, 323` (c/d), End, destroy and listener release. Scheduled end and close operations own Socket, pending completions move out for one-shot delivery, and close/error use local listener copies before removing stored hooks.
+- **SAFE** `42, 48, 49, 50, 55, 56, 328, 331, 332, 337, 338, 339, 341, 342, 345, 347, 348, 349, 350, 351, 352, 355, 361, 362, 363, 375, 376, 378, 379, 384, 385, 386, 387, 394, 395` (b/c), TLS setup, certificate views and handshake completion. OpenSSL receives synchronously consumed option storage and owns its BIOs after setup, while callbacks own Tls options and the native receiver is pinned by the handshake caller or read handler.
+- **SAFE** `390, 391, 392, 393, 398, 399, 400, 401, 404, 405, 407, 411, 413, 414, 416, 419, 421, 424, 426, 428, 429, 444, 445, 448, 450, 451, 452, 453, 455` (b/c/d), TLS plaintext and ciphertext buffers. The handshake moves the pending plaintext queue out before flushing it, TLS views stay in a synchronous delivery, and owned ciphertext moves into the native write queue.
+
 ## Ranked defects and counts
 
-Reviewed **28/30 files** and **167 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **29/30 files** and **174 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 5 | 20 | 0 |
-| b. Borrowed coroutine parameter or receiver | 12 | 106 | 3 |
-| c. Callback ownership or cycle | 19 | 101 | 6 |
-| d. Container invalidation | 4 | 71 | 0 |
+| b. Borrowed coroutine parameter or receiver | 13 | 109 | 3 |
+| c. Callback ownership or cycle | 20 | 107 | 6 |
+| d. Container invalidation | 5 | 75 | 0 |
 | e. GCC 12 await-expression rule | 5 | 13 | 1 |
-| **Unique site groups** | 26 | 134 | 7 |
+| **Unique site groups** | 27 | 140 | 7 |
 
-### 1. A-FETCH-ABORT-TRANSPORT (memory safety in the injectable transport path) — Abort can outlive the owning virtual transport frame
+### 1. A-WEBSOCKET-WRITE-BUFFER (native write-buffer lifetime on WebSocket request paths) — Closing a WebSocket releases the native write buffer before completion
+
+`src/rt/websocket_socket.cpp:188, 190, 194, 196, 199, 201, 202, 203, 226, 276, 280, 281, 284, 305, 308, 309`
+
+- A send reaches would-block and async_write_some borrows the front item's bytes. Its completion has yet to run.
+- A normal terminate or loop teardown closes the descriptor and discards the queue before the completion is delivered or destroyed.
+
+```diff
+--- a/cpp/gateway/src/rt/websocket_internal.hpp
++++ b/cpp/gateway/src/rt/websocket_internal.hpp
+@@ -114,3 +114,3 @@
+     struct Pending {
+-      Bytes data;
++      std::shared_ptr<const Bytes> data;
+       std::size_t offset = 0;
+--- a/cpp/gateway/src/rt/websocket_socket.cpp
++++ b/cpp/gateway/src/rt/websocket_socket.cpp
+@@ -188,4 +188,4 @@
+   void Socket::queueRaw(Bytes data, std::size_t accounted, Callback callback) {
+     queued_ += accounted;
+-    queue_.push_back(Pending{std::move(data), 0, accounted, std::move(callback)});
++    queue_.push_back(Pending{std::make_shared<const Bytes>(std::move(data)), 0, accounted, std::move(callback)});
+     if (!writing_) flush();
+@@ -196,9 +196,13 @@
+       Pending& front = queue_.front();
+-      if (front.offset < front.data.size()) {
++      if (front.offset < front.data->size()) {
++        const auto buffer = asio::buffer(front.data->data() + front.offset, front.data->size() - front.offset);
+         boost::system::error_code error;
+-        const std::size_t written = stream_.write_some(asio::buffer(front.data.data() + front.offset, front.data.size() - front.offset), error);
++        const std::size_t written = stream_.write_some(buffer, error);
+         if (error == asio::error::would_block || error == asio::error::try_again) {
+           writing_ = true;
+-          stream_.async_write_some(asio::buffer(front.data.data() + front.offset, front.data.size() - front.offset),
+-                                   [self = shared_from_this()](const boost::system::error_code& failure, std::size_t count) { guarded([&] { self->onWritten(failure, count); }); });
++          stream_.async_write_some(buffer, [self = shared_from_this(), data = front.data](const boost::system::error_code& failure, std::size_t count) {
++            (void)data;
++            guarded([&] { self->onWritten(failure, count); });
++          });
+           return;
+@@ -210,3 +214,3 @@
+         front.offset += written;
+         if (auto activity = onActivity) activity();
+-        if (front.offset < front.data.size()) continue;
++        if (front.offset < front.data->size()) continue;
+@@ -233,3 +237,3 @@
+     Pending& front = queue_.front();
+     front.offset += count;
+-    if (front.offset == front.data.size()) {
++    if (front.offset == front.data->size()) {
+```
+
+### 2. A-FETCH-ABORT-TRANSPORT (memory safety in the injectable transport path) — Abort can outlive the owning virtual transport frame
 
 `src/rt/fetch.cpp:131, 132, 134, 135, 136, 137, 138, 195`
 
@@ -407,7 +471,7 @@ Reviewed **28/30 files** and **167 site groups**. A site group can have multiple
 +      Task<Response> guarded = abortable(signal, std::move(ownedSend));
 ```
 
-### 2. A-STREAM-CANCEL-OWNER (memory safety in stream cancellation) — Stream cancel borrows the owner slot through callback invocation
+### 3. A-STREAM-CANCEL-OWNER (memory safety in stream cancellation) — Stream cancel borrows the owner slot through callback invocation
 
 `include/uos/rt/stream.hpp:238, 249, 251, 252, 253, 262, 264, 336, 338, 352, 355, 396, 398, 401, 404`
 
@@ -422,7 +486,7 @@ Reviewed **28/30 files** and **167 site groups**. A site group can have multiple
 +    template <class T> void cancelStreamInto(std::shared_ptr<StreamState<T>> stream, Reason reason, const std::shared_ptr<PromiseState<void>>& out) {
 ```
 
-### 3. A-FETCH-CALLBACK-INPUT (memory safety in the injectable Fetch API) — Fetch erasure can discard input storage before a borrowing coroutine starts
+### 4. A-FETCH-CALLBACK-INPUT (memory safety in the injectable Fetch API) — Fetch erasure can discard input storage before a borrowing coroutine starts
 
 `include/uos/rt/fetch.hpp:20, 27, 28, 29, 33, 38, 40, 41, 49`
 
@@ -461,7 +525,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
      Response response = co_await std::move(task);
 ```
 
-### 4. A-FETCH-REENTRANT-FUNCTION (memory safety during a reentrant Fetch callback) — Fetch calls a replaceable slot before reliably taking ownership
+### 5. A-FETCH-REENTRANT-FUNCTION (memory safety during a reentrant Fetch callback) — Fetch calls a replaceable slot before reliably taking ownership
 
 `src/rt/fetch.cpp:176, 177, 178, 181, 183, 189, 191, 193`
 
@@ -480,7 +544,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +    return keepAlive(std::move(function), std::move(task));
 ```
 
-### 5. A-MOCK-HANDLER-OWNER (memory safety in local transport injection) — Mock transport returns a callback task without its handler owner
+### 6. A-MOCK-HANDLER-OWNER (memory safety in local transport injection) — Mock transport returns a callback task without its handler owner
 
 `src/rt/fetch.cpp:204, 205, 206`
 
@@ -508,7 +572,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +    return detail::keepAlive<Response>(std::move(invocation), std::move(task));
 ```
 
-### 6. A-PROMISE-CALLBACK-INPUT (memory safety in the public runtime API) — Task-returning Promise callbacks can borrow a destroyed outcome
+### 7. A-PROMISE-CALLBACK-INPUT (memory safety in the public runtime API) — Task-returning Promise callbacks can borrow a destroyed outcome
 
 `include/uos/rt/async.hpp:692, 701, 704, 713, 715, 726, 731, 744, 745, 746, 758, 760`
 
@@ -539,7 +603,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +        detail::settleWith(target, callback, source, [&] { return (*callback)(source->error); });
 ```
 
-### 7. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
+### 8. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
 
 `src/rt/abort.cpp:62, 69, 74, 81, 95, 228`
 
@@ -554,7 +618,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +    void signalAbort(std::shared_ptr<State> signal, Reason reason) {
 ```
 
-### 8. A-FETCH-ABORT-BODY-CYCLE (request-path leak) — Dropped abortable response body is kept by its own controller
+### 9. A-FETCH-ABORT-BODY-CYCLE (request-path leak) — Dropped abortable response body is kept by its own controller
 
 `src/rt/fetch.cpp:70, 72, 73, 74, 77, 112, 114, 115, 120, 123, 124, 125, 126, 127, 128`
 
@@ -586,7 +650,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +      response.setBodyStream(std::move(stream));
 ```
 
-### 9. A-FETCH-UPLOAD-STRANDED (request-path retention after a failed or early response) — Terminal connection close can strand a detached upload reader
+### 10. A-FETCH-UPLOAD-STRANDED (request-path retention after a failed or early response) — Terminal connection close can strand a detached upload reader
 
 `src/rt/fetch_transport.cpp:173, 182, 203, 204, 209, 210, 215, 216, 274, 276, 277, 279, 296, 298, 299, 349, 350, 368, 372, 378, 475, 478, 479, 530, 537, 555`
 
@@ -612,7 +676,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +      pump.writer->releaseReader();
 ```
 
-### 10. A-FETCH-RESPONSE-STRANDED (request-path pending response read) — Post-head upload failure leaves a response read parked
+### 11. A-FETCH-RESPONSE-STRANDED (request-path pending response read) — Post-head upload failure leaves a response read parked
 
 `src/rt/fetch_transport.cpp:135, 214, 215, 216, 236, 237, 238, 416, 436, 437, 438, 440, 441, 452, 455, 474`
 
@@ -631,7 +695,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
            if (status == ReadStatus::eof && pump->framing == Framing::close) {
 ```
 
-### 11. A-PROCESS-SIGNAL-CONTEXT (memory safety with scoped runtime loops) — Static process signal registry retains a scoped Asio context
+### 12. A-PROCESS-SIGNAL-CONTEXT (memory safety with scoped runtime loops) — Static process signal registry retains a scoped Asio context
 
 `src/rt/process_loop.cpp:100, 102, 107, 108, 119, 124, 125, 134, 136, 142, 148`
 
@@ -659,7 +723,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
      }
 ```
 
-### 12. A-STREAM-TEE-READ-CYCLE (retention on cloned streaming bodies) — In-flight tee read keeps abandoned branches' source alive
+### 13. A-STREAM-TEE-READ-CYCLE (retention on cloned streaming bodies) — In-flight tee read keeps abandoned branches' source alive
 
 `include/uos/rt/stream.hpp:444, 445, 446, 453, 454, 458, 460, 464, 469, 475, 479, 485, 486, 493, 496, 502, 554, 557, 558, 559, 561, 562, 567, 568`
 
@@ -692,7 +756,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +      start(currentLoop(), teeRead<T>(std::weak_ptr<TeeState<T>>(tee)));
 ```
 
-### 13. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
+### 14. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
 
 `src/rt/async.cpp:485, 490, 491, 492, 494, 497`
 
@@ -718,7 +782,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +      source->react([source = source.get(), out, remaining] {
 ```
 
-### 14. A-GENERATOR-STEP-OWNER (public runtime liveness) — Pending generator step does not keep its generator alive
+### 15. A-GENERATOR-STEP-OWNER (public runtime liveness) — Pending generator step does not keep its generator alive
 
 `include/uos/rt/async.hpp:1041, 1058, 1061, 1062, 1063, 1064, 1099, 1101`
 
@@ -739,7 +803,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
      }
 ```
 
-### 15. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
+### 16. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
 
 `src/rt/async.cpp:252, 257, 258, 261, 263, 266, 268, 367, 368, 396, 397, 400, 401, 443, 445`
 
@@ -754,7 +818,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +    LoopScope scope(owner);
 ```
 
-### 16. A-WEBSOCKET-EMIT-OWNER (memory safety in explicit WebSocket event delivery) — Public event delivery can lose its WebSocket receiver
+### 17. A-WEBSOCKET-EMIT-OWNER (memory safety in explicit WebSocket event delivery) — Public event delivery can lose its WebSocket receiver
 
 `src/rt/websocket.cpp:206, 208, 215, 219, 221, 586, 587, 588, 589, 607, 608, 612`
 
@@ -782,7 +846,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
      std::vector<Registration> listeners;
 ```
 
-### 17. A-WEBSOCKET-UPGRADE-OWNER (memory safety in the public server upgrade API) — Upgrade hooks can release the last WebSocketServer owner
+### 18. A-WEBSOCKET-UPGRADE-OWNER (memory safety in the public server upgrade API) — Upgrade hooks can release the last WebSocketServer owner
 
 `src/rt/websocket.cpp:741, 750, 752, 759, 762, 768, 769, 770, 771, 781`
 
@@ -798,7 +862,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
      // Destroy the socket if the client has already sent a FIN packet.
 ```
 
-### 18. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
+### 19. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
 
 `include/uos/rt/async.hpp:219, 375`
 
@@ -818,7 +882,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +      co_await std::move(ready);
 ```
 
-### 19. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
+### 20. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
 
 `include/uos/rt/async.hpp:1073, 1123, 1124`
 
@@ -840,7 +904,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +        else co_await std::move(handling);
 ```
 
-### 20. A-STREAM-GCC-AWAIT (GCC 12 portability rule) — Stream callback and yield arguments materialized inside awaits
+### 21. A-STREAM-GCC-AWAIT (GCC 12 portability rule) — Stream callback and yield arguments materialized inside awaits
 
 `include/uos/rt/stream.hpp:72, 540`
 
@@ -868,7 +932,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +          co_await std::move(yielding);
 ```
 
-### 21. A-WEBSOCKET-CONTEXT (memory safety when a socket survives a scoped Loop) — A retained WebSocket outlives its Asio socket service
+### 22. A-WEBSOCKET-CONTEXT (memory safety when a socket survives a scoped Loop) — A retained WebSocket outlives its Asio socket service
 
 `src/rt/websocket.cpp:35, 42, 44, 47, 49, 50, 51, 480, 481, 482`
 
@@ -892,7 +956,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
            websocket->removeAllListeners();
 ```
 
-### 22. A-FETCH-NET-GCC-AWAIT (GCC 12 portability rule) — Inline Asio buffer construction in native awaits
+### 23. A-FETCH-NET-GCC-AWAIT (GCC 12 portability rule) — Inline Asio buffer construction in native awaits
 
 `src/rt/fetch_transport_net.cpp:111, 151, 178, 193, 224`
 
