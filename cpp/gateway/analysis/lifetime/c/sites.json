@@ -1336,8 +1336,16 @@
       "sites": []
     },
     "include/uos/provider/claude_code_usage_refresh.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Usage refresh entry point.",
+      "sites": [
+        {
+          "lines": "18-19",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The refresh task owns KV, account binding and optional fetch inputs."
+        }
+      ]
     },
     "include/uos/provider/claude_code_usage_schema.hpp": {
       "status": "pending",
