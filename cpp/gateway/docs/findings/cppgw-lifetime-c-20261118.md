@@ -69,7 +69,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/routing_mutations.hpp`
 - [x] `include/uos/codex/routing_serial.hpp`
 - [x] `include/uos/codex/routing_state.hpp`
-- [ ] `include/uos/codex/session.hpp`
+- [x] `include/uos/codex/session.hpp`
 - [ ] `include/uos/codex/supervisor.hpp`
 - [ ] `include/uos/codex/supervisor_brief.hpp`
 - [ ] `include/uos/codex/supervisor_config.hpp`
@@ -521,3 +521,9 @@ Serial routing APIs use owned snapshots.
 ### `include/uos/codex/routing_state.hpp`
 
 Synchronous value records, comparison and evaluation declarations. No coroutine or asynchronous callback registration.
+
+### `include/uos/codex/session.hpp`
+
+KV session observation interface.
+
+- 41-42 · owning task parameters · **SAFE** · Both overloads copy or move key, client metadata and time into the receiving task.

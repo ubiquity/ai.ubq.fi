@@ -404,8 +404,16 @@
       "sites": []
     },
     "include/uos/codex/session.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "KV session observation interface.",
+      "sites": [
+        {
+          "lines": "41-42",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Both overloads copy or move key, client metadata and time into the receiving task."
+        }
+      ]
     },
     "include/uos/codex/supervisor.hpp": {
       "status": "pending",
