@@ -730,7 +730,8 @@
       ]
     },
     "include/uos/harmony/reliability/context.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous reliability context records and projection declarations.",
       "sites": []
     },
     "include/uos/harmony/reliability/failure.hpp": {

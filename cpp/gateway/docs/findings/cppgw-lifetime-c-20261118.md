@@ -100,7 +100,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/parse.hpp`
 - [x] `include/uos/harmony/probe_scenarios.hpp`
 - [x] `include/uos/harmony/probes.hpp`
-- [ ] `include/uos/harmony/reliability/context.hpp`
+- [x] `include/uos/harmony/reliability/context.hpp`
 - [ ] `include/uos/harmony/reliability/failure.hpp`
 - [ ] `include/uos/harmony/reliability/feedback.hpp`
 - [ ] `include/uos/harmony/reliability/harness.hpp`
@@ -691,3 +691,7 @@ Scenario definitions store owned run functions.
 Probe context callbacks forward to task factories.
 
 - 120-131 · callback bundle · **SAFE** · RunRaw invokes synchronously and the underlying probe tasks own their body, conversation and transport.
+
+### `include/uos/harmony/reliability/context.hpp`
+
+Synchronous reliability context records and projection declarations.
