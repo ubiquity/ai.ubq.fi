@@ -2308,8 +2308,22 @@
       ]
     },
     "src/codex/supervisor.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The admin follow handler spawns one owning polling task and weakly observes it from the stream and request signal.",
+      "sites": [
+        {
+          "lines": "209-259,292-307",
+          "kind": "stream start, detached poll, cancel and abort",
+          "verdict": "SAFE",
+          "reason": "The poll frame owns FollowState and the revisions handle. Controller holds a weak stream handle, and the abort and cancel callbacks lock weak state only for their synchronous use."
+        },
+        {
+          "lines": "263-290",
+          "kind": "config and inventory awaits",
+          "verdict": "SAFE",
+          "reason": "Config and inventory snapshots are frame-owned. A matching configured source is copied before the inventory suspension."
+        }
+      ]
     },
     "src/codex/supervisor_brief.cpp": {
       "status": "pending",

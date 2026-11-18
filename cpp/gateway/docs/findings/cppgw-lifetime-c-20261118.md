@@ -216,7 +216,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/routing_serial.cpp`
 - [x] `src/codex/routing_state.cpp`
 - [x] `src/codex/session.cpp`
-- [ ] `src/codex/supervisor.cpp`
+- [x] `src/codex/supervisor.cpp`
 - [ ] `src/codex/supervisor_brief.cpp`
 - [ ] `src/codex/supervisor_config.cpp`
 - [ ] `src/codex/supervisor_follow.cpp`
@@ -1393,3 +1393,10 @@ KV key constants and routing row serialization are synchronous. Reference-taking
 Session telemetry uses per-observation hashes and a local durable update.
 
 - 200-269 · session, key, and rate update awaits · **SAFE** · Inputs and hashes are frame-owned, the row vector remains local across the write, and the AtomicOperation and KV survive the commit.
+
+### `src/codex/supervisor.cpp`
+
+The admin follow handler spawns one owning polling task and weakly observes it from the stream and request signal.
+
+- 209-259,292-307 · stream start, detached poll, cancel and abort · **SAFE** · The poll frame owns FollowState and the revisions handle. Controller holds a weak stream handle, and the abort and cancel callbacks lock weak state only for their synchronous use.
+- 263-290 · config and inventory awaits · **SAFE** · Config and inventory snapshots are frame-owned. A matching configured source is copied before the inventory suspension.
