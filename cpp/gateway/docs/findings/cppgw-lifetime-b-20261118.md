@@ -37,7 +37,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/runtime/http_tasks.cpp`
 - [x] `src/runtime/http_upgrade.cpp`
 - [x] `src/runtime/native_kv_bootstrap.cpp`
-- [ ] `src/runtime/permissions_linux.cpp`
+- [x] `src/runtime/permissions_linux.cpp`
 - [ ] `src/runtime/websocket.cpp`
 - [ ] `include/uos/rt/fs.hpp`
 - [ ] `include/uos/rt/kv.hpp`
@@ -243,6 +243,13 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 70-89 | Receipt string views | **SAFE** | The parsed JSON is alive for the synchronous call and fields are copied into the returned binding. |
 | 143-148 | Deferred native KV preparation | **SAFE** | then owns the callback, which copies repositoryRoot and does synchronous receipt verification and preparation. |
 
+### `src/runtime/permissions_linux.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 116-160 | Seccomp filter builders and syscall view | **SAFE** | Local closures fill the stack buffer synchronously, and the syscall consumes its program pointer before the frame exits. |
+| 175-228,242-262,323-374 | Native Landlock and permission callbacks | **SAFE** | Rule data, grants, path views and receipt callbacks stay within synchronous stack scopes. Native permissions stores function pointers to linked functions. |
+
 
 ## Ranked defects and counts
 
@@ -408,4 +415,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-14/97 files reviewed. **DEFECT 7, SAFE 41, UNCLEAR 2.**
+15/97 files reviewed. **DEFECT 7, SAFE 43, UNCLEAR 2.**

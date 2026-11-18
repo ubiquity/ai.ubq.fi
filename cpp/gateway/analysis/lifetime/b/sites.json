@@ -575,8 +575,30 @@
       ]
     },
     "src/runtime/permissions_linux.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "116-160",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "Seccomp filter builders and syscall view",
+          "evidence": "Local closures fill the stack buffer synchronously, and the syscall consumes its program pointer before the frame exits."
+        },
+        {
+          "lines": "175-228,242-262,323-374",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "Native Landlock and permission callbacks",
+          "evidence": "Rule data, grants, path views and receipt callbacks stay within synchronous stack scopes. Native permissions stores function pointers to linked functions."
+        }
+      ]
     },
     "src/runtime/websocket.cpp": {
       "reviewed": false,
