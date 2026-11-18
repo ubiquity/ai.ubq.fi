@@ -513,8 +513,148 @@
       ]
     },
     "src/admin/codex.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed all admin Codex actions, catalog construction and refresh, provider selection, and prompt purge.",
+      "sites": [
+        {
+          "lines": [
+            46,
+            52,
+            53,
+            54
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The roster owns its accounts and every hash child owns its account ID. The fail-fast combination cannot invalidate the remaining hash inputs."
+        },
+        {
+          "lines": [
+            70,
+            71,
+            72,
+            78,
+            83,
+            88,
+            93,
+            95
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The request, scenario and baseline are owned by the handler. The experiment task owns its baseline before the handler awaits it."
+        },
+        {
+          "lines": [
+            103,
+            105,
+            107,
+            111,
+            124
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The telemetry overload owns the adapter closure in the by-value reader parameter throughout the awaited task. The analytics handler likewise keeps its callback and options during direct delegation."
+        },
+        {
+          "lines": [
+            128,
+            129,
+            135,
+            153,
+            166,
+            174
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Native and memory KV readers acquire a store owner synchronously. The upload frame owns validation and atomic state, and keeps the database alive through the directly awaited catalog write."
+        },
+        {
+          "lines": [
+            181,
+            183,
+            188,
+            193,
+            194,
+            195,
+            197,
+            201,
+            202,
+            227,
+            228,
+            233,
+            257,
+            258,
+            263
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The individual paths await children with stable frame-local receiver, request or iterator owners. The entries and result snapshots are values."
+        },
+        {
+          "lines": [
+            207,
+            208,
+            209
+          ],
+          "kinds": [
+            "a",
+            "c",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "Catalog override lifetime. A whitelist read rejects while an injected capturing catalog coroutine is pending. The join unwinds the dependency object; the pending coroutine can resume through its destroyed closure. Hold the catalog callable in rt::async before starting its Promise."
+        },
+        {
+          "lines": [
+            216,
+            217,
+            218,
+            219,
+            220,
+            221
+          ],
+          "kinds": [
+            "a",
+            "c",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "Refresh override lifetime. A refresh child rejects while a sibling created by an injected capturing refresh coroutine is suspended. Handler exit destroys the callback holding its captures; the sibling can still resume. Wrap each injected callback in rt::async with copied options."
+        },
+        {
+          "lines": [
+            238,
+            239,
+            240
+          ],
+          "kinds": [
+            "a",
+            "c",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "Provider selection override lifetime. The selection read rejects while an injected capturing catalog coroutine is pending. Handler exit destroys the callable; the pending build can resume through it. Hold the catalog callable in rt::async before starting its Promise."
+        }
+      ]
     },
     "src/admin/codex_reset.cpp": {
       "reviewed": false,

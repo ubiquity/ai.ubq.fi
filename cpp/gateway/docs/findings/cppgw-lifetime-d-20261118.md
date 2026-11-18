@@ -29,7 +29,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/admin/capacity_observation_sync.cpp`
 - [x] `src/admin/chart_source_proxy.cpp`
 - [x] `src/admin/claude_code.cpp`
-- [ ] `src/admin/codex.cpp`
+- [x] `src/admin/codex.cpp`
 - [ ] `src/admin/codex_reset.cpp`
 - [ ] `src/admin/defaults.cpp`
 - [ ] `src/admin/error_log.cpp`
@@ -373,6 +373,19 @@ Reviewed credential validation and persistence, account targeting, guard and acc
 - L250, 253, 257, 259, 267, 272, 276, 279, 287, 292, 299, 306, 310 **SAFE** · The quota, deletion and guard operations await each child with a frame-local store and account or body snapshot. The raw member used after resolution is in the unchanged local JSON.
 - L316, 321, 324, 328, 335, 338, 342, 345 **SAFE** · Both access and active-account handlers retain request, store and parsed IDs until completion, including the store borrowed by the access write.
 
+### `src/admin/codex.cpp`
+
+Reviewed all admin Codex actions, catalog construction and refresh, provider selection, and prompt purge.
+
+- L46, 52, 53, 54 **SAFE** · The roster owns its accounts and every hash child owns its account ID. The fail-fast combination cannot invalidate the remaining hash inputs.
+- L70, 71, 72, 78, 83, 88, 93, 95 **SAFE** · The request, scenario and baseline are owned by the handler. The experiment task owns its baseline before the handler awaits it.
+- L103, 105, 107, 111, 124 **SAFE** · The telemetry overload owns the adapter closure in the by-value reader parameter throughout the awaited task. The analytics handler likewise keeps its callback and options during direct delegation.
+- L128, 129, 135, 153, 166, 174 **SAFE** · Native and memory KV readers acquire a store owner synchronously. The upload frame owns validation and atomic state, and keeps the database alive through the directly awaited catalog write.
+- L181, 183, 188, 193, 194, 195, 197, 201, 202, 227, 228, 233, 257, 258, 263 **SAFE** · The individual paths await children with stable frame-local receiver, request or iterator owners. The entries and result snapshots are values.
+- L207, 208, 209 **DEFECT** · Catalog override lifetime. A whitelist read rejects while an injected capturing catalog coroutine is pending. The join unwinds the dependency object; the pending coroutine can resume through its destroyed closure. Hold the catalog callable in rt::async before starting its Promise.
+- L216, 217, 218, 219, 220, 221 **DEFECT** · Refresh override lifetime. A refresh child rejects while a sibling created by an injected capturing refresh coroutine is suspended. Handler exit destroys the callback holding its captures; the sibling can still resume. Wrap each injected callback in rt::async with copied options.
+- L238, 239, 240 **DEFECT** · Provider selection override lifetime. The selection read rejects while an injected capturing catalog coroutine is pending. Handler exit destroys the callable; the pending build can resume through it. Hold the catalog callable in rt::async before starting its Promise.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -381,4 +394,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-6/286 files reviewed. 29 sites: 29 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+7/286 files reviewed. 37 sites: 34 SAFE, 3 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
