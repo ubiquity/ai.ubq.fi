@@ -47,7 +47,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/banked_reset_claim.hpp`
 - [x] `include/uos/codex/banked_reset_pool.hpp`
 - [x] `include/uos/codex/banked_reset_provider.hpp`
-- [ ] `include/uos/codex/banked_reset_submission.hpp`
+- [x] `include/uos/codex/banked_reset_submission.hpp`
 - [ ] `include/uos/codex/capacity_routing.hpp`
 - [ ] `include/uos/codex/dispatch.hpp`
 - [ ] `include/uos/codex/experiment.hpp`
@@ -397,3 +397,9 @@ Reset provider interface and read-only display APIs.
 
 - 163-166 · member task interface · **SAFE** · The built-in upstream implementation synchronously copies its shared binding into free tasks; production callers also retain their provider handle.
 - 184,279,282 · owning task parameters · **SAFE** · Display tasks own options including the clock/fetch dependencies, and their abort signal.
+
+### `include/uos/codex/banked_reset_submission.hpp`
+
+Dependency bundles and reset candidates cross this boundary by value.
+
+- 16,24-25,31-32 · owning task parameters · **SAFE** · The KV open and submission/reconciliation frames retain their provider, store override, callbacks and candidates.

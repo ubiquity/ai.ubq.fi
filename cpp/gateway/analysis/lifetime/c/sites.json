@@ -158,8 +158,16 @@
       ]
     },
     "include/uos/codex/banked_reset_submission.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Dependency bundles and reset candidates cross this boundary by value.",
+      "sites": [
+        {
+          "lines": "16,24-25,31-32",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The KV open and submission/reconciliation frames retain their provider, store override, callbacks and candidates."
+        }
+      ]
     },
     "include/uos/codex/capacity_routing.hpp": {
       "status": "pending",
