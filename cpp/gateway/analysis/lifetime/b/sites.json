@@ -2337,8 +2337,41 @@
       ]
     },
     "src/cache/scope_experiment_targets.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "15-26,50-58,62-73,75-99,126-133",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Runtime, target campaign and cycle read fan-outs",
+          "evidence": "Children are free coroutines with copied KV/store and values. The aggregate result containers are frame-owned and tuples are named before binding."
+        },
+        {
+          "lines": "102-120,167-197",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Read and assert experiment telemetry baseline",
+          "evidence": "The resolved binding pointer points into a const result owned by the current frame across its read. Baseline and selected target are copied into the return value."
+        },
+        {
+          "lines": "198-218,220-238",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Acquire cycle and renew lease",
+          "evidence": "Each frame keeps its state, binding and atomic operation. Parallel lease reads own the KV and keys regardless of sibling rejection."
+        }
+      ]
     },
     "src/cache/scope_targets.cpp": {
       "reviewed": false,

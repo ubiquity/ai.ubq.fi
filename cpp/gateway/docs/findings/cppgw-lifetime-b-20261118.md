@@ -99,7 +99,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/prompt_analytics_read.cpp`
 - [x] `src/cache/scope_experiment.cpp`
 - [x] `src/cache/scope_experiment_model.cpp`
-- [ ] `src/cache/scope_experiment_targets.cpp`
+- [x] `src/cache/scope_experiment_targets.cpp`
 - [ ] `src/cache/scope_targets.cpp`
 - [ ] `src/cache/telemetry_gate.cpp`
 - [ ] `include/uos/kernel/attestation.hpp`
@@ -680,6 +680,14 @@ This facade does not define a coroutine or register callbacks. Its exported impl
 | 73-82,133-145 | Detached cancel and response settlement | **SAFE** | Cancellation gets a stream handle immediately and the catch callback is captureless. The settlement coroutine retains its Response by value through exactly one transition. |
 | 322-370 | Completed usage stream iterator and terminal result | **SAFE** | The frame owns Response/model/signal and the returned iterator owns its stream inputs. Payload is copied before either return_ await, and the final probe keeps the Response until settlement. |
 
+### `src/cache/scope_experiment_targets.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 15-26,50-58,62-73,75-99,126-133 | Runtime, target campaign and cycle read fan-outs | **SAFE** | Children are free coroutines with copied KV/store and values. The aggregate result containers are frame-owned and tuples are named before binding. |
+| 102-120,167-197 | Read and assert experiment telemetry baseline | **SAFE** | The resolved binding pointer points into a const result owned by the current frame across its read. Baseline and selected target are copied into the return value. |
+| 198-218,220-238 | Acquire cycle and renew lease | **SAFE** | Each frame keeps its state, binding and atomic operation. Parallel lease reads own the KV and keys regardless of sibling rejection. |
+
 
 ## Ranked defects and counts
 
@@ -885,4 +893,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-76/97 files reviewed. **DEFECT 8, SAFE 180, UNCLEAR 3.**
+77/97 files reviewed. **DEFECT 8, SAFE 183, UNCLEAR 3.**
