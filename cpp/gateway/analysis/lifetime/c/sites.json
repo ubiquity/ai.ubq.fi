@@ -767,7 +767,8 @@
       "sites": []
     },
     "include/uos/harmony/reliability/retry.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous retry decisions and option records.",
       "sites": []
     },
     "include/uos/harmony/reliability/state.hpp": {
