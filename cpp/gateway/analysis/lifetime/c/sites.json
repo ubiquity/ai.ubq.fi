@@ -500,7 +500,8 @@
       ]
     },
     "include/uos/codex/supervisor_secret.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous secret validation declarations. No suspendable body or callback registration.",
       "sites": []
     },
     "include/uos/codex/supervisor_transport.hpp": {

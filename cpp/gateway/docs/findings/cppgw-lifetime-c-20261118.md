@@ -76,7 +76,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/supervisor_follow.hpp`
 - [x] `include/uos/codex/supervisor_inventory.hpp`
 - [x] `include/uos/codex/supervisor_log.hpp`
-- [ ] `include/uos/codex/supervisor_secret.hpp`
+- [x] `include/uos/codex/supervisor_secret.hpp`
 - [ ] `include/uos/codex/supervisor_transport.hpp`
 - [ ] `include/uos/deepseek/chat_projection.hpp`
 - [ ] `include/uos/deepseek/context_admission_failure.hpp`
@@ -565,3 +565,7 @@ Inventory snapshot declaration.
 Rollout tail reader interface.
 
 - 58 · owning task parameters · **SAFE** · The task frame owns the input record and its path parameters.
+
+### `include/uos/codex/supervisor_secret.hpp`
+
+Synchronous secret validation declarations. No suspendable body or callback registration.
