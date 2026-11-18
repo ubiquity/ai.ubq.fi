@@ -110,7 +110,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/reliability/state.hpp`
 - [x] `include/uos/harmony/reliability/surfaces.hpp`
 - [x] `include/uos/harmony/reliability/verify.hpp`
-- [ ] `include/uos/harmony/render.hpp`
+- [x] `include/uos/harmony/render.hpp`
 - [ ] `include/uos/harmony/tools/backend.hpp`
 - [ ] `include/uos/harmony/tools/fakes.hpp`
 - [ ] `include/uos/harmony/tools/result.hpp`
@@ -733,3 +733,7 @@ Synchronous surface selection and policy declarations.
 ### `include/uos/harmony/reliability/verify.hpp`
 
 Synchronous reliability verification predicates and records.
+
+### `include/uos/harmony/render.hpp`
+
+Synchronous Harmony text rendering declaration. The returned text owns its bytes.

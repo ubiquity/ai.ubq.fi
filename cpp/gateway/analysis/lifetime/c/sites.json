@@ -787,7 +787,8 @@
       "sites": []
     },
     "include/uos/harmony/render.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous Harmony text rendering declaration. The returned text owns its bytes.",
       "sites": []
     },
     "include/uos/harmony/tools/backend.hpp": {
