@@ -327,6 +327,28 @@ ASYNC_TEST("abort retains a replaced transport until its suspended send returns"
   EXPECT(weak.expired());
 }
 
+ASYNC_TEST("dropping an unread abortable response releases the wrapper and source") {
+  std::weak_ptr<detail::StreamState<ByteChunk>> sourceState, wrapperState;
+  TransportScope scope([&sourceState](Request) -> Task<Response> {
+    ByteStream source({}, QueuingStrategy{0});
+    sourceState = source.state();
+    co_return Response(BodyInit(std::move(source)));
+  });
+  AbortController abort;
+  {
+    RequestInit init;
+    init.signal = abort.signal();
+    auto sending = fetch(info("http://example.test/"), std::move(init));
+    auto response = co_await std::move(sending);
+    ASSERT(response.body().has_value());
+    wrapperState = response.body()->state();
+    EXPECT(!sourceState.expired());
+  }
+  co_await uos::rt::sleep(1);
+  EXPECT(wrapperState.expired());
+  EXPECT(sourceState.expired());
+}
+
 ASYNC_TEST("aborting after the response errors its body with the reason") {
   TransportScope scope([](Request) -> Task<Response> { co_return Response(BodyInit(std::string("ok"))); });
   AbortController controller;

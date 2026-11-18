@@ -69,11 +69,12 @@ namespace uos::rt {
     // After the response arrived, an abort errors its body with the reason.
     struct AbortableBody {
       std::optional<ReadableStreamDefaultReader<ByteChunk>> reader;
-      std::optional<ReadableStreamDefaultController<ByteChunk>> controller;
+      std::weak_ptr<detail::StreamState<ByteChunk>> wrapper;
       AbortSignal signal;
       EventListener onAbort;
       bool finished = false;
       explicit AbortableBody(AbortSignal signal_) : signal(std::move(signal_)) {}
+      ~AbortableBody() { finish(); }
       void finish() {
         if (finished) return;
         finished = true;
@@ -117,15 +118,16 @@ namespace uos::rt {
         if (!held || held->finished) return;
         held->finish();
         const Reason reason = held->signal.reason();
-        if (held->controller) held->controller->error(reason);
+        if (auto wrapper = held->wrapper.lock()) wrapper->error(reason);
         spawn(held->reader->cancel(reason), [](Reason) {});
       });
       UnderlyingSource<ByteChunk> wrapper;
-      wrapper.start = [body](ReadableStreamDefaultController<ByteChunk> controller) { body->controller = controller; };
       wrapper.pull = [body](ReadableStreamDefaultController<ByteChunk> controller) { return pullAbortable(body, controller); };
       wrapper.cancel = [body](Reason reason) { return cancelAbortable(body, std::move(reason)); };
+      ByteStream stream(std::move(wrapper), QueuingStrategy{0});
+      body->wrapper = stream.state();
       signal.addEventListener("abort", body->onAbort, AddEventListenerOptions{.once = true});
-      response.setBodyStream(ByteStream(std::move(wrapper), QueuingStrategy{0}));
+      response.setBodyStream(std::move(stream));
     }
 
     Task<Response> sendThrough(Request request, bool watchSignal) {
