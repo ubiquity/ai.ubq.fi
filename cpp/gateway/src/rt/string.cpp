@@ -6,9 +6,14 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+
+// ICU headers from a staged prefix can enter through a regular include path.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-conversion"
 #include <unicode/casemap.h>
 #include <unicode/ucol.h>
 #include <unicode/ustring.h>
+#pragma GCC diagnostic pop
 
 namespace uos::rt {
   namespace {
