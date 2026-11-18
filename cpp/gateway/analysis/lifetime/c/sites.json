@@ -2686,8 +2686,22 @@
       ]
     },
     "src/harmony/adapter.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The Harmony transport makes its callable owner explicit, including when a consumer races it with cancellation.",
+      "sites": [
+        {
+          "lines": "256-277",
+          "kind": "transport callable keep-alive",
+          "verdict": "SAFE",
+          "reason": "The member wrapper synchronously transfers a shared function owner into keepAlive alongside the returned task. The Cerebras forwarder owns options and returns a value-taking task."
+        },
+        {
+          "lines": "280-299",
+          "kind": "transport and buffered parse awaits",
+          "verdict": "SAFE",
+          "reason": "The frame owns adapter options, response and JSON values. The parse recovery callback has no captures."
+        }
+      ]
     },
     "src/harmony/classifier.cpp": {
       "status": "pending",

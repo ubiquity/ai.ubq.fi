@@ -240,7 +240,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/embeddings/jobs.cpp`
 - [x] `src/embeddings/ledger.cpp`
 - [x] `src/embeddings/voyage.cpp`
-- [ ] `src/harmony/adapter.cpp`
+- [x] `src/harmony/adapter.cpp`
 - [ ] `src/harmony/classifier.cpp`
 - [ ] `src/harmony/conversation.cpp`
 - [ ] `src/harmony/parse.cpp`
@@ -1547,3 +1547,10 @@ Cache and budget code borrow KV within joined request and job frames, with a sep
 - 186-188,194-197 · timer-driven completion · **SAFE** · Sleep captures its resolver, and the abortable sleep timer owns State and removes the listener during ordinary completion.
 - 198-207 · retry sleep abort ownership cycle · **DEFECT** · The signal retains the once callback and that callback retains the same signal. When loop teardown clears the pending timer before it fires, the listener cycle remains. Use weak signal state or rely on once to remove the listener before it runs.
 - 435-467,503-545 · encryption, key read, and upstream fetch · **SAFE** · Input and request options are frame-owned, the fetch hook is awaited through completion, and ScopeExit clears the streaming-independent request timer.
+
+### `src/harmony/adapter.cpp`
+
+The Harmony transport makes its callable owner explicit, including when a consumer races it with cancellation.
+
+- 256-277 · transport callable keep-alive · **SAFE** · The member wrapper synchronously transfers a shared function owner into keepAlive alongside the returned task. The Cerebras forwarder owns options and returns a value-taking task.
+- 280-299 · transport and buffered parse awaits · **SAFE** · The frame owns adapter options, response and JSON values. The parse recovery callback has no captures.
