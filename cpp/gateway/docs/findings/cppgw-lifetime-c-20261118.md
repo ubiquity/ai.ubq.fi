@@ -86,7 +86,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/deepseek/index.hpp`
 - [x] `include/uos/deepseek/responses.hpp`
 - [x] `include/uos/deepseek/responses_payload.hpp`
-- [ ] `include/uos/deepseek/responses_stream.hpp`
+- [x] `include/uos/deepseek/responses_stream.hpp`
 - [ ] `include/uos/deepseek/stream.hpp`
 - [ ] `include/uos/deepseek/waterfall.hpp`
 - [ ] `include/uos/deepseek/waterfall_handler.hpp`
@@ -613,3 +613,9 @@ Synchronous Responses conversion declarations. The results own translated wire v
 ### `include/uos/deepseek/responses_payload.hpp`
 
 Synchronous construction of downstream payloads. No suspension or retained callback.
+
+### `include/uos/deepseek/responses_stream.hpp`
+
+A synchronous stateful adapter is returned by value.
+
+- 17-40 · callback bundle · **SAFE** · Each callback owns the shared adapter state; push consumes its JSON argument during the call.

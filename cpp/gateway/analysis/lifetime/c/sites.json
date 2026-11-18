@@ -578,8 +578,16 @@
       "sites": []
     },
     "include/uos/deepseek/responses_stream.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "A synchronous stateful adapter is returned by value.",
+      "sites": [
+        {
+          "lines": "17-40",
+          "kind": "callback bundle",
+          "verdict": "SAFE",
+          "reason": "Each callback owns the shared adapter state; push consumes its JSON argument during the call."
+        }
+      ]
     },
     "include/uos/deepseek/stream.hpp": {
       "status": "pending",
