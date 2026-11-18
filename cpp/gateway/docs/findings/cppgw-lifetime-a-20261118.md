@@ -54,7 +54,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/fetch_transport_http.cpp`
 - [x] `src/rt/fetch_transport_internal.hpp`
 - [x] `src/rt/fetch_transport_net.cpp`
-- [ ] `src/rt/gzip.cpp`
+- [x] `src/rt/gzip.cpp`
 - [ ] `src/rt/tls.cpp`
 - [ ] `src/rt/tls_internal.hpp`
 - [ ] `src/rt/websocket.cpp`
@@ -310,18 +310,28 @@ Reviewed the TCP and TLS paths, cancellation, idle timers, pool slots, registry 
 - **SAFE** `302, 304, 305, 309, 310, 311, 313, 314, 317, 323, 325, 326, 331, 335, 336, 338, 340, 341, 342, 345, 348, 350, 351, 353, 354, 358` (c/d), Pool timer reschedule and close traversal. The loop owns the timer job, the job temporarily promotes a weak pool, and no vector slot is borrowed across suspension or user callback invocation.
 - **SAFE** `361, 363, 364, 365, 369, 371, 372, 373, 374, 379, 384, 387, 388, 392, 393, 394, 395, 396, 399, 402, 403, 405, 406, 408, 409, 410, 414, 415, 417, 418, 419, 420, 425, 427` (b/c/d), Registry and TLS context lifetime during client teardown. Asio releases registry pool owners during service shutdown. The only other current pool owners are synchronous handles or same-context tasks destroyed before service deallocation, and the client and SSL connections hold their own context references.
 
+### `src/rt/gzip.cpp`
+
+Reviewed the native and dynamically loaded zlib paths, incremental borrowed buffers, synchronous visitor delivery and the two Task wrappers.
+
+- **SAFE** `77, 88, 89, 92, 93, 97, 98, 102, 103, 105, 108, 109, 115, 117, 121, 126, 127, 134, 135, 139, 140, 141, 451, 452, 453` (b/c/d), Zlib callback table across test seam replacement. An existing inflater holds a pointer to a static or list-owned table. Repointing the lookup slot preserves the old list node and its open library mapping.
+- **SAFE** `148, 150, 152, 153, 156, 158, 160, 161, 162, 165, 166, 179, 182, 185, 190, 192, 195, 197, 198, 202, 203, 205` (b/c/d), Allocator callback storage and output spans. Zlib registers stateless allocation functions and each allocated block owns its size header. Output spans are consumed synchronously before the next growth or transfer.
+- **SAFE** `216, 217, 219, 220, 229, 236, 239, 240, 244, 248, 253, 254, 259, 263, 272, 275, 283, 284, 291, 292, 294, 297, 300, 302, 331, 333, 337, 339, 340, 341, 349, 350, 351, 353, 355, 356, 362, 365, 367, 370, 372, 375, 379, 380` (b/c/d), Incremental inflater state and documented span borrows. The nonmovable heap state stays stable when the public handle moves. Checked callers keep input alive until drained, consume the current output span before another operation and stop on error.
+- **SAFE** `386, 387, 389, 390, 391, 395, 396, 399, 401, 406, 407, 410, 411, 415, 418, 419, 422, 424, 426, 429, 431, 432` (b/c/d), Synchronous compressor cleanup and piece visitor. The scope guard runs with its stream and static API still alive. The visitor runs synchronously, and the production and fixture callbacks copy each piece before the next inflater read.
+- **SAFE** `437, 438, 439, 440, 441, 444, 445, 446, 447, 448` (a/b/c/e), Compression and decompression Task frames. Each frame owns the input and result. Its noncoroutine scrub guard borrows the frame's input, and only the captureless zero-argument microtask runs after the codec work.
+
 ## Ranked defects and counts
 
-Reviewed **22/30 files** and **130 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **23/30 files** and **135 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
-| a. Capturing coroutine closure | 5 | 19 | 0 |
-| b. Borrowed coroutine parameter or receiver | 11 | 81 | 3 |
-| c. Callback ownership or cycle | 16 | 75 | 4 |
-| d. Container invalidation | 3 | 52 | 0 |
-| e. GCC 12 await-expression rule | 5 | 12 | 1 |
-| **Unique site groups** | 23 | 102 | 5 |
+| a. Capturing coroutine closure | 5 | 20 | 0 |
+| b. Borrowed coroutine parameter or receiver | 11 | 86 | 3 |
+| c. Callback ownership or cycle | 16 | 80 | 4 |
+| d. Container invalidation | 3 | 56 | 0 |
+| e. GCC 12 await-expression rule | 5 | 13 | 1 |
+| **Unique site groups** | 23 | 107 | 5 |
 
 ### 1. A-FETCH-ABORT-TRANSPORT (memory safety in the injectable transport path) — Abort can outlive the owning virtual transport frame
 
