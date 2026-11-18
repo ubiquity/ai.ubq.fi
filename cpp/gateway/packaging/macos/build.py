@@ -139,11 +139,17 @@ def build(work, output, jobs):
     shutil.copyfile(GATEWAY / "packaging/SQLITE-LICENSE", licenses / "sqlite/LICENSE")
 
     env["SDKROOT"] = profile["sdk"]
+    flags = [*profile["flags"], f"-ffile-prefix-map={work}=."]
     minimum_os = {}
     for name in EXECUTABLES:
         source = GATEWAY / "entrypoints" / (name.removeprefix("uos-") + ".cpp")
+        entry = (source,)
+        if name == "uos-gateway":
+            gateway_entry = work / "gateway.o"
+            run(*flags, "-Dmain=uosGatewayMain", "-c", source, "-o", gateway_entry, env=env)
+            entry = (f'-DUOS_PACKAGE_GIT_COMMIT="{commit}"', GATEWAY / "packaging/macos/gateway-version.cpp", gateway_entry)
         target = stage / "bin" / name
-        run(*profile["flags"], f"-ffile-prefix-map={work}=.", source, GATEWAY / "runtime/startup.cpp",
+        run(*flags, *entry, GATEWAY / "runtime/startup.cpp",
             "-Xlinker", "-force_load", "-Xlinker", build_root / "libuos_gateway.a", *static_libraries,
             "-Wl,-no_uuid", "-Wl,-adhoc_codesign", "-o", target, env=env)
         if capture("xcrun", "lipo", "-archs", target, env=env) != "arm64":

@@ -1,9 +1,9 @@
 # Download and install C++ gateway packages
 
 Use the Linux ARM64 package for Arch Linux ARM or 64-bit Raspberry Pi OS. Use the macOS ARM64 package on Apple Silicon
-to install the development binaries. Linux service startup needs glibc 2.36 or newer, Landlock ABI 8 or newer, and
-seccomp thread synchronization. The C++ gateway and its KV tools still require Linux at startup, so the Mac package
-cannot replace an existing service.
+to install the development binaries and check the gateway version offline. Linux service startup needs glibc 2.36
+or newer, Landlock ABI 8 or newer, and seccomp thread synchronization. Gateway serving and KV operations require the
+sealed Linux package.
 
 ## Build and download in GitHub Actions
 
@@ -11,7 +11,8 @@ cannot replace an existing service.
    build. The workflow must be available on the default branch for manual runs. To build a tagged commit instead, push a
    tag beginning with `cpp-gateway-v`, for example `cpp-gateway-v0.1.0`, pointing to a commit containing the workflow.
 2. Open the run and check the commit shown at the top. Wait for your platform's job to succeed. The Linux job checks
-   the package in Debian 12 and 13 containers. The macOS job runs the existing runtime test suite before packaging.
+   the package in Debian 12 and 13 containers. The macOS job runs the runtime tests and checks the extracted gateway's
+   offline version command.
 3. On that run's **Summary** page, download `uos-gateway-linux-arm64` or `uos-gateway-macos-arm64` from **Artifacts**.
    Unzip the download to find the `.tar.gz` archive and `SHA256SUMS`. The Linux download also includes `proof.log`.
    Download each platform into its own directory so its checksum file stays with the correct archive.
@@ -96,18 +97,22 @@ In another terminal, `curl -f http://127.0.0.1:18080/health` checks the listener
 
 ## Install the files on an Apple Silicon Mac
 
-In a native Terminal, `uname -m` should print `arm64`. From the verified download directory, extract to a new directory:
+In a native Terminal, extract to a new directory from the verified download directory.
 
 ```sh
+test "$(uname -m)" = arm64
 mkdir -p "$HOME/uos-gateway/releases"
 release=$(mktemp -d "$HOME/uos-gateway/releases/macos.XXXXXX")
-tar -xzf uos-gateway-macos-arm64.tar.gz -C "$release"
+tar --no-same-owner --no-same-permissions -xzf uos-gateway-macos-arm64.tar.gz -C "$release"
 cat "$release/VERSION"
 file "$release/bin/uos-gateway" "$release/bin/uos-kv-convert" "$release/bin/uos-kv-proof"
+"$release/bin/uos-gateway" --version
+printf '%s\n' "$release"
 ```
 
-`VERSION` lists each executable's minimum macOS version. The files should be arm64 Mach-O executables. Keep your
-existing service on its supported release while the C++ startup and confinement contract is Linux-only. [Known Darwin boundaries](MACOS.md)
+`VERSION` lists each executable's minimum macOS version. Check for arm64 Mach-O executables and compare the full
+commit printed by `--version` with `gitCommit` in `VERSION`. Save the printed directory for rollback. Keep your
+existing service on its supported release. [Known Darwin boundaries](MACOS.md)
 
 ## Roll back
 
@@ -118,7 +123,19 @@ and use its new binding. Then restart the previous release and check its health 
 
 Use the latest stopped database when switching runtimes. A return to legacy Deno after Bun writes requires reverse
 conversion, a verified private rollback receipt, and a supported legacy release/profile. A stale backup loses those
-writes. To roll back the Mac file installation, select the previous extracted directory.
+writes.
+
+### Roll back the Mac file installation
+
+Set `previous_release` to the directory printed when you installed the previous archive. Select it and check its
+recorded commit.
+
+```sh
+previous_release=/absolute/path/to/previous/extracted/directory
+release="$previous_release"
+cat "$release/VERSION"
+"$release/bin/uos-gateway" --version
+```
 
 ## Build locally
 

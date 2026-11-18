@@ -60,7 +60,7 @@ jobs:
 
   macos:
     name: macOS ARM64 package
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -77,9 +77,19 @@ jobs:
         shell: bash
         run: |
           release="$RUNNER_TEMP/cpp-gateway-macos"
-          mkdir "$release"
-          python3 -B cpp/gateway/packaging/macos/build.py "$release/uos-gateway-macos-arm64.tar.gz"
+          scratch=$(mktemp -d "$RUNNER_TEMP/cpp-gateway-macos.XXXXXX")
+          trap 'rm -rf -- "$scratch"' EXIT
+          mkdir "$release" "$scratch/build-home" "$scratch/build-tmp"
+          env -i PATH=/opt/homebrew/bin:/usr/bin:/bin HOME="$scratch/build-home" TMPDIR="$scratch/build-tmp" \
+            python3 -B cpp/gateway/packaging/macos/build.py "$release/uos-gateway-macos-arm64.tar.gz"
           (cd "$release" && shasum -a 256 uos-gateway-macos-arm64.tar.gz > SHA256SUMS)
+          mkdir "$scratch/unpacked" "$scratch/home" "$scratch/tmp"
+          tar --no-same-owner --no-same-permissions -xzf "$release/uos-gateway-macos-arm64.tar.gz" -C "$scratch/unpacked"
+          expected="uos-gateway $(git rev-parse HEAD)"
+          version=$(cd "$scratch/unpacked" && env -i PATH=/usr/bin:/bin HOME="$scratch/home" TMPDIR="$scratch/tmp" \
+            /usr/bin/sandbox-exec -p '(version 1)(allow default)(deny network*)' ./bin/uos-gateway --version)
+          test "$version" = "$expected"
+          printf '%s\n' "$version"
       - name: Upload macOS package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

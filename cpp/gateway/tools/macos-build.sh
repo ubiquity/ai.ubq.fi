@@ -91,12 +91,13 @@ if not compiler:
 env["SDKROOT"] = capture(["xcrun", "--show-sdk-path"])
 packages = ["openssl", "zlib", "libbrotlidec", "libzstd", "icu-uc", "icu-i18n"]
 cflags = shlex.split(capture(["pkg-config", "--cflags", *packages]))
+cflags = ["-isystem" + flag[2:] if flag.startswith("-I") else flag for flag in cflags]
 libs = shlex.split(capture(["pkg-config", "--libs", *packages]))
 sqlite = prefixes["sqlite"]
 flags = [compiler, "-std=c++20", "-stdlib=libc++", "-O0", "-g0", "-Wall", "-Wextra", "-Wshadow",
          "-Wconversion", "-Werror", "-DBOOST_JSON_NO_LIB", "-DBOOST_CONTAINER_NO_LIB", "-DBOOST_SYSTEM_NO_LIB",
          "-I", str(gateway / "include"), "-I", str(gateway), "-isystem", str(prefixes["boost"] / "include"),
-         "-isystem", str(sqlite / "include"), "-pthread", *cflags]
+         "-isystem", str(sqlite / "include"), "--system-header-prefix=third_party/simdutf/", "-pthread", *cflags]
 flags.append("-DUOS_GATEWAY_NATIVE_LIBRARIES")
 libs += [str(sqlite / "lib/libsqlite3.dylib"), "-L" + str(prefixes["boost"] / "lib"), "-lboost_json", "-lboost_container"]
 # dyld fallback search is explicit and credential-free; native links use the exact dylib above.
@@ -154,8 +155,9 @@ def compile_one(source, selected_flags=None):
     result["source"] = str(source)
     if result["status"] == 0:
         deps = shlex.split(target.with_suffix(".d").read_text().replace("\\\n", " ").split(":", 1)[1])
-        if str(source) in simdjson_sources:
-            deps.append(str(gateway / vendor_sources.SIMDJSON_HEADER))
+        # -MMD omits system headers, including the vendored headers used by this source.
+        deps.extend(str((gateway / library.source).with_suffix(".h"))
+                    for library in vendor_sources.required(vendors, (source,)))
         result["inputs"] = {p: digest(p) for p in deps}
     receipt.write_text(json.dumps(result, indent=2) + "\n")
     return result

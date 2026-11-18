@@ -4,6 +4,9 @@ Run `shasum -a 256 -c SHA256SUMS` next to the archive. Extract the verified arch
 records the source commit, toolchain and minimum macOS version. The three arm64 executables are under `bin/`, with
 their third-party licences under `licenses/`.
 
-This is a development package. The current gateway and KV executables require the Linux package and startup
-confinement. Keep your existing Mac service on its supported release until the native macOS launcher is available.
-To roll back the file installation, select your previous extracted directory.
+From the extracted directory, run `./bin/uos-gateway --version`. It prints `uos-gateway` and the full source commit
+recorded in `VERSION`, then exits. The version command works offline.
+
+Gateway serving and KV operations require the sealed Linux package and its startup confinement. Keep your existing
+Mac service on its supported release. To roll back the Mac file installation, select your previous extracted
+directory and check its `VERSION`.
