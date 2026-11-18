@@ -7892,8 +7892,25 @@
       ]
     },
     "include/uos/authority/native_authority_principals.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the principal subcomponent's callback and receiver boundary.",
+      "sites": [
+        {
+          "lines": [
+            8,
+            10,
+            12
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The outer native authority Task keeps the enclosing State and its borrowed subcomponents alive, and the principal Task takes its binding and command by value."
+        }
+      ]
     },
     "include/uos/authority/native_authority_rpc.hpp": {
       "reviewed": false,
