@@ -293,7 +293,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_authority_principals.hpp`
 - [x] `include/uos/authority/native_authority_rpc.hpp`
 - [x] `include/uos/authority/native_authority_runtime.hpp`
-- [ ] `include/uos/authority/native_authority_sql.hpp`
+- [x] `include/uos/authority/native_authority_sql.hpp`
 - [ ] `include/uos/authority/native_codex.hpp`
 - [ ] `include/uos/authority/native_codex_429.hpp`
 - [ ] `include/uos/authority/native_codex_capacity.hpp`
@@ -1635,6 +1635,13 @@ Reviewed the runtime verifier interfaces and the borrowing subcomponent.
 
 - L7, 8, 9, 11, 13, 18, 21 **SAFE** · The bound State keeps the runtime receiver, verifier and all referenced subcomponents alive throughout direct asynchronous verification.
 
+### `include/uos/authority/native_authority_sql.hpp`
+
+Reviewed the inline transaction helper and materializing SQL adapters.
+
+- L31, 32, 34, 38, 60 **SAFE** · The synchronous transaction contract keeps the local callback and receiver alive, while current transaction bodies return synchronous values and the initializer callback never escapes.
+- L44, 49, 54, 55, 56, 57 **SAFE** · Read, write and paging templates consume temporary row and index references synchronously and return owning results.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1883,4 +1890,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-185/286 files reviewed. 357 sites: 336 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+186/286 files reviewed. 359 sites: 338 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

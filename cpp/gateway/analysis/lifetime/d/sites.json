@@ -7992,8 +7992,42 @@
       ]
     },
     "include/uos/authority/native_authority_sql.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the inline transaction helper and materializing SQL adapters.",
+      "sites": [
+        {
+          "lines": [
+            31,
+            32,
+            34,
+            38,
+            60
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The synchronous transaction contract keeps the local callback and receiver alive, while current transaction bodies return synchronous values and the initializer callback never escapes."
+        },
+        {
+          "lines": [
+            44,
+            49,
+            54,
+            55,
+            56,
+            57
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Read, write and paging templates consume temporary row and index references synchronously and return owning results."
+        }
+      ]
     },
     "include/uos/authority/native_codex.hpp": {
       "reviewed": false,
