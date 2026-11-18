@@ -188,7 +188,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/lib/jev_compaction/jev_compaction_smoke.cpp`
 - [x] `src/lib/jev_compaction/request.cpp`
 - [x] `src/lib/jev_compaction/state.cpp`
-- [ ] `src/lib/jev_compaction/types.cpp`
+- [x] `src/lib/jev_compaction/types.cpp`
 - [ ] `src/metered_quota.cpp`
 - [ ] `src/models/catalog.cpp`
 - [ ] `src/models/codex_models.cpp`
@@ -1044,6 +1044,10 @@ Reviewed synchronous Jev request serialization and response parsing. Header, pay
 
 Reviewed synchronous token estimation, tool-call matching, history reduction and rendering. Predicate and mutation callables execute within the input owner's scope and output state owns its data.
 
+### `src/lib/jev_compaction/types.cpp`
+
+Reviewed synchronous representation codecs and error translation. No retained callback or suspension.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1257,4 +1261,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-98/286 files reviewed. 205 sites: 189 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+99/286 files reviewed. 205 sites: 189 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

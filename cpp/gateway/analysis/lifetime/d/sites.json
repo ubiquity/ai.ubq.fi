@@ -4415,7 +4415,8 @@
       "sites": []
     },
     "src/lib/jev_compaction/types.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous representation codecs and error translation. No retained callback or suspension.",
       "sites": []
     },
     "src/metered_quota.cpp": {
