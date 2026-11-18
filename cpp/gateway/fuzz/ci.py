@@ -18,7 +18,6 @@ import os
 from pathlib import Path
 import platform
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -94,7 +93,7 @@ def classify_campaign(target, seconds, artifacts, log, code):
             fork_leaks = {path for path in inputs if path.name.startswith("crash-") and path.stat().st_size == 0}
 
     findings = sorted(path.name for path in inputs - slow - fork_leaks)
-    completed = fuzzed_seconds >= seconds and fork_exit_code in expected_codes and (code == fork_exit_code or fork_leaks)
+    completed = fuzzed_seconds >= seconds and fork_exit_code in expected_codes and (code == fork_exit_code or bool(fork_leaks))
     outcome = "findings" if findings else "passed" if completed else "incomplete"
     return {"outcome": outcome, "fuzzed_seconds": fuzzed_seconds, "findings": findings,
             "expected_slow_inputs": len(slow), "expected_fork_exit_leaks": len(fork_leaks)}
@@ -118,7 +117,6 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
     flags = ["-std=c++20", "-pthread", "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY)]
     flags += ["-D" + define for define in DEFINES] + policy["compile_options"]
-    flags += shlex.split(os.environ.get("UOS_CI_CXXFLAGS", ""))
     sources = policy["common_sources"] + extra_sources(args.target, target, policy["common_sources"])
     # A target may list further sources itself (for example vendored third_party libraries).
     sources += [source for source in target.get("extra_sources", []) if source not in sources]
