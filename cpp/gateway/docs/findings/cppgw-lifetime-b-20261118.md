@@ -47,7 +47,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/rt/sqlite.hpp`
 - [x] `src/rt/fs.cpp`
 - [x] `src/rt/kv.cpp`
-- [ ] `src/rt/kv_internal.hpp`
+- [x] `src/rt/kv_internal.hpp`
 - [ ] `src/rt/kv_js.cpp`
 - [ ] `src/rt/kv_jsc.cpp`
 - [ ] `src/rt/kv_jsc_deserialize.cpp`
@@ -314,6 +314,10 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 77-80 | kvListToArray borrowed iterator | **SAFE** | The caller in auth/passkeys.cpp retains its named owning list iterator through the direct await. Each returned entry is moved into the collector's owned vector. |
 | 85-97,134 | Forwarding KV and atomic tasks | **SAFE** | These synchronous wrappers consume the receiver only to obtain a child task. Actual callers retain the inner owner through the await, and durable read/write implementations capture their StorePtr before returning. |
 
+### `src/rt/kv_internal.hpp`
+
+Private synchronous codec declarations. Views and references are consumed during the call, and each result type owns its data.
+
 
 ## Ranked defects and counts
 
@@ -479,4 +483,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-24/97 files reviewed. **DEFECT 7, SAFE 62, UNCLEAR 2.**
+25/97 files reviewed. **DEFECT 7, SAFE 62, UNCLEAR 2.**
