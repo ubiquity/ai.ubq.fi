@@ -218,7 +218,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/session.cpp`
 - [x] `src/codex/supervisor.cpp`
 - [x] `src/codex/supervisor_brief.cpp`
-- [ ] `src/codex/supervisor_config.cpp`
+- [x] `src/codex/supervisor_config.cpp`
 - [ ] `src/codex/supervisor_follow.cpp`
 - [ ] `src/codex/supervisor_inventory.cpp`
 - [ ] `src/codex/supervisor_log.cpp`
@@ -1408,3 +1408,10 @@ Transcript and brief generation use independent owned transcript, connection, an
 - 204-209,270-327,330-350 · connection tasks and enrichment iteration · **SAFE** · The frames retain connection and callable owners. Target references come from a private immutable vector and lookup views refer to locally owned RPC payloads.
 - 440-501,561-606,637-666,854-879 · transcript, brief, and connection teardown · **SAFE** · Source, config, response, and turn vectors are frame-owned. The connection stays live through collection errors and the awaited close.
 - 764-770 · borrowed adapter inputs · **SAFE** · Both reference-taking entry points are regular factories that copy connection/source into the child without suspending first.
+
+### `src/codex/supervisor_config.cpp`
+
+Supervisor configuration copies its env reader before the file-read boundary.
+
+- 104-119 · poll timer and abort listener · **SAFE** · The timer completion removes the listener and abort clears the timer. Loop::clearAllTimers clears the timer callback on teardown, breaking the callback ownership chain.
+- 199-250 · config read and parser await · **SAFE** · Options, env function, path and file contents stay in the frame. The environment reader is invoked synchronously.

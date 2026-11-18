@@ -2350,8 +2350,22 @@
       ]
     },
     "src/codex/supervisor_config.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Supervisor configuration copies its env reader before the file-read boundary.",
+      "sites": [
+        {
+          "lines": "104-119",
+          "kind": "poll timer and abort listener",
+          "verdict": "SAFE",
+          "reason": "The timer completion removes the listener and abort clears the timer. Loop::clearAllTimers clears the timer callback on teardown, breaking the callback ownership chain."
+        },
+        {
+          "lines": "199-250",
+          "kind": "config read and parser await",
+          "verdict": "SAFE",
+          "reason": "Options, env function, path and file contents stay in the frame. The environment reader is invoked synchronously."
+        }
+      ]
     },
     "src/codex/supervisor_follow.cpp": {
       "status": "pending",
