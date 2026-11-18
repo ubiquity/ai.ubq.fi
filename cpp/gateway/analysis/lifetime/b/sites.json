@@ -617,8 +617,19 @@
       ]
     },
     "include/uos/rt/fs.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "103,204-244,262-284",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "Filesystem views, FileHandle and path pack",
+          "evidence": "The fs/promises names wrap synchronous cores. FileHandle owns its descriptor and borrows the read buffer only for one syscall. The template view arrays are consumed by synchronous path helpers."
+        }
+      ]
     },
     "include/uos/rt/kv.hpp": {
       "reviewed": false,

@@ -39,7 +39,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/runtime/native_kv_bootstrap.cpp`
 - [x] `src/runtime/permissions_linux.cpp`
 - [x] `src/runtime/websocket.cpp`
-- [ ] `include/uos/rt/fs.hpp`
+- [x] `include/uos/rt/fs.hpp`
 - [ ] `include/uos/rt/kv.hpp`
 - [ ] `include/uos/rt/kv_js.hpp`
 - [ ] `include/uos/rt/kv_sqlite.hpp`
@@ -256,6 +256,12 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | --- | --- | --- | --- |
 | 17-25 | WebSocket module memoization | **SAFE** | The free task returns owned constructor function objects without an intermediate suspension. The static retained Promise stores the result and no caller locals. |
 
+### `include/uos/rt/fs.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 103,204-244,262-284 | Filesystem views, FileHandle and path pack | **SAFE** | The fs/promises names wrap synchronous cores. FileHandle owns its descriptor and borrows the read buffer only for one syscall. The template view arrays are consumed by synchronous path helpers. |
+
 
 ## Ranked defects and counts
 
@@ -421,4 +427,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-16/97 files reviewed. **DEFECT 7, SAFE 44, UNCLEAR 2.**
+17/97 files reviewed. **DEFECT 7, SAFE 45, UNCLEAR 2.**
