@@ -186,7 +186,7 @@ namespace uos::rt::ws::detail {
 
   private:
     enum class Step { getInfo, getPayloadLength16, getPayloadLength64, getMask, getData };
-    Bytes consume(std::size_t count);
+    BytesView consume(std::size_t count);
     void startLoop();
     void getInfo();
     void getPayloadLength16();
@@ -200,7 +200,6 @@ namespace uos::rt::ws::detail {
 
     std::int32_t maxPayload_;
     bool isServer_;
-    bool skipUTF8Validation_;
     Bytes buffer_;
     std::size_t bufferOffset_ = 0;
     std::uint64_t payloadLength_ = 0;
@@ -210,7 +209,6 @@ namespace uos::rt::ws::detail {
     bool fin_ = false;
     int opcode_ = 0;
     std::uint64_t totalPayloadLength_ = 0;
-    std::uint64_t messageLength_ = 0;
     std::vector<Bytes> fragments_;
     bool errored_ = false;
     bool loop_ = false;

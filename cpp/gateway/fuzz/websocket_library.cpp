@@ -32,8 +32,10 @@ namespace {
     if (bytes.empty()) return;
     const std::uint8_t mode = bytes.front();
     bytes = bytes.subspan(1);
-    const auto key = (mode & 1) != 0 ? std::string(uos::fuzz::text(bytes.data(), bytes.size())) : "dGhlIHNhbXBsZSBub25jZQ==";
-    const ws::UpgradeRequest request{"GET", "/", {{"Host", "localhost"}, {"Upgrade", "websocket"}, {"Connection", "Upgrade"}, {"Sec-WebSocket-Version", "13"}, {"Sec-WebSocket-Key", key}}};
+    const auto input = uos::fuzz::text(bytes.data(), bytes.size());
+    const auto key = (mode & 1) != 0 ? std::string(input) : "dGhlIHNhbXBsZSBub25jZQ==";
+    ws::UpgradeRequest request{"GET", "/", {{"Host", "localhost"}, {"Upgrade", "websocket"}, {"Connection", "Upgrade"}, {"Sec-WebSocket-Version", "13"}, {"Sec-WebSocket-Key", key}}};
+    if ((mode & 4) != 0) request.rawHeaders.emplace_back("Sec-WebSocket-Protocol", input);
     rt::Loop loop;
     rt::LoopScope scope(loop);
     asio::local::stream_protocol::socket accepted(rt::executor()), peer(rt::executor());
@@ -45,7 +47,7 @@ namespace {
     options.maxPayload = 4096;
     auto server = std::make_shared<ws::WebSocketServer>(options);
     ws::Bytes head;
-    if ((mode & 1) == 0) head.assign(bytes.begin(), bytes.end());
+    if ((mode & 5) == 0) head.assign(bytes.begin(), bytes.end());
     server->handleUpgrade(request, socket, std::move(head), [bytes, mode](const std::shared_ptr<ws::WebSocket>& websocket, const ws::UpgradeRequest&) {
       websocket->on("error", [](const ws::EventArgs& event) { uos::fuzz::malformed([&] { rt::rethrow(event.error); }); });
       const auto outgoing = bytes.first(std::min(bytes.size(), std::size_t{256}));

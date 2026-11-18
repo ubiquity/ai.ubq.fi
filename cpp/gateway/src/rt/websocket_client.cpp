@@ -5,7 +5,6 @@
 #include "websocket_internal.hpp"
 
 #include "uos/rt/base64.hpp"
-#include "uos/rt/crypto.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/url.hpp"
@@ -14,6 +13,7 @@
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/local/stream_protocol.hpp>
+#include <boost/beast/websocket/detail/hybi13.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -409,7 +409,9 @@ namespace uos::rt::ws::detail {
     if (invalidUrlMessage) throw SyntaxError(*invalidUrlMessage);
 
     const int defaultPort = isSecure ? 443 : 80;
-    const std::string key = toBase64(rt::crypto::randomBytes(16));
+    boost::beast::websocket::detail::sec_ws_key_type nonce;
+    boost::beast::websocket::detail::make_sec_ws_key(nonce);
+    const std::string key(nonce.data(), nonce.size());
     std::string hostname = parsedUrl.hostname();
     if (!hostname.empty() && hostname.front() == '[') hostname = hostname.substr(1, hostname.size() - 2);
     const std::string portText = parsedUrl.port();
