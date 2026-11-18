@@ -7656,8 +7656,26 @@
       ]
     },
     "include/uos/authority/credential_publication.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the publication receiver and asynchronous verification interface.",
+      "sites": [
+        {
+          "lines": [
+            49,
+            54,
+            57,
+            64
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The awaited publication has a named publisher owner that retains the verifier and store. The verifier receives a copied publication value."
+        }
+      ]
     },
     "include/uos/authority/delivery_outbox.hpp": {
       "reviewed": false,

@@ -278,7 +278,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/admission_state.hpp`
 - [x] `include/uos/authority/authority_rpc.hpp`
 - [x] `include/uos/authority/contracts.hpp`
-- [ ] `include/uos/authority/credential_publication.hpp`
+- [x] `include/uos/authority/credential_publication.hpp`
 - [ ] `include/uos/authority/delivery_outbox.hpp`
 - [ ] `include/uos/authority/durable_store.hpp`
 - [ ] `include/uos/authority/native_api_key.hpp`
@@ -1546,6 +1546,12 @@ Reviewed the ordered record helper and authority store contract.
 - L25, 26, 27, 38, 42, 243, 244 **SAFE** · Lookups borrow the record's own entries, used synchronously or against an immutable frame-local snapshot. Key iteration returns copied strings and the sorter runs inline.
 - L215, 216, 217 **SAFE** · The authority owner retains the store during reads and CAS. Snapshot and update state pass by value.
 
+### `include/uos/authority/credential_publication.hpp`
+
+Reviewed the publication receiver and asynchronous verification interface.
+
+- L49, 54, 57, 64 **SAFE** · The awaited publication has a named publisher owner that retains the verifier and store. The verifier receives a copied publication value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1794,4 +1800,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-170/286 files reviewed. 342 sites: 321 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+171/286 files reviewed. 343 sites: 322 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
