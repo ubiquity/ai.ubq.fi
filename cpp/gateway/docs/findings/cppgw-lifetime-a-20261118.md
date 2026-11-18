@@ -47,7 +47,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `include/uos/rt/fetch.hpp`
 - [x] `include/uos/rt/fetch_transport.hpp`
 - [x] `include/uos/rt/gzip.hpp`
-- [ ] `include/uos/rt/websocket.hpp`
+- [x] `include/uos/rt/websocket.hpp`
 - [ ] `src/rt/fetch.cpp`
 - [ ] `src/rt/fetch_transport.cpp`
 - [ ] `src/rt/fetch_transport_codec.cpp`
@@ -230,18 +230,28 @@ The incremental codec interface exposes synchronous borrows with explicit validi
 - **SAFE** `100, 101, 102, 103, 106, 108, 109, 110, 111, 113, 115, 121` (b/d), Inflater input and output spans in gateway callers. The fetch decoder drains and copies each inflater piece synchronously while the calling buffer and unique codec state remain alive.
 - **SAFE** `129, 135, 138, 146, 149, 153` (a/b/c), One-shot, callback and coroutine codec APIs. The piece callback runs synchronously before the borrowed span changes and both Task APIs own their bytes across the microtask.
 
+### `include/uos/rt/websocket.hpp`
+
+Reviewed the listener and callback shapes, client and server ownership contracts and the upgrade handoff. Event views and target pointers are call-scoped in the checked production handlers.
+
+- **SAFE** `57, 63, 69, 87, 93, 94, 95, 171, 173, 175, 179, 181, 187, 189, 194, 352, 359, 362` (b/d), Incoming values and event borrows in the checked callers. The native dispatch owns the active event, gateway listeners consume its raw pointers synchronously, and scheduled work copies payload or response data first.
+- **SAFE** `105, 107, 108, 110, 111, 113, 115, 118, 132, 135, 138, 139, 141, 142, 144, 149, 150, 153, 160, 162, 166` (c/d), Listener identity and declared EventEmitter storage. The emitter owns the registered functions and dispatch uses owning snapshot entries. This pins callable identity through reentrant listener removal.
+- **SAFE** `239, 243, 256, 259, 264, 265, 285, 286, 287, 288, 296, 302, 305, 311, 317, 318, 319, 320, 321, 322, 323, 324, 337, 347` (b/c), Client construction, send callbacks and event attributes. Asynchronous sends transfer owning payload and callable values, and attribute wrappers belong to the socket's registry. Receiver ownership during delivery is assessed in the implementation.
+- **UNCLEAR** `326, 330, 331, 332, 333` (c), Self-replacement of injected buffered-amount getter. The production getter is fixed. Supporting a configured getter that overwrites its own callable requires testing that invocation with an independently pinned callable.
+- **SAFE** `368, 372, 399, 403, 407, 409, 414, 415, 427, 429, 435, 437, 439, 442, 444, 447` (b/c/d), Upgrade API borrows and cross-loop ownership. Protocol and upgrade callbacks run synchronously against the caller's request, the socket is moved into native state, and client list access returns an owning vector snapshot.
+
 ## Ranked defects and counts
 
-Reviewed **15/30 files** and **85 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **16/30 files** and **90 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 2 | 16 | 0 |
-| b. Borrowed coroutine parameter or receiver | 5 | 47 | 3 |
-| c. Callback ownership or cycle | 10 | 55 | 3 |
-| d. Container invalidation | 3 | 24 | 0 |
+| b. Borrowed coroutine parameter or receiver | 5 | 50 | 3 |
+| c. Callback ownership or cycle | 10 | 58 | 4 |
+| d. Container invalidation | 3 | 27 | 0 |
 | e. GCC 12 await-expression rule | 4 | 7 | 1 |
-| **Unique site groups** | 15 | 66 | 4 |
+| **Unique site groups** | 15 | 70 | 5 |
 
 ### 1. A-STREAM-CANCEL-OWNER (memory safety in stream cancellation) — Stream cancel borrows the owner slot through callback invocation
 

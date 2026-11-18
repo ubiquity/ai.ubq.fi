@@ -2250,8 +2250,149 @@
       ]
     },
     "include/uos/rt/websocket.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed the listener and callback shapes, client and server ownership contracts and the upgrade handoff. Event views and target pointers are call-scoped in the checked production handlers.",
+      "sites": [
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "d"
+          ],
+          "lines": [
+            57,
+            63,
+            69,
+            87,
+            93,
+            94,
+            95,
+            171,
+            173,
+            175,
+            179,
+            181,
+            187,
+            189,
+            194,
+            352,
+            359,
+            362
+          ],
+          "label": "Incoming values and event borrows in the checked callers",
+          "reason": "The native dispatch owns the active event, gateway listeners consume its raw pointers synchronously, and scheduled work copies payload or response data first."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "c",
+            "d"
+          ],
+          "lines": [
+            105,
+            107,
+            108,
+            110,
+            111,
+            113,
+            115,
+            118,
+            132,
+            135,
+            138,
+            139,
+            141,
+            142,
+            144,
+            149,
+            150,
+            153,
+            160,
+            162,
+            166
+          ],
+          "label": "Listener identity and declared EventEmitter storage",
+          "reason": "The emitter owns the registered functions and dispatch uses owning snapshot entries. This pins callable identity through reentrant listener removal."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            239,
+            243,
+            256,
+            259,
+            264,
+            265,
+            285,
+            286,
+            287,
+            288,
+            296,
+            302,
+            305,
+            311,
+            317,
+            318,
+            319,
+            320,
+            321,
+            322,
+            323,
+            324,
+            337,
+            347
+          ],
+          "label": "Client construction, send callbacks and event attributes",
+          "reason": "Asynchronous sends transfer owning payload and callable values, and attribute wrappers belong to the socket's registry. Receiver ownership during delivery is assessed in the implementation."
+        },
+        {
+          "verdict": "UNCLEAR",
+          "classes": [
+            "c"
+          ],
+          "lines": [
+            326,
+            330,
+            331,
+            332,
+            333
+          ],
+          "label": "Self-replacement of injected buffered-amount getter",
+          "reason": "The production getter is fixed. Supporting a configured getter that overwrites its own callable requires testing that invocation with an independently pinned callable."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "lines": [
+            368,
+            372,
+            399,
+            403,
+            407,
+            409,
+            414,
+            415,
+            427,
+            429,
+            435,
+            437,
+            439,
+            442,
+            444,
+            447
+          ],
+          "label": "Upgrade API borrows and cross-loop ownership",
+          "reason": "Protocol and upgrade callbacks run synchronously against the caller's request, the socket is moved into native state, and client list access returns an owning vector snapshot."
+        }
+      ]
     },
     "src/rt/fetch.cpp": {
       "status": "pending",
