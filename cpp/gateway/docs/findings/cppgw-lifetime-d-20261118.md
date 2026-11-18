@@ -270,7 +270,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/api_keys.hpp`
 - [x] `include/uos/auth/index.hpp`
 - [x] `include/uos/auth/local_admin.hpp`
-- [ ] `include/uos/auth/local_development_key.hpp`
+- [x] `include/uos/auth/local_development_key.hpp`
 - [ ] `include/uos/auth/passkeys.hpp`
 - [ ] `include/uos/auth/passport.hpp`
 - [ ] `include/uos/auth/passport_sessions.hpp`
@@ -1497,6 +1497,12 @@ Reviewed loopback parsing and request-peer binding interfaces.
 
 - L28, 30, 33, 35, 44, 45, 48, 59 **SAFE** · The borrowed arguments are consumed synchronously. Request-specific state retains only a weak request identity and owns the copied peer.
 
+### `include/uos/auth/local_development_key.hpp`
+
+Reviewed the pricing initializer interface and local provisioning options. The orphaned abort race itself is recorded in the implementation.
+
+- L73, 78, 91, 92, 101, 102 **SAFE** · Pricing work owns the initializer callback and its signal independently of the caller that may finish on deadline; the callable stays in the frame awaiting the initializer.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1745,4 +1751,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-162/286 files reviewed. 333 sites: 312 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+163/286 files reviewed. 334 sites: 313 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

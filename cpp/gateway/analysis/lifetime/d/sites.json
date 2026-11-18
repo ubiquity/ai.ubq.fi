@@ -7416,8 +7416,28 @@
       ]
     },
     "include/uos/auth/local_development_key.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the pricing initializer interface and local provisioning options. The orphaned abort race itself is recorded in the implementation.",
+      "sites": [
+        {
+          "lines": [
+            73,
+            78,
+            91,
+            92,
+            101,
+            102
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Pricing work owns the initializer callback and its signal independently of the caller that may finish on deadline; the callable stays in the frame awaiting the initializer."
+        }
+      ]
     },
     "include/uos/auth/passkeys.hpp": {
       "reviewed": false,
