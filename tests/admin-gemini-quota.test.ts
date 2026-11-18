@@ -31,6 +31,26 @@ const withFixture = async (run: (root: string, directory: string) => Promise<voi
   }
 };
 
+const withStatusLine = (run: (directory: string, send: (event: unknown) => Promise<void>) => Promise<void>) =>
+  withFixture(async (root, directory) => {
+    const docs = await readFile(join(ROOT, "ops/README.md"), "utf8");
+    const sample = /```json\n(\{\n {2}"statusLine"[\s\S]*?\n\})\n```/.exec(docs);
+    assert.ok(sample);
+    const { statusLine } = JSON.parse(sample[1]) as { statusLine: { command: string; stack_with_default: boolean } };
+    assert.equal(statusLine.stack_with_default, true);
+    const command = statusLine.command.replaceAll("/path/to/bun", process.execPath).replaceAll("/path/to/gateway", root);
+    const outside = join(root, "session");
+    await mkdir(outside);
+    await Promise.all(["ops", "scripts", "src"].map((name) => symlink(join(ROOT, name), join(root, name), "dir")));
+
+    const send = async (event: unknown) => {
+      const child = Bun.spawn(["/bin/sh", "-c", command], { cwd: outside, stdin: new Blob([JSON.stringify(event)]), stdout: "pipe", stderr: "pipe" });
+      const [exit, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+      assert.deepEqual({ exit, stdout, stderr }, { exit: 0, stdout: "", stderr: "" });
+    };
+    await run(directory, send);
+  });
+
 test("the status line projects only subscription data and validates each bucket independently", () => {
   const observation = projectAntigravityStatusLine({
     ...EVENT,
@@ -58,29 +78,12 @@ test("the status line projects only subscription data and validates each bucket 
     },
   });
   assert.deepEqual(projectAntigravityStatusLine({ ...EVENT, product: "other" }), { status: "invalid_event" });
-  assert.deepEqual(projectAntigravityStatusLine({ ...EVENT, agent_state: "authenticating" }), { status: "signed_out" });
   assert.deepEqual(projectAntigravityStatusLine({ product: "antigravity", email: EVENT.email }), { status: "observed", plan_tier: null, quota: {} });
 });
 
 test("the documented hook runs silently outside the checkout and saves only change or freshness updates", async () => {
-  await withFixture(async (root, directory) => {
-    const docs = await readFile(join(ROOT, "ops/README.md"), "utf8");
-    const sample = /```json\n(\{\n {2}"statusLine"[\s\S]*?\n\})\n```/.exec(docs);
-    assert.ok(sample);
-    const { statusLine } = JSON.parse(sample[1]) as { statusLine: { command: string; stack_with_default: boolean } };
-    assert.equal(statusLine.stack_with_default, true);
-    const command = statusLine.command.replaceAll("/path/to/bun", process.execPath).replaceAll("/path/to/gateway", root);
-    const outside = join(root, "session");
-    await mkdir(outside);
-    await Promise.all(["ops", "scripts", "src"].map((name) => symlink(join(ROOT, name), join(root, name), "dir")));
-
-    const send = async (input: string) => {
-      const child = Bun.spawn(["/bin/sh", "-c", command], { cwd: outside, stdin: new Blob([input]), stdout: "pipe", stderr: "pipe" });
-      const [exit, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
-      assert.deepEqual({ exit, stdout, stderr }, { exit: 0, stdout: "", stderr: "" });
-    };
-
-    await send(JSON.stringify(EVENT));
+  await withStatusLine(async (directory, send) => {
+    await send(EVENT);
     const destination = join(directory, GEMINI_QUOTA_FILE);
     const first = await readGeminiQuotaSnapshot(directory);
     assert.equal(first.status, "observed");
@@ -92,22 +95,119 @@ test("the documented hook runs silently outside the checkout and saves only chan
     const withinInterval = { ...first, observed_at_ms: Date.now() - 2000, quota: { weekly: { ...EVENT.quota.weekly, reset_in_seconds: 7202 } } };
     await writeFile(destination, JSON.stringify(withinInterval));
     const initialInode = (await lstat(destination)).ino;
-    await Promise.all([send(JSON.stringify({ ...EVENT, context_window: { total_input_tokens: 7 } })), send(JSON.stringify(EVENT))]);
+    await Promise.all([send({ ...EVENT, context_window: { total_input_tokens: 7 } }), send(EVENT)]);
     assert.deepEqual(await readGeminiQuotaSnapshot(directory), withinInterval);
     assert.equal((await lstat(destination)).ino, initialInode);
 
     const previousAt = Date.now() - 31_000;
-    await writeFile(destination, JSON.stringify({ ...first, observed_at_ms: previousAt }));
-    await send(JSON.stringify(EVENT));
+    const quota = { weekly: { remaining_fraction: 0.25, reset_time: new Date(previousAt + 7_200_000).toISOString() } };
+    await writeFile(destination, JSON.stringify({ ...first, observed_at_ms: previousAt, quota }));
+    await send({ ...EVENT, quota });
     const refreshed = await readGeminiQuotaSnapshot(directory);
-    assert.ok("observed_at_ms" in refreshed && refreshed.observed_at_ms > previousAt);
+    assert.equal(refreshed.status, "observed");
+    assert.ok(refreshed.observed_at_ms > previousAt);
+    assert.deepEqual(refreshed.quota, quota);
 
-    await send(JSON.stringify({ ...EVENT, email: "" }));
+    await send({ ...EVENT, email: "" });
     assert.equal((await readGeminiQuotaSnapshot(directory)).status, "signed_out");
     assert.doesNotMatch(await readFile(destination, "utf8"), /weekly|plan_tier/);
-    await send(JSON.stringify(EVENT));
-    await send(JSON.stringify({ ...EVENT, conversation_title: "a".repeat(256 * 1024) }));
+    await send(EVENT);
+    await send({ ...EVENT, conversation_title: "a".repeat(256 * 1024) });
     assert.equal((await readGeminiQuotaSnapshot(directory)).status, "invalid_event");
+  });
+});
+
+test("the hook uses the current signed-in quota during authentication and clears it when email disappears", async () => {
+  await withStatusLine(async (directory, send) => {
+    await send(EVENT);
+    const current = {
+      ...EVENT,
+      email: "another@example.test",
+      agent_state: "authenticating",
+      plan_tier: "Ultra",
+      cwd: "/private/workspace",
+      quota: { balance: { remaining_amount: 9 } },
+    };
+    await send(current);
+    const observed = await readGeminiQuotaSnapshot(directory);
+    assert.equal(observed.status, "observed");
+    assert.equal(observed.plan_tier, current.plan_tier);
+    assert.deepEqual(observed.quota, current.quota);
+    const destination = join(directory, GEMINI_QUOTA_FILE);
+    assert.doesNotMatch(await readFile(destination, "utf8"), /@example\.test|email|agent_state|\/private\//);
+
+    await send({ ...current, email: "third@example.test", quota: undefined });
+    const empty = await readGeminiQuotaSnapshot(directory);
+    assert.equal(empty.status, "observed");
+    assert.deepEqual(empty.quota, {});
+
+    await send(current);
+    await send({ ...current, email: undefined });
+    assert.equal((await readGeminiQuotaSnapshot(directory)).status, "signed_out");
+    assert.doesNotMatch(await readFile(destination, "utf8"), /balance|plan_tier/);
+  });
+});
+
+for (const first of ["absolute", "countdown"]) {
+  test(`the hook coalesces rounded reset equivalents with ${first} first and saves a moved reset`, async () => {
+    await withStatusLine(async (directory, send) => {
+      const { remaining_fraction, reset_in_seconds } = EVENT.quota.weekly;
+      const observedAt = Date.now() - 2_000;
+      const estimatedReset = observedAt + (reset_in_seconds + 2) * 1000;
+      const absolute = { remaining_fraction, reset_time: new Date(estimatedReset + 500).toISOString() };
+      const countdown = { remaining_fraction, reset_in_seconds: reset_in_seconds + 2 };
+      const previous = {
+        version: 1,
+        status: "observed",
+        observed_at_ms: observedAt,
+        plan_tier: EVENT.plan_tier,
+        quota: { weekly: first === "absolute" ? absolute : countdown },
+      };
+      await writeFile(join(directory, GEMINI_QUOTA_FILE), JSON.stringify(previous), { mode: 0o600 });
+      await send({ ...EVENT, quota: { weekly: first === "absolute" ? EVENT.quota.weekly : absolute } });
+      assert.deepEqual(await readGeminiQuotaSnapshot(directory), previous);
+
+      const moved =
+        first === "absolute"
+          ? { remaining_fraction, reset_in_seconds: reset_in_seconds + 60 }
+          : { remaining_fraction, reset_time: new Date(estimatedReset + 60_000).toISOString() };
+      await send({ ...EVENT, quota: { weekly: moved } });
+      const changed = await readGeminiQuotaSnapshot(directory);
+      assert.equal(changed.status, "observed");
+      assert.deepEqual(changed.quota, { weekly: moved });
+    });
+  });
+}
+
+test("the hook saves reset changes and transitions in fraction, amount, and disabled state", async () => {
+  await withStatusLine(async (directory, send) => {
+    const previousAt = Date.now() - 3_000;
+    const previous = { version: 1, observed_at_ms: previousAt, ...projectAntigravityStatusLine(EVENT) };
+    await writeFile(join(directory, GEMINI_QUOTA_FILE), JSON.stringify(previous), { mode: 0o600 });
+    await send(EVENT);
+    const shifted = await readGeminiQuotaSnapshot(directory);
+    assert.equal(shifted.status, "observed");
+    assert.ok(shifted.observed_at_ms > previousAt);
+
+    const reset = Date.now() + 60_000;
+    const resetTime = new Date(reset + 500).toISOString();
+    const changes = [
+      { remaining_fraction: 0.25, reset_time: new Date(reset).toISOString(), disabled: false },
+      { remaining_fraction: 0.25, reset_time: resetTime, disabled: false },
+      { remaining_fraction: 0.5, reset_time: resetTime, disabled: false },
+      { remaining_amount: 7, reset_time: resetTime, disabled: false },
+      { remaining_amount: 0, reset_time: resetTime, disabled: false },
+      { remaining_amount: 0, reset_time: resetTime, disabled: true },
+      { remaining_amount: 0, reset_time: resetTime, disabled: false },
+      { remaining_amount: 0, disabled: false },
+    ];
+    for (const weekly of changes) {
+      const quota = { weekly };
+      await send({ ...EVENT, quota });
+      const observation = await readGeminiQuotaSnapshot(directory);
+      assert.equal(observation.status, "observed");
+      assert.deepEqual(observation.quota, quota);
+    }
   });
 });
 

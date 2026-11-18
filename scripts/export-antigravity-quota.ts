@@ -41,18 +41,25 @@ const readEvent = async (): Promise<unknown> => {
   }
 };
 
+const resetInstant = (time: string | undefined, seconds: number | undefined, observedAt: number): number | undefined => {
+  if (time !== undefined) return Date.parse(time);
+  return seconds === undefined ? undefined : observedAt + seconds * 1000;
+};
+
 const sameQuota = (previous: GeminiQuotaSnapshot, current: GeminiQuotaSnapshot): boolean => {
   if (previous.status !== "observed" || current.status !== "observed") return previous.status === current.status;
   if (previous.plan_tier !== current.plan_tier || Object.keys(previous.quota).length !== Object.keys(current.quota).length) return false;
   return Object.entries(current.quota).every(([id, bucket]) => {
     if (!Object.hasOwn(previous.quota, id)) return false;
-    const { reset_in_seconds: seconds, ...values } = bucket;
-    const { reset_in_seconds: priorSeconds, ...priorValues } = previous.quota[id];
+    const { reset_time: time, reset_in_seconds: seconds, ...values } = bucket;
+    const { reset_time: priorTime, reset_in_seconds: priorSeconds, ...priorValues } = previous.quota[id];
     if (!isDeepStrictEqual(values, priorValues)) return false;
-    if (seconds === priorSeconds) return true;
-    if (seconds === undefined || priorSeconds === undefined) return false;
-    // A falling countdown to the same estimated instant is the same quota.
-    return Math.abs(current.observed_at_ms + seconds * 1000 - (previous.observed_at_ms + priorSeconds * 1000)) <= RESET_COUNTDOWN_TOLERANCE_MS;
+    const reset = resetInstant(time, seconds, current.observed_at_ms);
+    const priorReset = resetInstant(priorTime, priorSeconds, previous.observed_at_ms);
+    if (reset === priorReset) return true;
+    if (reset === undefined || priorReset === undefined) return false;
+    // A countdown can round the reset instant to a whole second.
+    return (seconds !== undefined || priorSeconds !== undefined) && Math.abs(reset - priorReset) <= RESET_COUNTDOWN_TOLERANCE_MS;
   });
 };
 
