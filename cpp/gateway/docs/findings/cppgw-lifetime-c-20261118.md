@@ -145,7 +145,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/capacity_history.hpp`
 - [x] `include/uos/provider/capacity_parse.hpp`
 - [x] `include/uos/provider/capacity_rollups.hpp`
-- [ ] `include/uos/provider/cerebras.hpp`
+- [x] `include/uos/provider/cerebras.hpp`
 - [ ] `include/uos/provider/cerebras_handlers.hpp`
 - [ ] `include/uos/provider/cerebras_rate_limits.hpp`
 - [ ] `include/uos/provider/cerebras_responses.hpp`
@@ -930,3 +930,9 @@ Capacity parsing helpers are synchronous; there is one stored snapshot read.
 Capacity rollup query API.
 
 - 138 · owning task parameters · **SAFE** · The query owns the store and options across awaits.
+
+### `include/uos/provider/cerebras.hpp`
+
+Cerebras transport copies arguments and owns the provider option objects.
+
+- 81-83,150-151 · task and callback interface · **SAFE** · The task retains the request and dispatch hooks while it performs its single buffered dispatch.

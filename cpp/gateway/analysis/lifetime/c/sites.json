@@ -1164,8 +1164,16 @@
       ]
     },
     "include/uos/provider/cerebras.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Cerebras transport copies arguments and owns the provider option objects.",
+      "sites": [
+        {
+          "lines": "81-83,150-151",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "The task retains the request and dispatch hooks while it performs its single buffered dispatch."
+        }
+      ]
     },
     "include/uos/provider/cerebras_handlers.hpp": {
       "status": "pending",
