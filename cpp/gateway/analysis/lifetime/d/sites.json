@@ -2551,7 +2551,8 @@
       "sites": []
     },
     "src/authority/native_paid_contracts.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed paid-attempt and billing codecs. JSON member borrows end within the synchronous conversion and outputs own the results.",
       "sites": []
     },
     "src/authority/native_paid_policy.cpp": {
