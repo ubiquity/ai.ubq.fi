@@ -38,7 +38,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/runtime/http_upgrade.cpp`
 - [x] `src/runtime/native_kv_bootstrap.cpp`
 - [x] `src/runtime/permissions_linux.cpp`
-- [ ] `src/runtime/websocket.cpp`
+- [x] `src/runtime/websocket.cpp`
 - [ ] `include/uos/rt/fs.hpp`
 - [ ] `include/uos/rt/kv.hpp`
 - [ ] `include/uos/rt/kv_js.hpp`
@@ -250,6 +250,12 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 116-160 | Seccomp filter builders and syscall view | **SAFE** | Local closures fill the stack buffer synchronously, and the syscall consumes its program pointer before the frame exits. |
 | 175-228,242-262,323-374 | Native Landlock and permission callbacks | **SAFE** | Rule data, grants, path views and receipt callbacks stay within synchronous stack scopes. Native permissions stores function pointers to linked functions. |
 
+### `src/runtime/websocket.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 17-25 | WebSocket module memoization | **SAFE** | The free task returns owned constructor function objects without an intermediate suspension. The static retained Promise stores the result and no caller locals. |
+
 
 ## Ranked defects and counts
 
@@ -415,4 +421,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-15/97 files reviewed. **DEFECT 7, SAFE 43, UNCLEAR 2.**
+16/97 files reviewed. **DEFECT 7, SAFE 44, UNCLEAR 2.**

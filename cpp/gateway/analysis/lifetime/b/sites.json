@@ -601,8 +601,20 @@
       ]
     },
     "src/runtime/websocket.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "17-25",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "WebSocket module memoization",
+          "evidence": "The free task returns owned constructor function objects without an intermediate suspension. The static retained Promise stores the result and no caller locals."
+        }
+      ]
     },
     "include/uos/rt/fs.hpp": {
       "reviewed": false,
