@@ -37,13 +37,13 @@ resulting OS environment to the executable. The deployed Bun launcher owns
 its explicit repository-root dotenv policy. TLS and child environment
 construction are outside the edited closure.
 
-`git grep -nE '\\b(loadEnvFile|parseEnvFile)\\b' -- cpp/gateway` found only
+`git grep -nE '\b(loadEnvFile|parseEnvFile)\b' -- cpp/gateway` found only
 the declarations and implementation, the ordinary env fixture, the existing
 env fuzz fixture and documentation or metadata. The original snapshot and
 lookups retain their implementation. Enumeration uses a stable sort and the
-whole-view fixture uses a scoped swap. The
-runtime fixture keeps all 124 original dotenv inputs and exercises explicit
-OS precedence, present-but-empty values and nested restoration. The existing
+whole-view fixture uses a scoped swap. The runtime fixture keeps all 124
+original dotenv inputs and exercises explicit OS precedence, present-but-empty
+values and nested restoration. The existing
 fuzz target exercises snapshot and override restoration with its arbitrary
 input bytes. Its descriptive `entry` field still names the retired parser
 in the out-of-scope fuzz registry. Neither fuzz driver reads that field.
@@ -54,7 +54,8 @@ Environment production files went from **281 to 185 physical lines**
 The first implementation extended outside the assigned snapshot and lookup
 regions. The line-range audit restored those regions from the supplied base
 and the committed code stays within the brief. The earlier focused and
-partial-build logs are retained as superseded evidence.
+partial-build logs are retained as superseded evidence. The final env fuzz
+target passed 10,000 inputs with Clang ASan, UBSan and LeakSanitizer.
 
 ### Filesystem and paths
 
@@ -96,11 +97,11 @@ Mold 2.30.0 linked the tests. The installed OpenSSL, zlib, Brotli and Zstd
 versions were 3.0.13, 1.3, 1.1.0 and 1.5.5. Boost, SQLite and ICU were
 built from verified official archives outside the checkout.
 
-| Archive | SHA-256 |
-| ------- | ------- |
-| `boost-1.92.0-b2-nodocs.tar.xz` | `ea7b982002cc9dfbe59b0b217b206f470dc75f3de0bb2973d844118934d82411` |
+| Archive                          | SHA-256                                                            |
+| -------------------------------- | ------------------------------------------------------------------ |
+| `boost-1.92.0-b2-nodocs.tar.xz`  | `ea7b982002cc9dfbe59b0b217b206f470dc75f3de0bb2973d844118934d82411` |
 | `sqlite-autoconf-3540000.tar.gz` | `134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed` |
-| `icu4c-78.3-sources.tgz` | `3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0` |
+| `icu4c-78.3-sources.tgz`         | `3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0` |
 
 `/tmp/cppgw-slim-env-fs.6AJbTT` held the dependencies, the `gate` wrapper,
 build objects, evidence and probe sources. The preparation commands were:
@@ -161,16 +162,87 @@ The two updated fuzz harnesses were built with `clang++-21 -std=c++20 -O1
 and the strict warning flags. Runs used `-runs=10000 -seed=18112026
 -max_len=16384` under the Linux namespace and cleared-environment boundary.
 The report and appended deviations used the frozen Prettier dependency via
-`bun --no-env-file run format:check` in an external scratch copy.
+`bun --no-env-file run format:check` in an external scratch copy. The whole
+deviations file and its supplied base both have pre-existing Prettier differences.
+Formatting both scratch copies confirmed that all differences precede the appendix.
 
-## Verification in progress
+## Named release gates
 
-The full test registry contains 441 tests. Every test links both edited
-runtime source files. Qualification runs the twelve named release gates, the
-unsharded release suite and the unsharded Clang ASan/UBSan suite. The release
-and sanitizer drivers use two and four compiler jobs, respectively. Each run writes
-its compile log, incremental test counts and exact-tree receipt to scratch.
-The cold suites are expected to take roughly 30 to 60 minutes on the four
-runner CPUs. Keep exact diagnostics for failed controls, retry recoverable
-runner failures, and leave findings owned by other lanes on their existing
-branches.
+All 12 named binaries passed all 96 cases on Linux ARM64. The receipts bind
+commit `af9d96832c48d938b1f46a87e46bac6ae27e5df3`, tree
+`ac162da5c72a31608df627c753926651a6de056d` and stable inputs.
+
+| Test                                      | Cases passed | Wall seconds |
+| ----------------------------------------- | -----------: | -----------: |
+| `rt/env_test`                             |          7/7 |      217.443 |
+| `rt/process_test`                         |        10/10 |        9.753 |
+| `runtime_config_differential_test`        |          8/8 |        1.417 |
+| `jev_compaction_smoke_test`               |          6/6 |       17.081 |
+| `rt/fs_test`                              |        13/13 |       15.392 |
+| `rt/text_codec_test`                      |          6/6 |        1.255 |
+| `static_differential_test`                |          1/1 |        6.342 |
+| `native_addon_differential_test`          |          4/4 |        7.529 |
+| `sqlite_readonly_test`                    |          5/5 |        6.816 |
+| `kv_conversion_convert_differential_test` |        13/13 |        6.700 |
+| `permissions_linux_test`                  |          5/5 |        6.799 |
+| `runtime_native_startup_test`             |        18/18 |        7.264 |
+
+## Complete ARM64 runs
+
+Every binary in the 441-test registry links both edited runtime objects.
+Both unsharded runs used the tested commit and tree above and compiled all
+369 production objects, including 44 runtime objects. The source input
+SHA-256 was `959474754fdcb4c94b4693fcccc19c78fc2d39a42cb497250440826e39ef30bb`
+in both receipts, before and after execution. Each binary emitted one
+confirmed fixture-network receipt. The sanitizer logs contained no ASan,
+UBSan or LeakSanitizer diagnostics.
+
+| Profile          | Binaries passed | Cases passed | Build failures | Timeouts | Object seconds | Link and test seconds | Total seconds | Exit |
+| ---------------- | --------------: | -----------: | -------------: | -------: | -------------: | --------------------: | ------------: | ---: |
+| GCC release      |         438/441 |  5,027/5,030 |              0 |        0 |       2549.340 |               139.237 |      2689.300 |    1 |
+| Clang ASan/UBSan |         438/441 |  5,027/5,030 |              0 |        0 |       2730.013 |               230.556 |      2961.092 |    1 |
+
+The profiles ran concurrently and reused previously compiled objects.
+Their aggregate wall times describe incremental runs. The full receipts
+and individual diagnostics are in the external evidence directory.
+
+| Receipt                     | SHA-256                                                            |
+| --------------------------- | ------------------------------------------------------------------ |
+| `evidence/release-all.json` | `eb6bfab88b30e4bb21645e35b140182dbc6598f7af029e319c0dddec73020d44` |
+| `evidence/asan-all.json`    | `5299d57be46eaa3b6bf098c2fdbc430099239118acaa090779397700be1c3a40` |
+
+## Baseline findings and handoff
+
+Each full run exited 1 on the same three cases documented for the supplied
+base. Each row accounts for one failed case in both profiles.
+[Prior small-helper qualification](cppgw-std-small-helpers-20261117.md#combined-build-and-regression-evidence)
+
+| Fixture                                 | Current diagnostic                                                                                                                             |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude_code_usage_schema_test`         | The legacy string `"0"` leaves the normalized deadline null. The Bun vector expects `946684800000`.                                            |
+| `codex_external_auth_differential_test` | The legacy refresh strings `"Nov 16 2026"`, `" 2026-11-16 "` and `"1"` are rejected in one differential case.                                  |
+| `rt/http_test`                          | Two malformed redirects throw `TypeError` with `location` and an omitted rejected value. The vector expects `Location` and the rejected bytes. |
+
+The prior ICU 74.2 IDNA discrepancies did not reproduce with ICU 78.3.
+The IDNA binary passed both cases in each profile. The three date and HTTP
+cases remain with the integration job. The platform guide and the env fuzz
+registry's descriptive `entry` field still name the retired dotenv API.
+Apple Silicon execution awaits a matching host and the qualified native
+fixture procedure. [Mac qualification](../MACOS.md)
+
+The environment and filesystem commits are `a6d30b146aa6755225906a3ce346b00acec7884b`
+and `af9d96832c48d938b1f46a87e46bac6ae27e5df3` on the local `agent-job` branch.
+`git fetch --no-tags origin refs/heads/development:refs/remotes/origin/development`
+returned `2ac5aae69b0f0bac77cf1c6f329995cf1187616c`.
+`GIT_TERMINAL_PROMPT=0 git push --dry-run origin HEAD:refs/heads/agent-jobs/cppgw-slim-env-fs-20261118`
+failed because GitHub required authentication. Publication, pull request
+integration and the `development` checkout handoff remain pending.
+
+## Summary
+
+Removed 134 first-party production lines across the two briefs. Environment
+went from 281 to 185 lines and filesystem/path from 1,025 to 987. All 12
+named ARM64 release fixtures passed all 96 cases. Each full ARM64 profile
+passed 438 of 441 binaries and 5,027 of 5,030 cases, with the same three
+documented baseline failures. GitHub authentication blocked publication.
+Apple Silicon qualification remains pending.
