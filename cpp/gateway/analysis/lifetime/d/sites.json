@@ -4099,7 +4099,8 @@
       ]
     },
     "src/kv_conversion/typed_value.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed the synchronous typed graph encoder, decoder, key handling and graph slot traversal. Frames and decoded values have established local or graph owners. No asynchronous suspension or escaping callback.",
       "sites": []
     },
     "src/lib/jev_compaction/client.cpp": {
