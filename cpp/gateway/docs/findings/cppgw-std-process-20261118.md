@@ -158,3 +158,9 @@ if [ "$config" = asan ]; then flags="$flags -gline-tables-only"; fi
 UOS_CI_JOBS=4
 UOS_CI_BUILD_DIR="$work/ci-system-icu"
 ```
+
+## Focused sanitizer receipts
+
+The focused ASan/UBSan run built 45 translation units and the two vendor archives through the portable driver's Ninja rules with the exact full-profile flags. It passed `process_test` 15 of 15 in 0.918 seconds, using the driver's Linux fixture boundary and fatal sanitizer settings. `focused-asan-receipt.json` has SHA-256 `29805e72a56f8125e727460a5a643c7d82a5208c91706ee84f2f32959b5726c7`. The full sanitizer invocation can reuse this configuration's compiled objects.
+
+The SIGCHLD control rebuilt only `src/rt/process_loop.cpp` with the same sanitizer flags plus `-DBOOST_PROCESS_V2_DISABLE_PIDFD_OPEN`, linked the other focused objects through `driver.run_test`, and passed 15 of 15 in 0.921 seconds. `asan-sigchld/receipt.json` has SHA-256 `aad57e40d7e4a7d1c0f69ae51b0e19489ec3f24dd7cc8a72810da32736858c8f`. This exercises the backend selected on macOS on the Linux runner.
