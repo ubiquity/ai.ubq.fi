@@ -4764,8 +4764,49 @@
       "sites": []
     },
     "src/models/openrouter_models.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed model refresh coalescing, injected Fetch ownership and the lookup cache.",
+      "sites": [
+        {
+          "lines": [
+            221,
+            222,
+            227,
+            234
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The request task and Fetch retain the callable and signal. Every body operation uses a named Response or owned stream."
+        },
+        {
+          "lines": [
+            320,
+            326,
+            327,
+            332,
+            333,
+            337,
+            342,
+            346,
+            351,
+            354,
+            355,
+            356
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The module-state reference points to static storage, and the coroutine copies fetcher and pending Promise before suspension. A detached refresh gets its own inputs, and synchronous matching finishes before the shared snapshots can be replaced."
+        }
+      ]
     },
     "src/openai.cpp": {
       "reviewed": false,
