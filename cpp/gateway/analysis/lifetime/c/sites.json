@@ -2704,7 +2704,8 @@
       ]
     },
     "src/harmony/classifier.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Classifier request and verdict conversion are synchronous and consume each view while its owning response is live.",
       "sites": []
     },
     "src/harmony/conversation.cpp": {

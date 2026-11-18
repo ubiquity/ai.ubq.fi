@@ -241,7 +241,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/embeddings/ledger.cpp`
 - [x] `src/embeddings/voyage.cpp`
 - [x] `src/harmony/adapter.cpp`
-- [ ] `src/harmony/classifier.cpp`
+- [x] `src/harmony/classifier.cpp`
 - [ ] `src/harmony/conversation.cpp`
 - [ ] `src/harmony/parse.cpp`
 - [ ] `src/harmony/probe_scenarios.cpp`
@@ -1554,3 +1554,7 @@ The Harmony transport makes its callable owner explicit, including when a consum
 
 - 256-277 · transport callable keep-alive · **SAFE** · The member wrapper synchronously transfers a shared function owner into keepAlive alongside the returned task. The Cerebras forwarder owns options and returns a value-taking task.
 - 280-299 · transport and buffered parse awaits · **SAFE** · The frame owns adapter options, response and JSON values. The parse recovery callback has no captures.
+
+### `src/harmony/classifier.cpp`
+
+Classifier request and verdict conversion are synchronous and consume each view while its owning response is live.
