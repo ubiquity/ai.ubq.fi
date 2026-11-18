@@ -57,7 +57,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/rt/kv_sdk.hpp`
 - [x] `src/rt/kv_sqlite.cpp`
 - [x] `src/rt/kv_value.cpp`
-- [ ] `src/rt/process.cpp`
+- [x] `src/rt/process.cpp`
 - [ ] `src/rt/sqlite.cpp`
 - [ ] `src/rt/sqlite_darwin.hpp`
 - [ ] `include/uos/storage/key_compatibility.hpp`
@@ -384,6 +384,13 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | --- | --- | --- | --- |
 | 101-123,190-229,347-379,483-512 | KV value projection and synchronous walk | **SAFE** | The immediate visitors, comparison and validation use aliases only during synchronous calls. Returned element references borrow the named container; serializers and traced consumers copy before a suspension. |
 
+### `src/rt/process.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 54-68 | Process argv snapshot and override | **SAFE** | Process arguments are copied into process-lifetime vector storage. ScopedArgv owns the previous vector and restores it synchronously. |
+| 117-134 | Signal name mapping | **SAFE** | Returned names view static storage and argument names are compared synchronously. |
+
 
 ## Ranked defects and counts
 
@@ -549,4 +556,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-34/97 files reviewed. **DEFECT 8, SAFE 82, UNCLEAR 3.**
+35/97 files reviewed. **DEFECT 8, SAFE 84, UNCLEAR 3.**

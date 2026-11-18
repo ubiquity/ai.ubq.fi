@@ -1115,8 +1115,28 @@
       ]
     },
     "src/rt/process.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "54-68",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Process argv snapshot and override",
+          "evidence": "Process arguments are copied into process-lifetime vector storage. ScopedArgv owns the previous vector and restores it synchronously."
+        },
+        {
+          "lines": "117-134",
+          "verdict": "SAFE",
+          "kinds": [
+            "b"
+          ],
+          "symbol": "Signal name mapping",
+          "evidence": "Returned names view static storage and argument names are compared synchronously."
+        }
+      ]
     },
     "src/rt/sqlite.cpp": {
       "reviewed": false,
