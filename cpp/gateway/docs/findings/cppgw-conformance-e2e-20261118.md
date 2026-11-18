@@ -287,3 +287,13 @@ The fixture map supports DeepSeek and Codex, including the Codex catalog and Rea
 | embedding-job-cached | 200 | 200 | Match |
 | embedding-job-cached-readback | 200 | 200 | Match |
 | embedding-job-other-principal | 404 | 404 | Match |
+
+## Continuation release check
+
+The new Ubuntu ARM64 runner built the inherited clean commit `b12de8a8e474d21525ba2eecef71779c1ecbb579`, tree `7a4075459065b86bed28aad4afabf033a195ba98`. The documented `bash cpp/gateway/conformance/run.sh "$scratch"` completed 380 Ninja steps, linked all three native executables, and packaged 62 files. From prepared host dependencies it took 724.49 s and reported 1,300,956 KiB maximum child RSS. The paired phase took 2.849 s and reproduced the 170-row table byte for byte. It exited 1 for the two shared validation failures. The native gateway hash was `93e8f0751d025583d0acab1aa49150aee51c5b045cc81082b2adb3410746568f` and the package manifest hash was `0d209845be36b919f26b2272386668dc83110f5dcc52f4e5cbccd74e45486ca1`.
+
+## Work contract v3
+
+Extend the measured matrix over the same isolated production entrypoints. The pinned launcher maps DeepSeek Chat, Codex Models, Codex Responses and Realtime to the local mock. The Images routes already translate to Codex Responses, so the mock can exercise successful image delivery and a single quota charge across two upstream calls. Cover conditional catalog reads and their authentication boundary, tool history replay, Codex reasoning translation, request ID correlation, redirect refusal, and Realtime principal ownership. Exercise the agent-message route with the available API-key and anonymous credentials.
+
+The owned paths are the suite, its guide and this report. Keep the existing cases and network boundary. Record gateway and fixture-boundary findings with their exact responses for the respective maintainers. The source snapshot above supplies the release for the expanded run. Validate with the paired `run.sh` command against that snapshot, the Python comparison and wire controls, scoped formatting and whitespace checks. The earlier results apply to the inherited matrix. Finish when the expanded run records both observations for every case, with local receipts and the Git delivery state recorded here.
