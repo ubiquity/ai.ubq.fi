@@ -173,7 +173,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/openrouter_handlers.hpp`
 - [x] `include/uos/provider/openrouter_request_controls.hpp`
 - [x] `include/uos/provider/openrouter_streams.hpp`
-- [ ] `include/uos/provider/openrouter_web_tools.hpp`
+- [x] `include/uos/provider/openrouter_web_tools.hpp`
 - [ ] `include/uos/provider/presentation.hpp`
 - [ ] `include/uos/provider/removed_provider_circuit.hpp`
 - [ ] `include/uos/provider/removed_provider_telemetry.hpp`
@@ -1091,3 +1091,7 @@ Prompt-cache control API uses a synchronous forwarding wrapper.
 ### `include/uos/provider/openrouter_streams.hpp`
 
 The public stream iterator factory is synchronous. Its generator owns response and stream options.
+
+### `include/uos/provider/openrouter_web_tools.hpp`
+
+Synchronous request projection and web-tool handling declarations. No deferred borrowing.

@@ -1478,7 +1478,8 @@
       "sites": []
     },
     "include/uos/provider/openrouter_web_tools.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous request projection and web-tool handling declarations. No deferred borrowing.",
       "sites": []
     },
     "include/uos/provider/presentation.hpp": {
