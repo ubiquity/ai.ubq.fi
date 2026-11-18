@@ -245,7 +245,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/sentinel/replay_retention_schema.cpp`
 - [x] `src/sentinel/replay_store.cpp`
 - [x] `src/sentinel/upstream_capture.cpp`
-- [ ] `src/serve.cpp`
+- [x] `src/serve.cpp`
 - [ ] `src/static.cpp`
 - [ ] `src/systemone/handlers.cpp`
 - [ ] `src/types.cpp`
@@ -1325,6 +1325,19 @@ Reviewed synchronous serialization and test injection, ledger snapshots, chunk i
 - L483, 485, 495 **SAFE** · The coroutine owns both synchronous mutation callbacks. Current callers return the same atomic operation covered by the frame's owning pointer through commit.
 - L499, 501, 505, 509 **SAFE** · The awaiting caller retains KV; retention status construction uses only the frame-owned ledger snapshot after the read.
 
+### `src/serve.cpp`
+
+Reviewed startup, lifecycle signal registration, Mac maintenance, and ordering of request drain and KV closure.
+
+- L20, 23 **SAFE** · Telemetry close is directly awaited, and the reporting snapshot is a value read after settlement.
+- L42, 49, 50, 53, 59, 60, 65, 84, 87, 88, 89, 93 **SAFE** · Each maintenance Task owns the shared state and KV. Frame guards release its Promise slots, and the returned stop closure shares state until both task outcomes settle.
+- L98, 104, 107, 118, 121, 124 **SAFE** · Provisioning and migration own their KV handles, and command-line options are copied into the directly awaited configuration coroutine.
+- L136, 141, 146 **SAFE** · The runtime entry points delegate synchronously to process-static handlers and pass owning request and connection metadata.
+- L155, 159, 160, 162, 163, 165, 166, 167, 169, 170, 171, 172, 173, 174, 181, 185, 187, 195, 196, 198, 199, 200, 201, 205, 206, 207, 211 **SAFE** · The process signal callbacks own copyable server handles. Startup retains the listener identities through ready and finished and removes them on success or unwind after registration.
+- L159, 162, 163, 165 **DEFECT** · In the development launcher the second signal registration can throw after the first has been stored, before the removal guard exists. The process signal table then keeps the server handle and callback live after startup unwinds. Install the guard before either registration.
+- L123, 124, 133, 156, 170, 174, 175, 192, 201, 216 **DEFECT** · Startup discards the migration Promise. If shutdown reaches KV close while that migration is suspended, its next read or atomic write uses a closed database even though a shared pointer retains the object. Keep the startup Promise and await it after server settlement and before closing KV, including the prepared launcher failure path.
+- L225, 229, 231, 235, 239 **SAFE** · The options wrapper copies host and port before lazy startup begins. The main coroutine constructs owned arguments from the process argv vector before starting configuration.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1573,4 +1586,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-137/286 files reviewed. 285 sites: 266 SAFE, 19 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+138/286 files reviewed. 293 sites: 272 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

@@ -6452,8 +6452,159 @@
       ]
     },
     "src/serve.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed startup, lifecycle signal registration, Mac maintenance, and ordering of request drain and KV closure.",
+      "sites": [
+        {
+          "lines": [
+            20,
+            23
+          ],
+          "kinds": [
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Telemetry close is directly awaited, and the reporting snapshot is a value read after settlement."
+        },
+        {
+          "lines": [
+            42,
+            49,
+            50,
+            53,
+            59,
+            60,
+            65,
+            84,
+            87,
+            88,
+            89,
+            93
+          ],
+          "kinds": [
+            "a",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each maintenance Task owns the shared state and KV. Frame guards release its Promise slots, and the returned stop closure shares state until both task outcomes settle."
+        },
+        {
+          "lines": [
+            98,
+            104,
+            107,
+            118,
+            121,
+            124
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Provisioning and migration own their KV handles, and command-line options are copied into the directly awaited configuration coroutine."
+        },
+        {
+          "lines": [
+            136,
+            141,
+            146
+          ],
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "detail": "The runtime entry points delegate synchronously to process-static handlers and pass owning request and connection metadata."
+        },
+        {
+          "lines": [
+            155,
+            159,
+            160,
+            162,
+            163,
+            165,
+            166,
+            167,
+            169,
+            170,
+            171,
+            172,
+            173,
+            174,
+            181,
+            185,
+            187,
+            195,
+            196,
+            198,
+            199,
+            200,
+            201,
+            205,
+            206,
+            207,
+            211
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The process signal callbacks own copyable server handles. Startup retains the listener identities through ready and finished and removes them on success or unwind after registration."
+        },
+        {
+          "lines": [
+            159,
+            162,
+            163,
+            165
+          ],
+          "kinds": [
+            "c"
+          ],
+          "verdict": "DEFECT",
+          "detail": "In the development launcher the second signal registration can throw after the first has been stored, before the removal guard exists. The process signal table then keeps the server handle and callback live after startup unwinds. Install the guard before either registration."
+        },
+        {
+          "lines": [
+            123,
+            124,
+            133,
+            156,
+            170,
+            174,
+            175,
+            192,
+            201,
+            216
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "Startup discards the migration Promise. If shutdown reaches KV close while that migration is suspended, its next read or atomic write uses a closed database even though a shared pointer retains the object. Keep the startup Promise and await it after server settlement and before closing KV, including the prepared launcher failure path."
+        },
+        {
+          "lines": [
+            225,
+            229,
+            231,
+            235,
+            239
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The options wrapper copies host and port before lazy startup begins. The main coroutine constructs owned arguments from the process argv vector before starting configuration."
+        }
+      ]
     },
     "src/static.cpp": {
       "reviewed": false,
