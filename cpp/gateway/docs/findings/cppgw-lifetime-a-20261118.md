@@ -45,7 +45,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/http.cpp`
 - [x] `include/uos/rt/http.hpp`
 - [x] `include/uos/rt/fetch.hpp`
-- [ ] `include/uos/rt/fetch_transport.hpp`
+- [x] `include/uos/rt/fetch_transport.hpp`
 - [ ] `include/uos/rt/gzip.hpp`
 - [ ] `include/uos/rt/websocket.hpp`
 - [ ] `src/rt/fetch.cpp`
@@ -217,18 +217,24 @@ The statically erased Fetch and MockTransport callback signatures are the owners
 - **DEFECT (A-FETCH-CALLBACK-INPUT)** `20, 27, 28, 29, 33, 38, 40, 41, 49` (a/b), Fetch erasure can discard input storage before a borrowing coroutine starts. The invocability constraint accepts reference-taking callables, but the by-value erased invocation can destroy its RequestInfo and RequestInit before their borrowed uses.
 - **SAFE** `81, 83, 84, 102, 105, 106, 107, 109, 112, 113` (b/d), Transport input and recorded request views. The virtual request parameter owns a handle and the recorded vector view is consumed while the MockTransport is held. The lifetime of the virtual receiver and callback is assessed at their implementations.
 
+### `include/uos/rt/fetch_transport.hpp`
+
+Reviewed the options and transport interface. The implementation copies the shared client state at the public send boundary, and the scoped-loop disposal path is covered at Pool.
+
+- **SAFE** `28, 31, 34, 36, 40, 43, 46, 58, 59, 60, 64, 66, 68, 71, 76, 77` (b/c), Client options, send wrapper and installation. Options and requests cross entry points by value, deferred send takes a shared ClientState, and synchronous pool access and global installation use owning transport handles.
+
 ## Ranked defects and counts
 
-Reviewed **13/30 files** and **82 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **14/30 files** and **83 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 2 | 15 | 0 |
-| b. Borrowed coroutine parameter or receiver | 5 | 44 | 3 |
-| c. Callback ownership or cycle | 10 | 53 | 3 |
+| b. Borrowed coroutine parameter or receiver | 5 | 45 | 3 |
+| c. Callback ownership or cycle | 10 | 54 | 3 |
 | d. Container invalidation | 3 | 23 | 0 |
 | e. GCC 12 await-expression rule | 4 | 7 | 1 |
-| **Unique site groups** | 15 | 63 | 4 |
+| **Unique site groups** | 15 | 64 | 4 |
 
 ### 1. A-STREAM-CANCEL-OWNER (memory safety in stream cancellation) — Stream cancel borrows the owner slot through callback invocation
 

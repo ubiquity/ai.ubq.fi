@@ -2170,8 +2170,37 @@
       ]
     },
     "include/uos/rt/fetch_transport.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed the options and transport interface. The implementation copies the shared client state at the public send boundary, and the scoped-loop disposal path is covered at Pool.",
+      "sites": [
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            28,
+            31,
+            34,
+            36,
+            40,
+            43,
+            46,
+            58,
+            59,
+            60,
+            64,
+            66,
+            68,
+            71,
+            76,
+            77
+          ],
+          "label": "Client options, send wrapper and installation",
+          "reason": "Options and requests cross entry points by value, deferred send takes a shared ClientState, and synchronous pool access and global installation use owning transport handles."
+        }
+      ]
     },
     "include/uos/rt/gzip.hpp": {
       "status": "pending",
