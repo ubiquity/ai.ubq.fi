@@ -186,7 +186,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/chat/envelope.cpp`
 - [x] `src/chat/stream_translation.cpp`
 - [x] `src/codex/account_routing.cpp`
-- [ ] `src/codex/auth.cpp`
+- [x] `src/codex/auth.cpp`
 - [ ] `src/codex/auth_refresh.cpp`
 - [ ] `src/codex/auth_repair.cpp`
 - [ ] `src/codex/banked_reset.cpp`
@@ -1176,3 +1176,11 @@ Election and admission use frame-local snapshots and optimistic KV commits. Conc
 - 122-143,218-240,264-295,346-390 · election, recheck, and route awaits · **SAFE** · Each frame retains its account, row and pool values and the KV owner. A commit's AtomicOperation remains in scope through completion.
 - 194-214 · fail-fast all · **SAFE** · routingAccountIdentity receives a CodexAuthState value, so a pending hash child survives the parent result or rejection independently.
 - 297-329 · admission coroutine closure · **SAFE** · withCodexAdmission retains the moved action in its frame and waits for it. The action captures KV and account by value.
+
+### `src/codex/auth.cpp`
+
+Auth pool cache accesses are synchronous or start with a copied handle. Probe outcome maps use weak response identities.
+
+- 192-223,608-661 · probe, health, and transition awaits · **SAFE** · Tasks and health writes receive owned response, account and transition data. The map keeps the promise value until settlement and no iterator into it is saved.
+- 333-383 · auth pool load and seed · **SAFE** · The frame owns its KV, row, seed and binding inputs. The local AtomicOperation is kept through the commit.
+- 680-704 · cache promise and finalizer · **SAFE** · The function copies the cached pool or in-flight Promise before a wait, and the zero-capture finalizer only accesses the module cache.

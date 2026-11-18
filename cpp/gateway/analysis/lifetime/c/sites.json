@@ -1696,8 +1696,28 @@
       ]
     },
     "src/codex/auth.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Auth pool cache accesses are synchronous or start with a copied handle. Probe outcome maps use weak response identities.",
+      "sites": [
+        {
+          "lines": "192-223,608-661",
+          "kind": "probe, health, and transition awaits",
+          "verdict": "SAFE",
+          "reason": "Tasks and health writes receive owned response, account and transition data. The map keeps the promise value until settlement and no iterator into it is saved."
+        },
+        {
+          "lines": "333-383",
+          "kind": "auth pool load and seed",
+          "verdict": "SAFE",
+          "reason": "The frame owns its KV, row, seed and binding inputs. The local AtomicOperation is kept through the commit."
+        },
+        {
+          "lines": "680-704",
+          "kind": "cache promise and finalizer",
+          "verdict": "SAFE",
+          "reason": "The function copies the cached pool or in-flight Promise before a wait, and the zero-capture finalizer only accesses the module cache."
+        }
+      ]
     },
     "src/codex/auth_refresh.cpp": {
       "status": "pending",
