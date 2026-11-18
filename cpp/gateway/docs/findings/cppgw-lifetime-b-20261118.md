@@ -33,7 +33,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/runtime/websocket.hpp`
 - [x] `src/runtime/http.cpp`
 - [x] `src/runtime/http_body.cpp`
-- [ ] `src/runtime/http_early_sse.cpp`
+- [x] `src/runtime/http_early_sse.cpp`
 - [ ] `src/runtime/http_tasks.cpp`
 - [ ] `src/runtime/http_upgrade.cpp`
 - [ ] `src/runtime/native_kv_bootstrap.cpp`
@@ -210,6 +210,13 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 32-69,91-118 | Body event and abort handlers | **SAFE** | Registered listeners use weak state and lock it for dispatch. The raw self callbacks are synchronous members of that same live state and are never independently registered. |
 | 132-150 | Request body source algorithms and controller | **SAFE** | Source callbacks own body state; the state drops its strong controller after synchronous start and then reaches the stream weakly. EOF, cancel and dispose remove registrations. |
 
+### `src/runtime/http_early_sse.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 14-17 | Early SSE registration cleanup at HTTP caller | **DEFECT** ([D04](#d04)) | Registration stores an owner of its callable in the weak-map value and returns an ordinary callable for deletion. The HTTP caller gives the stored value a strong edge back to the key and drops the explicit cleanup on frame abandonment. |
+| 19-33 | Synchronous early SSE lookup and commit | **SAFE** | Commit takes a shared copy of Entry before invoking a possibly reentrant callback. The query that only reads the bit uses its map pointer synchronously. |
+
 
 ## Ranked defects and counts
 
@@ -375,4 +382,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-10/97 files reviewed. **DEFECT 5, SAFE 30, UNCLEAR 2.**
+11/97 files reviewed. **DEFECT 6, SAFE 31, UNCLEAR 2.**

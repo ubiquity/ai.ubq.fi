@@ -417,8 +417,29 @@
       ]
     },
     "src/runtime/http_early_sse.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "14-17",
+          "verdict": "DEFECT",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Early SSE registration cleanup at HTTP caller",
+          "evidence": "Registration stores an owner of its callable in the weak-map value and returns an ordinary callable for deletion. The HTTP caller gives the stored value a strong edge back to the key and drops the explicit cleanup on frame abandonment.",
+          "defect": "D04"
+        },
+        {
+          "lines": "19-33",
+          "verdict": "SAFE",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "Synchronous early SSE lookup and commit",
+          "evidence": "Commit takes a shared copy of Entry before invoking a possibly reentrant callback. The query that only reads the bit uses its map pointer synchronously."
+        }
+      ]
     },
     "src/runtime/http_tasks.cpp": {
       "reviewed": false,
