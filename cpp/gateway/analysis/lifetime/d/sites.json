@@ -7141,8 +7141,36 @@
       ]
     },
     "include/uos/admin/error_log.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the error input record and error, history and file-size interfaces.",
+      "sites": [
+        {
+          "lines": [
+            66,
+            67
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The two error-recording overloads copy the input synchronously and make the optional shared KV owner part of the work."
+        },
+        {
+          "lines": [
+            126,
+            127,
+            128,
+            130
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "History listing, status handling and request delegation receive scalar values, an owning override or a request value."
+        }
+      ]
     },
     "include/uos/admin/index.hpp": {
       "reviewed": false,

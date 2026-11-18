@@ -260,7 +260,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/admin/codex.hpp`
 - [x] `include/uos/admin/codex_reset.hpp`
 - [x] `include/uos/admin/defaults.hpp`
-- [ ] `include/uos/admin/error_log.hpp`
+- [x] `include/uos/admin/error_log.hpp`
 - [ ] `include/uos/admin/index.hpp`
 - [ ] `include/uos/admin/kernel.hpp`
 - [ ] `include/uos/admin/sentinel_incident.hpp`
@@ -1435,6 +1435,13 @@ Reviewed defaults and KV migration interfaces. The injected diagnostics slot at 
 
 - L8, 9, 11 **SAFE** · Migration and ordinary defaults requests transfer Request values and take no borrowed asynchronous inputs.
 
+### `include/uos/admin/error_log.hpp`
+
+Reviewed the error input record and error, history and file-size interfaces.
+
+- L66, 67 **SAFE** · The two error-recording overloads copy the input synchronously and make the optional shared KV owner part of the work.
+- L126, 127, 128, 130 **SAFE** · History listing, status handling and request delegation receive scalar values, an owning override or a request value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1683,4 +1690,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-152/286 files reviewed. 320 sites: 299 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+153/286 files reviewed. 322 sites: 301 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
