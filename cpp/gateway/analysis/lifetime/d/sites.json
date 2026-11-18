@@ -2115,8 +2115,26 @@
       "sites": []
     },
     "src/authority/credential_publication.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed capability binding, asynchronous verifier use and the publication CAS retry. Current publisher callers hold a named shared owner through awaited publication.",
+      "sites": [
+        {
+          "lines": [
+            103,
+            104,
+            124,
+            129
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The caller retains the publisher and its verifier. The publication input and identity are owned values and no references into the private snapshot survive the synchronous update or its CAS."
+        }
+      ]
     },
     "src/authority/delivery_outbox.cpp": {
       "reviewed": false,

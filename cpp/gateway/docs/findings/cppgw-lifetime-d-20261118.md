@@ -94,7 +94,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/admission_state.cpp`
 - [x] `src/authority/authority_rpc.cpp`
 - [x] `src/authority/contracts.cpp`
-- [ ] `src/authority/credential_publication.cpp`
+- [x] `src/authority/credential_publication.cpp`
 - [ ] `src/authority/delivery_outbox.cpp`
 - [ ] `src/authority/durable_store.cpp`
 - [ ] `src/authority/native_api_key.cpp`
@@ -619,6 +619,12 @@ Reviewed the portable RPC command bridge, server receiver and client call chain.
 
 Reviewed authority value codecs and snapshot shapes. Member references and viewed keys are consumed synchronously, and the exported serializers and parsers return owned values. No suspension or escaping callback.
 
+### `src/authority/credential_publication.cpp`
+
+Reviewed capability binding, asynchronous verifier use and the publication CAS retry. Current publisher callers hold a named shared owner through awaited publication.
+
+- L103, 104, 124, 129 **SAFE** · The caller retains the publisher and its verifier. The publication input and identity are owned values and no references into the private snapshot survive the synchronous update or its CAS.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -724,4 +730,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-29/286 files reviewed. 119 sites: 110 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+30/286 files reviewed. 120 sites: 111 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
