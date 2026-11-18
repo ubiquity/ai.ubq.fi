@@ -59,7 +59,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/tls_internal.hpp`
 - [x] `src/rt/websocket.cpp`
 - [x] `src/rt/websocket_client.cpp`
-- [ ] `src/rt/websocket_frame.cpp`
+- [x] `src/rt/websocket_frame.cpp`
 - [ ] `src/rt/websocket_internal.hpp`
 - [ ] `src/rt/websocket_socket.cpp`
 
@@ -367,18 +367,28 @@ Reviewed Unix and TCP resolve/connect paths, TLS callbacks, HTTP response parsin
 - **UNCLEAR** `284, 289, 351, 353, 354, 357, 358, 492, 498, 499, 503` (c), Unfinished ownership after a handled unexpected response. A registered unexpected-response listener takes the path that leaves request listeners installed until the connection closes. The listener contract needs to establish who must close a persistent response, including a listener that throws or retains no client handle.
 - **SAFE** `390, 391, 395, 399, 412, 414, 421, 422, 423, 429, 431, 443, 444, 449, 451, 464, 467, 473, 475, 476, 477, 481, 482, 483, 486, 488, 489, 490, 492, 493, 495, 498, 505, 507, 508, 511, 512, 513, 515, 517, 521, 523` (b/c/d), Client initialization and handshake listener arguments. Request construction copies local options and headers. Handshake callbacks own response, socket and key values, and their public WebSocket backedge is released on normal abort, close, error or upgrade, or registry shutdown.
 
+### `src/rt/websocket_frame.cpp`
+
+Reviewed synchronous receiver parsing, event delivery, receiver error and finish notifications, and all Sender frame construction. There are no coroutine bodies in this translation unit.
+
+- **SAFE** `23, 24, 28, 29, 30, 38, 44, 45, 48, 51, 52, 55, 56, 57, 61, 89, 93, 109, 125, 126, 135, 136, 157, 158, 169, 170, 171, 173, 174` (b/d), Receiver input and parser views. Socket supplies bytes to a synchronous copy, and each parse view is consumed before deferred error reporting or dispatch of a callback that could change the receiver.
+- **SAFE** `178, 183, 186, 189, 191, 193, 197, 198, 199, 202, 207, 212, 213, 214, 215, 218, 219, 220` (b/c/d), Completed message and control-frame delivery. The parser moves fragment storage out before calling listeners, passes owned event bytes and invokes an owning callable copy while the native dispatch retains the receiver.
+- **SAFE** `223, 226, 228, 229, 230, 231, 232, 233, 237, 240, 241, 242, 243, 247, 248, 249, 250, 251, 252, 253` (c), Receiver error and finish microtasks. The posted callbacks retain the receiver and copy each hook before invoking it. Close and registry shutdown clear the receiver's stored hooks.
+- **SAFE** `258, 260, 262, 264, 265, 266, 268, 269, 270, 274, 276, 279, 286, 289, 291, 294, 297, 298, 300, 303, 304, 306, 309, 310, 311, 313, 314, 315` (b/d), Sender frame assembly and data borrows. The frame serializes into owned bytes before its stack header and caller data can expire. Fragment bookkeeping is synchronous and precedes the socket write.
+- **SAFE** `258, 294, 300, 306, 315, 318` (b/c), Sender-to-socket ownership handoff. Sender holds the socket, and write receives owning frame bytes and a moved callback. The native write buffer lifetime is assessed in websocket_socket.cpp.
+
 ## Ranked defects and counts
 
-Reviewed **27/30 files** and **162 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **28/30 files** and **167 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 5 | 20 | 0 |
-| b. Borrowed coroutine parameter or receiver | 12 | 102 | 3 |
-| c. Callback ownership or cycle | 19 | 98 | 6 |
-| d. Container invalidation | 4 | 68 | 0 |
+| b. Borrowed coroutine parameter or receiver | 12 | 106 | 3 |
+| c. Callback ownership or cycle | 19 | 101 | 6 |
+| d. Container invalidation | 4 | 71 | 0 |
 | e. GCC 12 await-expression rule | 5 | 13 | 1 |
-| **Unique site groups** | 26 | 129 | 7 |
+| **Unique site groups** | 26 | 134 | 7 |
 
 ### 1. A-FETCH-ABORT-TRANSPORT (memory safety in the injectable transport path) — Abort can outlive the owning virtual transport frame
 

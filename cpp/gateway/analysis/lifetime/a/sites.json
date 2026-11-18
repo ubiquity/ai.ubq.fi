@@ -4797,8 +4797,166 @@
       ]
     },
     "src/rt/websocket_frame.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed synchronous receiver parsing, event delivery, receiver error and finish notifications, and all Sender frame construction. There are no coroutine bodies in this translation unit.",
+      "sites": [
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "d"
+          ],
+          "lines": [
+            23,
+            24,
+            28,
+            29,
+            30,
+            38,
+            44,
+            45,
+            48,
+            51,
+            52,
+            55,
+            56,
+            57,
+            61,
+            89,
+            93,
+            109,
+            125,
+            126,
+            135,
+            136,
+            157,
+            158,
+            169,
+            170,
+            171,
+            173,
+            174
+          ],
+          "label": "Receiver input and parser views",
+          "reason": "Socket supplies bytes to a synchronous copy, and each parse view is consumed before deferred error reporting or dispatch of a callback that could change the receiver."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "lines": [
+            178,
+            183,
+            186,
+            189,
+            191,
+            193,
+            197,
+            198,
+            199,
+            202,
+            207,
+            212,
+            213,
+            214,
+            215,
+            218,
+            219,
+            220
+          ],
+          "label": "Completed message and control-frame delivery",
+          "reason": "The parser moves fragment storage out before calling listeners, passes owned event bytes and invokes an owning callable copy while the native dispatch retains the receiver."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "c"
+          ],
+          "lines": [
+            223,
+            226,
+            228,
+            229,
+            230,
+            231,
+            232,
+            233,
+            237,
+            240,
+            241,
+            242,
+            243,
+            247,
+            248,
+            249,
+            250,
+            251,
+            252,
+            253
+          ],
+          "label": "Receiver error and finish microtasks",
+          "reason": "The posted callbacks retain the receiver and copy each hook before invoking it. Close and registry shutdown clear the receiver's stored hooks."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "d"
+          ],
+          "lines": [
+            258,
+            260,
+            262,
+            264,
+            265,
+            266,
+            268,
+            269,
+            270,
+            274,
+            276,
+            279,
+            286,
+            289,
+            291,
+            294,
+            297,
+            298,
+            300,
+            303,
+            304,
+            306,
+            309,
+            310,
+            311,
+            313,
+            314,
+            315
+          ],
+          "label": "Sender frame assembly and data borrows",
+          "reason": "The frame serializes into owned bytes before its stack header and caller data can expire. Fragment bookkeeping is synchronous and precedes the socket write."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            258,
+            294,
+            300,
+            306,
+            315,
+            318
+          ],
+          "label": "Sender-to-socket ownership handoff",
+          "reason": "Sender holds the socket, and write receives owning frame bytes and a moved callback. The native write buffer lifetime is assessed in websocket_socket.cpp."
+        }
+      ]
     },
     "src/rt/websocket_internal.hpp": {
       "status": "pending",
