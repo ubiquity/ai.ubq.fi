@@ -2956,8 +2956,28 @@
       ]
     },
     "src/paid_fallback/claude_code_route.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Pool work copies subscription data before forwarding and retains one shared lifetime per request.",
+      "sites": [
+        {
+          "lines": "53-124",
+          "kind": "capability check, settlement hook, and pool fan-out",
+          "verdict": "SAFE",
+          "reason": "Each loadPoolState child owns a store/account copy. The joined bookkeeping frame owns each callback and its result/health snapshots."
+        },
+        {
+          "lines": "135-203",
+          "kind": "before-dispatch and transport callbacks",
+          "verdict": "SAFE",
+          "reason": "Fetch options own captured state and the handler waits for the fetch to settle with its telemetry referent live."
+        },
+        {
+          "lines": "206-293",
+          "kind": "selection and one request lifetime",
+          "verdict": "SAFE",
+          "reason": "The roster or pool view remains frame-local. Joined dispatch, outcome settlement and pool advancement receive owned request/state copies."
+        }
+      ]
     },
     "src/paid_fallback/health.cpp": {
       "status": "pending",

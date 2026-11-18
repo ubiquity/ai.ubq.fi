@@ -268,7 +268,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/live/routes.cpp`
 - [x] `src/live/sideband.cpp`
 - [x] `src/live/upstream.cpp`
-- [ ] `src/paid_fallback/claude_code_route.cpp`
+- [x] `src/paid_fallback/claude_code_route.cpp`
 - [ ] `src/paid_fallback/health.cpp`
 - [ ] `src/paid_fallback/index.cpp`
 - [ ] `src/paid_fallback/ledger_admission.cpp`
@@ -1689,3 +1689,11 @@ Mapping operations own identifiers and retain KV through each joined operation.
 
 - 65-91 · mapping reads and writes · **SAFE** · The returned store and entry are local values. Retiring state is looked up anew after an await instead of retaining a set iterator.
 - 93-109 · retirement guard and retries · **SAFE** · ScopeExit borrows the same frame's callId, whose parameter storage outlives the guard. Each delete retains its KV owner through completion.
+
+### `src/paid_fallback/claude_code_route.cpp`
+
+Pool work copies subscription data before forwarding and retains one shared lifetime per request.
+
+- 53-124 · capability check, settlement hook, and pool fan-out · **SAFE** · Each loadPoolState child owns a store/account copy. The joined bookkeeping frame owns each callback and its result/health snapshots.
+- 135-203 · before-dispatch and transport callbacks · **SAFE** · Fetch options own captured state and the handler waits for the fetch to settle with its telemetry referent live.
+- 206-293 · selection and one request lifetime · **SAFE** · The roster or pool view remains frame-local. Joined dispatch, outcome settlement and pool advancement receive owned request/state copies.
