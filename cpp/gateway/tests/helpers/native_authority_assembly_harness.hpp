@@ -4,6 +4,7 @@
 #include "tests/helpers/native_authority_harness.hpp"
 #include "uos/authority/native_authority.hpp"
 #include "uos/rt/fs.hpp"
+#include "uos/rt/json_document.hpp"
 #include "uos/rt/process.hpp"
 #include "uos/rt/record.hpp"
 #include <deque>
@@ -27,7 +28,8 @@ namespace uos::tests::helpers::native_authority_assembly_harness {
 #include "tests/native_authority_assembly_vectors.inc"
       );
       const auto bytes = rt::gzip::gunzipSync(rt::fromBase64(encoded));
-      return rt::jsonParse(std::string(bytes.begin(), bytes.end()));
+      // The checked-in assembly traces expand to about 39 MiB as one document.
+      return rt::jsonParseWithLimit({reinterpret_cast<const char*>(bytes.data()), bytes.size()}, 40 * 1024 * 1024);
     }();
     return value;
   }

@@ -25,6 +25,18 @@ The test expectations use the shared parser diagnostic. The fixtures still check
 | `anthropic_chat_stream_differential_test` | Malformed SSE still produces the same stream error and cause type. Its rendered cause is now `SyntaxError: Invalid JSON`. |
 | `passkeys_webauthn_differential_test` | Truncated client data still fails verification. Only the warning's parser message changes. |
 
+## Exceptions in fixture readers
+
+| Failing binary | Root cause and repair |
+| --- | --- |
+| `compaction_summary_forwarding_test` | Static registration parsed a 71,469,423-byte bundle of 15 forwarding traces through the 16 MiB parser entry point. The bundled fixture gets a 72 MiB read limit. Individual requests still exercise the real forwarding and admission checks. |
+| `native_authority_test` | Static registration parsed the 40,807,665-byte native authority assembly bundle through the 16 MiB entry point. The shared fixture reader uses a 40 MiB limit. The RPC and SQLite assertions are retained. |
+| `native_principal_control_test` | The same assembly bundle failure prevented private-control scenarios from registering. The bounded fixture reader restores those scenarios. |
+| `native_runtime_binding_test` | The same assembly bundle failure prevented runtime-binding scenarios from registering. The bounded fixture reader restores those scenarios. |
+| `jev_compaction_differential_test` | The test parsed a deliberately out-of-range `1e999` during setup to obtain infinity. It now checks that the Jev response parser catches and rejects the wire input, then constructs infinity directly to retain the `noulAnswer` finite-number assertion. |
+
+The larger allowances apply to repository fixtures. Production keeps its default byte and nesting limits.
+
 ## Release and sanitizer receipts
 
 Pending on the Ubuntu 24.04 ARM64 runner.
