@@ -31,7 +31,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/runtime/native_kv_bootstrap.hpp`
 - [x] `include/uos/runtime/permissions_linux.hpp`
 - [x] `include/uos/runtime/websocket.hpp`
-- [ ] `src/runtime/http.cpp`
+- [x] `src/runtime/http.cpp`
 - [ ] `src/runtime/http_body.cpp`
 - [ ] `src/runtime/http_early_sse.cpp`
 - [ ] `src/runtime/http_tasks.cpp`
@@ -172,7 +172,38 @@ Synchronous permission contract and owned value types. No coroutine, deferred ca
 
 Declaration of the memoized module promise. Constructor call and cache lifetime are reviewed with the implementation.
 
+### `src/runtime/http.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 35-74,1151-1177,1273-1277 | Emitter and server listener dispatch | **SAFE** | Dispatch snapshots registrations and weak or strong target handles are acquired by the callback. A reentrant removal leaves the callable alive through the copied registration. |
+| 323-453,621-695,739-773 | llhttp callbacks and parser views | **SAFE** | The parser is immovable inside ConnectionState, runs llhttp callbacks synchronously, uses offsets across reads, and copies target, headers and payload before erasing or growing input. |
+| 514-559 | ConnectionState::startRead | **SAFE** | The async completion owns ConnectionState and its fixed readBuffer. Destruction closes the stream but the queued completion still owns the storage. |
+| 689-733,796-807,987-1031,1133-1143,1236-1255 | Connection, socket and request links on ordinary completion | **SAFE** | Server map owns attached connections, which own socket and active HTTP objects. Normal close or ws handoff drops the return edges; finish or dump releases the current request and response. |
+| 756-759,783-787,809-833 | Body event and queued resume/end | **SAFE** | Event dispatch or the queued job holds a local IncomingMessage and ConnectionState; queued work checks that the request still matches before operating. |
+| 850-889,987-1000 | Outstanding HTTP write buffer | **DEFECT** ([D01](#d01)) | flush gives Asio a view into output.front() and awaits its callback. An intervening close destroys that vector with output.clear() before the completion runs, violating Asio's buffer lifetime requirement. |
+| 892-920,928-962,1001-1031 | Posted drain, finish and close callbacks | **SAFE** | Each dispatch holds an owning connection or response snapshot; after reentrant finish it checks that the same response is current before resetting members. |
+| 1036-1090 | Connection timeout | **SAFE** | The timer captures a weak ConnectionState, locks it before onTimer and is cleared on destruction or handoff. |
+| 1114-1117,979-983 | Standalone node-http requestTimeout refusal | **UNCLEAR** | destroyAfter drops the outgoing response before close, so a listener waiting specifically for its close may retain state. serveHttp sets requestTimeout to zero. Trace any separately shipped callers that enable it and expect a delivery receipt. |
+| 1180-1195,1203-1233,1325-1349 | Server request dispatch, accept and retry on ordinary shutdown | **SAFE** | Deferred jobs own Server; accept and retry stop once listening is false, and close cancels the retry and clears the listening self-reference and registrations. |
+| 1203-1215,1279-1320,1935-1944,1968-1985 | ServeState ownership after bind rejection | **DEFECT** ([D02](#d02)) | A listen error in the early-return branches only rejects ready and finished. There is no close to clear the server-owned strong request/upgrade listeners, and shutdown also exits at the rejected ready await. |
+| 1328,1968-1979 | Active listener ownership on external loop destruction | **UNCLEAR** | Explicit close clears the Server self-owner and ServeState listener cycles. Establish whether a supported entry point can abandon a listening HTTP server in a reusable process without running close. |
+| 1397-1400,1416-1420 | Socket handoff and message receiver | **SAFE** | The queued handoff check owns ConnectionState; the upgrade path holds the socket through synchronous ws handoff. pause and resume use a raw request identity only for a synchronous comparison. |
+| 1485-1502,1505-1567 | Response write and header views | **SAFE** | Header and byte inputs are copied into owned fields or output before these synchronous calls return. The later lifetime of the output front is covered by D01. |
+| 1620-1643,1656-1667,1890-1893 | Request body registration and disposal | **SAFE** | The request handler owns the Request and explicitly erases its entry after delivery; body access is synchronous and the body value does not hold the Request key. |
+| 1687-1706,1722-1729 | Early SSE stop listeners | **SAFE** | The listeners weakly lock Readiness, which weakly locks the response. A local or registry handle keeps Readiness alive during a callback. |
+| 1707-1721,1861-1872,1888-1896 | Early SSE registry key retained by its own value | **DEFECT** ([D04](#d04)) | The static registry stores a commit callable owning its Request key. If the handler frame is abandoned before the explicit unregister after delivery, the key cannot expire and the registry retains its body and signal indefinitely. |
+| 1747-1778,1813-1816 | DrainWait callback self-ownership | **DEFECT** ([D03](#d03)) | DrainWait stores four listeners that each strongly own DrainWait. A frame abandoned at the drain await can drop without any of those events firing, so the self-cycle still retains the response, connection and signal. |
+| 1783-1795 | Detached body cancellation | **SAFE** | ByteStream::cancel synchronously builds an owning cancellation task and the coroutine copies Request, Response, outgoing and signal. Cancellation does not borrow the local optional stream handle. |
+| 1795-1801,1807-1823 | Stream reader and abort callback on ordinary completion | **SAFE** | The reader task owns its reader slot, the named chunk survives a directly awaited drain, and normal failure or abort removes the listener. Forced-teardown retention of the abort edge is covered separately. |
+| 1796-1801,1821 | Response abort listener self-ownership | **DEFECT** ([D05](#d05)) | The abort signal owns a listener that captures that same signal and a reader. If the send coroutine is destroyed during a pending read without dispatching abort, the post-await remove never runs and the listener pins both. |
+| 1846-1854,1986-1990 | Active tasks and finished aggregation | **SAFE** | Tasks own their child frames; settlement listeners weakly acquire ServeState. Shutdown takes a promise snapshot and its detached continuation copies only the finished resolver. |
+| 1858-1873,1888-1898 | HTTP request coroutine and normal receipt/drain | **SAFE** | The request frame owns ServeState and the handler closure until its Promise settles. It retains the request, real delivery receipt, and drain callable across their waits, with no alias into the active task map. |
+| 1901-1933 | Request finish, close and error listeners | **SAFE** | Listeners own the controller, resolver and one shared settlement bit. The raw response pointer is stored on that same response and both emitting paths keep the response alive in a local owning snapshot. |
+| 1935-1944,2022-2039 | Shutdown coroutine and lingering close timer | **SAFE** | Shutdown takes state and close callback by value; the timer holds the callable for each scheduled invocation and its self-reference and state reference are weak. |
+| 1992-2015,2040-2062 | Listen callback, abort cleanup and public handles | **SAFE** | Listening and terminal callbacks weakly lock state. The finished reaction removes the external abort registration and clears the state-held listener; returned handles own state for their use. |
+
 
 ## Ranked defects and counts
 
-8/97 files reviewed. **DEFECT 0, SAFE 9, UNCLEAR 0.**
+9/97 files reviewed. **DEFECT 5, SAFE 28, UNCLEAR 2.**

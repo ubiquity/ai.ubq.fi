@@ -132,8 +132,265 @@
       "note": "Declaration of the memoized module promise. Constructor call and cache lifetime are reviewed with the implementation."
     },
     "src/runtime/http.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "35-74,1151-1177,1273-1277",
+          "verdict": "SAFE",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "Emitter and server listener dispatch",
+          "evidence": "Dispatch snapshots registrations and weak or strong target handles are acquired by the callback. A reentrant removal leaves the callable alive through the copied registration."
+        },
+        {
+          "lines": "323-453,621-695,739-773",
+          "verdict": "SAFE",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "llhttp callbacks and parser views",
+          "evidence": "The parser is immovable inside ConnectionState, runs llhttp callbacks synchronously, uses offsets across reads, and copies target, headers and payload before erasing or growing input."
+        },
+        {
+          "lines": "514-559",
+          "verdict": "SAFE",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "ConnectionState::startRead",
+          "evidence": "The async completion owns ConnectionState and its fixed readBuffer. Destruction closes the stream but the queued completion still owns the storage."
+        },
+        {
+          "lines": "689-733,796-807,987-1031,1133-1143,1236-1255",
+          "verdict": "SAFE",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Connection, socket and request links on ordinary completion",
+          "evidence": "Server map owns attached connections, which own socket and active HTTP objects. Normal close or ws handoff drops the return edges; finish or dump releases the current request and response."
+        },
+        {
+          "lines": "756-759,783-787,809-833",
+          "verdict": "SAFE",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "Body event and queued resume/end",
+          "evidence": "Event dispatch or the queued job holds a local IncomingMessage and ConnectionState; queued work checks that the request still matches before operating."
+        },
+        {
+          "lines": "850-889,987-1000",
+          "verdict": "DEFECT",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "Outstanding HTTP write buffer",
+          "evidence": "flush gives Asio a view into output.front() and awaits its callback. An intervening close destroys that vector with output.clear() before the completion runs, violating Asio's buffer lifetime requirement.",
+          "defect": "D01"
+        },
+        {
+          "lines": "892-920,928-962,1001-1031",
+          "verdict": "SAFE",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "Posted drain, finish and close callbacks",
+          "evidence": "Each dispatch holds an owning connection or response snapshot; after reentrant finish it checks that the same response is current before resetting members."
+        },
+        {
+          "lines": "1036-1090",
+          "verdict": "SAFE",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Connection timeout",
+          "evidence": "The timer captures a weak ConnectionState, locks it before onTimer and is cleared on destruction or handoff."
+        },
+        {
+          "lines": "1114-1117,979-983",
+          "verdict": "UNCLEAR",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Standalone node-http requestTimeout refusal",
+          "evidence": "destroyAfter drops the outgoing response before close, so a listener waiting specifically for its close may retain state. serveHttp sets requestTimeout to zero. Trace any separately shipped callers that enable it and expect a delivery receipt."
+        },
+        {
+          "lines": "1180-1195,1203-1233,1325-1349",
+          "verdict": "SAFE",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Server request dispatch, accept and retry on ordinary shutdown",
+          "evidence": "Deferred jobs own Server; accept and retry stop once listening is false, and close cancels the retry and clears the listening self-reference and registrations."
+        },
+        {
+          "lines": "1203-1215,1279-1320,1935-1944,1968-1985",
+          "verdict": "DEFECT",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "ServeState ownership after bind rejection",
+          "evidence": "A listen error in the early-return branches only rejects ready and finished. There is no close to clear the server-owned strong request/upgrade listeners, and shutdown also exits at the rejected ready await.",
+          "defect": "D02"
+        },
+        {
+          "lines": "1328,1968-1979",
+          "verdict": "UNCLEAR",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Active listener ownership on external loop destruction",
+          "evidence": "Explicit close clears the Server self-owner and ServeState listener cycles. Establish whether a supported entry point can abandon a listening HTTP server in a reusable process without running close."
+        },
+        {
+          "lines": "1397-1400,1416-1420",
+          "verdict": "SAFE",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "Socket handoff and message receiver",
+          "evidence": "The queued handoff check owns ConnectionState; the upgrade path holds the socket through synchronous ws handoff. pause and resume use a raw request identity only for a synchronous comparison."
+        },
+        {
+          "lines": "1485-1502,1505-1567",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Response write and header views",
+          "evidence": "Header and byte inputs are copied into owned fields or output before these synchronous calls return. The later lifetime of the output front is covered by D01."
+        },
+        {
+          "lines": "1620-1643,1656-1667,1890-1893",
+          "verdict": "SAFE",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "Request body registration and disposal",
+          "evidence": "The request handler owns the Request and explicitly erases its entry after delivery; body access is synchronous and the body value does not hold the Request key."
+        },
+        {
+          "lines": "1687-1706,1722-1729",
+          "verdict": "SAFE",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Early SSE stop listeners",
+          "evidence": "The listeners weakly lock Readiness, which weakly locks the response. A local or registry handle keeps Readiness alive during a callback."
+        },
+        {
+          "lines": "1707-1721,1861-1872,1888-1896",
+          "verdict": "DEFECT",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Early SSE registry key retained by its own value",
+          "evidence": "The static registry stores a commit callable owning its Request key. If the handler frame is abandoned before the explicit unregister after delivery, the key cannot expire and the registry retains its body and signal indefinitely.",
+          "defect": "D04"
+        },
+        {
+          "lines": "1747-1778,1813-1816",
+          "verdict": "DEFECT",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "DrainWait callback self-ownership",
+          "evidence": "DrainWait stores four listeners that each strongly own DrainWait. A frame abandoned at the drain await can drop without any of those events firing, so the self-cycle still retains the response, connection and signal.",
+          "defect": "D03"
+        },
+        {
+          "lines": "1783-1795",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "Detached body cancellation",
+          "evidence": "ByteStream::cancel synchronously builds an owning cancellation task and the coroutine copies Request, Response, outgoing and signal. Cancellation does not borrow the local optional stream handle."
+        },
+        {
+          "lines": "1795-1801,1807-1823",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "Stream reader and abort callback on ordinary completion",
+          "evidence": "The reader task owns its reader slot, the named chunk survives a directly awaited drain, and normal failure or abort removes the listener. Forced-teardown retention of the abort edge is covered separately."
+        },
+        {
+          "lines": "1796-1801,1821",
+          "verdict": "DEFECT",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Response abort listener self-ownership",
+          "evidence": "The abort signal owns a listener that captures that same signal and a reader. If the send coroutine is destroyed during a pending read without dispatching abort, the post-await remove never runs and the listener pins both.",
+          "defect": "D05"
+        },
+        {
+          "lines": "1846-1854,1986-1990",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "c",
+            "d"
+          ],
+          "symbol": "Active tasks and finished aggregation",
+          "evidence": "Tasks own their child frames; settlement listeners weakly acquire ServeState. Shutdown takes a promise snapshot and its detached continuation copies only the finished resolver."
+        },
+        {
+          "lines": "1858-1873,1888-1898",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b"
+          ],
+          "symbol": "HTTP request coroutine and normal receipt/drain",
+          "evidence": "The request frame owns ServeState and the handler closure until its Promise settles. It retains the request, real delivery receipt, and drain callable across their waits, with no alias into the active task map."
+        },
+        {
+          "lines": "1901-1933",
+          "verdict": "SAFE",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Request finish, close and error listeners",
+          "evidence": "Listeners own the controller, resolver and one shared settlement bit. The raw response pointer is stored on that same response and both emitting paths keep the response alive in a local owning snapshot."
+        },
+        {
+          "lines": "1935-1944,2022-2039",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Shutdown coroutine and lingering close timer",
+          "evidence": "Shutdown takes state and close callback by value; the timer holds the callable for each scheduled invocation and its self-reference and state reference are weak."
+        },
+        {
+          "lines": "1992-2015,2040-2062",
+          "verdict": "SAFE",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Listen callback, abort cleanup and public handles",
+          "evidence": "Listening and terminal callbacks weakly lock state. The finished reaction removes the external abort registration and clears the state-held listener; returned handles own state for their use."
+        }
+      ]
     },
     "src/runtime/http_body.cpp": {
       "reviewed": false,
