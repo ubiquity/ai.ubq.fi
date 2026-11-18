@@ -2514,8 +2514,9 @@
       ]
     },
     "include/uos/kernel/quota_reserve.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "The reservation overloads own each input and injected KV option. The lock callback ownership is reviewed at implementation."
     },
     "include/uos/kernel/quota_v2.hpp": {
       "reviewed": false,

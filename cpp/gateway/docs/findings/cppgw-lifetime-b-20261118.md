@@ -105,7 +105,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/kernel/attestation.hpp`
 - [x] `include/uos/kernel/policy_queue.hpp`
 - [x] `include/uos/kernel/quota_reservations.hpp`
-- [ ] `include/uos/kernel/quota_reserve.hpp`
+- [x] `include/uos/kernel/quota_reserve.hpp`
 - [ ] `include/uos/kernel/quota_v2.hpp`
 - [ ] `include/uos/kernel/quota_write.hpp`
 - [ ] `include/uos/kernel/usage.hpp`
@@ -722,6 +722,10 @@ Queue-record inputs are owning strings, and list has no borrowed parameters. No 
 | 58-71,77-101 | withKernelQuotaLock callable, turn and success/error cleanup | **SAFE** | The wrapper owns the coroutine callable by value before entering the lock and awaits it directly. Previous is a copied promise and ordinary operation success and exceptions both release the current turn. |
 | 79-98 | Quota lock turn abandoned before cleanup | **UNCLEAR** | The static turn remains pending if its frame is abandoned before leaveKernelQuotaLock. Establish whether an in-service cancel or a supported reusable-loop teardown can drop a live holder or queued turn, and preserve predecessor ordering in any fix. |
 
+### `include/uos/kernel/quota_reserve.hpp`
+
+The reservation overloads own each input and injected KV option. The lock callback ownership is reviewed at implementation.
+
 
 ## Ranked defects and counts
 
@@ -927,4 +931,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-82/97 files reviewed. **DEFECT 9, SAFE 192, UNCLEAR 4.**
+83/97 files reviewed. **DEFECT 9, SAFE 192, UNCLEAR 4.**
