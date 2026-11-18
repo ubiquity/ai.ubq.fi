@@ -322,4 +322,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-Initial checkpoint. Audit coverage and counts will be updated as files are committed.
+0/286 files reviewed. 0 sites: 0 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
