@@ -271,7 +271,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/paid_fallback/claude_code_route.cpp`
 - [x] `src/paid_fallback/health.cpp`
 - [x] `src/paid_fallback/index.cpp`
-- [ ] `src/paid_fallback/ledger_admission.cpp`
+- [x] `src/paid_fallback/ledger_admission.cpp`
 - [ ] `src/paid_fallback/ledger_backfill.cpp`
 - [ ] `src/paid_fallback/ledger_settlement.cpp`
 - [ ] `src/paid_fallback/ledger_state.cpp`
@@ -1714,3 +1714,10 @@ Policy and settlement tasks operate on owned request and reservation records.
 - 165-203,213 · policy lookup, retry, and terminal-sweep spawn · **SAFE** · KV and policy snapshots stay in their frames. The detached reconciliation entry point takes no caller-owned references.
 - 246-315,322-373 · pricing and reservation awaits · **SAFE** · Pricing, policy, and admission input data are held as values and model/catalog pointers refer to local snapshots.
 - 376-484 · reservation settlement and bookkeeping awaits · **SAFE** · Provider response, reservation, and usage data are frame-owned and all durable steps in each function are joined.
+
+### `src/paid_fallback/ledger_admission.cpp`
+
+Admission and release use CAS snapshots and module-owned KV; explicit override deletion uses joined member operations.
+
+- 91-142,144-197,201-266 · iterator, read batches, and commit ownership · **SAFE** · Admission and release read the globally retained production KV, whose guarded get also retains native storage independently. Transaction and tuple/value owners remain live across their waits.
+- 271-320,324-386 · deletion, retry, and request update ownership · **SAFE** · The override store, row and transaction handles remain in the joined frames. The deletion scans retain individual iterator owners through next.

@@ -3034,8 +3034,22 @@
       ]
     },
     "src/paid_fallback/ledger_admission.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Admission and release use CAS snapshots and module-owned KV; explicit override deletion uses joined member operations.",
+      "sites": [
+        {
+          "lines": "91-142,144-197,201-266",
+          "kind": "iterator, read batches, and commit ownership",
+          "verdict": "SAFE",
+          "reason": "Admission and release read the globally retained production KV, whose guarded get also retains native storage independently. Transaction and tuple/value owners remain live across their waits."
+        },
+        {
+          "lines": "271-320,324-386",
+          "kind": "deletion, retry, and request update ownership",
+          "verdict": "SAFE",
+          "reason": "The override store, row and transaction handles remain in the joined frames. The deletion scans retain individual iterator owners through next."
+        }
+      ]
     },
     "src/paid_fallback/ledger_backfill.cpp": {
       "status": "pending",
