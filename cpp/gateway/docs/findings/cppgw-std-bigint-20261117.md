@@ -150,3 +150,13 @@ At 01:48 UTC, release had completed 355 of 442 closures with 353 passing binarie
 A fetch refreshed `origin/development` to `6bd78fc5e3b0783809691c6bd45d25ac45e9696e` and the port branch to `45118332b287b7ba9534bb66ab1518f1990a9d9e`. The development tree has no `cpp/gateway` entry. `git merge-tree --write-tree --name-only origin/claude/cpp-gateway-port HEAD` found one add/add conflict in the shared `DEVIATIONS-FROM-BUN.md`, which the two branches created independently. The fuzz registry merged in the preview.
 
 `GIT_TERMINAL_PROMPT=0 git push --dry-run --porcelain origin HEAD:refs/heads/pool-partial/cppgw-std-bigint-20261117-44188151110` failed with GitHub requiring authentication. The same dry run with GitHub CLI's credential helper failed. The BigInt commits are in the local task branch pending repository handoff.
+
+### Release terminal receipt
+
+The release sweep compiled and ran all **442 binaries**. On the runner's system ICU 74.2 it recorded **440 passing binaries, 2 failing binaries and 5,025 passing cases out of 5,028**. All **405 application binaries and 4,571 application cases** passed. No builds or test runs timed out. The receipt SHA-256 is `4c131370ccc469a05bb00b15a2154ef253c38c9de85f846409a5f3e6a4f126f6`. The input digest was `173c881ddb9a3698a4387278b11f2c247ddcf3cb161a0cf038f1087d0be05416` at start and finish.
+
+The exact IDNA link closures in release and ASan/UBSan were relinked with ICU 78.3 after recompiling their `url.cpp` object against those headers. Each passed 2/2 cases with the BigInt object and all other objects from the main sweep. The command was `python3 -B "$scratch/icu-link-closures.py" "$PWD/cpp/gateway" "$scratch" "$scratch/icu-full-closures"` in the isolated environment. This accounts for both IDNA cases in each raw suite.
+
+A subsequent full source build used `python3 -B "$scratch/link-production.py" "$PWD/cpp/gateway" "$scratch"`. It compiled all 369 production objects, archived `libuos_gateway.a` and linked `uos_gateway`, `uos_kv_convert` and `uos_kv_proof` using the strict release flags and the vendored archives. The startup and entrypoint units compiled for those links. The binaries are link evidence and were kept in scratch.
+
+The sanitizer sweep kept its completed entries and switched from two to four workers after release finished. The command is `python3 -B "$scratch/resume-closures.py" "$PWD/cpp/gateway" "$scratch" asan --jobs 4 --resume-after 5ab1a34de1cb47b31a990c0e3ca6ec3024440f2b` with the same environment and compiler flags. The helper verifies the scoped files against the tested revision before resuming. Its SHA-256 is `c99e0d83547a2307c66e741068c556b2a9392d7c24f8f259dd3e36450e7117b5`.
