@@ -2452,7 +2452,8 @@
       ]
     },
     "src/deepseek/chat_projection.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Projection and normalization are synchronous. The system message iterator is used only while its local vector is live.",
       "sites": []
     },
     "src/deepseek/context_admission_failure.cpp": {

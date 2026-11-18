@@ -224,7 +224,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/supervisor_log.cpp`
 - [x] `src/codex/supervisor_secret.cpp`
 - [x] `src/codex/supervisor_transport.cpp`
-- [ ] `src/deepseek/chat_projection.cpp`
+- [x] `src/deepseek/chat_projection.cpp`
 - [ ] `src/deepseek/context_admission_failure.cpp`
 - [ ] `src/deepseek/flash_aliases.cpp`
 - [ ] `src/deepseek/forwarded_payload_policy.cpp`
@@ -1449,3 +1449,7 @@ Socket events now use weak connection state. The separate per-call abort callbac
 - 62-70,154-179,181-263 · transport awaits and socket listeners · **SAFE** · Connection and call frames own the shared state. Socket message/close/error callbacks use weak state, and initialization failure settles pending calls and terminates the socket.
 - 88-101,127-150 · pending map and normal cleanup · **SAFE** · Settlement copies the call record before erase, clears its timer, removes the matching listener and only then settles its promise.
 - 134-140 · per-call abort ownership cycle · **DEFECT** · While the call is suspended, pending cleanup owns its signal and listener, and the listener owns the same ConnectionState. Loop teardown drops the timer and socket callbacks without settling that call, leaving the pending cleanup cycle alive. Use weak state in the abort callable while callConnection owns the state.
+
+### `src/deepseek/chat_projection.cpp`
+
+Projection and normalization are synchronous. The system message iterator is used only while its local vector is live.
