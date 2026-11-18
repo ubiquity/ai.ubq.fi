@@ -71,7 +71,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/routing_state.hpp`
 - [x] `include/uos/codex/session.hpp`
 - [x] `include/uos/codex/supervisor.hpp`
-- [ ] `include/uos/codex/supervisor_brief.hpp`
+- [x] `include/uos/codex/supervisor_brief.hpp`
 - [ ] `include/uos/codex/supervisor_config.hpp`
 - [ ] `include/uos/codex/supervisor_follow.hpp`
 - [ ] `include/uos/codex/supervisor_inventory.hpp`
@@ -533,3 +533,9 @@ KV session observation interface.
 Supervisor HTTP handlers take owned requests or no parameters.
 
 - 9,17 · owning task parameters · **SAFE** · The output handler retains its request handle and sessions needs no caller-owned data.
+
+### `include/uos/codex/supervisor_brief.hpp`
+
+Brief collection exposes two synchronous copying task factories and an owning HTTP task.
+
+- 124-129,159 · task factories · **SAFE** · The collection wrappers copy the connection and source into their implementation Tasks before returning; the handler owns its request.

@@ -428,8 +428,16 @@
       ]
     },
     "include/uos/codex/supervisor_brief.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Brief collection exposes two synchronous copying task factories and an owning HTTP task.",
+      "sites": [
+        {
+          "lines": "124-129,159",
+          "kind": "task factories",
+          "verdict": "SAFE",
+          "reason": "The collection wrappers copy the connection and source into their implementation Tasks before returning; the handler owns its request."
+        }
+      ]
     },
     "include/uos/codex/supervisor_config.hpp": {
       "status": "pending",
