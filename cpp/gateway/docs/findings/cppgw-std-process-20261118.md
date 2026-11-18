@@ -69,7 +69,7 @@ The portable-driver commands run from the repository root. `$runtime` is the ded
 ```sh
 runtime=$(cat "$scratch/runtime-path")
 for config in release asan; do
-  flags="-isystem $boost"
+  flags="-isystem $boost --system-header-prefix=third_party/simdutf/"
   if [ "$config" = asan ]; then flags="$flags -gline-tables-only"; fi
   empty_home=$(mktemp -d "$scratch/$config-home.XXXXXX")
   private_tmp=$(mktemp -d "$scratch/$config-tmp.XXXXXX")
@@ -82,10 +82,23 @@ for config in release asan; do
 done
 ```
 
-The driver runs each binary in independent network, mount and PID namespaces with a private tmpfs, an empty home, a new temporary directory and a credential-free environment. The command selects every test without a shard filter. Release and sanitizer builds ran as independent processes. The final source and test commit is `dfef31b22cc971cbfa897bd18e030dbbd8b21b1e`, tree `586f80c663892b2fdaa58356c3f934cf5904fe10`. Superseded runs contributed only cached objects. A preliminary focused compile overlapped an edit and consumed inconsistent input. It was replaced by a run from the committed source.
+The driver runs each binary in independent network, mount and PID namespaces with a private tmpfs, an empty home, a new temporary directory and a credential-free environment. The command selects every test without a shard filter. Release and sanitizer builds run as independent processes. The final source and test commit is `dfef31b22cc971cbfa897bd18e030dbbd8b21b1e`, tree `586f80c663892b2fdaa58356c3f934cf5904fe10`. A preliminary focused compile overlapped an edit and consumed inconsistent input. The focused runs were restarted from the committed source.
+
+The unmodified driver classified `third_party/simdutf/simdutf.h` as a first-party header when compiling `src/rt/base64.cpp`. Clang 21 stopped on `-Werror,-Wsign-conversion` inside that header. The final commands supply Clang's system-header prefix for the vendor directory and retain the first-party warning flags. The driver used a fresh cache for the adjusted flags. The repository driver, vendor source and base64 code are outside the owned paths.
 
 ## Verification in progress
 
-Focused isolated release and forced-SIGCHLD ASan/UBSan runs passed 15 of 15 process cases. The forced backend uses `-DBOOST_PROCESS_V2_DISABLE_PIDFD_OPEN` on Linux. Both full Linux ARM64 profiles are running on the frozen source and test commit.
+Focused isolated release and forced-SIGCHLD ASan/UBSan runs passed 15 of 15 process cases. The forced backend uses `-DBOOST_PROCESS_V2_DISABLE_PIDFD_OPEN` on Linux. GCC 14.2.0 compiled `process_loop.cpp` with the same strict warnings at `-O2`. Both full Linux ARM64 profiles are running on the frozen C++ sources and tests.
 
-The two process implementation objects and the process test cross-compiled as Mach-O ARM64 with Clang 21.1.8, libc++, the macOS 15.5 SDK and Boost 1.92.0. This compile check exposed the SDK's signal-set macros and verified the correction. Darwin runtime execution requires a Mac.
+The two process implementation objects and the process test cross-compiled as Mach-O ARM64 with Clang 21.1.8, libc++, the macOS 15.5 SDK and Boost 1.92.0. This compile check exposed the SDK's signal-set macros and verified the correction. The SDK archive `MacOSX15.5.sdk.tar.xz` had SHA-256 `c15cf0f3f17d714d1aa5a642da8e118db53d79429eb015771ba816aa7c6c1cbd`. [SDK archive](https://github.com/joseluisq/macosx-sdks/releases/tag/15.5)
+
+```sh
+for source in cpp/gateway/src/rt/process.cpp cpp/gateway/src/rt/process_loop.cpp cpp/gateway/tests/rt/process_test.cpp; do
+  clang++-21 --target=arm64-apple-macos15.5 -isysroot "$scratch/MacOSX15.5.sdk" -stdlib=libc++ \
+    -std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion -Werror \
+    -DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING -Icpp/gateway/include -isystem "$boost" \
+    -c "$source" -o "$scratch/darwin/$(basename "$source" .cpp).o"
+done
+```
+
+A standalone launcher cross-linked for macOS with `ld64.lld-21 -arch arm64 -platform_version macos 15.5 15.5` after adding the archive built from the matching upstream Process sources. Omitting the archive produced unresolved symbols. The Linux fault-injection launcher likewise linked with `-lboost_process` and failed linkage without it. Darwin runtime execution requires a Mac.
