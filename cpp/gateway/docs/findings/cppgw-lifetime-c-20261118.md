@@ -125,7 +125,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/paid_fallback/claude_code_route.hpp`
 - [x] `include/uos/paid_fallback/health.hpp`
 - [x] `include/uos/paid_fallback/index.hpp`
-- [ ] `include/uos/paid_fallback/ledger_admission.hpp`
+- [x] `include/uos/paid_fallback/ledger_admission.hpp`
 - [ ] `include/uos/paid_fallback/ledger_backfill.hpp`
 - [ ] `include/uos/paid_fallback/ledger_settlement.hpp`
 - [ ] `include/uos/paid_fallback/ledger_state.hpp`
@@ -813,3 +813,9 @@ Health reads, catalog operations and fallback routing API.
 Paid reservation and terminal accounting API.
 
 - 85-86,103-125,156-157 · task and callback interface · **SAFE** · Accounting tasks own their reservations, delivery evidence and billing parameters; the test sweep hook is stored as a value.
+
+### `include/uos/paid_fallback/ledger_admission.hpp`
+
+Ledger admission, release and update declarations.
+
+- 38-39,57-70 · owning task parameters · **SAFE** · The coroutines retain keys, reservation inputs, patches and any store override as values.

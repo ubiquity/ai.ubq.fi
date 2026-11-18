@@ -932,8 +932,16 @@
       ]
     },
     "include/uos/paid_fallback/ledger_admission.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Ledger admission, release and update declarations.",
+      "sites": [
+        {
+          "lines": "38-39,57-70",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The coroutines retain keys, reservation inputs, patches and any store override as values."
+        }
+      ]
     },
     "include/uos/paid_fallback/ledger_backfill.hpp": {
       "status": "pending",
