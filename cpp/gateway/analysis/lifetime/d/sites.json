@@ -3027,7 +3027,8 @@
       "sites": []
     },
     "src/handler/admission.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed process-controller initialization, route classifications and synchronous overload responses. The controller lives in static storage and response details are copied.",
       "sites": []
     },
     "src/handler/http.cpp": {

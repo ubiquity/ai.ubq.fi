@@ -134,7 +134,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/debug_routing.cpp`
 - [x] `src/decisions/handlers.cpp`
 - [x] `src/defaults.cpp`
-- [ ] `src/handler/admission.cpp`
+- [x] `src/handler/admission.cpp`
 - [ ] `src/handler/http.cpp`
 - [ ] `src/handler/index.cpp`
 - [ ] `src/handler/serve_handler.cpp`
@@ -825,6 +825,10 @@ Reviewed the Decisions route's request body, selection, shared dispatch telemetr
 
 Reviewed the default key constants and synchronous key construction. No suspension or escaping callback.
 
+### `src/handler/admission.cpp`
+
+Reviewed process-controller initialization, route classifications and synchronous overload responses. The controller lives in static storage and response details are copied.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -930,4 +934,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-68/286 files reviewed. 151 sites: 142 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+69/286 files reviewed. 151 sites: 142 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
