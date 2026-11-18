@@ -101,7 +101,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/scope_experiment_model.cpp`
 - [x] `src/cache/scope_experiment_targets.cpp`
 - [x] `src/cache/scope_targets.cpp`
-- [ ] `src/cache/telemetry_gate.cpp`
+- [x] `src/cache/telemetry_gate.cpp`
 - [ ] `include/uos/kernel/attestation.hpp`
 - [ ] `include/uos/kernel/policy_queue.hpp`
 - [ ] `include/uos/kernel/quota_reservations.hpp`
@@ -697,6 +697,15 @@ This facade does not define a coroutine or register callbacks. Its exported impl
 | 145-200 | Derive target roster across hashes | **SAFE** | Range iteration is over an immutable frame-owned catalog. Each hash task gets a copied model and snapshot, and temporary topology/map views are used synchronously. |
 | 212-237 | Load catalog and auth pool | **SAFE** | The fan-out uses free children that own KV and keys. Named aggregate results are owned through inventory derivation; no caller views escape either step. |
 
+### `src/cache/telemetry_gate.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 79-101 | Resolve telemetry KV and hash | **SAFE** | Options carry the injected store owner, or the coroutine holds the environment promise. The hash text and child Task are named before the wait. |
+| 202-211 | Per-route counter read fan-out | **SAFE** | Each child owns its KV key/retry state. Counter names are static string views used synchronously, and the result vector is owned. |
+| 267-298,300-354 | Resolve keys and record telemetry | **SAFE** | All async inputs and hash results are owned. Temporary key construction and mutation occur before awaiting a named atomic operation. |
+| 356-467 | Baseline read fan-out and aggregation | **SAFE** | Each named route child receives copied strings and a shared KV independently of early rejection. Aggregation walks a completed immutable vector after the wait. |
+
 
 ## Ranked defects and counts
 
@@ -902,4 +911,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-78/97 files reviewed. **DEFECT 9, SAFE 186, UNCLEAR 3.**
+79/97 files reviewed. **DEFECT 9, SAFE 190, UNCLEAR 3.**

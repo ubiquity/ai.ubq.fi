@@ -2421,8 +2421,52 @@
       ]
     },
     "src/cache/telemetry_gate.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "79-101",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "e"
+          ],
+          "symbol": "Resolve telemetry KV and hash",
+          "evidence": "Options carry the injected store owner, or the coroutine holds the environment promise. The hash text and child Task are named before the wait."
+        },
+        {
+          "lines": "202-211",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Per-route counter read fan-out",
+          "evidence": "Each child owns its KV key/retry state. Counter names are static string views used synchronously, and the result vector is owned."
+        },
+        {
+          "lines": "267-298,300-354",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Resolve keys and record telemetry",
+          "evidence": "All async inputs and hash results are owned. Temporary key construction and mutation occur before awaiting a named atomic operation."
+        },
+        {
+          "lines": "356-467",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Baseline read fan-out and aggregation",
+          "evidence": "Each named route child receives copied strings and a shared KV independently of early rejection. Aggregation walks a completed immutable vector after the wait."
+        }
+      ]
     },
     "include/uos/kernel/attestation.hpp": {
       "reviewed": false,
