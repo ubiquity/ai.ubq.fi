@@ -28,6 +28,7 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
 
+#include <charconv>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -79,10 +80,12 @@ namespace {
   rt::KvValue ledgerValue(const Ledger& ledger) { return rt::KvValue(json::value_from(ledger)); }
 
   SentinelReplayManifest manifestFor(double index) {
+    char hex[8];
+    const auto end = std::to_chars(hex, hex + sizeof hex, static_cast<std::uint32_t>(index), 16).ptr;
     return {
       .version = 1,
       .capture_id = "bootstrap-retry-" + rt::numberToString(index),
-      .fingerprint = rt::padStart(rt::numberToString(index, 16), 64, "0"),
+      .fingerprint = rt::padStart(std::string(hex, end), 64, "0"),
       .case_group_digest = std::string(64, 'c'),
       .captured_at_ms = now + index,
       .expires_at_ms = now + index + SENTINEL_REPLAY_TTL_MS,

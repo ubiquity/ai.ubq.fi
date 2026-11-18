@@ -14,7 +14,7 @@
 #include <vector>
 
 namespace uos::rt {
-  // `Number.*` statics. The global `parseInt`/`parseFloat` are the same functions.
+  // `Number.*` statics. The global `parseInt` is the same function.
   namespace Number {
     inline constexpr double MAX_SAFE_INTEGER = 9007199254740991.0;
     inline constexpr double MIN_SAFE_INTEGER = -9007199254740991.0;
@@ -31,9 +31,7 @@ namespace uos::rt {
     bool isSafeInteger(double value);
     // parseInt(string, radix): `radix` is the already ToInt32-converted argument; 0 means absent.
     double parseInt(std::string_view text, std::int32_t radix = 0);
-    double parseFloat(std::string_view text);
   }
-  using Number::parseFloat;
   using Number::parseInt;
   // Global isNaN/isFinite applied to a number (they ToNumber their argument first:
   // for a string use isNaN(stringToNumber(s))).
@@ -42,10 +40,6 @@ namespace uos::rt {
 
   // String(n), `${n}`, n.toString(), and every number JSON.stringify prints.
   std::string numberToString(double value);
-  // n.toString(radix). RangeError "toString() radix argument must be between 2 and 36".
-  std::string numberToString(double value, int radix);
-  // n.toFixed(digits). RangeError "toFixed() argument must be between 0 and 100".
-  std::string toFixed(double value, int fractionDigits);
   // Number(string) / unary + on a string: StringToNumber with JSC's literal rounding.
   double stringToNumber(std::string_view text);
   // StrWhiteSpaceChar: what String.prototype.trim and Number() strip (one code point).

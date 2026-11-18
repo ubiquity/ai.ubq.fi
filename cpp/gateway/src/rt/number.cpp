@@ -265,17 +265,6 @@ namespace uos::rt {
       std::reverse(result.begin(), result.end());
       return result;
     }
-
-    // Exact value of a finite non-negative double scaled by 2^kFractionBits.
-    constexpr std::uint64_t kFractionBits = 1076;
-
-    BigInt scaledExact(double value) {
-      int exponent = 0;
-      const double mantissa = std::frexp(value, &exponent);  // value = mantissa * 2^exponent, mantissa in [0.5, 1)
-      const auto integer = static_cast<std::int64_t>(std::ldexp(mantissa, 53));
-      const std::int64_t shift = static_cast<std::int64_t>(kFractionBits) + exponent - 53;
-      return BigInt(integer) << BigInt(shift);
-    }
   }
 
   bool isStrWhiteSpace(char32_t c) {
@@ -341,15 +330,6 @@ namespace uos::rt {
       }
       return sign * number;
     }
-
-    double parseFloat(std::string_view text) {
-      if (text.size() == 1) return isDigit(text[0]) ? text[0] - '0' : kNaN;
-      const std::size_t index = skipWhiteSpace(text, 0);
-      if (index == text.size()) return kNaN;
-      double number = kNaN;
-      strDecimalLiteral(text.substr(index), number);
-      return number;
-    }
   }
 
   bool isNaN(double value) { return std::isnan(value); }
@@ -384,100 +364,6 @@ namespace uos::rt {
       }
       out += exponent < 0 ? "e-" : "e+";
       out += std::to_string(exponent < 0 ? -exponent : exponent);
-    }
-    return out;
-  }
-
-  std::string numberToString(double value, int radix) {
-    if (radix < 2 || radix > 36) throw RangeError(kRadixRange);
-    if (radix == 10 || !std::isfinite(value)) return numberToString(value);
-    const bool negative = value < 0;
-    const double number = std::fabs(value);
-    double integerPart = std::floor(number);
-    const double fractionPart = number - integerPart;
-    std::string fraction;
-    if (fractionPart != 0) {
-      // JSC toStringWithRadixInternal: emit digits until the remainder is within
-      // half the distance to the neighbouring doubles, rounding half to even.
-      const bool integerPartIsOdd = integerPart <= 9007199254740991.0 && (static_cast<std::int64_t>(integerPart) & 1);
-      bool isOddInOddRadix = integerPartIsOdd;
-      std::uint32_t digit = integerPartIsOdd ? 1u : 0u;
-      const BigInt one = BigInt(1) << BigInt(static_cast<std::int64_t>(kFractionBits));
-      const BigInt half = BigInt(1) << BigInt(static_cast<std::int64_t>(kFractionBits - 1));
-      const BigInt radixValue(radix);
-      BigInt remainder = scaledExact(fractionPart);
-      const double next = std::nextafter(number, kInfinity);
-      const double previous = std::nextafter(number, -kInfinity);
-      BigInt halfDeltaNext = scaledExact(next - number) >> BigInt(1);
-      BigInt halfDeltaLast = scaledExact(number - previous) >> BigInt(1);
-      bool needsRoundingUp = false;
-      fraction = ".";
-      while (true) {
-        const auto comparison = remainder <=> half;
-        const bool odd = (radix & 1) ? isOddInOddRadix : (digit & 1u) != 0;
-        if (comparison > 0 || (comparison == 0 && odd)) {
-          if (remainder + halfDeltaNext > one) {
-            needsRoundingUp = true;
-            break;
-          }
-        } else if (remainder < halfDeltaLast) {
-          break;
-        }
-        remainder *= radixValue;
-        const BigInt whole = remainder >> BigInt(static_cast<std::int64_t>(kFractionBits));
-        digit = static_cast<std::uint32_t>(whole.toUint64());
-        remainder -= whole << BigInt(static_cast<std::int64_t>(kFractionBits));
-        fraction += kRadixDigits[digit];
-        if (digit & 1u) isOddInOddRadix = !isOddInOddRadix;
-        halfDeltaNext *= radixValue;
-        halfDeltaLast *= radixValue;
-      }
-      if (needsRoundingUp) {
-        while (fraction.back() == kRadixDigits[radix - 1]) fraction.pop_back();
-        if (fraction.back() == '9') {
-          fraction.back() = 'a';
-        } else if (fraction.back() != '.') {
-          ++fraction.back();
-        } else {
-          fraction.clear();
-          integerPart += 1;
-        }
-      } else {
-        while (fraction.back() == '0') fraction.pop_back();
-      }
-    }
-    std::string out = BigInt::fromNumber(integerPart).toString(radix) + fraction;
-    return negative ? "-" + out : out;
-  }
-
-  std::string toFixed(double value, int fractionDigits) {
-    if (fractionDigits < 0 || fractionDigits > 100) throw RangeError("toFixed() argument must be between 0 and 100");
-    if (!std::isfinite(value) || std::fabs(value) >= 1e21) return numberToString(value);
-    // The exact decimal expansion of a double never needs more than 1074 fraction digits.
-    std::string exact(1200, '\0');
-    const auto result = std::to_chars(exact.data(), exact.data() + exact.size(), std::fabs(value), std::chars_format::fixed, 1074);
-    exact.resize(static_cast<std::size_t>(result.ptr - exact.data()));
-    const std::size_t point = exact.find('.');
-    std::string digits = exact.substr(0, point) + exact.substr(point + 1, static_cast<std::size_t>(fractionDigits));
-    if (exact[point + 1 + static_cast<std::size_t>(fractionDigits)] >= '5') {
-      std::size_t index = digits.size();
-      while (index > 0) {
-        --index;
-        if (digits[index] == '9') {
-          digits[index] = '0';
-          continue;
-        }
-        ++digits[index];
-        break;
-      }
-      if (index == 0 && digits[0] == '0') digits.insert(digits.begin(), '1');
-    }
-    const std::size_t integerDigits = digits.size() - static_cast<std::size_t>(fractionDigits);
-    std::string out = value < 0 ? "-" : "";
-    out += digits.substr(0, integerDigits);
-    if (fractionDigits > 0) {
-      out += '.';
-      out += digits.substr(integerDigits);
     }
     return out;
   }
