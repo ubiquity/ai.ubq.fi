@@ -1435,8 +1435,9 @@
       ]
     },
     "src/storage/value_compatibility.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "This translation unit delegates to the synchronous runtime value validator, already classified in src/rt/kv_value.cpp."
     },
     "include/uos/cache/kv_migration.hpp": {
       "reviewed": false,
