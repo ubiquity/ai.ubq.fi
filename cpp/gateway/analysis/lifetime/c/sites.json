@@ -3725,8 +3725,22 @@
       ]
     },
     "src/provider/lithos_rate_limits.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Rate-limit parsing and failover-window lookups finish synchronously. The retry promise links a timer and once listener by weak back-references.",
+      "sites": [
+        {
+          "lines": "197-227",
+          "kind": "failover-window map references",
+          "verdict": "SAFE",
+          "reason": "Lookups and writes consume map entries synchronously without an intervening suspension or callback."
+        },
+        {
+          "lines": "255-292",
+          "kind": "rate-limit retry timer, listener, and executor",
+          "verdict": "SAFE",
+          "reason": "newPromise runs the borrowing executor inline. The timer owns the wait state and signal, and the once listener keeps weak back-references and its own elapsed callback and rejector."
+        }
+      ]
     },
     "src/provider/lithos_streams.cpp": {
       "status": "pending",

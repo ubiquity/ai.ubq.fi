@@ -310,7 +310,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/lithos.cpp`
 - [x] `src/provider/lithos_handlers.cpp`
 - [x] `src/provider/lithos_models.cpp`
-- [ ] `src/provider/lithos_rate_limits.cpp`
+- [x] `src/provider/lithos_rate_limits.cpp`
 - [ ] `src/provider/lithos_streams.cpp`
 - [ ] `src/provider/metered.cpp`
 - [ ] `src/provider/openrouter.cpp`
@@ -1981,3 +1981,10 @@ The catalog coalesces through a module-owned promise and publishes an owning sna
 
 - 32-52 · catalog fetch and buffered decode · **SAFE** · The task owns options, timeout/signal handles, fetch function, key and response while waiting. The data view is used synchronously against the named JSON.
 - 60-78 · coalesced promise and publication guard · **SAFE** · wait() copies the promise state before the registry can change, and the scope guard captures the exact promise identity rather than a reference into the optional.
+
+### `src/provider/lithos_rate_limits.cpp`
+
+Rate-limit parsing and failover-window lookups finish synchronously. The retry promise links a timer and once listener by weak back-references.
+
+- 197-227 · failover-window map references · **SAFE** · Lookups and writes consume map entries synchronously without an intervening suspension or callback.
+- 255-292 · rate-limit retry timer, listener, and executor · **SAFE** · newPromise runs the borrowing executor inline. The timer owns the wait state and signal, and the once listener keeps weak back-references and its own elapsed callback and rejector.
