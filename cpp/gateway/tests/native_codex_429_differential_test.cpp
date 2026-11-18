@@ -209,7 +209,7 @@ ASYNC_TEST("Codex 429 requires a body within the JSON depth limit for quota proo
     const auto bytes = generate(json::object{{"generator", "nestedArrays"}, {"size", rt::makeNumber(static_cast<double>(depth - 1))}});
     rt::ResponseInit init;
     init.status = 429;
-    init.headers.set("Retry-After", "15");
+    init.headers = rt::Headers{{"Retry-After", "15"}};
     const rt::Response upstream(rt::BodyInit(bytes), std::move(init));
     auto classifying = codex429::classifyCodex429(upstream, now);
     const auto parsed = co_await std::move(classifying);
