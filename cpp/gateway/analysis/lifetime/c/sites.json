@@ -2514,7 +2514,8 @@
       "sites": []
     },
     "src/deepseek/responses_payload.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Responses payload construction is synchronous. Field lookups return copies or are used immediately against the live JSON record.",
       "sites": []
     },
     "src/deepseek/responses_stream.cpp": {

@@ -231,7 +231,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/deepseek/handlers.cpp`
 - [x] `src/deepseek/index.cpp`
 - [x] `src/deepseek/responses.cpp`
-- [ ] `src/deepseek/responses_payload.cpp`
+- [x] `src/deepseek/responses_payload.cpp`
 - [ ] `src/deepseek/responses_stream.cpp`
 - [ ] `src/deepseek/stream.cpp`
 - [ ] `src/deepseek/waterfall.cpp`
@@ -1484,3 +1484,7 @@ DeepSeek preparation, validation and envelope checks operate synchronously on th
 ### `src/deepseek/responses.cpp`
 
 Responses request projection and model policy checks are synchronous. Reasoning and model views are consumed within the owning record or table's lifetime.
+
+### `src/deepseek/responses_payload.cpp`
+
+Responses payload construction is synchronous. Field lookups return copies or are used immediately against the live JSON record.
