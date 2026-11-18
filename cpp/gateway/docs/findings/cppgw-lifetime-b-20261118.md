@@ -96,7 +96,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/prompt_analytics.cpp`
 - [x] `src/cache/prompt_analytics_core.cpp`
 - [x] `src/cache/prompt_analytics_queue.cpp`
-- [ ] `src/cache/prompt_analytics_read.cpp`
+- [x] `src/cache/prompt_analytics_read.cpp`
 - [ ] `src/cache/scope_experiment.cpp`
 - [ ] `src/cache/scope_experiment_model.cpp`
 - [ ] `src/cache/scope_experiment_targets.cpp`
@@ -653,6 +653,13 @@ This facade does not define a coroutine or register callbacks. Its exported impl
 | 173-220 | Enqueue after cohort resolution | **SAFE** | The local target, event and options remain owned through the hash wait. Queue and entry values are copied before enqueue, and closure state is not borrowed from the request. |
 | 222-245 | Optional queue flush, close, and reset | **SAFE** | A close task receives a copied queue state before awaiting its promise. The static optional is only read synchronously, so the test reset can drop its handle without invalidating the active task. |
 
+### `src/cache/prompt_analytics_read.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 361-399 | Read analytics with three possible scans | **SAFE** | The coroutine owns KV, window, group-by and the named iterators. Each accumulator consumes its copied row synchronously before the next iterator await. |
+| 415-468 | Analytics read orchestration | **SAFE** | Options, grouped data and all scan arguments are owned by the frames. Aggregation uses an immutable result snapshot and finishes synchronously. |
+
 
 ## Ranked defects and counts
 
@@ -858,4 +865,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-73/97 files reviewed. **DEFECT 8, SAFE 168, UNCLEAR 3.**
+74/97 files reviewed. **DEFECT 8, SAFE 170, UNCLEAR 3.**

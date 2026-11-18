@@ -2194,8 +2194,30 @@
       ]
     },
     "src/cache/prompt_analytics_read.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "361-399",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Read analytics with three possible scans",
+          "evidence": "The coroutine owns KV, window, group-by and the named iterators. Each accumulator consumes its copied row synchronously before the next iterator await."
+        },
+        {
+          "lines": "415-468",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Analytics read orchestration",
+          "evidence": "Options, grouped data and all scan arguments are owned by the frames. Aggregation uses an immutable result snapshot and finishes synchronously."
+        }
+      ]
     },
     "src/cache/scope_experiment.cpp": {
       "reviewed": false,
