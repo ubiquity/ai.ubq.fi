@@ -2561,7 +2561,8 @@
       "sites": []
     },
     "src/authority/native_principal_contracts.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed principal request, grant and result codecs. Standard variant visitation consumes its captures synchronously and result conversion copies the data.",
       "sites": []
     },
     "src/authority/native_runtime_contracts.cpp": {
