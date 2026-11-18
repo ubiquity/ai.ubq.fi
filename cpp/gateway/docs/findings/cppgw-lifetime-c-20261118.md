@@ -199,7 +199,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/experiment.cpp`
 - [x] `src/codex/external_auth.cpp`
 - [x] `src/codex/index.cpp`
-- [ ] `src/codex/manual_reset.cpp`
+- [x] `src/codex/manual_reset.cpp`
 - [ ] `src/codex/manual_reset_state.cpp`
 - [ ] `src/codex/native_auth.cpp`
 - [ ] `src/codex/native_auth_transport.cpp`
@@ -1282,3 +1282,12 @@ The two entry points join dispatch and its accounting cleanup.
 
 - 13-38 · serial loop callback borrows · **SAFE** · fetchPreparedCodexResponses holds shared ctx across the serial loop join. The loop's raw pointer predicates are synchronous and its other installed operations are joined.
 - 44-60 · request coordinator cleanup · **SAFE** · Both options and coordinator are frame-owned and cancellation is awaited before the frame returns or rethrows.
+
+### `src/codex/manual_reset.cpp`
+
+Manual reset keeps request, billing proof and selection data in local snapshots. Its injectable KV dependency needs separate treatment under fail-fast reads.
+
+- 47-78,89-120 · target scan, usage callback, and intent reads · **SAFE** · The account references are into the frame's immutable parsed pool. The copied fetch callable, dependencies and KV live through their nested joins, while a spawned body cancellation owns its handle.
+- 88,161-162,199-201 · KV receiver lifetime after fail-fast all · **DEFECT** · readEntry is a forwarding function and releases its KV copy before the returned virtual get finishes. If an injected KV's coroutine get loses to a rejected sibling and the caller supplied the last owner, the pending method can resume with a dead receiver. Make readEntry an owning coroutine. Guarded production KV and MemoryKv take their own inner store ownership.
+- 129-153,155-184,192-208,220-229 · validated promotion and reset joins · **SAFE** · The target, intent, observation and operation handles belong to the parent frames, and every nested step after fan-out is joined.
+- 209-219 · durable fence predicate closures · **SAFE** · Predicates copy target, selection, intent and clock into the candidate and are only invoked synchronously with row values.
