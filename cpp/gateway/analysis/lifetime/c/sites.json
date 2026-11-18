@@ -821,8 +821,16 @@
       "sites": []
     },
     "include/uos/harmony/tools/router.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Four overloads route owned tool work.",
+      "sites": [
+        {
+          "lines": "30-34",
+          "kind": "task factories",
+          "verdict": "SAFE",
+          "reason": "The pointer overload copies or converts the JSON argument synchronously before returning the implementation task, whose backend bundle is owning."
+        }
+      ]
     },
     "include/uos/harmony/tools/schemas.hpp": {
       "status": "pending",
