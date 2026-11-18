@@ -4959,8 +4959,178 @@
       ]
     },
     "src/rt/websocket_internal.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed internal callback declarations, ByteView use, TLS inputs and all shared ownership arcs in WebSocket state. Definitions carry the coroutine-free callback and native operation analysis.",
+      "sites": [
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            21,
+            24,
+            29,
+            31,
+            33,
+            37,
+            40,
+            43,
+            48,
+            50
+          ],
+          "label": "Synchronous event guard and custom microtask",
+          "reason": "The guard invokes its borrowed callback immediately. nextTick instead moves an owning callback to the loop and returned headers or errors own their values."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            57,
+            59,
+            60,
+            61,
+            65,
+            66,
+            67,
+            68,
+            69,
+            71,
+            75,
+            79,
+            83,
+            87,
+            90,
+            92,
+            109,
+            123,
+            124,
+            126,
+            128,
+            131,
+            132,
+            136,
+            138,
+            139,
+            140,
+            155
+          ],
+          "label": "Native Socket buffer and callback declarations",
+          "reason": "The socket owns read storage and makes delivery spans call-scoped. Posted read and event callbacks capture strong owners, and the implementation distinguishes write-queue ownership during cancellation."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "lines": [
+            159,
+            170,
+            172,
+            173,
+            174,
+            175,
+            176,
+            180,
+            182,
+            185,
+            189,
+            198,
+            199,
+            203,
+            212,
+            225,
+            227,
+            230,
+            231,
+            232,
+            233,
+            238,
+            239
+          ],
+          "label": "Receiver and Sender byte and frame interfaces",
+          "reason": "The receiver copies payloads before emitting and uses short views only during parsing. Sender copies source bytes to an owning frame before the socket write and holds its socket by shared owner."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            246,
+            256,
+            257,
+            259,
+            260,
+            261,
+            262,
+            265,
+            267,
+            271,
+            274,
+            277,
+            279,
+            282,
+            283,
+            285,
+            286,
+            290,
+            300,
+            304,
+            305,
+            306,
+            307,
+            308,
+            310
+          ],
+          "label": "Handshake and cross-file handoff declarations",
+          "reason": "Connection targets, upgrade bytes and operation handles are retained by the appropriate callback or local caller; response parser views are consumed synchronously."
+        },
+        {
+          "verdict": "DEFECT",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            114,
+            115,
+            121,
+            127,
+            128,
+            141,
+            145
+          ],
+          "label": "The pending queue is the sole asynchronous write-buffer owner",
+          "reason": "Its stored data can disappear when shutdown discards the write queue. The handler needs ownership independent of queue membership.",
+          "related_defect": "A-WEBSOCKET-WRITE-BUFFER"
+        },
+        {
+          "verdict": "DEFECT",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            314,
+            315,
+            324,
+            325,
+            326,
+            335
+          ],
+          "label": "WebSocket state retains loop-bound socket members",
+          "reason": "The WebSocket owns both Sender and Socket across context shutdown if an external owner retains the public handle.",
+          "related_defect": "A-WEBSOCKET-CONTEXT"
+        }
+      ]
     },
     "src/rt/websocket_socket.cpp": {
       "status": "complete",

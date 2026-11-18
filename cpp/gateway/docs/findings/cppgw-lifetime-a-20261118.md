@@ -60,7 +60,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/websocket.cpp`
 - [x] `src/rt/websocket_client.cpp`
 - [x] `src/rt/websocket_frame.cpp`
-- [ ] `src/rt/websocket_internal.hpp`
+- [x] `src/rt/websocket_internal.hpp`
 - [x] `src/rt/websocket_socket.cpp`
 
 
@@ -377,6 +377,17 @@ Reviewed synchronous receiver parsing, event delivery, receiver error and finish
 - **SAFE** `258, 260, 262, 264, 265, 266, 268, 269, 270, 274, 276, 279, 286, 289, 291, 294, 297, 298, 300, 303, 304, 306, 309, 310, 311, 313, 314, 315` (b/d), Sender frame assembly and data borrows. The frame serializes into owned bytes before its stack header and caller data can expire. Fragment bookkeeping is synchronous and precedes the socket write.
 - **SAFE** `258, 294, 300, 306, 315, 318` (b/c), Sender-to-socket ownership handoff. Sender holds the socket, and write receives owning frame bytes and a moved callback. The native write buffer lifetime is assessed in websocket_socket.cpp.
 
+### `src/rt/websocket_internal.hpp`
+
+Reviewed internal callback declarations, ByteView use, TLS inputs and all shared ownership arcs in WebSocket state. Definitions carry the coroutine-free callback and native operation analysis.
+
+- **SAFE** `21, 24, 29, 31, 33, 37, 40, 43, 48, 50` (b/c), Synchronous event guard and custom microtask. The guard invokes its borrowed callback immediately. nextTick instead moves an owning callback to the loop and returned headers or errors own their values.
+- **SAFE** `57, 59, 60, 61, 65, 66, 67, 68, 69, 71, 75, 79, 83, 87, 90, 92, 109, 123, 124, 126, 128, 131, 132, 136, 138, 139, 140, 155` (b/c), Native Socket buffer and callback declarations. The socket owns read storage and makes delivery spans call-scoped. Posted read and event callbacks capture strong owners, and the implementation distinguishes write-queue ownership during cancellation.
+- **SAFE** `159, 170, 172, 173, 174, 175, 176, 180, 182, 185, 189, 198, 199, 203, 212, 225, 227, 230, 231, 232, 233, 238, 239` (b/c/d), Receiver and Sender byte and frame interfaces. The receiver copies payloads before emitting and uses short views only during parsing. Sender copies source bytes to an owning frame before the socket write and holds its socket by shared owner.
+- **SAFE** `246, 256, 257, 259, 260, 261, 262, 265, 267, 271, 274, 277, 279, 282, 283, 285, 286, 290, 300, 304, 305, 306, 307, 308, 310` (b/c), Handshake and cross-file handoff declarations. Connection targets, upgrade bytes and operation handles are retained by the appropriate callback or local caller; response parser views are consumed synchronously.
+- **DEFECT (A-WEBSOCKET-WRITE-BUFFER)** `114, 115, 121, 127, 128, 141, 145` (b/c), The pending queue is the sole asynchronous write-buffer owner. Its stored data can disappear when shutdown discards the write queue. The handler needs ownership independent of queue membership.
+- **DEFECT (A-WEBSOCKET-CONTEXT)** `314, 315, 324, 325, 326, 335` (b/c), WebSocket state retains loop-bound socket members. The WebSocket owns both Sender and Socket across context shutdown if an external owner retains the public handle.
+
 ### `src/rt/websocket_socket.cpp`
 
 Reviewed plaintext and TLS byte storage, synchronous callback reentrancy, Asio initiation and completion, ordinary close, cancellation, and context shutdown. There are no coroutine bodies, but Asio completions suspend access to the native buffers.
@@ -391,16 +402,16 @@ Reviewed plaintext and TLS byte storage, synchronous callback reentrancy, Asio i
 
 ## Ranked defects and counts
 
-Reviewed **29/30 files** and **174 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **30/30 files** and **180 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 5 | 20 | 0 |
-| b. Borrowed coroutine parameter or receiver | 13 | 109 | 3 |
-| c. Callback ownership or cycle | 20 | 107 | 6 |
-| d. Container invalidation | 5 | 75 | 0 |
+| b. Borrowed coroutine parameter or receiver | 15 | 113 | 3 |
+| c. Callback ownership or cycle | 22 | 111 | 6 |
+| d. Container invalidation | 5 | 76 | 0 |
 | e. GCC 12 await-expression rule | 5 | 13 | 1 |
-| **Unique site groups** | 27 | 140 | 7 |
+| **Unique site groups** | 29 | 144 | 7 |
 
 ### 1. A-WEBSOCKET-WRITE-BUFFER (native write-buffer lifetime on WebSocket request paths) — Closing a WebSocket releases the native write buffer before completion
 
