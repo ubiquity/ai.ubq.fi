@@ -118,6 +118,15 @@ compiles and projects source `a` and flags `v`. It also confirmed the old
 diagnostics for the malformed patterns and flags. The two test files retain
 their original assertions under the job's path scope.
 
+A scratch binary linked the original `typed_value.cpp` and `profile_json.cpp`
+objects and passed 4/4 controls in each configuration. Both typed and native
+graph codecs round-tripped the recorded `/a/v` graph along with the other two
+regexes in that vector, preserving the encoded bytes. Both rejected all six
+malformed graph inputs with `SyntaxError`. The profile JSON codec preserved four
+valid wire values including `/[a--b]/v` and rejected all three malformed inputs
+with `SyntaxError`. The controls used the same Linux fixture boundary as the
+suite.
+
 ## ASan and UBSan sweep
 
 The same portable driver ran `bash cpp/gateway/tools/ci-build.sh --config asan rt/regex_test.cpp`
@@ -166,3 +175,88 @@ and a zero-length global match. The Clang 21 libFuzzer build exercised both
 vendor translation units under ASan and UBSan. The 120-second smoke campaign
 ran for 123 seconds including shutdown, executed 901,617 inputs, retained
 2,271 corpus entries, and exited zero with no crash, timeout, or OOM artifacts.
+
+```sh
+python3 -B cpp/gateway/fuzz/ci.py regex_library --compiler clang++ --jobs 1 \
+  --seconds 120 --out /tmp/cppgw-regex-c2.OHm0Ix/fuzz-final
+```
+
+## Before and after measurements
+
+The baseline uses the six first-party regex files from
+`09f9840dd1df3498d83f6f32b1987beaddbaec64` (tree
+`ffb9ee064ae32ad56e46b4fc2a9915d9d3f0f1a1`). The candidate uses the release
+objects qualified above. Both use Clang 21.1.8, `-O2`, the fatal port
+warnings, the same Boost libraries, and the same supervisor redaction, string,
+number, and JSON objects. Neither timing binary has allocator instrumentation.
+The allocation binaries separately wrap the C allocation calls and scalar,
+array, and aligned C++ `operator new` calls from the linked objects. The counts
+include nonzero `realloc` requests and exclude allocation calls made solely
+inside dynamically linked libraries.
+
+The run used the 18 existing regex fixtures and four compile-only fixtures
+made from the bearer, SSE, Unicode-property, and credential-key patterns. Each
+workload used three warmup batches and seven timed batches, with 1 to 2,000
+operations per batch as set by the manifest. Both engines ran serially on CPU 2
+in a private network namespace with fresh scratch directories and a cleared
+environment. The driver alternated engine order and compared the resulting
+text, captures, offsets, `lastIndex`, or compile result, as applicable. All 22
+outputs matched. Times are medians in nanoseconds per operation.
+[Fixture generator](../../bench/regex/make_fixtures.py)
+
+| Workload                              | Input bytes |   Old ns/op | QuickJS ns/op | Old alloc/op | QuickJS alloc/op |
+| ------------------------------------- | ----------: | ----------: | ------------: | -----------: | ---------------: |
+| Redact words                          |     210,000 |  23,189,561 |   126,720,209 |            8 |              233 |
+| Redact dotted text                    |     200,000 | 443,207,159 |   528,181,481 |            8 |               23 |
+| Redact dashed text                    |     210,000 | 283,761,726 |   383,690,611 |            8 |               23 |
+| Redact assignments                    |     210,000 |  88,963,015 |   204,923,454 |      385,220 |          385,246 |
+| Redact brackets                       |     225,000 |  86,964,810 |   174,042,773 |      287,763 |          375,268 |
+| Redact quoted text                    |     240,000 |  85,523,856 |   214,358,841 |      260,257 |          340,262 |
+| Redact transcript                     |       6,320 |   2,161,496 |     4,744,065 |        1,080 |            1,819 |
+| Redact Unicode text                   |       4,096 |   1,486,456 |     3,311,101 |        1,550 |            2,334 |
+| Credential-key search without matches |     210,000 |   1,931,937 |     6,857,907 |            0 |               25 |
+| Credential-key search with matches    |       6,304 |     219,622 |       294,657 |           70 |              152 |
+| Bearer header capture                 |         263 |         612 |         2,483 |            4 |               12 |
+| SSE line splitting                    |      14,848 |      51,030 |       302,066 |          524 |              524 |
+| Unicode-property search               |       5,120 |     293,422 |       332,493 |        3,603 |            3,606 |
+| Global whitespace replacement         |       9,216 |     105,430 |       145,341 |           22 |               26 |
+| Invalid Base64 test                   |      24,577 |     205,639 |       690,766 |            7 |               17 |
+| Unicode sticky match                  |          13 |         243 |           362 |            3 |                3 |
+| Provider model test                   |         244 |         438 |         2,097 |            0 |                9 |
+| Title search without a match          |      24,583 |     246,005 |       569,061 |            0 |               20 |
+| Compile bearer header                 |           0 |      13,909 |         1,778 |          102 |               52 |
+| Compile SSE lines                     |           0 |         760 |           558 |           24 |               11 |
+| Compile Unicode property              |           0 |      14,445 |        30,255 |           46 |              112 |
+| Compile credential key                |           0 |      27,142 |         3,172 |          212 |               66 |
+
+QuickJS reduced compile time for three patterns. Unicode-property compilation
+took 2.09 times as long. The sampled execution workloads took 1.13 to 5.92
+times as long with QuickJS. The 14,848-byte SSE fixture took 302 µs per
+operation and made the same 524 allocation calls in both engines.
+
+The local benchmark executable accepts `MANIFEST FIXTURE SAMPLES WARMUPS ITERATIONS`.
+For example, the timed SSE command inside the namespace was `taskset -c 2
+new-time fixtures.json sse-lines 7 3 5` with absolute executable and manifest
+paths. The equivalent allocation command used `new-alloc`. The paired run
+took 41.551 seconds. The fixture manifest SHA-256 is
+`ccf33eab4cdacffc32e56e777838c38e74532a0b285f24ae5182468333113479`.
+The output with all samples is
+`/tmp/cppgw-regex-c2.OHm0Ix/bench-run.9mK1a1/summary.json` (SHA-256
+`dc4ca5e2c256bfa838f8c9729dd4f536283fe2c9e15c190e74c7d61eb5debc16`).
+
+## Handoff
+
+The focused regex gate passed 20/20 in both configurations. The release and
+sanitizer sweeps each passed 439/441 binaries and 5,025/5,028 cases. The two KV
+test files still need expectation updates outside this job's ownership. The
+separate controls passed the underlying wire behavior in both configurations.
+
+The portable driver's shared Ninja registration still needs C compilation and
+multi-source vendor support. A direct `clang++-21 -std=c++20 -O2 -c
+cpp/gateway/third_party/quickjs-libregexp/libregexp.c` probe exited 1 with
+invalid C++ conversions from `void*`. Its archive contains only `libregexp.c.o`
+and leaves Unicode symbols unresolved. CMake's archive contains `libregexp.c.o`
+and `libunicode.c.o`. For the portable sweeps, the scratch compiler launcher
+compiled the first file in `-std=gnu11` mode, and `UOS_CI_LDFLAGS` supplied the
+second object built in the same configuration. The shared portable driver and
+KV test expectations are both outside the owned paths.
