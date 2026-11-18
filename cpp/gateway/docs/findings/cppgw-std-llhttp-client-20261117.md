@@ -105,3 +105,15 @@ The split-head test repeats head parsing on each cumulative read, as the live fe
 The standard portable driver and the current macOS shell builder assume one implementation source per vendor archive. The production-host `tools/unit.mk` has only a C++ vendor object rule. Those entry points need multi-source C archive support. This Linux disposable runner used all three sources and the native CMake static target verified the intended archive.
 
 The GitHub push dry run returned `could not read Username for 'https://github.com': terminal prompts disabled`. The task commits are on the local `agent-job` branch. The fetched C++ integration branch already contains the port baseline. The fetched `origin/development` does not contain it, so integrating the lane there would also bring in the broader C++ port. Publication and integration remain pending.
+
+## Release sweep and expanded sanitizer results
+
+The optimized ARM64 sweep compiled all 369 production translation units and ran all 442 registered binaries. It passed 440 binaries and 5,029 of 5,032 cases, with zero compile failures or timeouts. All 405 application-level binaries and all 4,571 of their cases passed. The failures were the unchanged Bun expectation group in `tests/rt/fetch_transport_test.cpp` (32/33) and the URL/IDNA reference test (0/2) using Ubuntu's ICU 74.2. The optimized object phase took 1,413.766 seconds after reusing the completed objects from the earlier attempt. The entire invocation took 1,493.775 seconds.
+
+The expanded Clang 21 sanitizer gate ran the 36 runtime binaries, the new library test, the two runtime HTTP and WebSocket suites, and the bounded-response-body suite. It passed 38 of 40 binaries and 483 of 486 cases. The same two existing test binaries failed on the same assertions, and there were no sanitizer findings. The invocation took 620.872 seconds. Both final receipts record matching input digests and the source commit and tree listed above.
+
+A scratch-only diagnostic copy of the original fetch transport test kept every fixture and updated the 15 expectations that differ under strictly parsed heads and bodies. It passed all 33 cases in the GCC release build. The repository still contains the original expectation table, and the exhaustive sweep counts its failure.
+
+A separate Bun 1.4.0 control used the repository WebSocket loader with the frozen `ws@8.18.3` install. It delivered a text frame coalesced with the valid HTTP/1.1 upgrade and rejected HTTP/1.2, an extra status-space, duplicate lengths, and conflicting framing under its node:http parser. The native WebSocket tests passed on the same source tree.
+
+The changed-content check used `bun --no-env-file run format:check` with the frozen repository formatter in scratch. It passed for the added findings text, the deviations, provenance, and both JSON registries. The existing findings prefix was compared byte-for-byte with the inherited report. First-party `git diff --check` passed. The vendored generated C file contains upstream whitespace and matches the pinned archive.
