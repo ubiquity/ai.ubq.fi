@@ -7740,8 +7740,22 @@
       ]
     },
     "include/uos/authority/native_api_key_audit.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed event inputs, cursor helpers and the audit-source callbacks.",
+      "sites": [
+        {
+          "lines": [
+            54,
+            55,
+            56
+          ],
+          "kinds": [
+            "c"
+          ],
+          "verdict": "SAFE",
+          "detail": "The event builder invokes the copied UUID, clock and release functions synchronously while their dependency owner is live."
+        }
+      ]
     },
     "include/uos/authority/native_api_key_policy.hpp": {
       "reviewed": false,

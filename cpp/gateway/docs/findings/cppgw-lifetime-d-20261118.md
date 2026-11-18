@@ -282,7 +282,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/delivery_outbox.hpp`
 - [x] `include/uos/authority/durable_store.hpp`
 - [x] `include/uos/authority/native_api_key.hpp`
-- [ ] `include/uos/authority/native_api_key_audit.hpp`
+- [x] `include/uos/authority/native_api_key_audit.hpp`
 - [ ] `include/uos/authority/native_api_key_policy.hpp`
 - [ ] `include/uos/authority/native_authority.hpp`
 - [ ] `include/uos/authority/native_authority_api.hpp`
@@ -1570,6 +1570,12 @@ Reviewed usage provider constants, window helpers and admission-plan declaration
 
 - L23 **SAFE** · Provider views point to literals. Usage helpers consume input records synchronously and return owning plans.
 
+### `include/uos/authority/native_api_key_audit.hpp`
+
+Reviewed event inputs, cursor helpers and the audit-source callbacks.
+
+- L54, 55, 56 **SAFE** · The event builder invokes the copied UUID, clock and release functions synchronously while their dependency owner is live.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1818,4 +1824,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-174/286 files reviewed. 346 sites: 325 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+175/286 files reviewed. 347 sites: 326 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
