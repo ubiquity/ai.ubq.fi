@@ -68,3 +68,20 @@ interpretation of absolute components.
 
 Relative paths require resolvable absolute endpoints. A lookup failure
 cannot appear to a containment caller as an empty, equal relative path.
+
+## Console formatting
+
+Structured diagnostics now use compact Boost.JSON serialization. The
+console still accepts the existing values and placeholder tokens, and the
+sink uses the original method to select stdout, stderr and capture routing.
+Plain strings and preformatted application events retain their bytes
+within the output limit.
+
+| Changed behavior | Example | Effect |
+| ---------------- | ------- | ------ |
+| Arrays and objects use compact JSON with quoted keys and insertion order | `{a: 1}` displays as `{"a":1}` | The same diagnostic fields remain readable, without Bun's columns, line wrapping or numeric-key sorting. |
+| JSON projects nonfinite numbers to null and omits undefined object members | `{missing: undefined, reading: NaN}` displays as `{"reading":null}` | Structured values use standard JSON. Standalone undefined remains visible and an undefined `%j` stays empty. |
+| Errors use JSON name, message, optional properties and nested causes | `Error("outer", {cause: Error("inner")})` displays an error object with `"cause":{"name":"Error","message":"inner"}` | Fields such as code, status and errno remain available. JSON escaping keeps newlines in error messages within the record. |
+| Scalars use `to_chars`, and numeric substitutions parse complete text with `from_chars` | `%d` with `"0x10"` gives `nan`, and `%d` with `1e21` gives `1e+21` | Negative zero, infinity, exponent spelling, and numeric text follow the standard functions. Arrays and objects use JSON instead of JavaScript coercion for `%s`. |
+| Boost.JSON writes fractional values in standard exponent notation | `%j` with `1.5` gives `1.5E0` | JSON consumers read the same number. |
+| Projection and output are bounded | A nested value beyond depth 16 or an array beyond its first 100 elements uses `"[truncated]"` | The projection also charges text and nodes against 32 KiB, and the complete formatted line is capped at 256 KiB. Malformed structured UTF-8 is replaced before serialization. |

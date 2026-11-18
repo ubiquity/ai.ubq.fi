@@ -76,6 +76,12 @@
       "max_len": 16384,
       "extra_sources": ["src/rt/fs.cpp"]
     },
+    "console_format": {
+      "harness": "fuzz/console_format.cpp",
+      "entry": "uos::rt::console::format and Value projection",
+      "max_len": 16384,
+      "extra_sources": ["src/rt/console.cpp", "src/rt/text_codec.cpp"]
+    },
     "url": {
       "harness": "fuzz/url.cpp",
       "entry": "uos::rt::URL / URLSearchParams",

@@ -260,3 +260,41 @@ For each of `release` and `asan`,
 `python3 -B /tmp/uos-small-r1/gate.py PROFILE quick filesystem 2 fs_test,runtime_native_startup_test,kv_conversion_cli_differential_test,kv_conversion_profile_json_differential_test`
 exited 0 with **4/4 binaries and 46/46 cases** on the final adapter.
 The second 120-second path campaign for that adapter is in progress.
+
+## Console
+
+Replaced the JSON encoder and multiline Bun inspector with Boost.JSON
+serialization. Ordinary string output takes a direct append path.
+C++ `to_chars` renders plain numbers and `from_chars` parses text in
+numeric substitutions. A small token adapter preserves the existing
+console call shapes. The value projection keeps properties and exception
+causes, replaces invalid structured UTF-8, and bounds depth, array
+length, projection allocation and final output. Capture, observers,
+forwarding, stdout/stderr and the terminal-event construction stay at
+their original boundaries. The old layout description in
+`include/uos/rt/console.hpp` is outside the assigned paths.
+
+- Production diff was **330 removed, 116 added**, a net reduction of
+  214 lines. The 99 changed assertions cover 41 collection renderings,
+  44 error renderings and 14 scalar or numeric substitution cases.
+- `python3 -B /tmp/uos-small-r1/gate.py PROFILE compile all 2` compiled
+  831 first-party translation units in each profile with no fatal warnings.
+  `python3 -B /tmp/uos-small-r1/gate.py PROFILE run console 2` then exited 0
+  with **16/16 binaries, 172/172 cases** in both profiles. The selection
+  includes all Harmony-named tests, startup and OpenAI telemetry.
+- `python3 -B /tmp/uos-small-r1/gate.py asan fuzz console_format 1` ran
+  **843,101 inputs in 121 seconds**, exit 0, with no finding.
+- The final `posix_path` rerun under the same sanitizer fuzz command passed
+  **1,790,146 inputs in 121 seconds**, exit 0.
+- Clang 21 with `-stdlib=libc++` compiled `console.cpp` with the same
+  warnings as errors. This was a Linux compile check.
+- `python3 -B /tmp/uos-small-r1/bench.py console console` measured
+  constant calls with the same preconstructed arguments.
+
+| Input                 | Before ns/op | After ns/op | Before alloc/op | After alloc/op |
+| --------------------- | -----------: | ----------: | --------------: | -------------: |
+| Raw message           |         68.5 |        27.5 |               1 |              1 |
+| Preformatted terminal |        138.3 |        57.4 |               3 |              2 |
+| Structured diagnostic |        662.2 |       721.1 |               8 |             14 |
+| Format tokens         |        255.5 |       202.0 |               3 |              2 |
+| Error                 |        102.6 |       295.6 |               3 |              6 |
