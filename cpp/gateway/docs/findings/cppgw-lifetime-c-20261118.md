@@ -213,7 +213,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/responses_state.cpp`
 - [x] `src/codex/routing_evaluation.cpp`
 - [x] `src/codex/routing_mutations.cpp`
-- [ ] `src/codex/routing_serial.cpp`
+- [x] `src/codex/routing_serial.cpp`
 - [ ] `src/codex/routing_state.cpp`
 - [ ] `src/codex/session.cpp`
 - [ ] `src/codex/supervisor.cpp`
@@ -1375,3 +1375,11 @@ Route mutations use owned snapshots and joined persistence.
 
 - 33-49,83-154,172-215,329-395 · fence iteration, CAS, and proof awaits · **SAFE** · The private fence vector and KV/atomic operation remain in the waiting frames. Optional row/probe data is copied before any later mutation.
 - 222-237,244-288,291-308 · joined routing transform closures · **SAFE** · updateRoutingState owns the callable through each retry while the joined parent retains captured account and identity referents.
+
+### `src/codex/routing_serial.cpp`
+
+The serial admission lock chains copied promises and invokes a frame-owned action. Slot identity resolution is independently owned.
+
+- 96-159,232-263 · strong row, commit, and selected pool awaits · **SAFE** · Row and pool snapshots plus the transaction owner remain local. The account hash loop uses the unchanged by-value pool.
+- 177-228 · fail-fast account identity children · **SAFE** · Each child copies the particular auth record from the slot pool and can outlive a sibling rejection without a borrow into that vector.
+- 266-285,295-325 · admission lock and coroutine closure · **SAFE** · withCodexAdmission keeps both the action and KV in its own frame through the wait and release. The action closure owns its account inputs and every result is joined.

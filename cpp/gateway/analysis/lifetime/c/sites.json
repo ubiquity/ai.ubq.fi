@@ -2267,8 +2267,28 @@
       ]
     },
     "src/codex/routing_serial.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The serial admission lock chains copied promises and invokes a frame-owned action. Slot identity resolution is independently owned.",
+      "sites": [
+        {
+          "lines": "96-159,232-263",
+          "kind": "strong row, commit, and selected pool awaits",
+          "verdict": "SAFE",
+          "reason": "Row and pool snapshots plus the transaction owner remain local. The account hash loop uses the unchanged by-value pool."
+        },
+        {
+          "lines": "177-228",
+          "kind": "fail-fast account identity children",
+          "verdict": "SAFE",
+          "reason": "Each child copies the particular auth record from the slot pool and can outlive a sibling rejection without a borrow into that vector."
+        },
+        {
+          "lines": "266-285,295-325",
+          "kind": "admission lock and coroutine closure",
+          "verdict": "SAFE",
+          "reason": "withCodexAdmission keeps both the action and KV in its own frame through the wait and release. The action closure owns its account inputs and every result is joined."
+        }
+      ]
     },
     "src/codex/routing_state.cpp": {
       "status": "pending",
