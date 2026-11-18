@@ -7032,8 +7032,31 @@
       ]
     },
     "include/uos/admin/claude_code.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed overloads, request ownership and injected credential, quota and clock dependencies.",
+      "sites": [
+        {
+          "lines": [
+            11,
+            16,
+            17,
+            22,
+            24,
+            25,
+            28,
+            30,
+            31,
+            32
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The handlers receive request and options values. The clock is used synchronously, and the persistence operations remain within the awaiting frames that own their options."
+        }
+      ]
     },
     "include/uos/admin/codex.hpp": {
       "reviewed": false,

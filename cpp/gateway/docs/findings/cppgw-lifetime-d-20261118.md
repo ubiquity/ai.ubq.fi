@@ -256,7 +256,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/admin/api_keys.hpp`
 - [x] `include/uos/admin/capacity_observation_sync.hpp`
 - [x] `include/uos/admin/chart_source_proxy.hpp`
-- [ ] `include/uos/admin/claude_code.hpp`
+- [x] `include/uos/admin/claude_code.hpp`
 - [ ] `include/uos/admin/codex.hpp`
 - [ ] `include/uos/admin/codex_reset.hpp`
 - [ ] `include/uos/admin/defaults.hpp`
@@ -1410,6 +1410,12 @@ Reviewed the shared capacity-push record and the proxy dependency interface.
 
 - L16, 19, 23, 24, 26, 28, 29, 30, 31 **SAFE** · Proxy wrappers copy the dependency object, including shared push state. The detached push owns its inputs and releases the in-flight slot through its settlement callback.
 
+### `include/uos/admin/claude_code.hpp`
+
+Reviewed overloads, request ownership and injected credential, quota and clock dependencies.
+
+- L11, 16, 17, 22, 24, 25, 28, 30, 31, 32 **SAFE** · The handlers receive request and options values. The clock is used synchronously, and the persistence operations remain within the awaiting frames that own their options.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1658,4 +1664,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-148/286 files reviewed. 315 sites: 294 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+149/286 files reviewed. 316 sites: 295 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
