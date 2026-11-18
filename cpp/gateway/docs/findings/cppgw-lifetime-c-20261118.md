@@ -245,7 +245,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/conversation.cpp`
 - [x] `src/harmony/parse.cpp`
 - [x] `src/harmony/probe_scenarios.cpp`
-- [ ] `src/harmony/probes.cpp`
+- [x] `src/harmony/probes.cpp`
 - [ ] `src/harmony/reliability/context.cpp`
 - [ ] `src/harmony/reliability/failure.cpp`
 - [ ] `src/harmony/reliability/feedback.cpp`
@@ -1572,3 +1572,10 @@ The Harmony parser consumes text views synchronously and returns owning parse re
 Probe scenarios sequence each model step while owning the probe context and its callables.
 
 - 47-153,170-176 · scenario joins and callback factory · **SAFE** · The scenario frame owns its context, options, tool calls and conversation at each wait. The registered scenario wrapper is synchronous and copies its index into the returned task.
+
+### `src/harmony/probes.cpp`
+
+Probe transport and result projections own their per-call state.
+
+- 112-170,179-203 · probe invocation, JSON reads and result values · **SAFE** · Each task owns a context and request arguments, and each parse uses a local response. The zero-capture catch reaction owns no referents.
+- 241-249 · published probe callback bundle · **SAFE** · The returned functions own a shared ContextState which contains transport and clock values, without a back-reference to the bundle.

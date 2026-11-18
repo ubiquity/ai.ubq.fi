@@ -2731,8 +2731,22 @@
       ]
     },
     "src/harmony/probes.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Probe transport and result projections own their per-call state.",
+      "sites": [
+        {
+          "lines": "112-170,179-203",
+          "kind": "probe invocation, JSON reads and result values",
+          "verdict": "SAFE",
+          "reason": "Each task owns a context and request arguments, and each parse uses a local response. The zero-capture catch reaction owns no referents."
+        },
+        {
+          "lines": "241-249",
+          "kind": "published probe callback bundle",
+          "verdict": "SAFE",
+          "reason": "The returned functions own a shared ContextState which contains transport and clock values, without a back-reference to the bundle."
+        }
+      ]
     },
     "src/harmony/reliability/context.cpp": {
       "status": "pending",
