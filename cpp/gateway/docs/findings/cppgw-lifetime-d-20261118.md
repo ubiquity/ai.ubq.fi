@@ -1119,6 +1119,7 @@ Reviewed synchronous model capability normalization, defaults and metadata mergi
 Reviewed model refresh coalescing, injected Fetch ownership and the lookup cache.
 
 - L221, 222, 227, 234 **SAFE** · The request task and Fetch retain the callable and signal. Every body operation uses a named Response or owned stream.
+- L158, 174, 179, 203, 206, 207, 239, 240, 245, 298, 306, 353, 356 **DEFECT** · A refresh replaces cache before building the new match index. If index construction throws, the refresh catches the exception and leaves the old index pointing into a retired snapshot; later metadata lookup may copy a freed row. Build the snapshot and index before publishing either shared pointer.
 - L320, 326, 327, 332, 333, 337, 342, 346, 351, 354, 355, 356 **SAFE** · The module-state reference points to static storage, and the coroutine copies fetcher and pending Promise before suspension. A detached refresh gets its own inputs, and synchronous matching finishes before the shared snapshots can be replaced.
 
 ### `src/openai.cpp`
@@ -2021,6 +2022,7 @@ Reviewed the non-owning match index and catalog fetch options. The partial publi
 
 ## Out-of-area observations
 
+- `src/codex/auth_refresh.cpp:536-549`. Shared auth can win its race, then its finalizer removes the only listener able to settle the private abort Promise. The pending abort reaction retains the winning auth state until loop teardown. The Codex owner should settle the abandoned private latch after detaching it while keeping the shared auth work observed.
 - `include/uos/rt/async.hpp:855-861` and `src/rt/async.cpp:410-425`. A pending race source owns its reaction, which owns both the source and the combined result. An abandoned synthetic loser therefore pins the winner until `Loop::Impl` clears pending reactions on teardown. The default loop is process-long (`src/rt/async.cpp:399-403`). Runtime owner should address pending-source reaction ownership or disarm race-only observers after settlement while still observing late rejections. The local diffs below settle only an abandoned private latch. Actual sibling work keeps the same semantics.
 - `src/rt/kv.cpp:73`. `GenericAtomicOperation::commit` returns an awaited aggregate directly. The port's named-result rule also applies there. Request callers in this audit generally keep the receiver in their awaiting frame. Runtime owner should bind the result to a named local before returning it.
 
@@ -2265,4 +2267,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-249/286 files reviewed. 425 sites: 403 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+249/286 files reviewed. 426 sites: 403 SAFE, 23 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

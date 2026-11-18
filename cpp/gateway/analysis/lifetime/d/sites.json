@@ -4804,6 +4804,29 @@
         },
         {
           "lines": [
+            158,
+            174,
+            179,
+            203,
+            206,
+            207,
+            239,
+            240,
+            245,
+            298,
+            306,
+            353,
+            356
+          ],
+          "kinds": [
+            "d",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "A refresh replaces cache before building the new match index. If index construction throws, the refresh catches the exception and leaves the old index pointing into a retired snapshot; later metadata lookup may copy a freed row. Build the snapshot and index before publishing either shared pointer."
+        },
+        {
+          "lines": [
             320,
             326,
             327,
