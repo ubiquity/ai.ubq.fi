@@ -505,8 +505,16 @@
       "sites": []
     },
     "include/uos/codex/supervisor_transport.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The control connection is an owning pair of task factories.",
+      "sites": [
+        {
+          "lines": "25-28,43-44",
+          "kind": "task factories and callbacks",
+          "verdict": "SAFE",
+          "reason": "Open owns the socket path and signal; returned call and close callbacks synchronously move an owning state handle into the actual coroutine."
+        }
+      ]
     },
     "include/uos/deepseek/chat_projection.hpp": {
       "status": "pending",
