@@ -71,8 +71,19 @@
       ]
     },
     "include/uos/runtime/http_early_sse.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "12-24",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "Early SSE registration API",
+          "evidence": "The callback is passed as an owning function and invoked synchronously with the headers reference. The registry and captured request lifetime are reviewed at the actual registration."
+        }
+      ]
     },
     "include/uos/runtime/http_tasks.hpp": {
       "reviewed": false,
