@@ -1589,8 +1589,226 @@
       ]
     },
     "src/auth/passkeys.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed attestation and certificate chains, CRL cache, passkey KV transactions and registration, session and login handlers. The parsing and cryptography helpers through the first certificate fetch and between attestation awaits are synchronous.",
+      "sites": [
+        {
+          "lines": [
+            2757,
+            2772,
+            2773,
+            2775,
+            2788
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The fetch frame owns the certificate, URL and response. Cache iterators are discarded before fetch and the later insertion uses the owned key."
+        },
+        {
+          "lines": [
+            2811,
+            2812,
+            2816,
+            2835,
+            2839
+          ],
+          "kinds": [
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Both certificate collections are private to the path-validation frame and stay immutable while the checker uses a copied Certificate."
+        },
+        {
+          "lines": [
+            2926,
+            2972,
+            3085,
+            3182,
+            3642,
+            3665
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Attestation coroutine frames own the options and parsed objects backing their CBOR, certificate and JSON views. Each separately built validation Task owns its certificate lists."
+        },
+        {
+          "lines": [
+            3713,
+            3791,
+            3794,
+            3797,
+            3800,
+            3803,
+            3806
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Verification owns incoming JSON and the decoded authenticator material. It builds a separate Task with a by-value options record in each supported format branch."
+        },
+        {
+          "lines": [
+            4153,
+            4286,
+            4300
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Handle hashing retains the trimmed seed and delegates with a value. The store promise and request body parser own the store and request through completion."
+        },
+        {
+          "lines": [
+            4313,
+            4410,
+            4425,
+            4488,
+            4919,
+            5001
+          ],
+          "kinds": [
+            "e"
+          ],
+          "verdict": "DEFECT",
+          "detail": "Passkey lookups and logout construct temporary KvKey values in the await full-expression. GCC 12.2 is prohibited there even though current KV adapters move the key to their own work. Bind each key before the await, with an explicit block for logout."
+        },
+        {
+          "lines": [
+            4316,
+            4324,
+            4333,
+            4345,
+            4352,
+            4366,
+            4372,
+            4378,
+            4383,
+            4402,
+            4468,
+            4476,
+            4479,
+            4485
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The concrete KV adapters move by-value inputs into owning operations and all receivers and list iterators stay in the awaiting frames. Each atomic receiver has a named owner until commit."
+        },
+        {
+          "lines": [
+            4524,
+            4542,
+            4545,
+            4569,
+            4573,
+            4583,
+            4590,
+            4595,
+            4600,
+            4620,
+            4642
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Session and registration-start operations take Request, KV, options and input snapshots by value, with parsed body and caller locals retained in the frame."
+        },
+        {
+          "lines": [
+            4682,
+            4686,
+            4699,
+            4709,
+            4732,
+            4738
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The parsed registration body, challenge and save variant are immutable frame locals backing any member references. Each child owns the copied inputs it uses."
+        },
+        {
+          "lines": [
+            4782,
+            4790,
+            4799,
+            4803,
+            4814,
+            4828,
+            4842,
+            4857
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Login-start owns the KV budget transaction, body and request metadata. The generated options and digest inputs are stored before the explicit microtask."
+        },
+        {
+          "lines": [
+            4882,
+            4891,
+            4895,
+            4909,
+            4914,
+            4930,
+            4935,
+            4940
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Login-finish retains the copied body and credential entry through counter and session updates. The assertion verifier uses its views synchronously while the caller owns the data."
+        },
+        {
+          "lines": [
+            4977,
+            4997,
+            5000,
+            5011,
+            5017,
+            5032,
+            5040,
+            5054,
+            5065
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Session, logout and administration keep their Request, KV handles, local body and iterator owners in scope through the corresponding awaits."
+        }
+      ]
     },
     "src/auth/passport.cpp": {
       "reviewed": false,

@@ -87,7 +87,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/auth/index.cpp`
 - [x] `src/auth/local_admin.cpp`
 - [x] `src/auth/local_development_key.cpp`
-- [ ] `src/auth/passkeys.cpp`
+- [x] `src/auth/passkeys.cpp`
 - [ ] `src/auth/passport.cpp`
 - [ ] `src/auth/passport_sessions.cpp`
 - [ ] `src/auth/relay.cpp`
@@ -560,6 +560,23 @@ Reviewed stream framing, abort and timeout races, generator delegation, proxy li
 - L498, 499, 501, 502, 510, 515, 517, 529, 530, 532, 533, 536, 570 **SAFE** · The newPromise executor uses this only synchronously and its timer uses weak state. Cancellation and read wins resolve the synthetic heartbeat even when stopping the timer. A heartbeat win leaves the same read pending until a chunk or cancel.
 - L575, 585, 589, 594, 605, 609, 614, 623, 624, 635, 636, 644, 646, 650 **SAFE** · Preflight and stream factories transfer values to generator and source holders. Escaping cancellation and pull tasks take copied iterator, stream control or source state before the wrapper returns.
 
+### `src/auth/passkeys.cpp`
+
+Reviewed attestation and certificate chains, CRL cache, passkey KV transactions and registration, session and login handlers. The parsing and cryptography helpers through the first certificate fetch and between attestation awaits are synchronous.
+
+- L2757, 2772, 2773, 2775, 2788 **SAFE** · The fetch frame owns the certificate, URL and response. Cache iterators are discarded before fetch and the later insertion uses the owned key.
+- L2811, 2812, 2816, 2835, 2839 **SAFE** · Both certificate collections are private to the path-validation frame and stay immutable while the checker uses a copied Certificate.
+- L2926, 2972, 3085, 3182, 3642, 3665 **SAFE** · Attestation coroutine frames own the options and parsed objects backing their CBOR, certificate and JSON views. Each separately built validation Task owns its certificate lists.
+- L3713, 3791, 3794, 3797, 3800, 3803, 3806 **SAFE** · Verification owns incoming JSON and the decoded authenticator material. It builds a separate Task with a by-value options record in each supported format branch.
+- L4153, 4286, 4300 **SAFE** · Handle hashing retains the trimmed seed and delegates with a value. The store promise and request body parser own the store and request through completion.
+- L4313, 4410, 4425, 4488, 4919, 5001 **DEFECT** · Passkey lookups and logout construct temporary KvKey values in the await full-expression. GCC 12.2 is prohibited there even though current KV adapters move the key to their own work. Bind each key before the await, with an explicit block for logout.
+- L4316, 4324, 4333, 4345, 4352, 4366, 4372, 4378, 4383, 4402, 4468, 4476, 4479, 4485 **SAFE** · The concrete KV adapters move by-value inputs into owning operations and all receivers and list iterators stay in the awaiting frames. Each atomic receiver has a named owner until commit.
+- L4524, 4542, 4545, 4569, 4573, 4583, 4590, 4595, 4600, 4620, 4642 **SAFE** · Session and registration-start operations take Request, KV, options and input snapshots by value, with parsed body and caller locals retained in the frame.
+- L4682, 4686, 4699, 4709, 4732, 4738 **SAFE** · The parsed registration body, challenge and save variant are immutable frame locals backing any member references. Each child owns the copied inputs it uses.
+- L4782, 4790, 4799, 4803, 4814, 4828, 4842, 4857 **SAFE** · Login-start owns the KV budget transaction, body and request metadata. The generated options and digest inputs are stored before the explicit microtask.
+- L4882, 4891, 4895, 4909, 4914, 4930, 4935, 4940 **SAFE** · Login-finish retains the copied body and credential entry through counter and session updates. The assertion verifier uses its views synchronously while the caller owns the data.
+- L4977, 4997, 5000, 5011, 5017, 5032, 5040, 5054, 5065 **SAFE** · Session, logout and administration keep their Request, KV handles, local body and iterator owners in scope through the corresponding awaits.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -665,4 +682,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-22/286 files reviewed. 93 sites: 85 SAFE, 8 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+23/286 files reviewed. 105 sites: 96 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
