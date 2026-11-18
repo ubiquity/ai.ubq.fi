@@ -52,21 +52,8 @@ namespace uos::rt {
       return DoubleDays{static_cast<double>(start.time_since_epoch().count()) + cycles * DAYS_PER_CYCLE + std::trunc(dayOfMonth) - 1};
     }
 
-    // The calendar fields of a valid time value.
-    struct Fields {
-      int year;
-      int month;  // 0-based
-      int day;
-      int weekDay;
-      int hour;
-      int minute;
-      int second;
-      int ms;
-      DoubleDays dayNumber;
-      DoubleMilliseconds timeInDay;
-    };
-
-    Fields fieldsOf(double time) {
+    // The callers supply a valid, clipped time value.
+    Date::UtcFields fieldsOf(double time) {
       const sys_time<WideMilliseconds> timestamp{WideMilliseconds{static_cast<std::int64_t>(time)}};
       const auto midnight = floor<WideDays>(timestamp);
       const auto dayCount = midnight.time_since_epoch().count();
@@ -74,13 +61,8 @@ namespace uos::rt {
       const auto cycles = dayCount < FIRST_CALENDAR_DAY || dayCount > LAST_CALENDAR_DAY ? dayCount / DAYS_PER_CYCLE : 0;
       const sys_days reducedDay{days{static_cast<days::rep>(dayCount - cycles * DAYS_PER_CYCLE)}};
       const year_month_day date{reducedDay};
-      const auto timeInDay = duration_cast<milliseconds>(timestamp - midnight);
-      const hh_mm_ss clock{timeInDay};
       return {static_cast<int>(date.year()) + static_cast<int>(cycles) * YEARS_PER_CYCLE,
-              static_cast<int>(static_cast<unsigned>(date.month())) - 1, static_cast<int>(static_cast<unsigned>(date.day())),
-              static_cast<int>(weekday{reducedDay}.c_encoding()), static_cast<int>(clock.hours().count()),
-              static_cast<int>(clock.minutes().count()), static_cast<int>(clock.seconds().count()), static_cast<int>(clock.subseconds().count()),
-              DoubleDays{static_cast<double>(dayCount)}, DoubleMilliseconds{timeInDay}};
+              date.month(), date.day(), weekday{reducedDay}, hh_mm_ss{duration_cast<milliseconds>(timestamp - midnight)}};
     }
 
     constexpr std::string_view WEEK_DAYS[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
@@ -97,12 +79,12 @@ namespace uos::rt {
       appendPadded(out, std::abs(year), expanded ? 6 : 4);
     }
 
-    void appendClock(std::string& out, const Fields& fields) {
-      appendPadded(out, fields.hour, 2);
+    void appendClock(std::string& out, const hh_mm_ss<milliseconds>& clock) {
+      appendPadded(out, clock.hours().count(), 2);
       out.push_back(':');
-      appendPadded(out, fields.minute, 2);
+      appendPadded(out, clock.minutes().count(), 2);
       out.push_back(':');
-      appendPadded(out, fields.second, 2);
+      appendPadded(out, clock.seconds().count(), 2);
     }
 
     int readDigits(std::string_view& text, std::size_t width) {
@@ -211,81 +193,36 @@ namespace uos::rt {
   double Date::UTC(double year, double month, double date, double hours, double minutes, double seconds, double ms) noexcept {
     const double wholeYear = std::trunc(year);
     const double fullYear = wholeYear >= 0 && wholeYear <= 99 ? 1900 + wholeYear : wholeYear;
-    return timeClip((makeDay(fullYear, month, date) + makeTime(hours, minutes, seconds, ms)).count());
+    return fromUtc(fullYear, month, date, hours, minutes, seconds, ms).getTime();
   }
 
-  double Date::getUTCFullYear() const noexcept { return std::isnan(time_) ? NaN : static_cast<double>(fieldsOf(time_).year); }
-  double Date::getUTCMonth() const noexcept { return std::isnan(time_) ? NaN : fieldsOf(time_).month; }
-  double Date::getUTCDate() const noexcept { return std::isnan(time_) ? NaN : fieldsOf(time_).day; }
-  double Date::getUTCDay() const noexcept { return std::isnan(time_) ? NaN : fieldsOf(time_).weekDay; }
-  double Date::getUTCHours() const noexcept { return std::isnan(time_) ? NaN : fieldsOf(time_).hour; }
-  double Date::getUTCMinutes() const noexcept { return std::isnan(time_) ? NaN : fieldsOf(time_).minute; }
-  double Date::getUTCSeconds() const noexcept { return std::isnan(time_) ? NaN : fieldsOf(time_).second; }
-  double Date::getUTCMilliseconds() const noexcept { return std::isnan(time_) ? NaN : fieldsOf(time_).ms; }
-  double Date::getTimezoneOffset() const noexcept { return std::isnan(time_) ? NaN : 0; }
-
-  double Date::setTime(double time) noexcept { return time_ = timeClip(time); }
-
-  double Date::setUTCFullYear(double year, std::optional<double> month, std::optional<double> date) noexcept {
-    const Fields fields = fieldsOf(std::isnan(time_) ? 0 : time_);
-    const double newDate = (makeDay(year, month.value_or(fields.month), date.value_or(fields.day)) + fields.timeInDay).count();
-    return time_ = timeClip(newDate);
+  Date Date::fromUtc(double year, double month, double day, double hour, double minute, double second, double ms) noexcept {
+    return Date((makeDay(year, month, day) + makeTime(hour, minute, second, ms)).count());
   }
 
-  double Date::setUTCMonth(double month, std::optional<double> date) noexcept {
-    if (std::isnan(time_)) return NaN;
-    const Fields fields = fieldsOf(time_);
-    return time_ = timeClip((makeDay(fields.year, month, date.value_or(fields.day)) + fields.timeInDay).count());
+  std::optional<Date::UtcFields> Date::utcFields() const noexcept {
+    if (std::isnan(time_)) return std::nullopt;
+    return fieldsOf(time_);
   }
 
-  double Date::setUTCDate(double date) noexcept {
-    if (std::isnan(time_)) return NaN;
-    const Fields fields = fieldsOf(time_);
-    return time_ = timeClip((makeDay(fields.year, fields.month, date) + fields.timeInDay).count());
-  }
-
-  double Date::setUTCHours(double hours, std::optional<double> minutes, std::optional<double> seconds, std::optional<double> ms) noexcept {
-    if (std::isnan(time_)) return NaN;
-    const Fields fields = fieldsOf(time_);
-    const auto time = makeTime(hours, minutes.value_or(fields.minute), seconds.value_or(fields.second), ms.value_or(fields.ms));
-    return time_ = timeClip((fields.dayNumber + time).count());
-  }
-
-  double Date::setUTCMinutes(double minutes, std::optional<double> seconds, std::optional<double> ms) noexcept {
-    if (std::isnan(time_)) return NaN;
-    const Fields fields = fieldsOf(time_);
-    const auto time = makeTime(fields.hour, minutes, seconds.value_or(fields.second), ms.value_or(fields.ms));
-    return time_ = timeClip((fields.dayNumber + time).count());
-  }
-
-  double Date::setUTCSeconds(double seconds, std::optional<double> ms) noexcept {
-    if (std::isnan(time_)) return NaN;
-    const Fields fields = fieldsOf(time_);
-    const auto time = makeTime(fields.hour, fields.minute, seconds, ms.value_or(fields.ms));
-    return time_ = timeClip((fields.dayNumber + time).count());
-  }
-
-  double Date::setUTCMilliseconds(double ms) noexcept {
-    if (std::isnan(time_)) return NaN;
-    const Fields fields = fieldsOf(time_);
-    const auto time = makeTime(fields.hour, fields.minute, fields.second, ms);
-    return time_ = timeClip((fields.dayNumber + time).count());
-  }
+  double Date::getUTCFullYear() const noexcept { return std::isnan(time_) ? NaN : fieldsOf(time_).year; }
+  double Date::getUTCMonth() const noexcept { return std::isnan(time_) ? NaN : static_cast<unsigned>(fieldsOf(time_).month) - 1; }
+  double Date::getUTCDate() const noexcept { return std::isnan(time_) ? NaN : static_cast<unsigned>(fieldsOf(time_).day); }
 
   std::string Date::toISOString() const {
     if (std::isnan(time_)) throw RangeError("Invalid Date");
-    const Fields fields = fieldsOf(time_);
+    const UtcFields fields = fieldsOf(time_);
     std::string out;
     out.reserve(27);
     appendYear(out, fields.year, fields.year < 0 || fields.year > 9999);
     out.push_back('-');
-    appendPadded(out, fields.month + 1, 2);
+    appendPadded(out, static_cast<unsigned>(fields.month), 2);
     out.push_back('-');
-    appendPadded(out, fields.day, 2);
+    appendPadded(out, static_cast<unsigned>(fields.day), 2);
     out.push_back('T');
-    appendClock(out, fields);
+    appendClock(out, fields.clock);
     out.push_back('.');
-    appendPadded(out, fields.ms, 3);
+    appendPadded(out, fields.clock.subseconds().count(), 3);
     out.push_back('Z');
     return out;
   }
@@ -297,32 +234,32 @@ namespace uos::rt {
 
   std::string Date::toUTCString() const {
     if (std::isnan(time_)) return "Invalid Date";
-    const Fields fields = fieldsOf(time_);
-    std::string out{WEEK_DAYS[fields.weekDay]};
+    const UtcFields fields = fieldsOf(time_);
+    std::string out{WEEK_DAYS[fields.weekday.c_encoding()]};
     out += ", ";
-    appendPadded(out, fields.day, 2);
+    appendPadded(out, static_cast<unsigned>(fields.day), 2);
     out.push_back(' ');
-    out += MONTHS[fields.month];
+    out += MONTHS[static_cast<unsigned>(fields.month) - 1];
     out.push_back(' ');
     appendYear(out, fields.year);
     out.push_back(' ');
-    appendClock(out, fields);
+    appendClock(out, fields.clock);
     out += " GMT";
     return out;
   }
 
   std::string Date::toString() const {
     if (std::isnan(time_)) return "Invalid Date";
-    const Fields fields = fieldsOf(time_);
-    std::string out{WEEK_DAYS[fields.weekDay]};
+    const UtcFields fields = fieldsOf(time_);
+    std::string out{WEEK_DAYS[fields.weekday.c_encoding()]};
     out.push_back(' ');
-    out += MONTHS[fields.month];
+    out += MONTHS[static_cast<unsigned>(fields.month) - 1];
     out.push_back(' ');
-    appendPadded(out, fields.day, 2);
+    appendPadded(out, static_cast<unsigned>(fields.day), 2);
     out.push_back(' ');
     appendYear(out, fields.year);
     out.push_back(' ');
-    appendClock(out, fields);
+    appendClock(out, fields.clock);
     out += " GMT+0000 (Coordinated Universal Time)";
     return out;
   }
