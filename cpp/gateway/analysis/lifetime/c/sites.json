@@ -1,0 +1,1166 @@
+{
+  "audited_commit": "6d28e858e7ab8b8b1036db4a4adfdade0465ed40",
+  "audited_tree": "6abb54014cf79ba7c64b24be4d28dde250c40ccf",
+  "files": {
+    "include/uos/chat/completions.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/chat/envelope.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/chat/stream_translation.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/account_routing.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/auth.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/auth_refresh.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/auth_repair.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/banked_reset.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/banked_reset_claim.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/banked_reset_pool.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/banked_reset_provider.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/banked_reset_submission.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/capacity_routing.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/dispatch.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/experiment.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/external_auth.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/index.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/manual_reset.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/manual_reset_state.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/native_auth.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/native_auth_transport.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/overage_settings.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/quota.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/rate_limit_429.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/reset_settings.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/responses_error.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/responses_operations.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/responses_runners.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/responses_state.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/routing_evaluation.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/routing_mutations.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/routing_serial.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/routing_state.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/session.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/supervisor.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/supervisor_brief.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/supervisor_config.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/supervisor_follow.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/supervisor_inventory.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/supervisor_log.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/supervisor_secret.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/codex/supervisor_transport.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/deepseek/chat_projection.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/deepseek/context_admission_failure.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/deepseek/flash_aliases.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/deepseek/forwarded_payload_policy.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/deepseek/handlers.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/deepseek/index.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/deepseek/responses.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/deepseek/responses_payload.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/deepseek/responses_stream.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/deepseek/stream.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/deepseek/waterfall.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/deepseek/waterfall_handler.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/embeddings/handlers.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/embeddings/jobs.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/embeddings/ledger.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/embeddings/voyage.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/adapter.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/classifier.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/conversation.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/parse.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/probe_scenarios.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/probes.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/context.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/failure.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/feedback.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/harness.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/hash.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/loops.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/retry.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/state.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/surfaces.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/verify.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/render.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/tools/backend.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/tools/fakes.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/tools/result.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/tools/router.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/tools/schemas.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/harmony/types.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/live/calls.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/live/handler.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/live/routes.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/live/sideband.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/live/upstream.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/paid_fallback/claude_code_route.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/paid_fallback/health.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/paid_fallback/index.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/paid_fallback/ledger_admission.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/paid_fallback/ledger_backfill.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/paid_fallback/ledger_settlement.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/paid_fallback/ledger_state.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/paid_fallback/ledger_stats.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/paid_fallback/removed_provider.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/paid_fallback/rollups.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/paid_fallback/routing.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/anthropic_chat_responses.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/anthropic_chat_stream.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/anthropic_replay.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/anthropic_response_wire.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/anthropic_responses.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/capacity.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/capacity_analytics.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/capacity_contract.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/capacity_events.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/capacity_history.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/capacity_parse.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/capacity_rollups.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/cerebras.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/cerebras_handlers.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/cerebras_rate_limits.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/cerebras_responses.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/claude_capacity_history.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/claude_capacity_rollups.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/claude_code.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/claude_code_access.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/claude_code_accounts.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/claude_code_credentials.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/claude_code_fwd.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/claude_code_models.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/claude_code_quota.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/claude_code_usage.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/claude_code_usage_fwd.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/claude_code_usage_refresh.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/claude_code_usage_schema.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/health.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/lithos.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/lithos_handlers.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/lithos_models.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/lithos_rate_limits.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/lithos_streams.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/metered.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/openrouter.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/openrouter_handlers.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/openrouter_request_controls.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/openrouter_streams.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/openrouter_web_tools.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/presentation.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/removed_provider_circuit.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/removed_provider_telemetry.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/selection.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/stream_relay.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/surplus.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/surplus_claude_chat_request.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "include/uos/provider/surplus_claude_request.hpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/chat/completions.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/chat/envelope.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/chat/stream_translation.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/account_routing.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/auth.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/auth_refresh.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/auth_repair.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/banked_reset.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/banked_reset_claim.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/banked_reset_pool.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/banked_reset_provider.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/banked_reset_submission.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/capacity_routing.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/dispatch.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/experiment.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/external_auth.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/index.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/manual_reset.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/manual_reset_state.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/native_auth.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/native_auth_transport.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/overage_settings.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/quota.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/rate_limit_429.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/reset_settings.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/responses_error.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/responses_operations.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/responses_runners.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/responses_state.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/routing_evaluation.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/routing_mutations.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/routing_serial.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/routing_state.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/session.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/supervisor.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/supervisor_brief.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/supervisor_config.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/supervisor_follow.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/supervisor_inventory.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/supervisor_log.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/supervisor_secret.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/codex/supervisor_transport.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/deepseek/chat_projection.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/deepseek/context_admission_failure.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/deepseek/flash_aliases.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/deepseek/forwarded_payload_policy.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/deepseek/handlers.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/deepseek/index.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/deepseek/responses.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/deepseek/responses_payload.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/deepseek/responses_stream.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/deepseek/stream.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/deepseek/waterfall.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/deepseek/waterfall_handler.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/embeddings/handlers.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/embeddings/jobs.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/embeddings/ledger.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/embeddings/voyage.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/adapter.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/classifier.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/conversation.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/parse.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/probe_scenarios.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/probes.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/reliability/context.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/reliability/failure.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/reliability/feedback.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/reliability/harness.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/reliability/hash.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/reliability/loops.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/reliability/retry.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/reliability/state.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/reliability/surfaces.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/reliability/verify.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/render.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/tools/backend.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/tools/fakes.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/tools/result.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/tools/router.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/tools/schemas.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/harmony/types.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/live/calls.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/live/handler.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/live/routes.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/live/sideband.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/live/upstream.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/paid_fallback/claude_code_route.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/paid_fallback/health.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/paid_fallback/index.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/paid_fallback/ledger_admission.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/paid_fallback/ledger_backfill.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/paid_fallback/ledger_settlement.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/paid_fallback/ledger_state.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/paid_fallback/ledger_stats.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/paid_fallback/removed_provider.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/paid_fallback/rollups.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/paid_fallback/routing.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/anthropic_chat_responses.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/anthropic_chat_stream.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/anthropic_replay.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/anthropic_response_wire.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/anthropic_responses.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/capacity.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/capacity_analytics.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/capacity_contract.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/capacity_events.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/capacity_history.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/capacity_parse.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/capacity_rollups.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/cerebras.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/cerebras_handlers.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/cerebras_rate_limits.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/cerebras_responses.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/claude_capacity_history.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/claude_capacity_rollups.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/claude_code.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/claude_code_access.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/claude_code_accounts.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/claude_code_credentials.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/claude_code_models.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/claude_code_quota.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/claude_code_usage.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/claude_code_usage_refresh.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/claude_code_usage_schema.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/health.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/lithos.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/lithos_handlers.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/lithos_models.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/lithos_rate_limits.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/lithos_streams.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/metered.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/openrouter.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/openrouter_handlers.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/openrouter_request_controls.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/openrouter_streams.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/openrouter_web_tools.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/presentation.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/removed_provider_circuit.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/removed_provider_telemetry.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/selection.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/stream_relay.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/surplus.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/surplus_claude_chat_request.cpp": {
+      "status": "pending",
+      "sites": []
+    },
+    "src/provider/surplus_claude_request.cpp": {
+      "status": "pending",
+      "sites": []
+    }
+  }
+}
