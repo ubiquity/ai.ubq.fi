@@ -332,7 +332,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/input_normalization.hpp`
 - [x] `include/uos/jev_compaction/compaction.hpp`
 - [x] `include/uos/jev_compaction/hybrid.hpp`
-- [ ] `include/uos/kv.hpp`
+- [x] `include/uos/kv.hpp`
 - [ ] `include/uos/kv_conversion/cli.hpp`
 - [ ] `include/uos/kv_conversion/convert.hpp`
 - [ ] `include/uos/kv_conversion/cursors.hpp`
@@ -1866,6 +1866,12 @@ Reviewed hybrid fetch injection and residue interfaces.
 
 - L32, 37, 38 **SAFE** · The frame owns the summary and Fetch, and copies per-worker options and work state before dispatch.
 
+### `include/uos/kv.hpp`
+
+Reviewed KV startup and test overrides. Replacing a pending injected opener is classified in src/kv.cpp.
+
+- L14, 17, 21 **SAFE** · Initialization and the resolved override take shared KV values, and coalesced consumers obtain their own Promise and store handles.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2114,4 +2120,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-224/286 files reviewed. 398 sites: 376 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+225/286 files reviewed. 399 sites: 377 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
