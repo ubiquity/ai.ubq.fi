@@ -46,7 +46,7 @@ completes, or record the precise pending work and last passing tree.
 | A-GENERATOR-STEP-OWNER (`include/uos/rt/async.hpp`) | FIXED. `requestStep` eagerly enqueues the result, but the generator body deliberately keeps only a weak link. Keep the core in the returned Task so either step can still settle after the last generator handle is dropped. | This commit | `rt/async_test`, checks `next` and a queued `return_` before a timer. The baseline failure is liveness. |
 | A-GENERATOR-GCC-AWAIT (`include/uos/rt/async.hpp`) | FIXED. `delegateTo` and `forAwait` materialized owning yielded arguments in await expressions. Name the Tasks. The same review found that `runGenerator` erased its Yield argument by value. Forward the frame's own Yield instead so reference-taking bodies can use it after suspension. | This commit | Existing delegation and iteration tests plus a borrowed Yield regression in `rt/async_test`. GCC 12 expression shapes were checked by inspection. |
 | A-PROCESS-SIGNAL-CONTEXT (`src/rt/process_loop.cpp`) | FIXED. The static signal set could retain the first scoped Asio context past destruction. An Asio service for each loop now owns that loop's listeners and destroys its signal set at shutdown. | This commit | `rt/process_test`, leaves an armed registration at teardown, checks the default action, then removes the identity in a new loop. |
-| A-STREAM-GCC-AWAIT (`include/uos/rt/stream.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
+| A-STREAM-GCC-AWAIT (`include/uos/rt/stream.hpp`) | FIXED. `runAsync` and `iterateStream` now name the Tasks before awaiting. The async erasure forwards a reference to the argument owned by `runAsync`. | This commit | `rt/stream_test`, a pull Task borrows its controller across suspension. Existing stream iteration covers named yields. |
 | A-PROMISE-REACTION-CYCLE (`include/uos/rt/stream.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-STREAM-CANCEL-OWNER (`include/uos/rt/stream.hpp`) | FIXED. `cancelStreamInto` read the reader's stream slot after the synchronous cancel algorithm could empty it through `releaseLock`. Take an owning copy before closing the stream or invoking the callback. | This commit | `rt/stream_test`, cancel releases the reader while a read is pending. |
 | A-STREAM-TEE-READ-CYCLE (`include/uos/rt/stream.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
@@ -73,7 +73,7 @@ completes, or record the precise pending work and last passing tree.
 | --- | --- | --- |
 | `src/rt/clock.cpp` | Self-replacement of injected global hooks | LEFT. Current-tree re-verification pending. |
 | `src/rt/async.cpp` | Parked awaiter and pending Promise ownership | LEFT. Current-tree re-verification pending. |
-| `include/uos/rt/stream.hpp` | Borrowing callback parameters through the by-value erased signature | LEFT. Current-tree re-verification pending. |
+| `include/uos/rt/stream.hpp` | Borrowing callback parameters through the by-value erased signature | FIXED with A-STREAM-GCC-AWAIT. A reference-taking coroutine used to point into the by-value function invocation. Forward the frame-owned argument. |
 | `src/rt/http.cpp` | Abandoned streamed-body reader lock | LEFT. Current-tree re-verification pending. |
 | `include/uos/rt/websocket.hpp` | Self-replacement of injected buffered-amount getter | LEFT. Current-tree re-verification pending. |
 | `src/rt/websocket.cpp` | Injected buffered-amount getter replaces itself | LEFT. Current-tree re-verification pending. |

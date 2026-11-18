@@ -46,7 +46,7 @@ namespace uos::rt {
       SourceAlgorithm(F&& callable) {
         using R = std::invoke_result_t<std::decay_t<F>&, A>;
         if constexpr (std::is_void_v<R>) sync_ = std::make_shared<const std::function<void(A)>>(std::forward<F>(callable));
-        else async_ = std::make_shared<const std::function<Task<void>(A)>>(std::forward<F>(callable));
+        else async_ = std::make_shared<const std::function<Task<void>(A&&)>>(std::forward<F>(callable));
       }
       explicit operator bool() const noexcept { return sync_ || async_; }
       // `Promise.resolve(algorithm(argument))`; a synchronous throw rejects
@@ -69,9 +69,12 @@ namespace uos::rt {
       }
 
     private:
-      static Task<void> runAsync(std::shared_ptr<const std::function<Task<void>(A)>> function, A argument) { co_await (*function)(std::move(argument)); }
+      static Task<void> runAsync(std::shared_ptr<const std::function<Task<void>(A&&)>> function, A argument) {
+        auto handling = (*function)(std::move(argument));
+        co_await std::move(handling);
+      }
       std::shared_ptr<const std::function<void(A)>> sync_;
-      std::shared_ptr<const std::function<Task<void>(A)>> async_;
+      std::shared_ptr<const std::function<Task<void>(A&&)>> async_;
     };
 
     enum class StreamError : std::uint8_t {
@@ -538,7 +541,8 @@ namespace uos::rt {
         }
         bool returning = false;
         try {
-          co_await yield(std::move(*step->value));
+          auto yielding = yield(std::move(*step->value));
+          co_await std::move(yielding);
         } catch (const GeneratorReturn&) {
           returning = true;
         }

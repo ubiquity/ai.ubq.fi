@@ -289,6 +289,22 @@ ASYNC_TEST("bun stream2: cancel, failing pull/start, close with queued chunks, h
                            "desired after close with queue=0", "q1: resolved {\"value\":\"1\",\"done\":false}", "q2: resolved {\"done\":true}", "hwm2 pulls before read=2", "hwm2 got=[1,2,3,4] pulls=4"}));
 }
 
+ASYNC_TEST("a source Task can borrow its controller across suspension") {
+  rt::UnderlyingSource<std::string> source;
+  source.pull = [](const Controller& controller) -> rt::Task<void> {
+    co_await rt::microtask();
+    controller.enqueue("chunk");
+    controller.close();
+  };
+  const Stream stream(std::move(source));
+  const auto reader = stream.getReader();
+  const auto chunk = co_await reader.read();
+  ASSERT(chunk.value.has_value());
+  EXPECT_EQ(*chunk.value, "chunk");
+  const auto closed = co_await reader.read();
+  EXPECT(closed.done);
+}
+
 ASYNC_TEST("reader cancellation retains the stream when the source releases the reader") {
   using Reader = rt::ReadableStreamDefaultReader<std::string>;
   std::optional<Reader> reader;
