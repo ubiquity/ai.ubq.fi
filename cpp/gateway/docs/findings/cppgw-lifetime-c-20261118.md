@@ -289,7 +289,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/capacity_contract.cpp`
 - [x] `src/provider/capacity_events.cpp`
 - [x] `src/provider/capacity_history.cpp`
-- [ ] `src/provider/capacity_parse.cpp`
+- [x] `src/provider/capacity_parse.cpp`
 - [ ] `src/provider/capacity_rollups.cpp`
 - [ ] `src/provider/cerebras.cpp`
 - [ ] `src/provider/cerebras_handlers.cpp`
@@ -1840,3 +1840,9 @@ Event persistence and scans retain their store and cursor owners. Event sampling
 History scan and recovery use copied snapshots.
 
 - 183-205,320-339,357-385 · row scan, event persistence and recovery · **SAFE** · Store, iterator, snapshots and event lists remain local across the joined operations, and source pointers are used only against live local data.
+
+### `src/provider/capacity_parse.cpp`
+
+Capacity schema consumers return owned rows. Only the final stored snapshot lookup suspends.
+
+- 424-435 · snapshot read · **SAFE** · The frame owns KV and the received row, with field views consumed synchronously by the local parser.

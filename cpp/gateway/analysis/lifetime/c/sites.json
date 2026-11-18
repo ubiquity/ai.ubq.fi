@@ -3373,8 +3373,16 @@
       ]
     },
     "src/provider/capacity_parse.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Capacity schema consumers return owned rows. Only the final stored snapshot lookup suspends.",
+      "sites": [
+        {
+          "lines": "424-435",
+          "kind": "snapshot read",
+          "verdict": "SAFE",
+          "reason": "The frame owns KV and the received row, with field views consumed synchronously by the local parser."
+        }
+      ]
     },
     "src/provider/capacity_rollups.cpp": {
       "status": "pending",
