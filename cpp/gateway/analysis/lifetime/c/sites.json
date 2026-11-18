@@ -3474,8 +3474,28 @@
       ]
     },
     "src/provider/claude_code.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Claude Messages transport owns fetch callbacks and request state. Its preheader abort listener has a teardown cycle.",
+      "sites": [
+        {
+          "lines": "100-119",
+          "kind": "Claude abort listener ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "The signal owns an abort callback that retains the same signal. If the transport and abort are both pending when the wait is destroyed, the frame drops dispose without calling it. Capture weak signal state or install a removal guard before suspension."
+        },
+        {
+          "lines": "137-158,213-289",
+          "kind": "preheader transport, fetch branch and error body",
+          "verdict": "SAFE",
+          "reason": "The provider options and hooks are frame values. rt::Fetch::keepAlive owns the transport callable if abort wins. The running timer owns its controller and normal paths clear it."
+        },
+        {
+          "lines": "426-496,498-624",
+          "kind": "workspace discovery, retries and normalization",
+          "verdict": "SAFE",
+          "reason": "The source frame owns workspace, native request, credentials and attempt snapshots. Before-dispatch closures remain live through joined attempts, and the returned normalizer stream has its own options."
+        }
+      ]
     },
     "src/provider/claude_code_access.cpp": {
       "status": "pending",

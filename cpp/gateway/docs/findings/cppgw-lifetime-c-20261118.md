@@ -297,7 +297,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/cerebras_responses.cpp`
 - [x] `src/provider/claude_capacity_history.cpp`
 - [x] `src/provider/claude_capacity_rollups.cpp`
-- [ ] `src/provider/claude_code.cpp`
+- [x] `src/provider/claude_code.cpp`
 - [ ] `src/provider/claude_code_access.cpp`
 - [ ] `src/provider/claude_code_accounts.cpp`
 - [ ] `src/provider/claude_code_credentials.cpp`
@@ -1888,3 +1888,11 @@ Capacity history has separate owning per-rollup reads and a local list cursor.
 Capacity and usage lists use local cursors and typed point snapshots.
 
 - 236-267,269-278,355-397 · list iteration, keying and cursor cleanup · **SAFE** · KV, list cursor, each row and the hash task's point stay live through next, return and joined validation.
+
+### `src/provider/claude_code.cpp`
+
+Claude Messages transport owns fetch callbacks and request state. Its preheader abort listener has a teardown cycle.
+
+- 100-119 · Claude abort listener ownership cycle · **DEFECT** · The signal owns an abort callback that retains the same signal. If the transport and abort are both pending when the wait is destroyed, the frame drops dispose without calling it. Capture weak signal state or install a removal guard before suspension.
+- 137-158,213-289 · preheader transport, fetch branch and error body · **SAFE** · The provider options and hooks are frame values. rt::Fetch::keepAlive owns the transport callable if abort wins. The running timer owns its controller and normal paths clear it.
+- 426-496,498-624 · workspace discovery, retries and normalization · **SAFE** · The source frame owns workspace, native request, credentials and attempt snapshots. Before-dispatch closures remain live through joined attempts, and the returned normalizer stream has its own options.
