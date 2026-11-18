@@ -1152,8 +1152,16 @@
       ]
     },
     "include/uos/provider/capacity_rollups.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Capacity rollup query API.",
+      "sites": [
+        {
+          "lines": "138",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The query owns the store and options across awaits."
+        }
+      ]
     },
     "include/uos/provider/cerebras.hpp": {
       "status": "pending",
