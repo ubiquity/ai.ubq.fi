@@ -9799,8 +9799,27 @@
       ]
     },
     "include/uos/responses_buffered.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed buffered result callbacks and collection interfaces.",
+      "sites": [
+        {
+          "lines": [
+            8,
+            9,
+            10,
+            11,
+            13,
+            14
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The collector owns its attempt and options through its awaited iterator. Event and failure borrows are passed only to synchronous callbacks."
+        }
+      ]
     },
     "include/uos/responses_failover_stream.hpp": {
       "reviewed": false,

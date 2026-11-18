@@ -367,7 +367,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/request.hpp`
 - [x] `include/uos/request_policy.hpp`
 - [x] `include/uos/responses_attempts.hpp`
-- [ ] `include/uos/responses_buffered.hpp`
+- [x] `include/uos/responses_buffered.hpp`
 - [ ] `include/uos/responses_failover_stream.hpp`
 - [ ] `include/uos/responses_handler.hpp`
 - [ ] `include/uos/responses_native_headers.hpp`
@@ -2081,6 +2081,12 @@ Reviewed prepared/primary attempt handles, usage pointers and provider options.
 
 - L18, 19, 27, 41, 43, 61, 70, 78, 81, 83 **SAFE** · The route keeps the borrowed usage context during direct attempts. Attempt work owns response, body, controls and generator; the detached circuit seam's constraints are recorded at its implementation.
 
+### `include/uos/responses_buffered.hpp`
+
+Reviewed buffered result callbacks and collection interfaces.
+
+- L8, 9, 10, 11, 13, 14 **SAFE** · The collector owns its attempt and options through its awaited iterator. Event and failure borrows are passed only to synchronous callbacks.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2330,4 +2336,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-259/286 files reviewed. 441 sites: 417 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+260/286 files reviewed. 442 sites: 418 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
