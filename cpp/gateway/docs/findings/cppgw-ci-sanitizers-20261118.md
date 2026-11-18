@@ -71,3 +71,7 @@ for FUZZ_TARGET in json regex; do
     2>&1 | tee "$fuzz_out/build.log"
 done
 ```
+
+## Local results
+
+The JSON harness completed on x86_64. The four-worker build and link took 469.825 seconds while the suite was compiling. The campaign took 309.935 seconds wall time and libFuzzer reported 309 seconds of fuzzing. The final corpus contained 997 files. There were zero findings, regex timeout artifacts or fork-parent exit leak artifacts, and the command exited 0.
