@@ -224,7 +224,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/request.cpp`
 - [x] `src/request_policy.cpp`
 - [x] `src/responses_attempts.cpp`
-- [ ] `src/responses_buffered.cpp`
+- [x] `src/responses_buffered.cpp`
 - [ ] `src/responses_failover_stream.cpp`
 - [ ] `src/responses_handler.cpp`
 - [ ] `src/responses_native_headers.cpp`
@@ -1174,6 +1174,12 @@ Reviewed precommit iterator and options, primary and removed-provider attempts, 
 - L179, 182, 197, 211, 214, 219, 232, 233, 236, 238, 248, 252, 257, 258 **SAFE** · The caller retains the usage context through the whole attempt, including before-dispatch and headers callbacks. The read and cancel children copy their circuit or response handles before leaving this frame.
 - L265, 268, 270 **SAFE** · The deferred callback can contain a raw usage pointer. The checked-in circuit returns the already-settled value none, the recorder does no context access for none, and ordinary routing creates no probe.
 
+### `src/responses_buffered.cpp`
+
+Reviewed buffered iterators, accumulator, telemetry and cancellation.
+
+- L74, 75, 78, 80, 84, 85, 87, 92, 99, 109, 112 **SAFE** · Generator and SourceAlgorithm holders own their callbacks, and the caller's options capture shared Delivery backing the usage pointer. Collection owns the source and awaits cleanup before releasing its frame.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1422,4 +1428,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-117/286 files reviewed. 231 sites: 214 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+118/286 files reviewed. 232 sites: 215 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

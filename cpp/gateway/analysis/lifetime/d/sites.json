@@ -5042,8 +5042,34 @@
       ]
     },
     "src/responses_buffered.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed buffered iterators, accumulator, telemetry and cancellation.",
+      "sites": [
+        {
+          "lines": [
+            74,
+            75,
+            78,
+            80,
+            84,
+            85,
+            87,
+            92,
+            99,
+            109,
+            112
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Generator and SourceAlgorithm holders own their callbacks, and the caller's options capture shared Delivery backing the usage pointer. Collection owns the source and awaits cleanup before releasing its frame."
+        }
+      ]
     },
     "src/responses_failover_stream.cpp": {
       "reviewed": false,
