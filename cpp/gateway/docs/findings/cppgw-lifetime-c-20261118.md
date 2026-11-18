@@ -249,7 +249,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/reliability/context.cpp`
 - [x] `src/harmony/reliability/failure.cpp`
 - [x] `src/harmony/reliability/feedback.cpp`
-- [ ] `src/harmony/reliability/harness.cpp`
+- [x] `src/harmony/reliability/harness.cpp`
 - [ ] `src/harmony/reliability/hash.cpp`
 - [ ] `src/harmony/reliability/loops.cpp`
 - [ ] `src/harmony/reliability/retry.cpp`
@@ -1591,3 +1591,12 @@ Reliability classification is synchronous and returns owning results.
 ### `src/harmony/reliability/feedback.cpp`
 
 Tool argument validation and feedback projection use synchronous calls with live JSON arguments.
+
+### `src/harmony/reliability/harness.cpp`
+
+The harness joins private borrowing helpers and uses owning race branches for cancellation.
+
+- 117-135 · run cancellation listener and race · **SAFE** · ScopeExit removes the listener and the listener owns only a resolver. Both race inputs own their pending state.
+- 218-298 · transport, body parse, and borrowed retry parameters · **SAFE** · The joined frame retains run, opts and built. HarmonyTransport::keepAlive and Response::json separately own the work that may outlive an aborted wait.
+- 321-340,369-414 · tool annotations, retry sleep and loop references · **SAFE** · The sequential caller owns run, options, validation data, tool calls and analysis through the join. Tool routing takes an owning backend handle.
+- 465-479,511-519 · turn and run joins · **SAFE** · runReliabilityHarness owns run and options, and runHarnessTurn owns the built request and normalized result until both children complete.

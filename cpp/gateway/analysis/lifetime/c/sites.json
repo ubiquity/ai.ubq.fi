@@ -2764,8 +2764,34 @@
       "sites": []
     },
     "src/harmony/reliability/harness.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The harness joins private borrowing helpers and uses owning race branches for cancellation.",
+      "sites": [
+        {
+          "lines": "117-135",
+          "kind": "run cancellation listener and race",
+          "verdict": "SAFE",
+          "reason": "ScopeExit removes the listener and the listener owns only a resolver. Both race inputs own their pending state."
+        },
+        {
+          "lines": "218-298",
+          "kind": "transport, body parse, and borrowed retry parameters",
+          "verdict": "SAFE",
+          "reason": "The joined frame retains run, opts and built. HarmonyTransport::keepAlive and Response::json separately own the work that may outlive an aborted wait."
+        },
+        {
+          "lines": "321-340,369-414",
+          "kind": "tool annotations, retry sleep and loop references",
+          "verdict": "SAFE",
+          "reason": "The sequential caller owns run, options, validation data, tool calls and analysis through the join. Tool routing takes an owning backend handle."
+        },
+        {
+          "lines": "465-479,511-519",
+          "kind": "turn and run joins",
+          "verdict": "SAFE",
+          "reason": "runReliabilityHarness owns run and options, and runHarnessTurn owns the built request and normalized result until both children complete."
+        }
+      ]
     },
     "src/harmony/reliability/hash.cpp": {
       "status": "pending",
