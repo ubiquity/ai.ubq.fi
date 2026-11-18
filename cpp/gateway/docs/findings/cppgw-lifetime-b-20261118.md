@@ -34,7 +34,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/runtime/http.cpp`
 - [x] `src/runtime/http_body.cpp`
 - [x] `src/runtime/http_early_sse.cpp`
-- [ ] `src/runtime/http_tasks.cpp`
+- [x] `src/runtime/http_tasks.cpp`
 - [ ] `src/runtime/http_upgrade.cpp`
 - [ ] `src/runtime/native_kv_bootstrap.cpp`
 - [ ] `src/runtime/permissions_linux.cpp`
@@ -217,6 +217,13 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 14-17 | Early SSE registration cleanup at HTTP caller | **DEFECT** ([D04](#d04)) | Registration stores an owner of its callable in the weak-map value and returns an ordinary callable for deletion. The HTTP caller gives the stored value a strong edge back to the key and drops the explicit cleanup on frame abandonment. |
 | 19-33 | Synchronous early SSE lookup and commit | **SAFE** | Commit takes a shared copy of Entry before invoking a possibly reentrant callback. The query that only reads the bit uses its map pointer synchronously. |
 
+### `src/runtime/http_tasks.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 17-24,42-45 | Request drain and settlement aggregation | **SAFE** | The synchronous wrapper copies task set and receipt into the child frame. Each iteration snapshots promise values before allSettled; no iterator or entry reference survives the wait. |
+| 27-39 | Settlement removal | **SAFE** | The map lookup is copied before use. The reaction owns the promise identity token and weakly locks the TaskSet so the set and task reaction cannot own each other. |
+
 
 ## Ranked defects and counts
 
@@ -382,4 +389,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-11/97 files reviewed. **DEFECT 6, SAFE 31, UNCLEAR 2.**
+12/97 files reviewed. **DEFECT 6, SAFE 33, UNCLEAR 2.**

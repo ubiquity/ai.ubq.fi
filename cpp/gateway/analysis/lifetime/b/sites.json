@@ -442,8 +442,30 @@
       ]
     },
     "src/runtime/http_tasks.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "17-24,42-45",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Request drain and settlement aggregation",
+          "evidence": "The synchronous wrapper copies task set and receipt into the child frame. Each iteration snapshots promise values before allSettled; no iterator or entry reference survives the wait."
+        },
+        {
+          "lines": "27-39",
+          "verdict": "SAFE",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "Settlement removal",
+          "evidence": "The map lookup is copied before use. The reaction owns the promise identity token and weakly locks the TaskSet so the set and task reaction cannot own each other."
+        }
+      ]
     },
     "src/runtime/http_upgrade.cpp": {
       "reviewed": false,
