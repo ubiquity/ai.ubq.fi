@@ -5527,8 +5527,25 @@
       ]
     },
     "src/sentinel/replay_admin.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed authenticated replay listing, direct and paged read variants and output assembly.",
+      "sites": [
+        {
+          "lines": [
+            131,
+            140,
+            155,
+            162
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The admin frame owns request, options, keys and shared KV while directly awaiting the borrowed-store listing and copying each result."
+        }
+      ]
     },
     "src/sentinel/replay_capture.cpp": {
       "reviewed": false,
