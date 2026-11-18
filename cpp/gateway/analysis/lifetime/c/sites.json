@@ -1062,8 +1062,16 @@
       "sites": []
     },
     "include/uos/provider/anthropic_responses.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Anthropic Messages adapter task interface.",
+      "sites": [
+        {
+          "lines": "36",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The normalization task owns its response handle and options."
+        }
+      ]
     },
     "include/uos/provider/capacity.hpp": {
       "status": "pending",
