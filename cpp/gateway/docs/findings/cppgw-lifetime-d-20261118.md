@@ -24,7 +24,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 286 first-party files.
 
 - [x] `src/admin/api_key_audit.cpp`
-- [ ] `src/admin/api_key_mutations.cpp`
+- [x] `src/admin/api_key_mutations.cpp`
 - [ ] `src/admin/api_keys.cpp`
 - [ ] `src/admin/capacity_observation_sync.cpp`
 - [ ] `src/admin/chart_source_proxy.cpp`
@@ -322,6 +322,20 @@ Reviewed list traversal, atomic staging and request forwarding.
 - L41, 53, 75, 76, 77 **SAFE** · Request and override handles enter the owning handler by value, and the synchronous list wrapper copies the input before the child runs.
 - L66 **SAFE** · The audit sources are captureless synchronous calls consumed during event construction.
 
+### `src/admin/api_key_mutations.cpp`
+
+Reviewed update authorization, versioned writes, revocation and guarded deletion. The wrappers at the end are synchronous.
+
+- L42, 43 **SAFE** · The record reader invokes both reference-capturing helpers synchronously before its input can go away.
+- L104, 118, 133 **SAFE** · The resolver frames own KV, copied JSON and records, and the paid initializer receives an owned signal.
+- L153, 159, 167, 169, 170, 182, 183 **SAFE** · Each projection or reservation step owns its fields and KV and completes before that frame leaves scope.
+- L196, 205, 214, 225, 228 **SAFE** · The write frame retains original entries, optional snapshots and its atomic operation through commit and conflict handling.
+- L234, 236, 240, 247, 252, 269, 274, 434, 435 **SAFE** · The wrapper eagerly copies context. The update coroutine keeps the variant containing the borrowed target alive while each Promise completes, and its children receive copies.
+- L277, 279, 284, 290, 303, 315, 436, 437, 438, 439 **SAFE** · The revocation frame retains the request, context, KV, fetched records and atomic operation through commit.
+- L328, 334, 341, 350, 356, 358, 365, 369 **SAFE** · The local-deletion claim and release tasks take entry, key and claim values and keep each atomic operation in its awaiting frame.
+- L374, 376, 381, 385, 387, 392, 396, 400, 404, 413, 415, 440, 441 **SAFE** · The deletion frame owns both the result variant and the operation, including the blocked alternative accessed after the release wait.
+- L423, 425, 428, 429 **SAFE** · The prefix vector is frame-local and immutable, and each iterator and yielded entry remains owned through its awaited deletion.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -330,4 +344,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-1/286 files reviewed. 3 sites: 3 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+2/286 files reviewed. 12 sites: 12 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

@@ -48,8 +48,166 @@
       ]
     },
     "src/admin/api_key_mutations.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed update authorization, versioned writes, revocation and guarded deletion. The wrappers at the end are synchronous.",
+      "sites": [
+        {
+          "lines": [
+            42,
+            43
+          ],
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "detail": "The record reader invokes both reference-capturing helpers synchronously before its input can go away."
+        },
+        {
+          "lines": [
+            104,
+            118,
+            133
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The resolver frames own KV, copied JSON and records, and the paid initializer receives an owned signal."
+        },
+        {
+          "lines": [
+            153,
+            159,
+            167,
+            169,
+            170,
+            182,
+            183
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each projection or reservation step owns its fields and KV and completes before that frame leaves scope."
+        },
+        {
+          "lines": [
+            196,
+            205,
+            214,
+            225,
+            228
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The write frame retains original entries, optional snapshots and its atomic operation through commit and conflict handling."
+        },
+        {
+          "lines": [
+            234,
+            236,
+            240,
+            247,
+            252,
+            269,
+            274,
+            434,
+            435
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The wrapper eagerly copies context. The update coroutine keeps the variant containing the borrowed target alive while each Promise completes, and its children receive copies."
+        },
+        {
+          "lines": [
+            277,
+            279,
+            284,
+            290,
+            303,
+            315,
+            436,
+            437,
+            438,
+            439
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The revocation frame retains the request, context, KV, fetched records and atomic operation through commit."
+        },
+        {
+          "lines": [
+            328,
+            334,
+            341,
+            350,
+            356,
+            358,
+            365,
+            369
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The local-deletion claim and release tasks take entry, key and claim values and keep each atomic operation in its awaiting frame."
+        },
+        {
+          "lines": [
+            374,
+            376,
+            381,
+            385,
+            387,
+            392,
+            396,
+            400,
+            404,
+            413,
+            415,
+            440,
+            441
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The deletion frame owns both the result variant and the operation, including the blocked alternative accessed after the release wait."
+        },
+        {
+          "lines": [
+            423,
+            425,
+            428,
+            429
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The prefix vector is frame-local and immutable, and each iterator and yielded entry remains owned through its awaited deletion."
+        }
+      ]
     },
     "src/admin/api_keys.cpp": {
       "reviewed": false,
