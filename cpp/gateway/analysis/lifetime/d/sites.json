@@ -4405,7 +4405,8 @@
       ]
     },
     "src/lib/jev_compaction/request.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous Jev request serialization and response parsing. Header, payload and response values own their data. No suspension or escaping callback.",
       "sites": []
     },
     "src/lib/jev_compaction/state.cpp": {

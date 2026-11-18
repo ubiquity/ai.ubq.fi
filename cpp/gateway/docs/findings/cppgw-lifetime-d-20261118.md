@@ -186,7 +186,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/lib/jev_compaction/compact.cpp`
 - [x] `src/lib/jev_compaction/jev_codex_smoke.cpp`
 - [x] `src/lib/jev_compaction/jev_compaction_smoke.cpp`
-- [ ] `src/lib/jev_compaction/request.cpp`
+- [x] `src/lib/jev_compaction/request.cpp`
 - [ ] `src/lib/jev_compaction/state.cpp`
 - [ ] `src/lib/jev_compaction/types.cpp`
 - [ ] `src/metered_quota.cpp`
@@ -1036,6 +1036,10 @@ Reviewed the local smoke run, owned mock transport callbacks, terminal polling a
 - L294, 305, 321, 336, 337, 342 **SAFE** · The fake server task owns its request and shared call vector. Fixture preparation and reads keep the native-store and artifact inputs through completion.
 - L349, 361, 368, 372, 388, 390, 392, 408, 412, 418, 421, 435, 441, 444, 464, 466, 468, 482, 490, 499, 502, 504, 506, 515 **SAFE** · Terminal polls retain shared console capture through their await, Fetch retains its callback and the outer runner keeps gateway, upstream and utility handles through normal cleanup.
 
+### `src/lib/jev_compaction/request.cpp`
+
+Reviewed synchronous Jev request serialization and response parsing. Header, payload and response values own their data. No suspension or escaping callback.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1249,4 +1253,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-96/286 files reviewed. 205 sites: 189 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+97/286 files reviewed. 205 sites: 189 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
