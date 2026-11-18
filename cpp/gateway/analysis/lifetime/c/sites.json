@@ -317,7 +317,8 @@
       ]
     },
     "include/uos/codex/responses_error.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "The synchronous error translation API takes borrowed event views and returns an owned event.",
       "sites": []
     },
     "include/uos/codex/responses_operations.hpp": {
