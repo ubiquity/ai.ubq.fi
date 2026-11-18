@@ -202,3 +202,50 @@ succeeded. Development at `6bd78fc5e3b0783809691c6bd45d25ac45e9696e` has no `cpp
 port branch and this lane share ancestor `093a9e0511e9d0deae5495dc324e53ff4dccd719`. The runner's
 credential-free dry-run push to the existing task branch returned 128. GitHub requires an authenticated
 writer. The continuation preserves the job branch for the port integration.
+
+### Portable Clang recovery
+
+The original object passes reached 316 of 837 Ninja steps in release and 352 of 837 in ASan/UBSan. Both
+reported `-Werror,-Wsign-conversion` in the pre-existing simdutf header included by
+`src/rt/base64.cpp`. Both passes were interrupted before test execution and their diagnostics were retained.
+The scratch runner resumes with the same compiler, profile flags and build directory. It adds
+`--system-header-prefix=third_party/simdutf/` to the single `base64.cpp` Ninja rule, so warning checks
+stay active on all first-party code. Both objects compiled on retry. The repository driver and simdutf
+files retain their incoming bytes.
+
+To reproduce the resume, use the same shell environment as above and save the following under
+`$work/portable-ci.py`. Invoke it in place of the shell wrapper via
+`python3 -B "$work/portable-ci.py" "$root" --config release`. The ASan/UBSan invocation uses
+`--config asan` and the sanitizer profile flags above.
+
+```python
+import signal
+import sys
+from pathlib import Path
+
+gateway = Path(sys.argv.pop(1)).resolve()
+sys.path.insert(0, str(gateway / "cmake/ci"))
+import driver
+
+original_write_ninja = driver.write_ninja
+
+def write_ninja(build, sources, compiler, flags, vendors=()):
+    original_write_ninja(build, sources, compiler, flags, vendors)
+    manifest = build / "build.ninja"
+    graph = manifest.read_text()
+    target = driver.ninja_escape(driver.object_path(build, "src/rt/base64.cpp"))
+    dependency = f"build {target}: cxx "
+    assert graph.count(dependency) == 1
+    rule = driver.ninja_compile_rule(
+        "selected_simdutf",
+        compiler + flags + ["--system-header-prefix=third_party/simdutf/"],
+        "CXX",
+    )
+    graph = graph.replace(dependency, "\n".join(rule) + f"\nbuild {target}: selected_simdutf ")
+    manifest.write_text(graph)
+
+driver.write_ninja = write_ninja
+for signum in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(signum, driver.interrupted)
+raise SystemExit(driver.main())
+```
