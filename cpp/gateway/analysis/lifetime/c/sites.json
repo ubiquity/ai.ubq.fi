@@ -673,8 +673,22 @@
       ]
     },
     "include/uos/harmony/adapter.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "HarmonyTransport implements an owning erased transport wrapper.",
+      "sites": [
+        {
+          "lines": "87-107",
+          "kind": "callback lifetime",
+          "verdict": "SAFE",
+          "reason": "The outer callable only forwards; keepAlive retains the function and its shared target until the returned coroutine completes."
+        },
+        {
+          "lines": "133",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The turn task owns options and a transport handle while dispatching and normalizing the response."
+        }
+      ]
     },
     "include/uos/harmony/classifier.hpp": {
       "status": "pending",

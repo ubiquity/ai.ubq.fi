@@ -94,7 +94,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/embeddings/jobs.hpp`
 - [x] `include/uos/embeddings/ledger.hpp`
 - [x] `include/uos/embeddings/voyage.hpp`
-- [ ] `include/uos/harmony/adapter.hpp`
+- [x] `include/uos/harmony/adapter.hpp`
 - [ ] `include/uos/harmony/classifier.hpp`
 - [ ] `include/uos/harmony/conversation.hpp`
 - [ ] `include/uos/harmony/parse.hpp`
@@ -660,3 +660,10 @@ Embeddings cache/budget operations borrow KV where specified.
 
 - 12-18,31-32 · borrowed store and owned signal · **SAFE** · Handlers and jobs keep the shared KV handle alive until each cache/budget task returns; the timer factory uses a signal value.
 - 42-44,45-67 · owning task parameters · **SAFE** · Encryption and fetch frames own their inputs, provider callback bundle and any store handle.
+
+### `include/uos/harmony/adapter.hpp`
+
+HarmonyTransport implements an owning erased transport wrapper.
+
+- 87-107 · callback lifetime · **SAFE** · The outer callable only forwards; keepAlive retains the function and its shared target until the returned coroutine completes.
+- 133 · owning task parameters · **SAFE** · The turn task owns options and a transport handle while dispatching and normalizing the response.
