@@ -145,3 +145,31 @@ python3 -I "$bench/profile.py" "$work/candidate-profile/after/01-reject-native/p
 | After rejection `perf.data`  | `2ead06e7dd7a06e9531bed990a3753390fef20d79323658bfab75092fec8bab4` |
 
 The full release and linked ASan+UBSan gates were still running at this checkpoint.
+
+### Allocation checks for the implementation commits
+
+Three additional 10,000-request rejection trials for each cumulative step reproduced the savings. The 150,000 timed requests passed status, zero-dispatch, shutdown and normalized terminal comparison checks. All 15 runs produced the same normalized terminal digest.
+
+| Cumulative source change     | Commit     | Median allocations/request |
+| ---------------------------- | ---------- | -------------------------: |
+| Source baseline              | `b54357a9` |                   1,263.96 |
+| Reserved record              | `319b2475` |                   1,137.96 |
+| Move delivery ownership      | `72042438` |                   1,129.96 |
+| Avoid empty replay work      | `62e4850a` |                   1,106.93 |
+| Skip default 401 diagnostics | `0ed173c2` |                     947.70 |
+
+```sh
+record=$(git rev-parse 319b2475)
+ownership=$(git rev-parse 72042438)
+replay=$(git rev-parse 62e4850a)
+for checkpoint in "record:$record" "ownership:$ownership" "replay:$replay"; do
+  label=${checkpoint%%:*}
+  revision=${checkpoint#*:}
+  python3 -B "$work/link_bench.py" "$PWD" "$label" "$revision"
+  python3 -B "$work/package_bench.py" "$label"
+done
+python3 -I "$work/measure_pair.py" "$before" "$after" --checkpoints \
+  --checkpoint record "$record" --checkpoint ownership "$ownership" --checkpoint replay "$replay"
+```
+
+The SHA-256 of `checkpoint-alloc/results.json` is `b06b9db67fd1c8d9c1ac401f44f4e52e706137107a544d5ad6d16ee725ff0a6b`.
