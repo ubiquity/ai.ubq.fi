@@ -3409,8 +3409,16 @@
       ]
     },
     "src/provider/cerebras_handlers.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Chat reads the bounded complete upstream body before returning a buffered or replay response.",
+      "sites": [
+        {
+          "lines": "98-148,153-215",
+          "kind": "buffered handler, context, and callback borrows",
+          "verdict": "SAFE",
+          "reason": "The envelope joins the handler with live telemetry, fetch options retain its callbacks, and the captured bytes/results and replay data are owned values."
+        }
+      ]
     },
     "src/provider/cerebras_rate_limits.cpp": {
       "status": "pending",

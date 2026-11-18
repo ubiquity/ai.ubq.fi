@@ -292,7 +292,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/capacity_parse.cpp`
 - [x] `src/provider/capacity_rollups.cpp`
 - [x] `src/provider/cerebras.cpp`
-- [ ] `src/provider/cerebras_handlers.cpp`
+- [x] `src/provider/cerebras_handlers.cpp`
 - [ ] `src/provider/cerebras_rate_limits.cpp`
 - [ ] `src/provider/cerebras_responses.cpp`
 - [ ] `src/provider/claude_capacity_history.cpp`
@@ -1858,3 +1858,9 @@ Rollup transforms consume local snapshots synchronously and sorted listing owns 
 Cerebras Chat wire normalization is synchronous. Its request owns options through the preheader send.
 
 - 655-733 · fetch callback, admission and deadline · **SAFE** · The options and fetcher stay live during awaited dispatch. The timer captures its controller and is cleared by ScopeExit.
+
+### `src/provider/cerebras_handlers.cpp`
+
+Chat reads the bounded complete upstream body before returning a buffered or replay response.
+
+- 98-148,153-215 · buffered handler, context, and callback borrows · **SAFE** · The envelope joins the handler with live telemetry, fetch options retain its callbacks, and the captured bytes/results and replay data are owned values.
