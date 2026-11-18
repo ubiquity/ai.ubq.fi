@@ -76,7 +76,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/cache/kv_migration_base.hpp`
 - [x] `include/uos/cache/kv_migration_paid_fallback.hpp`
 - [x] `include/uos/cache/kv_migration_projection.hpp`
-- [ ] `include/uos/cache/kv_migration_usage.hpp`
+- [x] `include/uos/cache/kv_migration_usage.hpp`
 - [ ] `include/uos/cache/kv_migration_validation.hpp`
 - [ ] `include/uos/cache/prompt_analytics.hpp`
 - [ ] `include/uos/cache/prompt_analytics_core.hpp`
@@ -498,6 +498,12 @@ The inventory overloads own their KV and input sets. Private borrowed collectors
 
 Both projection entries own their KV and pair vector. Private borrows and snapshots are classified at their definitions.
 
+### `include/uos/cache/kv_migration_usage.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 69-70 | Bounded counter handoff policy borrow | **SAFE** | The caller owns the normalized policy in its frame and awaits the handoff through settlement. The handoff is not raced with sibling work. |
+
 
 ## Ranked defects and counts
 
@@ -703,4 +709,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-53/97 files reviewed. **DEFECT 8, SAFE 107, UNCLEAR 3.**
+54/97 files reviewed. **DEFECT 8, SAFE 108, UNCLEAR 3.**

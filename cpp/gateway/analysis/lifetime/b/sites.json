@@ -1469,8 +1469,18 @@
       "note": "Both projection entries own their KV and pair vector. Private borrows and snapshots are classified at their definitions."
     },
     "include/uos/cache/kv_migration_usage.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "69-70",
+          "verdict": "SAFE",
+          "kinds": [
+            "b"
+          ],
+          "symbol": "Bounded counter handoff policy borrow",
+          "evidence": "The caller owns the normalized policy in its frame and awaits the handoff through settlement. The handoff is not raced with sibling work."
+        }
+      ]
     },
     "include/uos/cache/kv_migration_validation.hpp": {
       "reviewed": false,
