@@ -9501,8 +9501,22 @@
       ]
     },
     "include/uos/openai_schema.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed static OpenAI field lists.",
+      "sites": [
+        {
+          "lines": [
+            6,
+            8
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Both lists hold views of literal field names with static storage."
+        }
+      ]
     },
     "include/uos/openai_telemetry.hpp": {
       "reviewed": false,

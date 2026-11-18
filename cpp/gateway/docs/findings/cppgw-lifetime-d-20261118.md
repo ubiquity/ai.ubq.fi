@@ -358,7 +358,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/models/metadata.hpp`
 - [x] `include/uos/models/openrouter_models.hpp`
 - [x] `include/uos/openai.hpp`
-- [ ] `include/uos/openai_schema.hpp`
+- [x] `include/uos/openai_schema.hpp`
 - [ ] `include/uos/openai_telemetry.hpp`
 - [ ] `include/uos/optional_telemetry_queue.hpp`
 - [ ] `include/uos/quota_projection.hpp`
@@ -2024,6 +2024,12 @@ Reviewed the default lookups, request signal APIs and static schema collections.
 
 - L8, 9, 10, 11, 16, 21, 22 **SAFE** · Default lookups take no borrowed inputs. Signal and schema helper calls are synchronous and return copied handles or keys.
 
+### `include/uos/openai_schema.hpp`
+
+Reviewed static OpenAI field lists.
+
+- L6, 8 **SAFE** · Both lists hold views of literal field names with static storage.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2273,4 +2279,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-250/286 files reviewed. 427 sites: 404 SAFE, 23 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+251/286 files reviewed. 428 sites: 405 SAFE, 23 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
