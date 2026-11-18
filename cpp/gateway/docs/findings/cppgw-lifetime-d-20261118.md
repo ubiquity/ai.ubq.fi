@@ -251,7 +251,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/types.cpp`
 - [x] `src/upstream_wire.cpp`
 - [x] `src/utils.cpp`
-- [ ] `include/uos/admin/api_key_audit.hpp`
+- [x] `include/uos/admin/api_key_audit.hpp`
 - [ ] `include/uos/admin/api_key_mutations.hpp`
 - [ ] `include/uos/admin/api_keys.hpp`
 - [ ] `include/uos/admin/capacity_observation_sync.hpp`
@@ -1379,6 +1379,12 @@ Reviewed byte and string views and both digest coroutines.
 - L12, 32, 38, 40, 50, 74, 76 **SAFE** · Base64 and hex operations consume temporary or borrowed views during a synchronous call and return owning strings or byte vectors.
 - L60, 63, 67, 70 **SAFE** · The digest frames own their input strings and digest buffers through their microtask yield.
 
+### `include/uos/admin/api_key_audit.hpp`
+
+Reviewed audit context values and the API for listing and handling change events.
+
+- L25, 26, 27 **SAFE** · The listing adapter copies its borrowed input before returning and request handlers retain their shared KV argument.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1627,4 +1633,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-143/286 files reviewed. 309 sites: 288 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+144/286 files reviewed. 310 sites: 289 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

@@ -6902,8 +6902,23 @@
       ]
     },
     "include/uos/admin/api_key_audit.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed audit context values and the API for listing and handling change events.",
+      "sites": [
+        {
+          "lines": [
+            25,
+            26,
+            27
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The listing adapter copies its borrowed input before returning and request handlers retain their shared KV argument."
+        }
+      ]
     },
     "include/uos/admin/api_key_mutations.hpp": {
       "reviewed": false,
