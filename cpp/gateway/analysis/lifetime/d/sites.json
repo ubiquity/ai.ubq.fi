@@ -6675,8 +6675,83 @@
       ]
     },
     "src/systemone/handlers.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed request parsing, provider hooks and usage callbacks for the System One terminal route.",
+      "sites": [
+        {
+          "lines": [
+            27,
+            28,
+            36,
+            48,
+            58,
+            61,
+            97,
+            110
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Static model and error views refer to literals. Parsed JSON entry pointers are consumed synchronously while input values remain owned."
+        },
+        {
+          "lines": [
+            124,
+            126,
+            132,
+            140,
+            141
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Request, parsed payload, dependencies and usage context are frame-owned. The usage call is awaited while its shared context remains live."
+        },
+        {
+          "lines": [
+            147,
+            148,
+            150,
+            151,
+            154,
+            155,
+            157,
+            158
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Provider hooks capture a shared context and are copied into the provider's owning frame. That frame awaits both the admission callback and the selected fetcher while retaining the exact callables it invoked."
+        },
+        {
+          "lines": [
+            109,
+            162,
+            165,
+            169,
+            170,
+            175,
+            178,
+            181,
+            184
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Detached health recording receives owned arguments and a free clock function. Completion recording is directly awaited with the shared context, and the public wrappers copy their override before returning the Task."
+        }
+      ]
     },
     "src/types.cpp": {
       "reviewed": false,

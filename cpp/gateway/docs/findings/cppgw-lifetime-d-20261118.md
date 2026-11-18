@@ -247,7 +247,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/sentinel/upstream_capture.cpp`
 - [x] `src/serve.cpp`
 - [x] `src/static.cpp`
-- [ ] `src/systemone/handlers.cpp`
+- [x] `src/systemone/handlers.cpp`
 - [ ] `src/types.cpp`
 - [ ] `src/upstream_wire.cpp`
 - [ ] `src/utils.cpp`
@@ -1347,6 +1347,15 @@ Reviewed static asset-map lifetime, process-wide configuration, request content 
 - L214, 215, 312, 317 **SAFE** · Header enumeration returns an owned vector. The ranking and sort callbacks consume references only inside synchronous operations on local containers.
 - L343, 344, 347, 353, 360, 368, 373, 378 **SAFE** · Static lookup copies the shared asset pointer before awaiting. Root handling holds a request value, uses immutable module data, and retains the KV handle returned by the lookup.
 
+### `src/systemone/handlers.cpp`
+
+Reviewed request parsing, provider hooks and usage callbacks for the System One terminal route.
+
+- L27, 28, 36, 48, 58, 61, 97, 110 **SAFE** · Static model and error views refer to literals. Parsed JSON entry pointers are consumed synchronously while input values remain owned.
+- L124, 126, 132, 140, 141 **SAFE** · Request, parsed payload, dependencies and usage context are frame-owned. The usage call is awaited while its shared context remains live.
+- L147, 148, 150, 151, 154, 155, 157, 158 **SAFE** · Provider hooks capture a shared context and are copied into the provider's owning frame. That frame awaits both the admission callback and the selected fetcher while retaining the exact callables it invoked.
+- L109, 162, 165, 169, 170, 175, 178, 181, 184 **SAFE** · Detached health recording receives owned arguments and a free clock function. Completion recording is directly awaited with the shared context, and the public wrappers copy their override before returning the Task.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1595,4 +1604,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-139/286 files reviewed. 297 sites: 276 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+140/286 files reviewed. 301 sites: 280 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
