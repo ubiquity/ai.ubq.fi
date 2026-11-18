@@ -286,7 +286,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_api_key_policy.hpp`
 - [x] `include/uos/authority/native_authority.hpp`
 - [x] `include/uos/authority/native_authority_api.hpp`
-- [ ] `include/uos/authority/native_authority_codex.hpp`
+- [x] `include/uos/authority/native_authority_codex.hpp`
 - [ ] `include/uos/authority/native_authority_contracts.hpp`
 - [ ] `include/uos/authority/native_authority_kernel.hpp`
 - [ ] `include/uos/authority/native_authority_paid.hpp`
@@ -1592,6 +1592,12 @@ Reviewed the API subcomponent's SQL borrow and synchronous admission interfaces.
 
 - L8, 16 **SAFE** · The enclosing native State owns SQL before constructing API and retains it throughout each synchronous command.
 
+### `include/uos/authority/native_authority_codex.hpp`
+
+Reviewed the Codex subcomponent's SQL, API and proof inputs.
+
+- L9, 10, 25, 29 **SAFE** · The enclosing native State owns both dependencies. The signal method consumes the optional classification pointer synchronously while its frame-owned value remains alive.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1840,4 +1846,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-178/286 files reviewed. 349 sites: 328 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+179/286 files reviewed. 350 sites: 329 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
