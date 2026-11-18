@@ -2809,7 +2809,8 @@
       "sites": []
     },
     "src/harmony/reliability/state.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Tool observation reducers and state normalization are synchronous. Returned state owns the values read from sources.",
       "sites": []
     },
     "src/harmony/reliability/surfaces.cpp": {

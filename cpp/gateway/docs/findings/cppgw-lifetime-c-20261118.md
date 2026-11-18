@@ -253,7 +253,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/reliability/hash.cpp`
 - [x] `src/harmony/reliability/loops.cpp`
 - [x] `src/harmony/reliability/retry.cpp`
-- [ ] `src/harmony/reliability/state.cpp`
+- [x] `src/harmony/reliability/state.cpp`
 - [ ] `src/harmony/reliability/surfaces.cpp`
 - [ ] `src/harmony/reliability/verify.cpp`
 - [ ] `src/harmony/render.cpp`
@@ -1612,3 +1612,7 @@ Loop detection and ordered-map observation execute synchronously. Returned flags
 ### `src/harmony/reliability/retry.cpp`
 
 Retry policy and ledger inspection are synchronous. Entry copies and scalar delay values travel outside the function.
+
+### `src/harmony/reliability/state.cpp`
+
+Tool observation reducers and state normalization are synchronous. Returned state owns the values read from sources.
