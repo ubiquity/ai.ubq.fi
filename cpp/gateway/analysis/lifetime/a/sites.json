@@ -339,8 +339,51 @@
       ]
     },
     "include/uos/rt/clock.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "The injected Clock methods are synchronous. Loop's borrowed Clock dependency is assessed in async.cpp and async.hpp.",
+      "sites": [
+        {
+          "lines": [
+            75,
+            78,
+            94,
+            96,
+            99
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Timeout timer ownership",
+          "reason": "Timeout is a shared handle and the implementation consumes its state accessor within synchronous timer operations."
+        },
+        {
+          "lines": [
+            102,
+            108,
+            111,
+            115,
+            117,
+            127,
+            128,
+            129,
+            130,
+            134,
+            141,
+            145,
+            151,
+            153
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Timer registration and scheduling API",
+          "reason": "Registration accepts an owning callable by value, clearing borrows only synchronously, and sleep creates and owns its result independently of the caller."
+        }
+      ]
     },
     "src/rt/async.cpp": {
       "status": "pending",

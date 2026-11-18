@@ -35,7 +35,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/abort.cpp`
 - [x] `include/uos/rt/abort.hpp`
 - [x] `src/rt/clock.cpp`
-- [ ] `include/uos/rt/clock.hpp`
+- [x] `include/uos/rt/clock.hpp`
 - [ ] `src/rt/async.cpp`
 - [ ] `include/uos/rt/async.hpp`
 - [ ] `src/rt/process_loop.cpp`
@@ -101,18 +101,25 @@ Timer APIs are synchronous. The one Task-returning overload creates an owning re
 - **SAFE** `234, 236, 242, 244, 246, 247, 251, 254, 260, 264, 265, 268` (c/d), Timer dispatch and callback rearm. The dispatcher pins the timer, erases the map entry and moves out the callable before invoking code that may clear or rearm it.
 - **SAFE** `272, 273, 276, 277, 280, 281` (c/d), Timer teardown. Teardown owns a detached map and releases moved callbacks after marking the corresponding timers disarmed.
 
+### `include/uos/rt/clock.hpp`
+
+The injected Clock methods are synchronous. Loop's borrowed Clock dependency is assessed in async.cpp and async.hpp.
+
+- **SAFE** `75, 78, 94, 96, 99` (b/c), Timeout timer ownership. Timeout is a shared handle and the implementation consumes its state accessor within synchronous timer operations.
+- **SAFE** `102, 108, 111, 115, 117, 127, 128, 129, 130, 134, 141, 145, 151, 153` (b/c), Timer registration and scheduling API. Registration accepts an owning callable by value, clearing borrows only synchronously, and sleep creates and owns its result independently of the caller.
+
 ## Ranked defects and counts
 
-Reviewed **3/30 files** and **16 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **4/30 files** and **18 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 0 | 1 | 0 |
-| b. Borrowed coroutine parameter or receiver | 0 | 4 | 0 |
-| c. Callback ownership or cycle | 1 | 14 | 1 |
+| b. Borrowed coroutine parameter or receiver | 0 | 6 | 0 |
+| c. Callback ownership or cycle | 1 | 16 | 1 |
 | d. Container invalidation | 1 | 5 | 0 |
 | e. GCC 12 await-expression rule | 0 | 0 | 0 |
-| **Unique site groups** | 1 | 14 | 1 |
+| **Unique site groups** | 1 | 16 | 1 |
 
 ### 1. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
 
