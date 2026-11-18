@@ -1544,8 +1544,19 @@
       "note": "The experiment takes an owning telemetry baseline value. No inline coroutine or registration."
     },
     "include/uos/cache/scope_experiment_model.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "44,158-187",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Experiment options and response read contract",
+          "evidence": "ReadSample takes Response and expected model by value. State and evidence parsing reads JSON views synchronously and returns owned records."
+        }
+      ]
     },
     "include/uos/cache/scope_experiment_targets.hpp": {
       "reviewed": false,
