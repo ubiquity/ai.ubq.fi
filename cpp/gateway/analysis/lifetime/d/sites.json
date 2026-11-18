@@ -2445,8 +2445,24 @@
       ]
     },
     "src/authority/native_authority_runtime.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed native runtime verification and routing, including retained-history authorization and synchronous row snapshots.",
+      "sites": [
+        {
+          "lines": [
+            72,
+            121,
+            142
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The bound NativeAuthority port retains its enclosing State, runtime and injected verifier through settlement. The binding, request and intent offered to the verifier are value parameters of the awaiting frame."
+        }
+      ]
     },
     "src/authority/native_authority_sql.cpp": {
       "reviewed": false,

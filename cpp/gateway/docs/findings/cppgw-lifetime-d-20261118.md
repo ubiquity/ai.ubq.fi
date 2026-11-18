@@ -108,7 +108,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_authority_paid.cpp`
 - [x] `src/authority/native_authority_principals.cpp`
 - [x] `src/authority/native_authority_rpc.cpp`
-- [ ] `src/authority/native_authority_runtime.cpp`
+- [x] `src/authority/native_authority_runtime.cpp`
 - [ ] `src/authority/native_authority_sql.cpp`
 - [ ] `src/authority/native_codex.cpp`
 - [ ] `src/authority/native_codex_429.cpp`
@@ -698,6 +698,12 @@ Reviewed command parsing, server and client adapters, and escaping transport cal
 - L133, 143, 152, 161, 256, 257, 260, 264, 267, 277, 278 **SAFE** · Each server transport lambda is a noncoroutine factory and transfers a port or copied callable and binding to an owning child frame before returning. Each injected callable remains live through its direct wait.
 - L175, 184, 193, 270, 271, 272, 273, 281, 282 **SAFE** · The synchronous facade copies each transport, epoch and argument object into the named client Task. The Task owns its encoded command and callback until the reply.
 
+### `src/authority/native_authority_runtime.cpp`
+
+Reviewed native runtime verification and routing, including retained-history authorization and synchronous row snapshots.
+
+- L72, 121, 142 **SAFE** · The bound NativeAuthority port retains its enclosing State, runtime and injected verifier through settlement. The binding, request and intent offered to the verifier are value parameters of the awaiting frame.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -803,4 +809,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-43/286 files reviewed. 133 sites: 124 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+44/286 files reviewed. 134 sites: 125 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
