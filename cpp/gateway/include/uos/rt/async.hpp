@@ -216,7 +216,8 @@ namespace uos::rt {
     }
 
     template <class T> Task<T> awaitOwned(std::shared_ptr<PromiseState<T>> state) {
-      co_await awaitSettled(state);
+      auto ready = awaitSettled(state);
+      co_await std::move(ready);
       if (state->status == PromiseCore::Status::rejected) rethrow(state->error);
       if constexpr (!std::is_void_v<T>) co_return std::move(*state->value);
     }
@@ -372,7 +373,8 @@ namespace uos::rt {
 
   private:
     static Task<T> awaitState(std::shared_ptr<detail::PromiseState<T>> state) {
-      co_await detail::awaitSettled(state);
+      auto ready = detail::awaitSettled(state);
+      co_await std::move(ready);
       if (state->status == detail::PromiseCore::Status::rejected) rethrow(state->error);
       if constexpr (!std::is_void_v<T>) co_return *state->value;
     }

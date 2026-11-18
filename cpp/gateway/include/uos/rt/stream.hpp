@@ -513,7 +513,8 @@ namespace uos::rt {
       if (tee->canceled1 && tee->canceled2) adopt(tee->cancelPromise, cancelStream(tee->source, makeReason(TeeCancelReason(tee->reason1, tee->reason2))));
       auto cancelPromise = tee->cancelPromise;
       tee.reset();
-      co_await awaitSettled(cancelPromise);
+      auto cancelled = awaitSettled(cancelPromise);
+      co_await std::move(cancelled);
       if (cancelPromise->status == PromiseCore::Status::rejected) rethrow(cancelPromise->error);
     }
 
