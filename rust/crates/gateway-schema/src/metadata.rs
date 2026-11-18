@@ -96,14 +96,15 @@ pub struct ResolvedMetadata {
     pub reasoning_source: String,
 }
 pub fn resolved_auto_compact(window: i64, configured: Option<i64>) -> i64 {
-    if let Some(n) = configured.filter(|n| *n > 0 && *n <= window) {
-        return n;
-    }
-    if window > 50_000 {
-        ((window as f64 * 0.85).floor() as i64).min(window - 50_000)
+    let derived = if window > 50_000 {
+        ((window as f64 * 0.90).floor() as i64).min(window - 50_000)
     } else {
-        1.max((window - 1).min((window as f64 * 0.85).floor() as i64))
-    }
+        1.max((window - 1).min((window as f64 * 0.90).floor() as i64))
+    };
+    // A source may declare an earlier limit, but never one above the global rule.
+    configured
+        .filter(|n| *n > 0 && *n <= window)
+        .map_or(derived, |n| n.min(derived))
 }
 fn first_positive(values: impl IntoIterator<Item = Option<i64>>) -> Option<i64> {
     values

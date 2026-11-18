@@ -7,7 +7,6 @@ import { buildRuntimeConfig, cacheRuntimeConfig, normalizeRuntimeConfig, RUNTIME
 import { getString, isRecord } from "../utils.ts";
 import { DEEPSEEK_CONTEXT_WINDOW_TOKENS, DEEPSEEK_DISPLAY_NAMES, DEEPSEEK_OFFICIAL_MODEL_IDS, readDeepSeekApiKey } from "../deepseek/index.ts";
 import {
-  DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT,
   DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
   DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
   DEEPSEEK_WATERFALL_DESCRIPTION,
@@ -17,6 +16,7 @@ import {
   DEEPSEEK_WATERFALL_REASONING_LEVELS,
 } from "../deepseek/waterfall.ts";
 import { FORWARDED_PAYLOAD_POLICY } from "../deepseek/forwarded-payload-policy.ts";
+import { deriveAutoCompactTokenLimit } from "../recent-model-context.ts";
 import { CEREBRAS_MODELS, readCerebrasApiKey } from "../provider/cerebras.ts";
 import { CEREBRAS_MODEL_DISPLAY_NAMES } from "../input-normalization.ts";
 import { cerebrasProviderHint } from "../request-policy.ts";
@@ -325,7 +325,7 @@ export const buildDeepSeekWaterfallCodexRecord = (): Record<string, unknown> => 
   default_reasoning_level: DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
   context_window: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
   max_context_window: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
-  auto_compact_token_limit: DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT,
+  auto_compact_token_limit: deriveAutoCompactTokenLimit(DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS),
   effective_context_window_percent: DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
   shell_type: "shell_command",
   visibility: "list",

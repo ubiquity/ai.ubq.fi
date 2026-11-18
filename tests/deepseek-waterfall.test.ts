@@ -5,8 +5,7 @@ import { buildDeepSeekWaterfallCodexRecord } from "../src/catalog/models.ts";
 import { handleDeepSeekWaterfallResponses, type DeepSeekWaterfallDispatch, type DeepSeekWaterfallPaidTail } from "../src/deepseek/waterfall-handler.ts";
 import { resolvePaidRoutingState } from "../src/paid-fallback/health.ts";
 import {
-  DEEPSEEK_WATERFALL_AUTO_COMPACT_PERCENT,
-  DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT,
+  DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
   DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
   DEEPSEEK_WATERFALL_DISPLAY_NAME,
   DEEPSEEK_WATERFALL_LEGACY_MODEL_ID,
@@ -63,8 +62,7 @@ test("waterfall: the synthetic id is versionless and uses provider-owned latest 
   assert.equal(DEEPSEEK_WATERFALL_PROVIDER_MODEL.lithos, "deepseek-ai/DeepSeek-V4.1-Flash");
   assert.equal(DEEPSEEK_WATERFALL_PROVIDER_MODEL.surplus, "deepseek-v4.1-flash");
   assert.equal(DEEPSEEK_WATERFALL_PROVIDER_MODEL.openlux, "deepseek-v4.1-flash");
-  assert.equal(DEEPSEEK_WATERFALL_AUTO_COMPACT_PERCENT, 75);
-  assert.equal(DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT, 747_110);
+  assert.equal(DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS, 800_000);
 });
 
 test("waterfall: aliases resolve the newest provider base without dropping any provider", () => {
@@ -228,8 +226,9 @@ test("waterfall: the Codex catalogue record carries the advertised contract", ()
     [...DEEPSEEK_WATERFALL_REASONING_LEVELS]
   );
   assert.deepEqual(row.supported_endpoint_types, ["openai-response"]);
-  assert.equal(row.context_window, 1_048_576);
-  assert.equal(row.auto_compact_token_limit, 747_110);
+  assert.equal(row.context_window, 800_000);
+  assert.equal(row.max_context_window, 800_000);
+  assert.equal(row.auto_compact_token_limit, 720_000);
 });
 
 const sseBody = (events: readonly Record<string, unknown>[]): string =>
