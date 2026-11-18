@@ -5450,8 +5450,27 @@
       ]
     },
     "src/runtime_config.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed runtime configuration reads, coalescing and synchronous parsers.",
+      "sites": [
+        {
+          "lines": [
+            204,
+            214,
+            225,
+            227,
+            343,
+            350
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each waiter copies the Promise. Refresh retains stale config, KV and entry by value and only touches the process cache synchronously."
+        }
+      ]
     },
     "src/sentinel/incident_outbox.cpp": {
       "reviewed": false,

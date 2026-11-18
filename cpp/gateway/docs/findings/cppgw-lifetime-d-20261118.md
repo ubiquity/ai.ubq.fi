@@ -230,7 +230,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/responses_native_headers.cpp`
 - [x] `src/responses_request.cpp`
 - [x] `src/responses_stream.cpp`
-- [ ] `src/runtime_config.cpp`
+- [x] `src/runtime_config.cpp`
 - [ ] `src/sentinel/incident_outbox.cpp`
 - [ ] `src/sentinel/replay_admin.cpp`
 - [ ] `src/sentinel/replay_capture.cpp`
@@ -1209,6 +1209,12 @@ Reviewed parsed-body selection, model and reasoning metadata, and synchronous no
 
 - L61, 97, 103, 106, 110, 111, 145, 150 **SAFE** · Body and telemetry pointers borrow from the calling handler or image frame, which directly awaits these tasks. JSON member borrows refer to frame-owned snapshots, and the named metadata result stays live through reasoning normalization.
 
+### `src/runtime_config.cpp`
+
+Reviewed runtime configuration reads, coalescing and synchronous parsers.
+
+- L204, 214, 225, 227, 343, 350 **SAFE** · Each waiter copies the Promise. Refresh retains stale config, KV and entry by value and only touches the process cache synchronously.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1457,4 +1463,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-122/286 files reviewed. 241 sites: 223 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+123/286 files reviewed. 242 sites: 224 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
