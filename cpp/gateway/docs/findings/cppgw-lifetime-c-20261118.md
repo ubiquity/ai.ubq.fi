@@ -193,7 +193,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/banked_reset_claim.cpp`
 - [x] `src/codex/banked_reset_pool.cpp`
 - [x] `src/codex/banked_reset_provider.cpp`
-- [ ] `src/codex/banked_reset_submission.cpp`
+- [x] `src/codex/banked_reset_submission.cpp`
 - [ ] `src/codex/capacity_routing.cpp`
 - [ ] `src/codex/dispatch.cpp`
 - [ ] `src/codex/experiment.cpp`
@@ -1233,3 +1233,11 @@ The default provider is a thin synchronous factory around coroutine tasks using 
 - 95 · body cancel spawn · **SAFE** · ByteStream::cancel starts from a shared stream handle and transfers operation state to its returned task before the local optional body disappears.
 - 150-233,238-245 · bound member calls, fetch, and JSON reads · **SAFE** · The virtual wrapper copies Bound into the free coroutine. Bound retains the Fetch callable, and the request, response and JSON owners survive their awaits.
 - 441-494 · inventory diagnostic awaits · **SAFE** · Each display frame keeps its resolved fetcher, signal, response, and parsed result, and the credit loop runs over a local value after the read.
+
+### `src/codex/banked_reset_submission.cpp`
+
+Reset submission and verification keep the provider and its inputs alive from admission through settlement.
+
+- 85-148,192-255,261-405 · provider method and preflight joins · **SAFE** · The joined tasks own their provider/dependency bundle and KV. Credit, response and record references point into local result snapshots.
+- 412-429,451-485,488-560,568-610 · submit, verify, and receipt awaits · **SAFE** · The provider owner stays in the submitting frame through the result wait. Intermediate observers are synchronous and swallow their own exceptions.
+- 614-622,666-825,828-837 · store selection and claim driver · **SAFE** · Dependency, callback and claimed variant values are owned in the awaited frames. No live cursor or borrow from the shared store is retained.

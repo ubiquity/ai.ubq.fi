@@ -1870,8 +1870,28 @@
       ]
     },
     "src/codex/banked_reset_submission.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Reset submission and verification keep the provider and its inputs alive from admission through settlement.",
+      "sites": [
+        {
+          "lines": "85-148,192-255,261-405",
+          "kind": "provider method and preflight joins",
+          "verdict": "SAFE",
+          "reason": "The joined tasks own their provider/dependency bundle and KV. Credit, response and record references point into local result snapshots."
+        },
+        {
+          "lines": "412-429,451-485,488-560,568-610",
+          "kind": "submit, verify, and receipt awaits",
+          "verdict": "SAFE",
+          "reason": "The provider owner stays in the submitting frame through the result wait. Intermediate observers are synchronous and swallow their own exceptions."
+        },
+        {
+          "lines": "614-622,666-825,828-837",
+          "kind": "store selection and claim driver",
+          "verdict": "SAFE",
+          "reason": "Dependency, callback and claimed variant values are owned in the awaited frames. No live cursor or borrow from the shared store is retained."
+        }
+      ]
     },
     "src/codex/capacity_routing.cpp": {
       "status": "pending",
