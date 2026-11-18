@@ -10,12 +10,12 @@ component tests, and this report. The TypeScript oracle, wire formats, committed
 fixtures, deployment configuration, and production state are outside the edit
 scope.
 
-| Surface | Required behavior |
-| --- | --- |
-| Ordinary values | Existing Bun vectors, error semantics, and codec performance |
-| Sparse arrays | Bun's length, own indices, and undefined behavior with allocation based on present entries |
-| Object graph | Preserve identity across JSC, typed interchange, and both offline conversion directions |
-| Offline fixture | Run the original forward/reverse proof against disposable, stopped data with pinned Deno |
+| Surface         | Required behavior                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------ |
+| Ordinary values | Existing Bun vectors, error semantics, and codec performance                               |
+| Sparse arrays   | Bun's length, own indices, and undefined behavior with allocation based on present entries |
+| Object graph    | Preserve identity across JSC, typed interchange, and both offline conversion directions    |
+| Offline fixture | Run the original forward/reverse proof against disposable, stopped data with pinned Deno   |
 
 The baseline is `55afcc8b13b2ddd10747355745da19e5264f7b76`. Bun 1.4.0
 deserializes `05000000012cfbff00ffffffff` to an array of length 16,775,980
@@ -169,3 +169,41 @@ The out-of-scope `src/rt/kv_js.cpp` projection still constructs dense JSON
 output for arrays. Its cyclic JSON stringify path hits its recursion
 guard and emits a RangeError, while Bun's JSON.stringify emits a TypeError.
 Storage codecs and interchange avoid the dense projection.
+
+## Continuation at `d8214f50`
+
+The inherited implementation and tests were clean at commit
+`d8214f50b1a1480785f5dee89215ea79478ef304`, tree
+`6a0c25d44e3c0f015b767f9aa0b295b624d6a716`. The next gate retains
+work contract v1. The 7 production files have 691 added and 472 deleted
+physical lines against `55afcc8b`. The existing reader and wire format
+remain in use.
+
+```sh
+python3 -B /tmp/kv-graph/build-tests.py release --jobs 4 \
+  rt/kv_jsc_sparse_test.cpp rt/kv_jsc_deserialize_test.cpp \
+  kv_conversion_typed_value_differential_test.cpp \
+  kv_conversion_proof_differential_test.cpp kv_conversion_convert_differential_test.cpp
+git diff --check 55afcc8b
+```
+
+The optimized inherited build passed all 40 cases in 5 binaries.
+The Bun 1.4.0 recheck used the test's hex strings, `node:v8.deserialize`,
+and the repository's TypeScript `encodeTypedValue` under an empty home and
+`bun --no-env-file --no-install`. All 15 lengths, present-index lists and
+hole reads matched. The allocation probe measured 6,184 to 9,171 total
+requested heap bytes per complete read, interchange, write and reread.
+
+The earlier plain sweep completed on this same source tree with 439/442
+binaries and 5,023/5,029 cases. All first-party units compiled. The SQLite
+case failures reproduced with the distribution's 3.45.1, and the URL/IDNA
+cases failed with ICU 74.2. Focused relinks of the same tests passed 29/29
+and 2/2 in both profiles with SQLite 3.54.0 and ICU 78.3. The remaining
+plain failure was an elapsed-time assertion in the unrelated supervisor
+redactor at `-O0`. The interrupted instrumented run and these diagnostic
+runs precede the final corrected sweeps.
+
+Fetching `development` and the C++ port branch succeeded. GitHub CLI
+reported no authenticated session and `git push --dry-run` to the
+existing task branch could not obtain an HTTPS username. The task
+commits are preserved on `agent-job` for the branch owner.
