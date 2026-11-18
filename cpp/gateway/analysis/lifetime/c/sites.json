@@ -1720,8 +1720,40 @@
       ]
     },
     "src/codex/auth_refresh.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Refresh routing uses owned account snapshots and shares work while aborting only the current wait.",
+      "sites": [
+        {
+          "lines": "89-115,135-181,207-279",
+          "kind": "response and refresh persistence awaits",
+          "verdict": "SAFE",
+          "reason": "Response, parsed pool copies and database owners live in the joined frames, and the refresh decisions use scalar generation values."
+        },
+        {
+          "lines": "281-420,438-454,460-517",
+          "kind": "lease, account, and retry awaits",
+          "verdict": "SAFE",
+          "reason": "Each child receives copies of credentials, lease key and KV owner. Owner and lease views refer to local JSON and are consumed within one iteration."
+        },
+        {
+          "lines": "535-548",
+          "kind": "abort listener ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "While shared refresh is pending, the signal owns its listener and the listener owns the same signal. Teardown before settlement or abort discards the finalizer without breaking that edge. Capture a weak signal state in the once listener and use the settled signal reason while the state is locked."
+        },
+        {
+          "lines": "538,543-549",
+          "kind": "executor and sibling lifetime",
+          "verdict": "SAFE",
+          "reason": "newPromise calls its executor synchronously, and the abort race passes only owning promise values. Its shared-work finalizer owns the exact listener identity to remove on settlement."
+        },
+        {
+          "lines": "554-608",
+          "kind": "stateless refresh and single-flight finalizer",
+          "verdict": "SAFE",
+          "reason": "Request and auth inputs are frame-owned. The hash-map value is copied before waiting and the registered eraser owns the account ID."
+        }
+      ]
     },
     "src/codex/auth_repair.cpp": {
       "status": "pending",

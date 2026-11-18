@@ -187,7 +187,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/chat/stream_translation.cpp`
 - [x] `src/codex/account_routing.cpp`
 - [x] `src/codex/auth.cpp`
-- [ ] `src/codex/auth_refresh.cpp`
+- [x] `src/codex/auth_refresh.cpp`
 - [ ] `src/codex/auth_repair.cpp`
 - [ ] `src/codex/banked_reset.cpp`
 - [ ] `src/codex/banked_reset_claim.cpp`
@@ -1184,3 +1184,13 @@ Auth pool cache accesses are synchronous or start with a copied handle. Probe ou
 - 192-223,608-661 · probe, health, and transition awaits · **SAFE** · Tasks and health writes receive owned response, account and transition data. The map keeps the promise value until settlement and no iterator into it is saved.
 - 333-383 · auth pool load and seed · **SAFE** · The frame owns its KV, row, seed and binding inputs. The local AtomicOperation is kept through the commit.
 - 680-704 · cache promise and finalizer · **SAFE** · The function copies the cached pool or in-flight Promise before a wait, and the zero-capture finalizer only accesses the module cache.
+
+### `src/codex/auth_refresh.cpp`
+
+Refresh routing uses owned account snapshots and shares work while aborting only the current wait.
+
+- 89-115,135-181,207-279 · response and refresh persistence awaits · **SAFE** · Response, parsed pool copies and database owners live in the joined frames, and the refresh decisions use scalar generation values.
+- 281-420,438-454,460-517 · lease, account, and retry awaits · **SAFE** · Each child receives copies of credentials, lease key and KV owner. Owner and lease views refer to local JSON and are consumed within one iteration.
+- 535-548 · abort listener ownership cycle · **DEFECT** · While shared refresh is pending, the signal owns its listener and the listener owns the same signal. Teardown before settlement or abort discards the finalizer without breaking that edge. Capture a weak signal state in the once listener and use the settled signal reason while the state is locked.
+- 538,543-549 · executor and sibling lifetime · **SAFE** · newPromise calls its executor synchronously, and the abort race passes only owning promise values. Its shared-work finalizer owns the exact listener identity to remove on settlement.
+- 554-608 · stateless refresh and single-flight finalizer · **SAFE** · Request and auth inputs are frame-owned. The hash-map value is copied before waiting and the registered eraser owns the account ID.
