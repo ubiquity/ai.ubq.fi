@@ -248,7 +248,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/probes.cpp`
 - [x] `src/harmony/reliability/context.cpp`
 - [x] `src/harmony/reliability/failure.cpp`
-- [ ] `src/harmony/reliability/feedback.cpp`
+- [x] `src/harmony/reliability/feedback.cpp`
 - [ ] `src/harmony/reliability/harness.cpp`
 - [ ] `src/harmony/reliability/hash.cpp`
 - [ ] `src/harmony/reliability/loops.cpp`
@@ -1587,3 +1587,7 @@ Transcript sizing, compaction and rendering are synchronous. Indexes and views a
 ### `src/harmony/reliability/failure.cpp`
 
 Reliability classification is synchronous and returns owning results.
+
+### `src/harmony/reliability/feedback.cpp`
+
+Tool argument validation and feedback projection use synchronous calls with live JSON arguments.

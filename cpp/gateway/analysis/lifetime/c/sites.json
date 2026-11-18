@@ -2759,7 +2759,8 @@
       "sites": []
     },
     "src/harmony/reliability/feedback.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Tool argument validation and feedback projection use synchronous calls with live JSON arguments.",
       "sites": []
     },
     "src/harmony/reliability/harness.cpp": {
