@@ -896,8 +896,16 @@
       ]
     },
     "include/uos/paid_fallback/claude_code_route.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The subscription attempt receives its body and options as values.",
+      "sites": [
+        {
+          "lines": "21",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The attempt owns the body and options while dispatching; telemetry referents are retained by its joined caller."
+        }
+      ]
     },
     "include/uos/paid_fallback/health.hpp": {
       "status": "pending",

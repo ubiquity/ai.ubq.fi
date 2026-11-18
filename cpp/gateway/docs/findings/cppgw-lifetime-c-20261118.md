@@ -122,7 +122,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/live/routes.hpp`
 - [x] `include/uos/live/sideband.hpp`
 - [x] `include/uos/live/upstream.hpp`
-- [ ] `include/uos/paid_fallback/claude_code_route.hpp`
+- [x] `include/uos/paid_fallback/claude_code_route.hpp`
 - [ ] `include/uos/paid_fallback/health.hpp`
 - [ ] `include/uos/paid_fallback/index.hpp`
 - [ ] `include/uos/paid_fallback/ledger_admission.hpp`
@@ -795,3 +795,9 @@ Live sideband handler and upgrade factory API.
 Live upstream helpers and mapping API.
 
 - 36-38 · owning task parameters · **SAFE** · Mapping operations retain their IDs across KV awaits, including detached retirement.
+
+### `include/uos/paid_fallback/claude_code_route.hpp`
+
+The subscription attempt receives its body and options as values.
+
+- 21 · owning task parameters · **SAFE** · The attempt owns the body and options while dispatching; telemetry referents are retained by its joined caller.
