@@ -2709,7 +2709,8 @@
       "sites": []
     },
     "src/harmony/conversation.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Conversation transforms are synchronous. They return owned copies and do not suspend while iterating turns.",
       "sites": []
     },
     "src/harmony/parse.cpp": {

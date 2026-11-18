@@ -242,7 +242,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/embeddings/voyage.cpp`
 - [x] `src/harmony/adapter.cpp`
 - [x] `src/harmony/classifier.cpp`
-- [ ] `src/harmony/conversation.cpp`
+- [x] `src/harmony/conversation.cpp`
 - [ ] `src/harmony/parse.cpp`
 - [ ] `src/harmony/probe_scenarios.cpp`
 - [ ] `src/harmony/probes.cpp`
@@ -1558,3 +1558,7 @@ The Harmony transport makes its callable owner explicit, including when a consum
 ### `src/harmony/classifier.cpp`
 
 Classifier request and verdict conversion are synchronous and consume each view while its owning response is live.
+
+### `src/harmony/conversation.cpp`
+
+Conversation transforms are synchronous. They return owned copies and do not suspend while iterating turns.
