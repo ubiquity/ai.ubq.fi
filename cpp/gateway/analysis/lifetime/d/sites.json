@@ -7619,8 +7619,41 @@
       ]
     },
     "include/uos/authority/contracts.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the ordered record helper and authority store contract.",
+      "sites": [
+        {
+          "lines": [
+            25,
+            26,
+            27,
+            38,
+            42,
+            243,
+            244
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Lookups borrow the record's own entries, used synchronously or against an immutable frame-local snapshot. Key iteration returns copied strings and the sorter runs inline."
+        },
+        {
+          "lines": [
+            215,
+            216,
+            217
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The authority owner retains the store during reads and CAS. Snapshot and update state pass by value."
+        }
+      ]
     },
     "include/uos/authority/credential_publication.hpp": {
       "reviewed": false,

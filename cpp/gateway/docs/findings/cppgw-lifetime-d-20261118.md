@@ -277,7 +277,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/auth/relay.hpp`
 - [x] `include/uos/authority/admission_state.hpp`
 - [x] `include/uos/authority/authority_rpc.hpp`
-- [ ] `include/uos/authority/contracts.hpp`
+- [x] `include/uos/authority/contracts.hpp`
 - [ ] `include/uos/authority/credential_publication.hpp`
 - [ ] `include/uos/authority/delivery_outbox.hpp`
 - [ ] `include/uos/authority/durable_store.hpp`
@@ -1539,6 +1539,13 @@ Reviewed portable server/client interfaces and shared transport storage.
 
 - L31, 37, 38, 42, 44, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 67, 69 **SAFE** · Current adapters keep the named RPC receivers alive and transfer values through the transport. Each receiver owns its delegated authority or transport.
 
+### `include/uos/authority/contracts.hpp`
+
+Reviewed the ordered record helper and authority store contract.
+
+- L25, 26, 27, 38, 42, 243, 244 **SAFE** · Lookups borrow the record's own entries, used synchronously or against an immutable frame-local snapshot. Key iteration returns copied strings and the sorter runs inline.
+- L215, 216, 217 **SAFE** · The authority owner retains the store during reads and CAS. Snapshot and update state pass by value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1787,4 +1794,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-169/286 files reviewed. 340 sites: 319 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+170/286 files reviewed. 342 sites: 321 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
