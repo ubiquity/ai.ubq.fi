@@ -255,7 +255,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/reliability/retry.cpp`
 - [x] `src/harmony/reliability/state.cpp`
 - [x] `src/harmony/reliability/surfaces.cpp`
-- [ ] `src/harmony/reliability/verify.cpp`
+- [x] `src/harmony/reliability/verify.cpp`
 - [ ] `src/harmony/render.cpp`
 - [ ] `src/harmony/tools/backend.cpp`
 - [ ] `src/harmony/tools/fakes.cpp`
@@ -1620,3 +1620,7 @@ Tool observation reducers and state normalization are synchronous. Returned stat
 ### `src/harmony/reliability/surfaces.cpp`
 
 Provider surface assertions and request descriptions are synchronous. The returned records own their inspected fields.
+
+### `src/harmony/reliability/verify.cpp`
+
+Verification and final-answer checks evaluate synchronous snapshots. No callback or container reference crosses a wait.

@@ -2819,7 +2819,8 @@
       "sites": []
     },
     "src/harmony/reliability/verify.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Verification and final-answer checks evaluate synchronous snapshots. No callback or container reference crosses a wait.",
       "sites": []
     },
     "src/harmony/render.cpp": {
