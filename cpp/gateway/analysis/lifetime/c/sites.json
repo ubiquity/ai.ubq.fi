@@ -1205,8 +1205,16 @@
       ]
     },
     "include/uos/provider/claude_capacity_history.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Claude capacity recording and reading.",
+      "sites": [
+        {
+          "lines": "28-30",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The reader and recorder own their store and inputs."
+        }
+      ]
     },
     "include/uos/provider/claude_capacity_rollups.hpp": {
       "status": "pending",
