@@ -2126,7 +2126,8 @@
       ]
     },
     "src/codex/quota.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Header classification and redaction are synchronous. Header iteration uses keys owned for the loop and each suffix view refers to static storage.",
       "sites": []
     },
     "src/codex/rate_limit_429.cpp": {

@@ -204,7 +204,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/native_auth.cpp`
 - [x] `src/codex/native_auth_transport.cpp`
 - [x] `src/codex/overage_settings.cpp`
-- [ ] `src/codex/quota.cpp`
+- [x] `src/codex/quota.cpp`
 - [ ] `src/codex/rate_limit_429.cpp`
 - [ ] `src/codex/reset_settings.cpp`
 - [ ] `src/codex/responses_error.cpp`
@@ -1318,3 +1318,7 @@ The refresh builds fresh overage rows before replacing shared state.
 
 - 42-56 · KV read and write · **SAFE** · Each task retains KV and its key/value arguments until the operation finishes.
 - 64-95 · capturing coroutine and nested fail-fast joins · **SAFE** · rt::async owns the captured account and KV independently of the parent. Both nested hash tasks take owning inputs and the final map mutation uses copied output rows.
+
+### `src/codex/quota.cpp`
+
+Header classification and redaction are synchronous. Header iteration uses keys owned for the loop and each suffix view refers to static storage.
