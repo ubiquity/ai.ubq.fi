@@ -126,7 +126,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/paid_fallback/health.hpp`
 - [x] `include/uos/paid_fallback/index.hpp`
 - [x] `include/uos/paid_fallback/ledger_admission.hpp`
-- [ ] `include/uos/paid_fallback/ledger_backfill.hpp`
+- [x] `include/uos/paid_fallback/ledger_backfill.hpp`
 - [ ] `include/uos/paid_fallback/ledger_settlement.hpp`
 - [ ] `include/uos/paid_fallback/ledger_state.hpp`
 - [ ] `include/uos/paid_fallback/ledger_stats.hpp`
@@ -819,3 +819,9 @@ Paid reservation and terminal accounting API.
 Ledger admission, release and update declarations.
 
 - 38-39,57-70 · owning task parameters · **SAFE** · The coroutines retain keys, reservation inputs, patches and any store override as values.
+
+### `include/uos/paid_fallback/ledger_backfill.hpp`
+
+Backfill and reconciliation API with a copied shared-work promise.
+
+- 60-61,84-85,101-102,117,124-149 · owning task parameters · **SAFE** · The caller hands over store, options and reconciliation inputs by value; the scheduled-work accessor copies its promise handle.

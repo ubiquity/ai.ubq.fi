@@ -944,8 +944,16 @@
       ]
     },
     "include/uos/paid_fallback/ledger_backfill.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Backfill and reconciliation API with a copied shared-work promise.",
+      "sites": [
+        {
+          "lines": "60-61,84-85,101-102,117,124-149",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The caller hands over store, options and reconciliation inputs by value; the scheduled-work accessor copies its promise handle."
+        }
+      ]
     },
     "include/uos/paid_fallback/ledger_settlement.hpp": {
       "status": "pending",
