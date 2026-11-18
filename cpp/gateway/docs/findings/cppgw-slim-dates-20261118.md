@@ -31,7 +31,7 @@ The clean `agent-job` checkout matches `origin/agent-jobs/cppgw-integrate-f1-202
 `2b23fb6837e2b5c0dc9ffa50771f52d322dd413a`, tree `d4f9c3beb10816358c85e92c1c231421fa35fa48`. The incoming
 F1 report records 450 passing Release binaries and 5,104 passing cases. Its two shared validation failures
 belong to the separate paired conformance suite. This runner is Ubuntu 24.04.5 on AArch64 with four CPUs and
-15 GiB RAM. Local baseline results, the fixture-only API audit and publication access are pending.
+15 GiB RAM.
 
 First-party production counts use physical lines, including comments and blanks. `src/rt/date.cpp` starts at
 353 lines and `include/uos/rt/date.hpp` starts at 71, for 424 lines across the owned production files.
@@ -47,9 +47,13 @@ year digits and two month and day digits before calling `Date::UTC`.
 ## Runner setup
 
 Clang 21.1.8 and its sanitizer runtime came from the signed apt.llvm.org Noble 21 archive. Its key fingerprint
-is `6084F3CF814B57C1CF12EFD515CF4D18AF4F7421`. The runner installed the compiler and system libraries with
-`sudo -n apt-get install -y -qq clang-21 libclang-rt-21-dev llvm-21 libssl-dev zlib1g-dev libbrotli-dev libzstd-dev libicu-dev mold`.
-The driver used Ninja 1.13.2, mold 2.30.0, OpenSSL 3.0.13, zlib 1.3, Brotli 1.1.0 and Zstd 1.5.5.
+is `6084F3CF814B57C1CF12EFD515CF4D18AF4F7421`. The driver used Ninja 1.13.2, mold 2.30.0, OpenSSL 3.0.13, zlib
+1.3, Brotli 1.1.0 and Zstd 1.5.5.
+
+```bash
+sudo -n apt-get install -y -qq libssl-dev zlib1g-dev libbrotli-dev libzstd-dev libicu-dev mold
+sudo -n apt-get install -y -qq clang-21 libclang-rt-21-dev llvm-21
+```
 
 | Verified upstream archive        | SHA-256                                                            |
 | -------------------------------- | ------------------------------------------------------------------ |
@@ -109,7 +113,9 @@ Receipt `receipts/baseline-release.json` SHA-256 is
 2. `118f9ed5cde38a0038f66843f2beb2e89c589cb5` reuses year, clock and width formatting for the ISO and HTTP date
    strings. New controls cover both chrono calendar bounds, overflow in month, day and time components,
    TimeClip endpoints, applied UTC offsets and weekday spelling. One control cancels a very large year and
-   month and checks the literal date `0001-05-01T00:00:00.000Z`. The date fixture passed 7/7 cases.
+   month and checks the mathematically normalized `0001-05-01T00:00:00.000Z`. Bun 1.4.0 produces
+   `0000-09-01T00:00:00.000Z` for those extreme operands. The gateway day-key parser cannot supply them.
+   The date fixture passed 7/7 cases.
 3. `7e9a4bac9382dec76a4641dcf1df2e055077e691` removes the fixture-only methods and adds
    `Date::utcFields()` and `Date::fromUtc()`. All 520 former setter inputs now check immutable reconstruction.
    The 2,050 parser inputs, 205 epoch inputs and 221 UTC constructor inputs are retained. The
@@ -178,5 +184,56 @@ bash "$scratch/run-release.sh" final-release
 
 The Release wrapper runs `bash "$scratch/ci-gate.sh" /usr/bin/time -o "$scratch/receipts/$label.time"
 -f 'wall_s=%e peak_process_kib=%M exit=%x' timeout -k 15s 90m bash cpp/gateway/tools/ci-build.sh
---config release "$@"` and preserves the driver receipt and results table. The full ASan/UBSan/LSan
-gate is running on the same candidate.
+--config release "$@"` and preserves the driver receipt and results table.
+
+The complete AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer gate passed **450/450 binaries
+and 5,105/5,105 cases** on the same candidate. Release and sanitizer receipts list the same targets and the same
+per-target case counts. The sanitizer build compiled all 369 production objects in 2,875.712 s, and link and
+test took 225.481 s. Each run log contains one successful network-isolation receipt with outside errno 101.
+The sanitizer scans found zero diagnostics in the 450 logs. The outer timing was
+`wall_s=3102.06 peak_process_kib=1107708 exit=0`. Receipt `receipts/final-asan.json` SHA-256 is
+`bf798337cf6990d4ecdd5a5aa4150e27cb3bb421bb263da4e8c55ee76640eb71`.
+
+```bash
+bash "$scratch/ci-gate.sh" /usr/bin/time -o "$scratch/receipts/final-asan.time" -f 'wall_s=%e peak_process_kib=%M exit=%x' \
+  timeout -k 15s 90m bash cpp/gateway/tools/ci-build.sh --config asan
+```
+
+## Findings outside the date edits
+
+The parser declaration comment and `docs/rt/text.md` still describe the legacy Bun parser. The text guide also
+lists the removed mutation and scalar getter APIs. The supported formats and immutable operations are recorded
+in the deviations appendix. [Runtime deviations](../DEVIATIONS-FROM-BUN.md)
+
+F1's separate paired conformance report records `chat-invalid-role` and `responses-invalid-tool-type` as open
+shared validation defects. Native and Bun returned HTTP 200 and dispatched upstream in those cases. The
+independent expectations require HTTP 400 and zero dispatch. [F1 paired conformance](cppgw-integrate-f1-20261118.md#paired-conformance)
+
+## Handoff
+
+The source and test tree is committed in three steps on `agent-job`. Later commits update this report. The
+format gate used Bun 1.4.0 and both frozen dependency manifests in runner scratch. Links validated all 450
+targets, and `git diff --check` passed. The branch diff covers five owned paths. Build output is in runner scratch.
+
+```bash
+(cd "$scratch/format" && bash "$scratch/ci-gate.sh" bun --no-env-file --no-install run format:check \
+  cpp/gateway/docs/DEVIATIONS-FROM-BUN.md cpp/gateway/docs/findings/cppgw-slim-dates-20261118.md)
+git diff --check 2b23fb68..HEAD
+git fetch --no-tags origin refs/heads/development:refs/remotes/origin/development
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false timeout -k 2s 25s git push --porcelain origin \
+  HEAD:refs/heads/agent-jobs/cppgw-slim-dates-20261118
+git merge-base --is-ancestor HEAD origin/development
+git bundle create "$scratch/cppgw-slim-dates-20261118.bundle" agent-job ^2b23fb68
+git bundle verify "$scratch/cppgw-slim-dates-20261118.bundle"
+```
+
+The push preflight and push exited 128 because GitHub write authentication is unavailable. The refreshed
+`origin/development` at `a3a96bc5fe96ba383936746fae23e64daa69562f` lacks the supplied F1 base and the task tip.
+The PR, merge and `development` checkout handoff remain pending. Runner scratch holds the verified Git bundle
+and gate receipts.
+
+**Summary.** C++20 `std::chrono` now handles UTC calendar operations. The refactor removes 98 first-party lines
+(424 to 326) and replaces fixture-only setters with immutable operations. Extreme opposing year and month
+inputs use mathematical normalization. Linux ARM64 Release and ASan/UBSan/LSan each passed 450 binaries and
+5,105 cases. The Codex Retry-After fixture retained HTTP 429 and the `1700000060000` ms reset. GitHub write
+authentication and the missing F1 ancestry on `development` block the handoff. The checkout is clean on `agent-job`.
