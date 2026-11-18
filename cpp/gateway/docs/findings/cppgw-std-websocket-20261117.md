@@ -4,11 +4,11 @@
 
 Qualify Beast for row 13 on `093a9e0511e9d0deae5495dc324e53ff4dccd719`, tree `cb6c6415cfd603f5aac070d424bc42b4642349e1`. Preserve the C++ socket API, gateway wire behavior and validation boundaries. Prefer the library's RFC 6455 and RFC 7692 behavior for generic operations. Adopt each independently qualified slice if the whole stream cannot satisfy those boundaries.
 
-| Caller | Contract |
-| --- | --- |
+| Caller                                 | Contract                                                                                                                                                                               |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Inbound HTTP Upgrade and live sideband | Authenticated upgrade, application response headers, pre-read frame bytes, ordered text and binary delivery, bounded queues, early hard message limit and route-specific failure close |
-| Outbound live sideband | TCP/TLS with certificate checks and custom authorization headers, negotiated compression disabled, bounded messages, refusal status and close propagation |
-| Codex supervisor and native auth | `ws+unix` JSON-RPC, explicit compression disablement, connection and payload limits, request-response ordering |
+| Outbound live sideband                 | TCP/TLS with certificate checks and custom authorization headers, negotiated compression disabled, bounded messages, refusal status and close propagation                              |
+| Codex supervisor and native auth       | `ws+unix` JSON-RPC, explicit compression disablement, connection and payload limits, request-response ordering                                                                         |
 
 Writes are limited to the assigned C++ WebSocket paths and ranges, the job report, and any WebSocket test, fuzz, or dependency registration explicitly assigned to this job. The client HTTP response parser belongs to the HTTP lane. TypeScript, shared HTTP, provider and routing code, workflow files, and deployment are outside scope.
 
@@ -175,3 +175,45 @@ Resumed with `018eb54982fe352bf88846345233c4e99e68479a` and the working report a
 | Strict `-O1` ASan/UBSan/LSan |               10 |           123 |                 0 |       48.117 | `c83376121b1192e3c020bef747e88fb611fa25f89f3f1d2244abd98bc1c18774` |
 
 The sanitizer replay reused the existing object cache and compiled the remaining live relay test object. Strict release and sanitizer registries each selected 442 binaries because every test links the affected runtime. The remaining release build resumed 232 object actions. The remaining sanitizer build resumed 517. Both drivers use two workers with fresh fixture environments. The expected runtimes are about 20 minutes for release and 45–55 minutes for sanitizers. Preserve their terminal counts and reproduce any failures against the smallest pre-adoption closure. The component, strict warning, wire, fuzz and benchmark receipts above carry forward when only this report changes.
+
+## Native ARM64 linkage
+
+All 369 production objects were present in the strict release cache. A standalone link used the same archive and entry-point structure as CMake. `runtime/startup.cpp` and the three entry points compiled under the strict warning set. All three links exited 0 and `file` identified each result as an AArch64 ELF executable.
+
+| Executable     | SHA-256                                                            |
+| -------------- | ------------------------------------------------------------------ |
+| uos-gateway    | `7763d17b65d0ae8feb7703d29667e24a70a372c36e16a1e50ae287bbe1517a96` |
+| uos-kv-convert | `3496ba29ec408d833b25e02f1e7c5e4d531cb7ef410d0102fd414f5d3ccd1b19` |
+| uos-kv-proof   | `08714921e36396528e0115159dc69e87697237ff6032ecf2c2db805e4b3c411a` |
+
+```sh
+gateway="$PWD/cpp/gateway"
+build="$work/qualify/clang++-21-92811b799430/release"
+out="$work/native-link"
+flags=(-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror -DBOOST_JSON_NO_LIB -DBOOST_CONTAINER_NO_LIB
+  -DBOOST_SYSTEM_NO_LIB -DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING -DUOS_GATEWAY_NATIVE_LIBRARIES=1
+  -O2 -I"$gateway/include" -I"$gateway" -isystem "$boost" -isystem "$sqlite" --system-header-prefix=third_party/)
+mapfile -t sources < <(find "$gateway/src" -name '*.cpp' -type f | sort)
+objects=()
+for source in "${sources[@]}"; do
+  object="$build/obj/${source#"$gateway/"}.o"
+  test -s "$object"
+  objects+=("$object")
+done
+ar rcs "$out/libuos_gateway.a" "${objects[@]}"
+clang++-21 "${flags[@]}" -c "$gateway/runtime/startup.cpp" -o "$out/startup.o"
+for entry in gateway kv-convert kv-proof; do
+  clang++-21 "${flags[@]}" -c "$gateway/entrypoints/$entry.cpp" -o "$out/$entry.o"
+  clang++-21 "$out/$entry.o" "$out/startup.o" -Wl,--whole-archive "$out/libuos_gateway.a" -Wl,--no-whole-archive \
+    "$build"/libuos_vendor_*.a -L"$boost/stage/lib" -L"$sqlite" -fuse-ld=lld-21 -Wl,--threads=1 \
+    -lboost_json -lboost_container -lssl -lcrypto -lsqlite3 -lz -lbrotlidec -lzstd -licuuc -licui18n -pthread -ldl -o "$out/uos-$entry"
+  file "$out/uos-$entry"
+  sha256sum "$out/uos-$entry"
+done
+```
+
+## Integration checkpoint
+
+`git merge-tree --write-tree --name-only origin/claude/cpp-gateway-port HEAD` against port tip `45118332b287b7ba9534bb66ab1518f1990a9d9e` reported a single add/add conflict in `DEVIATIONS-FROM-BUN.md`. Appending the WebSocket section to the port branch's existing ledger resolved it in a temporary index, and the upstream ledger bytes before the appended section matched exactly. The preview left both branches intact. The fetched `origin/development` at `6bd78fc5e3b0783809691c6bd45d25ac45e9696e` predates the gateway port and has no `cpp/gateway` tree. The authenticated push check for the existing task branch failed because the runner lacked GitHub credentials.
+
+The inherited local Codex review attempt failed before it could inspect the diff. Its sandbox could not start commands under the runner's approval policy. The socket reference at `docs/rt/websocket.md` also still describes the original 8 KiB random pool and `ScopedRandomSource` override. Beast now generates nonces and masking keys in its secure ChaCha20 mode. That reference is outside this task's document ownership.
