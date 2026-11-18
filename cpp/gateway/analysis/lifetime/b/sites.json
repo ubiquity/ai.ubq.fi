@@ -1640,8 +1640,60 @@
       ]
     },
     "src/cache/kv_migration_base.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "298-330",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Imported window reconciliation scan",
+          "evidence": "Window keys are an owning by-value map and used only by this scan. Nested reservation entries and atomic mutations are owned through their awaited steps."
+        },
+        {
+          "lines": "343-366",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Import entry lookup and write",
+          "evidence": "The frame owns an immutable entry and shared import state. Direct reads and writes copy keys and values, and the local atomic builder survives commit."
+        },
+        {
+          "lines": "369-414",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Import state and finalization",
+          "evidence": "Group counters are dereferenced before mutation; per-line work and window reconciliation get owners or a copied map. The parent awaits each step."
+        },
+        {
+          "lines": "416-438,488-494",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Vector and generator import adapters",
+          "evidence": "The wrappers synchronously copy options. Vector storage is frame-owned and unmodified except for individual moved strings, and the by-value generator remains live while awaiting next."
+        },
+        {
+          "lines": "496-508",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Count a KV prefix",
+          "evidence": "A named iterator and owned store stay in this counting task until it returns, independently of any fail-fast aggregation."
+        }
+      ]
     },
     "src/cache/kv_migration_paid_fallback.cpp": {
       "reviewed": false,

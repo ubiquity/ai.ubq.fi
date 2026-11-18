@@ -88,7 +88,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/cache/scope_targets.hpp`
 - [x] `include/uos/cache/telemetry_gate.hpp`
 - [x] `src/cache/kv_migration.cpp`
-- [ ] `src/cache/kv_migration_base.cpp`
+- [x] `src/cache/kv_migration_base.cpp`
 - [ ] `src/cache/kv_migration_paid_fallback.cpp`
 - [ ] `src/cache/kv_migration_projection.cpp`
 - [ ] `src/cache/kv_migration_usage.cpp`
@@ -564,6 +564,16 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 | 113-148 | Initial migration settings and catalog | **SAFE** | The frame owns KV and all read results. Inline key lists use the permitted variadic KvKey constructor, and JSON borrows are used synchronously. |
 | 150-190 | Migration phases and final write | **SAFE** | Inventory and projection tasks own KV and inputs or are awaited before local inputs change. The frame retains both the finish builder and its result through the terminal write. |
 
+### `src/cache/kv_migration_base.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 298-330 | Imported window reconciliation scan | **SAFE** | Window keys are an owning by-value map and used only by this scan. Nested reservation entries and atomic mutations are owned through their awaited steps. |
+| 343-366 | Import entry lookup and write | **SAFE** | The frame owns an immutable entry and shared import state. Direct reads and writes copy keys and values, and the local atomic builder survives commit. |
+| 369-414 | Import state and finalization | **SAFE** | Group counters are dereferenced before mutation; per-line work and window reconciliation get owners or a copied map. The parent awaits each step. |
+| 416-438,488-494 | Vector and generator import adapters | **SAFE** | The wrappers synchronously copy options. Vector storage is frame-owned and unmodified except for individual moved strings, and the by-value generator remains live while awaiting next. |
+| 496-508 | Count a KV prefix | **SAFE** | A named iterator and owned store stay in this counting task until it returns, independently of any fail-fast aggregation. |
+
 
 ## Ranked defects and counts
 
@@ -769,4 +779,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-65/97 files reviewed. **DEFECT 8, SAFE 118, UNCLEAR 3.**
+66/97 files reviewed. **DEFECT 8, SAFE 123, UNCLEAR 3.**
