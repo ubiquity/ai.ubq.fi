@@ -231,7 +231,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/responses_request.cpp`
 - [x] `src/responses_stream.cpp`
 - [x] `src/runtime_config.cpp`
-- [ ] `src/sentinel/incident_outbox.cpp`
+- [x] `src/sentinel/incident_outbox.cpp`
 - [ ] `src/sentinel/replay_admin.cpp`
 - [ ] `src/sentinel/replay_capture.cpp`
 - [ ] `src/sentinel/replay_envelope.cpp`
@@ -1215,6 +1215,13 @@ Reviewed runtime configuration reads, coalescing and synchronous parsers.
 
 - L204, 214, 225, 227, 343, 350 **SAFE** · Each waiter copies the Promise. Refresh retains stale config, KV and entry by value and only touches the process cache synchronously.
 
+### `src/sentinel/incident_outbox.cpp`
+
+Reviewed incident event creation and completion, degradation recording, index CAS, evidence binding and listing.
+
+- L249, 251, 271, 334, 354, 364, 384, 412, 418, 422, 432 **SAFE** · The replay/degradation owners directly await the borrowing KV tasks. The frames retain their copied rows and inputs, and each atomic receiver survives until commit.
+- L439, 443, 458, 464, 647, 652, 655, 657, 663, 672, 682, 690, 702, 727 **SAFE** · The environment task holds the shared KV through dispatch, and admin/replay callers retain the borrowed KV through listing and binding. UUID callbacks run inline, while keys, index and event snapshots and iterators stay named during awaits.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1463,4 +1470,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-123/286 files reviewed. 242 sites: 224 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+124/286 files reviewed. 244 sites: 226 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

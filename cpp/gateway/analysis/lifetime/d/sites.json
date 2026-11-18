@@ -5473,8 +5473,58 @@
       ]
     },
     "src/sentinel/incident_outbox.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed incident event creation and completion, degradation recording, index CAS, evidence binding and listing.",
+      "sites": [
+        {
+          "lines": [
+            249,
+            251,
+            271,
+            334,
+            354,
+            364,
+            384,
+            412,
+            418,
+            422,
+            432
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The replay/degradation owners directly await the borrowing KV tasks. The frames retain their copied rows and inputs, and each atomic receiver survives until commit."
+        },
+        {
+          "lines": [
+            439,
+            443,
+            458,
+            464,
+            647,
+            652,
+            655,
+            657,
+            663,
+            672,
+            682,
+            690,
+            702,
+            727
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The environment task holds the shared KV through dispatch, and admin/replay callers retain the borrowed KV through listing and binding. UUID callbacks run inline, while keys, index and event snapshots and iterators stay named during awaits."
+        }
+      ]
     },
     "src/sentinel/replay_admin.cpp": {
       "reviewed": false,
