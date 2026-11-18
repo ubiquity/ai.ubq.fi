@@ -1277,8 +1277,16 @@
       ]
     },
     "include/uos/provider/claude_code_fwd.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Transport and environment type aliases.",
+      "sites": [
+        {
+          "lines": "16-25",
+          "kind": "callback interface",
+          "verdict": "SAFE",
+          "reason": "rt::Fetch supplies the transport callable owner, and the environment lookup is invoked synchronously with a live name."
+        }
+      ]
     },
     "include/uos/provider/claude_code_models.hpp": {
       "status": "pending",
