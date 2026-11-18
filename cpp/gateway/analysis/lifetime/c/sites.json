@@ -2874,7 +2874,8 @@
       "sites": []
     },
     "src/harmony/types.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Harmony wire and tool type conversion is synchronous with static discriminator views.",
       "sites": []
     },
     "src/live/calls.cpp": {

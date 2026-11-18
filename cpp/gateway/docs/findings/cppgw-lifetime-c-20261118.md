@@ -262,7 +262,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/tools/result.cpp`
 - [x] `src/harmony/tools/router.cpp`
 - [x] `src/harmony/tools/schemas.cpp`
-- [ ] `src/harmony/types.cpp`
+- [x] `src/harmony/types.cpp`
 - [ ] `src/live/calls.cpp`
 - [ ] `src/live/handler.cpp`
 - [ ] `src/live/routes.cpp`
@@ -1653,3 +1653,7 @@ The tool router owns its backend and validated argument snapshots.
 ### `src/harmony/tools/schemas.cpp`
 
 Schema parsing and argument validation are synchronous and return owned data.
+
+### `src/harmony/types.cpp`
+
+Harmony wire and tool type conversion is synchronous with static discriminator views.
