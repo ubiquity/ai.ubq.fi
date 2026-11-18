@@ -69,7 +69,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/storage/key_compatibility.cpp`
 - [x] `src/storage/kv.cpp`
 - [x] `src/storage/native_addon.cpp`
-- [ ] `src/storage/native_kv.cpp`
+- [x] `src/storage/native_kv.cpp`
 - [ ] `src/storage/sqlite_readonly.cpp`
 - [ ] `src/storage/value_compatibility.cpp`
 - [ ] `include/uos/cache/kv_migration.hpp`
@@ -460,6 +460,15 @@ A declaration alias to the synchronous KV value walk. No separate lifetime site.
 | 39-75,92-134 | Artifact verification views | **SAFE** | Named input and provenance JSON retain all field views and file bytes through synchronous verification. The returned artifact owns its strings. |
 | 137-179,187-210 | Prepared export callback owners | **SAFE** | Prepared stores owning NAPI callback copies, the require call consumes its path synchronously, and linked export stubs own copied error messages. |
 
+### `src/storage/native_kv.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 25-50 | CheckedAtomicOperation retry receiver | **SAFE** | The retry frame owns commitOnce and the caller's named atomic operation spans the direct commit await. That operation owns both the inner builder and native KV. |
+| 55-85,88-106 | CheckedListIterator next and return | **SAFE** | The current scan owns the named CheckedListIterator for each awaited next. The iterator keeps native and inner iterator alive while the retry callback uses this. |
+| 118-126 | Guarded reads across retry/fail-fast aggregate | **SAFE** | Read wrappers immediately copy native, key vectors and options into the by-value retry callback. A rejecting sibling can unwind its caller without dropping these owners. |
+| 128-141,155-170 | Guarded writes and queue receiver | **SAFE** | Current callers retain the wrapper until the initial member resume. The write frame owns an independent atomic builder after starting, and the awaited enqueue retains the same owning store in its caller. |
+
 
 ## Ranked defects and counts
 
@@ -665,4 +674,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-46/97 files reviewed. **DEFECT 8, SAFE 100, UNCLEAR 3.**
+47/97 files reviewed. **DEFECT 8, SAFE 104, UNCLEAR 3.**

@@ -1361,8 +1361,52 @@
       ]
     },
     "src/storage/native_kv.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "25-50",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "CheckedAtomicOperation retry receiver",
+          "evidence": "The retry frame owns commitOnce and the caller's named atomic operation spans the direct commit await. That operation owns both the inner builder and native KV."
+        },
+        {
+          "lines": "55-85,88-106",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "CheckedListIterator next and return",
+          "evidence": "The current scan owns the named CheckedListIterator for each awaited next. The iterator keeps native and inner iterator alive while the retry callback uses this."
+        },
+        {
+          "lines": "118-126",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b"
+          ],
+          "symbol": "Guarded reads across retry/fail-fast aggregate",
+          "evidence": "Read wrappers immediately copy native, key vectors and options into the by-value retry callback. A rejecting sibling can unwind its caller without dropping these owners."
+        },
+        {
+          "lines": "128-141,155-170",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "Guarded writes and queue receiver",
+          "evidence": "Current callers retain the wrapper until the initial member resume. The write frame owns an independent atomic builder after starting, and the awaited enqueue retains the same owning store in its caller."
+        }
+      ]
     },
     "src/storage/sqlite_readonly.cpp": {
       "reviewed": false,
