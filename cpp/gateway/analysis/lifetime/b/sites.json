@@ -1696,8 +1696,70 @@
       ]
     },
     "src/cache/kv_migration_paid_fallback.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "143-166",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "collectPaidFallbackWindows",
+          "evidence": "inspectPaidFallbackV3 owns knownKeyIds/errors and directly awaits this scan. Its local iterator and row values remain alive and only copied values enter the result."
+        },
+        {
+          "lines": "169-191",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "collectPaidFallbackRequests",
+          "evidence": "The inspecting parent retains knownKeyIds/errors through the direct await. The scan uses read results, not aliases into persistent mutable storage."
+        },
+        {
+          "lines": "194-213",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "collectPaidFallbackPending",
+          "evidence": "The shared KV and local iterator own the scan. The direct caller retains its error vector through the whole await."
+        },
+        {
+          "lines": "216-232",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "countPaidFallbackLeases",
+          "evidence": "The sequential inventory owner retains its known-key set and errors; each iteration consumes a value result before the next await."
+        },
+        {
+          "lines": "235-251",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "countPaidFallbackDeletionGuards",
+          "evidence": "The error vector belongs to the parent that directly awaits this scan. The iterator and row are local owners."
+        },
+        {
+          "lines": "438-464",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Paid fallback inventory scheduling",
+          "evidence": "All five borrowed scans run sequentially under the owning inventory frame. Final summaries use owned inventory values after the awaits."
+        }
+      ]
     },
     "src/cache/kv_migration_projection.cpp": {
       "reviewed": false,

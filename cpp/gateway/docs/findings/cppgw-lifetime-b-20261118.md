@@ -89,7 +89,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/cache/telemetry_gate.hpp`
 - [x] `src/cache/kv_migration.cpp`
 - [x] `src/cache/kv_migration_base.cpp`
-- [ ] `src/cache/kv_migration_paid_fallback.cpp`
+- [x] `src/cache/kv_migration_paid_fallback.cpp`
 - [ ] `src/cache/kv_migration_projection.cpp`
 - [ ] `src/cache/kv_migration_usage.cpp`
 - [ ] `src/cache/kv_migration_validation.cpp`
@@ -574,6 +574,17 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 | 416-438,488-494 | Vector and generator import adapters | **SAFE** | The wrappers synchronously copy options. Vector storage is frame-owned and unmodified except for individual moved strings, and the by-value generator remains live while awaiting next. |
 | 496-508 | Count a KV prefix | **SAFE** | A named iterator and owned store stay in this counting task until it returns, independently of any fail-fast aggregation. |
 
+### `src/cache/kv_migration_paid_fallback.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 143-166 | collectPaidFallbackWindows | **SAFE** | inspectPaidFallbackV3 owns knownKeyIds/errors and directly awaits this scan. Its local iterator and row values remain alive and only copied values enter the result. |
+| 169-191 | collectPaidFallbackRequests | **SAFE** | The inspecting parent retains knownKeyIds/errors through the direct await. The scan uses read results, not aliases into persistent mutable storage. |
+| 194-213 | collectPaidFallbackPending | **SAFE** | The shared KV and local iterator own the scan. The direct caller retains its error vector through the whole await. |
+| 216-232 | countPaidFallbackLeases | **SAFE** | The sequential inventory owner retains its known-key set and errors; each iteration consumes a value result before the next await. |
+| 235-251 | countPaidFallbackDeletionGuards | **SAFE** | The error vector belongs to the parent that directly awaits this scan. The iterator and row are local owners. |
+| 438-464 | Paid fallback inventory scheduling | **SAFE** | All five borrowed scans run sequentially under the owning inventory frame. Final summaries use owned inventory values after the awaits. |
+
 
 ## Ranked defects and counts
 
@@ -779,4 +790,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-66/97 files reviewed. **DEFECT 8, SAFE 123, UNCLEAR 3.**
+67/97 files reviewed. **DEFECT 8, SAFE 129, UNCLEAR 3.**
