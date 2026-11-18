@@ -1283,8 +1283,18 @@
       "note": "A declaration alias to the synchronous KV value walk. No separate lifetime site."
     },
     "src/storage/key_compatibility.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "17-52",
+          "verdict": "SAFE",
+          "kinds": [
+            "b"
+          ],
+          "symbol": "Portable key span",
+          "evidence": "The validator walks the caller's bytes synchronously and returns no borrow."
+        }
+      ]
     },
     "src/storage/kv.cpp": {
       "reviewed": false,
