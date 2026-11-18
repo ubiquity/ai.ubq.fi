@@ -58,7 +58,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/native_auth.hpp`
 - [x] `include/uos/codex/native_auth_transport.hpp`
 - [x] `include/uos/codex/overage_settings.hpp`
-- [ ] `include/uos/codex/quota.hpp`
+- [x] `include/uos/codex/quota.hpp`
 - [ ] `include/uos/codex/rate_limit_429.hpp`
 - [ ] `include/uos/codex/reset_settings.hpp`
 - [ ] `include/uos/codex/responses_error.hpp`
@@ -461,3 +461,7 @@ Native refresh request interface.
 Overage usage persistence and pool-loading API.
 
 - 22-24,32 · owning task parameters · **SAFE** · Each store operation owns the KV handle and key, and pool loading owns its auth snapshot.
+
+### `include/uos/codex/quota.hpp`
+
+Synchronous quota parsing and record declarations. No suspendable body or registration.

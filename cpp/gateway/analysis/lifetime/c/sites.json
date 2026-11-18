@@ -288,7 +288,8 @@
       ]
     },
     "include/uos/codex/quota.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous quota parsing and record declarations. No suspendable body or registration.",
       "sites": []
     },
     "include/uos/codex/rate_limit_429.hpp": {
