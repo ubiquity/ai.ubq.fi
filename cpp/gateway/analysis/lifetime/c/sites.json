@@ -3010,8 +3010,28 @@
       ]
     },
     "src/paid_fallback/index.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Policy and settlement tasks operate on owned request and reservation records.",
+      "sites": [
+        {
+          "lines": "165-203,213",
+          "kind": "policy lookup, retry, and terminal-sweep spawn",
+          "verdict": "SAFE",
+          "reason": "KV and policy snapshots stay in their frames. The detached reconciliation entry point takes no caller-owned references."
+        },
+        {
+          "lines": "246-315,322-373",
+          "kind": "pricing and reservation awaits",
+          "verdict": "SAFE",
+          "reason": "Pricing, policy, and admission input data are held as values and model/catalog pointers refer to local snapshots."
+        },
+        {
+          "lines": "376-484",
+          "kind": "reservation settlement and bookkeeping awaits",
+          "verdict": "SAFE",
+          "reason": "Provider response, reservation, and usage data are frame-owned and all durable steps in each function are joined."
+        }
+      ]
     },
     "src/paid_fallback/ledger_admission.cpp": {
       "status": "pending",
