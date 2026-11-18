@@ -134,7 +134,8 @@ namespace uos::rt {
       const AbortSignal signal = request.signal();
       if (signal.aborted()) rethrow(signal.reason());
       Task<Response> sending = transport->send(std::move(request));
-      Task<Response> guarded = abortable(signal, std::move(sending));
+      auto ownedSend = detail::keepAlive<Response>(std::move(transport), std::move(sending));
+      Task<Response> guarded = abortable(signal, std::move(ownedSend));
       Response response = co_await std::move(guarded);
       if (watchSignal) {
         if (signal.aborted()) {

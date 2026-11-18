@@ -290,6 +290,43 @@ ASYNC_TEST("aborting while the transport waits rejects with the reason") {
   EXPECT_REJECTS_MESSAGE(std::move(rejected16), DOMException, "The operation timed out.");
 }
 
+ASYNC_TEST("abort retains a replaced transport until its suspended send returns") {
+  struct Transport final : FetchTransport {
+    Resolvers<void> started = withResolvers();
+    Resolvers<void> resume = withResolvers();
+    std::string payload = "transport still alive";
+    std::shared_ptr<std::string> observed = std::make_shared<std::string>();
+
+    Task<Response> send(Request) override {
+      started.resolve();
+      co_await resume.promise.wait();
+      *observed = payload;
+      co_return Response();
+    }
+  };
+  auto restore = ScopeExit([previous = fetchTransport()] { setFetchTransport(previous); });
+  auto transport = std::make_shared<Transport>();
+  const std::weak_ptr<Transport> weak = transport;
+  auto started = transport->started.promise;
+  auto resume = transport->resume.resolve;
+  auto observed = transport->observed;
+  setFetchTransport(std::move(transport));
+  AbortController abort;
+  RequestInit init;
+  init.signal = abort.signal();
+  Promise result(fetch(info("http://example.test/"), std::move(init)));
+  co_await started.wait();
+  setFetchTransport(nullptr);
+
+  abort.abort();
+  EXPECT_REJECTS_REASON(result.wait(), abort.signal().reason());
+  EXPECT(!weak.expired());
+  resume();
+  co_await uos::rt::sleep(1);
+  EXPECT_EQ(*observed, "transport still alive");
+  EXPECT(weak.expired());
+}
+
 ASYNC_TEST("aborting after the response errors its body with the reason") {
   TransportScope scope([](Request) -> Task<Response> { co_return Response(BodyInit(std::string("ok"))); });
   AbortController controller;
