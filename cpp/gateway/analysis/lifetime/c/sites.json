@@ -99,7 +99,8 @@
       ]
     },
     "include/uos/codex/auth_repair.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous repair planning, token metadata and JSON conversion declarations. Their reference and view parameters have call-local use.",
       "sites": []
     },
     "include/uos/codex/banked_reset.hpp": {

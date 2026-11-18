@@ -42,7 +42,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/account_routing.hpp`
 - [x] `include/uos/codex/auth.hpp`
 - [x] `include/uos/codex/auth_refresh.hpp`
-- [ ] `include/uos/codex/auth_repair.hpp`
+- [x] `include/uos/codex/auth_repair.hpp`
 - [ ] `include/uos/codex/banked_reset.hpp`
 - [ ] `include/uos/codex/banked_reset_claim.hpp`
 - [ ] `include/uos/codex/banked_reset_pool.hpp`
@@ -368,3 +368,7 @@ The async API owns response handles, while the shared caches are reviewed at mut
 Refresh helper interfaces transfer owned task inputs.
 
 - 18,23,30,43-49 · owning task parameters · **SAFE** · Account data, promises and optional signals are copied or moved into the task frames.
+
+### `include/uos/codex/auth_repair.hpp`
+
+Synchronous repair planning, token metadata and JSON conversion declarations. Their reference and view parameters have call-local use.
