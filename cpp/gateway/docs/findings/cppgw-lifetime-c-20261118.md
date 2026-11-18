@@ -48,7 +48,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/banked_reset_pool.hpp`
 - [x] `include/uos/codex/banked_reset_provider.hpp`
 - [x] `include/uos/codex/banked_reset_submission.hpp`
-- [ ] `include/uos/codex/capacity_routing.hpp`
+- [x] `include/uos/codex/capacity_routing.hpp`
 - [ ] `include/uos/codex/dispatch.hpp`
 - [ ] `include/uos/codex/experiment.hpp`
 - [ ] `include/uos/codex/external_auth.hpp`
@@ -403,3 +403,9 @@ Reset provider interface and read-only display APIs.
 Dependency bundles and reset candidates cross this boundary by value.
 
 - 16,24-25,31-32 · owning task parameters · **SAFE** · The KV open and submission/reconciliation frames retain their provider, store override, callbacks and candidates.
+
+### `include/uos/codex/capacity_routing.hpp`
+
+Async selection/persistence consumes owned snapshots; routing transforms are synchronous callables.
+
+- 37-40,54,60,65,69,77,85-93,102,112-113 · owning task parameters · **SAFE** · Pool, observation, account and transform values stay in the receiving frames; a transform reads the supplied state only during invocation.

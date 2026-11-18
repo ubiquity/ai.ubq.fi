@@ -170,8 +170,16 @@
       ]
     },
     "include/uos/codex/capacity_routing.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Async selection/persistence consumes owned snapshots; routing transforms are synchronous callables.",
+      "sites": [
+        {
+          "lines": "37-40,54,60,65,69,77,85-93,102,112-113",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Pool, observation, account and transform values stay in the receiving frames; a transform reads the supplied state only during invocation."
+        }
+      ]
     },
     "include/uos/codex/dispatch.hpp": {
       "status": "pending",
