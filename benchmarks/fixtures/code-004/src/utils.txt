@@ -1,5 +1,0 @@
-def dup_a():
-    return 1
-
-def dup_b():
-    return 1
