@@ -8,7 +8,12 @@
     "src/rt/fetch_transport_http.cpp",
     "src/rt/websocket_client.cpp"
   ],
-  "qcbor": ["src/auth/passkeys.cpp", "fuzz/passkeys.cpp", "fuzz/passkeys_asn1_library.cpp"],
+  "qcbor": [
+    "src/auth/passkeys.cpp",
+    "tests/legacy/passkeys_asn1_library_test.cpp",
+    "fuzz/passkeys.cpp",
+    "fuzz/passkeys_asn1_library.cpp"
+  ],
   "simdjson": ["src/rt/json.cpp"],
   "simdutf": ["src/rt/base64.cpp"]
 }
