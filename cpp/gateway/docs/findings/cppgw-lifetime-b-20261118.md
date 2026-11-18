@@ -72,7 +72,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/storage/native_kv.cpp`
 - [x] `src/storage/sqlite_readonly.cpp`
 - [x] `src/storage/value_compatibility.cpp`
-- [ ] `include/uos/cache/kv_migration.hpp`
+- [x] `include/uos/cache/kv_migration.hpp`
 - [ ] `include/uos/cache/kv_migration_base.hpp`
 - [ ] `include/uos/cache/kv_migration_paid_fallback.hpp`
 - [ ] `include/uos/cache/kv_migration_projection.hpp`
@@ -480,6 +480,10 @@ A declaration alias to the synchronous KV value walk. No separate lifetime site.
 
 This translation unit delegates to the synchronous runtime value validator, already classified in src/rt/kv_value.cpp.
 
+### `include/uos/cache/kv_migration.hpp`
+
+The migration entry takes an owning shared KV. The progress borrow is private and covered at its definition and call site.
+
 
 ## Ranked defects and counts
 
@@ -685,4 +689,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-49/97 files reviewed. **DEFECT 8, SAFE 106, UNCLEAR 3.**
+50/97 files reviewed. **DEFECT 8, SAFE 106, UNCLEAR 3.**

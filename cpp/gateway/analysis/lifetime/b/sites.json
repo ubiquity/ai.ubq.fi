@@ -1440,8 +1440,9 @@
       "note": "This translation unit delegates to the synchronous runtime value validator, already classified in src/rt/kv_value.cpp."
     },
     "include/uos/cache/kv_migration.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "The migration entry takes an owning shared KV. The progress borrow is private and covered at its definition and call site."
     },
     "include/uos/cache/kv_migration_base.hpp": {
       "reviewed": false,
