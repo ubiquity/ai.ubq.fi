@@ -2556,7 +2556,8 @@
       "sites": []
     },
     "src/authority/native_paid_policy.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed paid key projection and model lookup. Pointer and view use is confined to synchronous checks or copied into results.",
       "sites": []
     },
     "src/authority/native_principal_contracts.cpp": {
