@@ -54,6 +54,7 @@ const sameQuota = (previous: GeminiQuotaSnapshot, current: GeminiQuotaSnapshot):
     const { reset_time: time, reset_in_seconds: seconds, ...values } = bucket;
     const { reset_time: priorTime, reset_in_seconds: priorSeconds, ...priorValues } = previous.quota[id];
     if (!isDeepStrictEqual(values, priorValues)) return false;
+    if (time === priorTime && seconds === priorSeconds) return true;
     const reset = resetInstant(time, seconds, current.observed_at_ms);
     const priorReset = resetInstant(priorTime, priorSeconds, previous.observed_at_ms);
     if (reset === priorReset) return true;
