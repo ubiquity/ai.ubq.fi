@@ -239,7 +239,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/embeddings/handlers.cpp`
 - [x] `src/embeddings/jobs.cpp`
 - [x] `src/embeddings/ledger.cpp`
-- [ ] `src/embeddings/voyage.cpp`
+- [x] `src/embeddings/voyage.cpp`
 - [ ] `src/harmony/adapter.cpp`
 - [ ] `src/harmony/classifier.cpp`
 - [ ] `src/harmony/conversation.cpp`
@@ -1537,3 +1537,13 @@ Ledger records, chunk assembly and transaction state are per invocation. The rep
 
 - 161-168 · idempotency replay fan-out receiver · **DEFECT** · A rejected chunk read can lead to an unavailable response while another injected virtual get remains pending. When the acquisition unwinds the last shared KV owner, that coroutine can resume with a dead receiver. Keep the store in each child frame.
 - 156-160,169-180,197-347,534-618,621-714 · response hash, acquisition and settlement joins · **SAFE** · Named results, owned lease and params, per-attempt rows and local atomic handles retain their resources through joined reads and writes. Hash children own the combined text.
+
+### `src/embeddings/voyage.cpp`
+
+Cache and budget code borrow KV within joined request and job frames, with a separate issue at the cache eviction fan-out.
+
+- 55-124,144-175,246-289 · borrowed KV, list iterator and atomic waits · **SAFE** · The handler or job retains KV through the awaited cache and budget operation, and the list and transaction handles are local to each frame.
+- 126-136 · eviction fan-out receiver · **DEFECT** · If one eviction index get rejects, the cache writer returns failure without joining a pending sibling. An injected KV coroutine can resume after its receiver's last owner leaves the request. Propagate a shared store into the eviction reader children.
+- 186-188,194-197 · timer-driven completion · **SAFE** · Sleep captures its resolver, and the abortable sleep timer owns State and removes the listener during ordinary completion.
+- 198-207 · retry sleep abort ownership cycle · **DEFECT** · The signal retains the once callback and that callback retains the same signal. When loop teardown clears the pending timer before it fires, the listener cycle remains. Use weak signal state or rely on once to remove the listener before it runs.
+- 435-467,503-545 · encryption, key read, and upstream fetch · **SAFE** · Input and request options are frame-owned, the fetch hook is awaited through completion, and ScopeExit clears the streaming-independent request timer.

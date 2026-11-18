@@ -2650,8 +2650,40 @@
       ]
     },
     "src/embeddings/voyage.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Cache and budget code borrow KV within joined request and job frames, with a separate issue at the cache eviction fan-out.",
+      "sites": [
+        {
+          "lines": "55-124,144-175,246-289",
+          "kind": "borrowed KV, list iterator and atomic waits",
+          "verdict": "SAFE",
+          "reason": "The handler or job retains KV through the awaited cache and budget operation, and the list and transaction handles are local to each frame."
+        },
+        {
+          "lines": "126-136",
+          "kind": "eviction fan-out receiver",
+          "verdict": "DEFECT",
+          "reason": "If one eviction index get rejects, the cache writer returns failure without joining a pending sibling. An injected KV coroutine can resume after its receiver's last owner leaves the request. Propagate a shared store into the eviction reader children."
+        },
+        {
+          "lines": "186-188,194-197",
+          "kind": "timer-driven completion",
+          "verdict": "SAFE",
+          "reason": "Sleep captures its resolver, and the abortable sleep timer owns State and removes the listener during ordinary completion."
+        },
+        {
+          "lines": "198-207",
+          "kind": "retry sleep abort ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "The signal retains the once callback and that callback retains the same signal. When loop teardown clears the pending timer before it fires, the listener cycle remains. Use weak signal state or rely on once to remove the listener before it runs."
+        },
+        {
+          "lines": "435-467,503-545",
+          "kind": "encryption, key read, and upstream fetch",
+          "verdict": "SAFE",
+          "reason": "Input and request options are frame-owned, the fetch hook is awaited through completion, and ScopeExit clears the streaming-independent request timer."
+        }
+      ]
     },
     "src/harmony/adapter.cpp": {
       "status": "pending",
