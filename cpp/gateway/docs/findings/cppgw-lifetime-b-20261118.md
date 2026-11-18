@@ -44,7 +44,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/rt/kv_js.hpp`
 - [x] `include/uos/rt/kv_sqlite.hpp`
 - [x] `include/uos/rt/process.hpp`
-- [ ] `include/uos/rt/sqlite.hpp`
+- [x] `include/uos/rt/sqlite.hpp`
 - [ ] `src/rt/fs.cpp`
 - [ ] `src/rt/kv.cpp`
 - [ ] `src/rt/kv_internal.hpp`
@@ -292,6 +292,13 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 84-118 | Signal listener and signal name views | **SAFE** | Listener copies own shared callable identity. Signal-name views refer to static strings, and notification takes a copied listener snapshot in the process event implementation. |
 | 126-168,211-225 | Spawn, pipe and Bun file façade | **SAFE** | Options and file path have owning storage. Subprocess and sink handles own their state. A file stream takes its own path and source state at construction. |
 
+### `include/uos/rt/sqlite.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 97-106,241-299,309-354 | SQLite bindings and synchronous row iterator | **SAFE** | Bindings own their bytes and row iterator owns its statement and bindings. Its input iterator borrows the named RowIterator only for synchronous production iteration, and a result row references the current iterator element only until advance. |
+| 425,449-482 | SQLite transaction callable | **SAFE** | Transaction owns the functor, connection and controller. Its reference-capturing invocation lambda runs synchronously inside runTransaction and all traced production transaction bodies are synchronous. |
+
 
 ## Ranked defects and counts
 
@@ -457,4 +464,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-21/97 files reviewed. **DEFECT 7, SAFE 55, UNCLEAR 2.**
+22/97 files reviewed. **DEFECT 7, SAFE 57, UNCLEAR 2.**

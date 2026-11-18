@@ -751,8 +751,30 @@
       ]
     },
     "include/uos/rt/sqlite.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "97-106,241-299,309-354",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "SQLite bindings and synchronous row iterator",
+          "evidence": "Bindings own their bytes and row iterator owns its statement and bindings. Its input iterator borrows the named RowIterator only for synchronous production iteration, and a result row references the current iterator element only until advance."
+        },
+        {
+          "lines": "425,449-482",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "SQLite transaction callable",
+          "evidence": "Transaction owns the functor, connection and controller. Its reference-capturing invocation lambda runs synchronously inside runTransaction and all traced production transaction bodies are synchronous."
+        }
+      ]
     },
     "src/rt/fs.cpp": {
       "reviewed": false,
