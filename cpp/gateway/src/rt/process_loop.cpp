@@ -133,29 +133,28 @@ namespace uos::rt::process {
       }
     }
 
+    class NullDevice {
+    public:
+      NullDevice(bool needed, int flags) {
+        if (!needed) return;
+        do fd = ::open("/dev/null", flags | O_CLOEXEC);
+        while (fd < 0 && errno == EINTR);
+        if (fd < 0) throw fs::errnoError(errno, "open", "/dev/null");
+      }
+      ~NullDevice() {
+        if (fd >= 0) ::close(fd);
+      }
+      NullDevice(const NullDevice&) = delete;
+      NullDevice& operator=(const NullDevice&) = delete;
+      int fd = -1;
+    };
+
     template <class Binding, class Pipe>
-    Binding stdioBinding(Stdio mode, Pipe& pipe) {
+    Binding stdioBinding(Stdio mode, Pipe& pipe, const NullDevice& nullDevice) {
       if (mode == Stdio::pipe) return pipe;
-      if (mode == Stdio::ignore) return nullptr;
+      if (mode == Stdio::ignore) return nullDevice.fd;
       return {};
     }
-
-    // Prevent an inherited handler from running in the child before exec setup.
-    class BlockSignals {
-    public:
-      BlockSignals() {
-        sigset_t all;
-        ::sigfillset(&all);
-        const int error = ::pthread_sigmask(SIG_BLOCK, &all, &previous_);
-        if (error != 0) throw fs::errnoError(error, "pthread_sigmask");
-      }
-      ~BlockSignals() { ::pthread_sigmask(SIG_SETMASK, &previous_, nullptr); }
-      BlockSignals(const BlockSignals&) = delete;
-      BlockSignals& operator=(const BlockSignals&) = delete;
-
-    private:
-      sigset_t previous_{};
-    };
 
     struct ResetChildSignals {
       boost::system::error_code on_exec_setup(bp::posix::default_launcher&, const bp::filesystem::path&, const char* const*) const {
@@ -166,8 +165,8 @@ namespace uos::rt::process {
           if (::sigaction(number, &action, nullptr) < 0 && errno != EINVAL)
             return {errno, boost::system::system_category()};
         }
-        return ::sigprocmask(SIG_SETMASK, &action.sa_mask, nullptr) == 0
-            ? boost::system::error_code{} : boost::system::error_code(errno, boost::system::system_category());
+        if (::sigprocmask(SIG_SETMASK, &action.sa_mask, nullptr) < 0) return {errno, boost::system::system_category()};
+        return {};
       }
     };
 
@@ -217,7 +216,9 @@ namespace uos::rt::process {
       controller.enqueue(std::move(buffer));
     }
 
-    ReadableStream<Bytes> pipeStream(std::shared_ptr<asio::readable_pipe> pipe) {
+    ReadableStream<Bytes> pipeStream(asio::writable_pipe& childEnd) {
+      auto pipe = std::make_shared<asio::readable_pipe>(childEnd.get_executor());
+      connectPipe(*pipe, childEnd);
       UnderlyingSource<Bytes> source;
       source.pull = [pipe](ReadableStreamDefaultController<Bytes> controller) { return readChunk(pipe, std::move(controller)); };
       source.cancel = [pipe](Reason) {
@@ -326,6 +327,18 @@ namespace uos::rt::process {
       co_return code;
     }
 
+    // The launcher can fork successfully and then fail to acquire a process handle.
+    // In that case there is no Boost object to clean up the child.
+    void reapUnownedChild(pid_t child) {
+      if (child <= 0) return;
+      pid_t observed;
+      do observed = ::waitpid(child, nullptr, WNOHANG);
+      while (observed < 0 && errno == EINTR);
+      if (observed != 0) return;
+      ::kill(child, SIGKILL);
+      while (::waitpid(child, nullptr, 0) < 0 && errno == EINTR) {}
+    }
+
     bp::process launch(Executor executor, const std::string& file, const std::vector<std::string>& cmd,
                        const SpawnOptions& options, bp::process_stdio& stdio) {
       // Pass a complete argv to preserve the caller's argv[0] after PATH lookup.
@@ -339,24 +352,30 @@ namespace uos::rt::process {
         entries.reserve(options.env->size());
         for (const auto& [name, value] : *options.env) entries.push_back(name + "=" + value);
       }
-      auto environment = options.env ? bp::process_environment(entries) : bp::process_environment(bp::environment::current());
       bp::default_process_launcher launcher;
       const bp::filesystem::path executable(file);
-      const BlockSignals blocked;
-      boost::system::error_code error;
+      bp::process_environment environment(entries);
+      if (options.env) {
+        const auto error = environment.on_setup(launcher, executable, argv.data());
+        if (error) throw fs::errnoError(error.value(), "spawn", file);
+      }
+
+      // An inherited handler could otherwise run in the child before exec setup.
+      sigset_t all, previous;
+      ::sigfillset(&all);
+      const int maskError = ::pthread_sigmask(SIG_BLOCK, &all, &previous);
+      if (maskError != 0) throw fs::errnoError(maskError, "pthread_sigmask");
+      const auto restoreMask = scopeExit([&previous] { ::pthread_sigmask(SIG_SETMASK, &previous, nullptr); });
+      auto cleanup = scopeExit([&launcher] { reapUnownedChild(launcher.pid); });
       try {
+        boost::system::error_code error;
         bp::process child = options.cwd
-            ? launcher(executor, error, executable, argv.data(), stdio, environment, bp::process_start_dir(*options.cwd), ResetChildSignals())
-            : launcher(executor, error, executable, argv.data(), stdio, environment, ResetChildSignals());
+            ? launcher(executor, error, executable, argv.data(), stdio, bp::process_start_dir(*options.cwd), ResetChildSignals())
+            : launcher(executor, error, executable, argv.data(), stdio, ResetChildSignals());
+        cleanup.release();
         if (error) throw fs::errnoError(error.value(), "spawn", file);
         return child;
       } catch (const boost::system::system_error& failure) {
-        // The launcher can fork successfully and then fail to acquire a process handle.
-        // No Boost object owns the child on that path.
-        if (launcher.pid > 0) {
-          ::kill(launcher.pid, SIGKILL);
-          while (::waitpid(launcher.pid, nullptr, 0) < 0 && errno == EINTR) {}
-        }
         throw fs::errnoError(failure.code().value(), "spawn", file);
       }
     }
@@ -419,20 +438,14 @@ namespace uos::rt::process {
       state->stdinSink = std::make_shared<FileSink::State>(executor);
       connectPipe(childIn, state->stdinSink->pipe);
     }
-    auto parentOut = std::make_shared<asio::readable_pipe>(executor);
-    auto parentErr = std::make_shared<asio::readable_pipe>(executor);
-    if (options.stdout == Stdio::pipe) {
-      connectPipe(*parentOut, childOut);
-      state->stdoutStream.emplace(pipeStream(std::move(parentOut)));
-    }
-    if (options.stderr == Stdio::pipe) {
-      connectPipe(*parentErr, childErr);
-      state->stderrStream.emplace(pipeStream(std::move(parentErr)));
-    }
+    if (options.stdout == Stdio::pipe) state->stdoutStream.emplace(pipeStream(childOut));
+    if (options.stderr == Stdio::pipe) state->stderrStream.emplace(pipeStream(childErr));
+    const NullDevice nullIn(options.stdin == Stdio::ignore, O_RDONLY);
+    const NullDevice nullOut(options.stdout == Stdio::ignore || options.stderr == Stdio::ignore, O_WRONLY);
     bp::process_stdio stdio{
-      .in = stdioBinding<decltype(stdio.in)>(options.stdin, childIn),
-      .out = stdioBinding<decltype(stdio.out)>(options.stdout, childOut),
-      .err = stdioBinding<decltype(stdio.err)>(options.stderr, childErr),
+      .in = stdioBinding<decltype(stdio.in)>(options.stdin, childIn, nullIn),
+      .out = stdioBinding<decltype(stdio.out)>(options.stdout, childOut, nullOut),
+      .err = stdioBinding<decltype(stdio.err)>(options.stderr, childErr, nullOut),
     };
     state->child.emplace(launch(executor, file, cmd, options, stdio));
     state->pid = state->child->id();
@@ -440,7 +453,6 @@ namespace uos::rt::process {
     state->exited = Promise<int>(std::move(observation));
     return Subprocess(std::move(state));
   }
-
 }
 
 namespace uos::rt::bun {

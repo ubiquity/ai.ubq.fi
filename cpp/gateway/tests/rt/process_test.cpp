@@ -423,6 +423,13 @@ TEST("Bun.spawn environment, PATH lookup, cwd and spawn errors (spawn1/spawn2 pr
     auto awaited18 = co_await relative.exited().wait();
     EXPECT_EQ(awaited18, 0);
     rt::fs::rmSync(dir, {.recursive = true, .force = true});
+
+    auto arguments = process::spawn({"sh", "-c", "printf '<%s>\\n' \"$@\"", "sh", "two words", "", "--flag"});
+    auto readingArguments = readAll(arguments.stdout());
+    const auto givenArguments = co_await std::move(readingArguments);
+    EXPECT_EQ(givenArguments, "<two words>\n<>\n<--flag>\n");
+    const auto argumentStatus = co_await arguments.exited().wait();
+    EXPECT_EQ(argumentStatus, 0);
   }());
 }
 
@@ -476,6 +483,24 @@ TEST("dropping the subprocess handle keeps its exit promise and reaps the child"
     EXPECT_EQ(::waitpid(pid, &raw, WNOHANG), -1);
     EXPECT_EQ(errno, ECHILD);
   }());
+}
+
+TEST("destroying the loop cleans up a pending child") {
+  const auto launch = [](int* pid) -> rt::Task<void> {
+    const auto child = process::spawn({"sleep", "30"}, {.stdout = process::Stdio::ignore});
+    *pid = child.pid();
+    co_return;
+  };
+  int pid;
+  {
+    rt::Loop loop;
+    auto launched = launch(&pid);
+    rt::blockOn(loop, std::move(launched));
+  }
+  int raw = 0;
+  errno = 0;
+  EXPECT_EQ(::waitpid(pid, &raw, WNOHANG), -1);
+  EXPECT_EQ(errno, ECHILD);
 }
 
 TEST("Bun.file(path).stream(): 256 KiB chunks and Bun's errors (file1 probe)") {
