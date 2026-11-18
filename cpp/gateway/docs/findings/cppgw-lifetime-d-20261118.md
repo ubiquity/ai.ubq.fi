@@ -386,7 +386,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/sentinel/replay_retention_bootstrap.hpp`
 - [x] `include/uos/sentinel/replay_retention_metadata.hpp`
 - [x] `include/uos/sentinel/replay_retention_schema.hpp`
-- [ ] `include/uos/sentinel/replay_store.hpp`
+- [x] `include/uos/sentinel/replay_store.hpp`
 - [ ] `include/uos/sentinel/upstream_capture.hpp`
 - [ ] `include/uos/serve.hpp`
 - [ ] `include/uos/static.hpp`
@@ -2200,6 +2200,12 @@ Reviewed schema labels, fault and transaction callbacks, and borrowed KV operati
 - L41, 42, 43, 44, 45, 215, 316, 318, 321 **SAFE** · Status views point to literals. Fault and mutation callbacks are invoked synchronously, and current atomic application callbacks return the operation the frame owns.
 - L289, 301, 302, 311, 313, 326, 327 **SAFE** · Read and chunk helpers await only owned cursor or storage operations. The caller retains KV, or the eager ledger read consumes the borrow before suspension when running in a fail-fast join.
 
+### `include/uos/sentinel/replay_store.hpp`
+
+Reviewed replay persistence and omission wrappers and their borrowed store contract.
+
+- L30, 39, 41, 45, 48, 54, 56 **SAFE** · The wrappers copy reference arguments before constructing a Task. Ordinary persistence takes a shared store in its owned dependencies and direct status writers retain KV through the await.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2449,4 +2455,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-278/286 files reviewed. 467 sites: 442 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+279/286 files reviewed. 468 sites: 443 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

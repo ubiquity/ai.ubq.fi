@@ -10369,8 +10369,28 @@
       ]
     },
     "include/uos/sentinel/replay_store.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed replay persistence and omission wrappers and their borrowed store contract.",
+      "sites": [
+        {
+          "lines": [
+            30,
+            39,
+            41,
+            45,
+            48,
+            54,
+            56
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The wrappers copy reference arguments before constructing a Task. Ordinary persistence takes a shared store in its owned dependencies and direct status writers retain KV through the await."
+        }
+      ]
     },
     "include/uos/sentinel/upstream_capture.hpp": {
       "reviewed": false,
