@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-work=$(mktemp -d)
+work=/tmp/uos-portable-native
+mkdir "$work"
 trap 'rm -rf -- "$work"' EXIT
 cd "$work"
 
@@ -15,6 +16,17 @@ curl -fsSL --retry 3 --max-time 600 https://github.com/oven-sh/bun/releases/down
 printf '%s\n' '4b1a332ee861983eb93bcfe6f770fff94e3e31b2c388bdaea3c8ed35e58eed0e  bun.zip' | sha256sum --check
 unzip -q bun.zip
 mkdir "$work/home" "$work/tmp"
+# The frozen builder creates a fresh workspace. Keep its random pathname out of the Rust objects.
+mkdir -p "$work/kv-build/.cargo"
+cat > "$work/kv-build/.cargo/config.toml" <<EOF
+[build]
+rustc-wrapper = "$work/rustc-wrapper"
+EOF
+cat > "$work/rustc-wrapper" <<'SH'
+#!/bin/sh
+exec "$@" "--remap-path-prefix=${CARGO_HOME%/*}=/build/native-kv"
+SH
+chmod 755 "$work/rustc-wrapper"
 cd /source
 kv_builder=$(cat <<'JS'
 import { buildNativeKv } from "./scripts/build-native-kv.ts";
@@ -34,6 +46,7 @@ JS
 )
 env -i PATH=/usr/bin:/bin HOME="$work/home" TMPDIR="$work/tmp" \
   UOS_PORTABLE_WORK="$work" "$work/bun-linux-aarch64/bun" --no-env-file --no-install -e "$kv_builder"
+python3 -B /usr/local/bin/portable-native-receipt "$work"
 
 mkdir /native/permissions
 permissions=/native/permissions/linux-arm64.node

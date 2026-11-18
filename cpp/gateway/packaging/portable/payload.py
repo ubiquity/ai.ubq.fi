@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 """Assemble the relocatable payload, without choosing a runtime host closure."""
 
-import json
+from datetime import datetime, timezone
 from pathlib import Path
 import shutil
 import subprocess
@@ -18,7 +18,7 @@ sys.modules["runtime_manifest"] = native.runtime
 from seal import EXECUTABLES, manifest, require_portable
 
 
-def main(commit, tree):
+def main(commit, tree, epoch):
     payload = OUTPUT / "payload"
     payload.mkdir(parents=True)
     kv = Path("/native/kv")
@@ -45,7 +45,7 @@ def main(commit, tree):
     for name in ("launch-schema.json", "offline-schema.json"):
         native.copy_file(GATEWAY / "runtime" / name, payload / "runtime" / name)
     native.copy_file(GATEWAY / "ops/launch-native.sh", payload / "ops/launch-native.sh", executable=True)
-    for name in ("native-kv.node", "native-kv.provenance.json"):
+    for name in ("native-kv.node", "native-kv.provenance.json", "build-commands.jsonl"):
         native.copy_file(kv / name, payload / "native/kv" / name)
     native.copy_file(inputs, payload / "native/kv/inputs.json")
     for name in ("linux-arm64.node", "manifest.json"):
@@ -54,21 +54,28 @@ def main(commit, tree):
     native.copy_vendor_licenses(payload)
     native.copy_file(kv / "LICENSE", payload / "licenses/native-kv/LICENSE")
     shutil.copytree("/opt/uos/licenses", payload / "licenses", dirs_exist_ok=True)
+    native.copy_file(GATEWAY / "packaging/SQLITE-LICENSE", payload / "licenses/sqlite/LICENSE")
+    native.copy_file(Path("/usr/share/common-licenses/GPL-3"), payload / "licenses/gcc/GPL-3")
     packages = ["libc6", "clang-21", "libstdc++-12-dev", "libgcc-12-dev", "libssl-dev", "zlib1g-dev", "libbrotli-dev", "libzstd-dev", "mold"]
+    kv_inputs = native.read_json(inputs)
     profile = {
         "schema": "uos-gateway-portable-build-v1", "gitCommit": commit, "gitTree": tree,
+        "buildDate": datetime.fromtimestamp(int(epoch), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "target": "aarch64-linux-gnu", "isa": "armv8-a", "glibcCeiling": "2.36",
         "compiler": subprocess.check_output(["clang++-21", "--version"], text=True).splitlines()[0],
         "debianPackages": dict(line.split("\t", 1) for line in subprocess.check_output(
             ["dpkg-query", "-W", "-f=${Package}\t${Version}\n", *packages], text=True).splitlines()),
         "static": {"Boost.JSON/Container": "1.92.0", "SQLite": "3.54.0", "ICU": "78.3", "simdjson": "5.2.0", "simdutf": "9.4.0"},
+        "nativeKv": kv_inputs["sdk"] | {"toolchain": kv_inputs["toolchain"]["rustcVersion"]},
         "linkFlags": ["-static-libstdc++", "-static-libgcc"],
     }
     native.write_json(payload / "build-profile.json", profile)
+    native.write_json(OUTPUT / "VERSION", profile)
     native.write_json(payload / "package.json", {"schema": "uos-native-package-v1", "platform": "linux", "architecture": "arm64",
                       "nativeKvProvenanceSha256": provenance, "profileSha256": native.runtime.digest(payload / "build-profile.json")})
     (payload / "manifest.sha256").write_text(manifest(payload))
     native.copy_file(GATEWAY / "docs/RASPBERRY-PI.md", OUTPUT / "README.md")
+    native.copy_file(GATEWAY / "packaging/portable/INSTALL.md", OUTPUT / "INSTALL.md")
     native.copy_file(GATEWAY / "tools/runtime-manifest.py", OUTPUT / "runtime_manifest.py")
     native.copy_file(GATEWAY / "packaging/portable/seal.py", OUTPUT / "seal.py")
 

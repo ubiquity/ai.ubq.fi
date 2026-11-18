@@ -27,7 +27,9 @@ COPY cpp/gateway/tests/production_smoke/serve_failure_gate.cpp cpp/gateway/tests
 COPY cpp/gateway/packaging/portable/clang-warnings.txt /opt/uos/clang-warnings.txt
 COPY cpp/gateway/packaging/portable/vendor-headers.cmake /opt/uos/vendor-headers.cmake
 ENV CCACHE_DIR=/var/cache/ccache CCACHE_COMPILERCHECK=content CCACHE_EXTRAFILES=/opt/uos/clang-warnings.txt
+ARG FRESH_COMPILE=0
 RUN --network=none --mount=type=cache,target=/var/cache/ccache \
+    if [ "$FRESH_COMPILE" = 1 ]; then export CCACHE_DISABLE=1; fi; \
     UOS_GATEWAY_BUILD_EVIDENCE=bookworm-arm64 UOS_GATEWAY_TOOL_ROOT=/opt/uos \
     cmake -S cpp/gateway -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_CXX_COMPILER=clang++-21 -DUOS_GATEWAY_FRAME_RECYCLING_DISABLED=ON \
@@ -44,6 +46,7 @@ FROM base AS native
 RUN apt-get update && apt-get install -y --no-install-recommends libnode-dev patch unzip xz-utils \
     && rm -rf /var/lib/apt/lists/*
 COPY cpp/gateway/packaging/portable/native.sh /usr/local/bin/portable-native
+COPY cpp/gateway/packaging/portable/native-receipt.py /usr/local/bin/portable-native-receipt
 COPY scripts/build-native-kv.ts /source/scripts/
 COPY tools/native-kv /source/tools/native-kv
 COPY src/runtime/permissions-native.c /source/src/runtime/
@@ -57,10 +60,12 @@ COPY tools/native-kv/inputs.json tools/native-kv/
 COPY cpp/gateway/docs/licenses cpp/gateway/docs/licenses
 COPY cpp/gateway/docs/RASPBERRY-PI.md cpp/gateway/docs/
 COPY cpp/gateway/ops/launch-native.sh cpp/gateway/ops/
+COPY cpp/gateway/packaging/SQLITE-LICENSE cpp/gateway/packaging/
 COPY cpp/gateway/packaging/portable cpp/gateway/packaging/portable
 ARG SOURCE_COMMIT
 ARG SOURCE_TREE
-RUN --network=none python3 -B cpp/gateway/packaging/portable/payload.py "$SOURCE_COMMIT" "$SOURCE_TREE"
+ARG SOURCE_COMMIT_EPOCH
+RUN --network=none python3 -B cpp/gateway/packaging/portable/payload.py "$SOURCE_COMMIT" "$SOURCE_TREE" "$SOURCE_COMMIT_EPOCH"
 
 FROM scratch AS package
 COPY --from=assemble /release/ /
