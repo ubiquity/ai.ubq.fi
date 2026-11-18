@@ -9694,7 +9694,8 @@
       "sites": []
     },
     "include/uos/recent_model_context.hpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed context estimates and stored-record interfaces. All options and borrowed views are processed synchronously and projections are owning values.",
       "sites": []
     },
     "include/uos/release.hpp": {

@@ -362,7 +362,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/openai_telemetry.hpp`
 - [x] `include/uos/optional_telemetry_queue.hpp`
 - [x] `include/uos/quota_projection.hpp`
-- [ ] `include/uos/recent_model_context.hpp`
+- [x] `include/uos/recent_model_context.hpp`
 - [ ] `include/uos/release.hpp`
 - [ ] `include/uos/request.hpp`
 - [ ] `include/uos/request_policy.hpp`
@@ -2052,6 +2052,10 @@ Reviewed the complete inline queue, clock and writer hooks, wait races, in-fligh
 
 Reviewed projection constants, output records, and synchronous aggregation APIs. Result rows own their data and there is no Task or retained callback.
 
+### `include/uos/recent_model_context.hpp`
+
+Reviewed context estimates and stored-record interfaces. All options and borrowed views are processed synchronously and projections are owning values.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2301,4 +2305,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-254/286 files reviewed. 436 sites: 412 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+255/286 files reviewed. 436 sites: 412 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
