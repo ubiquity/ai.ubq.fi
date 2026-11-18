@@ -96,7 +96,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/embeddings/voyage.hpp`
 - [x] `include/uos/harmony/adapter.hpp`
 - [x] `include/uos/harmony/classifier.hpp`
-- [ ] `include/uos/harmony/conversation.hpp`
+- [x] `include/uos/harmony/conversation.hpp`
 - [ ] `include/uos/harmony/parse.hpp`
 - [ ] `include/uos/harmony/probe_scenarios.hpp`
 - [ ] `include/uos/harmony/probes.hpp`
@@ -671,3 +671,7 @@ HarmonyTransport implements an owning erased transport wrapper.
 ### `include/uos/harmony/classifier.hpp`
 
 Synchronous classifier request/projection declarations. No async registration or suspended borrowing.
+
+### `include/uos/harmony/conversation.hpp`
+
+Synchronous conversation construction and JSON values. No deferred borrowing.

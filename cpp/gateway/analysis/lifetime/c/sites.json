@@ -696,7 +696,8 @@
       "sites": []
     },
     "include/uos/harmony/conversation.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous conversation construction and JSON values. No deferred borrowing.",
       "sites": []
     },
     "include/uos/harmony/parse.hpp": {
