@@ -8270,8 +8270,33 @@
       "sites": []
     },
     "include/uos/authority/native_principal_contracts.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the principal verifier, audit and provisioning callback declarations.",
+      "sites": [
+        {
+          "lines": [
+            163,
+            169,
+            170,
+            171,
+            172,
+            173,
+            175,
+            176,
+            177,
+            178,
+            185
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The native State retains the stored verifier and source callables through their direct awaits. Bound runner callbacks copy their State into work and the remaining hooks are synchronous."
+        }
+      ]
     },
     "include/uos/authority/native_runtime_contracts.hpp": {
       "reviewed": false,

@@ -306,7 +306,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_paid.hpp`
 - [x] `include/uos/authority/native_paid_contracts.hpp`
 - [x] `include/uos/authority/native_paid_policy.hpp`
-- [ ] `include/uos/authority/native_principal_contracts.hpp`
+- [x] `include/uos/authority/native_principal_contracts.hpp`
 - [ ] `include/uos/authority/native_runtime_contracts.hpp`
 - [ ] `include/uos/bounded_response_body.hpp`
 - [ ] `include/uos/catalog/index.hpp`
@@ -1710,6 +1710,12 @@ Reviewed paid authority's row and outcome records and synchronous codecs.
 
 Reviewed synchronous validators and paid-field projection. Input pointers are borrowed only during validation and the projection returns owned fields.
 
+### `include/uos/authority/native_principal_contracts.hpp`
+
+Reviewed the principal verifier, audit and provisioning callback declarations.
+
+- L163, 169, 170, 171, 172, 173, 175, 176, 177, 178, 185 **SAFE** · The native State retains the stored verifier and source callables through their direct awaits. Bound runner callbacks copy their State into work and the remaining hooks are synchronous.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1958,4 +1964,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-198/286 files reviewed. 369 sites: 348 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+199/286 files reviewed. 370 sites: 349 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
