@@ -99,3 +99,84 @@ bash "$scratch/ci-gate.sh" /usr/bin/time -o "$scratch/baseline-release.time" -f 
 
 Receipt `receipts/baseline-release.json` SHA-256 is
 `93eb27c9266bc14ac815522715644da5a0eec9aa0e8985ca7b08313dcbe8cac7`.
+
+## Implementation
+
+1. `177a16df9497260b473fa8e1567208d54e6038c2` uses `sys_days`, `year_month_day`, `weekday` and `hh_mm_ss` for UTC
+   projection, and chrono durations for normalized numeric inputs. Wide days and milliseconds retain the full
+   TimeClip range, and 400-year reduction keeps out-of-range years inside the standard calendar types. The
+   first date fixture run passed 6/6 cases.
+2. `118f9ed5cde38a0038f66843f2beb2e89c589cb5` reuses year, clock and width formatting for the ISO and HTTP date
+   strings. New controls cover both chrono calendar bounds, overflow in month, day and time components,
+   TimeClip endpoints, applied UTC offsets and weekday spelling. One control cancels a very large year and
+   month and checks the literal date `0001-05-01T00:00:00.000Z`. The date fixture passed 7/7 cases.
+3. `7e9a4bac9382dec76a4641dcf1df2e055077e691` removes the fixture-only methods and adds
+   `Date::utcFields()` and `Date::fromUtc()`. All 520 former setter inputs now check immutable reconstruction.
+   The 2,050 parser inputs, 205 epoch inputs and 221 UTC constructor inputs are retained. The
+   `readDigits` through `Date::parse` block compares byte-for-byte with the base.
+
+| First-party production path  |      Before |       After | Removed |
+| ---------------------------- | ----------: | ----------: | ------: |
+| `src/rt/date.cpp`            |         353 |         266 |      87 |
+| `include/uos/rt/date.hpp`    |          71 |          60 |      11 |
+| **Owned total**              |     **424** |     **326** |  **98** |
+| **Gateway production total** | **185,211** | **185,113** |  **98** |
+
+The gateway census counts tracked physical newlines under `src`, `include`, `runtime`, `entrypoints` and the
+compiled macOS version launcher. Tests, documentation and vendors are outside the production count.
+
+A scratch comparison compiled the base and each of the three patches with strict Clang 21 Release flags,
+then ran all four through the driver fixture boundary. The 150,000 generated TimeClip values had matching
+ISO, HTTP and display strings, and the 150,000 generated component sets had matching epoch milliseconds
+or invalid results. Each ISO timestamp parsed back to its input milliseconds.
+
+```bash
+bash "$scratch/calendar-probe.sh"
+bash "$scratch/run-release.sh" step1-date tests/rt/date_test.cpp
+bash "$scratch/run-release.sh" step2-date tests/rt/date_test.cpp
+python3 -B cpp/gateway/tools/links.py --check
+git diff --check 2b23fb68..HEAD
+```
+
+## Candidate ARM64 verification
+
+The driver receipts bind commit `7e9a4bac9382dec76a4641dcf1df2e055077e691`, tree
+`f52dec859c479becf72a86e159eed999fdc38e5e`, and driver input SHA-256
+`0c52ed5b68f29cc0140c52521a61802173b7c63703138cbc431e4ec377464087`. The portable driver links the date object into every test.
+
+| Requested Release selection                        | Binaries passed | Cases passed |
+| -------------------------------------------------- | --------------: | -----------: |
+| `tests/rt/date_test.cpp`                           |               1 |            7 |
+| `tests/rt/fs_test.cpp`                             |               1 |           13 |
+| `tests/rt/clock_test.cpp`                          |               1 |           11 |
+| `tests/native_codex_429_differential_test.cpp`     |               1 |            4 |
+| `tests/native_codex429_conformance_test.cpp`       |               1 |            2 |
+| `tests/cache_kv_migration_usage_coverage_test.cpp` |               1 |           43 |
+| `tests/serve_delivery_http_test.cpp`               |               1 |            7 |
+| **Total**                                          |           **7** |       **87** |
+
+The native Codex fixture retained HTTP 429 and the stable `header_retry_after` deadline at
+`1700000060000` ms for `Tue, 14 Nov 2023 22:14:20 GMT`. Changing the weekday to Wednesday rejected the
+deadline. A conflicting later deadline took effect at `1700000120000` ms and cleared reset stability.
+The filesystem, migration, serving and stored-value comparisons ran with their existing assertions.
+
+The complete Release gate passed **450/450 binaries and 5,105/5,105 cases**, including checks for
+health responses, HTTP framing and persisted timestamps. The date boundary test accounts for the one
+additional case. The object phase took 314.243 s with cached objects available,
+and link and test took 64.011 s. The outer timing was
+`wall_s=379.08 peak_process_kib=696308 exit=0`. Receipt
+`receipts/final-release.json` SHA-256 is `86e2752317f7bca86b1c54a5baa0d7032fa50befe4da99eb7e366615b0ffd550`.
+
+```bash
+for test in tests/rt/date_test.cpp tests/rt/fs_test.cpp tests/rt/clock_test.cpp \
+  tests/native_codex_429_differential_test.cpp tests/native_codex429_conformance_test.cpp \
+  tests/cache_kv_migration_usage_coverage_test.cpp tests/serve_delivery_http_test.cpp; do
+  bash "$scratch/run-release.sh" "focused-$(basename "$test" .cpp)" "$test"
+done
+bash "$scratch/run-release.sh" final-release
+```
+
+The Release wrapper runs `bash "$scratch/ci-gate.sh" /usr/bin/time -o "$scratch/receipts/$label.time"
+-f 'wall_s=%e peak_process_kib=%M exit=%x' timeout -k 15s 90m bash cpp/gateway/tools/ci-build.sh
+--config release "$@"` and preserves the driver receipt and results table. The full ASan/UBSan/LSan
+gate is running on the same candidate.
