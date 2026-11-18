@@ -843,8 +843,16 @@
       "sites": []
     },
     "include/uos/live/calls.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Call-creation handler API.",
+      "sites": [
+        {
+          "lines": "8",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The create frame owns the request and principal identity."
+        }
+      ]
     },
     "include/uos/live/handler.hpp": {
       "status": "pending",

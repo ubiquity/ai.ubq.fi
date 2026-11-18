@@ -117,7 +117,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/tools/router.hpp`
 - [x] `include/uos/harmony/tools/schemas.hpp`
 - [x] `include/uos/harmony/types.hpp`
-- [ ] `include/uos/live/calls.hpp`
+- [x] `include/uos/live/calls.hpp`
 - [ ] `include/uos/live/handler.hpp`
 - [ ] `include/uos/live/routes.hpp`
 - [ ] `include/uos/live/sideband.hpp`
@@ -767,3 +767,9 @@ Synchronous tool schema declarations.
 ### `include/uos/harmony/types.hpp`
 
 Harmony value records and synchronous JSON conversions.
+
+### `include/uos/live/calls.hpp`
+
+Call-creation handler API.
+
+- 8 · owning task parameters · **SAFE** · The create frame owns the request and principal identity.
