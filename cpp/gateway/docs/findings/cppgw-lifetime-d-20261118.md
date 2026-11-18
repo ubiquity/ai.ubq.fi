@@ -228,7 +228,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/responses_failover_stream.cpp`
 - [x] `src/responses_handler.cpp`
 - [x] `src/responses_native_headers.cpp`
-- [ ] `src/responses_request.cpp`
+- [x] `src/responses_request.cpp`
 - [x] `src/responses_stream.cpp`
 - [ ] `src/runtime_config.cpp`
 - [ ] `src/sentinel/incident_outbox.cpp`
@@ -1203,6 +1203,12 @@ Reviewed early-header dispatch wrapper and error capture.
 
 - L26, 27, 55, 56, 65, 85 **SAFE** · The plain callback constructs a Task with copied request, headers and context. Header processing keeps its context and response through bounded reading, and the weak-map entry owns an error snapshot.
 
+### `src/responses_request.cpp`
+
+Reviewed parsed-body selection, model and reasoning metadata, and synchronous normalization.
+
+- L61, 97, 103, 106, 110, 111, 145, 150 **SAFE** · Body and telemetry pointers borrow from the calling handler or image frame, which directly awaits these tasks. JSON member borrows refer to frame-owned snapshots, and the named metadata result stays live through reasoning normalization.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1451,4 +1457,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-121/286 files reviewed. 240 sites: 222 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+122/286 files reviewed. 241 sites: 223 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

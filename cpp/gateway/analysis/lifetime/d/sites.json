@@ -5288,8 +5288,29 @@
       ]
     },
     "src/responses_request.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed parsed-body selection, model and reasoning metadata, and synchronous normalization.",
+      "sites": [
+        {
+          "lines": [
+            61,
+            97,
+            103,
+            106,
+            110,
+            111,
+            145,
+            150
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Body and telemetry pointers borrow from the calling handler or image frame, which directly awaits these tasks. JSON member borrows refer to frame-owned snapshots, and the named metadata result stays live through reasoning normalization."
+        }
+      ]
     },
     "src/responses_stream.cpp": {
       "reviewed": true,
