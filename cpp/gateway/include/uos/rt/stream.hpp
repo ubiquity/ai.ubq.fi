@@ -460,14 +460,19 @@ namespace uos::rt {
 
     template <class T> void teePull(const std::shared_ptr<TeeState<T>>& tee);
 
-    template <class T> Task<void> teeRead(std::shared_ptr<TeeState<T>> tee) {
+    template <class T> Task<void> teeRead(std::weak_ptr<TeeState<T>> weak) {
       ReadableStreamReadResult<T> result;
       bool failed = false;
       try {
-        result = co_await readFrom(tee->reader);
+        Task<ReadableStreamReadResult<T>> reading;
+        if (auto tee = weak.lock()) reading = readFrom(tee->reader);
+        else co_return;
+        result = co_await std::move(reading);
       } catch (...) {
         failed = true;
       }
+      auto tee = weak.lock();
+      if (!tee) co_return;
       if (failed) {
         tee->reading = false;
         co_return;
@@ -502,7 +507,7 @@ namespace uos::rt {
         return;
       }
       tee->reading = true;
-      start(currentLoop(), teeRead(tee));
+      start(currentLoop(), teeRead<T>(tee));
     }
 
     template <class T> Task<void> teeCancel(std::shared_ptr<TeeState<T>> tee, bool first, Reason reason) {

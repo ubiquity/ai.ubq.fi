@@ -321,6 +321,21 @@ ASYNC_TEST("reader cancellation retains the stream when the source releases the 
   EXPECT(step.done);
 }
 
+ASYNC_TEST("an abandoned tee releases its source while a read is parked") {
+  std::weak_ptr<rt::detail::StreamState<std::string>> weak;
+  int pulls = 0;
+  {
+    rt::UnderlyingSource<std::string> source;
+    source.pull = [&pulls](Controller) { ++pulls; };
+    const Stream stream(std::move(source), rt::QueuingStrategy{0});
+    weak = stream.state();
+    const auto branches = stream.tee();
+    co_await rt::sleep(1);
+    EXPECT_EQ(pulls, 1);
+  }
+  EXPECT(weak.expired());
+}
+
 ASYNC_TEST("bun stream2: tee() gives both branches every chunk; both cancels cancel the source with [r1, r2]; a source error errors both") {
   auto log = makeLog();
   {
