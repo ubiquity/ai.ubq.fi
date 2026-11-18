@@ -212,7 +212,8 @@
       ]
     },
     "include/uos/codex/external_auth.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous external-auth decision and text/JSON declarations. No suspendable definition or asynchronous registration.",
       "sites": []
     },
     "include/uos/codex/index.hpp": {

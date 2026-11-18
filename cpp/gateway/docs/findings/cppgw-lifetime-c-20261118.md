@@ -51,7 +51,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/capacity_routing.hpp`
 - [x] `include/uos/codex/dispatch.hpp`
 - [x] `include/uos/codex/experiment.hpp`
-- [ ] `include/uos/codex/external_auth.hpp`
+- [x] `include/uos/codex/external_auth.hpp`
 - [ ] `include/uos/codex/index.hpp`
 - [ ] `include/uos/codex/manual_reset.hpp`
 - [ ] `include/uos/codex/manual_reset_state.hpp`
@@ -422,3 +422,7 @@ Dispatch interfaces transfer request and callback objects by value; async invoca
 Cache-scope experiment API and owned input records.
 
 - 34,65,72-74,91 · owning task parameters · **SAFE** · The experiment frames own session, slot, request and options data across auth/routing work.
+
+### `include/uos/codex/external_auth.hpp`
+
+Synchronous external-auth decision and text/JSON declarations. No suspendable definition or asynchronous registration.
