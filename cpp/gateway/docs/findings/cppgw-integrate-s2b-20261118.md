@@ -8,14 +8,14 @@ requested order. Reconcile overlapping code, vendor registrations and the
 specified fixtures under `cpp/gateway/`. Preserve upstream vendor bytes.
 The checkout handoff is the stage 2b branch for the maintainer's final integration.
 
-| Surface | Required behavior |
-| --- | --- |
-| Slimming | Retain the supported console, environment, filesystem, Headers, multipart, ordered container and gzip contracts. |
-| Fetch | Keep framing, limits, redirect and delivery behavior for supported HTTP requests. Reuse the stage 1 llhttp sources. |
-| URL | Use Ada 4.0.0 for URL, IDNA and form operations. Retain origin, redirect and request validation at the gateway boundary. |
-| Passkeys | Require canonical CBOR and retain authentication and attestation checks with OpenSSL's typed decoders. |
+| Surface                  | Required behavior                                                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Slimming                 | Retain the supported console, environment, filesystem, Headers, multipart, ordered container and gzip contracts.                     |
+| Fetch                    | Keep framing, limits, redirect and delivery behavior for supported HTTP requests. Reuse the stage 1 llhttp sources.                  |
+| URL                      | Use Ada 4.0.0 for URL, IDNA and form operations. Retain origin, redirect and request validation at the gateway boundary.             |
+| Passkeys                 | Require canonical CBOR and retain authentication and attestation checks with OpenSSL's typed decoders.                               |
 | BigInt and stored values | Keep supported numeric and stored representations, including sparse arrays, shared references and cycles. Verify input depth bounds. |
-| Conformance | Compare the native and Bun gateways with isolated local mocks. Preserve wire behavior, statuses, accounting and validation. |
+| Conformance              | Compare the native and Bun gateways with isolated local mocks. Preserve wire behavior, statuses, accounting and validation.          |
 
 The owner policy permits standard rejection of malformed inputs and library
 diagnostic wording. Preserve validation coverage and all valid vectors. Keep

@@ -4,10 +4,10 @@
 
 Replace OSS plan rows 7 and 8 with the pinned llhttp 9.4.4 release. The baseline is the clean C++ port at `093a9e0511e9d0deae5495dc324e53ff4dccd719`. The HTTP response parser must preserve the runtime interfaces, response headers, streaming and failure boundaries required by gateway callers. Use strict llhttp behavior for wire grammar. Preserve bounded head reads, header counts where applicable, raw field order and duplicates, trailing bytes at message boundaries, and ordinary JavaScript-style failures.
 
-| Consumer | Boundary and behavior |
-| --- | --- |
-| Fetch response head | Parse incrementally, skip informational responses, reject unsolicited upgrades, and preserve status, reason and ordered fields |
-| Fetch response body | Parse Content-Length, chunked and EOF-delimited bodies, honor bodyless response semantics, and keep content decoding separate |
+| Consumer            | Boundary and behavior                                                                                                            |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Fetch response head | Parse incrementally, skip informational responses, reject unsolicited upgrades, and preserve status, reason and ordered fields   |
+| Fetch response body | Parse Content-Length, chunked and EOF-delimited bodies, honor bodyless response semantics, and keep content decoding separate    |
 | WebSocket handshake | Parse a bounded response head, retain the raw header representation, and hand bytes beyond the head to the existing upgrade path |
 
 The request writer, networking lifecycle, content decoders, WebSocket upgrade validation and frame handling, server request parsing, TypeScript, deployment and credentials are outside this change. The owned production regions are the fetch response parser, its internal parser types and the WebSocket response-head function. Vendor registration, component tests and fuzzing, documentation and the report are the other assigned areas.
