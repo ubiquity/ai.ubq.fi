@@ -2516,7 +2516,8 @@
       "sites": []
     },
     "src/authority/native_codex_contracts.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous pool, slot and proof codecs. Property views are consumed while the input JSON lives and results own decoded data. No suspension or escaping callback.",
       "sites": []
     },
     "src/authority/native_codex_evaluation.cpp": {
