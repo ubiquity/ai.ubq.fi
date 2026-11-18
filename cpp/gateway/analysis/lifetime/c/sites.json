@@ -3839,8 +3839,16 @@
       ]
     },
     "src/provider/openrouter_request_controls.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Extension selection copies its source body at the public API boundary.",
+      "sites": [
+        {
+          "lines": "16-30",
+          "kind": "reference-taking task factory and catalog waits",
+          "verdict": "SAFE",
+          "reason": "The synchronous wrapper copies the body into the task. Provider selection and model resolution return value snapshots and the model string is a frame local."
+        }
+      ]
     },
     "src/provider/openrouter_streams.cpp": {
       "status": "pending",

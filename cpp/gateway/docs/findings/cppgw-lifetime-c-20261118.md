@@ -315,7 +315,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/metered.cpp`
 - [x] `src/provider/openrouter.cpp`
 - [x] `src/provider/openrouter_handlers.cpp`
-- [ ] `src/provider/openrouter_request_controls.cpp`
+- [x] `src/provider/openrouter_request_controls.cpp`
 - [ ] `src/provider/openrouter_streams.cpp`
 - [ ] `src/provider/openrouter_web_tools.cpp`
 - [ ] `src/provider/presentation.cpp`
@@ -2020,3 +2020,9 @@ Both handlers await dispatch and buffered reads in the request lifetime. The str
 - 25-60 · borrowed JSON walk · **SAFE** · Every pending pointer refers to the immutable local JSON root and is consumed before the synchronous helper returns.
 - 74-97,125-134,157-166 · transport closure and telemetry borrow · **SAFE** · The dispatch frame owns the attempt callable through its awaited result. Handler locals and the request owner's UsageContext survive dispatch and the buffered capture, and stream factories copy telemetry.
 - 110-140,142-176 · buffered body, status views and usage joins · **SAFE** · The handlers retain request snapshots and buffered payloads. The status view refers to the local payload, and bounded reads use a named task.
+
+### `src/provider/openrouter_request_controls.cpp`
+
+Extension selection copies its source body at the public API boundary.
+
+- 16-30 · reference-taking task factory and catalog waits · **SAFE** · The synchronous wrapper copies the body into the task. Provider selection and model resolution return value snapshots and the model string is a frame local.
