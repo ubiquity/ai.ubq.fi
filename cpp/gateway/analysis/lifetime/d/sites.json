@@ -6921,8 +6921,28 @@
       ]
     },
     "include/uos/admin/api_key_mutations.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the declarations for API key mutation and audit context propagation.",
+      "sites": [
+        {
+          "lines": [
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each context overload copies the audit context into the child Task and transfers the request value before the caller can return."
+        }
+      ]
     },
     "include/uos/admin/api_keys.hpp": {
       "reviewed": false,

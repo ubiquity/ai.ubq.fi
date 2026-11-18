@@ -252,7 +252,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/upstream_wire.cpp`
 - [x] `src/utils.cpp`
 - [x] `include/uos/admin/api_key_audit.hpp`
-- [ ] `include/uos/admin/api_key_mutations.hpp`
+- [x] `include/uos/admin/api_key_mutations.hpp`
 - [ ] `include/uos/admin/api_keys.hpp`
 - [ ] `include/uos/admin/capacity_observation_sync.hpp`
 - [ ] `include/uos/admin/chart_source_proxy.hpp`
@@ -1385,6 +1385,12 @@ Reviewed audit context values and the API for listing and handling change events
 
 - L25, 26, 27 **SAFE** · The listing adapter copies its borrowed input before returning and request handlers retain their shared KV argument.
 
+### `include/uos/admin/api_key_mutations.hpp`
+
+Reviewed the declarations for API key mutation and audit context propagation.
+
+- L8, 9, 10, 11, 12, 13, 14, 15 **SAFE** · Each context overload copies the audit context into the child Task and transfers the request value before the caller can return.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1633,4 +1639,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-144/286 files reviewed. 310 sites: 289 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+145/286 files reviewed. 311 sites: 290 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
