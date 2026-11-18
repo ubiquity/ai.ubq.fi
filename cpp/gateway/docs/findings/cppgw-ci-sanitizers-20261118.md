@@ -127,4 +127,11 @@ The same four binaries and five cases failed in the Release shard 1 diagnostic. 
 
 ## Handoff
 
-The Release and ASan matrices and all 11 harness jobs are configured. The two local campaigns met their five-minute budgets. Matching ARM64 runs, the 40-minute campaigns and the full set of sanitizer shard results remain pending hosted validation. The push dry run for `refs/heads/agent-jobs/cppgw-ci-sanitizers-20261118-44214118327-1` failed because this runner lacks GitHub write credentials. The result commits are on the clean `agent-job` checkout for the agent-branch handoff.
+The Release and ASan matrices and all 11 harness jobs are configured. The two local campaigns met their five-minute budgets. Matching ARM64 runs, the 40-minute campaigns and the full set of sanitizer shard results remain pending hosted validation.
+
+The dry run and actual push both exited 128 with `could not read Username for 'https://github.com': terminal prompts disabled`. The published agent branch remains at `5705ff938c90303b291a80f817cb29a10ce97e6f`. The result commits are on the clean `agent-job` checkout for authenticated handoff.
+
+```sh
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false timeout 25s git push origin \
+  HEAD:refs/heads/agent-jobs/cppgw-ci-sanitizers-20261118-44214118327-1
+```
