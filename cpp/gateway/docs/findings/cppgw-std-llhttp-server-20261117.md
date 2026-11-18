@@ -203,3 +203,42 @@ sudo -n /usr/bin/unshare --net --setgid "$(id -g)" --setuid "$(id -u)" -- /usr/b
   -seed=17112026 -max_len=32768 -timeout=3 -rss_limit_mb=768 -malloc_limit_mb=128 \
   -max_total_time=120 -print_final_stats=1 "-artifact_prefix=$campaign/artifacts/" "$campaign/corpus"
 ```
+
+## Terminal qualification and handoff
+
+| Gate                                     | Binaries passed / built | Harness cases passed / run |
+| ---------------------------------------- | ----------------------: | -------------------------: |
+| Optimized, all registered closures       |               440 / 442 |              5,028 / 5,031 |
+| Optimized, HTTP-linked closures          |                 88 / 89 |              1,077 / 1,078 |
+| ASan and UBSan, HTTP-linked closures     |                 88 / 89 |              1,077 / 1,078 |
+| Optimized, standalone llhttp parser      |                   1 / 1 |                      7 / 7 |
+| ASan and UBSan, standalone llhttp parser |                   1 / 1 |                      7 / 7 |
+
+All 89 sanitizer run logs had zero ASan, UBSan and leak diagnostics. The
+sanitized wire test with the same four scratch expectations passed all
+five harness cases and all 106 wire comparisons. The command was
+`${isolated[@]} python3 "$scratch/wire_strict.py" asan`. The tracked wire
+test remains the sole nonpassing HTTP-linked binary in both profiles.
+
+The remaining 353 optimized binaries passed 352/353 binaries and
+3,951/3,953 cases. The URL/IDNA differential binary failed two cases,
+including the U+180E host mapping and Unicode scalar table expectations
+on the runner's ICU 74.2. Its link list includes neither the server parser
+object nor the llhttp archive. The application, runtime and test inputs
+for that binary match the pre-task tree.
+
+The HTTP-linked runs used the commit and tree above, with source digest
+`ed7a5fbfd8bc372840b9dc0366c50763adb07a7b855ea1c63904f34876a54c66`.
+The other optimized run used `e11e93ed93e6f70a6281aed792945a9f8ad89a13`,
+tree `2405b139d7e870bb869f283dd3fefe836f43f5f6`, with source digest
+`a5cc80ef877b90af3a574be29dc95e3eb06d40257b86d67001561398e60c1560`.
+The verifier checked both digests after the runs. The subsequent commits
+contain only documentation. Pinned Prettier 3.9.6 passed the new Markdown,
+the continuation of this report and the changed JSON files.
+
+The local branch has the completed parser commits and the run receipts.
+Full acceptance awaits the four tracked fixture updates and multi-file C
+support in the non-CMake build drivers. The push dry run to
+`origin/pool-partial/cppgw-std-llhttp-server-20261117-44188151110` failed
+because this runner has no GitHub write credential. The work remains
+committed on the local task branch.
