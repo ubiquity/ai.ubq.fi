@@ -1140,8 +1140,16 @@
       ]
     },
     "include/uos/provider/capacity_parse.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Capacity parsing helpers are synchronous; there is one stored snapshot read.",
+      "sites": [
+        {
+          "lines": "31,87",
+          "kind": "clock and task interface",
+          "verdict": "SAFE",
+          "reason": "safeNow invokes its callable inline, and the snapshot coroutine owns KV while it awaits."
+        }
+      ]
     },
     "include/uos/provider/capacity_rollups.hpp": {
       "status": "pending",

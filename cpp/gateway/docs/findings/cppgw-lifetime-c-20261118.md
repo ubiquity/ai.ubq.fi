@@ -143,7 +143,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/capacity_contract.hpp`
 - [x] `include/uos/provider/capacity_events.hpp`
 - [x] `include/uos/provider/capacity_history.hpp`
-- [ ] `include/uos/provider/capacity_parse.hpp`
+- [x] `include/uos/provider/capacity_parse.hpp`
 - [ ] `include/uos/provider/capacity_rollups.hpp`
 - [ ] `include/uos/provider/cerebras.hpp`
 - [ ] `include/uos/provider/cerebras_handlers.hpp`
@@ -918,3 +918,9 @@ Event tasks and sample-trigger callback declarations.
 Capacity history and recovery APIs.
 
 - 33,59-61,71-72 · owning task parameters · **SAFE** · The reader/merger tasks retain their store and point/event input values.
+
+### `include/uos/provider/capacity_parse.hpp`
+
+Capacity parsing helpers are synchronous; there is one stored snapshot read.
+
+- 31,87 · clock and task interface · **SAFE** · safeNow invokes its callable inline, and the snapshot coroutine owns KV while it awaits.
