@@ -51,6 +51,32 @@ TEST("loop teardown releases open WebSocket cycles without emitting close") { ch
 
 TEST("loop teardown releases a WebSocket whose close completion was abandoned") { checkLoopTeardown(true); }
 
+TEST("an externally retained WebSocket releases its Asio socket at loop teardown") {
+  for (bool closeFirst : {false, true}) {
+    std::shared_ptr<ws::WebSocket> websocket;
+    std::weak_ptr<ws::detail::Socket> native;
+    {
+      rt::FakeClock clock;
+      rt::Loop loop(clock);
+      rt::LoopScope scope(loop);
+      asio::ip::tcp::acceptor acceptor(rt::executor(), asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
+      asio::ip::tcp::socket client(rt::executor());
+      client.connect(acceptor.local_endpoint());
+      auto peer = acceptor.accept();
+      websocket = openSocket(std::move(client));
+      native = websocket->state().socket;
+      if (closeFirst) {
+        websocket->terminate();
+        loop.run();
+        EXPECT_EQ(websocket->readyState(), ws::WebSocket::CLOSED);
+      }
+    }
+    EXPECT(native.expired());
+    EXPECT_EQ(websocket->readyState(), ws::WebSocket::CLOSED);
+    websocket.reset();
+  }
+}
+
 TEST("loop teardown releases an opening WebSocket and its pending connect attempt") {
   std::weak_ptr<ws::WebSocket> weak;
   {

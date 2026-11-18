@@ -46,7 +46,14 @@ namespace uos::rt::ws {
             request->abort();
             if (request->socket) request->socket->shutdown();
           }
-          if (state.socket) state.socket->shutdown();
+          if (state.socket) {
+            state.bufferedAmount = websocket->ownBufferedAmount();
+            state.socket->shutdown();
+          }
+          state.sender.reset();
+          state.socket.reset();
+          state.socketAttached = false;
+          state.readyState = WebSocket::CLOSED;
           if (state.receiver) state.receiver->removeAllListeners();
           websocket->removeAllListeners();
         }
