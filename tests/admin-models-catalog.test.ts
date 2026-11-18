@@ -321,7 +321,17 @@ test("the gateway waterfall model is cataloged with one provider row per usable 
   delete process.env.CEREBRAS_API_KEY;
   process.env.OPENROUTER_API_KEY = "fixture-openrouter-key";
   process.env.DEEPSEEK_API_KEY = "fixture-deepseek-key";
+  resetOpenRouterModelsCacheForTest();
   try {
+    await fetchOpenRouterModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(
+          Response.json({
+            data: [{ id: "~deepseek/deepseek-flash-latest", context_length: 1_048_576, top_provider: { context_length: 1_048_576 } }],
+          })
+        ),
+    });
     const catalog = await buildModelCatalogSnapshot();
     const row = catalog.models.find((model) => model.id === DEEPSEEK_WATERFALL_MODEL_ID);
     assert.ok(row, "a configured hop makes the waterfall model selectable");
@@ -332,13 +342,16 @@ test("the gateway waterfall model is cataloged with one provider row per usable 
     );
     assert.deepEqual(row.providers[0].supported_endpoints, ["/v1/responses"]);
     assert.equal(row.providers[0].owned_by, "ubiquity");
-    assert.equal(row.context_window_tokens, 1_048_576);
+    assert.equal(row.context_window_tokens, 800_000);
+    assert.equal(row.max_context_window_tokens, 800_000);
+    assert.equal(row.auto_compact_token_limit_tokens, 720_000);
     assert.equal(row.context_source, "provider_discovery");
     assert.deepEqual(row.supported_reasoning_levels, ["low", "high", "max"]);
     assert.equal(row.default_reasoning_effort, "high");
   } finally {
     delete process.env.OPENROUTER_API_KEY;
     delete process.env.DEEPSEEK_API_KEY;
+    resetOpenRouterModelsCacheForTest();
   }
 });
 
@@ -364,7 +377,9 @@ test("the gateway waterfall model lists the paid hops, OpenLux last, when their 
       assert.equal(provider.owned_by, "ubiquity");
       assert.deepEqual(provider.supported_endpoints, ["/v1/responses"]);
     }
-    assert.equal(row.context_window_tokens, 1_048_576);
+    assert.equal(row.context_window_tokens, 800_000);
+    assert.equal(row.max_context_window_tokens, 800_000);
+    assert.equal(row.auto_compact_token_limit_tokens, 720_000);
     assert.deepEqual(row.supported_reasoning_levels, ["low", "high", "max"]);
     assert.equal(row.default_reasoning_effort, "high");
   } finally {
