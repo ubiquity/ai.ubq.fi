@@ -7207,8 +7207,26 @@
       ]
     },
     "include/uos/admin/sentinel_incident.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the Sentinel incident administration dependency interface.",
+      "sites": [
+        {
+          "lines": [
+            16,
+            17,
+            22,
+            23
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The handler owns the KV opening and listing callbacks and directly awaits both. A shared KV handle remains live through the borrowed list call."
+        }
+      ]
     },
     "include/uos/agent_messages.hpp": {
       "reviewed": false,
