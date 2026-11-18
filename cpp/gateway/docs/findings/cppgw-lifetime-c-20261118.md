@@ -217,7 +217,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/routing_state.cpp`
 - [x] `src/codex/session.cpp`
 - [x] `src/codex/supervisor.cpp`
-- [ ] `src/codex/supervisor_brief.cpp`
+- [x] `src/codex/supervisor_brief.cpp`
 - [ ] `src/codex/supervisor_config.cpp`
 - [ ] `src/codex/supervisor_follow.cpp`
 - [ ] `src/codex/supervisor_inventory.cpp`
@@ -1400,3 +1400,11 @@ The admin follow handler spawns one owning polling task and weakly observes it f
 
 - 209-259,292-307 · stream start, detached poll, cancel and abort · **SAFE** · The poll frame owns FollowState and the revisions handle. Controller holds a weak stream handle, and the abort and cancel callbacks lock weak state only for their synchronous use.
 - 263-290 · config and inventory awaits · **SAFE** · Config and inventory snapshots are frame-owned. A matching configured source is copied before the inventory suspension.
+
+### `src/codex/supervisor_brief.cpp`
+
+Transcript and brief generation use independent owned transcript, connection, and request records.
+
+- 204-209,270-327,330-350 · connection tasks and enrichment iteration · **SAFE** · The frames retain connection and callable owners. Target references come from a private immutable vector and lookup views refer to locally owned RPC payloads.
+- 440-501,561-606,637-666,854-879 · transcript, brief, and connection teardown · **SAFE** · Source, config, response, and turn vectors are frame-owned. The connection stays live through collection errors and the awaited close.
+- 764-770 · borrowed adapter inputs · **SAFE** · Both reference-taking entry points are regular factories that copy connection/source into the child without suspending first.

@@ -2326,8 +2326,28 @@
       ]
     },
     "src/codex/supervisor_brief.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Transcript and brief generation use independent owned transcript, connection, and request records.",
+      "sites": [
+        {
+          "lines": "204-209,270-327,330-350",
+          "kind": "connection tasks and enrichment iteration",
+          "verdict": "SAFE",
+          "reason": "The frames retain connection and callable owners. Target references come from a private immutable vector and lookup views refer to locally owned RPC payloads."
+        },
+        {
+          "lines": "440-501,561-606,637-666,854-879",
+          "kind": "transcript, brief, and connection teardown",
+          "verdict": "SAFE",
+          "reason": "Source, config, response, and turn vectors are frame-owned. The connection stays live through collection errors and the awaited close."
+        },
+        {
+          "lines": "764-770",
+          "kind": "borrowed adapter inputs",
+          "verdict": "SAFE",
+          "reason": "Both reference-taking entry points are regular factories that copy connection/source into the child without suspending first."
+        }
+      ]
     },
     "src/codex/supervisor_config.cpp": {
       "status": "pending",
