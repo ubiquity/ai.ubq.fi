@@ -331,7 +331,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/inference_deadline.hpp`
 - [x] `include/uos/input_normalization.hpp`
 - [x] `include/uos/jev_compaction/compaction.hpp`
-- [ ] `include/uos/jev_compaction/hybrid.hpp`
+- [x] `include/uos/jev_compaction/hybrid.hpp`
 - [ ] `include/uos/kv.hpp`
 - [ ] `include/uos/kv_conversion/cli.hpp`
 - [ ] `include/uos/kv_conversion/convert.hpp`
@@ -1860,6 +1860,12 @@ Reviewed the compaction input wrapper, injected asker and rewrite callback. Stre
 
 - L29, 38, 40, 44, 49, 50, 51 **SAFE** · The wrappers copy JSON and dependencies into the Task. The awaiting frame owns the asker and residue function through their calls.
 
+### `include/uos/jev_compaction/hybrid.hpp`
+
+Reviewed hybrid fetch injection and residue interfaces.
+
+- L32, 37, 38 **SAFE** · The frame owns the summary and Fetch, and copies per-worker options and work state before dispatch.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2108,4 +2114,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-223/286 files reviewed. 397 sites: 375 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+224/286 files reviewed. 398 sites: 376 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

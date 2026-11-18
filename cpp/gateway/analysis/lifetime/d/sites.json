@@ -8866,8 +8866,25 @@
       ]
     },
     "include/uos/jev_compaction/hybrid.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed hybrid fetch injection and residue interfaces.",
+      "sites": [
+        {
+          "lines": [
+            32,
+            37,
+            38
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The frame owns the summary and Fetch, and copies per-worker options and work state before dispatch."
+        }
+      ]
     },
     "include/uos/kv.hpp": {
       "reviewed": false,
