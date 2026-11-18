@@ -104,3 +104,25 @@ The fresh ARM64 runner started at commit `0b727faf827c0c79607921348e84c2fdf9aa20
 | Clang 21 ASan / UBSan |             1/2 |                13/14 |                           146/155 |
 
 All 13 codec cases passed in each profile. The sole failing harness case is the differential replay, which reproduced the nine mismatches listed above. The three negative TPM tests currently have matching recorded outcomes. Their statement maps also place `ver` before `alg`, so sorting all five TPM maps restores coverage of the downstream TPM decisions. The existing vector file, `tests/passkeys_webauthn_differential_vectors.inc`, requires separate scope approval for a committed update. The broader release build is in progress.
+
+## Work contract v2
+
+Bind QCBOR's C compiler in the existing qualified Clang profiles. A fresh `fuzz-clang` tool view selected `/usr/bin/cc` even though its C++ wrapper used Clang 21. The QCBOR compile then failed on the unsupported GCC option `-fsanitize=fuzzer-no-link`. The change owns the C language selection for QCBOR in `CMakeLists.txt` and this report. The passkey codec, fixtures and vendor sources retain their current input hashes for this build correction. The tool view should use its pinned Clang C frontend when no C compiler was supplied. Explicit `CC` or `CMAKE_C_COMPILER` selections and the existing native GCC and SDK selection paths stay authoritative. Acceptance is a fresh Clang tool-view configure and a five-object `uos_vendor_qcbor` build through `compiler-limit.py`, plus the direct release and sanitizer focused commands. The actual qualified host SDK is unavailable on this runner. Stop once the reproduced failure clears and the direct build commands and focused results reconcile.
+
+The corrected fresh tool view built all five QCBOR objects with Clang 21.1.8 and `-fsanitize=fuzzer-no-link,address,undefined` through `tools/compiler-limit.py`. All five compile receipts returned 0 and the archive had five members. The commands below use the runner's Clang 21 C++ wrapper and pinned C symlink under `profile-view` and `cmake-sdk/bin`, respectively. The pre-fix control ran the same commands with `profile-before` paths and stopped on two GCC C compiles.
+
+```sh
+q=/tmp/qcbor-c1
+export UOS_GATEWAY_TOOL_ROOT="$q/cmake-sdk"
+env -u CC UOS_GATEWAY_TOOL_VIEW="$q/profile-view" UOS_GATEWAY_BUILD_EVIDENCE="$q/profile-after-evidence" \
+  cmake -S cpp/gateway -B "$q/profile-after" -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE="$PWD/cpp/gateway/cmake/native-toolchain.cmake" \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUOS_GATEWAY_FUZZ=ON -DUOS_GATEWAY_SANITIZER=address,undefined
+env -u CC UOS_GATEWAY_TOOL_VIEW="$q/profile-view" UOS_GATEWAY_BUILD_EVIDENCE="$q/profile-after-evidence" \
+  cmake --build "$q/profile-after" -j 2 --target uos_vendor_qcbor
+ar t "$q/profile-after/libuos_vendor_qcbor.a"
+```
+
+The direct Clang ASan/UBSan configure retained all compiler commands after sorting by input. The focused rerun passed 13 codec cases and reproduced the same nine fixture differences without sanitizer diagnostics.
+
+The scratch fixture patch at `/tmp/qcbor-c1/passkeys-canonical-fixtures.patch` (SHA-256 `fc9e9dc8c522c4ec56e6fb170381b185ba673f42e0a754755d7ea0abf9e474d6`) updates 12 vectors and adds two canonical COSE controls. It preserves all signed TPM data and every unaffected fixture. Rebuilding just the replay translation unit against that scratch data passed all 157 vectors in GCC release and Clang ASan/UBSan. The repository fixture path is outside the assigned scope, so this receipt applies to the scratch data.
