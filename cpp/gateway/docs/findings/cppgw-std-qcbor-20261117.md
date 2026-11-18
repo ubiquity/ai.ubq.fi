@@ -93,3 +93,14 @@ python3 "$q/run-tests.py" --build "$q/cmake-release" --mode all --jobs 4 --log "
 ```
 
 The CMake include contains a deferred `set_source_files_properties` call that gives only `src/rt/base64.cpp` Clang's `--system-header-prefix=third_party/` option. The runner wrapper selects the generated Links registry, gives each test a private mount, network and PID namespace via `sudo -n unshare`, and invokes `cmake/ci/isolate.py` with a credential-free environment. The namespace helper verifies loopback works and external routing is denied before executing the binary with a fresh tmpfs home and temporary directory. `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:detect_stack_use_after_return=1` and `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1` make sanitizer findings fatal. `python3 -B cpp/gateway/tools/links.py --check` resolved 442 test entries. `sha256sum -c SHA256SUMS` verified 16 upstream files and all three vendor paths (`inc/`, `src/`, `LICENSE`) matched the pinned extraction. The on-disk binaries, replay helpers and receipts are outside the checkout under `/tmp/qcbor-r1`.
+
+## Second continuation checkpoint
+
+The fresh ARM64 runner started at commit `0b727faf827c0c79607921348e84c2fdf9aa20da`, tree `8f0dff322191473524b6d096ea710738acf7303c`. GCC 14.2 and Clang 21.1.8 rebuilt and linked both focused binaries, using Boost 1.92.0 and SQLite 3.54.0 from official source archives. The inherited QCBOR source, fuzz harness and benchmark implementation have the same bytes as the previous receipts. The scoped format check passed for all five changed Markdown and JSON files using the frozen Bun dependencies in scratch. The vendor's `inc/qcbor/UsefulBuf.h` contains an upstream blank line at EOF, which `git diff --check 55afcc8b..HEAD` reports.
+
+| Fresh focused gate    | Binaries passed | Harness cases passed | Recorded WebAuthn vectors matched |
+| --------------------- | --------------: | -------------------: | --------------------------------: |
+| GCC 14.2 release      |             1/2 |                13/14 |                           146/155 |
+| Clang 21 ASan / UBSan |             1/2 |                13/14 |                           146/155 |
+
+All 13 codec cases passed in each profile. The sole failing harness case is the differential replay, which reproduced the nine mismatches listed above. The three negative TPM tests currently have matching recorded outcomes. Their statement maps also place `ver` before `alg`, so sorting all five TPM maps restores coverage of the downstream TPM decisions. The existing vector file, `tests/passkeys_webauthn_differential_vectors.inc`, requires separate scope approval for a committed update. The broader release build is in progress.
