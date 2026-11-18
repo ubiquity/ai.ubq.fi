@@ -3278,8 +3278,172 @@
       ]
     },
     "src/handler/terminal_route.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed admission, quota gates, terminal accounting hooks, routes and background exception replay.",
+      "sites": [
+        {
+          "lines": [
+            52,
+            69,
+            75,
+            94,
+            100,
+            101,
+            110,
+            166,
+            169,
+            176,
+            177,
+            183,
+            199,
+            206
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The outer route or scheduled omission owns state, request and identifiers. Permit callbacks own state and are transferred through responses, while borrowed admission helpers are awaited directly."
+        },
+        {
+          "lines": [
+            210,
+            213,
+            218,
+            221,
+            230,
+            233,
+            235,
+            238,
+            260,
+            264,
+            270,
+            281,
+            282,
+            286,
+            306,
+            307,
+            316,
+            323
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The outer route retains the receiver, and terminal settlement callbacks copy its shared state into logging. Both reservation tasks keep their receivers through waits."
+        },
+        {
+          "lines": [
+            331,
+            334,
+            344,
+            349,
+            353,
+            356,
+            363,
+            370,
+            374,
+            376,
+            379,
+            381,
+            385,
+            387,
+            389,
+            391,
+            398,
+            401,
+            404,
+            406,
+            408,
+            410,
+            415,
+            417,
+            419,
+            423,
+            425,
+            427,
+            431,
+            433,
+            435,
+            439,
+            441,
+            443,
+            445,
+            449,
+            451,
+            453,
+            455,
+            460,
+            461,
+            464,
+            465,
+            466,
+            470,
+            471,
+            472,
+            473,
+            474,
+            478,
+            490,
+            491,
+            497,
+            506
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Every route factory owns shared State in its direct awaiting frame and each downstream task gets an owning context or a borrow from that retained State. No sibling can outlive the frame through a fail-fast join here."
+        },
+        {
+          "lines": [
+            523,
+            524,
+            526,
+            529
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "An injected Task-returning persistence callable can be stored in the Promise-returning std::function through implicit Task adoption. A successful background registrar lets the options frame die while that coroutine is pending. Invoke a shared copy of the callable and keep that same copy in the persistence settlement chain."
+        },
+        {
+          "lines": [
+            536,
+            542,
+            547,
+            548,
+            551,
+            554,
+            558,
+            560,
+            562,
+            564,
+            567,
+            579,
+            587,
+            589,
+            591
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The owning route frame holds State, authentication, permit and quota context. Task factories pass values into children or run only while an owner in the awaiting chain remains live."
+        }
+      ]
     },
     "src/health.cpp": {
       "reviewed": false,

@@ -139,7 +139,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/handler/index.cpp`
 - [x] `src/handler/serve_handler.cpp`
 - [x] `src/handler/terminal_log.cpp`
-- [ ] `src/handler/terminal_route.cpp`
+- [x] `src/handler/terminal_route.cpp`
 - [ ] `src/health.cpp`
 - [ ] `src/http.cpp`
 - [ ] `src/images.cpp`
@@ -859,6 +859,16 @@ Reviewed body and delivery observation, streaming source ownership, coalesced qu
 - L417, 424, 426, 427, 436, 440, 446, 448, 451, 452, 458, 459, 460, 471, 474, 477, 480, 541, 542 **SAFE** · The stream runtime SourceAlgorithm::runAsync owns the pull callable and its state capture through the member task, including close or error clearing the stream's callbacks. Cancel is synchronous and the original reader remains owned.
 - L519, 521, 531, 532, 533, 538 **DEFECT** · SSE completion keeps a body-outcome latch alive through its logging reaction. If transport header preparation throws before reading, runtime can finish a fallback response without ever cancelling the SSE body. The body latch retains the log, process permit and request drain indefinitely. Cancel the unconsumed body when native response setup fails.
 
+### `src/handler/terminal_route.cpp`
+
+Reviewed admission, quota gates, terminal accounting hooks, routes and background exception replay.
+
+- L52, 69, 75, 94, 100, 101, 110, 166, 169, 176, 177, 183, 199, 206 **SAFE** · The outer route or scheduled omission owns state, request and identifiers. Permit callbacks own state and are transferred through responses, while borrowed admission helpers are awaited directly.
+- L210, 213, 218, 221, 230, 233, 235, 238, 260, 264, 270, 281, 282, 286, 306, 307, 316, 323 **SAFE** · The outer route retains the receiver, and terminal settlement callbacks copy its shared state into logging. Both reservation tasks keep their receivers through waits.
+- L331, 334, 344, 349, 353, 356, 363, 370, 374, 376, 379, 381, 385, 387, 389, 391, 398, 401, 404, 406, 408, 410, 415, 417, 419, 423, 425, 427, 431, 433, 435, 439, 441, 443, 445, 449, 451, 453, 455, 460, 461, 464, 465, 466, 470, 471, 472, 473, 474, 478, 490, 491, 497, 506 **SAFE** · Every route factory owns shared State in its direct awaiting frame and each downstream task gets an owning context or a borrow from that retained State. No sibling can outlive the frame through a fail-fast join here.
+- L523, 524, 526, 529 **DEFECT** · An injected Task-returning persistence callable can be stored in the Promise-returning std::function through implicit Task adoption. A successful background registrar lets the options frame die while that coroutine is pending. Invoke a shared copy of the callable and keep that same copy in the persistence settlement chain.
+- L536, 542, 547, 548, 551, 554, 558, 560, 562, 564, 567, 579, 587, 589, 591 **SAFE** · The owning route frame holds State, authentication, permit and quota context. Task factories pass values into children or run only while an owner in the awaiting chain remains live.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -964,4 +974,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-73/286 files reviewed. 161 sites: 151 SAFE, 10 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+74/286 files reviewed. 166 sites: 155 SAFE, 11 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
