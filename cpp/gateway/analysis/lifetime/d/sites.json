@@ -2802,8 +2802,151 @@
       ]
     },
     "src/catalog/store.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed all KV reference parameters, catalog memo and chunk ownership, storage lifecycle and lease heartbeat.",
+      "sites": [
+        {
+          "lines": [
+            86,
+            95,
+            101,
+            103,
+            117,
+            130,
+            134,
+            141,
+            147
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Catalog callers retain KV while these tasks run. Pruning traverses its private vector and keeps each list/atomic receiver live through its await. Compression helpers transfer or copy input into their child tasks."
+        },
+        {
+          "lines": [
+            237,
+            242,
+            244,
+            260,
+            263
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The key factory is a frame value and native KV reads hold storage after a failed join. Chunk spans point into the owned entry vector, and gzip receives an owned byte copy."
+        },
+        {
+          "lines": [
+            274,
+            276,
+            289,
+            291,
+            301,
+            306
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The caller retains the KV. Memo hits are moved into private storage before insertion and no memo pointer crosses suspension. Chunk-key callbacks own version and generation."
+        },
+        {
+          "lines": [
+            550,
+            553,
+            560,
+            564,
+            575,
+            576,
+            578,
+            581,
+            585,
+            586,
+            587,
+            590,
+            595,
+            596,
+            759,
+            760,
+            763,
+            765,
+            767,
+            768
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The catalog context holds KV under the documented heartbeat precondition until stop has synchronously cleared the timer and awaited the last renewal. Renewal callbacks own state and clear the temporary renewal chain on settlement."
+        },
+        {
+          "lines": [
+            625,
+            627,
+            637,
+            639,
+            656,
+            663,
+            667,
+            669,
+            689,
+            691,
+            694,
+            696,
+            702,
+            705,
+            707,
+            714,
+            719
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The context or named caller retains the borrowed KV. Writes, compression, digest and pruning use frame-owned inputs and named atomic receivers across waits."
+        },
+        {
+          "lines": [
+            727,
+            730,
+            736,
+            740,
+            748,
+            755,
+            773,
+            777,
+            782,
+            789,
+            791,
+            797,
+            800,
+            807,
+            809,
+            812
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Generation and lease callers hold the KV through each directly awaited task. Each loop or retry uses copied rows and result values before the next await."
+        }
+      ]
     },
     "src/catalog/types.cpp": {
       "reviewed": false,

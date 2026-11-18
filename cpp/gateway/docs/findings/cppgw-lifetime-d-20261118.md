@@ -128,7 +128,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/catalog/index.cpp`
 - [x] `src/catalog/models.cpp`
 - [x] `src/catalog/promotion.cpp`
-- [ ] `src/catalog/store.cpp`
+- [x] `src/catalog/store.cpp`
 - [ ] `src/catalog/types.cpp`
 - [ ] `src/config.cpp`
 - [ ] `src/debug_routing.cpp`
@@ -789,6 +789,17 @@ Reviewed the scoped metadata promotion and atomic updates.
 
 - L55, 56, 57, 58, 66 **SAFE** · The frame owns the shared KV and its input and plan snapshots, including the ready result used after commit. Native KV gets have independent storage owners if the join rejects early.
 
+### `src/catalog/store.cpp`
+
+Reviewed all KV reference parameters, catalog memo and chunk ownership, storage lifecycle and lease heartbeat.
+
+- L86, 95, 101, 103, 117, 130, 134, 141, 147 **SAFE** · Catalog callers retain KV while these tasks run. Pruning traverses its private vector and keeps each list/atomic receiver live through its await. Compression helpers transfer or copy input into their child tasks.
+- L237, 242, 244, 260, 263 **SAFE** · The key factory is a frame value and native KV reads hold storage after a failed join. Chunk spans point into the owned entry vector, and gzip receives an owned byte copy.
+- L274, 276, 289, 291, 301, 306 **SAFE** · The caller retains the KV. Memo hits are moved into private storage before insertion and no memo pointer crosses suspension. Chunk-key callbacks own version and generation.
+- L550, 553, 560, 564, 575, 576, 578, 581, 585, 586, 587, 590, 595, 596, 759, 760, 763, 765, 767, 768 **SAFE** · The catalog context holds KV under the documented heartbeat precondition until stop has synchronously cleared the timer and awaited the last renewal. Renewal callbacks own state and clear the temporary renewal chain on settlement.
+- L625, 627, 637, 639, 656, 663, 667, 669, 689, 691, 694, 696, 702, 705, 707, 714, 719 **SAFE** · The context or named caller retains the borrowed KV. Writes, compression, digest and pruning use frame-owned inputs and named atomic receivers across waits.
+- L727, 730, 736, 740, 748, 755, 773, 777, 782, 789, 791, 797, 800, 807, 809, 812 **SAFE** · Generation and lease callers hold the KV through each directly awaited task. Each loop or retry uses copied rows and result values before the next await.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -894,4 +905,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-62/286 files reviewed. 142 sites: 133 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+63/286 files reviewed. 148 sites: 139 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
