@@ -439,13 +439,17 @@ namespace uos::provider::gemini {
 
     rt::Task<GeminiCliTurn> runWithAdmission(const Prepared& prepared, const std::string& model, const tel::UsageContext* context,
       const GeminiHandlerOptions& options, bool& admitted) {
+      std::optional<api_key_policy::ApiKeyProviderDispatch> dispatch;
       if (context && context->beforeProviderDispatch) {
         auto dispatching = context->beforeProviderDispatch("gemini");
-        co_await std::move(dispatching);
+        dispatch = co_await std::move(dispatching);
       }
       tel::recordAttemptedProvider(context, "gemini");
       GeminiCliOptions optionsForCli{.model = model, .prompt = prepared.prompt.text, .jsonSchema = prepared.prompt.schema,
-        .onDispatch = [context] { tel::recordFirstProviderDispatch(context); },
+        .onDispatch = [context, dispatch = std::move(dispatch)]() mutable {
+          if (dispatch) dispatch->markTransportStarted();
+          tel::recordFirstProviderDispatch(context);
+        },
         .onInit = [context] { tel::recordFirstProviderHeaders(context); }};
       admitted = true;
       auto task = runGeminiCli(optionsForCli, options.runner);

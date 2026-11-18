@@ -501,6 +501,7 @@ test("a malformed usage window or request row is refused instead of trusted", ()
     assert.deepEqual(normalizeApiKeyUsageRequestV3(row), row, `a ${provider} dispatch row stays readable`);
   }
   assert(API_KEY_USAGE_PROVIDERS.includes("claude_code"), "the Claude subscription dispatch must be a listed API-key usage provider");
+  assert(API_KEY_USAGE_PROVIDERS.includes("gemini"), "the Gemini subscription dispatch must be a listed API-key usage provider");
   assert.equal(normalizeApiKeyUsageRequestV3({ ...dispatched, provider: null }), null);
   assert.equal(normalizeApiKeyUsageRequestV3({ ...dispatched, dispatched_at_ms: null }), null);
   const released = { ...reserved, state: "released", released_at_ms: 3, release_reason: "route_completed_without_provider_dispatch" };

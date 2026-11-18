@@ -34,6 +34,7 @@
 // src/sentinel/replay_model.cpp src/sentinel/replay_observation.cpp src/sentinel/replay_read.cpp src/sentinel/replay_retention.cpp src/sentinel/replay_retention_bootstrap.cpp src/sentinel/replay_retention_metadata.cpp
 // src/sentinel/replay_retention_schema.cpp src/sentinel/replay_store.cpp src/sentinel/upstream_capture.cpp src/static.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp
 // src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/systemone/handlers.cpp src/types.cpp src/upstream_wire.cpp src/utils.cpp
+#include "uos/admin/api_keys.hpp"
 #include "uos/admin/gemini_quota.hpp"
 #include "uos/config.hpp"
 #include "uos/handler/index.hpp"
@@ -265,6 +266,58 @@ ASYNC_TEST("authenticated gateway request routes to Gemini and records the subsc
   EXPECT_EQ(telemetry->provider, "gemini");
   EXPECT_EQ(telemetry->totalTokens, std::optional<double>(8699));
   EXPECT_EQ(telemetry->completed, true);
+  co_return;
+}
+
+ASYNC_TEST("Gemini API-key request increments the admin usage meter exactly once") {
+  const auto savedConfig = uos::config::config;
+  uos::config::config.authTokens.clear();
+  uos::config::config.adminTokens.clear();
+  uos::config::config.codexAuthJsonB64.clear();
+  uos::api_key_policy::resetApiKeyPolicyCacheForTest();
+  uos::kv::setKvForTest(std::make_shared<rt::MemoryKv>(rt::dateNow));
+  gemini::setGeminiCliRunnerForTest(turnRunner());
+  auto restore = rt::scopeExit([savedConfig] {
+    gemini::setGeminiCliRunnerForTest({});
+    uos::kv::setKvForTest(nullptr);
+    uos::config::config = savedConfig;
+    uos::api_key_policy::resetApiKeyPolicyCacheForTest();
+  });
+
+  const std::string token = "u_" + std::string(64, 'a');
+  rt::RequestInit createInit;
+  createInit.method = "POST";
+  createInit.headers = rt::Headers{{"Content-Type", "application/json"}};
+  createInit.body = rt::jsonStringify(json::object{{"name", "Gemini usage acceptance"}, {"token", token}, {"usage_limit_requests", 10},
+    {"window_ms", 3'600'000}, {"paid_fallback_enabled", false}});
+  AWAIT(created, uos::admin::api_keys::handleAdminApiKeysCreate(rt::Request("https://ai.ubq.fi/admin/api-keys", createInit)));
+  ASSERT_EQ(created.status(), 200);
+  AWAIT(createdBody, created.json());
+  const auto keyId = rt::getString(createdBody, "id");
+  ASSERT(keyId.has_value());
+
+  rt::RequestInit inferenceInit;
+  inferenceInit.method = "POST";
+  inferenceInit.headers = rt::Headers{{"Authorization", "Bearer " + token}, {"Content-Type", "application/json"}};
+  inferenceInit.body = rt::jsonStringify(json::object{{"model", "gemini-3.8-flash-low"}, {"input", "Reply exactly GEMINI_OK."}, {"stream", false}});
+  const rt::AbortController deliveryController;
+  const uos::handler::http::RequestDeliveryInfo delivery{rt::Promise<void>::resolve(), deliveryController.signal()};
+  AWAIT(inference, uos::handler::index::handler(rt::Request("https://ai.ubq.fi/v1/responses", inferenceInit), delivery));
+  ASSERT_EQ(inference.status(), 200);
+  AWAIT(inferenceBody, inference.text());
+  EXPECT(inferenceBody.find("GEMINI_OK") != std::string::npos);
+
+  AWAIT(listed, uos::admin::api_keys::handleAdminApiKeysList(rt::Request("https://ai.ubq.fi/admin/api-keys?include_usage=true")));
+  ASSERT_EQ(listed.status(), 200);
+  AWAIT(listedBody, listed.json());
+  const auto* rows = rt::getArray(listedBody, "data");
+  ASSERT(rows);
+  std::optional<double> usageRequests;
+  for (const auto& row : *rows) {
+    if (rt::getString(row, "id") == keyId) usageRequests = rt::getNumber(rt::get(row, "usage_requests"));
+  }
+  ASSERT(usageRequests.has_value());
+  EXPECT_EQ(*usageRequests, 1.0);
   co_return;
 }
 

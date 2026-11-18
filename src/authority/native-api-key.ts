@@ -25,6 +25,7 @@ export const API_KEY_USAGE_PROVIDERS = [
   "chatgpt_codex",
   "claude_code",
   "deepseek",
+  "gemini",
   "lithos",
   "openrouter",
   "removed_provider",

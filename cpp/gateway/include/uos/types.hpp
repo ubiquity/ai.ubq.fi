@@ -185,8 +185,8 @@ namespace uos::types {
     std::string state;  // "reserved" | "dispatched" | "released"
     double reserved_at_ms;
     double lease_expires_at_ms;
-    // "cerebras" | "chatgpt_codex" | "claude_code" | "deepseek" | "lithos" | "openrouter" |
-    // "removed_provider" | "metered" | "surplus" | "voyage" | null
+    // "cerebras" | "chatgpt_codex" | "claude_code" | "deepseek" | "gemini" | "lithos" |
+    // "openrouter" | "removed_provider" | "metered" | "surplus" | "voyage" | null
     std::optional<std::string> provider;
     std::optional<double> dispatched_at_ms;
     std::optional<double> released_at_ms;

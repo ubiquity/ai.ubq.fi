@@ -173,6 +173,8 @@ namespace {
       rt::objectSet(request.as_object(), "provider", json::value(json::string(provider)));
       providerNormalization.push_back(apiKeyV3::normalizeApiKeyUsageRequestV3(request).has_value());
     }
+    EXPECT(std::find(apiKeyV3::API_KEY_USAGE_PROVIDERS.begin(), apiKeyV3::API_KEY_USAGE_PROVIDERS.end(), "gemini") !=
+           apiKeyV3::API_KEY_USAGE_PROVIDERS.end());
     json::value unknownProviderRequest = json::value_from(dispatched->request);
     rt::objectSet(unknownProviderRequest.as_object(), "provider", json::value("openlux"));
 
