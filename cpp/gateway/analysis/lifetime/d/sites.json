@@ -9751,8 +9751,24 @@
       ]
     },
     "include/uos/request_policy.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed model defaults, metadata lookup and synchronous policy helpers.",
+      "sites": [
+        {
+          "lines": [
+            45,
+            56,
+            81,
+            103
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The asynchronous metadata lookup takes model and route strings by value. The static labels refer to literals."
+        }
+      ]
     },
     "include/uos/responses_attempts.hpp": {
       "reviewed": false,

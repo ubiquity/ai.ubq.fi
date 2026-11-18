@@ -365,7 +365,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/recent_model_context.hpp`
 - [x] `include/uos/release.hpp`
 - [x] `include/uos/request.hpp`
-- [ ] `include/uos/request_policy.hpp`
+- [x] `include/uos/request_policy.hpp`
 - [ ] `include/uos/responses_attempts.hpp`
 - [ ] `include/uos/responses_buffered.hpp`
 - [ ] `include/uos/responses_failover_stream.hpp`
@@ -2069,6 +2069,12 @@ Reviewed one-shot body observation and JSON reader interfaces.
 - L17, 19, 36, 39, 41, 48 **SAFE** · The request map copies both callbacks and erases the chosen entry before synchronous invocation. Captured body bytes cross the callback boundary as a shared owner.
 - L51, 54 **SAFE** · Both JSON reader entry Tasks own their Request and take body/document limits by value.
 
+### `include/uos/request_policy.hpp`
+
+Reviewed model defaults, metadata lookup and synchronous policy helpers.
+
+- L45, 56, 81, 103 **SAFE** · The asynchronous metadata lookup takes model and route strings by value. The static labels refer to literals.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2318,4 +2324,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-257/286 files reviewed. 439 sites: 415 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+258/286 files reviewed. 440 sites: 416 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
