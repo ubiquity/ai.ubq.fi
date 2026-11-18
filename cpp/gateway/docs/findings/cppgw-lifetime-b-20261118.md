@@ -50,7 +50,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/rt/kv_internal.hpp`
 - [x] `src/rt/kv_js.cpp`
 - [x] `src/rt/kv_jsc.cpp`
-- [ ] `src/rt/kv_jsc_deserialize.cpp`
+- [x] `src/rt/kv_jsc_deserialize.cpp`
 - [ ] `src/rt/kv_key.cpp`
 - [ ] `src/rt/kv_memory.cpp`
 - [ ] `src/rt/kv_sdk.cpp`
@@ -331,6 +331,10 @@ Private synchronous codec declarations. Views and references are consumed during
 | --- | --- | --- | --- |
 | 55-98,108-230 | JSC serializer string pool and visitor | **SAFE** | The Serializer and its pool are local to a synchronous encode. The visitor runs inline and copies fields into the owned output, with no map iterator retained between pool insertions. |
 
+### `src/rt/kv_jsc_deserialize.cpp`
+
+The input span is borrowed only during the synchronous Decoder call. Local string/object pools and byte subspans produce owned KvValue results, including the inner storage envelope. No coroutine or deferred callback.
+
 
 ## Ranked defects and counts
 
@@ -496,4 +500,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-27/97 files reviewed. **DEFECT 7, SAFE 65, UNCLEAR 2.**
+28/97 files reviewed. **DEFECT 7, SAFE 65, UNCLEAR 2.**
