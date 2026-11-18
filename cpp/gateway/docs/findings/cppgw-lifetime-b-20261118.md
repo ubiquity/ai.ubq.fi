@@ -28,7 +28,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/runtime/http_early_sse.hpp`
 - [x] `include/uos/runtime/http_tasks.hpp`
 - [x] `include/uos/runtime/http_upgrade.hpp`
-- [ ] `include/uos/runtime/native_kv_bootstrap.hpp`
+- [x] `include/uos/runtime/native_kv_bootstrap.hpp`
 - [ ] `include/uos/runtime/permissions_linux.hpp`
 - [ ] `include/uos/runtime/websocket.hpp`
 - [ ] `src/runtime/http.cpp`
@@ -160,7 +160,11 @@ Initial checkpoint. Manual review and tool verification are pending.
 | --- | --- | --- | --- |
 | 31-36,44-64 | Upgrade callback interfaces | **SAFE** | Handler and upgrade Task inputs are by value, and returned function wrappers are synchronous bridges into owning free coroutines. Socket-close ownership is reviewed at the registration site. |
 
+### `include/uos/runtime/native_kv_bootstrap.hpp`
+
+The path and receipt queries take references for synchronous calls. The asynchronous bootstrap entry takes an owning optional string. No inline coroutine or callback registration.
+
 
 ## Ranked defects and counts
 
-5/97 files reviewed. **DEFECT 0, SAFE 9, UNCLEAR 0.**
+6/97 files reviewed. **DEFECT 0, SAFE 9, UNCLEAR 0.**
