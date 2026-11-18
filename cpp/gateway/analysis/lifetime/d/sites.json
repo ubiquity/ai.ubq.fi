@@ -2300,8 +2300,22 @@
       "sites": []
     },
     "src/authority/native_authority_kernel.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed synchronous kernel quota transactions, policy snapshots and expiry handling.",
+      "sites": [
+        {
+          "lines": [
+            77
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The decision callback reads the current frame and receiver during its immediate transaction decision."
+        }
+      ]
     },
     "src/authority/native_authority_paid.cpp": {
       "reviewed": false,

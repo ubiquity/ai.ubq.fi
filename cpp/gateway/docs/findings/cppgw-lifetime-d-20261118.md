@@ -104,7 +104,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_authority_api.cpp`
 - [x] `src/authority/native_authority_codex.cpp`
 - [x] `src/authority/native_authority_contracts.cpp`
-- [ ] `src/authority/native_authority_kernel.cpp`
+- [x] `src/authority/native_authority_kernel.cpp`
 - [ ] `src/authority/native_authority_paid.cpp`
 - [ ] `src/authority/native_authority_principals.cpp`
 - [ ] `src/authority/native_authority_rpc.cpp`
@@ -673,6 +673,12 @@ Reviewed synchronous pool selection, reset, signal and write operations. The ide
 
 Reviewed native authority argument and row codecs. Variant visitation invokes the local callback inline and outputs own their JSON. No suspension or escaping callback.
 
+### `src/authority/native_authority_kernel.cpp`
+
+Reviewed synchronous kernel quota transactions, policy snapshots and expiry handling.
+
+- L77 **SAFE** · The decision callback reads the current frame and receiver during its immediate transaction decision.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -778,4 +784,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-39/286 files reviewed. 127 sites: 118 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+40/286 files reviewed. 128 sites: 119 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
