@@ -8744,8 +8744,30 @@
       ]
     },
     "include/uos/images.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed image dispatch injection, fan-out coordination and usage-context pointers.",
+      "sites": [
+        {
+          "lines": [
+            16,
+            21,
+            22,
+            23,
+            25,
+            26,
+            29,
+            31
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The adapters copy the context and options before suspending, and fan-out callbacks share a coordinator whose children retain independent ownership through settlement."
+        }
+      ]
     },
     "include/uos/inference_admission.hpp": {
       "reviewed": false,

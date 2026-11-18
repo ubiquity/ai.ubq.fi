@@ -326,7 +326,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/handler/terminal_route.hpp`
 - [x] `include/uos/health.hpp`
 - [x] `include/uos/http.hpp`
-- [ ] `include/uos/images.hpp`
+- [x] `include/uos/images.hpp`
 - [ ] `include/uos/inference_admission.hpp`
 - [ ] `include/uos/inference_deadline.hpp`
 - [ ] `include/uos/input_normalization.hpp`
@@ -1830,6 +1830,12 @@ Reviewed synchronous HTTP helpers and the response rate-limit constants.
 
 - L13 **SAFE** · Header views refer to static literals. The HTTP response helpers consume borrowed inputs synchronously and return owning response handles.
 
+### `include/uos/images.hpp`
+
+Reviewed image dispatch injection, fan-out coordination and usage-context pointers.
+
+- L16, 21, 22, 23, 25, 26, 29, 31 **SAFE** · The adapters copy the context and options before suspending, and fan-out callbacks share a coordinator whose children retain independent ownership through settlement.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2078,4 +2084,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-218/286 files reviewed. 392 sites: 370 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+219/286 files reviewed. 393 sites: 371 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
