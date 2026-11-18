@@ -50,7 +50,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `include/uos/rt/websocket.hpp`
 - [x] `src/rt/fetch.cpp`
 - [x] `src/rt/fetch_transport.cpp`
-- [ ] `src/rt/fetch_transport_codec.cpp`
+- [x] `src/rt/fetch_transport_codec.cpp`
 - [ ] `src/rt/fetch_transport_http.cpp`
 - [ ] `src/rt/fetch_transport_internal.hpp`
 - [ ] `src/rt/fetch_transport_net.cpp`
@@ -268,18 +268,27 @@ Reviewed DNS, both connection branches, concurrent upload/download, stale retry,
 - **DEFECT (A-FETCH-RESPONSE-STRANDED)** `135, 214, 215, 216, 236, 237, 238, 416, 436, 437, 438, 440, 441, 452, 455, 474` (b/c), Post-head upload failure leaves a response read parked. The detached upload writer can close the Connection with a body failure after the response exists. The response pull treats the resulting aborted read as a silent successful pull.
 - **SAFE** `492, 493, 496, 497, 498, 501, 502, 503, 504, 513, 514, 515, 518, 519, 520, 521, 522, 523, 526, 527, 533, 535, 549, 552, 553, 559, 561, 562, 563, 567, 568, 581, 584, 589, 595, 596` (b/d/e), Redirect drain, header edits and public send owner. The redirect frame owns request metadata, next URL and exchange. Header iteration is synchronous, and the public ordinary wrapper copies ClientState into the deferred operation.
 
+### `src/rt/fetch_transport_codec.cpp`
+
+Reviewed native and dynamically resolved codec branches. Decoder operations and function-table initialization run synchronously.
+
+- **SAFE** `24, 25, 27, 34, 35, 37, 40, 44, 45, 47, 52, 64, 67, 73, 76, 78, 79, 80, 85, 88` (b/d), Zlib adapter and borrowed decoder buffers. The response pump owns the decoder and input during the synchronous write, and each inflater output span is copied before the next read. On failure the pump stops using the decoder.
+- **SAFE** `122, 124, 127, 129, 131, 134, 135, 137, 140, 147, 150, 154, 157, 160, 163, 164, 174, 179, 181` (b/c), Brotli function table and streaming buffer ownership. Each decoder owns its C state and borrows a static API table, backed by the process-lifetime loader handle in the fallback. The C call uses stack buffers whose bytes are appended before returning.
+- **SAFE** `222, 224, 227, 229, 231, 234, 235, 238, 241, 248, 250, 252, 256, 259, 261, 262, 263, 265, 271, 276, 278` (b/c), Zstd function table and streaming buffer ownership. Each decoder frees its C stream through the static API table; its input view and output buffer descriptors are used entirely in one synchronous write.
+- **SAFE** `285, 287, 288, 300, 301, 302, 303, 304, 309, 311, 314, 315, 316, 320, 321, 323, 324, 327, 329, 332, 334, 339, 340, 345, 346` (b/d), Decoder selection and coding-name views. The code copies each view into its local vector before taking the selected reference, performs no later mutation of that vector and passes the URL into an owning string.
+
 ## Ranked defects and counts
 
-Reviewed **18/30 files** and **108 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **19/30 files** and **112 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 5 | 19 | 0 |
-| b. Borrowed coroutine parameter or receiver | 11 | 61 | 3 |
-| c. Callback ownership or cycle | 16 | 64 | 4 |
-| d. Container invalidation | 3 | 36 | 0 |
+| b. Borrowed coroutine parameter or receiver | 11 | 65 | 3 |
+| c. Callback ownership or cycle | 16 | 66 | 4 |
+| d. Container invalidation | 3 | 38 | 0 |
 | e. GCC 12 await-expression rule | 4 | 12 | 1 |
-| **Unique site groups** | 22 | 81 | 5 |
+| **Unique site groups** | 22 | 85 | 5 |
 
 ### 1. A-FETCH-ABORT-TRANSPORT (memory safety in the injectable transport path) — Abort can outlive the owning virtual transport frame
 

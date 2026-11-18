@@ -2997,8 +2997,139 @@
       ]
     },
     "src/rt/fetch_transport_codec.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed native and dynamically resolved codec branches. Decoder operations and function-table initialization run synchronously.",
+      "sites": [
+        {
+          "lines": [
+            24,
+            25,
+            27,
+            34,
+            35,
+            37,
+            40,
+            44,
+            45,
+            47,
+            52,
+            64,
+            67,
+            73,
+            76,
+            78,
+            79,
+            80,
+            85,
+            88
+          ],
+          "classes": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Zlib adapter and borrowed decoder buffers",
+          "reason": "The response pump owns the decoder and input during the synchronous write, and each inflater output span is copied before the next read. On failure the pump stops using the decoder."
+        },
+        {
+          "lines": [
+            122,
+            124,
+            127,
+            129,
+            131,
+            134,
+            135,
+            137,
+            140,
+            147,
+            150,
+            154,
+            157,
+            160,
+            163,
+            164,
+            174,
+            179,
+            181
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Brotli function table and streaming buffer ownership",
+          "reason": "Each decoder owns its C state and borrows a static API table, backed by the process-lifetime loader handle in the fallback. The C call uses stack buffers whose bytes are appended before returning."
+        },
+        {
+          "lines": [
+            222,
+            224,
+            227,
+            229,
+            231,
+            234,
+            235,
+            238,
+            241,
+            248,
+            250,
+            252,
+            256,
+            259,
+            261,
+            262,
+            263,
+            265,
+            271,
+            276,
+            278
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Zstd function table and streaming buffer ownership",
+          "reason": "Each decoder frees its C stream through the static API table; its input view and output buffer descriptors are used entirely in one synchronous write."
+        },
+        {
+          "lines": [
+            285,
+            287,
+            288,
+            300,
+            301,
+            302,
+            303,
+            304,
+            309,
+            311,
+            314,
+            315,
+            316,
+            320,
+            321,
+            323,
+            324,
+            327,
+            329,
+            332,
+            334,
+            339,
+            340,
+            345,
+            346
+          ],
+          "classes": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Decoder selection and coding-name views",
+          "reason": "The code copies each view into its local vector before taking the selected reference, performs no later mutation of that vector and passes the URL into an owning string."
+        }
+      ]
     },
     "src/rt/fetch_transport_http.cpp": {
       "status": "pending",
