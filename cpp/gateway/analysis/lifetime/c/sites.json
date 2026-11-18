@@ -573,7 +573,8 @@
       "sites": []
     },
     "include/uos/deepseek/responses_payload.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous construction of downstream payloads. No suspension or retained callback.",
       "sites": []
     },
     "include/uos/deepseek/responses_stream.hpp": {

@@ -85,7 +85,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/deepseek/handlers.hpp`
 - [x] `include/uos/deepseek/index.hpp`
 - [x] `include/uos/deepseek/responses.hpp`
-- [ ] `include/uos/deepseek/responses_payload.hpp`
+- [x] `include/uos/deepseek/responses_payload.hpp`
 - [ ] `include/uos/deepseek/responses_stream.hpp`
 - [ ] `include/uos/deepseek/stream.hpp`
 - [ ] `include/uos/deepseek/waterfall.hpp`
@@ -609,3 +609,7 @@ The dispatcher passes projected request data and callback objects as owning valu
 ### `include/uos/deepseek/responses.hpp`
 
 Synchronous Responses conversion declarations. The results own translated wire values.
+
+### `include/uos/deepseek/responses_payload.hpp`
+
+Synchronous construction of downstream payloads. No suspension or retained callback.
