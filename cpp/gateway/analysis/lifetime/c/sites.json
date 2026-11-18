@@ -3979,8 +3979,16 @@
       ]
     },
     "src/provider/surplus_claude_chat_request.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Native Chat projection, replay lookups and cache policy transforms are synchronous. Returned values own JSON and tool names.",
+      "sites": [
+        {
+          "lines": "357-405,512-545",
+          "kind": "cache block projections",
+          "verdict": "SAFE",
+          "reason": "The temporary pointer lists refer into the caller's private message and tool containers, which stay structurally unchanged while the selected inner object is updated."
+        }
+      ]
     },
     "src/provider/surplus_claude_request.cpp": {
       "status": "pending",

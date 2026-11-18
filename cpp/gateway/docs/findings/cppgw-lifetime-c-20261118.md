@@ -324,7 +324,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/selection.cpp`
 - [x] `src/provider/stream_relay.cpp`
 - [x] `src/provider/surplus.cpp`
-- [ ] `src/provider/surplus_claude_chat_request.cpp`
+- [x] `src/provider/surplus_claude_chat_request.cpp`
 - [ ] `src/provider/surplus_claude_request.cpp`
 
 ## Per-file verdicts
@@ -2076,3 +2076,9 @@ The Surplus stream projection owns its event and body state. Its header abort ra
 - 318-354 · abort race listener ownership cycle · **DEFECT** · If the preheader fetch remains pending when its loop stops, the signal retains its abort listener and both signal and finish captures retain that signal. Loop teardown discards the timer and reactions without invoking finish. Make the listener and finish use weak signal state.
 - 466-553 · generator yields, pull and cancel ownership · **SAFE** · The body owns its source iterator and part state, and each next result and vector live through yield. Pull and cancel receive a shared state parameter and their generator operations own their state.
 - 675-698,703-708 · coalescing cell after an abandoned wait · **DEFECT** · Fixture loop destruction can destroy the suite's unfinished discovery waiter before the coalescing cell is reset. A later loop can join an old Promise with no producer. Use an identity-checked scope guard.
+
+### `src/provider/surplus_claude_chat_request.cpp`
+
+Native Chat projection, replay lookups and cache policy transforms are synchronous. Returned values own JSON and tool names.
+
+- 357-405,512-545 · cache block projections · **SAFE** · The temporary pointer lists refer into the caller's private message and tool containers, which stay structurally unchanged while the selected inner object is updated.
