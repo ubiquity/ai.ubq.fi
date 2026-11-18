@@ -3890,7 +3890,8 @@
       "sites": []
     },
     "src/provider/removed_provider_telemetry.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "The retired telemetry hook returns an already settled promise without retaining its argument.",
       "sites": []
     },
     "src/provider/selection.cpp": {
