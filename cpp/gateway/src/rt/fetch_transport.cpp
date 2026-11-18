@@ -394,7 +394,7 @@ namespace uos::rt::detail::fetch {
             if (!pump->connection) co_return;
             if (status == ReadStatus::data) continue;
             if (pump->connection->timedOut()) rethrow(timeoutErrorReason());
-            if (status == ReadStatus::aborted) co_return;
+            if (pump->writer->bodyFailure) rethrow(pump->writer->bodyFailure);
             if (status != ReadStatus::eof || pump->parser.finish() != HPE_PAUSED) throw closedError(pump->url);
             ended = true;
           }

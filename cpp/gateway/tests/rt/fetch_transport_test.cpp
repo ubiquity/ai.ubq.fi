@@ -1218,6 +1218,38 @@ ASYNC_TEST("connection close releases a parked request upload before loop teardo
   }
 }
 
+ASYNC_TEST("an upload failure after response headers rejects a parked response read") {
+  auto peer = Peer::start();
+  TransportScope scope;
+  auto pulling = withResolvers();
+  peer->open = [ready = pulling.promise](std::shared_ptr<PeerConnection> connection) -> Task<bool> {
+    co_await ready.wait();
+    auto sending = connection->send("HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\n");
+    co_await std::move(sending);
+    co_return false;
+  };
+  std::optional<ReadableStreamDefaultController<ByteChunk>> upload;
+  UnderlyingSource<ByteChunk> source;
+  source.start = [&upload](ReadableStreamDefaultController<ByteChunk> controller) { upload.emplace(std::move(controller)); };
+  source.pull = [ready = pulling.resolve](ReadableStreamDefaultController<ByteChunk>) { ready(); };
+  RequestInit init{.method = "POST", .body = BodyInit(ByteStream(std::move(source), QueuingStrategy{0})), .duplex = "half"};
+  auto fetching = fetch(RequestInfo(peer->url("/upload")), std::move(init));
+  const auto response = co_await std::move(fetching);
+  EXPECT_EQ(response.status(), 200);
+  auto reader = response.body()->getReader();
+  auto reading = reader.readPromise();
+  EXPECT(reading.pending());
+  reading.catch_(ignoreRejection);
+
+  const auto failure = makeReason(TypeError("upload failed"));
+  upload->error(failure);
+  upload.reset();
+  co_await rt::sleep(1);
+  EXPECT(reading.rejected());
+  EXPECT(reading.reason() == failure);
+  peer->stop();
+}
+
 ASYNC_TEST("every fetched response has a body stream, an empty one when the response has no body") {
   auto peer = Peer::start();
   TransportScope scope;
