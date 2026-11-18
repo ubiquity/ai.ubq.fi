@@ -177,7 +177,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/presentation.hpp`
 - [x] `include/uos/provider/removed_provider_circuit.hpp`
 - [x] `include/uos/provider/removed_provider_telemetry.hpp`
-- [ ] `include/uos/provider/selection.hpp`
+- [x] `include/uos/provider/selection.hpp`
 - [ ] `include/uos/provider/stream_relay.hpp`
 - [ ] `include/uos/provider/surplus.hpp`
 - [ ] `include/uos/provider/surplus_claude_chat_request.hpp`
@@ -1111,3 +1111,9 @@ Retired circuit compatibility API.
 Retired telemetry compatibility API.
 
 - 6 · settled promise factory · **SAFE** · The synchronous wrapper returns a resolved promise and retains no reference to the supplied JSON.
+
+### `include/uos/provider/selection.hpp`
+
+Provider selection read/store and hash API.
+
+- 75,123,130,217-218 · owning task parameters · **SAFE** · Lookup and store frames own their store/options/selection data, and hash owns its account string.

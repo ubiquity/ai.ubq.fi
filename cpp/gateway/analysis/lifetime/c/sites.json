@@ -1512,8 +1512,16 @@
       ]
     },
     "include/uos/provider/selection.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Provider selection read/store and hash API.",
+      "sites": [
+        {
+          "lines": "75,123,130,217-218",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Lookup and store frames own their store/options/selection data, and hash owns its account string."
+        }
+      ]
     },
     "include/uos/provider/stream_relay.hpp": {
       "status": "pending",
