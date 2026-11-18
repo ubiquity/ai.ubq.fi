@@ -374,7 +374,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/responses_request.hpp`
 - [x] `include/uos/responses_stream.hpp`
 - [x] `include/uos/runtime_config.hpp`
-- [ ] `include/uos/sentinel/incident_outbox.hpp`
+- [x] `include/uos/sentinel/incident_outbox.hpp`
 - [ ] `include/uos/sentinel/replay_admin.hpp`
 - [ ] `include/uos/sentinel/replay_capture.hpp`
 - [ ] `include/uos/sentinel/replay_envelope.hpp`
@@ -2127,6 +2127,13 @@ Reviewed the runtime configuration loader and cache override interface.
 
 - L92, 93, 94 **SAFE** · Refresh takes an optional shared store by value, and returns an owning configuration snapshot.
 
+### `include/uos/sentinel/incident_outbox.hpp`
+
+Reviewed incident dependency callbacks, event/read Tasks and fingerprint wrapper.
+
+- L54, 59, 60, 61, 62, 63, 76, 77, 79, 80, 96, 98, 101, 102 **SAFE** · Current callers hold KV through their direct waits. The Tasks own options and events, Fetch retains its callable and the clock, UUID and signal suppliers are invoked synchronously.
+- L108, 109, 111, 112, 236, 262, 263, 290, 311, 312 **SAFE** · Environment and admin owners keep shared KV handles. Fingerprinting serializes its input before returning the owning hash Task, and list/bind Tasks own their input values.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2376,4 +2383,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-266/286 files reviewed. 452 sites: 427 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+267/286 files reviewed. 454 sites: 429 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

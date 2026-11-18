@@ -10022,8 +10022,57 @@
       ]
     },
     "include/uos/sentinel/incident_outbox.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed incident dependency callbacks, event/read Tasks and fingerprint wrapper.",
+      "sites": [
+        {
+          "lines": [
+            54,
+            59,
+            60,
+            61,
+            62,
+            63,
+            76,
+            77,
+            79,
+            80,
+            96,
+            98,
+            101,
+            102
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Current callers hold KV through their direct waits. The Tasks own options and events, Fetch retains its callable and the clock, UUID and signal suppliers are invoked synchronously."
+        },
+        {
+          "lines": [
+            108,
+            109,
+            111,
+            112,
+            236,
+            262,
+            263,
+            290,
+            311,
+            312
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Environment and admin owners keep shared KV handles. Fingerprinting serializes its input before returning the owning hash Task, and list/bind Tasks own their input values."
+        }
+      ]
     },
     "include/uos/sentinel/replay_admin.hpp": {
       "reviewed": false,
