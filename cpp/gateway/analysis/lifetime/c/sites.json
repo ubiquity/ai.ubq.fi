@@ -1488,8 +1488,16 @@
       "sites": []
     },
     "include/uos/provider/removed_provider_circuit.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Retired circuit compatibility API.",
+      "sites": [
+        {
+          "lines": "21-26",
+          "kind": "settled promise factory",
+          "verdict": "SAFE",
+          "reason": "The factories return settled values with no callbacks retaining inputs."
+        }
+      ]
     },
     "include/uos/provider/removed_provider_telemetry.hpp": {
       "status": "pending",
