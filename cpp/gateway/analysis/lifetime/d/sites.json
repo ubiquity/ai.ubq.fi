@@ -7763,8 +7763,34 @@
       "sites": []
     },
     "include/uos/authority/native_authority.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the native authority facade and conversion to owned runtime and control ports.",
+      "sites": [
+        {
+          "lines": [
+            12,
+            15,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The facade copies its shared State into returned ports and Task factories. Parsed binding JSON is converted synchronously and each child retains the State it will access."
+        }
+      ]
     },
     "include/uos/authority/native_authority_api.hpp": {
       "reviewed": false,
