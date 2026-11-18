@@ -3022,7 +3022,8 @@
       ]
     },
     "src/defaults.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed the default key constants and synchronous key construction. No suspension or escaping callback.",
       "sites": []
     },
     "src/handler/admission.cpp": {
