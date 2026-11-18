@@ -323,7 +323,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/removed_provider_telemetry.cpp`
 - [x] `src/provider/selection.cpp`
 - [x] `src/provider/stream_relay.cpp`
-- [ ] `src/provider/surplus.cpp`
+- [x] `src/provider/surplus.cpp`
 - [ ] `src/provider/surplus_claude_chat_request.cpp`
 - [ ] `src/provider/surplus_claude_request.cpp`
 
@@ -2067,3 +2067,12 @@ The relay copies telemetry, retains the upstream until late cancellation is hand
 - 62-82,125-142 · late downstream abort and pending response · **SAFE** · The abort listener owns PendingCancellation and only a weak signal. The loop registry releases any callback-owned cycle at shutdown, and the pending upstream reaction owns relay state until settlement or loop teardown.
 - 158-256,323-435 · member coroutines and awaited children · **SAFE** · SourceAlgorithm retains the state-capturing pull closure while the member pulls run and join their children. They use named iterator and response copies, so cancellation can reset the relay's copies independently.
 - 259-270,437-458,465-474 · cancel closure and detached generator return · **SAFE** · The stream owns the source closures, cancellation is synchronous, and iterator return takes a separate generator state handle before spawning.
+
+### `src/provider/surplus.cpp`
+
+The Surplus stream projection owns its event and body state. Its header abort race and catalog coalescing cell repeat the Metered teardown hazards.
+
+- 238-281,618-649,713-802 · transport, admission, and normalization owners · **SAFE** · The catalog and request tasks own options, signal and response snapshots, Fetch retains its callable if the race is lost, and the native response normalizer copies stream options.
+- 318-354 · abort race listener ownership cycle · **DEFECT** · If the preheader fetch remains pending when its loop stops, the signal retains its abort listener and both signal and finish captures retain that signal. Loop teardown discards the timer and reactions without invoking finish. Make the listener and finish use weak signal state.
+- 466-553 · generator yields, pull and cancel ownership · **SAFE** · The body owns its source iterator and part state, and each next result and vector live through yield. Pull and cancel receive a shared state parameter and their generator operations own their state.
+- 675-698,703-708 · coalescing cell after an abandoned wait · **DEFECT** · Fixture loop destruction can destroy the suite's unfinished discovery waiter before the coalescing cell is reset. A later loop can join an old Promise with no producer. Use an identity-checked scope guard.

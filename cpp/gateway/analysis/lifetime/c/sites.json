@@ -3949,8 +3949,34 @@
       ]
     },
     "src/provider/surplus.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The Surplus stream projection owns its event and body state. Its header abort race and catalog coalescing cell repeat the Metered teardown hazards.",
+      "sites": [
+        {
+          "lines": "238-281,618-649,713-802",
+          "kind": "transport, admission, and normalization owners",
+          "verdict": "SAFE",
+          "reason": "The catalog and request tasks own options, signal and response snapshots, Fetch retains its callable if the race is lost, and the native response normalizer copies stream options."
+        },
+        {
+          "lines": "318-354",
+          "kind": "abort race listener ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "If the preheader fetch remains pending when its loop stops, the signal retains its abort listener and both signal and finish captures retain that signal. Loop teardown discards the timer and reactions without invoking finish. Make the listener and finish use weak signal state."
+        },
+        {
+          "lines": "466-553",
+          "kind": "generator yields, pull and cancel ownership",
+          "verdict": "SAFE",
+          "reason": "The body owns its source iterator and part state, and each next result and vector live through yield. Pull and cancel receive a shared state parameter and their generator operations own their state."
+        },
+        {
+          "lines": "675-698,703-708",
+          "kind": "coalescing cell after an abandoned wait",
+          "verdict": "DEFECT",
+          "reason": "Fixture loop destruction can destroy the suite's unfinished discovery waiter before the coalescing cell is reset. A later loop can join an old Promise with no producer. Use an identity-checked scope guard."
+        }
+      ]
     },
     "src/provider/surplus_claude_chat_request.cpp": {
       "status": "pending",
