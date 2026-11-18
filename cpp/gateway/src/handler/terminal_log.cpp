@@ -50,7 +50,7 @@ namespace uos::handler::terminal_log {
       http::DeliveryOutcome deliveryOutcome;
       bool streamReadFailure;
       bool suppressSentinelReplay;
-      std::function<rt::Promise<BodyObservation>()> resolveClientBodyObservation;
+      std::function<rt::Task<BodyObservation>()> resolveClientBodyObservation;
     };
 
     rt::Task<void> logTerminalRequest(LogInput data) {
@@ -181,7 +181,9 @@ namespace uos::handler::terminal_log {
         .failure_kind = failureKind, .synthetic_terminal_type = telemetry ? telemetry->syntheticTerminalType : std::nullopt, .provider_route = provider,
       };
       const auto zero = rt::scopeExit([&input] { replay::zeroSentinelReplayInput(input.sentinelReplayInput); });
-      const auto clientBodyObservation = co_await data.resolveClientBodyObservation().wait();
+      auto resolvingBody = data.resolveClientBodyObservation();
+      const auto clientBodyObservation = co_await std::move(resolvingBody);
+      co_await rt::microtask();
       const auto clientObservation = replay::resolveSentinelClientFailureObservation(replayObservation, clientBodyObservation);
       std::optional<rt::Promise<replay::SentinelReplayPersistResult>> replayWrite;
       if (input.sentinelReplayInput && !data.suppressSentinelReplay && replay::shouldPersistSentinelReplay(replayObservation, clientObservation)) {
@@ -287,6 +289,10 @@ namespace uos::handler::terminal_log {
 
       rt::Promise<void> persistReplayAtApplicationTerminal(bool streamReadFailure = false) {
         if (replayFinalization) return *replayFinalization;
+        if (!input.sentinelReplayInput && !input.sentinelReplayOmission) {
+          replayFinalization = rt::Promise<void>::resolve();
+          return *replayFinalization;
+        }
         const auto originalReplayInput = input.sentinelReplayInput;
         const auto backgroundReplayInput = originalReplayInput ? std::optional(replay::snapshotSentinelReplayInput(*originalReplayInput)) : std::nullopt;
         // Release request-owned bytes before inspection or persistence can suspend.
@@ -309,7 +315,7 @@ namespace uos::handler::terminal_log {
         LogInput data{.input = std::move(logInput), .response = response, .downstreamDrainedAtMonotonicMs = drained,
           .deliveryOutcome = std::move(outcome), .streamReadFailure = streamReadFailure,
           .suppressSentinelReplay = suppressSentinelReplay || replayFinalization.has_value(),
-          .resolveClientBodyObservation = [self = shared_from_this()] { return rt::Promise<BodyObservation>(self->resolveBody()); }};
+          .resolveClientBodyObservation = [self = shared_from_this()] { return self->resolveBody(); }};
         terminalLog = rt::Promise<void>(logTerminalRequest(std::move(data))).catch_(rt::ignoreRejection);
         return *terminalLog;
       }
@@ -356,6 +362,7 @@ namespace uos::handler::terminal_log {
       }
 
       rt::Promise<void> finalizeFromTelemetry(std::string reason) {
+        if (!input.onTerminal) return rt::Promise<void>::resolve();
         const auto telemetry = openai_telemetry::getResponseTelemetry(telemetryResponse());
         return response.ok() && telemetry && telemetry->completed ? finalizeTerminal("completed") : finalizeTerminal("incomplete", std::move(reason));
       }
