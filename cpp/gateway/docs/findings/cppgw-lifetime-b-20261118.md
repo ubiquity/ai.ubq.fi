@@ -119,7 +119,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/worker/entrypoint.hpp`
 - [x] `include/uos/worker/transport.hpp`
 - [x] `src/worker/entrypoint.cpp`
-- [ ] `src/worker/transport.cpp`
+- [x] `src/worker/transport.cpp`
 
 ## Tooling and verification
 
@@ -831,6 +831,14 @@ Usage read methods own identities and options, with a shared store or a resolved
 | 277-292,335-340 | Worker request-to-dispatch abort bridge | **DEFECT** ([D11](#d11)) | The signal owns a callback owning its own Request. Abandoning a suspended dependency before refusal or delivery handoff skips every unregister path. |
 | 271-276,285-324,325-335,345-356 | Boundary fetch ownership and upstream terminal observation | **SAFE** | A free frame owns the request and dependencies; dispatch and terminal callbacks are synchronous bridges into tasks with copied values. Upstream receiver and validation callback stay owned through their respective waits. |
 
+### `src/worker/transport.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 15-28 | Fixed capability construction and validation | **SAFE** | Worker dependencies and direct fixture calls own the transport through the wait. The returned string view points into the named validation result and is consumed immediately. |
+| 31-38 | Upstream attempt adapter | **SAFE** | The synchronous method reads capability fields immediately and puts independent values in the returned task. |
+| 40-70 | Dispatch marker, upstream request, redirect cancel and observation | **SAFE** | The calling boundary or fixture retains the transport, the coroutine owns its signal and dispatch callback, and the local fetch callable is retained until its task completes. |
+
 
 ## Ranked defects and counts
 
@@ -1268,4 +1276,4 @@ registration owner used together with D11.
 +  const auto bindingHash = co_await std::move(bindingHashing);
 ```
 
-96/97 files reviewed. **DEFECT 14, SAFE 229, UNCLEAR 4.**
+97/97 files reviewed. **DEFECT 14, SAFE 232, UNCLEAR 4.**

@@ -3023,8 +3023,40 @@
       ]
     },
     "src/worker/transport.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "15-28",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Fixed capability construction and validation",
+          "evidence": "Worker dependencies and direct fixture calls own the transport through the wait. The returned string view points into the named validation result and is consumed immediately."
+        },
+        {
+          "lines": "31-38",
+          "verdict": "SAFE",
+          "kinds": [
+            "b"
+          ],
+          "symbol": "Upstream attempt adapter",
+          "evidence": "The synchronous method reads capability fields immediately and puts independent values in the returned task."
+        },
+        {
+          "lines": "40-70",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Dispatch marker, upstream request, redirect cancel and observation",
+          "evidence": "The calling boundary or fixture retains the transport, the coroutine owns its signal and dispatch callback, and the local fetch callable is retained until its task completes."
+        }
+      ]
     }
   }
 }
