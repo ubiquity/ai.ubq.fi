@@ -94,7 +94,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/kv_migration_usage.cpp`
 - [x] `src/cache/kv_migration_validation.cpp`
 - [x] `src/cache/prompt_analytics.cpp`
-- [ ] `src/cache/prompt_analytics_core.cpp`
+- [x] `src/cache/prompt_analytics_core.cpp`
 - [ ] `src/cache/prompt_analytics_queue.cpp`
 - [ ] `src/cache/prompt_analytics_read.cpp`
 - [ ] `src/cache/scope_experiment.cpp`
@@ -632,6 +632,18 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 
 This facade does not define a coroutine or register callbacks. Its exported implementation modules are reviewed individually.
 
+### `src/cache/prompt_analytics_core.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 287-305 | Analytics KV resolution | **SAFE** | The wrappers move the optional shared owner to a free coroutine. Both an injected KV and the environment KV promise survive their respective paths. |
+| 387-406 | Resolve cohort and hash model | **SAFE** | The task owns the event and route metadata, and the hash task receives its own string before awaiting the named promise. |
+| 409-438 | Counter-key callbacks and atomic writes | **SAFE** | Counter-key functions are invoked synchronously by incrementCounters. The reference to cohort is local to that call and the named owning atomic builder spans commit. |
+| 441-448,463-502,521-544 | Admit cohort or overflow and retry | **SAFE** | Each admission child owns a copy of the aggregate. References point into that own frame or the local entries vector, and named builders survive every commit. |
+| 546-572 | Record analytics lifecycle | **SAFE** | The task owns its event/options, accepted cohort refers to its own const target variant, and commit gets copied/moved inputs before suspension. |
+| 599-616 | Detached prune and fail-fast delete batch | **SAFE** | Prune owns options with a KV handle and a clock holding a copied scalar. Each guarded delete starts and builds its own atomic owner before all can reject. |
+| 626-692 | Prune stored ranges and batches | **SAFE** | The frame owns its scan array, iterators, and batch. It moves the entire batch into the deletion task and uses no aliases into it after starting that task. |
+
 
 ## Ranked defects and counts
 
@@ -837,4 +849,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-71/97 files reviewed. **DEFECT 8, SAFE 157, UNCLEAR 3.**
+72/97 files reviewed. **DEFECT 8, SAFE 164, UNCLEAR 3.**
