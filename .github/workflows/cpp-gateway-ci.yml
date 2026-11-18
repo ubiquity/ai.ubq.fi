@@ -39,7 +39,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq clang llvm ninja-build pkg-config mold util-linux libboost-json-dev \
-            libboost-container-dev libssl-dev libsqlite3-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev
+            libboost-container-dev libssl-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev
           clang++ --version
       - name: Build SQLite 3.54.0 (the suite's pinned version)
         run: |
@@ -49,12 +49,12 @@ jobs:
           tar -xzf sqlite.tar.gz && cd sqlite-autoconf-3540000
           ./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3' > /dev/null
           make -j4 > /dev/null && sudo make install > /dev/null && sudo ldconfig
-          pkg-config --modversion sqlite3
       - name: Build and test
         env:
           CXX: clang++
           UOS_CI_JOBS: 4
           UOS_CI_BUILD_DIR: ${{ runner.temp }}/uos-gateway-build
+          UOS_CI_SQLITE_PREFIX: /usr/local
           CONFIG: ${{ matrix.config }}
           SHARD: ${{ matrix.shard }}
         run: |

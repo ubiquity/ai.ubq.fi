@@ -277,6 +277,30 @@ def run_test(selected, runtime, build, compiler, flags, libraries, environment, 
         binary.unlink(missing_ok=True)
 
 
+def verify_sqlite(build, compiler, flags, libraries, environment, boundary):
+    source = Path(__file__).with_name("sqlite-version.cpp")
+    binary = build / "bin" / "sqlite-version"
+    try:
+        log = build / "sqlite-version-build.log"
+        command = compiler + flags + [str(source)] + libraries + ["-o", str(binary)]
+        code, _, _ = execute(command, log, cwd=build, environment=environment, timeout=60)
+        if code:
+            raise RuntimeError("SQLite version probe failed to build; see " + str(log))
+        log = build / "sqlite-version-run.log"
+        with tempfile.TemporaryDirectory(prefix="uos-ci-", dir="/tmp") as directory:
+            scratch = Path(directory)
+            command = boundary_command(boundary, scratch, build, binary.name, environment)
+            code, _, _ = execute(command, log, cwd=build, environment=environment, timeout=15)
+        for line in log.read_text().splitlines():
+            if line.startswith("sqlite3_libversion(): "):
+                announce(line)
+                if code == 0:
+                    return line.removeprefix("sqlite3_libversion(): ")
+        raise RuntimeError("SQLite version probe failed; see " + str(log))
+    finally:
+        binary.unlink(missing_ok=True)
+
+
 def main():
     global NINJA
     parser = argparse.ArgumentParser(description=__doc__)
@@ -317,19 +341,26 @@ def main():
             parser.error("GCC >=14 required: GCC 12 has a known coroutine miscompile")
     if not shutil.which("ninja"):
         parser.error("Ninja is required")
-    packages = ["openssl", "sqlite3", "zlib", "icu-uc", "icu-i18n", "libbrotlidec", "libzstd"]
+    sqlite_prefix = Path(os.environ.get("UOS_CI_SQLITE_PREFIX", "/usr/local")).resolve()
+    sqlite_include = sqlite_prefix / "include"
+    sqlite_library = sqlite_prefix / "lib" / "libsqlite3.so"
+    if not (sqlite_include / "sqlite3.h").is_file() or not sqlite_library.is_file():
+        parser.error("prepare SQLite 3.54.0 at UOS_CI_SQLITE_PREFIX; see cpp/gateway/docs/CI.md")
+    packages = ["openssl", "zlib", "icu-uc", "icu-i18n", "libbrotlidec", "libzstd"]
     package_flags = shlex.split(subprocess.check_output(["pkg-config", "--cflags", "--libs"] + packages, text=True))
     flags = ["-std=c++20", "-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror",
              "-DBOOST_JSON_NO_LIB", "-DBOOST_CONTAINER_NO_LIB", "-DBOOST_SYSTEM_NO_LIB",
-             "-DUOS_GATEWAY_NATIVE_LIBRARIES=1", "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY)]
+             "-DUOS_GATEWAY_NATIVE_LIBRARIES=1", "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY), "-I" + str(sqlite_include)]
     if clang:
         # Some consumers include vendor headers relative to the gateway root.
         flags.append("--system-header-prefix=third_party/")
     flags += CONFIGS[options.config] + [flag for flag in package_flags if flag.startswith(("-I", "-D"))]
     flags += shlex.split(os.environ.get("UOS_CI_CXXFLAGS", ""))
-    libraries = ["-lboost_json", "-lboost_container"] + [flag for flag in package_flags if not flag.startswith(("-I", "-D"))] + ["-pthread"]
+    libraries = ["-lboost_json", "-lboost_container", str(sqlite_library)]
+    libraries += [flag for flag in package_flags if not flag.startswith(("-I", "-D"))] + ["-pthread"]
     if sys.platform.startswith("linux"):
-        libraries.append("-ldl")
+        # Use DT_RPATH so a distribution search path cannot override the pinned suite library.
+        libraries += ["-ldl", "-Wl,--disable-new-dtags", "-Xlinker", "-rpath", "-Xlinker", str(sqlite_library.parent)]
         if shutil.which("mold"):
             libraries += ["-fuse-ld=mold", "-Wl,--threads=1"]
     libraries += shlex.split(os.environ.get("UOS_CI_LDFLAGS", ""))
@@ -378,6 +409,7 @@ def main():
     write_ninja(build, sorted(sources), compiler, flags, vendors)
     environment = clean_environment()
     boundary = find_boundary(build, environment)
+    sqlite_version = verify_sqlite(build, compiler, flags, libraries, environment, boundary)
     environment["NINJA_STATUS"] = "[%f/%t %es] "
     compile_started = time.monotonic()
     with (build / "compile.log").open("w") as log:
@@ -420,7 +452,7 @@ def main():
     after_hash = input_digest(vendors)
     vendor_archives = {library.archive: hashlib.sha256((build / library.archive).read_bytes()).hexdigest()
                        for library in vendors if (build / library.archive).is_file()}
-    receipt = dict(config=options.config, compiler=compiler, compiler_version=version, flags=flags,
+    receipt = dict(config=options.config, compiler=compiler, compiler_version=version, flags=flags, sqlite_version=sqlite_version,
                    libraries=libraries, vendor_archives=vendor_archives, source_sha256=source_hash, after_source_sha256=after_hash,
                    inputs_unchanged=source_hash == after_hash, git_commit=git_identity[0], git_tree=git_identity[1], selected=tests,
                    production_sources=len(production), runtime_sources=len(runtime),
@@ -444,6 +476,6 @@ if __name__ == "__main__":
         signal.signal(signum, interrupted)
     try:
         raise SystemExit(main())
-    except (OSError, subprocess.CalledProcessError, links.LinkError) as error:
+    except (OSError, RuntimeError, subprocess.CalledProcessError, links.LinkError) as error:
         print("ci-build: " + str(error), file=sys.stderr)
         raise SystemExit(2)

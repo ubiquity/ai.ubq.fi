@@ -1,6 +1,6 @@
 # Portable gateway CI build
 
-`tools/ci-build.sh` builds the C++20 port on a disposable Linux runner. It compiles every canonical `src/**/*.cpp` once and uses `tools/links.py` for each test's exact object list. Every `src/rt/*.cpp` object is linked into every test. Dot-prefixed staging files are excluded. This checkout has 325 module sources, 44 runtime sources and 441 standalone tests.
+`tools/ci-build.sh` builds the C++20 port on a disposable Linux runner. It compiles every canonical `src/**/*.cpp` once and uses `tools/links.py` for each test's exact object list. Every `src/rt/*.cpp` object is linked into every test. Dot-prefixed staging files are excluded. The stage 2a inventory has 325 module sources, 44 runtime sources and 443 standalone tests.
 
 ## Ubuntu prerequisites
 
@@ -9,7 +9,7 @@ On Ubuntu 24.04 or newer:
 ```sh
 sudo apt-get update
 sudo apt-get install -y g++-14 clang llvm ninja-build pkg-config libboost-json-dev libboost-container-dev \
-  libssl-dev libsqlite3-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev util-linux
+  libssl-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev util-linux
 # Optional faster linker, detected automatically on Linux:
 sudo apt-get install -y mold
 ```
@@ -31,9 +31,9 @@ sudo ldconfig
 pkg-config --modversion sqlite3
 ```
 
-Library preparation is a separate prerequisite. The GitHub workflow prepares the same release and configure flags, with `make -j4` on its four-core runners.
+Library preparation is a separate prerequisite. The GitHub suite workflow prepares the same release and configure flags with `make -j4`. The driver takes `sqlite3.h` and `libsqlite3.so` from `UOS_CI_SQLITE_PREFIX` (default `/usr/local`) and adds that library directory to the test binaries' ELF RPATH. Use a prefix outside `/tmp`, which the test mount namespace hides. A probe built with the same flags checks the headers, prints `sqlite3_libversion()` from inside the fixture boundary and rejects a version mismatch before running the suite.
 
-Use GCC 14 or newer, or a recent Clang, with Boost >= 1.83. GCC 12 is refused because of its known coroutine miscompile. Dependencies are linked through their installed headers and libraries with `UOS_GATEWAY_NATIVE_LIBRARIES=1`; SQLite, zlib, Brotli, Zstd and ICU use the current direct-library path. OpenSSL, Boost.JSON, Boost.Container and pthread are also required. `pkg-config` resolves the native C library include/link flags. No package is installed or downloaded by the driver.
+Use GCC 14 or newer or Clang 21 or newer, with Boost 1.92 recommended and ICU 78.3 for the Unicode fixtures. GCC 12 is refused because of its known coroutine miscompile. Dependencies are linked through their installed headers and libraries with `UOS_GATEWAY_NATIVE_LIBRARIES=1`. SQLite uses the explicit prefix above, and `pkg-config` resolves flags for OpenSSL, zlib, Brotli, Zstd and ICU. Boost.JSON, Boost.Container and pthread are also required. The driver uses preinstalled dependencies.
 
 The driver validates the vendored simdjson and simdutf sources using `cmake/vendors.json` and `tools/vendor_sources.py`, builds them as static archives, and links each archive into the test closures that need it. Vendor source builds omit the first-party warning set. With Clang, `--system-header-prefix=third_party/` covers tree-relative vendor includes while Ninja tracks those headers as explicit inputs.
 
