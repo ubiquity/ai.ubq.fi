@@ -223,7 +223,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/supervisor_inventory.cpp`
 - [x] `src/codex/supervisor_log.cpp`
 - [x] `src/codex/supervisor_secret.cpp`
-- [ ] `src/codex/supervisor_transport.cpp`
+- [x] `src/codex/supervisor_transport.cpp`
 - [ ] `src/deepseek/chat_projection.cpp`
 - [ ] `src/deepseek/context_admission_failure.cpp`
 - [ ] `src/deepseek/flash_aliases.cpp`
@@ -1441,3 +1441,11 @@ Rollout tail reads use owned input and a local fd guard across file checks and b
 Secret detection and redaction are synchronous.
 
 - 600,716,755 · synchronous redaction callbacks · **SAFE** · Regex captures refer to static pattern storage. Local accumulation callbacks are invoked before their output collections leave scope.
+
+### `src/codex/supervisor_transport.cpp`
+
+Socket events now use weak connection state. The separate per-call abort callback still creates a cycle while an RPC is pending.
+
+- 62-70,154-179,181-263 · transport awaits and socket listeners · **SAFE** · Connection and call frames own the shared state. Socket message/close/error callbacks use weak state, and initialization failure settles pending calls and terminates the socket.
+- 88-101,127-150 · pending map and normal cleanup · **SAFE** · Settlement copies the call record before erase, clears its timer, removes the matching listener and only then settles its promise.
+- 134-140 · per-call abort ownership cycle · **DEFECT** · While the call is suspended, pending cleanup owns its signal and listener, and the listener owns the same ConnectionState. Loop teardown drops the timer and socket callbacks without settling that call, leaving the pending cleanup cycle alive. Use weak state in the abort callable while callConnection owns the state.

@@ -2428,8 +2428,28 @@
       ]
     },
     "src/codex/supervisor_transport.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Socket events now use weak connection state. The separate per-call abort callback still creates a cycle while an RPC is pending.",
+      "sites": [
+        {
+          "lines": "62-70,154-179,181-263",
+          "kind": "transport awaits and socket listeners",
+          "verdict": "SAFE",
+          "reason": "Connection and call frames own the shared state. Socket message/close/error callbacks use weak state, and initialization failure settles pending calls and terminates the socket."
+        },
+        {
+          "lines": "88-101,127-150",
+          "kind": "pending map and normal cleanup",
+          "verdict": "SAFE",
+          "reason": "Settlement copies the call record before erase, clears its timer, removes the matching listener and only then settles its promise."
+        },
+        {
+          "lines": "134-140",
+          "kind": "per-call abort ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "While the call is suspended, pending cleanup owns its signal and listener, and the listener owns the same ConnectionState. Loop teardown drops the timer and socket callbacks without settling that call, leaving the pending cleanup cycle alive. Use weak state in the abort callable while callConnection owns the state."
+        }
+      ]
     },
     "src/deepseek/chat_projection.cpp": {
       "status": "pending",
