@@ -137,7 +137,10 @@ environment supplies an empty home, fresh temp space and loopback-only networkin
 log and a receipt with the exact inputs and counts. [Link resolver](../tools/links.py) ·
 [Registry](../tests/LINKS.txt) · [Portable driver](CI.md) · [Test conventions](TESTING.md)
 
+All four Linux ARM64 Release shards passed 450 binaries and 5,113 cases. ASan, UBSan and LSan passed 161 selected
+binaries and 1,989 cases, including every runtime binary and the HTTP, WebSocket, passkey, storage and confinement
+fixtures. [Final integration](findings/cppgw-integrate-f2-20261118.md)
+
 The paired package conformance runner launches the native and Bun gateways against the same loopback mocks and checks
 wire responses and durable readback across restart. It found agreement on all 186 cases and two failures of the
-independent validation assertions on both runtimes. [Final integration](findings/cppgw-integrate-f2-20261118.md) ·
-[Conformance](CONFORMANCE.md)
+independent validation assertions on both runtimes. [Conformance](CONFORMANCE.md)

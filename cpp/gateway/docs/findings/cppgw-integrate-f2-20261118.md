@@ -53,8 +53,9 @@ persistent execution handles. Logs and receipts remain in scratch.
   paths containing spaces and URL punctuation and retain the JSON rejection expectations.
 - The six linked vendors and 25 fuzz targets are the exact, duplicate-free union of both branches. The unified
   workflow selects every test for Release and sanitizers, including the regex and stored-value cases. Its fuzz jobs
-  discover both regex harnesses and `kv_jsc` from the registry. The regex source filenames now hold the adapter
-  instead of the former engine. The retired numeric helpers have no production, test or build references.
+  discover both regex harnesses and `kv_jsc` from the registry. The portable driver uses GNU C11 for the QuickJS-ng
+  objects in both configurations. The retained regex source filenames hold the adapter. The retired numeric helpers
+  have no production, test or build references.
 - The QuickJS-ng directory byte-compares with the incoming regex branch. The other vendor directories byte-compare
   with the first merge. Linux package versions and notices, and the macOS package's vendor archive list and licenses,
   resolve from that same registry.
@@ -146,6 +147,69 @@ Boost staged static JSON and Container archives. ICU configured in `$scratch/icu
 SQLite configured with `./configure --prefix="$scratch/sqlite" --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'`.
 The portable driver independently checks the SQLite headers and loaded version in the isolated fixture.
 [Preparation guide](../CI.md#ubuntu-prerequisites) · [Upstream Boost and ICU build commands](../CONFORMANCE.md#run-on-linux-arm64)
+
+## Release and sanitizer suites
+
+All four round-robin Release shards linked and passed every binary. The focused sanitizer selection included all
+37 `tests/rt/` binaries, fixtures with `passkey`, `kv`, `http`, `websocket`, `regex`, `permissions`, `static` or
+`url` in their paths, and all test closures that link `src/runtime/http.cpp`. Each gate built or reused all 369
+production objects and six vendor archives. The 161 sanitizer run logs had zero ASan, UBSan or LSan diagnostics.
+The separate portable driver controls passed 7/7 in 13.842 seconds.
+
+```bash
+for shard in 1 2 3; do
+  bash "$scratch/run-gate.sh" release 3 \
+    bash cpp/gateway/tools/ci-build.sh --config release --shard "$shard/4"
+done
+bash "$scratch/run-gate.sh" release 4 bash cpp/gateway/tools/ci-build.sh --config release --shard 4/4
+bash "$scratch/run-gate.sh" asan 3 python3 -B "$scratch/asan-focus.py" "$PWD/cpp/gateway" --config asan
+python3 -B "$scratch/verify-final-receipts.py" "$scratch/receipts/final"
+```
+
+The sanitizer selector substitutes only the test inventory in the standard `ci-build.sh` driver. The wrapper used
+the following environment for both configurations. `instrument` was empty for Release and
+`-gline-tables-only -fno-sanitize-recover=all` for ASan. Each test in turn ran as UID 1001 in fresh Linux network,
+mount and PID namespaces with loopback-only mocks. The three-worker gates overlapped with other verification.
+
+```bash
+session=$(mktemp -d "$scratch/gate.XXXXXXXX")
+mkdir "$session/home" "$session/tmp"
+env -i PATH=/usr/local/bin:/usr/bin:/bin:/usr/lib/llvm-21/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
+  HOME="$session/home" TMPDIR="$session/tmp" CC=clang-21 CXX=clang++-21 UOS_CI_JOBS="$jobs" \
+  UOS_CI_BUILD_DIR="$scratch/ci" UOS_CI_SQLITE_PREFIX="$scratch/sqlite" \
+  PKG_CONFIG_PATH="$scratch/icu78/lib/pkgconfig:$scratch/sqlite/lib/pkgconfig" \
+  UOS_CI_CFLAGS="$instrument" UOS_CI_CXXFLAGS="-isystem $scratch/boost_1_92_0 $instrument" \
+  UOS_CI_LDFLAGS="-L$scratch/boost_1_92_0/stage/lib -Wl,--disable-new-dtags,-rpath,$scratch/icu78/lib:$scratch/sqlite/lib" \
+  "$@"
+```
+
+| Linux ARM64 gate         | Passing binaries |   Passing cases | Compile (s) | Link and test (s) | Driver wall (s) |
+| ------------------------ | ---------------: | --------------: | ----------: | ----------------: | --------------: |
+| Release 1/4              |          113/113 |     1,333/1,333 |   2,781.981 |            48.707 |       2,831.566 |
+| Release 2/4              |          113/113 |     1,236/1,236 |     721.155 |            33.639 |         755.682 |
+| Release 3/4              |          112/112 |     1,440/1,440 |     574.069 |            23.893 |         598.515 |
+| Release 4/4              |          112/112 |     1,104/1,104 |     306.247 |            18.649 |         325.539 |
+| **Release total**        |      **450/450** | **5,113/5,113** |             |                   |                 |
+| **ASan, UBSan and LSan** |      **161/161** | **1,989/1,989** |   4,160.668 |           194.733 |       4,357.037 |
+
+The driver recorded source SHA-256 `4cb3e57b1a8692013237acf157e5c766c62c75bae95b247d237c0e715d42b123`
+before and after every gate. The verifier checked the shard partition, all pass and case counts, the sanitizer
+selection, the absence of diagnostics, the vendor inventory, and the source hash against the current tree.
+The interrupted connection left the outer timing files for Release 3 and sanitizers empty. The table uses the
+driver's terminal receipts for all five gates.
+
+| Gate receipts           | Git commit                                 | Git tree                                   |
+| ----------------------- | ------------------------------------------ | ------------------------------------------ |
+| Release 1 and sanitizer | `84bbc3ca9341b1949ec6f0ef48f83b5e8808c9ef` | `1a06ad5ee0ea605c916d51a18bd026be29dbc6d3` |
+| Release 2–4             | `a552e1ddf600e8a51e909df007b62a00df91b2dd` | `ec5c2ea060e636e3dc2e046aaafe9cfb23662994` |
+
+| Receipt under `receipts/final/` | SHA-256                                                            |
+| ------------------------------- | ------------------------------------------------------------------ |
+| `release-1.json`                | `04d7ca20d6925ebef34559c3659a3e8d791fdc495181ed4cedebb1b686399232` |
+| `release-2.json`                | `683de066ab43ba6968d353c95f76f164ba7bba2991cb523c59fa8d6c1600a3f6` |
+| `release-3.json`                | `219f48a10f669fe2515dbafe62355f61f6be0225aae9c041e23e999a31247f4e` |
+| `release-4.json`                | `e4c91d6f2fdf7fd6cd3517657c94971b4c71da8a0119964c846d2b7e215dbbfa` |
+| `asan.json`                     | `1c473786f1780cdac40257805420c4b0f16d52bec087a021fae9726fea74c97f` |
 
 ## Fuzz campaigns
 
@@ -256,3 +320,36 @@ dispatch. The comparator exited 1 for those same defects present in the precedin
 | Sealed package manifest                 | `dc0c7d6cd2a69902d0dfeb0ffd73e0da8e5e2d81fb26ab548499f774f0698646` |
 | `output/results.json`                   | `18e5bd70f81f5ee6a7f6c101694b17b455dfaddba8787edfeb820a6ca7948893` |
 | `output/table.md`                       | `2bea47a8a0cf89edca4f79f7da9b007578c6d65da0bc1e3028399fec1918de8e` |
+
+## Open items and handoff
+
+- The Chat role and Responses tool type checks are shared defects, including in the TypeScript oracle outside
+  the integration's paths. Their conformance assertions still require rejection before dispatch.
+  [Conformance cases](../CONFORMANCE.md)
+- The coroutine lifetime audit and tighter input-limit rollout are in progress. The Linux ARM64 runner verified
+  the Linux archive. The macOS packaging receipt is from the earlier Apple Silicon run, and its gateway exposes
+  only `--version`. Physical Raspberry Pi acceptance and production cutover remain owner decisions.
+  [Coroutine audit](local-coroutine-lifetime-audit.md) · [Runtime limits](../RUNTIME.md#input-limits) ·
+  [Platform and cutover stages](../OPEN-STAGES.md)
+- The first-party integration diff passed `git diff --check`. The full diff reports whitespace in the imported
+  llhttp, QCBOR and QuickJS-ng vendor sources. Their hashes match the supplying branches. Scoped Prettier
+  checks use Bun 1.4.0 with the repository's frozen dependencies in scratch.
+
+```bash
+git diff --check 45118332..HEAD -- . ':(exclude)cpp/gateway/third_party/**'
+git diff --exit-code ecce29dc HEAD -- . ':(exclude,glob)**/*.md'
+git fetch --no-tags origin refs/heads/development:refs/remotes/origin/development
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false git push --dry-run --porcelain origin \
+  HEAD:refs/heads/agent-jobs/cppgw-integrate-f2-20261118
+git bundle create "$scratch/cppgw-integrate-f2-20261118.bundle" agent-job \
+  ^45118332 ^2b23fb68 ^9acb016a
+git bundle verify "$scratch/cppgw-integrate-f2-20261118.bundle"
+```
+
+The dry-run push exited 128 while requesting GitHub authentication. The refreshed `origin/development` is
+`a3a96bc5fe96ba383936746fae23e64daa69562f` and precedes the gateway merges. The verified bundle preserves the
+local review branch. All commits after the source integration change only Markdown. The final checkout and
+tree verification are recorded in `receipts/final/handoff.txt` under scratch.
+
+The completed integration is committed on the runner's clean `agent-job` branch. GitHub write authentication
+blocked direct publication. Pull request publication and the `development` handoff remain pending.

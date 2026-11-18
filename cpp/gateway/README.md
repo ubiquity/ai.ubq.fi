@@ -9,8 +9,9 @@ Differences in diagnostic wording are expected. [TypeScript source](../../src/) 
 
 ## Where it stands
 
-- **Linux ARM64.** The portable package seals and runs on Debian 12 and 13. It agreed with Bun on all 186 paired
-  conformance cases, including two validation failures shared by both gateways.
+- **Linux ARM64.** All four Release shards passed **450 binaries and 5,113 cases**. The focused ASan, UBSan and
+  LSan run passed **161 binaries and 1,989 cases**. The portable package seals and runs on Debian 12 and 13. It
+  agreed with Bun on all 186 paired conformance cases, including two validation failures shared by both gateways.
   [Final integration](docs/findings/cppgw-integrate-f2-20261118.md)
 - **Linux x64.** The pre-integration comparison built 441 binaries and passed **438/441 binaries and 5,007/5,031 cases**.
   The three failures are detailed below. [Runner verification](docs/findings/cppgw-docs-readme-20261118.md)
