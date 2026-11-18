@@ -90,7 +90,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/kv_migration.cpp`
 - [x] `src/cache/kv_migration_base.cpp`
 - [x] `src/cache/kv_migration_paid_fallback.cpp`
-- [ ] `src/cache/kv_migration_projection.cpp`
+- [x] `src/cache/kv_migration_projection.cpp`
 - [ ] `src/cache/kv_migration_usage.cpp`
 - [ ] `src/cache/kv_migration_validation.cpp`
 - [ ] `src/cache/prompt_analytics.cpp`
@@ -585,6 +585,19 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 | 235-251 | countPaidFallbackDeletionGuards | **SAFE** | The error vector belongs to the parent that directly awaits this scan. The iterator and row are local owners. |
 | 438-464 | Paid fallback inventory scheduling | **SAFE** | All five borrowed scans run sequentially under the owning inventory frame. Final summaries use owned inventory values after the awaits. |
 
+### `src/cache/kv_migration_projection.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 230-250,408-422 | Candidate and request-row scans | **SAFE** | Frame-owned iterators yield copied entries; the prefix references are static and the result maps/vectors contain copies. |
+| 305-333 | Projected pending-marker repair | **SAFE** | The request reference is into the current frame-owned entry, never into the iterator's mutable batch. The named operation owns its mutations and is directly awaited. |
+| 361-397 | Collect repairable windows with borrowed lookups | **SAFE** | repairProjectedPaidFallbackWindows retains its local record map and caller-owned candidate set across the structured wait, with all map alias use in individual synchronous statements. |
+| 484-522,524-537 | Repair window context across request scan and CAS | **SAFE** | The directly awaiting parent owns its named context and immutable windows. Borrowed projected fields are consumed before the commit starts. |
+| 609-650 | Legacy projection commit helper | **SAFE** | The parent passes named keys/records and immediately awaits the helper. The atomic builder copies mutation inputs before suspension and stays owned through commit. |
+| 653-706 | Legacy candidate projection and aggregate orchestration | **SAFE** | The serial caller owns candidates, records and mutable hit set through the child. Fail-fast children are KV reads that own their inputs and never capture those references. |
+| 716-729 | Collect dedicated ledger references | **SAFE** | inspectPending retains errors and awaits this scan before starting the next; the iterator and result set are local. |
+| 732-760,776-793 | Collect pending legacy candidates and validate ledger | **SAFE** | Parent owns references, pairs and errors through sequential waits. A value reference spans a lookup only into the still-owned current entry, then is copied into the result vector. |
+
 
 ## Ranked defects and counts
 
@@ -790,4 +803,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-67/97 files reviewed. **DEFECT 8, SAFE 129, UNCLEAR 3.**
+68/97 files reviewed. **DEFECT 8, SAFE 137, UNCLEAR 3.**

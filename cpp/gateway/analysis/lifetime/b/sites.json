@@ -1762,8 +1762,90 @@
       ]
     },
     "src/cache/kv_migration_projection.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "230-250,408-422",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Candidate and request-row scans",
+          "evidence": "Frame-owned iterators yield copied entries; the prefix references are static and the result maps/vectors contain copies."
+        },
+        {
+          "lines": "305-333",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Projected pending-marker repair",
+          "evidence": "The request reference is into the current frame-owned entry, never into the iterator's mutable batch. The named operation owns its mutations and is directly awaited."
+        },
+        {
+          "lines": "361-397",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Collect repairable windows with borrowed lookups",
+          "evidence": "repairProjectedPaidFallbackWindows retains its local record map and caller-owned candidate set across the structured wait, with all map alias use in individual synchronous statements."
+        },
+        {
+          "lines": "484-522,524-537",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Repair window context across request scan and CAS",
+          "evidence": "The directly awaiting parent owns its named context and immutable windows. Borrowed projected fields are consumed before the commit starts."
+        },
+        {
+          "lines": "609-650",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Legacy projection commit helper",
+          "evidence": "The parent passes named keys/records and immediately awaits the helper. The atomic builder copies mutation inputs before suspension and stays owned through commit."
+        },
+        {
+          "lines": "653-706",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Legacy candidate projection and aggregate orchestration",
+          "evidence": "The serial caller owns candidates, records and mutable hit set through the child. Fail-fast children are KV reads that own their inputs and never capture those references."
+        },
+        {
+          "lines": "716-729",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Collect dedicated ledger references",
+          "evidence": "inspectPending retains errors and awaits this scan before starting the next; the iterator and result set are local."
+        },
+        {
+          "lines": "732-760,776-793",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Collect pending legacy candidates and validate ledger",
+          "evidence": "Parent owns references, pairs and errors through sequential waits. A value reference spans a lookup only into the still-owned current entry, then is copied into the result vector."
+        }
+      ]
     },
     "src/cache/kv_migration_usage.cpp": {
       "reviewed": false,
