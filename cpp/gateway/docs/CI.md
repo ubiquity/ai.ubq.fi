@@ -98,8 +98,8 @@ Exact commands, original failures, source changes, limitations and terminal coun
 
 ## GitHub Actions
 
-[The C++ gateway workflow](../../../.github/workflows/cpp-gateway-ci.yml) runs four Release shards with Clang on `ubuntu-26.04-arm`. It runs on pushes to `claude/cpp-gateway-port`, `pool-merge/**` and `agent-jobs/**`, on pull requests targeting `claude/cpp-gateway-port`, and on manual dispatch. A newer run for the same ref cancels the older run. Each shard builds the production objects and vendors, then links and executes its round-robin selection.
+The C++ gateway workflow runs four Release shards with Clang on `ubuntu-26.04-arm`. It runs on pushes to `claude/cpp-gateway-port`, `pool-merge/**` and `agent-jobs/**`, on pull requests targeting `claude/cpp-gateway-port`, and on manual dispatch. A newer run for the same ref cancels the older run. Each shard builds the production objects and vendors, then links and executes its round-robin selection. [Workflow](../../../.github/workflows/cpp-gateway-ci.yml)
 
 The workflow sets `UOS_CI_BUILD_DIR` under the runner's temporary directory. Each `ci-release-shard-i` artifact includes `receipt.json`, `results.tsv`, and the available driver, compiler, namespace, link and run logs. The job summary counts successful links, passed and failed targets, and reported cases, and lists every unsuccessful test. Failed targets include build failures and timeouts. An early driver exit may leave only logs and partial results.
 
-See [the Clang x86_64 qualification](findings/cppgw-ci-workflow-20261118.md) for local counts and diagnostics. The workflow on the pushed result branch provides the matching ARM64 evidence.
+The Clang x86_64 qualification records local counts and diagnostics. The workflow on the pushed result branch provides the matching ARM64 evidence. [Run report](findings/cppgw-ci-workflow-20261118.md)
