@@ -381,8 +381,22 @@
       ]
     },
     "include/uos/codex/routing_serial.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Serial routing APIs use owned snapshots.",
+      "sites": [
+        {
+          "lines": "37-43,57,70,90-92",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Evaluation, row read and selection tasks retain their snapshot or KV inputs."
+        },
+        {
+          "lines": "77-82",
+          "kind": "callback parameter",
+          "verdict": "SAFE",
+          "reason": "Admission owns the action function and awaits its result before releasing its gate."
+        }
+      ]
     },
     "include/uos/codex/routing_state.hpp": {
       "status": "pending",
