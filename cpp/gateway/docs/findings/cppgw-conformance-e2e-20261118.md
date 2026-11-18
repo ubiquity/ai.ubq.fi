@@ -297,3 +297,70 @@ The new Ubuntu ARM64 runner built the inherited clean commit `b12de8a8e474d21525
 Extend the measured matrix over the same isolated production entrypoints. The pinned launcher maps DeepSeek Chat, Codex Models, Codex Responses and Realtime to the local mock. The Images routes already translate to Codex Responses, so the mock can exercise successful image delivery and a single quota charge across two upstream calls. Cover conditional catalog reads and their authentication boundary, tool history replay, Codex reasoning translation, request ID correlation, redirect refusal, and Realtime principal ownership. Exercise the agent-message route with the available API-key and anonymous credentials.
 
 The owned paths are the suite, its guide and this report. Keep the existing cases and network boundary. Record gateway and fixture-boundary findings with their exact responses for the respective maintainers. The source snapshot above supplies the release for the expanded run. Validate with the paired `run.sh` command against that snapshot, the Python comparison and wire controls, scoped formatting and whitespace checks. The earlier results apply to the inherited matrix. Finish when the expanded run records both observations for every case, with local receipts and the Git delivery state recorded here.
+
+## Expanded results
+
+Bun and native agreed across all **186 cases per gateway**. **184 passed** the independent expectations. The two shared [functional findings](#functional-findings) reproduced with HTTP 200 and one DeepSeek dispatch per gateway in each case. There were zero cosmetic differences.
+
+The 170 inherited rows above are byte-identical to their entries in the expanded table. These are the 16 additional rows.
+
+<!-- prettier-ignore -->
+| Case | Bun | Native | Result |
+| --- | ---: | ---: | --- |
+| agent-messages-no-auth | 401 | 401 | Match |
+| agent-messages-api-key-read-refused | 403 | 403 | Match |
+| agent-messages-api-key-write-refused | 403 | 403 | Match |
+| models-codex-etag-hit | 304 | 304 | Match |
+| models-codex-etag-miss | 200 | 200 | Match |
+| models-codex-etag-requires-auth | 401 | 401 | Match |
+| chat-upstream-redirect-refused | 502 | 502 | Match |
+| responses-tool-output-replayed | 200 | 200 | Match |
+| codex-reasoning-none-wire | 200 | 200 | Match |
+| codex-reasoning-ultra-wire | 200 | 200 | Match |
+| websocket-wrong-principal | 403 | 403 | Match |
+| key-create-image-fanout-quota | 200 | 200 | Match |
+| images-generations-fanout | 200 | 200 | Match |
+| images-fanout-quota-readback | 200 | 200 | Match |
+| images-fanout-quota-rejects-second-admission | 429 | 429 | Match |
+| images-edits-json | 200 | 200 | Match |
+
+Both gateways returned a bodyless 304 with the captured ETag, a 200 for an unrelated ETag, and a 401 when the matching request lacked authentication. The DeepSeek redirect reached only the original mock route. Codex received explicit `none` and translated `ultra` to `max`. The new Realtime check refused the other API key before any mock WebSocket dispatch.
+
+Each image fan-out produced two PNG results and two Codex dispatches. The gateway wrote one delivered `response.completed` terminal with 22 input, 10 output and 32 total tokens. The API-key readback reported one request, and a second admission returned 429 without upstream dispatch. The Chat SSE case also correlated `synthetic-provider-request` between the client response header and its one delivered terminal.
+
+## Expanded run evidence
+
+The selected suite commit was `78b5db8d504736f5362ba40f1dda66b86d1700b6`, tree `5c565bce9d0d3ec299bc0fc4d106b6e0f0735732`. It reused the release and application snapshot from the continuation release check. Ninja reported `no work to do`. The wrapper took 3.75 s with 137,832 KiB maximum child RSS. Its paired phase took 3.087 s, with 372 HTTP or upgrade responses, 68 mock dispatches, eight progressive delivery proofs, 16 correlated terminals, and four successful process exits. The receipt recorded zero fixture or capture errors and `ENETUNREACH` on both outbound route probes. Exit 1 is the expected receipt status for the two shared failures.
+
+| Output                             | SHA-256                                                            |
+| ---------------------------------- | ------------------------------------------------------------------ |
+| `run.6sgRDWQv/output/results.json` | `47e2bca287301e5bbd357d194c7b374dc57198ccccd5ec11940dd112638ca023` |
+| `run.6sgRDWQv/output/table.md`     | `2bea47a8a0cf89edca4f79f7da9b007578c6d65da0bc1e3028399fec1918de8e` |
+
+The clean release check used the dependency commands in [CONFORMANCE.md](../CONFORMANCE.md#run-on-linux-arm64). The expanded run used the paths and commands below. All nine comparison and wire controls passed, including four malformed SSE subcases. Python syntax, shell lint, shell syntax, scoped formatting and whitespace checks passed.
+
+```bash
+scratch=/var/tmp/cppgw-conformance.GsWnqbSJ
+CPP_CONFORMANCE_SOURCE_REVISION=b12de8a8e474d21525ba2eecef71779c1ecbb579 \
+  /usr/bin/time -o "$scratch/continuation-final.time" -f 'wall_s=%e peak_process_kib=%M exit=%x' \
+  bash cpp/gateway/conformance/run.sh "$scratch"
+
+unit=$(mktemp -d "$scratch/unit.XXXXXXXX")
+mkdir -m 700 "$unit"/{home,tmp}
+env -i HOME="$unit/home" TMPDIR="$unit/tmp" PATH=/usr/bin:/bin LC_ALL=C.UTF-8 \
+  python3 -B cpp/gateway/conformance/compare_test.py
+shellcheck cpp/gateway/conformance/run.sh
+bash -n cpp/gateway/conformance/run.sh
+git diff --check b54357a9..HEAD
+```
+
+The frozen formatter ran in the scratch copy with the changed files at their repository paths.
+
+```sh
+bun --no-env-file run format:check cpp/gateway/conformance/cases.json cpp/gateway/docs/CONFORMANCE.md \
+  cpp/gateway/docs/findings/cppgw-conformance-e2e-20261118.md
+```
+
+The released fixture map limits live inference to DeepSeek and Codex. The cached Voyage paths remain covered through the gateway API. Configured paid routes and their settlement, direct Voyage transport, positive GitHub agent-message access, and WebSocket refusal bodies remain outside the captured evidence.
+
+The local continuation commits are on `agent-job`. An authenticated GitHub writer is needed for push and merge. `GIT_TERMINAL_PROMPT=0 git push origin HEAD:refs/heads/agent-jobs/cppgw-conformance-e2e-20261118-44214118327-1` returned `could not read Username`. The fetched `origin/development` at `6bd78fc5e3b0783809691c6bd45d25ac45e9696e` lacks the continuation commits.
