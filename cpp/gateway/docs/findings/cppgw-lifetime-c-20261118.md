@@ -130,7 +130,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/paid_fallback/ledger_settlement.hpp`
 - [x] `include/uos/paid_fallback/ledger_state.hpp`
 - [x] `include/uos/paid_fallback/ledger_stats.hpp`
-- [ ] `include/uos/paid_fallback/removed_provider.hpp`
+- [x] `include/uos/paid_fallback/removed_provider.hpp`
 - [ ] `include/uos/paid_fallback/rollups.hpp`
 - [ ] `include/uos/paid_fallback/routing.hpp`
 - [ ] `include/uos/provider/anthropic_chat_responses.hpp`
@@ -843,3 +843,9 @@ KV read and pending-gate APIs.
 Ledger statistics API.
 
 - 118,132,202 · owning task parameters · **SAFE** · The task frames own statistics inputs, options and store handles.
+
+### `include/uos/paid_fallback/removed_provider.hpp`
+
+Removed provider stub and compatibility helpers.
+
+- 14-37,46-59 · synchronous promise factories · **SAFE** · The stub returns settled promises and stores no borrows of caller input; the identity projection is synchronous and rejects rvalues.

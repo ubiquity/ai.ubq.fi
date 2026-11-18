@@ -992,8 +992,16 @@
       ]
     },
     "include/uos/paid_fallback/removed_provider.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Removed provider stub and compatibility helpers.",
+      "sites": [
+        {
+          "lines": "14-37,46-59",
+          "kind": "synchronous promise factories",
+          "verdict": "SAFE",
+          "reason": "The stub returns settled promises and stores no borrows of caller input; the identity projection is synchronous and rejects rvalues."
+        }
+      ]
     },
     "include/uos/paid_fallback/rollups.hpp": {
       "status": "pending",
