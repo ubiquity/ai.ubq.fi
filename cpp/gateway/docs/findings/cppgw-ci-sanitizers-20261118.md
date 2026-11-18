@@ -82,3 +82,20 @@ Both four-worker harness campaigns reached the 300-second budget and exited 0 on
 | `regex` |      440.423 s |     317.481 s |              317 s |            2,742,951 |                 6 / 2,157 |                    7 |                   0 |
 
 The seven slow inputs were retained as artifacts. The runs reported zero fork-parent exit leaks. The ARM64 exception was exercised by synthetic classification controls. The workflow summary step rendered both real receipts and the artifact counts matched. The campaign receipts and logs are in `$scratch/fuzz-scoped-json` and `$scratch/fuzz-scoped-regex`.
+
+## Final continuation
+
+The checkout resumed at `c75cd79e2b7d8b0a21e8f68534f8516d549da07f`, tree `d96fb32987663d5a130147d97c00a82bf8dbd3fe`. The sanitizer process had stopped before running tests. Its last Ninja line recorded step 443 of 501 at 3,207.012 seconds. The resumed command below reuses those objects and the existing compiler wrapper, with fresh home and temporary directories. Both parts used the same driver, C++ inputs and Clang flags. The original logs were preserved in `$scratch/asan-resume`.
+
+```sh
+export UOS_CI_BUILD_DIR="$scratch/asan-scoped-build"
+out="$scratch/asan-resume"
+CONFIG=asan
+SHARD=1
+mkdir -p "$out/home" "$out/tmp"
+env -i PATH="$scratch/compiler:/usr/local/bin:/usr/bin:/bin" LANG=C.UTF-8 HOME="$out/home" TMPDIR="$out/tmp" \
+  CXX=clang++ UOS_CI_JOBS=4 UOS_CI_BUILD_DIR="$UOS_CI_BUILD_DIR" \
+  bash cpp/gateway/tools/ci-build.sh --config "$CONFIG" --shard "$SHARD/4" 2>&1 | tee "$UOS_CI_BUILD_DIR/driver.log"
+```
+
+`actionlint` 1.7.11 passed again with the external ARM runner-label config. The union of the four `--list` outputs matched the unsharded list for each configuration. The seven ASan driver controls passed again in 14.757 seconds, and all twelve campaign classification controls passed. `bun --no-env-file run format:check` passed for the active workflow and both changed documents in the locked scratch formatter checkout.
