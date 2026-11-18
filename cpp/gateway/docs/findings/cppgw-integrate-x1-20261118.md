@@ -50,7 +50,7 @@ conversion and stage 1's scoped ICU header warning handling. The simdjson-only
 `json.cpp` and stage 2a limits and large-body path survived unchanged.
 Stage 1's console, date, environment, filesystem, Headers and HTTP source
 files merged byte-for-byte from its tip. The console and filesystem use
-the shared text codec. The headers parser retains its smaller 16,408-byte
+the shared text codec. The HTTP server retains its smaller 16,408-byte
 and 198-field request-head bounds. CMake and the vendor registry retained
 the simdjson and simdutf consumers and added the llhttp C archive and
 consumers. The existing Links declarations cover the standalone parser test.
@@ -59,3 +59,11 @@ The helper and HTTP fixtures keep stage 1 expectations for strict wire
 rejections, bounded Header errors, ISO/IMF date validation and retention
 of raw Claude usage reset text. The newer JSON, UTF, WebSocket and
 request-path fixtures from stage 2a remain in the merged inventory.
+
+## Stage X merge resolution
+
+Git found one conflict in `docs/DEVIATIONS-FROM-BUN.md`. The resolution
+preserves the Linux confinement section and the merged library sections,
+with the incoming-integration guidance at the end. The entrypoint, startup,
+Linux permissions implementation and header, and reduced-policy fixture
+are byte-identical to the fallback branch.

@@ -68,7 +68,32 @@ Both packaged offline executables require the prefix `--runtime-manifest <absolu
 
 Offline conversion/proof is a separate executable policy: the gateway's exec-denying seccomp filter is not applied to these explicitly invoked offline tools, because their original contract launches the independently hash-pinned Deno V8 helper. The original helper version/hash checks, stopped-source/new-destination/receipt checks and Deno permission flags remain authoritative. `v8-helper.mjs` and its only first-party file import, `typed-value.ts`, are packaged unchanged; `node:v8` and `node:buffer` are Deno builtins. No application TypeScript compilation, automatic dependency install or fallback application runtime is added. Data conversion and production state custody remain separately authorized operations; task acceptance uses only disposable synthetic inputs under the real outer network boundary.
 
-Startup verifies the manifest hash, every listed package file, absence of unbound/symlink/non-regular package entries, executing binary location, host-library closure, package identity, native-KV artifact and provenance, and Linux permissions manifest/artifact before state or listener effects. It then applies real Landlock ABI8+ filesystem thread synchronization and seccomp process thread synchronization. Package and host runtime data are readable; only stateRoot/.data is writable. Unsupported enforcement fails closed. There is no JavaScript permission facade and subprocess execution is denied. C++ cannot undo reads or descriptors created before enforcement, so the outer sparse environment and reviewed native executable remain part of the launch boundary.
+### Linux confinement
+
+The synchronous bootstrap verifies the launch and package manifests, the executing binary, the host-library closure, and the native KV and permissions artifacts. It loads the configured TLS trust stores and installs Landlock and the existing seccomp filter before starting the HTTP transport, event loop, or SQLite worker. The package and the existing host runtime paths are readable. Only `stateRoot/.data` is writable. Seccomp is thread-synchronized and denies subprocess execution in every mode. The reviewed launcher and its environment control the resources available before enforcement.
+
+The default policy requires Linux ARM64 with Landlock ABI 8 or newer and applies the existing filesystem policy using Landlock thread synchronization. For a 64-bit Raspberry Pi OS installation with Landlock ABI 3–7, set the following environment variable on the native launcher. Landlock must be enabled in the kernel, and seccomp with thread synchronization is required.
+
+```sh
+UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1 /absolute/path/to/package/ops/launch-native.sh /absolute/path/to/launch.json
+```
+
+For a systemd launch, set `Environment=UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1` in the gateway unit's `[Service]` section. The launcher reads the exact value `1` from its process environment during bootstrap. It queries the ABI from Landlock itself, so kernel backports and kernel configuration determine the available controls.
+
+| Landlock ABI | First Linux release | Protections with the opt-in                                                                                        |
+| -----------: | ------------------: | ------------------------------------------------------------------------------------------------------------------ |
+|          0–2 |                   — | Startup refuses                                                                                                    |
+|            3 |                 6.2 | Filesystem restrictions, including rename/link and truncation, plus seccomp TSYNC and Landlock inheritance         |
+|            4 |                 6.7 | ABI 3 protections plus TCP bind and connect restrictions                                                           |
+|            5 |                6.10 | ABI 4 protections plus device `ioctl` restrictions                                                                 |
+|            6 |                6.12 | ABI 5 protections plus scoping for abstract Unix sockets and signals                                               |
+|            7 |                6.15 | ABI 6 protections. The kernel also supports audit controls. The launcher uses the kernel's default audit settings. |
+|            8 |                 7.0 | ABI 6 protections with Landlock TSYNC                                                                              |
+|           9+ |                 7.1 | ABI 8 protections plus the existing restriction on pathname Unix socket lookup                                     |
+
+On ABI 3–7, the bootstrap verifies in `/proc/self/task` that it is the sole thread. The later resolver and SQLite threads inherit its Landlock domain. On ABI 4 and newer, the opt-in TCP policy permits binding the validated listener port, including `0` for kernel assignment. Outbound TCP permits DNS on port 53 and the gateway's HTTPS and WSS upstreams on port 443. An isolated fixture instead gets its verified loopback mock port. Landlock checks port numbers, so redirects to other TCP ports are denied under this policy.
+
+The startup log and `LinuxPermissionsReceipt` report the queried ABI, active controls, and missing controls. A Pi with ABI 3 reports the filesystem filter, thread inheritance, and seccomp TSYNC as active. It reports TCP port controls, device `ioctl` restrictions, Unix socket controls, signal scoping, and Landlock TSYNC as missing. [Linux Landlock documentation](https://docs.kernel.org/userspace-api/landlock.html)
 
 After validation/enforcement, cwd becomes stateRoot, `SQLITE_TMPDIR` is explicitly set to that same private `.data`, and immutable static resources use packageRoot. `src/static.cpp` otherwise retains cwd behavior for original module tests. Native-KV preparation supplies explicit packaged inputs so compile-time `__FILE__` development bootstrap paths are never selected by this entrypoint. The linked `rt::SqliteKv` opens the actual `.data/kv-bun.sqlite3`, verifies the Bun/JSC marker before adoption, initializes the shared handle, then enters the real authenticated application callbacks. Normal launch requires an existing private database; no implicit conversion or legacy `.data/kv.sqlite3` adoption occurs. The source serve lifecycle drains requests, closes optional telemetry and closes KV after SIGTERM/SIGINT; durable accounting and reopened-state acceptance still require actual smoke evidence.
 
