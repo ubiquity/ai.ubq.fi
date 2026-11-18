@@ -117,6 +117,7 @@ class Handler(BenchmarkHandler):
             self.send_response(302)
             self.send_header("Location", "/codex/models")
             self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
             self.end_headers()
         elif mode == "broken":
             self.stream_frames([SSE_TEXT[0], sse({"error": {"code": "server_error", "message": "Synthetic mid-stream fault."}})], gate_after=1)
