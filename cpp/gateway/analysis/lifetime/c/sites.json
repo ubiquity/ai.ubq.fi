@@ -2296,8 +2296,16 @@
       "sites": []
     },
     "src/codex/session.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Session telemetry uses per-observation hashes and a local durable update.",
+      "sites": [
+        {
+          "lines": "200-269",
+          "kind": "session, key, and rate update awaits",
+          "verdict": "SAFE",
+          "reason": "Inputs and hashes are frame-owned, the row vector remains local across the write, and the AtomicOperation and KV survive the commit."
+        }
+      ]
     },
     "src/codex/supervisor.cpp": {
       "status": "pending",

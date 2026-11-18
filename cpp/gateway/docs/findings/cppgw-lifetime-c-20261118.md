@@ -215,7 +215,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/routing_mutations.cpp`
 - [x] `src/codex/routing_serial.cpp`
 - [x] `src/codex/routing_state.cpp`
-- [ ] `src/codex/session.cpp`
+- [x] `src/codex/session.cpp`
 - [ ] `src/codex/supervisor.cpp`
 - [ ] `src/codex/supervisor_brief.cpp`
 - [ ] `src/codex/supervisor_config.cpp`
@@ -1387,3 +1387,9 @@ The serial admission lock chains copied promises and invokes a frame-owned actio
 ### `src/codex/routing_state.cpp`
 
 KV key constants and routing row serialization are synchronous. Reference-taking converters do their work within the call.
+
+### `src/codex/session.cpp`
+
+Session telemetry uses per-observation hashes and a local durable update.
+
+- 200-269 · session, key, and rate update awaits · **SAFE** · Inputs and hashes are frame-owned, the row vector remains local across the write, and the AtomicOperation and KV survive the commit.
