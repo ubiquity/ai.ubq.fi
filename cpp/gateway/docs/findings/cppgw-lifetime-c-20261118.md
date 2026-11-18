@@ -198,7 +198,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/dispatch.cpp`
 - [x] `src/codex/experiment.cpp`
 - [x] `src/codex/external_auth.cpp`
-- [ ] `src/codex/index.cpp`
+- [x] `src/codex/index.cpp`
 - [ ] `src/codex/manual_reset.cpp`
 - [ ] `src/codex/manual_reset_state.cpp`
 - [ ] `src/codex/native_auth.cpp`
@@ -1275,3 +1275,10 @@ The cache-scope experiment owns its session, auth pool snapshot and callback opt
 ### `src/codex/external_auth.cpp`
 
 Token shape and external account planning are synchronous. Returned records own their text and no async callback is installed.
+
+### `src/codex/index.cpp`
+
+The two entry points join dispatch and its accounting cleanup.
+
+- 13-38 · serial loop callback borrows · **SAFE** · fetchPreparedCodexResponses holds shared ctx across the serial loop join. The loop's raw pointer predicates are synchronous and its other installed operations are joined.
+- 44-60 · request coordinator cleanup · **SAFE** · Both options and coordinator are frame-owned and cancellation is awaited before the frame returns or rethrows.

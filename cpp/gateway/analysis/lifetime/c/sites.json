@@ -2007,8 +2007,22 @@
       "sites": []
     },
     "src/codex/index.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The two entry points join dispatch and its accounting cleanup.",
+      "sites": [
+        {
+          "lines": "13-38",
+          "kind": "serial loop callback borrows",
+          "verdict": "SAFE",
+          "reason": "fetchPreparedCodexResponses holds shared ctx across the serial loop join. The loop's raw pointer predicates are synchronous and its other installed operations are joined."
+        },
+        {
+          "lines": "44-60",
+          "kind": "request coordinator cleanup",
+          "verdict": "SAFE",
+          "reason": "Both options and coordinator are frame-owned and cancellation is awaited before the frame returns or rethrows."
+        }
+      ]
     },
     "src/codex/manual_reset.cpp": {
       "status": "pending",
