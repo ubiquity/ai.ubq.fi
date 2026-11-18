@@ -52,7 +52,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/rt/kv_jsc.cpp`
 - [x] `src/rt/kv_jsc_deserialize.cpp`
 - [x] `src/rt/kv_key.cpp`
-- [ ] `src/rt/kv_memory.cpp`
+- [x] `src/rt/kv_memory.cpp`
 - [ ] `src/rt/kv_sdk.cpp`
 - [ ] `src/rt/kv_sdk.hpp`
 - [ ] `src/rt/kv_sqlite.cpp`
@@ -342,6 +342,16 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | 131-190,192-245,261-334,378-491,509-525 | KV key codecs and comparison helpers | **SAFE** | Reference-capturing lambdas are synchronous and parser subspans point to the current call's input. Pack and unpack build owning key results. |
 | 343-360 | KV tuple variant accessors | **SAFE** | Byte, string and BigInt references are into the caller's KvKeyPart. The serializing and checking call sites consume them synchronously before any await. |
 
+### `src/rt/kv_memory.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 19-24,88-118,132-192,196-214 | Memory native tasks and transaction state | **SAFE** | The SDK StorePtr owns MemoryNative. Its row reads, undo log and expiry mutation are synchronous, and only copied results and exception pointers survive the macrotask. |
+| 248-265,303-324 | Memory KV commit and codec/clock captures | **SAFE** | The builder closure is noncoroutine and gives the task a StorePtr. Stored clock and codec callbacks execute synchronously and the native database holds only weak handles back. |
+| 270-302 | Checked list iterator next/return | **SAFE** | A named unique iterator in each traced caller owns ListStream and remains live through each awaited step. The cursor after the await is copied from that still-owned child. |
+| 337-359 | Memory KV task wrappers and unconditional atomic writes | **SAFE** | Public read/write wrappers take a store or handle copy before building a Task. The free write coroutines retain the unique operation through commit. |
+| 350-354 | Memory delete directly projects the awaited commit result | **DEFECT** ([D07](#d07)) | The operation suspends with a result temporary embedded in the member-access expression. The retained GCC 12 comparison rule requires a named awaited KvCommitResult before reading ok. |
+
 
 ## Ranked defects and counts
 
@@ -507,4 +517,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-29/97 files reviewed. **DEFECT 7, SAFE 67, UNCLEAR 2.**
+30/97 files reviewed. **DEFECT 8, SAFE 71, UNCLEAR 2.**

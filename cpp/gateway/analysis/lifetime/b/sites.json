@@ -914,8 +914,60 @@
       ]
     },
     "src/rt/kv_memory.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "19-24,88-118,132-192,196-214",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "Memory native tasks and transaction state",
+          "evidence": "The SDK StorePtr owns MemoryNative. Its row reads, undo log and expiry mutation are synchronous, and only copied results and exception pointers survive the macrotask."
+        },
+        {
+          "lines": "248-265,303-324",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Memory KV commit and codec/clock captures",
+          "evidence": "The builder closure is noncoroutine and gives the task a StorePtr. Stored clock and codec callbacks execute synchronously and the native database holds only weak handles back."
+        },
+        {
+          "lines": "270-302",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Checked list iterator next/return",
+          "evidence": "A named unique iterator in each traced caller owns ListStream and remains live through each awaited step. The cursor after the await is copied from that still-owned child."
+        },
+        {
+          "lines": "337-359",
+          "verdict": "SAFE",
+          "kinds": [
+            "b"
+          ],
+          "symbol": "Memory KV task wrappers and unconditional atomic writes",
+          "evidence": "Public read/write wrappers take a store or handle copy before building a Task. The free write coroutines retain the unique operation through commit."
+        },
+        {
+          "lines": "350-354",
+          "verdict": "DEFECT",
+          "kinds": [
+            "e"
+          ],
+          "symbol": "Memory delete directly projects the awaited commit result",
+          "evidence": "The operation suspends with a result temporary embedded in the member-access expression. The retained GCC 12 comparison rule requires a named awaited KvCommitResult before reading ok.",
+          "defect": "D07"
+        }
+      ]
     },
     "src/rt/kv_sdk.cpp": {
       "reviewed": false,
