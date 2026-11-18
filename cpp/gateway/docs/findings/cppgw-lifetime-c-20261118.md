@@ -226,7 +226,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/supervisor_transport.cpp`
 - [x] `src/deepseek/chat_projection.cpp`
 - [x] `src/deepseek/context_admission_failure.cpp`
-- [ ] `src/deepseek/flash_aliases.cpp`
+- [x] `src/deepseek/flash_aliases.cpp`
 - [ ] `src/deepseek/forwarded_payload_policy.cpp`
 - [ ] `src/deepseek/handlers.cpp`
 - [ ] `src/deepseek/index.cpp`
@@ -1457,3 +1457,9 @@ Projection and normalization are synchronous. The system message iterator is use
 ### `src/deepseek/context_admission_failure.cpp`
 
 Failure marking and recognition are synchronous. Response identity tracking uses weak keys.
+
+### `src/deepseek/flash_aliases.cpp`
+
+Catalog warming is detached while alias calculation uses copied catalog and model results.
+
+- 104-107 · detached catalog fetches · **SAFE** · Each spawned task obtains or owns its fetch state and receives no local view or closure from the warming function.

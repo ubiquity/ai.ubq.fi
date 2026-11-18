@@ -2462,8 +2462,16 @@
       "sites": []
     },
     "src/deepseek/flash_aliases.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Catalog warming is detached while alias calculation uses copied catalog and model results.",
+      "sites": [
+        {
+          "lines": "104-107",
+          "kind": "detached catalog fetches",
+          "verdict": "SAFE",
+          "reason": "Each spawned task obtains or owns its fetch state and receives no local view or closure from the warming function."
+        }
+      ]
     },
     "src/deepseek/forwarded_payload_policy.cpp": {
       "status": "pending",
