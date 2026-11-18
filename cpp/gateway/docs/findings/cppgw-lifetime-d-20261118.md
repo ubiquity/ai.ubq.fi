@@ -295,7 +295,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_authority_runtime.hpp`
 - [x] `include/uos/authority/native_authority_sql.hpp`
 - [x] `include/uos/authority/native_codex.hpp`
-- [ ] `include/uos/authority/native_codex_429.hpp`
+- [x] `include/uos/authority/native_codex_429.hpp`
 - [ ] `include/uos/authority/native_codex_capacity.hpp`
 - [ ] `include/uos/authority/native_codex_contracts.hpp`
 - [ ] `include/uos/authority/native_codex_evaluation.hpp`
@@ -1648,6 +1648,12 @@ Reviewed Codex selection and reset planning interfaces.
 
 - L67 **SAFE** · The plan label points to a static literal and its associated record is an owning value.
 
+### `include/uos/authority/native_codex_429.hpp`
+
+Reviewed the retry classification interface and synchronous evidence declarations.
+
+- L38 **SAFE** · The classifier takes an owning Response by value and copies its bounded result before using the response headers again.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1896,4 +1902,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-187/286 files reviewed. 360 sites: 339 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+188/286 files reviewed. 361 sites: 340 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
