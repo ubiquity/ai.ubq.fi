@@ -352,7 +352,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/metered_quota.hpp`
 - [x] `include/uos/models/catalog.hpp`
 - [x] `include/uos/models/codex_models.hpp`
-- [ ] `include/uos/models/codex_models_availability.hpp`
+- [x] `include/uos/models/codex_models_availability.hpp`
 - [ ] `include/uos/models/codex_models_fetch.hpp`
 - [ ] `include/uos/models/codex_models_whitelist.hpp`
 - [ ] `include/uos/models/metadata.hpp`
@@ -1986,6 +1986,12 @@ Reviewed snapshot queries, static labels and version parser views.
 
 - L34, 38, 134, 136, 139, 148, 169, 171 **SAFE** · Label views point to literals. Lookup and version parsing consume their input views synchronously; returned snapshots and records own their contents.
 
+### `include/uos/models/codex_models_availability.hpp`
+
+Reviewed account refresh, unsupported evidence and cache interfaces.
+
+- L80, 81, 84, 85, 93, 98, 99, 131 **SAFE** · Read and mutation Tasks receive owning entries, IDs and options. Each copies its shared store or pending Promise before suspension.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2234,4 +2240,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-244/286 files reviewed. 419 sites: 397 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+245/286 files reviewed. 420 sites: 398 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

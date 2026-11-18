@@ -9325,8 +9325,29 @@
       ]
     },
     "include/uos/models/codex_models_availability.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed account refresh, unsupported evidence and cache interfaces.",
+      "sites": [
+        {
+          "lines": [
+            80,
+            81,
+            84,
+            85,
+            93,
+            98,
+            99,
+            131
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Read and mutation Tasks receive owning entries, IDs and options. Each copies its shared store or pending Promise before suspension."
+        }
+      ]
     },
     "include/uos/models/codex_models_fetch.hpp": {
       "reviewed": false,
