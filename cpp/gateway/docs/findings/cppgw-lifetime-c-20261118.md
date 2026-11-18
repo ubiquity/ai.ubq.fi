@@ -164,7 +164,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/claude_code_usage_schema.hpp`
 - [x] `include/uos/provider/health.hpp`
 - [x] `include/uos/provider/lithos.hpp`
-- [ ] `include/uos/provider/lithos_handlers.hpp`
+- [x] `include/uos/provider/lithos_handlers.hpp`
 - [ ] `include/uos/provider/lithos_models.hpp`
 - [ ] `include/uos/provider/lithos_rate_limits.hpp`
 - [ ] `include/uos/provider/lithos_streams.hpp`
@@ -1039,3 +1039,9 @@ Health API returns shared recorder promises and owns clock callables for reads.
 Lithos provider transport API with owned options.
 
 - 124-126,234-235 · task and callback interface · **SAFE** · Request and dispatch hook values stay in the task frame through fetch and retry.
+
+### `include/uos/provider/lithos_handlers.hpp`
+
+Lithos handler interface with borrowed telemetry and an observer seam.
+
+- 12-19 · borrowed context and observer · **SAFE** · The caller awaits the handler while its context lives, and stream construction copies it. The test observer receives a weak controller handle.

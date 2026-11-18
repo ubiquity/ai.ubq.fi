@@ -1377,8 +1377,16 @@
       ]
     },
     "include/uos/provider/lithos_handlers.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Lithos handler interface with borrowed telemetry and an observer seam.",
+      "sites": [
+        {
+          "lines": "12-19",
+          "kind": "borrowed context and observer",
+          "verdict": "SAFE",
+          "reason": "The caller awaits the handler while its context lives, and stream construction copies it. The test observer receives a weak controller handle."
+        }
+      ]
     },
     "include/uos/provider/lithos_models.hpp": {
       "status": "pending",
