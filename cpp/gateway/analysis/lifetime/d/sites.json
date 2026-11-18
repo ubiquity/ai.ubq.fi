@@ -8064,8 +8064,33 @@
       ]
     },
     "include/uos/authority/native_codex_capacity.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed quota-class string views and the span-based capacity merge overloads.",
+      "sites": [
+        {
+          "lines": [
+            68,
+            71,
+            77,
+            79,
+            81,
+            85,
+            88,
+            96,
+            99,
+            100,
+            101,
+            118,
+            134
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Capacity helpers consume views and spans synchronously, and the variadic wrapper keeps its backing vector live through the merge. Results and keys own their data."
+        }
+      ]
     },
     "include/uos/authority/native_codex_contracts.hpp": {
       "reviewed": false,

@@ -296,7 +296,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_authority_sql.hpp`
 - [x] `include/uos/authority/native_codex.hpp`
 - [x] `include/uos/authority/native_codex_429.hpp`
-- [ ] `include/uos/authority/native_codex_capacity.hpp`
+- [x] `include/uos/authority/native_codex_capacity.hpp`
 - [ ] `include/uos/authority/native_codex_contracts.hpp`
 - [ ] `include/uos/authority/native_codex_evaluation.hpp`
 - [ ] `include/uos/authority/native_codex_mutations.hpp`
@@ -1654,6 +1654,12 @@ Reviewed the retry classification interface and synchronous evidence declaration
 
 - L38 **SAFE** · The classifier takes an owning Response by value and copies its bounded result before using the response headers again.
 
+### `include/uos/authority/native_codex_capacity.hpp`
+
+Reviewed quota-class string views and the span-based capacity merge overloads.
+
+- L68, 71, 77, 79, 81, 85, 88, 96, 99, 100, 101, 118, 134 **SAFE** · Capacity helpers consume views and spans synchronously, and the variadic wrapper keeps its backing vector live through the merge. Results and keys own their data.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1902,4 +1908,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-188/286 files reviewed. 361 sites: 340 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+189/286 files reviewed. 362 sites: 341 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
