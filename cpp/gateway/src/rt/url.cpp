@@ -1,5 +1,6 @@
 #include "uos/rt/url.hpp"
 #include "uos/rt/fs.hpp"
+#include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 #include "third_party/ada/ada.h"
@@ -56,7 +57,9 @@ namespace uos::rt {
           continue;
         }
         const std::string decoded = ada::idna::to_unicode(label);
-        if (decoded == label || decoded.find('.') != std::string::npos) return false;
+        // Ada 4.0.0 omits some combining marks from its leading-mark check.
+        static const Regex leadingMark(R"(^\p{Mark})", "u");
+        if (decoded == label || decoded.find('.') != std::string::npos || leadingMark.test(decoded)) return false;
         if (std::ranges::any_of(decoded, [](char c) {
               return static_cast<unsigned char>(c) < 0x80 &&
                      ada::idna::contains_forbidden_domain_code_point(std::string_view(&c, 1));
