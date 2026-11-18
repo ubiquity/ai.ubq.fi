@@ -8841,8 +8841,29 @@
       ]
     },
     "include/uos/jev_compaction/compaction.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the compaction input wrapper, injected asker and rewrite callback. Stream abort cleanup is classified in the implementation.",
+      "sites": [
+        {
+          "lines": [
+            29,
+            38,
+            40,
+            44,
+            49,
+            50,
+            51
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The wrappers copy JSON and dependencies into the Task. The awaiting frame owns the asker and residue function through their calls."
+        }
+      ]
     },
     "include/uos/jev_compaction/hybrid.hpp": {
       "reviewed": false,

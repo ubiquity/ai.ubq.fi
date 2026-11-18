@@ -330,7 +330,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/inference_admission.hpp`
 - [x] `include/uos/inference_deadline.hpp`
 - [x] `include/uos/input_normalization.hpp`
-- [ ] `include/uos/jev_compaction/compaction.hpp`
+- [x] `include/uos/jev_compaction/compaction.hpp`
 - [ ] `include/uos/jev_compaction/hybrid.hpp`
 - [ ] `include/uos/kv.hpp`
 - [ ] `include/uos/kv_conversion/cli.hpp`
@@ -1854,6 +1854,12 @@ Reviewed synchronous normalization templates and exported constants.
 
 - L25, 37, 41, 42, 43, 44, 45, 46 **SAFE** · The model constant refers to a literal. JSON input pointers and string views are used synchronously and normalization produces owned values.
 
+### `include/uos/jev_compaction/compaction.hpp`
+
+Reviewed the compaction input wrapper, injected asker and rewrite callback. Stream abort cleanup is classified in the implementation.
+
+- L29, 38, 40, 44, 49, 50, 51 **SAFE** · The wrappers copy JSON and dependencies into the Task. The awaiting frame owns the asker and residue function through their calls.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2102,4 +2108,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-222/286 files reviewed. 396 sites: 374 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+223/286 files reviewed. 397 sites: 375 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
