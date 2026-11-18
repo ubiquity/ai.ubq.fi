@@ -1,8 +1,10 @@
 """Controls for the public contract comparison."""
 
 import unittest
+from io import BytesIO
 
 from compare import compare, expectations, normalize, redact
+from wire import read_sse
 
 
 def observation(**fields):
@@ -62,6 +64,12 @@ class CompareTest(unittest.TestCase):
     def test_credential_redaction(self):
         self.assertEqual(redact({"echo": ["prefix private-fixture suffix"]}, ("private-fixture",)),
                          {"echo": ["prefix <synthetic credential> suffix"]})
+
+    def test_malformed_sse_metadata_can_be_reported_as_a_wire_error(self):
+        for body in (b'{"type":[]}', b'{"choices":[null]}',
+                     b'{"choices":[{"finish_reason":1}]}', b'{"choices":[{"delta":null}]}'):
+            with self.subTest(body=body), self.assertRaisesRegex(ValueError, "SSE"):
+                read_sse(BytesIO(b"data: " + body + b"\n\n"), {}, None)
 
 
 if __name__ == "__main__":

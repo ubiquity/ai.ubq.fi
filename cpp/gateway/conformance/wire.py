@@ -7,9 +7,6 @@ from pathlib import Path
 from string import Template
 import time
 
-from client import endpoint, websocket
-from fixtures import SCENARIOS, encode
-
 MAX_BODY = 8 * 1024 * 1024
 TIMEOUT = 6
 
@@ -29,6 +26,8 @@ def expand(value, variables):
 
 
 def payload(spec):
+    from fixtures import SCENARIOS, encode
+
     if "fixture" in spec:
         return SCENARIOS[spec["fixture"]].body, "application/json"
     if "json" in spec:
@@ -62,15 +61,26 @@ def event_kind(event):
     if not isinstance(value, dict):
         return "non-object"
     if "type" in value:
-        return value["type"]
+        kind = value["type"]
+        if not isinstance(kind, str) or not kind:
+            raise ValueError("SSE event type must be a nonempty string")
+        return kind
     if "error" in value:
         return "error"
-    if value.get("usage") is not None and not value.get("choices"):
+    choices = value.get("choices", [])
+    if not isinstance(choices, list) or any(not isinstance(choice, dict) for choice in choices):
+        raise ValueError("SSE choices must be an array of objects")
+    if value.get("usage") is not None and not choices:
         return "usage"
-    choice = (value.get("choices") or [{}])[0]
-    if choice.get("finish_reason"):
-        return "finish:" + choice["finish_reason"]
+    choice = choices[0] if choices else {}
+    finish = choice.get("finish_reason")
+    if finish is not None and not isinstance(finish, str):
+        raise ValueError("SSE finish_reason must be a string or null")
+    if finish:
+        return "finish:" + finish
     delta = choice.get("delta", {})
+    if not isinstance(delta, dict):
+        raise ValueError("SSE delta must be an object")
     if delta.get("tool_calls"):
         return "chat.tool_calls"
     if delta.get("content"):
@@ -111,6 +121,8 @@ def read_sse(response, result, on_event):
 
 
 def request(origin, spec, credentials, on_event=None):
+    from client import endpoint, websocket
+
     started = time.monotonic()
     result = {"status": None, "headers": {}, "body": None}
     auth = spec.get("auth", "primary")
