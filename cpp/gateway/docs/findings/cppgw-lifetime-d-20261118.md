@@ -238,7 +238,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/sentinel/replay_limits.cpp`
 - [x] `src/sentinel/replay_model.cpp`
 - [x] `src/sentinel/replay_observation.cpp`
-- [ ] `src/sentinel/replay_read.cpp`
+- [x] `src/sentinel/replay_read.cpp`
 - [ ] `src/sentinel/replay_retention.cpp`
 - [ ] `src/sentinel/replay_retention_bootstrap.cpp`
 - [ ] `src/sentinel/replay_retention_metadata.cpp`
@@ -1253,6 +1253,14 @@ Reviewed bounded response cloning, SSE inspection, one-shot raw-body observation
 - L192, 196, 206, 207, 751 **SAFE** · The frame owns its cloned stream, reader and chunk buffers. The synchronous cancel wrapper copies its own stream owner before releasing the lock, and the response inspection retains its Response through cloning.
 - L374, 595, 596, 597, 709, 764, 765 **SAFE** · The inline parser guard lives in the same frame as its receiver and index. Request observers own the candidate without a back-reference to Request and inspector callbacks own shared parser State, consuming passed spans synchronously.
 
+### `src/sentinel/replay_read.cpp`
+
+Reviewed encrypted listing and lookup, stale references, manifest and ledger reads, and authenticated decryption.
+
+- L181, 189, 248, 272, 284, 290, 320, 324, 331, 348, 349, 356, 359, 368 **SAFE** · Admin and replay callers hold a shared KV owner while directly awaiting the borrowed-store helpers. Each reader retains its snapshots and named list/atomic receivers through the corresponding waits.
+- L374, 377, 381, 384, 388, 413, 416, 420, 422, 424, 432, 449 **SAFE** · The caller retains KV while lookup tasks hold copied key, status and manifest values. The named status and tombstone entries back all borrowed views.
+- L474, 476, 486, 513, 515 **SAFE** · Decrypt owns its export, key bytes and intermediate vectors. Hash, decompression and grouping children take independent values and cleanup guards run within that frame.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1501,4 +1509,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-130/286 files reviewed. 248 sites: 230 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+131/286 files reviewed. 251 sites: 233 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

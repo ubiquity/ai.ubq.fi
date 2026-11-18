@@ -5626,8 +5626,74 @@
       ]
     },
     "src/sentinel/replay_read.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed encrypted listing and lookup, stale references, manifest and ledger reads, and authenticated decryption.",
+      "sites": [
+        {
+          "lines": [
+            181,
+            189,
+            248,
+            272,
+            284,
+            290,
+            320,
+            324,
+            331,
+            348,
+            349,
+            356,
+            359,
+            368
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Admin and replay callers hold a shared KV owner while directly awaiting the borrowed-store helpers. Each reader retains its snapshots and named list/atomic receivers through the corresponding waits."
+        },
+        {
+          "lines": [
+            374,
+            377,
+            381,
+            384,
+            388,
+            413,
+            416,
+            420,
+            422,
+            424,
+            432,
+            449
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The caller retains KV while lookup tasks hold copied key, status and manifest values. The named status and tombstone entries back all borrowed views."
+        },
+        {
+          "lines": [
+            474,
+            476,
+            486,
+            513,
+            515
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Decrypt owns its export, key bytes and intermediate vectors. Hash, decompression and grouping children take independent values and cleanup guards run within that frame."
+        }
+      ]
     },
     "src/sentinel/replay_retention.cpp": {
       "reviewed": false,
