@@ -2511,7 +2511,8 @@
       ]
     },
     "src/authority/native_codex_capacity.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed quota-class normalization, route-slot migration and resets. Predicates only borrow current groups during synchronous traversal, and selected slots and results are copied. No suspension or escaping callback.",
       "sites": []
     },
     "src/authority/native_codex_contracts.cpp": {
