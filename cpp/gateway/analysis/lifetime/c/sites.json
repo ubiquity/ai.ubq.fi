@@ -2914,8 +2914,28 @@
       "sites": []
     },
     "src/live/sideband.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Sideband ownership spans both WebSockets and the delayed mapping retirement before close.",
+      "sites": [
+        {
+          "lines": "28-33,88-120",
+          "kind": "constructor await and downstream handlers",
+          "verdict": "SAFE",
+          "reason": "The bridge frame owns State through installation and the downstream registrations retain it afterwards. A close while the constructor is pending sets settled before the frame resumes."
+        },
+        {
+          "lines": "59-87,121-142",
+          "kind": "socket callbacks and deferred close",
+          "verdict": "SAFE",
+          "reason": "State is retained while either socket can deliver a callback. Both concrete sockets clear listener edges at close or WebSocketRegistry teardown. The retirement task owns its call ID and the then callbacks own the state."
+        },
+        {
+          "lines": "147-165,168-193",
+          "kind": "account and upgrade transfer",
+          "verdict": "SAFE",
+          "reason": "Lookups operate on frame-local data. The synchronous accept callable copies socket and routing strings into the detached bridge task."
+        }
+      ]
     },
     "src/live/upstream.cpp": {
       "status": "pending",

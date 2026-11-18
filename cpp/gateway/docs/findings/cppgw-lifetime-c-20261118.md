@@ -266,7 +266,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/live/calls.cpp`
 - [x] `src/live/handler.cpp`
 - [x] `src/live/routes.cpp`
-- [ ] `src/live/sideband.cpp`
+- [x] `src/live/sideband.cpp`
 - [ ] `src/live/upstream.cpp`
 - [ ] `src/paid_fallback/claude_code_route.cpp`
 - [ ] `src/paid_fallback/health.cpp`
@@ -1674,3 +1674,11 @@ HTTP and upgrade handlers own the incoming Request and principal snapshots.
 ### `src/live/routes.cpp`
 
 Route matching is synchronous and returns owned route fields.
+
+### `src/live/sideband.cpp`
+
+Sideband ownership spans both WebSockets and the delayed mapping retirement before close.
+
+- 28-33,88-120 · constructor await and downstream handlers · **SAFE** · The bridge frame owns State through installation and the downstream registrations retain it afterwards. A close while the constructor is pending sets settled before the frame resumes.
+- 59-87,121-142 · socket callbacks and deferred close · **SAFE** · State is retained while either socket can deliver a callback. Both concrete sockets clear listener edges at close or WebSocketRegistry teardown. The retirement task owns its call ID and the then callbacks own the state.
+- 147-165,168-193 · account and upgrade transfer · **SAFE** · Lookups operate on frame-local data. The synchronous accept callable copies socket and routing strings into the detached bridge task.
