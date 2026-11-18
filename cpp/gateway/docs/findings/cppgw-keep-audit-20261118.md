@@ -15,6 +15,8 @@ Audit rows 17–55 under the owner's library-first policy. Measure the existing 
 
 The owned paths are this report and new Markdown under `cpp/gateway/docs/briefs/`. Source, tests, build settings, deployments, and the other agents' branches are outside the report's write scope. The initial unknowns were live API usage, current ledger boundaries and the cost of the remaining adapters. Completion requires a verdict for every row, a ranked estimate and verified brief commands.
 
+Run brief commands from the repository root after preparing the libraries and selecting a compiler as described in CI.md. Their release runs use the Linux namespace fixture boundary, an empty home, a private temp directory and synthetic upstreams. The two startup and permissions fixtures in the path briefs require Linux ARM64. Use the native fixture procedure on Apple Silicon. [Linux fixtures](../CI.md) · [Apple Silicon fixtures](../MACOS.md)
+
 ## Ranked implementation briefs
 
 Eleven lanes cover 13 KEEP rows with **1,140–1,735 estimated net first-party lines** removed. A further direct C++ design is assessed separately below. Prioritize by the midpoint of the net estimate divided by ordinal risk, with higher net savings breaking ties. Estimates subtract replacement code and caller churn and give zero credit to a move into a different first-party file. Each lane remeasures on its merged starting tree.
@@ -40,6 +42,16 @@ Risk **1** is an unreachable runtime feature with fixture coverage, **2** is a b
 The inventory names disjoint files and inclusive line spans. I counted the Git blobs at the baseline, including blanks, comments and generated tables as physical LOC. That gives **27,372 lines across 80 distinct paths**. All 39 row counts match the plan after rebasing the two string ranges. Between the plan commit `0edaf83367bbb29eaf50076afd428818f4b3e4bb` and the baseline, the only changes under the audited runtime source and include trees are `string.cpp` and `string.hpp`. ICU shifted the retained ranges. Rows 32 and 33 below give current coordinates.
 
 Caller counts below are textual matches of the named symbols in `src/**/*.cpp` outside `src/rt/`. They include qualified references or matching comments where present and give a lower bound on the surface when aliases, unqualified calls and headers are involved. For runtime-internal paths, each verdict names the immediate caller. Follow includes and caller links before deleting an API. Every runtime translation unit participates in each test's link, so a link-closure match alone does not prove a runtime call.
+
+Use the baseline blobs for physical counts and the retained ranges in rows 32–33 for the ICU layout. For example, these are the file and range counts for rows 46 and 51, followed by the row 46 usage probes.
+
+```bash
+git show b54357a9:cpp/gateway/include/uos/rt/ordered.hpp | wc -l
+git show b54357a9:cpp/gateway/src/rt/fs.cpp | sed -n '738,996p' | wc -l
+git show b54357a9:cpp/gateway/include/uos/rt/fs.hpp | sed -n '249,286p' | wc -l
+rg -c -o 'rt::(OrderedMap|OrderedSet|arrayFrom)\b' cpp/gateway/src -g '*.cpp' -g '!**/rt/**'
+rg -l 'rt::(OrderedMap|OrderedSet|arrayFrom)\b' cpp/gateway/src -g '*.cpp' -g '!**/rt/**'
+```
 
 ## Verdicts by plan row
 
@@ -226,4 +238,56 @@ Direct-design acceptance starts with `rt/async_test.cpp`, `rt/stream_test.cpp`, 
 
 ## Continuation checkpoint
 
-The prior agent committed the inventory and verdicts 17–45 in `535c01f8`, `9c99611e` and `5eade71a`. This continuation re-counted all 39 rows from Git blobs, measured the remaining qualified caller probes, completed rows 46–55 and sized the direct C++ option. The ordered-container estimate is lower because live-iteration and numeric-key tests still exercise that adapter after membership callers move. The release driver is running against continuation head `5eade71a050ce52d3c36a2cc903534c99ffbd6ed`, which differs from the source baseline only in this Markdown file. Its selected scope is all 369 production translation units and the 36 tests under `tests/rt/`. Briefs and terminal build evidence follow in the next checkpoint.
+The prior agent committed the inventory and verdicts 17–45 in `535c01f8`, `9c99611e` and `5eade71a`. This continuation re-counted all 39 rows from Git blobs, measured the remaining qualified caller probes, completed rows 46–55 and sized the direct C++ option. The ordered-container estimate is lower because live-iteration and numeric-key tests still exercise that adapter after membership callers move. The briefs are in `00da5868` and `8d3b9cc6`.
+
+## Baseline build and document checks
+
+On the four-CPU Ubuntu 26.04 x86_64 runner, Clang 21.1.8 built the Linux release profile with Boost 1.90, OpenSSL 3.5.5, SQLite 3.54.0, zlib 1.3.1, ICU 78.2, Brotli 1.2.0, Zstd 1.5.7 and mold 2.40.4. The driver listed 442 binaries. I stopped the initial unfiltered run after 35 Ninja actions and reused its objects for the focused release build of all 369 production translation units and the 36 `tests/rt/` binaries. Each test used the driver's loopback-only Linux namespace with a private tmpfs, an empty home and a fresh temp directory. The ARM64-only permissions and native startup fixtures are outside that selection.
+
+```bash
+sudo -n apt-get update
+sudo -n apt-get install -y clang ninja-build pkg-config libboost-json-dev libboost-container-dev \
+  libssl-dev libsqlite3-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev mold
+
+audit_scratch=$(mktemp -d /var/tmp/cppgw-keep-audit.XXXXXX)
+mkdir "$audit_scratch/home" "$audit_scratch/tmp"
+curl --fail --location --retry 2 --max-time 70 https://www.sqlite.org/2026/sqlite-autoconf-3540000.tar.gz \
+  -o "$audit_scratch/sqlite.tar.gz"
+printf '%s  %s\n' 134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed \
+  "$audit_scratch/sqlite.tar.gz" | sha256sum --check
+tar -xzf "$audit_scratch/sqlite.tar.gz" -C "$audit_scratch"
+(
+  cd "$audit_scratch/sqlite-autoconf-3540000"
+  ./configure --prefix="$audit_scratch/sqlite" --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'
+  make -j2
+  make install
+)
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 TZ=UTC HOME="$audit_scratch/home" TMPDIR="$audit_scratch/tmp" \
+  CXX=clang++ UOS_CI_BUILD_DIR="$audit_scratch/build" UOS_CI_JOBS=4 \
+  PKG_CONFIG_PATH="$audit_scratch/sqlite/lib/pkgconfig" \
+  UOS_CI_LDFLAGS="-Wl,--disable-new-dtags,-rpath,$audit_scratch/sqlite/lib" \
+  bash cpp/gateway/tools/ci-build.sh --config release tests/rt/
+```
+
+| Run                     | Git commit                                 | Git tree                                   | Production objects | Test binaries and cases                |     Elapsed |
+| ----------------------- | ------------------------------------------ | ------------------------------------------ | -----------------: | -------------------------------------- | ----------: |
+| Portable release        | `5eade71a050ce52d3c36a2cc903534c99ffbd6ed` | `1a5ab33cff5c77a714164a9eb5c575a3ecd11ef0` |            368/369 | 36 build failures, zero cases executed | 1,119.128 s |
+| Incremental Clang retry | `8d3b9cc6fb9f968b0653720ac744d3a766d9d453` | `8922270effbf84f52ec7d20151ba9604205e137a` |            369/369 | 36 passed, 453/453 cases passed        |    13.173 s |
+
+Both receipts recorded the same unchanged build-input SHA-256 `cde5c54835e8431ccf1128f47e49cef3fea46700a1e0b4d5f3e0a93e9c35fc42`. The receipt digests in run order are `a9ac01b600636879adee44c5ed162c2d48940f014c64aa62c3e1016f20c8b2f7` and `52d7f7daed9d9fe21bec7088c080def53e96bb31079eab2c1fe05b9315bf504e`. The retry reused the unaffected objects. It compiled the remaining object in 1.327 s and linked/ran the tests in 11.569 s. The checked C++ inputs also match the original baseline `b54357a9`. These measurements cover production compilation and the selected standalone test links and runs.
+
+### Findings outside the report's write scope
+
+- Clang reports `-Wsign-conversion` in `simdutf.h` beginning at line 2029 when the portable graph compiles `base64.cpp` through the ordinary first-party compile rule. All 36 selected binaries need that object. A scratch probe replayed its Ninja command with `--system-header-prefix=third_party/simdutf/` and compiled successfully. The incremental retry used the same environment and `/usr/bin/python3 -B "$audit_scratch/recheck.py" --config release tests/rt/` in place of the Bash entrypoint. That scratch wrapper imported `driver.py` and added the flag to the single base64 consumer compile edge after `write_ninja`. All first-party warnings remained fatal. For a fresh Clang build, the driver's `UOS_CI_CXXFLAGS=--system-header-prefix=third_party/simdutf/` option applies the same include classification. [Consumer](../../src/rt/base64.cpp#L6) · [Portable Ninja rules](../../cmake/ci/driver.py#L170)
+- The direct invocations in CI.md require an executable bit that the tracked launcher lacks. Every brief invokes the driver through Bash. [CI examples](../CI.md#commands)
+- The runtime documentation records cyclic values failing closed in the conversion proof and sparse arrays allocating per hole during materialization. These remain with the stored-value lane. The audit used the existing compatibility fixtures and performed no live database conversion. [Stored-value cutover requirements](../RUNTIME.md#cutover-requirements)
+
+### Final documentation and handoff
+
+Verified 39 distinct verdicts, 11 ranked briefs and 69 fixture selections covering 57 unique registered tests. Each brief's command block passed `bash -n`. For each fixture I ran `bash cpp/gateway/tools/ci-build.sh --list "$test"` and `python3 -B cpp/gateway/tools/links.py "$test"`, verifying that the filter selected exactly its intended binary and the link resolver succeeded. Local Markdown targets and source line anchors exist.
+
+The 12 changed Markdown files passed `bun --no-env-file run format:check <changed paths>` with Bun 1.4.0 and both committed lockfiles installed using `bun --no-env-file install --frozen-lockfile --ignore-scripts` in scratch. `git diff --check b54357a9 HEAD` and a path-restricted diff verified whitespace and that the other tracked files match the baseline.
+
+The completed docs are committed on the assigned checkout. The GitHub CLI had no API credential and `GIT_TERMINAL_PROMPT=0 git push --dry-run origin HEAD:refs/heads/agent-jobs/cppgw-keep-audit-20261118-44214118327-1` could not authenticate. Refreshed `origin/development` at `6bd78fc5e3b0783809691c6bd45d25ac45e9696e` has no `cpp/gateway` tree. The audit awaits publication and integration with the concurrent C++ work. Hosted CI, the complete runtime suite, ARM64 qualification and implementation of the replacement briefs remain outside this run.
+
+Audited all 39 KEEP rows covering 27,372 lines and committed 11 replacement briefs. The ranked lanes could remove 1,140–1,735 first-party lines. All 369 production sources compiled and 36 isolated runtime tests passed all 453 cases after a runner-only simdutf header adjustment. GitHub authentication blocked publication.
