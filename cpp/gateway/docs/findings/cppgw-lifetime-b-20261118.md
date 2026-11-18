@@ -78,7 +78,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/cache/kv_migration_projection.hpp`
 - [x] `include/uos/cache/kv_migration_usage.hpp`
 - [x] `include/uos/cache/kv_migration_validation.hpp`
-- [ ] `include/uos/cache/prompt_analytics.hpp`
+- [x] `include/uos/cache/prompt_analytics.hpp`
 - [ ] `include/uos/cache/prompt_analytics_core.hpp`
 - [ ] `include/uos/cache/prompt_analytics_queue.hpp`
 - [ ] `include/uos/cache/prompt_analytics_read.hpp`
@@ -510,6 +510,10 @@ Both projection entries own their KV and pair vector. Private borrows and snapsh
 | --- | --- | --- | --- |
 | 18-20 | Validation error accumulator borrow | **SAFE** | The validation frame owns the error vector and directly awaits both helpers before returning or continuing. |
 
+### `include/uos/cache/prompt_analytics.hpp`
+
+Exports types and APIs defined by the related cache headers. No inline coroutine or independent callback registration.
+
 
 ## Ranked defects and counts
 
@@ -715,4 +719,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-55/97 files reviewed. **DEFECT 8, SAFE 109, UNCLEAR 3.**
+56/97 files reviewed. **DEFECT 8, SAFE 109, UNCLEAR 3.**

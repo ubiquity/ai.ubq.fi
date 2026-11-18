@@ -1497,8 +1497,9 @@
       ]
     },
     "include/uos/cache/prompt_analytics.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "Exports types and APIs defined by the related cache headers. No inline coroutine or independent callback registration."
     },
     "include/uos/cache/prompt_analytics_core.hpp": {
       "reviewed": false,
