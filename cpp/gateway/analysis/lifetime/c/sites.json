@@ -838,7 +838,8 @@
       "sites": []
     },
     "include/uos/harmony/types.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Harmony value records and synchronous JSON conversions.",
       "sites": []
     },
     "include/uos/live/calls.hpp": {

@@ -116,7 +116,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/tools/result.hpp`
 - [x] `include/uos/harmony/tools/router.hpp`
 - [x] `include/uos/harmony/tools/schemas.hpp`
-- [ ] `include/uos/harmony/types.hpp`
+- [x] `include/uos/harmony/types.hpp`
 - [ ] `include/uos/live/calls.hpp`
 - [ ] `include/uos/live/handler.hpp`
 - [ ] `include/uos/live/routes.hpp`
@@ -763,3 +763,7 @@ Four overloads route owned tool work.
 ### `include/uos/harmony/tools/schemas.hpp`
 
 Synchronous tool schema declarations.
+
+### `include/uos/harmony/types.hpp`
+
+Harmony value records and synchronous JSON conversions.
