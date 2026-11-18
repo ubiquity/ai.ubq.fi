@@ -232,7 +232,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/deepseek/index.cpp`
 - [x] `src/deepseek/responses.cpp`
 - [x] `src/deepseek/responses_payload.cpp`
-- [ ] `src/deepseek/responses_stream.cpp`
+- [x] `src/deepseek/responses_stream.cpp`
 - [ ] `src/deepseek/stream.cpp`
 - [ ] `src/deepseek/waterfall.cpp`
 - [ ] `src/deepseek/waterfall_handler.cpp`
@@ -1488,3 +1488,9 @@ Responses request projection and model policy checks are synchronous. Reasoning 
 ### `src/deepseek/responses_payload.cpp`
 
 Responses payload construction is synchronous. Field lookups return copies or are used immediately against the live JSON record.
+
+### `src/deepseek/responses_stream.cpp`
+
+The projection API exposes synchronous translator operations.
+
+- 352-355 · translator callback bundle · **SAFE** · Each returned function owns shared translator state and that state does not retain the function bundle.

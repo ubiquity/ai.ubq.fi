@@ -2519,8 +2519,16 @@
       "sites": []
     },
     "src/deepseek/responses_stream.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The projection API exposes synchronous translator operations.",
+      "sites": [
+        {
+          "lines": "352-355",
+          "kind": "translator callback bundle",
+          "verdict": "SAFE",
+          "reason": "Each returned function owns shared translator state and that state does not retain the function bundle."
+        }
+      ]
     },
     "src/deepseek/stream.cpp": {
       "status": "pending",
