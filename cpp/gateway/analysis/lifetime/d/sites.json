@@ -9923,8 +9923,83 @@
       ]
     },
     "include/uos/responses_stream.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed event identity, generator cancellation, the stored callback wrapper, and stream creation interfaces.",
+      "sites": [
+        {
+          "lines": [
+            31,
+            33,
+            34,
+            55,
+            67,
+            93
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Event and exception identities have explicit owners. The cancellation wrapper creates work with its own iterator and error pointers borrow their live Reason."
+        },
+        {
+          "lines": [
+            100,
+            101,
+            107,
+            111,
+            118,
+            119,
+            120,
+            125,
+            126,
+            127
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "detail": "The synchronous function runs inline. The async wrapper copies the shared callable into its child frame before invoking it and owns each event or reason it passes."
+        },
+        {
+          "lines": [
+            125
+          ],
+          "kinds": [
+            "b",
+            "e",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "The callback wrapper passes an owning ResponsesStreamEvent or OwnedResponsesStreamFailureDetails aggregate by value inside the await expression. The GCC 12.2 profile forbids this form. Construct the returned Task in a named statement and then await it."
+        },
+        {
+          "lines": [
+            135,
+            138,
+            142,
+            147,
+            149,
+            150,
+            156,
+            157,
+            158,
+            165,
+            168
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Stream and preflight wrappers copy their signals, source and options. Escaping callbacks retain their own callable and arguments through asynchronous use."
+        }
+      ]
     },
     "include/uos/runtime_config.hpp": {
       "reviewed": false,

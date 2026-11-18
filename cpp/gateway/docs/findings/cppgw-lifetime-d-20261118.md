@@ -372,7 +372,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/responses_handler.hpp`
 - [x] `include/uos/responses_native_headers.hpp`
 - [x] `include/uos/responses_request.hpp`
-- [ ] `include/uos/responses_stream.hpp`
+- [x] `include/uos/responses_stream.hpp`
 - [ ] `include/uos/runtime_config.hpp`
 - [ ] `include/uos/sentinel/incident_outbox.hpp`
 - [ ] `include/uos/sentinel/replay_admin.hpp`
@@ -2112,6 +2112,15 @@ Reviewed request parsing, metadata and reasoning interfaces.
 
 - L62, 65, 72, 73, 78 **SAFE** · Current callers directly await with their parsed body and usage context alive. The result owns its metadata and deadline controls.
 
+### `include/uos/responses_stream.hpp`
+
+Reviewed event identity, generator cancellation, the stored callback wrapper, and stream creation interfaces.
+
+- L31, 33, 34, 55, 67, 93 **SAFE** · Event and exception identities have explicit owners. The cancellation wrapper creates work with its own iterator and error pointers borrow their live Reason.
+- L100, 101, 107, 111, 118, 119, 120, 125, 126, 127 **SAFE** · The synchronous function runs inline. The async wrapper copies the shared callable into its child frame before invoking it and owns each event or reason it passes.
+- L125 **DEFECT** · The callback wrapper passes an owning ResponsesStreamEvent or OwnedResponsesStreamFailureDetails aggregate by value inside the await expression. The GCC 12.2 profile forbids this form. Construct the returned Task in a named statement and then await it.
+- L135, 138, 142, 147, 149, 150, 156, 157, 158, 165, 168 **SAFE** · Stream and preflight wrappers copy their signals, source and options. Escaping callbacks retain their own callable and arguments through asynchronous use.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2361,4 +2370,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-264/286 files reviewed. 447 sites: 423 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+265/286 files reviewed. 451 sites: 426 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
