@@ -1217,8 +1217,16 @@
       ]
     },
     "include/uos/provider/claude_capacity_rollups.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Claude capacity rollup and usage scan API.",
+      "sites": [
+        {
+          "lines": "77,104,121",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The read/key tasks own store and query/key inputs."
+        }
+      ]
     },
     "include/uos/provider/claude_code.hpp": {
       "status": "pending",

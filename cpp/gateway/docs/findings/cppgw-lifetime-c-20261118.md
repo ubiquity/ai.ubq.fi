@@ -150,7 +150,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/cerebras_rate_limits.hpp`
 - [x] `include/uos/provider/cerebras_responses.hpp`
 - [x] `include/uos/provider/claude_capacity_history.hpp`
-- [ ] `include/uos/provider/claude_capacity_rollups.hpp`
+- [x] `include/uos/provider/claude_capacity_rollups.hpp`
 - [ ] `include/uos/provider/claude_code.hpp`
 - [ ] `include/uos/provider/claude_code_access.hpp`
 - [ ] `include/uos/provider/claude_code_accounts.hpp`
@@ -958,3 +958,9 @@ Buffered Cerebras Responses API.
 Claude capacity recording and reading.
 
 - 28-30 · owning task parameters · **SAFE** · The reader and recorder own their store and inputs.
+
+### `include/uos/provider/claude_capacity_rollups.hpp`
+
+Claude capacity rollup and usage scan API.
+
+- 77,104,121 · owning task parameters · **SAFE** · The read/key tasks own store and query/key inputs.
