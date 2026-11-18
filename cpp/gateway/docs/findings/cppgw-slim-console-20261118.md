@@ -169,12 +169,47 @@ whole fixture from a wrapper TU first triggered GCC's existing
 primary TU with an absolute private implementation include resolved it
 under the same fatal warnings.
 
-The full release and sanitizer sweeps are running. Prettier 3.9.6
-accepted the report and the appended deviations section with
+The same six-source scratch fixture compiled with Clang 21.1.8,
+`-O1 -gline-tables-only -fsanitize=address,undefined
+-fno-sanitize-recover=all -fno-omit-frame-pointer`. All **11/11 cases
+passed** with ASan leak detection enabled and UBSan set to halt on error.
+Using `-fsanitize=fuzzer,address,undefined` and the unchanged
+`fuzz/console_format.cpp` with the same runtime sources, the existing
+corpus completed **294,605 executions in 121 seconds** with no finding.
+The isolated campaign used `-max_total_time=120 -max_len=16384 -timeout=3
+-rss_limit_mb=768 -seed=18112026 -artifact_prefix=/tmp/t/artifacts/
+-print_final_stats=1 /tmp/t/corpus`. Peak reported RSS was 437 MiB.
+
+Prettier 3.9.6 accepted the report and the appended deviations section with
 `bun --no-env-file --no-install "$scratch/prettier/bin/prettier.cjs"
 --config .prettierrc --check`. The existing Date table in the deviations
 document has a formatting difference. The appendix check verified that
 the original document is a byte-identical prefix.
+
+## Complete release sweep
+
+`bash cpp/gateway/tools/ci-build.sh --config release` selected all 441
+binaries under GCC 14.2.0. All 369 production objects compiled. The
+incremental object phase took 1,752.034 seconds, and linking and running
+the suite took 91.956 seconds. The driver reported **438/441 binaries,
+5,025/5,028 cases**, exit 1, with zero build failures or timeouts.
+The stable source digest was
+`fd69c612088e5ebbc32354b3301bb707596233ffcb1e3b6a32da0c19c8b6322a`.
+The release receipt SHA-256 was
+`5dbe7ac1b56ee3b2a3373d961cb2c5eb29fa24130ae2a82b3b26b70bb112f5b3`.
+
+The three failures match the assigned baseline.
+
+| Fixture                                 | Cases passed | Baseline difference                                                                                                      |
+| --------------------------------------- | -----------: | ------------------------------------------------------------------------------------------------------------------------ |
+| `claude_code_usage_schema_test`         |          2/3 | Legacy `resets_at` text of `"0"` is retained with a null normalized deadline.                                            |
+| `codex_external_auth_differential_test` |          3/4 | External auth rejects three legacy `last_refresh` date forms.                                                            |
+| `rt/http_test`                          |          5/6 | Malformed redirects throw the same type with a normalized field name and the rejected value omitted from the diagnostic. |
+
+These are tracked in the [small-helpers report](cppgw-std-small-helpers-20261117.md#pinned-icu-sweep).
+The complete sanitizer sweep is compiling.
+
+## Publication
 
 The GitHub write preflight for
 `refs/heads/agent-jobs/cppgw-slim-console-20261118` returned exit 128
