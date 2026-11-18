@@ -23,6 +23,8 @@ include(cmake/Vendors.cmake)
 if(TARGET uos_vendor_quickjs-libregexp)
   # Use the pinned compiler driver for the C vendor, including in sanitizer profiles.
   get_target_property(quickjs_sources uos_vendor_quickjs-libregexp SOURCES)
+  set_property(TARGET uos_vendor_quickjs-libregexp PROPERTY CXX_STANDARD)
+  set_property(TARGET uos_vendor_quickjs-libregexp PROPERTY CXX_EXTENSIONS ON)
   set_source_files_properties(${quickjs_sources} PROPERTIES LANGUAGE CXX COMPILE_OPTIONS "-x;c;-std=gnu11")
   get_target_property(quickjs_consumers uos_vendor_quickjs-libregexp UOS_VENDOR_CONSUMERS)
 endif()
