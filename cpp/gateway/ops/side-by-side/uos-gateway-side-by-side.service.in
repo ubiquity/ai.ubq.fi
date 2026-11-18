@@ -1,10 +1,13 @@
 # Render and verify using docs/SIDE-BY-SIDE.md. No boot target is supplied.
 [Unit]
 Description=Native gateway side-by-side observation
+AssertControlGroupController=v2
+AssertControlGroupController=cpu memory
 
 [Service]
 Type=exec
 User=@SHADOW_USER@
+Group=@SHADOW_GROUP@
 WorkingDirectory=@STATE_ROOT@
 UMask=0077
 # Start with an empty environment. The sealed package launcher eventually execs the gateway.
@@ -18,6 +21,7 @@ CPUWeight=25
 Nice=10
 MemoryAccounting=yes
 MemoryMax=512M
+MemorySwapMax=0
 
 NoNewPrivileges=yes
 CapabilityBoundingSet=
@@ -31,9 +35,11 @@ ProtectKernelTunables=yes
 RestrictSUIDSGID=yes
 ReadOnlyPaths=@PACKAGE_ROOT@
 ReadWritePaths=@STATE_ROOT@/.data
-InaccessiblePaths=@BUN_ROOT@
+# ProtectHome may already hide this path. Also cover installs outside home.
+InaccessiblePaths=-@BUN_ROOT@
 
-# Share only IPv4 loopback with the host for local replay.
+# Requires effective cgroup BPF bind and IP filters on the target host.
+# The application also validates its own loopback listener before binding.
 RestrictAddressFamilies=AF_INET
 IPAddressDeny=any
 IPAddressAllow=127.0.0.1/32
