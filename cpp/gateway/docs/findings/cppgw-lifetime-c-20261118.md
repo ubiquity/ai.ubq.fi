@@ -148,7 +148,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/cerebras.hpp`
 - [x] `include/uos/provider/cerebras_handlers.hpp`
 - [x] `include/uos/provider/cerebras_rate_limits.hpp`
-- [ ] `include/uos/provider/cerebras_responses.hpp`
+- [x] `include/uos/provider/cerebras_responses.hpp`
 - [ ] `include/uos/provider/claude_capacity_history.hpp`
 - [ ] `include/uos/provider/claude_capacity_rollups.hpp`
 - [ ] `include/uos/provider/claude_code.hpp`
@@ -946,3 +946,9 @@ Buffered Cerebras Chat APIs use the route telemetry context while joined.
 ### `include/uos/provider/cerebras_rate_limits.hpp`
 
 Synchronous rate-limit reading and parsing API. No task or registration.
+
+### `include/uos/provider/cerebras_responses.hpp`
+
+Buffered Cerebras Responses API.
+
+- 5-6 · borrowed context · **SAFE** · The route holds its context while awaiting completion and the task owns the request and record values.

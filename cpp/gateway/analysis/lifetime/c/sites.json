@@ -1193,8 +1193,16 @@
       "sites": []
     },
     "include/uos/provider/cerebras_responses.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Buffered Cerebras Responses API.",
+      "sites": [
+        {
+          "lines": "5-6",
+          "kind": "borrowed context",
+          "verdict": "SAFE",
+          "reason": "The route holds its context while awaiting completion and the task owns the request and record values."
+        }
+      ]
     },
     "include/uos/provider/claude_capacity_history.hpp": {
       "status": "pending",
