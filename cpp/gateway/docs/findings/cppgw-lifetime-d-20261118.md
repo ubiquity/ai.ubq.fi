@@ -324,7 +324,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/handler/serve_handler.hpp`
 - [x] `include/uos/handler/terminal_log.hpp`
 - [x] `include/uos/handler/terminal_route.hpp`
-- [ ] `include/uos/health.hpp`
+- [x] `include/uos/health.hpp`
 - [ ] `include/uos/http.hpp`
 - [ ] `include/uos/images.hpp`
 - [ ] `include/uos/inference_admission.hpp`
@@ -1818,6 +1818,12 @@ Reviewed terminal route descriptions, handler inputs and the replay override dec
 
 - L25, 26, 28, 36 **SAFE** · The shipped route views refer to static literals. The handler copies the request, path and delivery context into its main Task.
 
+### `include/uos/health.hpp`
+
+Reviewed passive and active health entry points. The active probe's abandoned timeout is recorded at the race in its implementation.
+
+- L9, 11, 12, 13, 14, 16 **SAFE** · The public health operations receive options by value or take no inputs.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2066,4 +2072,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-216/286 files reviewed. 390 sites: 368 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+217/286 files reviewed. 391 sites: 369 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

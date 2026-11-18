@@ -8705,8 +8705,26 @@
       ]
     },
     "include/uos/health.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed passive and active health entry points. The active probe's abandoned timeout is recorded at the race in its implementation.",
+      "sites": [
+        {
+          "lines": [
+            9,
+            11,
+            12,
+            13,
+            14,
+            16
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The public health operations receive options by value or take no inputs."
+        }
+      ]
     },
     "include/uos/http.hpp": {
       "reviewed": false,
