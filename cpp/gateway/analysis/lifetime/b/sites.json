@@ -970,8 +970,52 @@
       ]
     },
     "src/rt/kv_sdk.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "101-143,145-154",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "Mutation and value codec callbacks",
+          "evidence": "Validation and decoding invoke callback references synchronously on owned message or result data, before any later suspension."
+        },
+        {
+          "lines": "156-197",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "KV get and getMany snapshot",
+          "evidence": "StorePtr owns Native. Keys and read ranges are moved into the native call, and result vectors and rowMap are owned locals created or traversed after the await."
+        },
+        {
+          "lines": "200-231",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "KV SDK commit",
+          "evidence": "StorePtr owns the native target and checks, mutations and enqueues are owning vectors. All view use ends before the await of the native write."
+        },
+        {
+          "lines": "236-288,290-317,319-333",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "ListStream and GenericListIterator next/fetch/return",
+          "evidence": "Callers own and await named iterators sequentially. ListStream owns StorePtr; fetch starts from copied range bounds, and entry references are taken after fetch and copied before returning."
+        }
+      ]
     },
     "src/rt/kv_sdk.hpp": {
       "reviewed": false,

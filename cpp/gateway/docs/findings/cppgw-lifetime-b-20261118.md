@@ -53,7 +53,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/rt/kv_jsc_deserialize.cpp`
 - [x] `src/rt/kv_key.cpp`
 - [x] `src/rt/kv_memory.cpp`
-- [ ] `src/rt/kv_sdk.cpp`
+- [x] `src/rt/kv_sdk.cpp`
 - [ ] `src/rt/kv_sdk.hpp`
 - [ ] `src/rt/kv_sqlite.cpp`
 - [ ] `src/rt/kv_value.cpp`
@@ -352,6 +352,15 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | 337-359 | Memory KV task wrappers and unconditional atomic writes | **SAFE** | Public read/write wrappers take a store or handle copy before building a Task. The free write coroutines retain the unique operation through commit. |
 | 350-354 | Memory delete directly projects the awaited commit result | **DEFECT** ([D07](#d07)) | The operation suspends with a result temporary embedded in the member-access expression. The retained GCC 12 comparison rule requires a named awaited KvCommitResult before reading ok. |
 
+### `src/rt/kv_sdk.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 101-143,145-154 | Mutation and value codec callbacks | **SAFE** | Validation and decoding invoke callback references synchronously on owned message or result data, before any later suspension. |
+| 156-197 | KV get and getMany snapshot | **SAFE** | StorePtr owns Native. Keys and read ranges are moved into the native call, and result vectors and rowMap are owned locals created or traversed after the await. |
+| 200-231 | KV SDK commit | **SAFE** | StorePtr owns the native target and checks, mutations and enqueues are owning vectors. All view use ends before the await of the native write. |
+| 236-288,290-317,319-333 | ListStream and GenericListIterator next/fetch/return | **SAFE** | Callers own and await named iterators sequentially. ListStream owns StorePtr; fetch starts from copied range bounds, and entry references are taken after fetch and copied before returning. |
+
 
 ## Ranked defects and counts
 
@@ -517,4 +526,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-30/97 files reviewed. **DEFECT 8, SAFE 71, UNCLEAR 2.**
+31/97 files reviewed. **DEFECT 8, SAFE 75, UNCLEAR 2.**
