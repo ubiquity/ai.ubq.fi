@@ -4924,8 +4924,29 @@
       ]
     },
     "src/request_policy.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed model routing metadata, provider joins and synchronous request field rules.",
+      "sites": [
+        {
+          "lines": [
+            216,
+            219,
+            250,
+            257,
+            273,
+            274,
+            275,
+            276
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The frame owns model, route and snapshot while each provider task receives owning values. The joined result is named and metadata lookup consumes its element views synchronously."
+        }
+      ]
     },
     "src/responses_attempts.cpp": {
       "reviewed": false,

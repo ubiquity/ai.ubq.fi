@@ -222,7 +222,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/recent_model_context.cpp`
 - [x] `src/release.cpp`
 - [x] `src/request.cpp`
-- [ ] `src/request_policy.cpp`
+- [x] `src/request_policy.cpp`
 - [ ] `src/responses_attempts.cpp`
 - [ ] `src/responses_buffered.cpp`
 - [ ] `src/responses_failover_stream.cpp`
@@ -1159,6 +1159,12 @@ Reviewed one-shot raw body observers, bounded reads, rejection and JSON parsing.
 - L42, 43, 47, 48, 56, 63, 64, 66 **SAFE** · The observer is copied before the WeakMap entry is erased. The synchronous callback is invoked with the request and bytes still owned by the caller, and the production observer holds its replay candidate weakly.
 - L86, 88, 101, 103, 106, 125, 129, 140, 171 **SAFE** · The read frame owns its Request, stream, reader and chunk result until reader cleanup. Value borrows stem from private read results and no shared buffer is mutated across a wait.
 
+### `src/request_policy.cpp`
+
+Reviewed model routing metadata, provider joins and synchronous request field rules.
+
+- L216, 219, 250, 257, 273, 274, 275, 276 **SAFE** · The frame owns model, route and snapshot while each provider task receives owning values. The joined result is named and metadata lookup consumes its element views synchronously.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1407,4 +1413,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-115/286 files reviewed. 226 sites: 209 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+116/286 files reviewed. 227 sites: 210 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
