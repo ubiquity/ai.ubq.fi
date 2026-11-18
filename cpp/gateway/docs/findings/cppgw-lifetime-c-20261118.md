@@ -132,7 +132,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/paid_fallback/ledger_stats.hpp`
 - [x] `include/uos/paid_fallback/removed_provider.hpp`
 - [x] `include/uos/paid_fallback/rollups.hpp`
-- [ ] `include/uos/paid_fallback/routing.hpp`
+- [x] `include/uos/paid_fallback/routing.hpp`
 - [ ] `include/uos/provider/anthropic_chat_responses.hpp`
 - [ ] `include/uos/provider/anthropic_chat_stream.hpp`
 - [ ] `include/uos/provider/anthropic_replay.hpp`
@@ -855,3 +855,9 @@ Removed provider stub and compatibility helpers.
 Terminal rollup write/read API.
 
 - 46-47,56 · owning task parameters · **SAFE** · Rollup frames own their inputs, optional store override and read options.
+
+### `include/uos/paid_fallback/routing.hpp`
+
+Paid waterfall API.
+
+- 17-18 · owning task parameters · **SAFE** · The routing frame owns its request body and options; the joined parent owns any referenced telemetry.

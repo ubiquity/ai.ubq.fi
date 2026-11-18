@@ -1016,8 +1016,16 @@
       ]
     },
     "include/uos/paid_fallback/routing.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Paid waterfall API.",
+      "sites": [
+        {
+          "lines": "17-18",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The routing frame owns its request body and options; the joined parent owns any referenced telemetry."
+        }
+      ]
     },
     "include/uos/provider/anthropic_chat_responses.hpp": {
       "status": "pending",
