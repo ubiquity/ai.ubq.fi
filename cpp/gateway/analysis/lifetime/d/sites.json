@@ -8340,8 +8340,26 @@
       ]
     },
     "include/uos/catalog/index.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed catalog handler dependencies and by-value request routing.",
+      "sites": [
+        {
+          "lines": [
+            10,
+            11,
+            13,
+            14
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The handler and degradation wrapper copy their callbacks. The clock runs inline and the awaited degradation child holds the exact invoked callable."
+        }
+      ]
     },
     "include/uos/catalog/models.hpp": {
       "reviewed": false,
