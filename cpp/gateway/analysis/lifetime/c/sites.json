@@ -476,8 +476,16 @@
       ]
     },
     "include/uos/codex/supervisor_inventory.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Inventory snapshot declaration.",
+      "sites": [
+        {
+          "lines": "108",
+          "kind": "owning task result",
+          "verdict": "SAFE",
+          "reason": "The refresh API takes no borrowed input and yields a copied snapshot from its shared cache."
+        }
+      ]
     },
     "include/uos/codex/supervisor_log.hpp": {
       "status": "pending",

@@ -74,7 +74,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/supervisor_brief.hpp`
 - [x] `include/uos/codex/supervisor_config.hpp`
 - [x] `include/uos/codex/supervisor_follow.hpp`
-- [ ] `include/uos/codex/supervisor_inventory.hpp`
+- [x] `include/uos/codex/supervisor_inventory.hpp`
 - [ ] `include/uos/codex/supervisor_log.hpp`
 - [ ] `include/uos/codex/supervisor_secret.hpp`
 - [ ] `include/uos/codex/supervisor_transport.hpp`
@@ -553,3 +553,9 @@ The concurrency helper is executable template code; config and poll implementati
 Follow selection borrows only synchronously; polling owns its inputs.
 
 - 66,81-82 · container and task ownership · **SAFE** · The selection helper finishes before returning, while readFollowUpdate retains a shared revision map and owns source, cursor and signal.
+
+### `include/uos/codex/supervisor_inventory.hpp`
+
+Inventory snapshot declaration.
+
+- 108 · owning task result · **SAFE** · The refresh API takes no borrowed input and yields a copied snapshot from its shared cache.
