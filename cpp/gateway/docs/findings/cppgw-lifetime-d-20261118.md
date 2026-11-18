@@ -249,7 +249,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/static.cpp`
 - [x] `src/systemone/handlers.cpp`
 - [x] `src/types.cpp`
-- [ ] `src/upstream_wire.cpp`
+- [x] `src/upstream_wire.cpp`
 - [ ] `src/utils.cpp`
 - [ ] `include/uos/admin/api_key_audit.hpp`
 - [ ] `include/uos/admin/api_key_mutations.hpp`
@@ -1363,6 +1363,15 @@ Reviewed synchronous type parsing, serializers, and the variant visitor.
 - L21, 49, 51, 62 **SAFE** · Stringified enum values refer to static literal storage. Parsing consumes the input view synchronously while its JSON string is alive.
 - L801, 850, 862 **SAFE** · The variant visitor runs synchronously against the caller's value, and serializers return owned records or write into the caller's output.
 
+### `src/upstream_wire.cpp`
+
+Reviewed response provenance, error conversion, cancellation and buffered provider wire shaping.
+
+- L128, 129, 130, 138, 199, 228, 234, 260, 276, 322, 329, 330, 331, 332, 338, 344, 348, 451 **SAFE** · Diagnostic views and JSON pointers are synchronous and point into live inputs or static literals. The provenance map stores only weak response identity and an owned label.
+- L375, 381 **SAFE** · Cerebras SSE serialization appends synchronously to a local string, then gives the fully buffered result to the owning Response.
+- L286, 289, 395, 397, 411, 414, 428, 430, 461, 463 **SAFE** · Error converters own their response, signal and diagnostic values. They await the bounded capture Task before reading frame-owned bytes and headers.
+- L408, 409 **SAFE** · Stream cancellation synchronously captures the stream state or an owning rejection before returning the detached Task. The local stream wrapper can leave scope.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1611,4 +1620,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-141/286 files reviewed. 303 sites: 282 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+142/286 files reviewed. 307 sites: 286 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
