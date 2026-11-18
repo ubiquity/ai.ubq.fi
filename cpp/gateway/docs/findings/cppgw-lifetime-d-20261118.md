@@ -209,7 +209,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/metered_quota.cpp`
 - [x] `src/models/catalog.cpp`
 - [x] `src/models/codex_models.cpp`
-- [ ] `src/models/codex_models_availability.cpp`
+- [x] `src/models/codex_models_availability.cpp`
 - [ ] `src/models/codex_models_fetch.cpp`
 - [ ] `src/models/codex_models_whitelist.cpp`
 - [ ] `src/models/metadata.cpp`
@@ -1085,6 +1085,13 @@ Reviewed public and native model catalog projection, provider fan-out and capabi
 
 Reviewed model snapshots, capability hints, context limits and record transformation. String and JSON views are synchronous, and materialized snapshots own their contents. No suspension or escaping callback.
 
+### `src/models/codex_models_availability.cpp`
+
+Reviewed process caches, background refresh, KV merges and unsupported-model tracking.
+
+- L287, 293, 299, 312, 325, 327, 328, 332, 333, 429 **SAFE** · Refresh is started independently with owning inputs and a finalizer pointing only to static state. Cache snapshot pointers from the synchronous getter are consumed before any suspension.
+- L339, 353, 366, 370, 371, 375, 392, 394, 406, 409, 411, 478, 482 **SAFE** · The merge callback, database, entries and atomic operation are retained in their frame. Learned-map borrows are confined to a synchronous block and the test observer copies the in-flight Promise.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1333,4 +1340,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-102/286 files reviewed. 211 sites: 195 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+103/286 files reviewed. 213 sites: 197 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

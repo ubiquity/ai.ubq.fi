@@ -4566,8 +4566,57 @@
       "sites": []
     },
     "src/models/codex_models_availability.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed process caches, background refresh, KV merges and unsupported-model tracking.",
+      "sites": [
+        {
+          "lines": [
+            287,
+            293,
+            299,
+            312,
+            325,
+            327,
+            328,
+            332,
+            333,
+            429
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Refresh is started independently with owning inputs and a finalizer pointing only to static state. Cache snapshot pointers from the synchronous getter are consumed before any suspension."
+        },
+        {
+          "lines": [
+            339,
+            353,
+            366,
+            370,
+            371,
+            375,
+            392,
+            394,
+            406,
+            409,
+            411,
+            478,
+            482
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The merge callback, database, entries and atomic operation are retained in their frame. Learned-map borrows are confined to a synchronous block and the test observer copies the in-flight Promise."
+        }
+      ]
     },
     "src/models/codex_models_fetch.cpp": {
       "reviewed": false,
