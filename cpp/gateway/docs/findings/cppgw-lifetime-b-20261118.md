@@ -300,14 +300,30 @@ The assigned integration base is outside `origin/development` at
 `a3a96bc5fe96ba383936746fae23e64daa69562f`, whose tree lacks `cpp/gateway`.
 The branch push preflight exited 128 because GitHub HTTPS authentication was unavailable.
 The audit is committed on `agent-job` for integration with its assigned source branch.
-A post-review verification interval exceeded the 15-minute checkpoint target after all file
-verdicts had been committed.
+Two post-review verification intervals exceeded 15 minutes after all file verdicts
+had been committed.
 
 ```bash
 git fetch --no-tags origin refs/heads/development:refs/remotes/origin/development
 git merge-base --is-ancestor 6d28e858e7ab8b8b1036db4a4adfdade0465ed40 origin/development
 GIT_TERMINAL_PROMPT=0 git -c core.askPass=/bin/false push --dry-run origin \
   HEAD:refs/heads/agent-jobs/cppgw-lifetime-b-20261118
+```
+
+### Report and index gates
+
+Python syntax, checklist completeness, source-locator bounds, ranked defect references,
+report/index equivalence, and whitespace checks passed. Pinned Bun 1.4.0 ran the
+repository formatter against the two changed artifacts in scratch with the frozen tool
+dependencies. The checkout contains four audit files relative to the assigned base.
+
+```bash
+python3 -B cpp/gateway/analysis/lifetime/b/ledger.py complete
+python3 -B -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") for p in Path("cpp/gateway/analysis/lifetime/b").glob("*.py")]'
+git diff --check 6d28e858e7ab8b8b1036db4a4adfdade0465ed40 HEAD
+git diff --exit-code 6d28e858e7ab8b8b1036db4a4adfdade0465ed40 HEAD -- cpp/gateway/src cpp/gateway/include cpp/gateway/tests
+# In scratch with copies of the changed artifacts and repository tooling.
+bun --no-env-file --no-install run format:check cpp/gateway/docs/findings/cppgw-lifetime-b-20261118.md cpp/gateway/analysis/lifetime/b/sites.json
 ```
 
 ## File verdicts
@@ -367,29 +383,29 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 35-74,1151-1177,1273-1277,1393-1396,1578-1582 | Emitter and server listener dispatch | **SAFE** | Dispatch snapshots registrations and weak or strong target handles are acquired by the callback. A reentrant removal leaves the callable alive through the copied registration. |
 | 323-453,621-695,739-773 | llhttp callbacks and parser views | **SAFE** | The parser is immovable inside ConnectionState, runs llhttp callbacks synchronously, uses offsets across reads, and copies target, headers and payload before erasing or growing input. |
 | 514-559 | ConnectionState::startRead | **SAFE** | The async completion owns ConnectionState and its fixed readBuffer. Destruction closes the stream but the queued completion still owns the storage. |
-| 689-733,796-807,987-1031,1133-1143,1236-1255 | Connection, socket and request links on ordinary completion | **SAFE** | Server map owns attached connections, which own socket and active HTTP objects. Normal close or ws handoff drops the return edges; finish or dump releases the current request and response. |
-| 756-759,783-787,809-833 | Body event and queued resume/end | **SAFE** | Event dispatch or the queued job holds a local IncomingMessage and ConnectionState; queued work checks that the request still matches before operating. |
+| 689-733,796-807,987-1031,1133-1143,1236-1255 | Connection, socket and request links on ordinary completion | **SAFE** | Server map owns attached connections, which own socket and active HTTP objects. Normal close or ws handoff drops the return edges. Finish or dump releases the current request and response. |
+| 756-759,783-787,809-833 | Body event and queued resume/end | **SAFE** | Event dispatch or the queued job holds a local IncomingMessage and ConnectionState. Queued work checks that the request still matches before operating. |
 | 850-889,987-1000 | Outstanding HTTP write buffer | **DEFECT** ([D01](#d01)) | flush gives Asio a view into output.front() and awaits its callback. An intervening close destroys that vector with output.clear() before the completion runs, violating Asio's buffer lifetime requirement. |
-| 892-920,928-962,1001-1031 | Posted drain, finish and close callbacks | **SAFE** | Each dispatch holds an owning connection or response snapshot; after reentrant finish it checks that the same response is current before resetting members. |
+| 892-920,928-962,1001-1031 | Posted drain, finish and close callbacks | **SAFE** | Each dispatch holds an owning connection or response snapshot. After reentrant finish it checks that the same response is current before resetting members. |
 | 1036-1090 | Connection timeout | **SAFE** | The timer captures a weak ConnectionState, locks it before onTimer and is cleared on destruction or handoff. |
 | 1114-1117,979-983 | Standalone node-http requestTimeout refusal | **UNCLEAR** | destroyAfter drops the outgoing response before close, so a listener waiting specifically for its close may retain state. serveHttp sets requestTimeout to zero. Trace any separately shipped callers that enable it and expect a delivery receipt. |
-| 1180-1195,1203-1233,1325-1349 | Server request dispatch, accept and retry on ordinary shutdown | **SAFE** | Deferred jobs own Server; accept and retry stop once listening is false, and close cancels the retry and clears the listening self-reference and registrations. |
+| 1180-1195,1203-1233,1325-1349 | Server request dispatch, accept and retry on ordinary shutdown | **SAFE** | Deferred jobs own Server. Accept and retry stop once listening is false, and close cancels the retry and clears the listening self-reference and registrations. |
 | 1203-1215,1279-1320,1935-1944,1968-1985 | ServeState ownership after bind rejection | **DEFECT** ([D02](#d02)) | A listen error in the early-return branches only rejects ready and finished. There is no close to clear the server-owned strong request/upgrade listeners, and shutdown also exits at the rejected ready await. |
 | 1328,1968-1979 | Active listener ownership on external loop destruction | **UNCLEAR** | Explicit close clears the Server self-owner and ServeState listener cycles. Establish whether a supported entry point can abandon a listening HTTP server in a reusable process without running close. |
-| 1397-1400,1416-1420 | Socket handoff and message receiver | **SAFE** | The queued handoff check owns ConnectionState; the upgrade path holds the socket through synchronous ws handoff. pause and resume use a raw request identity only for a synchronous comparison. |
+| 1397-1400,1416-1420 | Socket handoff and message receiver | **SAFE** | The queued handoff check owns ConnectionState. The upgrade path holds the socket through synchronous ws handoff. pause and resume use a raw request identity only for a synchronous comparison. |
 | 1485-1502,1505-1567 | Response write and header views | **SAFE** | Header and byte inputs are copied into owned fields or output before these synchronous calls return. The later lifetime of the output front is covered by D01. |
-| 1620-1643,1656-1667,1890-1893 | Request body registration and disposal | **SAFE** | The request handler owns the Request and explicitly erases its entry after delivery; body access is synchronous and the body value does not hold the Request key. |
+| 1620-1643,1656-1667,1890-1893 | Request body registration and disposal | **SAFE** | The request handler owns the Request and explicitly erases its entry after delivery. Body access is synchronous and the body value does not hold the Request key. |
 | 1687-1706,1722-1729 | Early SSE stop listeners | **SAFE** | The listeners weakly lock Readiness, which weakly locks the response. A local or registry handle keeps Readiness alive during a callback. |
 | 1707-1721,1861-1872,1888-1896 | Early SSE registry key retained by its own value | **DEFECT** ([D04](#d04)) | The static registry stores a commit callable owning its Request key. If the handler frame is abandoned before the explicit unregister after delivery, the key cannot expire and the registry retains its body and signal indefinitely. |
 | 1747-1778,1813-1816 | DrainWait callback self-ownership | **DEFECT** ([D03](#d03)) | DrainWait stores four listeners that each strongly own DrainWait. A frame abandoned at the drain await can drop without any of those events firing, so the self-cycle still retains the response, connection and signal. |
 | 1783-1795 | Detached body cancellation | **SAFE** | ByteStream::cancel synchronously builds an owning cancellation task and the coroutine copies Request, Response, outgoing and signal. Cancellation does not borrow the local optional stream handle. |
 | 1795-1801,1807-1823 | Stream reader and abort callback on ordinary completion | **SAFE** | The reader task owns its reader slot, the named chunk survives a directly awaited drain, and normal failure or abort removes the listener. Forced-teardown retention of the abort edge is covered separately. |
 | 1796-1801,1821 | Response abort listener self-ownership | **DEFECT** ([D05](#d05)) | The abort signal owns a listener that captures that same signal and a reader. If the send coroutine is destroyed during a pending read without dispatching abort, the post-await remove never runs and the listener pins both. |
-| 1846-1854,1986-1990 | Active tasks and finished aggregation | **SAFE** | Tasks own their child frames; settlement listeners weakly acquire ServeState. Shutdown takes a promise snapshot and its detached continuation copies only the finished resolver. |
+| 1846-1854,1986-1990 | Active tasks and finished aggregation | **SAFE** | Tasks own their child frames. Settlement listeners weakly acquire ServeState. Shutdown takes a promise snapshot and its detached continuation copies only the finished resolver. |
 | 1858-1873,1888-1898 | HTTP request coroutine and normal receipt/drain | **SAFE** | The request frame owns ServeState and the handler closure until its Promise settles. It retains the request, real delivery receipt, and drain callable across their waits, with no alias into the active task map. |
 | 1901-1933 | Request finish, close and error listeners | **SAFE** | Listeners own the controller, resolver and one shared settlement bit. The raw response pointer is stored on that same response and both emitting paths keep the response alive in a local owning snapshot. |
-| 1935-1944,2022-2039 | Shutdown coroutine and lingering close timer | **SAFE** | Shutdown takes state and close callback by value; the timer holds the callable for each scheduled invocation and its self-reference and state reference are weak. |
-| 1992-2015,2040-2062 | Listen callback, abort cleanup and public handles | **SAFE** | Listening and terminal callbacks weakly lock state. The finished reaction removes the external abort registration and clears the state-held listener; returned handles own state for their use. |
+| 1935-1944,2022-2039 | Shutdown coroutine and lingering close timer | **SAFE** | Shutdown takes state and close callback by value. The timer holds the callable for each scheduled invocation and its self-reference and state reference are weak. |
+| 1992-2015,2040-2062 | Listen callback, abort cleanup and public handles | **SAFE** | Listening and terminal callbacks weakly lock state. The finished reaction removes the external abort registration and clears the state-held listener. Returned handles own state for their use. |
 | 1964-1966 | Startup rejection observers | **SAFE** | Both handlers are captureless and promise-owned through settlement. Neither reaction holds ServeState or the server. |
 
 ### `src/runtime/http_body.cpp`
@@ -397,7 +413,7 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | Lines | Site | Verdict | Ownership or failure |
 | --- | --- | --- | --- |
 | 32-69,91-118 | Body event and abort handlers | **SAFE** | Registered listeners use weak state and lock it for dispatch. The raw self callbacks are synchronous members of that same live state and are never independently registered. |
-| 132-150 | Request body source algorithms and controller | **SAFE** | Source callbacks own body state; the state drops its strong controller after synchronous start and then reaches the stream weakly. EOF, cancel and dispose remove registrations. |
+| 132-150 | Request body source algorithms and controller | **SAFE** | Source callbacks own body state. The state drops its strong controller after synchronous start and then reaches the stream weakly. EOF, cancel and dispose remove registrations. |
 
 ### `src/runtime/http_early_sse.cpp`
 
@@ -410,19 +426,19 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 
 | Lines | Site | Verdict | Ownership or failure |
 | --- | --- | --- | --- |
-| 17-24,42-45 | Request drain and settlement aggregation | **SAFE** | The synchronous wrapper copies task set and receipt into the child frame. Each iteration snapshots promise values before allSettled; no iterator or entry reference survives the wait. |
+| 17-24,42-45 | Request drain and settlement aggregation | **SAFE** | The synchronous wrapper copies task set and receipt into the child frame. Each iteration snapshots promise values before allSettled. No iterator or entry reference survives the wait. |
 | 27-39 | Settlement removal | **SAFE** | The map lookup is copied before use. The reaction owns the promise identity token and weakly locks the TaskSet so the set and task reaction cannot own each other. |
 
 ### `src/runtime/http_upgrade.cpp`
 
 | Lines | Site | Verdict | Ownership or failure |
 | --- | --- | --- | --- |
-| 22-42 | Upgrade refusal serialization and close wait | **SAFE** | The frame owns socket and response. Header iteration ends before suspension; newPromise invokes its reference-capturing executor synchronously and the socket owns only a copied resolver. |
+| 22-42 | Upgrade refusal serialization and close wait | **SAFE** | The frame owns socket and response. Header iteration ends before suspension. The newPromise call invokes its reference-capturing executor synchronously and the socket owns only a copied resolver. |
 | 83-99 | Authorization handler and refusal | **SAFE** | The owning Upgrades parameter retains the handler closure. Both request and handler info are value arguments, and refusal takes a Response copy out of the parent frame's variant. |
-| 96-111,176-195 | WebSocket added after shutdown snapshot | **DEFECT** ([D06](#d06)) | Authorization checks stopping before the asynchronously resumed module wait. Shutdown can snapshot sockets during that wait; the resumed authorization can then accept a socket the shutdown task never closed. |
+| 96-111,176-195 | WebSocket added after shutdown snapshot | **DEFECT** ([D06](#d06)) | Authorization checks stopping before the asynchronously resumed module wait. Shutdown can snapshot sockets during that wait. The resumed authorization can then accept a socket the shutdown task never closed. |
 | 112-145 | WebSocket construction, handshake callback and close registration | **SAFE** | The selected ws options complete the handoff synchronously. Headers and accept callable are owned, close removes the map edge, and WebSocketRegistry clears attached socket listeners on loop destruction. |
 | 148-173 | Upgrade socket close/error listeners | **SAFE** | The upgrade frame owns state and socket. Listeners own a controller with no strong socket edge and are removed after either outcome. |
-| 176-195 | WebSocket shutdown timer and aggregate ownership | **SAFE** | The loop traverses an owning socket snapshot. newPromise immediately consumes its socket reference; the timer target is weak and close owns only the timer and resolver. Sibling operations remain independently owned if all rejects. |
+| 176-195 | WebSocket shutdown timer and aggregate ownership | **SAFE** | The loop traverses an owning socket snapshot. newPromise immediately consumes its socket reference. The timer target is weak and close owns only the timer and resolver. Sibling operations remain independently owned if all rejects. |
 | 199-208 | Returned WebSocketUpgrades wrappers | **SAFE** | Both wrappers are synchronous closures that pass an owning copy of Upgrades into free coroutine frames. |
 
 ### `src/runtime/native_kv_bootstrap.cpp`
@@ -455,10 +471,10 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 
 | Lines | Site | Verdict | Ownership or failure |
 | --- | --- | --- | --- |
-| 77-80,94-99,193-199,335-336,380-419 | KV value and key views | **SAFE** | Input views are copied into owned variants; reference and find accessors borrow the containing value. The codecs and traced users consume them synchronously or copy before suspension. |
+| 77-80,94-99,193-199,335-336,380-419 | KV value and key views | **SAFE** | Input views are copied into owned variants. Reference and find accessors borrow the containing value. The codecs and traced users consume them synchronously or copy before suspension. |
 | 659-661,680-702,805-817,824-837 | Atomic builder and forwarding receiver contract | **SAFE** | Application commits retain the named builder and parent KV owner while awaiting. The production commit functions are synchronous forwarding closures that pass an owned store into free coroutine frames. |
 | 707-723 | KV iterator ownership contract | **SAFE** | Call sites retain a unique iterator across next or return. kvListToArray borrows the caller-owned iterator and its named call sites await it through completion. |
-| 730-771 | Typed KV lookup coroutines | **SAFE** | Keys and options are copied into the frame. Current typed callers retain their store through the initial virtual call and await; result conversions read only the frame-local entry or vector. |
+| 730-771 | Typed KV lookup coroutines | **SAFE** | Keys and options are copied into the frame. Current typed callers retain their store through the initial virtual call and await. Result conversions read only the frame-local entry or vector. |
 | 847,860-882,899-917 | Memory KV clock and database owners | **SAFE** | The database owns the copied clock and version callbacks or their static defaults. The handle owns its database and the database tracks native handles weakly. |
 
 ### `include/uos/rt/kv_js.hpp`
@@ -548,7 +564,7 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | 101-143,145-154 | Mutation and value codec callbacks | **SAFE** | Validation and decoding invoke callback references synchronously on owned message or result data, before any later suspension. |
 | 156-197 | KV get and getMany snapshot | **SAFE** | StorePtr owns Native. Keys and read ranges are moved into the native call, and result vectors and rowMap are owned locals created or traversed after the await. |
 | 200-231 | KV SDK commit | **SAFE** | StorePtr owns the native target and checks, mutations and enqueues are owning vectors. All view use ends before the await of the native write. |
-| 236-288,290-317,319-333 | ListStream and GenericListIterator next/fetch/return | **SAFE** | Callers own and await named iterators sequentially. ListStream owns StorePtr; fetch starts from copied range bounds, and entry references are taken after fetch and copied before returning. |
+| 236-288,290-317,319-333 | ListStream and GenericListIterator next/fetch/return | **SAFE** | Callers own and await named iterators sequentially. ListStream owns StorePtr. Fetch starts from copied range bounds, and entry references are taken after fetch and copied before returning. |
 
 ### `src/rt/kv_sdk.hpp`
 
@@ -566,13 +582,13 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | 651-674 | SQLite completion after forced event-loop teardown | **UNCLEAR** | Worker jobs use an io_context reference. A work guard keeps a run alive but does not own the context. Establish a supported exit path that destroys the context before KV close joins the worker. |
 | 682-685,700-739 | SQLite native snapshot/write and refusal | **SAFE** | SDK StorePtr keeps the native target alive. Native inputs and queued write state are owned, and no worker uses references to the request frame's inputs. |
 | 749-788,825-844 | SQLite SDK operations and queue delegation | **SAFE** | Free SDK coroutines own StorePtr and applicable arguments. Named operations or tasks cover suspension. The actual paid enqueue path keeps its shared KV wrapper alive until completion. |
-| 262,307,318 | Synchronous SQLite result scans | **SAFE** | Statement::all returns a vector of owning rows synchronously; the range-for extends the returned vector through its nonsuspending body. |
+| 262,307,318 | Synchronous SQLite result scans | **SAFE** | Statement::all returns a vector of owning rows synchronously. The range-for extends the returned vector through its nonsuspending body. |
 
 ### `src/rt/kv_value.cpp`
 
 | Lines | Site | Verdict | Ownership or failure |
 | --- | --- | --- | --- |
-| 101-123,190-229,347-379,483-512 | KV value projection and synchronous walk | **SAFE** | The immediate visitors, comparison and validation use aliases only during synchronous calls. Returned element references borrow the named container; serializers and traced consumers copy before a suspension. |
+| 101-123,190-229,347-379,483-512 | KV value projection and synchronous walk | **SAFE** | The immediate visitors, comparison and validation use aliases only during synchronous calls. Returned element references borrow the named container. Serializers and traced consumers copy before a suspension. |
 
 ### `src/rt/process.cpp`
 
@@ -589,7 +605,7 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | 284-347,911-928,951-970 | SQLite connection, statement cache and close | **SAFE** | Statements own their Connection, which tracks them weakly. Query copies the owning statement before cache mutation, and close locks each tracked statement before finalization. |
 | 412-445,528-564,584-628 | SQLite binding and result storage | **SAFE** | SQLITE_TRANSIENT copies text/binary while their owners are live. Column names and values are copied before stepping or resetting the statement. |
 | 811-832,866-886 | SQLite lazy RowIterator | **SAFE** | The iterator owns a statement handle and a copy of positional or named bindings. next uses them synchronously and returns an owning Row. |
-| 1002-1031 | Synchronous database transaction dispatcher | **SAFE** | The database and controller are owned by Transaction during invocation; runTransaction calls body inline before commit or rollback. |
+| 1002-1031 | Synchronous database transaction dispatcher | **SAFE** | The database and controller are owned by Transaction during invocation. RunTransaction calls body inline before commit or rollback. |
 | 375-383,804-809 | Synchronous binding visitor and all adapters | **SAFE** | The this-capturing visitor runs inline during construction. Statement::all copies each row before returning and retains no external callback. |
 
 ### `src/rt/sqlite_darwin.hpp`
@@ -715,7 +731,7 @@ Exports types and APIs defined by the related cache headers. No inline coroutine
 
 | Lines | Site | Verdict | Ownership or failure |
 | --- | --- | --- | --- |
-| 15-35,46-71,79-94 | Optional telemetry payload and queue options | **SAFE** | Queue values own event metadata and any injected store; no request frame borrow is stored. An injected queue is a copied handle over state and the sink takes its entry by value. |
+| 15-35,46-71,79-94 | Optional telemetry payload and queue options | **SAFE** | Queue values own event metadata and any injected store. No request frame borrow is stored. An injected queue is a copied handle over state and the sink takes its entry by value. |
 
 ### `include/uos/cache/prompt_analytics_read.hpp`
 
@@ -743,7 +759,7 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 
 | Lines | Site | Verdict | Ownership or failure |
 | --- | --- | --- | --- |
-| 42-49,129-147 | Telemetry option and request values | **SAFE** | Entries own targets/events/options before the first suspension; an injected KV is a shared owner and result counter strings are owned. |
+| 42-49,129-147 | Telemetry option and request values | **SAFE** | Entries own targets/events/options before the first suspension. An injected KV is a shared owner and result counter strings are owned. |
 
 ### `src/cache/kv_migration.cpp`
 
@@ -761,7 +777,7 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 | --- | --- | --- | --- |
 | 298-330 | Imported window reconciliation scan | **SAFE** | Window keys are an owning by-value map and used only by this scan. Nested reservation entries and atomic mutations are owned through their awaited steps. |
 | 343-366 | Import entry lookup and write | **SAFE** | The frame owns an immutable entry and shared import state. Direct reads and writes copy keys and values, and the local atomic builder survives commit. |
-| 369-414 | Import state and finalization | **SAFE** | Group counters are dereferenced before mutation; per-line work and window reconciliation get owners or a copied map. The parent awaits each step. |
+| 369-414 | Import state and finalization | **SAFE** | Group counters are dereferenced before mutation. Per-line work and window reconciliation get owners or a copied map. The parent awaits each step. |
 | 416-438,488-494 | Vector and generator import adapters | **SAFE** | The wrappers synchronously copy options. Vector storage is frame-owned and unmodified except for individual moved strings, and the by-value generator remains live while awaiting next. |
 | 496-508 | Count a KV prefix | **SAFE** | A named iterator and owned store stay in this counting task until it returns, independently of any fail-fast aggregation. |
 
@@ -772,7 +788,7 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 | 143-166 | collectPaidFallbackWindows | **SAFE** | inspectPaidFallbackV3 owns knownKeyIds/errors and directly awaits this scan. Its local iterator and row values remain alive and only copied values enter the result. |
 | 169-191 | collectPaidFallbackRequests | **SAFE** | The inspecting parent retains knownKeyIds/errors through the direct await. The scan uses read results, not aliases into persistent mutable storage. |
 | 194-213 | collectPaidFallbackPending | **SAFE** | The shared KV and local iterator own the scan. The direct caller retains its error vector through the whole await. |
-| 216-232 | countPaidFallbackLeases | **SAFE** | The sequential inventory owner retains its known-key set and errors; each iteration consumes a value result before the next await. |
+| 216-232 | countPaidFallbackLeases | **SAFE** | The sequential inventory owner retains its known-key set and errors. Each iteration consumes a value result before the next await. |
 | 235-251 | countPaidFallbackDeletionGuards | **SAFE** | The error vector belongs to the parent that directly awaits this scan. The iterator and row are local owners. |
 | 438-464 | Paid fallback inventory scheduling | **SAFE** | All five borrowed scans run sequentially under the owning inventory frame. Final summaries use owned inventory values after the awaits. |
 
@@ -780,13 +796,13 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 
 | Lines | Site | Verdict | Ownership or failure |
 | --- | --- | --- | --- |
-| 230-250,408-422 | Candidate and request-row scans | **SAFE** | Frame-owned iterators yield copied entries; the prefix references are static and the result maps/vectors contain copies. |
+| 230-250,408-422 | Candidate and request-row scans | **SAFE** | Frame-owned iterators yield copied entries. The prefix references are static and the result maps/vectors contain copies. |
 | 305-333 | Projected pending-marker repair | **SAFE** | The request reference is into the current frame-owned entry, never into the iterator's mutable batch. The named operation owns its mutations and is directly awaited. |
 | 361-397 | Collect repairable windows with borrowed lookups | **SAFE** | repairProjectedPaidFallbackWindows retains its local record map and caller-owned candidate set across the structured wait, with all map alias use in individual synchronous statements. |
 | 484-522,524-537 | Repair window context across request scan and CAS | **SAFE** | The directly awaiting parent owns its named context and immutable windows. Borrowed projected fields are consumed before the commit starts. |
 | 609-650 | Legacy projection commit helper | **SAFE** | The parent passes named keys/records and immediately awaits the helper. The atomic builder copies mutation inputs before suspension and stays owned through commit. |
 | 653-706 | Legacy candidate projection and aggregate orchestration | **SAFE** | The serial caller owns candidates, records and mutable hit set through the child. Fail-fast children are KV reads that own their inputs and never capture those references. |
-| 716-729 | Collect dedicated ledger references | **SAFE** | inspectPending retains errors and awaits this scan before starting the next; the iterator and result set are local. |
+| 716-729 | Collect dedicated ledger references | **SAFE** | inspectPending retains errors and awaits this scan before starting the next. The iterator and result set are local. |
 | 732-760,776-793 | Collect pending legacy candidates and validate ledger | **SAFE** | Parent owns references, pairs and errors through sequential waits. A value reference spans a lookup only into the still-owned current entry, then is copied into the result vector. |
 
 ### `src/cache/kv_migration_usage.cpp`
@@ -795,15 +811,15 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 | --- | --- | --- | --- |
 | 111-149 | Seed bounded counter baseline | **SAFE** | The awaiting handoff frame owns policy, keys, entries and existing window. The named atomic builder copies each row/check before commit. |
 | 152-180 | Update bounded counter baseline | **SAFE** | The same handoff frame owns all references through the direct await. Result generation uses scalars and the atomic owner stays live. |
-| 189-231,799-802 | Counter handoff wrapper and parallel reads | **SAFE** | The ordinary wrapper copies policy before constructing the free task. Reads own their keys and stores if all rejects; the frame builds and awaits each borrowed writer sequentially. |
+| 189-231,799-802 | Counter handoff wrapper and parallel reads | **SAFE** | The ordinary wrapper copies policy before constructing the free task. Reads own their keys and stores if all rejects. The frame builds and awaits each borrowed writer sequentially. |
 | 280-291 | Kernel migration default reads | **SAFE** | Each read owns its key and store through the aggregate and any early rejection. The result vector is frame-local. |
 | 297-303,382-413 | Legacy kernel delete and migrated write | **SAFE** | The direct parent retains borrowed records, identity and named context through both waits. Child operations own checks and rows. |
-| 416-457,814-821 | Legacy kernel entry and scope scans | **SAFE** | The scope frame retains the iterator, current entry and defaults through its child's direct await. Parallel read children own their arguments; resulting rows and write context are local. |
+| 416-457,814-821 | Legacy kernel entry and scope scans | **SAFE** | The scope frame retains the iterator, current entry and defaults through its child's direct await. Parallel read children own their arguments. Resulting rows and write context are local. |
 | 475-502 | API-key usage V3 window scan | **SAFE** | inspectApiKeyUsageV3 owns knownKeyIds and errors across the direct await. Each row and field alias remains local to one iteration. |
 | 521-555 | API-key usage V3 request scan | **SAFE** | The parent retains known ids and errors. Map lookups are dereferenced or overwritten synchronously between next calls. |
 | 591-625,654-688,843-875 | Parallel kernel quota audit scans | **SAFE** | Each scan owns KV, prefix, scope, iterator and shared scan state. Mutable map pointers are used between awaits and the parent iterates shared state only after all fulfilled. |
 | 691-708,716-747,877-885 | Strict API key hash and record inventory | **SAFE** | The parent owns errors and the completed hash index during the sequential awaited scans. Row references are resolved and copied before the next await. |
-| 804-812,823-841 | Count baselines and combine usage audits | **SAFE** | The count owns its iterator. Usage inventory owns the set and errors during its sequential scans; only copied scan results are traversed afterward. |
+| 804-812,823-841 | Count baselines and combine usage audits | **SAFE** | The count owns its iterator. Usage inventory owns the set and errors during its sequential scans. Only copied scan results are traversed afterward. |
 
 ### `src/cache/kv_migration_validation.cpp`
 
@@ -812,12 +828,12 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 | 87-134 | Migration prefix count fan-out | **SAFE** | Every child owns its prefix, iterator and shared KV. Early all rejection cannot release other scans' dependencies. |
 | 137-148 | Pending ledger validation scan | **SAFE** | The iterator remains named through each await and early return_ cleanup. The match is an owning string compared before cleanup. |
 | 151-166 | Audit bounded API-key aggregates | **SAFE** | The awaiting policy audit owns the policy/record and retains its validation parent's errors. Both named lookup results are owned. |
-| 169-191 | Audit one API-key policy | **SAFE** | validateTarget retains the pair snapshot and error vector until the structured await returns; nested tasks take copied ids or directly awaited references. |
+| 169-191 | Audit one API-key policy | **SAFE** | validateTarget retains the pair snapshot and error vector until the structured await returns. Nested tasks take copied ids or directly awaited references. |
 | 194-219 | Validate Codex model snapshot | **SAFE** | Validation owns errors through direct await, and model views refer to frame-owned read results. The inline key lists invoke the supported KvKey variadic constructor. |
-| 234-249 | Check reset-usage rows | **SAFE** | The caller keeps errors through the direct await; the iterator is local and only a static prefix and copied rows are used. |
+| 234-249 | Check reset-usage rows | **SAFE** | The caller keeps errors through the direct await. The iterator is local and only a static prefix and copied rows are used. |
 | 252-265 | Settings read fan-out | **SAFE** | Children own their key/store snapshots independently of the fail-fast aggregate. No lambda or vector element is borrowed by a child. |
 | 267-355 | End-to-end migration validation | **SAFE** | The parent owns scan state, pair inventory and errors, awaits every borrowed audit sequentially and combines owning scan results afterward. |
-| 358-373,375-390 | Redemption and manual intent scans | **SAFE** | The validation frame retains errors; a named iterator and owned entry cover each scan step. No sibling uses these references. |
+| 358-373,375-390 | Redemption and manual intent scans | **SAFE** | The validation frame retains errors. A named iterator and owned entry cover each scan step. No sibling uses these references. |
 
 ### `src/cache/prompt_analytics.cpp`
 
@@ -861,7 +877,7 @@ This facade does not define a coroutine or register callbacks. Its exported impl
 | 126-168 | Run an experiment cycle | **SAFE** | The reference-capturing inconclusive callback runs synchronously in its own frame. Transport and parse tasks take value args, and all sample references are consumed before the next suspension. |
 | 179-210 | Promotion and terminal write | **SAFE** | Tasks own binding/lease inputs and share a retained promotion receipt. Fresh finalization args are built before waiting. |
 | 215-236 | Cycle completion and persistence | **SAFE** | The classification reference is into the caller's immutable owned CycleRun across a directly awaited owned write, and its value is copied when returning. |
-| 244-258 | Cycle failure handling | **SAFE** | Child finalization owns KV/state/options and its output is discarded; no projected field or caller borrow survives the wait. |
+| 244-258 | Cycle failure handling | **SAFE** | Child finalization owns KV/state/options and its output is discarded. No projected field or caller borrow survives the wait. |
 | 260-270,278-307 | Campaign preflight and top-level orchestration | **SAFE** | The resolved-target alias points into a frame-owned const variant. The acquired state and session are copied into later tasks, which also own the shared promotion receipt. |
 
 ### `src/cache/scope_experiment_model.cpp`
@@ -886,7 +902,7 @@ This facade does not define a coroutine or register callbacks. Its exported impl
 | 82-96,110-120,201-206 | Four fingerprint hash awaits with inline string temporaries | **DEFECT** ([D08](#d08)) | Each inline canonicalJson call constructs a string in the same full-expression as a suspending hash coroutine taking that string by value. The port's GCC 12 rule calls for named input and separate task creation. |
 | 82-96,110-126 | Owners of fingerprint material and point reads | **SAFE** | The tasks own JSON/catalog/material and key/store parameters. Field aliases refer to owned inputs. Await-expression portability at the hash sites is tracked separately. |
 | 145-200 | Derive target roster across hashes | **SAFE** | Range iteration is over an immutable frame-owned catalog. Each hash task gets a copied model and snapshot, and temporary topology/map views are used synchronously. |
-| 212-237 | Load catalog and auth pool | **SAFE** | The fan-out uses free children that own KV and keys. Named aggregate results are owned through inventory derivation; no caller views escape either step. |
+| 212-237 | Load catalog and auth pool | **SAFE** | The fan-out uses free children that own KV and keys. Named aggregate results are owned through inventory derivation. No caller views escape either step. |
 
 ### `src/cache/telemetry_gate.cpp`
 
@@ -937,8 +953,8 @@ Usage read methods own identities and options, with a shared store or a resolved
 | Lines | Site | Verdict | Ownership or failure |
 | --- | --- | --- | --- |
 | 148-192,208-229 | Fetch and import key material | **SAFE** | The task owns the store, PEM rows, decoded bytes and keys. The range spans an immutable frame-local vector, and synchronous crypto returns an owning key before the microtask. |
-| 197-240,469-471,511-515 | Memoized and force-reloaded key promises | **SAFE** | Every waiter copies the promise; replacing the static slot leaves existing waiters' states live, and the load task takes no address of that slot across suspension. |
-| 395-436 | Signature verification and refresh retry | **SAFE** | Each child owns its key vector and shared immutable byte arrays; the range iterator stays in that child frame, and no reference into the static cache survives a wait. |
+| 197-240,469-471,511-515 | Memoized and force-reloaded key promises | **SAFE** | Every waiter copies the promise. Replacing the static slot leaves existing waiters' states live, and the load task takes no address of that slot across suspension. |
+| 395-436 | Signature verification and refresh retry | **SAFE** | Each child owns its key vector and shared immutable byte arrays. The range iterator stays in that child frame, and no reference into the static cache survives a wait. |
 | 442-455,568-574 | JTI cache cleanup and update | **SAFE** | Iteration and deletion are synchronous, the key is copied before deletion, and no alias into the cache is used after a suspension. |
 | 505-566,584-599 | Attestation and repository context composition | **SAFE** | Both frames own the request, options, token and parsed state. Digest and signature children receive copies, and variant-member pointers are used only synchronously. |
 
@@ -946,7 +962,7 @@ Usage read methods own identities and options, with a shared store or a resolved
 
 | Lines | Site | Verdict | Ownership or failure |
 | --- | --- | --- | --- |
-| 63-81,85-138 | Queue normalization, update and optimistic commit | **SAFE** | The store and atomic builder stay in the frame; normalization and sort consume only local data synchronously, and the selected record is copied before the commit wait. |
+| 63-81,85-138 | Queue normalization, update and optimistic commit | **SAFE** | The store and atomic builder stay in the frame. Normalization and sort consume only local data synchronously, and the selected record is copied before the commit wait. |
 | 150-161 | List policy queue | **SAFE** | The promise, shared store, key and result are owned. Iteration starts after the read and finishes synchronously before return. |
 
 ### `src/kernel/quota_reservations.cpp`
@@ -968,7 +984,7 @@ Usage read methods own identities and options, with a shared store or a resolved
 
 | Lines | Site | Verdict | Ownership or failure |
 | --- | --- | --- | --- |
-| 88-116 | Reservation read fan-out | **SAFE** | Each eager read owns its own key and KV receiver; the fail-fast aggregate retains its children, and the result tuple is named before decomposition or moving members. |
+| 88-116 | Reservation read fan-out | **SAFE** | Each eager read owns its own key and KV receiver. The fail-fast aggregate retains its children, and the result tuple is named before decomposition or moving members. |
 | 123-167,169-208 | Eligibility, capacity reclaim and durable reservation | **SAFE** | Each frame owns the policy snapshots and atomic builder. The window and reservation references point into that frame's const plan and remain valid when commit resumes. |
 | 211-225,241-260 | Reservation attempts and capturing lock operation | **SAFE** | The lock frame owns the by-value closure through the direct await. Each attempt owns its options and moved target, and the retry alias is consumed synchronously. |
 | 270-314,228-240 | Public org and effective reservation entries | **SAFE** | Each coroutine retains the selected KV owner and copies or moves all strings and options into independently owned tasks. |
@@ -1018,12 +1034,12 @@ Usage read methods own identities and options, with a shared store or a resolved
 | --- | --- | --- | --- |
 | 39-43,56-88 | Digest and bounded JSON result | **SAFE** | The coroutine owns the input, reader and chunks. It decodes bytes synchronously, records exceptions by value, and copies the reason into its cancellation task. |
 | 49-55,60-80 | Bounded body-read abort listener | **DEFECT** ([D10](#d10)) | The request signal owns a listener holding that same signal and a reader. If the body read is abandoned before abort, the normal removal is skipped and the cycle retains the reader. |
-| 115-123,231-257,260-268 | Delivery, refusal and dispatch persistence calls | **SAFE** | The synchronous finish calls an owning outbox task; its finalizer retains only the request and listener until settlement. Each other frame holds its authority/dependency owner and its own handle. |
+| 115-123,231-257,260-268 | Delivery, refusal and dispatch persistence calls | **SAFE** | The synchronous finish calls an owning outbox task. Its finalizer retains only the request and listener until settlement. Each other frame holds its authority/dependency owner and its own handle. |
 | 132-178,205-210 | Stream source tasks and per-chunk delivery | **SAFE** | Both source callbacks synchronously forward shared Delivery plus copied controller or reason. The stream-read and cancellation tasks hold their own state, and no iterator or slot reference crosses their waits. |
 | 196-198 | Host receipt owns full response state | **DEFECT** ([D13](#d13)) | Delivery keeps the receipt whose pending reaction captures Delivery. A late or abandoned host receipt retains the body and upstream state even after the client discards the response. |
-| 125-130,132-135,199-217 | Delivery's abort listener owns itself | **DEFECT** ([D12](#d12)) | The callback stored in Delivery captures Delivery. Dropping an unused response bypasses EOF and cancellation; when the signal was already aborted at registration, even the explicit cancellation cannot dispatch the cleanup listener. |
+| 125-130,132-135,199-217 | Delivery's abort listener owns itself | **DEFECT** ([D12](#d12)) | The callback stored in Delivery captures Delivery. Dropping an unused response bypasses EOF and cancellation. When the signal was already aborted at registration, even the explicit cancellation cannot dispatch the cleanup listener. |
 | 277-292,335-340 | Worker request-to-dispatch abort bridge | **DEFECT** ([D11](#d11)) | The signal owns a callback owning its own Request. Abandoning a suspended dependency before refusal or delivery handoff skips every unregister path. |
-| 271-276,285-324,325-335,345-356 | Boundary fetch ownership and upstream terminal observation | **SAFE** | A free frame owns the request and dependencies; dispatch and terminal callbacks are synchronous bridges into tasks with copied values. Upstream receiver and validation callback stay owned through their respective waits. |
+| 271-276,285-324,325-335,345-356 | Boundary fetch ownership and upstream terminal observation | **SAFE** | A free frame owns the request and dependencies. Dispatch and terminal callbacks are synchronous bridges into tasks with copied values. Upstream receiver and validation callback stay owned through their respective waits. |
 
 ### `src/worker/transport.cpp`
 
@@ -1498,6 +1514,9 @@ registration owner used together with D11.
 ```
 
 97/97 files reviewed. **DEFECT 17, SAFE 235, UNCLEAR 4.**
+
+The hazard tags overlap across verdicts. The index records 74 closure, 202 borrow,
+106 callback, 153 container, and 28 await-expression tags.
 
 **Handoff summary.** Area B covers all 97 files with 14 distinct defect classes across
 17 defect sites, 235 safe sites and four unclear sites. The outstanding HTTP write buffer

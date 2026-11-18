@@ -135,14 +135,14 @@
           "verdict": "SAFE",
           "kinds": ["c"],
           "symbol": "Connection, socket and request links on ordinary completion",
-          "evidence": "Server map owns attached connections, which own socket and active HTTP objects. Normal close or ws handoff drops the return edges; finish or dump releases the current request and response."
+          "evidence": "Server map owns attached connections, which own socket and active HTTP objects. Normal close or ws handoff drops the return edges. Finish or dump releases the current request and response."
         },
         {
           "lines": "756-759,783-787,809-833",
           "verdict": "SAFE",
           "kinds": ["c", "d"],
           "symbol": "Body event and queued resume/end",
-          "evidence": "Event dispatch or the queued job holds a local IncomingMessage and ConnectionState; queued work checks that the request still matches before operating."
+          "evidence": "Event dispatch or the queued job holds a local IncomingMessage and ConnectionState. Queued work checks that the request still matches before operating."
         },
         {
           "lines": "850-889,987-1000",
@@ -157,7 +157,7 @@
           "verdict": "SAFE",
           "kinds": ["c", "d"],
           "symbol": "Posted drain, finish and close callbacks",
-          "evidence": "Each dispatch holds an owning connection or response snapshot; after reentrant finish it checks that the same response is current before resetting members."
+          "evidence": "Each dispatch holds an owning connection or response snapshot. After reentrant finish it checks that the same response is current before resetting members."
         },
         {
           "lines": "1036-1090",
@@ -178,7 +178,7 @@
           "verdict": "SAFE",
           "kinds": ["c"],
           "symbol": "Server request dispatch, accept and retry on ordinary shutdown",
-          "evidence": "Deferred jobs own Server; accept and retry stop once listening is false, and close cancels the retry and clears the listening self-reference and registrations."
+          "evidence": "Deferred jobs own Server. Accept and retry stop once listening is false, and close cancels the retry and clears the listening self-reference and registrations."
         },
         {
           "lines": "1203-1215,1279-1320,1935-1944,1968-1985",
@@ -200,7 +200,7 @@
           "verdict": "SAFE",
           "kinds": ["c", "d"],
           "symbol": "Socket handoff and message receiver",
-          "evidence": "The queued handoff check owns ConnectionState; the upgrade path holds the socket through synchronous ws handoff. pause and resume use a raw request identity only for a synchronous comparison."
+          "evidence": "The queued handoff check owns ConnectionState. The upgrade path holds the socket through synchronous ws handoff. pause and resume use a raw request identity only for a synchronous comparison."
         },
         {
           "lines": "1485-1502,1505-1567",
@@ -214,7 +214,7 @@
           "verdict": "SAFE",
           "kinds": ["c", "d"],
           "symbol": "Request body registration and disposal",
-          "evidence": "The request handler owns the Request and explicitly erases its entry after delivery; body access is synchronous and the body value does not hold the Request key."
+          "evidence": "The request handler owns the Request and explicitly erases its entry after delivery. Body access is synchronous and the body value does not hold the Request key."
         },
         {
           "lines": "1687-1706,1722-1729",
@@ -266,7 +266,7 @@
           "verdict": "SAFE",
           "kinds": ["a", "c", "d"],
           "symbol": "Active tasks and finished aggregation",
-          "evidence": "Tasks own their child frames; settlement listeners weakly acquire ServeState. Shutdown takes a promise snapshot and its detached continuation copies only the finished resolver."
+          "evidence": "Tasks own their child frames. Settlement listeners weakly acquire ServeState. Shutdown takes a promise snapshot and its detached continuation copies only the finished resolver."
         },
         {
           "lines": "1858-1873,1888-1898",
@@ -287,14 +287,14 @@
           "verdict": "SAFE",
           "kinds": ["a", "b", "c"],
           "symbol": "Shutdown coroutine and lingering close timer",
-          "evidence": "Shutdown takes state and close callback by value; the timer holds the callable for each scheduled invocation and its self-reference and state reference are weak."
+          "evidence": "Shutdown takes state and close callback by value. The timer holds the callable for each scheduled invocation and its self-reference and state reference are weak."
         },
         {
           "lines": "1992-2015,2040-2062",
           "verdict": "SAFE",
           "kinds": ["c"],
           "symbol": "Listen callback, abort cleanup and public handles",
-          "evidence": "Listening and terminal callbacks weakly lock state. The finished reaction removes the external abort registration and clears the state-held listener; returned handles own state for their use."
+          "evidence": "Listening and terminal callbacks weakly lock state. The finished reaction removes the external abort registration and clears the state-held listener. Returned handles own state for their use."
         },
         {
           "lines": "1964-1966",
@@ -320,7 +320,7 @@
           "verdict": "SAFE",
           "kinds": ["a", "c"],
           "symbol": "Request body source algorithms and controller",
-          "evidence": "Source callbacks own body state; the state drops its strong controller after synchronous start and then reaches the stream weakly. EOF, cancel and dispose remove registrations."
+          "evidence": "Source callbacks own body state. The state drops its strong controller after synchronous start and then reaches the stream weakly. EOF, cancel and dispose remove registrations."
         }
       ]
     },
@@ -352,7 +352,7 @@
           "verdict": "SAFE",
           "kinds": ["a", "b", "d"],
           "symbol": "Request drain and settlement aggregation",
-          "evidence": "The synchronous wrapper copies task set and receipt into the child frame. Each iteration snapshots promise values before allSettled; no iterator or entry reference survives the wait."
+          "evidence": "The synchronous wrapper copies task set and receipt into the child frame. Each iteration snapshots promise values before allSettled. No iterator or entry reference survives the wait."
         },
         {
           "lines": "27-39",
@@ -371,7 +371,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "c", "d"],
           "symbol": "Upgrade refusal serialization and close wait",
-          "evidence": "The frame owns socket and response. Header iteration ends before suspension; newPromise invokes its reference-capturing executor synchronously and the socket owns only a copied resolver."
+          "evidence": "The frame owns socket and response. Header iteration ends before suspension. The newPromise call invokes its reference-capturing executor synchronously and the socket owns only a copied resolver."
         },
         {
           "lines": "83-99",
@@ -385,7 +385,7 @@
           "verdict": "DEFECT",
           "kinds": ["c", "d"],
           "symbol": "WebSocket added after shutdown snapshot",
-          "evidence": "Authorization checks stopping before the asynchronously resumed module wait. Shutdown can snapshot sockets during that wait; the resumed authorization can then accept a socket the shutdown task never closed.",
+          "evidence": "Authorization checks stopping before the asynchronously resumed module wait. Shutdown can snapshot sockets during that wait. The resumed authorization can then accept a socket the shutdown task never closed.",
           "defect": "D06"
         },
         {
@@ -407,7 +407,7 @@
           "verdict": "SAFE",
           "kinds": ["a", "b", "c", "d"],
           "symbol": "WebSocket shutdown timer and aggregate ownership",
-          "evidence": "The loop traverses an owning socket snapshot. newPromise immediately consumes its socket reference; the timer target is weak and close owns only the timer and resolver. Sibling operations remain independently owned if all rejects."
+          "evidence": "The loop traverses an owning socket snapshot. newPromise immediately consumes its socket reference. The timer target is weak and close owns only the timer and resolver. Sibling operations remain independently owned if all rejects."
         },
         {
           "lines": "199-208",
@@ -488,7 +488,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "KV value and key views",
-          "evidence": "Input views are copied into owned variants; reference and find accessors borrow the containing value. The codecs and traced users consume them synchronously or copy before suspension."
+          "evidence": "Input views are copied into owned variants. Reference and find accessors borrow the containing value. The codecs and traced users consume them synchronously or copy before suspension."
         },
         {
           "lines": "659-661,680-702,805-817,824-837",
@@ -509,7 +509,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "Typed KV lookup coroutines",
-          "evidence": "Keys and options are copied into the frame. Current typed callers retain their store through the initial virtual call and await; result conversions read only the frame-local entry or vector."
+          "evidence": "Keys and options are copied into the frame. Current typed callers retain their store through the initial virtual call and await. Result conversions read only the frame-local entry or vector."
         },
         {
           "lines": "847,860-882,899-917",
@@ -764,7 +764,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "ListStream and GenericListIterator next/fetch/return",
-          "evidence": "Callers own and await named iterators sequentially. ListStream owns StorePtr; fetch starts from copied range bounds, and entry references are taken after fetch and copied before returning."
+          "evidence": "Callers own and await named iterators sequentially. ListStream owns StorePtr. Fetch starts from copied range bounds, and entry references are taken after fetch and copied before returning."
         }
       ]
     },
@@ -830,7 +830,7 @@
           "verdict": "SAFE",
           "kinds": ["d"],
           "symbol": "Synchronous SQLite result scans",
-          "evidence": "Statement::all returns a vector of owning rows synchronously; the range-for extends the returned vector through its nonsuspending body."
+          "evidence": "Statement::all returns a vector of owning rows synchronously. The range-for extends the returned vector through its nonsuspending body."
         }
       ]
     },
@@ -842,7 +842,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "KV value projection and synchronous walk",
-          "evidence": "The immediate visitors, comparison and validation use aliases only during synchronous calls. Returned element references borrow the named container; serializers and traced consumers copy before a suspension."
+          "evidence": "The immediate visitors, comparison and validation use aliases only during synchronous calls. Returned element references borrow the named container. Serializers and traced consumers copy before a suspension."
         }
       ]
     },
@@ -901,7 +901,7 @@
           "verdict": "SAFE",
           "kinds": ["a", "b", "c"],
           "symbol": "Synchronous database transaction dispatcher",
-          "evidence": "The database and controller are owned by Transaction during invocation; runTransaction calls body inline before commit or rollback."
+          "evidence": "The database and controller are owned by Transaction during invocation. RunTransaction calls body inline before commit or rollback."
         },
         {
           "lines": "375-383,804-809",
@@ -1172,7 +1172,7 @@
           "verdict": "SAFE",
           "kinds": ["a", "b", "c"],
           "symbol": "Optional telemetry payload and queue options",
-          "evidence": "Queue values own event metadata and any injected store; no request frame borrow is stored. An injected queue is a copied handle over state and the sink takes its entry by value."
+          "evidence": "Queue values own event metadata and any injected store. No request frame borrow is stored. An injected queue is a copied handle over state and the sink takes its entry by value."
         }
       ]
     },
@@ -1216,7 +1216,7 @@
           "verdict": "SAFE",
           "kinds": ["b"],
           "symbol": "Telemetry option and request values",
-          "evidence": "Entries own targets/events/options before the first suspension; an injected KV is a shared owner and result counter strings are owned."
+          "evidence": "Entries own targets/events/options before the first suspension. An injected KV is a shared owner and result counter strings are owned."
         }
       ]
     },
@@ -1282,7 +1282,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "Import state and finalization",
-          "evidence": "Group counters are dereferenced before mutation; per-line work and window reconciliation get owners or a copied map. The parent awaits each step."
+          "evidence": "Group counters are dereferenced before mutation. Per-line work and window reconciliation get owners or a copied map. The parent awaits each step."
         },
         {
           "lines": "416-438,488-494",
@@ -1329,7 +1329,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "countPaidFallbackLeases",
-          "evidence": "The sequential inventory owner retains its known-key set and errors; each iteration consumes a value result before the next await."
+          "evidence": "The sequential inventory owner retains its known-key set and errors. Each iteration consumes a value result before the next await."
         },
         {
           "lines": "235-251",
@@ -1355,7 +1355,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "Candidate and request-row scans",
-          "evidence": "Frame-owned iterators yield copied entries; the prefix references are static and the result maps/vectors contain copies."
+          "evidence": "Frame-owned iterators yield copied entries. The prefix references are static and the result maps/vectors contain copies."
         },
         {
           "lines": "305-333",
@@ -1397,7 +1397,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "Collect dedicated ledger references",
-          "evidence": "inspectPending retains errors and awaits this scan before starting the next; the iterator and result set are local."
+          "evidence": "inspectPending retains errors and awaits this scan before starting the next. The iterator and result set are local."
         },
         {
           "lines": "732-760,776-793",
@@ -1430,7 +1430,7 @@
           "verdict": "SAFE",
           "kinds": ["a", "b", "d"],
           "symbol": "Counter handoff wrapper and parallel reads",
-          "evidence": "The ordinary wrapper copies policy before constructing the free task. Reads own their keys and stores if all rejects; the frame builds and awaits each borrowed writer sequentially."
+          "evidence": "The ordinary wrapper copies policy before constructing the free task. Reads own their keys and stores if all rejects. The frame builds and awaits each borrowed writer sequentially."
         },
         {
           "lines": "280-291",
@@ -1451,7 +1451,7 @@
           "verdict": "SAFE",
           "kinds": ["a", "b", "d"],
           "symbol": "Legacy kernel entry and scope scans",
-          "evidence": "The scope frame retains the iterator, current entry and defaults through its child's direct await. Parallel read children own their arguments; resulting rows and write context are local."
+          "evidence": "The scope frame retains the iterator, current entry and defaults through its child's direct await. Parallel read children own their arguments. Resulting rows and write context are local."
         },
         {
           "lines": "475-502",
@@ -1486,7 +1486,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "Count baselines and combine usage audits",
-          "evidence": "The count owns its iterator. Usage inventory owns the set and errors during its sequential scans; only copied scan results are traversed afterward."
+          "evidence": "The count owns its iterator. Usage inventory owns the set and errors during its sequential scans. Only copied scan results are traversed afterward."
         }
       ]
     },
@@ -1519,7 +1519,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "Audit one API-key policy",
-          "evidence": "validateTarget retains the pair snapshot and error vector until the structured await returns; nested tasks take copied ids or directly awaited references."
+          "evidence": "validateTarget retains the pair snapshot and error vector until the structured await returns. Nested tasks take copied ids or directly awaited references."
         },
         {
           "lines": "194-219",
@@ -1533,7 +1533,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "Check reset-usage rows",
-          "evidence": "The caller keeps errors through the direct await; the iterator is local and only a static prefix and copied rows are used."
+          "evidence": "The caller keeps errors through the direct await. The iterator is local and only a static prefix and copied rows are used."
         },
         {
           "lines": "252-265",
@@ -1554,7 +1554,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "Redemption and manual intent scans",
-          "evidence": "The validation frame retains errors; a named iterator and owned entry cover each scan step. No sibling uses these references."
+          "evidence": "The validation frame retains errors. A named iterator and owned entry cover each scan step. No sibling uses these references."
         }
       ]
     },
@@ -1719,7 +1719,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "e"],
           "symbol": "Cycle failure handling",
-          "evidence": "Child finalization owns KV/state/options and its output is discarded; no projected field or caller borrow survives the wait."
+          "evidence": "Child finalization owns KV/state/options and its output is discarded. No projected field or caller borrow survives the wait."
         },
         {
           "lines": "260-270,278-307",
@@ -1805,7 +1805,7 @@
           "verdict": "SAFE",
           "kinds": ["a", "b", "d"],
           "symbol": "Load catalog and auth pool",
-          "evidence": "The fan-out uses free children that own KV and keys. Named aggregate results are owned through inventory derivation; no caller views escape either step."
+          "evidence": "The fan-out uses free children that own KV and keys. Named aggregate results are owned through inventory derivation. No caller views escape either step."
         }
       ]
     },
@@ -1927,14 +1927,14 @@
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "Memoized and force-reloaded key promises",
-          "evidence": "Every waiter copies the promise; replacing the static slot leaves existing waiters' states live, and the load task takes no address of that slot across suspension."
+          "evidence": "Every waiter copies the promise. Replacing the static slot leaves existing waiters' states live, and the load task takes no address of that slot across suspension."
         },
         {
           "lines": "395-436",
           "verdict": "SAFE",
           "kinds": ["b", "d"],
           "symbol": "Signature verification and refresh retry",
-          "evidence": "Each child owns its key vector and shared immutable byte arrays; the range iterator stays in that child frame, and no reference into the static cache survives a wait."
+          "evidence": "Each child owns its key vector and shared immutable byte arrays. The range iterator stays in that child frame, and no reference into the static cache survives a wait."
         },
         {
           "lines": "442-455,568-574",
@@ -1960,7 +1960,7 @@
           "verdict": "SAFE",
           "kinds": ["b", "d", "e"],
           "symbol": "Queue normalization, update and optimistic commit",
-          "evidence": "The store and atomic builder stay in the frame; normalization and sort consume only local data synchronously, and the selected record is copied before the commit wait."
+          "evidence": "The store and atomic builder stay in the frame. Normalization and sort consume only local data synchronously, and the selected record is copied before the commit wait."
         },
         {
           "lines": "150-161",
@@ -2056,7 +2056,7 @@
           "verdict": "SAFE",
           "kinds": ["a", "b", "d", "e"],
           "symbol": "Reservation read fan-out",
-          "evidence": "Each eager read owns its own key and KV receiver; the fail-fast aggregate retains its children, and the result tuple is named before decomposition or moving members."
+          "evidence": "Each eager read owns its own key and KV receiver. The fail-fast aggregate retains its children, and the result tuple is named before decomposition or moving members."
         },
         {
           "lines": "123-167,169-208",
@@ -2229,7 +2229,7 @@
           "verdict": "SAFE",
           "kinds": ["a", "b", "c"],
           "symbol": "Delivery, refusal and dispatch persistence calls",
-          "evidence": "The synchronous finish calls an owning outbox task; its finalizer retains only the request and listener until settlement. Each other frame holds its authority/dependency owner and its own handle."
+          "evidence": "The synchronous finish calls an owning outbox task. Its finalizer retains only the request and listener until settlement. Each other frame holds its authority/dependency owner and its own handle."
         },
         {
           "lines": "132-178,205-210",
@@ -2251,7 +2251,7 @@
           "verdict": "DEFECT",
           "kinds": ["c"],
           "symbol": "Delivery's abort listener owns itself",
-          "evidence": "The callback stored in Delivery captures Delivery. Dropping an unused response bypasses EOF and cancellation; when the signal was already aborted at registration, even the explicit cancellation cannot dispatch the cleanup listener.",
+          "evidence": "The callback stored in Delivery captures Delivery. Dropping an unused response bypasses EOF and cancellation. When the signal was already aborted at registration, even the explicit cancellation cannot dispatch the cleanup listener.",
           "defect": "D12"
         },
         {
@@ -2267,7 +2267,7 @@
           "verdict": "SAFE",
           "kinds": ["a", "b", "d", "e"],
           "symbol": "Boundary fetch ownership and upstream terminal observation",
-          "evidence": "A free frame owns the request and dependencies; dispatch and terminal callbacks are synchronous bridges into tasks with copied values. Upstream receiver and validation callback stay owned through their respective waits."
+          "evidence": "A free frame owns the request and dependencies. Dispatch and terminal callbacks are synchronous bridges into tasks with copied values. Upstream receiver and validation callback stay owned through their respective waits."
         }
       ]
     },
