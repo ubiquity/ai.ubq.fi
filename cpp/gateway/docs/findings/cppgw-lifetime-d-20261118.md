@@ -262,7 +262,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/admin/defaults.hpp`
 - [x] `include/uos/admin/error_log.hpp`
 - [x] `include/uos/admin/index.hpp`
-- [ ] `include/uos/admin/kernel.hpp`
+- [x] `include/uos/admin/kernel.hpp`
 - [ ] `include/uos/admin/sentinel_incident.hpp`
 - [ ] `include/uos/agent_messages.hpp`
 - [ ] `include/uos/analytics.hpp`
@@ -1446,6 +1446,12 @@ Reviewed the error input record and error, history and file-size interfaces.
 
 Namespace imports only. The imported functions are already recorded with their declaring headers and implementations.
 
+### `include/uos/admin/kernel.hpp`
+
+Reviewed the admin kernel declarations against the already reviewed handlers.
+
+- L7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 **SAFE** · The exported Tasks take no parameters or an owning Request. Fan-out ownership is inside the implementation.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1694,4 +1700,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-154/286 files reviewed. 322 sites: 301 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+155/286 files reviewed. 323 sites: 302 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
