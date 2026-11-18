@@ -207,7 +207,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/lib/jev_compaction/state.cpp`
 - [x] `src/lib/jev_compaction/types.cpp`
 - [x] `src/metered_quota.cpp`
-- [ ] `src/models/catalog.cpp`
+- [x] `src/models/catalog.cpp`
 - [ ] `src/models/codex_models.cpp`
 - [ ] `src/models/codex_models_availability.cpp`
 - [ ] `src/models/codex_models_fetch.cpp`
@@ -1074,6 +1074,13 @@ Reviewed provider fetch and decoding, quota cache, CAS and lease refresh, balanc
 - L433, 434, 435, 441, 443, 448, 457, 461, 467, 472, 476, 487 **SAFE** · Refresh holds its named tuple and atomic receiver. Owned option, signal and credential values remain live through provider observation, and hash and history children own their inputs.
 - L684, 687, 690, 691, 701, 704, 712, 727, 741, 751, 776, 786, 799, 805, 831, 872, 883, 893 **SAFE** · Quota callbacks and stale cache state live in the directly awaiting frame. History lists retain their iterator and use fresh owned entries, while control operations transfer owning values.
 
+### `src/models/catalog.cpp`
+
+Reviewed public and native model catalog projection, provider fan-out and capability routing.
+
+- L44, 170, 173, 175, 182, 190, 198, 203, 205 **SAFE** · Each fetch or runtime snapshot child owns its options and arguments. Joining may fail early with independent siblings, and the results and KV are named value owners.
+- L237, 238, 239, 246, 251, 257 **SAFE** · Local tuple values hold catalog and selection through later KV awaits. Merge algorithms execute synchronously, and no child shares a mutable projection container.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1322,4 +1329,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-100/286 files reviewed. 209 sites: 193 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+101/286 files reviewed. 211 sites: 195 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

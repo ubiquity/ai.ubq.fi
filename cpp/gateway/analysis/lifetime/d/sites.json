@@ -4518,8 +4518,47 @@
       ]
     },
     "src/models/catalog.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed public and native model catalog projection, provider fan-out and capability routing.",
+      "sites": [
+        {
+          "lines": [
+            44,
+            170,
+            173,
+            175,
+            182,
+            190,
+            198,
+            203,
+            205
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each fetch or runtime snapshot child owns its options and arguments. Joining may fail early with independent siblings, and the results and KV are named value owners."
+        },
+        {
+          "lines": [
+            237,
+            238,
+            239,
+            246,
+            251,
+            257
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Local tuple values hold catalog and selection through later KV awaits. Merge algorithms execute synchronously, and no child shares a mutable projection container."
+        }
+      ]
     },
     "src/models/codex_models.cpp": {
       "reviewed": false,
