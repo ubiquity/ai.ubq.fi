@@ -7581,8 +7581,42 @@
       ]
     },
     "include/uos/authority/authority_rpc.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed portable server/client interfaces and shared transport storage.",
+      "sites": [
+        {
+          "lines": [
+            31,
+            37,
+            38,
+            42,
+            44,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            67,
+            69
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Current adapters keep the named RPC receivers alive and transfer values through the transport. Each receiver owns its delegated authority or transport."
+        }
+      ]
     },
     "include/uos/authority/contracts.hpp": {
       "reviewed": false,

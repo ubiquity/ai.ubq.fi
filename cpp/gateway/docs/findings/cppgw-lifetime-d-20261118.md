@@ -276,7 +276,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/auth/passport_sessions.hpp`
 - [x] `include/uos/auth/relay.hpp`
 - [x] `include/uos/authority/admission_state.hpp`
-- [ ] `include/uos/authority/authority_rpc.hpp`
+- [x] `include/uos/authority/authority_rpc.hpp`
 - [ ] `include/uos/authority/contracts.hpp`
 - [ ] `include/uos/authority/credential_publication.hpp`
 - [ ] `include/uos/authority/delivery_outbox.hpp`
@@ -1533,6 +1533,12 @@ Reviewed admission operation arguments, the portable receiver, and private CAS d
 
 - L46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 60, 61, 67, 69, 70, 71, 72, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 86, 89 **SAFE** · RPC and delivery adapters retain the shared authority; current direct callers retain it through the await. Inputs are values, and the owned store remains live for transaction retries.
 
+### `include/uos/authority/authority_rpc.hpp`
+
+Reviewed portable server/client interfaces and shared transport storage.
+
+- L31, 37, 38, 42, 44, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 67, 69 **SAFE** · Current adapters keep the named RPC receivers alive and transfer values through the transport. Each receiver owns its delegated authority or transport.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1781,4 +1787,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-168/286 files reviewed. 339 sites: 318 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+169/286 files reviewed. 340 sites: 319 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
