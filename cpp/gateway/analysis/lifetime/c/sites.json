@@ -590,7 +590,8 @@
       ]
     },
     "include/uos/deepseek/stream.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous stream event parsing declarations with owned delta results.",
       "sites": []
     },
     "include/uos/deepseek/waterfall.hpp": {
