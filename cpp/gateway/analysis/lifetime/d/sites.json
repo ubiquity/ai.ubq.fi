@@ -2541,7 +2541,8 @@
       "sites": []
     },
     "src/authority/native_kernel_contracts.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed kernel reservation, quota, terminal and configuration codecs. JSON or record borrows are confined to synchronous conversion and results own their data.",
       "sites": []
     },
     "src/authority/native_paid.cpp": {
