@@ -33,7 +33,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 ## Checklist (30 files)
 
 - [x] `src/rt/abort.cpp`
-- [ ] `include/uos/rt/abort.hpp`
+- [x] `include/uos/rt/abort.hpp`
 - [ ] `src/rt/clock.cpp`
 - [ ] `include/uos/rt/clock.hpp`
 - [ ] `src/rt/async.cpp`
@@ -82,18 +82,26 @@ Abort dispatch is synchronous, so callback reentrancy and ownership during dispa
 - **SAFE** `231, 232, 234, 237, 239, 240, 241` (c), Native cancellation bridge. The completion handler owns the cancellation slot and signal while the listener uses a weak signal link, and completion removes any surviving registration.
 - **SAFE** `247, 250, 252, 253, 257, 258, 259, 263, 264` (c), Abortable sleep timer and listener. The timer and listener intentionally retain each other while armed, and abort, timeout, or loop teardown clears an owning callback before releasing the active invocation.
 
+### `include/uos/rt/abort.hpp`
+
+The public header declares the abort bridge and listener handles. The implementation's reentrant dispatch defect is counted at its source.
+
+- **SAFE** `34, 39, 40, 45, 65, 72, 73, 76, 77` (c), Listener identity and invocation. Each identity shares an owning function and the runtime dispatch copies the listener before invoking it, allowing deregistration during the call.
+- **SAFE** `59, 62, 88, 91, 94, 102, 105` (b/c), Signal owner and borrowed accessors in current callers. The handle owns its state, callers copy or consume reason and state synchronously, and the separate abort-dispatch borrow is tracked in abort.cpp.
+- **SAFE** `115, 125, 126, 127, 128, 129` (a/b/c), Eager abortable wrapper. This ordinary function moves its Task into runInto and returns a Task owning the result state, while its fetch caller gives the native child owned request inputs.
+
 ## Ranked defects and counts
 
-Reviewed **1/30 files** and **7 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **2/30 files** and **10 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
-| a. Capturing coroutine closure | 0 | 0 | 0 |
-| b. Borrowed coroutine parameter or receiver | 0 | 0 | 0 |
-| c. Callback ownership or cycle | 1 | 6 | 0 |
+| a. Capturing coroutine closure | 0 | 1 | 0 |
+| b. Borrowed coroutine parameter or receiver | 0 | 2 | 0 |
+| c. Callback ownership or cycle | 1 | 9 | 0 |
 | d. Container invalidation | 1 | 2 | 0 |
 | e. GCC 12 await-expression rule | 0 | 0 | 0 |
-| **Unique site groups** | 1 | 6 | 0 |
+| **Unique site groups** | 1 | 9 | 0 |
 
 ### 1. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
 

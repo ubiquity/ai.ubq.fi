@@ -150,8 +150,65 @@
       ]
     },
     "include/uos/rt/abort.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "The public header declares the abort bridge and listener handles. The implementation's reentrant dispatch defect is counted at its source.",
+      "sites": [
+        {
+          "lines": [
+            34,
+            39,
+            40,
+            45,
+            65,
+            72,
+            73,
+            76,
+            77
+          ],
+          "classes": [
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Listener identity and invocation",
+          "reason": "Each identity shares an owning function and the runtime dispatch copies the listener before invoking it, allowing deregistration during the call."
+        },
+        {
+          "lines": [
+            59,
+            62,
+            88,
+            91,
+            94,
+            102,
+            105
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Signal owner and borrowed accessors in current callers",
+          "reason": "The handle owns its state, callers copy or consume reason and state synchronously, and the separate abort-dispatch borrow is tracked in abort.cpp."
+        },
+        {
+          "lines": [
+            115,
+            125,
+            126,
+            127,
+            128,
+            129
+          ],
+          "classes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Eager abortable wrapper",
+          "reason": "This ordinary function moves its Task into runInto and returns a Task owning the result state, while its fetch caller gives the native child owned request inputs."
+        }
+      ]
     },
     "src/rt/clock.cpp": {
       "status": "pending",
