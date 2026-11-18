@@ -64,7 +64,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/storage/kv.hpp`
 - [x] `include/uos/storage/native_addon.hpp`
 - [x] `include/uos/storage/native_kv.hpp`
-- [ ] `include/uos/storage/sqlite_readonly.hpp`
+- [x] `include/uos/storage/sqlite_readonly.hpp`
 - [ ] `include/uos/storage/value_compatibility.hpp`
 - [ ] `src/storage/key_compatibility.cpp`
 - [ ] `src/storage/kv.cpp`
@@ -429,6 +429,12 @@ The only API consumes a byte span synchronously. No coroutine or deferred callba
 | --- | --- | --- | --- |
 | 17-35 | retrySqliteBusy callable ownership | **SAFE** | The retry coroutine owns run by value between attempts and awaits each child through result or error before invoking it again. Each call site supplies any pointee owner separately. |
 
+### `include/uos/storage/sqlite_readonly.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 40-50,90-108 | Read-only statement and inspection callback | **SAFE** | The statement is an owning handle. The erased callback runs inline even during a fallback retry, while the caller's callable, optional result and database are alive. |
+
 
 ## Ranked defects and counts
 
@@ -634,4 +640,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-41/97 files reviewed. **DEFECT 8, SAFE 93, UNCLEAR 3.**
+42/97 files reviewed. **DEFECT 8, SAFE 94, UNCLEAR 3.**

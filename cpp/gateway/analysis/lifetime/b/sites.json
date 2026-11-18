@@ -1262,8 +1262,20 @@
       ]
     },
     "include/uos/storage/sqlite_readonly.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "40-50,90-108",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Read-only statement and inspection callback",
+          "evidence": "The statement is an owning handle. The erased callback runs inline even during a fallback retry, while the caller's callable, optional result and database are alive."
+        }
+      ]
     },
     "include/uos/storage/value_compatibility.hpp": {
       "reviewed": false,
