@@ -1413,8 +1413,16 @@
       ]
     },
     "include/uos/provider/lithos_streams.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Synchronous construction of stream adapters.",
+      "sites": [
+        {
+          "lines": "17",
+          "kind": "model callback",
+          "verdict": "SAFE",
+          "reason": "The adapter receives the model function as a value and retains it with its stream state."
+        }
+      ]
     },
     "include/uos/provider/metered.hpp": {
       "status": "pending",

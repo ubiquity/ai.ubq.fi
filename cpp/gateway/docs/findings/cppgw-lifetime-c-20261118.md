@@ -167,7 +167,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/lithos_handlers.hpp`
 - [x] `include/uos/provider/lithos_models.hpp`
 - [x] `include/uos/provider/lithos_rate_limits.hpp`
-- [ ] `include/uos/provider/lithos_streams.hpp`
+- [x] `include/uos/provider/lithos_streams.hpp`
 - [ ] `include/uos/provider/metered.hpp`
 - [ ] `include/uos/provider/openrouter.hpp`
 - [ ] `include/uos/provider/openrouter_handlers.hpp`
@@ -1057,3 +1057,9 @@ Lithos catalog API.
 Retry wait factory interface.
 
 - 97-98 · callback interface · **SAFE** · The timer wait owns its signal and elapsed callback; its listener cleanup is reviewed in lithos_rate_limits.cpp.
+
+### `include/uos/provider/lithos_streams.hpp`
+
+Synchronous construction of stream adapters.
+
+- 17 · model callback · **SAFE** · The adapter receives the model function as a value and retains it with its stream state.
