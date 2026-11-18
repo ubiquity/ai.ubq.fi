@@ -363,7 +363,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/optional_telemetry_queue.hpp`
 - [x] `include/uos/quota_projection.hpp`
 - [x] `include/uos/recent_model_context.hpp`
-- [ ] `include/uos/release.hpp`
+- [x] `include/uos/release.hpp`
 - [ ] `include/uos/request.hpp`
 - [ ] `include/uos/request_policy.hpp`
 - [ ] `include/uos/responses_attempts.hpp`
@@ -2056,6 +2056,12 @@ Reviewed projection constants, output records, and synchronous aggregation APIs.
 
 Reviewed context estimates and stored-record interfaces. All options and borrowed views are processed synchronously and projections are owning values.
 
+### `include/uos/release.hpp`
+
+Reviewed the build identity declaration.
+
+- L6 **SAFE** · The release SHA view points to build-time literal storage.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2305,4 +2311,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-255/286 files reviewed. 436 sites: 412 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+256/286 files reviewed. 437 sites: 413 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

@@ -9699,8 +9699,21 @@
       "sites": []
     },
     "include/uos/release.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the build identity declaration.",
+      "sites": [
+        {
+          "lines": [
+            6
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The release SHA view points to build-time literal storage."
+        }
+      ]
     },
     "include/uos/request.hpp": {
       "reviewed": false,
