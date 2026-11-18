@@ -439,6 +439,29 @@ lifetime contract violation. D02–D05 are retention failures under the stated e
          outputBytes = 0;
 ```
 
+<a id="d06"></a>
+
+### D06. A WebSocket can miss shutdown's socket snapshot, P2 request-path retention
+
+- Authorization accepts the request and waits for the WebSocket module promise after
+  checking stopping. Even the cached resolved promise resumes on a microtask.
+- Shutdown sets stopping and snapshots the set before authorization resumes. The new
+  socket is inserted after that snapshot and remains live until independently closed.
+
+```diff
+--- a/cpp/gateway/src/runtime/http_upgrade.cpp
++++ b/cpp/gateway/src/runtime/http_upgrade.cpp
+@@ authorizeAndUpgrade, after the refusal result branch
++      const rt::Promise<websocket::WebSocketModule> loading = websocket::loadWebSocketModule();
++      const websocket::WebSocketModule module = co_await loading.wait();
++      if (controller.signal().aborted() || socket->destroyed()) co_return;
+       if (state->stopping) {
+@@ before construction of WebSocketServer
+       const WebSocketUpgrade accepted = std::get<WebSocketUpgrade>(*result);
+-      const rt::Promise<websocket::WebSocketModule> loading = websocket::loadWebSocketModule();
+-      const websocket::WebSocketModule module = co_await loading.wait();
+```
+
 <a id="d02"></a>
 
 ### D02. Failed bind retains the server and full handler, P2 startup resource leak
@@ -571,5 +594,22 @@ removes the registrations on frame destruction as well as on normal return.
 +      const rt::ScopeExit removeCancel([&] { signal.removeEventListener("abort", cancelListener); });
 ```
 
+
+<a id="d07"></a>
+
+### D07. Memory KV delete directly accesses an awaited temporary, P3 comparison-profile rule
+
+- Delete waits for the named operation and receives a temporary KvCommitResult.
+- Accessing the result member in that same expression violates the port's GCC 12
+  comparison rule. The modern compiler audit does not establish a GCC 12 crash here.
+
+```diff
+--- a/cpp/gateway/src/rt/kv_memory.cpp
++++ b/cpp/gateway/src/rt/kv_memory.cpp
+@@ unconditionalDelete
+-      if (!(co_await operation->commit()).ok) throw JsError("Unconditional KV delete failed");
++      const KvCommitResult result = co_await operation->commit();
++      if (!result.ok) throw JsError("Unconditional KV delete failed");
+```
 
 37/97 files reviewed. **DEFECT 8, SAFE 90, UNCLEAR 3.**
