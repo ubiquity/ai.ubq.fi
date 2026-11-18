@@ -210,7 +210,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/models/catalog.cpp`
 - [x] `src/models/codex_models.cpp`
 - [x] `src/models/codex_models_availability.cpp`
-- [ ] `src/models/codex_models_fetch.cpp`
+- [x] `src/models/codex_models_fetch.cpp`
 - [ ] `src/models/codex_models_whitelist.cpp`
 - [ ] `src/models/metadata.cpp`
 - [ ] `src/models/openrouter_models.cpp`
@@ -1092,6 +1092,16 @@ Reviewed process caches, background refresh, KV merges and unsupported-model tra
 - L287, 293, 299, 312, 325, 327, 328, 332, 333, 429 **SAFE** · Refresh is started independently with owning inputs and a finalizer pointing only to static state. Cache snapshot pointers from the synchronous getter are consumed before any suspension.
 - L339, 353, 366, 370, 371, 375, 392, 394, 406, 409, 411, 478, 482 **SAFE** · The merge callback, database, entries and atomic operation are retained in their frame. Learned-map borrows are confined to a synchronous block and the test observer copies the in-flight Promise.
 
+### `src/models/codex_models_fetch.cpp`
+
+Reviewed single and union account discovery, bounded response handling, snapshot access and credentials validation.
+
+- L49, 51, 53, 57, 60, 62, 64, 143, 156, 169, 175, 180, 182, 196 **SAFE** · The iteration borrows only from owned immutable account entries. Each auth/provider child receives copied values and its signal. Any shared-auth task continuing after abort owns its own input. The shared wrapper's loser retention is recorded under out-of-area observations.
+- L210, 233, 235, 258, 274, 276, 292, 300, 302 **SAFE** · Validation and response readers own their Response and optional stream through reads and cancellation. Refresh inputs and parse outputs are values and no body receiver is a temporary.
+- L330, 335, 342, 347, 381, 387, 442, 451, 467, 481, 493, 499 **SAFE** · Pool and URL collections are frame-owned and immutable while iterating. Callback and options snapshots stay live and failures are reported synchronously. Retried tasks own account, URL and response inputs.
+- L544, 554, 555, 556, 582, 591, 592, 593, 617 **SAFE** · The KV owner and copied reads outlive their awaits. Promise reactions return copies and the two named rows remain live through the atomic transaction.
+- L712, 715, 730, 743, 756 **SAFE** · The validation frame retains copied auth, response and options, and starts separate named tasks for read and retry.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1340,4 +1350,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-103/286 files reviewed. 213 sites: 197 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+104/286 files reviewed. 218 sites: 202 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
