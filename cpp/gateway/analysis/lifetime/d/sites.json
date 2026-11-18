@@ -9478,8 +9478,27 @@
       ]
     },
     "include/uos/openai.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the default lookups, request signal APIs and static schema collections.",
+      "sites": [
+        {
+          "lines": [
+            8,
+            9,
+            10,
+            11,
+            16,
+            21,
+            22
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Default lookups take no borrowed inputs. Signal and schema helper calls are synchronous and return copied handles or keys."
+        }
+      ]
     },
     "include/uos/openai_schema.hpp": {
       "reviewed": false,
