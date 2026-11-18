@@ -12,6 +12,19 @@ The open questions are the exact input behind the five JSON exceptions, the JWT 
 
 `randomUUID()` still indexed the alphabet that the old crypto-local hex routine owned. It now formats the bytes with the existing lowercase Boost hex helper before inserting the UUID separators. The version and variant masks are preserved. Crypto digest and JWK encoding use the shared simdutf-backed helpers, and JWK decoding checks the existing URL alphabet, padding and length rules before calling the shared decoder.
 
+## Parser diagnostics
+
+The test expectations use the shared parser diagnostic. The fixtures still check the complete error shapes and outcomes.
+
+| Failing binary | Resolution |
+| --- | --- |
+| `deepseek_stream_differential_test` | The broken SSE object and empty SSE data still produce `malformed_event` with a `SyntaxError` cause. The expected cause message is `Invalid JSON` on both traces. |
+| `claude_code_models_differential_test` | A truncated models response still fails catalog parsing with `SyntaxError`. Only its message changes. |
+| `native_addon_differential_test` | Malformed inputs and provenance and BOM-prefixed inputs and receipts still fail at the artifact JSON boundary. The four rejected cases use the common syntax message. |
+| `kv_conversion_legacy_codec_differential_test` | Non-JSON helper output still fails both decode and encode with `SyntaxError`. Requests, process lifecycle and codec validations are compared as before. |
+| `anthropic_chat_stream_differential_test` | Malformed SSE still produces the same stream error and cause type. Its rendered cause is now `SyntaxError: Invalid JSON`. |
+| `passkeys_webauthn_differential_test` | Truncated client data still fails verification. Only the warning's parser message changes. |
+
 ## Release and sanitizer receipts
 
 Pending on the Ubuntu 24.04 ARM64 runner.
