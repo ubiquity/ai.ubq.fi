@@ -125,7 +125,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_principal_contracts.cpp`
 - [x] `src/authority/native_runtime_contracts.cpp`
 - [x] `src/bounded_response_body.cpp`
-- [ ] `src/catalog/index.cpp`
+- [x] `src/catalog/index.cpp`
 - [ ] `src/catalog/models.cpp`
 - [ ] `src/catalog/promotion.cpp`
 - [ ] `src/catalog/store.cpp`
@@ -768,6 +768,15 @@ Reviewed principal request, grant and result codecs. Standard variant visitation
 
 Reviewed runtime verification and routing codecs. Conversion and variant visitation use input references synchronously and return owned data.
 
+### `src/catalog/index.cpp`
+
+Reviewed catalog construction, paid-source joins, cache refresh and detached lease ownership.
+
+- L32, 37, 45, 50, 66, 68, 69, 71, 74, 75, 78, 85, 99, 105, 111, 117, 127, 128 **SAFE** · Each joined or detached provider fetch takes ownership of its own options. Promise wait copies its own state, and catalog references refer to immutable frame-owned results while the full snapshot loads. The append lambda runs inline.
+- L134, 138, 157, 160, 161, 165, 166, 167, 168, 169 **SAFE** · The degradation frame owns the injected callback through its wait. Refresh and fallback tasks retain the shared context or database and pass owning response inputs.
+- L172, 173, 174, 176, 177, 178, 179, 180, 183, 184, 186, 187, 188, 190, 191, 192, 193, 194, 199, 200, 202, 203, 206, 207, 211, 213, 216, 218, 219, 220, 222 **SAFE** · Every refresh stage keeps the context containing the store. The provider error callback captures that context with no reverse edge and the response is a named frame value.
+- L225, 227, 230, 232, 244, 245, 247, 248, 250, 251, 253, 255, 256, 257, 258, 260, 263, 264, 266 **SAFE** · The detached refresh directly owns the context and its shared KV. Normal success, rejection and recovery all reach heartbeat stop and wait for pending renewal before the context can be released. The spawn error callback owns its version.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -873,4 +882,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-59/286 files reviewed. 136 sites: 127 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+60/286 files reviewed. 140 sites: 131 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

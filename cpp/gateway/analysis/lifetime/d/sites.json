@@ -2628,8 +2628,135 @@
       ]
     },
     "src/catalog/index.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed catalog construction, paid-source joins, cache refresh and detached lease ownership.",
+      "sites": [
+        {
+          "lines": [
+            32,
+            37,
+            45,
+            50,
+            66,
+            68,
+            69,
+            71,
+            74,
+            75,
+            78,
+            85,
+            99,
+            105,
+            111,
+            117,
+            127,
+            128
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each joined or detached provider fetch takes ownership of its own options. Promise wait copies its own state, and catalog references refer to immutable frame-owned results while the full snapshot loads. The append lambda runs inline."
+        },
+        {
+          "lines": [
+            134,
+            138,
+            157,
+            160,
+            161,
+            165,
+            166,
+            167,
+            168,
+            169
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The degradation frame owns the injected callback through its wait. Refresh and fallback tasks retain the shared context or database and pass owning response inputs."
+        },
+        {
+          "lines": [
+            172,
+            173,
+            174,
+            176,
+            177,
+            178,
+            179,
+            180,
+            183,
+            184,
+            186,
+            187,
+            188,
+            190,
+            191,
+            192,
+            193,
+            194,
+            199,
+            200,
+            202,
+            203,
+            206,
+            207,
+            211,
+            213,
+            216,
+            218,
+            219,
+            220,
+            222
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Every refresh stage keeps the context containing the store. The provider error callback captures that context with no reverse edge and the response is a named frame value."
+        },
+        {
+          "lines": [
+            225,
+            227,
+            230,
+            232,
+            244,
+            245,
+            247,
+            248,
+            250,
+            251,
+            253,
+            255,
+            256,
+            257,
+            258,
+            260,
+            263,
+            264,
+            266
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The detached refresh directly owns the context and its shared KV. Normal success, rejection and recovery all reach heartbeat stop and wait for pending renewal before the context can be released. The spawn error callback owns its version."
+        }
+      ]
     },
     "src/catalog/models.cpp": {
       "reviewed": false,
