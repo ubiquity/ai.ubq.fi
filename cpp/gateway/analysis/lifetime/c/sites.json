@@ -2596,8 +2596,40 @@
       ]
     },
     "src/embeddings/jobs.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Jobs keep their attempt state in the request coroutine and pass owned KV into pending reads and writes.",
+      "sites": [
+        {
+          "lines": "38-60,134-144,212-234",
+          "kind": "cache and input fail-fast fan-outs",
+          "verdict": "SAFE",
+          "reason": "Each cacheEntry child takes a shared KV and key by value, including children whose results are overtaken by a sibling's failure."
+        },
+        {
+          "lines": "83-106",
+          "kind": "budget borrow, commit and allSettled",
+          "verdict": "SAFE",
+          "reason": "The job retains its shared KV while the budget helper runs. AtomicOperation is local, and the input delete batch joins both successful and rejected operations."
+        },
+        {
+          "lines": "146-211,237-302",
+          "kind": "job member awaits and state mutation",
+          "verdict": "SAFE",
+          "reason": "The attempt frame owns JobState and joins its members. Chunk inputs and response results are local values, and nested updates preserve their transaction owners."
+        },
+        {
+          "lines": "305-385,387-448",
+          "kind": "create/get, encrypt writes and telemetry",
+          "verdict": "SAFE",
+          "reason": "Each input write owns KV, key components and plaintext input. The handler awaits job execution and the telemetry adapters retain their own context copies."
+        },
+        {
+          "lines": "451-498",
+          "kind": "job attempt and public entry joins",
+          "verdict": "SAFE",
+          "reason": "The parent retains the optional borrowed telemetry during joined operation. Job state and atomic operations are frame-owned, and wrappers retain request arguments by value."
+        }
+      ]
     },
     "src/embeddings/ledger.cpp": {
       "status": "pending",

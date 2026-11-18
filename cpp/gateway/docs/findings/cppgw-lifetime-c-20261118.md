@@ -237,7 +237,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/deepseek/waterfall.cpp`
 - [x] `src/deepseek/waterfall_handler.cpp`
 - [x] `src/embeddings/handlers.cpp`
-- [ ] `src/embeddings/jobs.cpp`
+- [x] `src/embeddings/jobs.cpp`
 - [ ] `src/embeddings/ledger.cpp`
 - [ ] `src/embeddings/voyage.cpp`
 - [ ] `src/harmony/adapter.cpp`
@@ -1520,3 +1520,13 @@ The buffered handler joins member operations while its request and telemetry own
 - 80-130,150-231,237-342 · request-state members and retries · **SAFE** · handleEmbeddingsRequest owns the RequestState object. Nested tasks are joined serially, and Voyage parameters and chunk slices are copied before sending.
 - 137-140 · cache fan-out virtual receiver · **DEFECT** · One cache get can reject while another injected KV get is still awaiting. The request unwinds the last shared store owner, leaving the pending virtual coroutine with a dead receiver. Wrap each get in an owning child as jobs.cpp does.
 - 343-398 · handler context, hash fan-out and callback · **SAFE** · The terminal route retains its context during entry, runTelemetry owns its copy, and the telemetry wrapper retains the callback. Each hash child owns its input text.
+
+### `src/embeddings/jobs.cpp`
+
+Jobs keep their attempt state in the request coroutine and pass owned KV into pending reads and writes.
+
+- 38-60,134-144,212-234 · cache and input fail-fast fan-outs · **SAFE** · Each cacheEntry child takes a shared KV and key by value, including children whose results are overtaken by a sibling's failure.
+- 83-106 · budget borrow, commit and allSettled · **SAFE** · The job retains its shared KV while the budget helper runs. AtomicOperation is local, and the input delete batch joins both successful and rejected operations.
+- 146-211,237-302 · job member awaits and state mutation · **SAFE** · The attempt frame owns JobState and joins its members. Chunk inputs and response results are local values, and nested updates preserve their transaction owners.
+- 305-385,387-448 · create/get, encrypt writes and telemetry · **SAFE** · Each input write owns KV, key components and plaintext input. The handler awaits job execution and the telemetry adapters retain their own context copies.
+- 451-498 · job attempt and public entry joins · **SAFE** · The parent retains the optional borrowed telemetry during joined operation. Job state and atomic operations are frame-owned, and wrappers retain request arguments by value.
