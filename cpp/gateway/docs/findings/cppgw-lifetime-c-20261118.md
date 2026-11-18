@@ -88,7 +88,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/deepseek/responses_payload.hpp`
 - [x] `include/uos/deepseek/responses_stream.hpp`
 - [x] `include/uos/deepseek/stream.hpp`
-- [ ] `include/uos/deepseek/waterfall.hpp`
+- [x] `include/uos/deepseek/waterfall.hpp`
 - [ ] `include/uos/deepseek/waterfall_handler.hpp`
 - [ ] `include/uos/embeddings/handlers.hpp`
 - [ ] `include/uos/embeddings/jobs.hpp`
@@ -623,3 +623,9 @@ A synchronous stateful adapter is returned by value.
 ### `include/uos/deepseek/stream.hpp`
 
 Synchronous stream event parsing declarations with owned delta results.
+
+### `include/uos/deepseek/waterfall.hpp`
+
+Planning callbacks are synchronous predicates.
+
+- 38-39 · predicate interface · **SAFE** · The plan builder invokes each callback while its input and current provider string are live.

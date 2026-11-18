@@ -595,8 +595,16 @@
       "sites": []
     },
     "include/uos/deepseek/waterfall.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Planning callbacks are synchronous predicates.",
+      "sites": [
+        {
+          "lines": "38-39",
+          "kind": "predicate interface",
+          "verdict": "SAFE",
+          "reason": "The plan builder invokes each callback while its input and current provider string are live."
+        }
+      ]
     },
     "include/uos/deepseek/waterfall_handler.hpp": {
       "status": "pending",
