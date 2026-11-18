@@ -264,7 +264,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/tools/schemas.cpp`
 - [x] `src/harmony/types.cpp`
 - [x] `src/live/calls.cpp`
-- [ ] `src/live/handler.cpp`
+- [x] `src/live/handler.cpp`
 - [ ] `src/live/routes.cpp`
 - [ ] `src/live/sideband.cpp`
 - [ ] `src/live/upstream.cpp`
@@ -1664,3 +1664,9 @@ Call creation buffers and validates local multipart data, then joins account sel
 
 - 35-89 · request and multipart awaits · **SAFE** · The Request, optional File and parsed form live in their frames. A nested read or cancellation copies its stream owner before suspending.
 - 93-128,133-148,150-181 · account, response and telemetry waits · **SAFE** · Account and response results are local value snapshots and the mapping write owns all its identifiers.
+
+### `src/live/handler.cpp`
+
+HTTP and upgrade handlers own the incoming Request and principal snapshots.
+
+- 27-45,47-65 · authentication, principal, and upgrade waits · **SAFE** · Auth/route decisions and the presentation callback are local values. UpgradeResult owns the returned accept function separately.

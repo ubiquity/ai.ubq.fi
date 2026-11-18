@@ -2897,8 +2897,16 @@
       ]
     },
     "src/live/handler.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "HTTP and upgrade handlers own the incoming Request and principal snapshots.",
+      "sites": [
+        {
+          "lines": "27-45,47-65",
+          "kind": "authentication, principal, and upgrade waits",
+          "verdict": "SAFE",
+          "reason": "Auth/route decisions and the presentation callback are local values. UpgradeResult owns the returned accept function separately."
+        }
+      ]
     },
     "src/live/routes.cpp": {
       "status": "pending",
