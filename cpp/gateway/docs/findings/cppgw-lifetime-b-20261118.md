@@ -129,4 +129,4 @@ Initial checkpoint. Manual review and tool verification are pending.
 
 ## Ranked defects and counts
 
-No files reviewed yet. DEFECT 0, SAFE 0, UNCLEAR 0.
+0/97 files reviewed. **DEFECT 0, SAFE 0, UNCLEAR 0.**
