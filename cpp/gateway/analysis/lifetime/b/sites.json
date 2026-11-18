@@ -842,8 +842,29 @@
       "note": "Private synchronous codec declarations. Views and references are consumed during the call, and each result type owns its data."
     },
     "src/rt/kv_js.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "49-88,244-282,304-324",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Stored JSON and string conversion",
+          "evidence": "Typed-array element and variant references are read synchronously, with owned JSON and string outputs."
+        },
+        {
+          "lines": "330-362",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Uint8Array view and KV key conversion",
+          "evidence": "The input KvValue owns the backing store. The key conversion copies the subspan synchronously, and replay_read consumes it during synchronous deserialization."
+        }
+      ]
     },
     "src/rt/kv_jsc.cpp": {
       "reviewed": false,

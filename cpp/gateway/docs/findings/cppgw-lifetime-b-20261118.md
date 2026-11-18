@@ -48,7 +48,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/rt/fs.cpp`
 - [x] `src/rt/kv.cpp`
 - [x] `src/rt/kv_internal.hpp`
-- [ ] `src/rt/kv_js.cpp`
+- [x] `src/rt/kv_js.cpp`
 - [ ] `src/rt/kv_jsc.cpp`
 - [ ] `src/rt/kv_jsc_deserialize.cpp`
 - [ ] `src/rt/kv_key.cpp`
@@ -318,6 +318,13 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 
 Private synchronous codec declarations. Views and references are consumed during the call, and each result type owns its data.
 
+### `src/rt/kv_js.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 49-88,244-282,304-324 | Stored JSON and string conversion | **SAFE** | Typed-array element and variant references are read synchronously, with owned JSON and string outputs. |
+| 330-362 | Uint8Array view and KV key conversion | **SAFE** | The input KvValue owns the backing store. The key conversion copies the subspan synchronously, and replay_read consumes it during synchronous deserialization. |
+
 
 ## Ranked defects and counts
 
@@ -483,4 +490,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-25/97 files reviewed. **DEFECT 7, SAFE 62, UNCLEAR 2.**
+26/97 files reviewed. **DEFECT 7, SAFE 64, UNCLEAR 2.**
