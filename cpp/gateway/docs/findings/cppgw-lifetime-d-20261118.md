@@ -248,7 +248,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/serve.cpp`
 - [x] `src/static.cpp`
 - [x] `src/systemone/handlers.cpp`
-- [ ] `src/types.cpp`
+- [x] `src/types.cpp`
 - [ ] `src/upstream_wire.cpp`
 - [ ] `src/utils.cpp`
 - [ ] `include/uos/admin/api_key_audit.hpp`
@@ -1356,6 +1356,13 @@ Reviewed request parsing, provider hooks and usage callbacks for the System One 
 - L147, 148, 150, 151, 154, 155, 157, 158 **SAFE** · Provider hooks capture a shared context and are copied into the provider's owning frame. That frame awaits both the admission callback and the selected fetcher while retaining the exact callables it invoked.
 - L109, 162, 165, 169, 170, 175, 178, 181, 184 **SAFE** · Detached health recording receives owned arguments and a free clock function. Completion recording is directly awaited with the shared context, and the public wrappers copy their override before returning the Task.
 
+### `src/types.cpp`
+
+Reviewed synchronous type parsing, serializers, and the variant visitor.
+
+- L21, 49, 51, 62 **SAFE** · Stringified enum values refer to static literal storage. Parsing consumes the input view synchronously while its JSON string is alive.
+- L801, 850, 862 **SAFE** · The variant visitor runs synchronously against the caller's value, and serializers return owned records or write into the caller's output.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1604,4 +1611,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-140/286 files reviewed. 301 sites: 280 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+141/286 files reviewed. 303 sites: 282 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

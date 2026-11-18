@@ -6754,8 +6754,36 @@
       ]
     },
     "src/types.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed synchronous type parsing, serializers, and the variant visitor.",
+      "sites": [
+        {
+          "lines": [
+            21,
+            49,
+            51,
+            62
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Stringified enum values refer to static literal storage. Parsing consumes the input view synchronously while its JSON string is alive."
+        },
+        {
+          "lines": [
+            801,
+            850,
+            862
+          ],
+          "kinds": [
+            "c"
+          ],
+          "verdict": "SAFE",
+          "detail": "The variant visitor runs synchronously against the caller's value, and serializers return owned records or write into the caller's output."
+        }
+      ]
     },
     "src/upstream_wire.cpp": {
       "reviewed": false,
