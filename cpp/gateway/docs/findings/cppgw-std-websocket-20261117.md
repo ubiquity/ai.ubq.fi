@@ -251,3 +251,21 @@ The second sanitizer command took over the same cache after the two-worker regis
 The strict Linux ARM64 release replay with ICU 78.3 passed all 442 binaries and 5,029 cases with zero failures, skips or timeouts. The `url.cpp` rebuild took 15.998 seconds and linking and running the registry took 385.317 seconds. The source inputs bound to commit `4d4796869314cc4e95f5911a7b558fe711f09575`, tree `6e01acc32ea66e86ac1d60c3dd6abd4e9bad91b1`, had identical pre- and post-run SHA-256 `7c87b3c86154c35dea3f45a5a8019b4c6b718a9c00e747e9cd5d79c887e68715`. The exact release receipt SHA-256 is `2a480caf8a9362b09b960c5aa596127f7834bb4519097bb8afe6567f3dcda5fd`.
 
 All three executable links also passed with ICU 78.3. The link used the same commands as the native linkage above, with `ar rcs` replacing the single `url.cpp.o` member with the ICU 78.3 release object and the three static ICU archives in place of the system ICU flags. The `uos-gateway`, `uos-kv-convert` and `uos-kv-proof` SHA-256 digests were `1c587298d5e0a9a97086c7004e76b1956978fa1d4be6c7ae83aa02c42b1a2968`, `640c1a4724f2acc81125a1112f2fd8735f3acc434cf183e4e204cef7f69c4f07` and `b414ec3f6fdbc92409470169a92f22cb7bc8dddee541ea3ec51f400a55f2c117`, respectively.
+
+## Complete sanitizer result
+
+The strict `-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer` registry compiled all 369 production objects with Clang 21.1.8. The fixture driver set `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1` and `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`. The system-ICU control passed 441/442 binaries and 5,027/5,029 cases. The same two URL/IDNA cases reported the only failure. The driver took 1,628.515 seconds and its receipt SHA-256 is `9f8eb27859c6f4073cb117d48da65572f9e39b588c09bc9518116997ce850590`.
+
+The ICU 78.3 replay passed all 442 binaries and 5,029 cases with zero sanitizer findings, failures, skips or timeouts. The instrumented `url.cpp` rebuild took 8.548 seconds and the registry took 210.622 seconds to link and run. It bound commit `cc39f515c0fba7a7321f54f88081b53e9410870f`, tree `02640f31b251444d11e1f5a4005da653d187db99`, to the same unchanged source digest `7c87b3c86154c35dea3f45a5a8019b4c6b718a9c00e747e9cd5d79c887e68715` as the release receipt. The exact sanitizer receipt SHA-256 is `7658e6d14995544cb78512232d16e0d7d108feb840e4e8b55d68cad845077a70`.
+
+```sh
+cache="$work/qualify/clang++-21-69b7e4110c3c/asan"
+flock --shared "$cache/run.lock" python3 -B "$work/relink_icu78.py" "$work" "$PWD" asan all 4
+```
+
+## Handoff summary
+
+- Beast 1.92 supplies frame header output, masking, handshake key and accept primitives, and UTF-8 and close decoding. The receive framer retains header-time payload enforcement and the relay's configured close. Beast's full stream waits for the mask and sends its own 1009 before reporting the oversize error. The production patch removes 203 lines and adds 113.
+- Strict Linux ARM64 release and ASan/UBSan/LSan each passed 442/442 binaries and 5,029/5,029 cases. All three native entry points linked. The public-entry fuzz campaign ran 215,742 inputs in 122 seconds with zero findings.
+- Masked 64 KiB frame encoding moved from 34,698.12 to 4,799.95 ns/op with one allocation on each side. The accept token went from 649.74 to 229.97 ns/op and seven to one allocation. The 64-byte unmasked encode went from 21.19 to 33.12 ns/op with one allocation.
+- `GIT_TERMINAL_PROMPT=0 git push --porcelain origin HEAD:refs/heads/agent-jobs/cppgw-std-websocket-c1` exited 128 for missing GitHub authentication. The job commits remain on local `agent-job`. The refreshed `origin/development` at `70afb98dc1651a7a5851d8ee4f79ace5d4c836d1` does not contain the task tip. The C++ port merge preview still has the single shared ledger conflict described above.
