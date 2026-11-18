@@ -316,7 +316,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/openrouter.cpp`
 - [x] `src/provider/openrouter_handlers.cpp`
 - [x] `src/provider/openrouter_request_controls.cpp`
-- [ ] `src/provider/openrouter_streams.cpp`
+- [x] `src/provider/openrouter_streams.cpp`
 - [ ] `src/provider/openrouter_web_tools.cpp`
 - [ ] `src/provider/presentation.cpp`
 - [ ] `src/provider/removed_provider_circuit.cpp`
@@ -2026,3 +2026,11 @@ Both handlers await dispatch and buffered reads in the request lifetime. The str
 Extension selection copies its source body at the public API boundary.
 
 - 16-30 · reference-taking task factory and catalog waits · **SAFE** · The synchronous wrapper copies the body into the task. Provider selection and model resolution return value snapshots and the model string is a frame local.
+
+### `src/provider/openrouter_streams.cpp`
+
+OpenRouter Chat owns its parser session and Responses passes owned telemetry into the shared proxy.
+
+- 112-135 · read/abort race listener · **SAFE** · The executor runs inline. The signal owns a callback with a weak signal reference, and the reader request and rejector stay valid when their branch loses.
+- 137-173,194-213,258-264 · stream session, watchdog and yielded frame · **SAFE** · The generator and each pending nextFrame own the session. The timer owns a controller copy, and detached cancellation owns its stream operation and a stateless rejection callback.
+- 218-243,266-312 · relay and proxy callbacks · **SAFE** · Stream construction copies the framing adapter and telemetry. Proxy callbacks keep shared context and owned request ID and signal values for their synchronous invocations.

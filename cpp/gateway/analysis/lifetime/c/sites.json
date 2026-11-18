@@ -3851,8 +3851,28 @@
       ]
     },
     "src/provider/openrouter_streams.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "OpenRouter Chat owns its parser session and Responses passes owned telemetry into the shared proxy.",
+      "sites": [
+        {
+          "lines": "112-135",
+          "kind": "read/abort race listener",
+          "verdict": "SAFE",
+          "reason": "The executor runs inline. The signal owns a callback with a weak signal reference, and the reader request and rejector stay valid when their branch loses."
+        },
+        {
+          "lines": "137-173,194-213,258-264",
+          "kind": "stream session, watchdog and yielded frame",
+          "verdict": "SAFE",
+          "reason": "The generator and each pending nextFrame own the session. The timer owns a controller copy, and detached cancellation owns its stream operation and a stateless rejection callback."
+        },
+        {
+          "lines": "218-243,266-312",
+          "kind": "relay and proxy callbacks",
+          "verdict": "SAFE",
+          "reason": "Stream construction copies the framing adapter and telemetry. Proxy callbacks keep shared context and owned request ID and signal values for their synchronous invocations."
+        }
+      ]
     },
     "src/provider/openrouter_web_tools.cpp": {
       "status": "pending",
