@@ -40,13 +40,13 @@ C++ quoted strings. Single-line assignments, leading BOM, CRLF, inline
 hash comments and literal dollar references remain supported. Existing
 environment variables still take precedence when an explicit file is loaded.
 
-| Changed behavior | Example | Effect |
-| ---------------- | ------- | ------ |
-| Duplicate keys, sections, invalid keys and incomplete lines fail the whole file | `A=1\nA=2` | A malformed file cannot partially populate the environment. |
-| Colon assignments, `export` prefixes and split assignments are rejected | `export A=1` | The accepted grammar is a flat assignment file. |
-| Quotes must end on the same line and may be followed by whitespace or a hash comment | `A="x" junk` | Incomplete and ambiguous values fail atomically. |
-| C++ quoted extraction consumes the backslash before the next character | `A="a\nb"` gives `anb` | The format has no escape-to-control conversion or expansion. Unquoted backslashes remain literal. |
-| ASCII control bytes other than tab and line endings, interior bare CR, and input over 256 KiB are rejected | `A=x\x00y` | Values cannot introduce embedded NUL or line boundaries, and parser allocation has an input bound. |
+| Changed behavior                                                                                           | Example                | Effect                                                                                             |
+| ---------------------------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------- |
+| Duplicate keys, sections, invalid keys and incomplete lines fail the whole file                            | `A=1\nA=2`             | A malformed file cannot partially populate the environment.                                        |
+| Colon assignments, `export` prefixes and split assignments are rejected                                    | `export A=1`           | The accepted grammar is a flat assignment file.                                                    |
+| Quotes must end on the same line and may be followed by whitespace or a hash comment                       | `A="x" junk`           | Incomplete and ambiguous values fail atomically.                                                   |
+| C++ quoted extraction consumes the backslash before the next character                                     | `A="a\nb"` gives `anb` | The format has no escape-to-control conversion or expansion. Unquoted backslashes remain literal.  |
+| ASCII control bytes other than tab and line endings, interior bare CR, and input over 256 KiB are rejected | `A=x\x00y`             | Values cannot introduce embedded NUL or line boundaries, and parser allocation has an input bound. |
 
 Sixty-eight of the original 124 inputs now reject the whole file. Nine
 retain valid assignments with changed quoted values.
@@ -59,12 +59,12 @@ expectations held. Path functions use the C++ lexical model and preserve
 native POSIX path bytes. Resolve and join retain their existing
 interpretation of absolute components.
 
-| Changed lexical vectors | Example | Standard behavior |
-| ----------------------: | ------- | ----------------- |
-| 2 | `normalize("a/b/c/..")` gives `"a/b/"` | Lexical normalization may leave a final separator after removing a dot or parent element. Resolve still removes that separator. |
-| 11 | `dirname("/a/b/")` gives `"/a/b"` and `dirname("/a//b")` gives `"/a"` | A trailing separator denotes an empty final component, and repeated separators are collapsed in the result. |
-| 14 | `basename("a/")` and `extname("/a/b.c/")` give an empty string | A trailing separator has no filename or extension. The same rule applies to the suffix overload and root. |
-| 2 | `basename("/a/b.txt", "b.txt")` gives an empty string | A matching suffix is removed from the filename even when it spans the entire component. |
+| Changed lexical vectors | Example                                                               | Standard behavior                                                                                                               |
+| ----------------------: | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+|                       2 | `normalize("a/b/c/..")` gives `"a/b/"`                                | Lexical normalization may leave a final separator after removing a dot or parent element. Resolve still removes that separator. |
+|                      11 | `dirname("/a/b/")` gives `"/a/b"` and `dirname("/a//b")` gives `"/a"` | A trailing separator denotes an empty final component, and repeated separators are collapsed in the result.                     |
+|                      14 | `basename("a/")` and `extname("/a/b.c/")` give an empty string        | A trailing separator has no filename or extension. The same rule applies to the suffix overload and root.                       |
+|                       2 | `basename("/a/b.txt", "b.txt")` gives an empty string                 | A matching suffix is removed from the filename even when it spans the entire component.                                         |
 
 Relative paths require resolvable absolute endpoints. A lookup failure
 cannot appear to a containment caller as an empty, equal relative path.
@@ -77,11 +77,11 @@ sink uses the original method to select stdout, stderr and capture routing.
 Plain strings and preformatted application events retain their bytes
 within the output limit.
 
-| Changed behavior | Example | Effect |
-| ---------------- | ------- | ------ |
-| Arrays and objects use compact JSON with quoted keys and insertion order | `{a: 1}` displays as `{"a":1}` | The same diagnostic fields remain readable, without Bun's columns, line wrapping or numeric-key sorting. |
-| JSON projects nonfinite numbers to null and omits undefined object members | `{missing: undefined, reading: NaN}` displays as `{"reading":null}` | Structured values use standard JSON. Standalone undefined remains visible and an undefined `%j` stays empty. |
-| Errors use JSON name, message, optional properties and nested causes | `Error("outer", {cause: Error("inner")})` displays an error object with `"cause":{"name":"Error","message":"inner"}` | Fields such as code, status and errno remain available. JSON escaping keeps newlines in error messages within the record. |
-| Scalars use `to_chars`, and numeric substitutions parse complete text with `from_chars` | `%d` with `"0x10"` gives `nan`, and `%d` with `1e21` gives `1e+21` | Negative zero, infinity, exponent spelling, and numeric text follow the standard functions. Arrays and objects use JSON instead of JavaScript coercion for `%s`. |
-| Boost.JSON writes fractional values in standard exponent notation | `%j` with `1.5` gives `1.5E0` | JSON consumers read the same number. |
-| Projection and output are bounded | A nested value beyond depth 16 or an array beyond its first 100 elements uses `"[truncated]"` | The projection also charges text and nodes against 32 KiB, and the complete formatted line is capped at 256 KiB. Malformed structured UTF-8 is replaced before serialization. |
+| Changed behavior                                                                        | Example                                                                                                              | Effect                                                                                                                                                                        |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Arrays and objects use compact JSON with quoted keys and insertion order                | `{a: 1}` displays as `{"a":1}`                                                                                       | The same diagnostic fields remain readable, without Bun's columns, line wrapping or numeric-key sorting.                                                                      |
+| JSON projects nonfinite numbers to null and omits undefined object members              | `{missing: undefined, reading: NaN}` displays as `{"reading":null}`                                                  | Structured values use standard JSON. Standalone undefined remains visible and an undefined `%j` stays empty.                                                                  |
+| Errors use JSON name, message, optional properties and nested causes                    | `Error("outer", {cause: Error("inner")})` displays an error object with `"cause":{"name":"Error","message":"inner"}` | Fields such as code, status and errno remain available. JSON escaping keeps newlines in error messages within the record.                                                     |
+| Scalars use `to_chars`, and numeric substitutions parse complete text with `from_chars` | `%d` with `"0x10"` gives `nan`, and `%d` with `1e21` gives `1e+21`                                                   | Negative zero, infinity, exponent spelling, and numeric text follow the standard functions. Arrays and objects use JSON instead of JavaScript coercion for `%s`.              |
+| Boost.JSON writes fractional values in standard exponent notation                       | `%j` with `1.5` gives `1.5E0`                                                                                        | JSON consumers read the same number.                                                                                                                                          |
+| Projection and output are bounded                                                       | A nested value beyond depth 16 or an array beyond its first 100 elements uses `"[truncated]"`                        | The projection also charges text and nodes against 32 KiB, and the complete formatted line is capped at 256 KiB. Malformed structured UTF-8 is replaced before serialization. |

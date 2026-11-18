@@ -238,8 +238,8 @@ checks that accept an empty result as equality.
 | Normalize POSIX      |        221.3 |       669.5 |               2 |              8 |
 | Resolve backup path  |        538.7 |       826.5 |               8 |             12 |
 | Relative containment |        514.5 |     1,456.2 |               6 |             24 |
-| Read 1 KiB UTF-8      |      4,080.6 |     2,431.9 |               3 |              3 |
-| Write 1 KiB UTF-8     |    309,618.4 |   144,149.4 |               2 |              2 |
+| Read 1 KiB UTF-8     |      4,080.6 |     2,431.9 |               3 |              3 |
+| Write 1 KiB UTF-8    |    309,618.4 |   144,149.4 |               2 |              2 |
 
 The named `serve_delivery_http_test` passed **1/1 binary, 7/7 cases**
 in each profile. The commands were
@@ -298,3 +298,106 @@ their original boundaries. The old layout description in
 | Structured diagnostic |        662.2 |       721.1 |               8 |             14 |
 | Format tokens         |        255.5 |       202.0 |               3 |              2 |
 | Error                 |        102.6 |       295.6 |               3 |              6 |
+
+## Combined build and regression evidence
+
+All five production changes are present at
+`bd8d7da191286f3ce4aac445f5e9ef12e41eed16`, tree
+`493412442cde4f3b290aa1a36164ec178bfcc453`.
+
+| Production source | Removed | Added | Net removed |
+| ----------------- | ------: | ----: | ----------: |
+| Date              |     489 |    89 |         400 |
+| Headers           |      40 |     6 |          34 |
+| Environment       |     120 |    55 |          65 |
+| Filesystem        |     314 |    57 |         257 |
+| Console           |     330 |   116 |         214 |
+| Total             |   1,293 |   323 |         970 |
+
+`python3 -B /tmp/uos-small-r1/link-entrypoints.py PROFILE` compiled and
+linked the gateway, KV conversion and KV proof executables against the
+complete production object graph, the existing startup translation unit,
+and both vendor archives. All three linked in each profile. The local run
+used disposable namespace fixtures. No packaged release or Mac runtime
+was exercised.
+
+`python3 -B /tmp/uos-small-r1/gate.py PROFILE run all 3` executed all
+441 test binaries with stable inputs. Both ICU 74.2 runs returned exit 1
+with **437/441 binaries and 5,022/5,027 cases**. There were no build
+failures or timeouts. The release receipt SHA-256 is
+`13c4a8c80543e7217312384881dde2acd88252766308c7a8cb4ba2baee072194`.
+The sanitizer receipt SHA-256 is
+`2499dcd48f0c3cc6ab0ae90d4c90f3da7b076b6b1880a5dc46706c43355c449e`.
+
+| Failing fixture                         | Observed difference                                                                                                                                                                                                                                                                                     |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude_code_usage_schema_test`         | The string `"0"` leaves the normalized deadline null. Bun interpreted it as 2000-01-01. The raw provider value is preserved.                                                                                                                                                                            |
+| `codex_external_auth_differential_test` | Three synthetic `last_refresh` strings are rejected in one case. The inputs are `"Nov 16 2026"`, `" 2026-11-16 "` and `"1"`. Canonical ISO and the official access-only fixture pass. The isolated Bun 1.4.0 probe returned 1794787200000, 1794787200000 and 978307200000 for the three legacy strings. |
+| `rt/http_test`                          | Two malformed redirect asserts in one case expect the old `Location` spelling and the rejected input in the message. The same two values still throw `TypeError`.                                                                                                                                       |
+| `rt/url_idna_test`                      | Two ICU 74.2 Unicode cases fail against the port's ICU 78.3 fixture, independent of the five runtime helpers.                                                                                                                                                                                           |
+
+The first three fixtures and their vector files are outside the assigned
+paths. Their expectations are unchanged in this branch.
+
+### Pinned ICU sweep
+
+ICU 78.3 was built from the official `icu4c-78.3-sources.tgz` archive in
+scratch. The release-published SHA-256 checked by `sha256sum -c` was
+`3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0`.
+Commands were `../icu/source/configure --prefix="$scratch/install"
+--disable-samples --disable-tests --disable-extras`, `make -j4` and
+`make install`. Only `src/rt/url.cpp` includes ICU headers. The scratch
+driver rebuilt that object and linked the ICU 78.3 libraries into every
+binary. The library location is outside the fixture's private `/tmp`
+mount.
+
+The first ICU 78.3 trial supplied the library directory in
+`LD_LIBRARY_PATH`. Several fixtures correctly clear their child process
+environment, which caused loader exit 127. Both trials returned exit 1
+with 433/441 binaries and 5,002/5,010 reported cases. This also exposed
+an out-of-scope test defect at `tests/local_admin_auth_test.cpp:324`:
+after its child probe exits 127, the test dereferences a missing JSON
+member and crashes. The sanitizer trial captured the null read. Binding
+the ICU directory with linker RPATH resolved the loader failure, and the
+auth fixture then passed 17/17 cases in both profiles.
+
+The final command for each profile was
+`UOS_ICU_ROOT="$(realpath ../tmp)/icu-78.3" python3 -B /tmp/uos-small-r1/gate.py PROFILE run all 3`.
+The scratch linker added `-Wl,--disable-new-dtags,-rpath,<ICU lib directory>`
+so the existing child environments could remain isolated.
+
+| Profile             | Binaries passed | Cases passed | Exit | Wall time |
+| ------------------- | --------------: | -----------: | ---: | --------: |
+| GCC 14 release      |         438/441 |  5,024/5,027 |    1 |   148.1 s |
+| Clang 21 sanitizers |         438/441 |  5,024/5,027 |    1 |   296.8 s |
+
+Both IDNA cases passed in both final sweeps. There were zero build
+failures, timeouts or sanitizer findings in those sweeps. The three
+remaining cases are the Date and Headers snapshots listed above.
+`python3 -B /tmp/uos-small-r1/compare-original.py` relinked the three
+fixtures with the original Date and Headers objects and the rest of the
+same release graph. That comparison passed all 13 cases.
+
+The final release receipt SHA-256 is
+`32ab67b69f78b2c4014de1edf980a8c0558c1a37fcd3d8644ce582bd36414e32`.
+The final sanitizer receipt SHA-256 is
+`172d0fef0116d0d3c03ff286a82f31f1d73b6cf89a2be5677427ca380954bc3f`.
+Both record the same immutable source/test input digest
+`4e51546d85fd38e07777c073b5ae1e04ee83e6e7e490fe4e10cf34aa88318f35`
+at the source commit listed above.
+
+The final Headers corpus rerun,
+`UOS_CAMPAIGN_LABEL=final python3 -B /tmp/uos-small-r1/gate.py asan fuzz headers_library 1`,
+completed **1,513,289 inputs in 121 seconds**, exit 0. Each of the five
+registered harnesses has a clean two-minute smoke result.
+
+### Checkout handoff
+
+The component commits are on the assigned `agent-job` continuation.
+The GitHub push preflight for the assigned
+`pool-partial/cppgw-std-small-helpers-20261117-44194982655` ref returned
+exit 128 because this checkout has no GitHub write credentials.
+`gh auth status --hostname github.com` also returned exit 1. The task
+history diverges from `origin/development`; integration of this C++ work
+remains with the coordinating branch owner. The final commit after the
+verified source tree contains only report and deviation formatting.
