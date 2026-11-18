@@ -52,11 +52,11 @@ The portable build driver at `cmake/ci/driver.py` currently generates a vendor a
 The checked source commit is `8c988f466cd96416877d2058156f0e4f35fb7015`, tree
 `ba45a45c30c4753daee7b825a67166c5f0e92634`. Compared with `093a9e05`, the three first-party production files add 210 lines and remove 284 lines, for a net reduction of 74 physical lines. The removed code includes the fetch status and field scanner, numeric Content-Length parser, chunked state machine, and WebSocket status and field scanner.
 
-| Production file                    | Added | Removed |
-| ---------------------------------- | ----: | ------: |
-| `fetch_transport_http.cpp`         |   148 |     223 |
-| `fetch_transport_internal.hpp`     |    40 |      20 |
-| `websocket_client.cpp`             |    22 |      41 |
+| Production file                | Added | Removed |
+| ------------------------------ | ----: | ------: |
+| `fetch_transport_http.cpp`     |   148 |     223 |
+| `fetch_transport_internal.hpp` |    40 |      20 |
+| `websocket_client.cpp`         |    22 |      41 |
 
 The client adapter pauses llhttp at the head and message boundaries. It keeps the fetch head and field quotas, HTTP/1.x and reason-phrase validation, raw field order and duplicates, and the fetch bodyless response rules. The transfer-coding guard rejects repeated or nonfinal `chunked` and catches cases such as `Transfer-Encoding: chunked,` where llhttp would otherwise stream chunk delimiters as close-delimited payload. The WebSocket adapter keeps its 16 KiB head quota and preserves bytes belonging to the first frame. It moves ASCII strings directly and converts Latin-1 values only when they contain a non-ASCII byte. Socket-level request writing, response decoding and connection lifecycle retain their existing paths.
 
@@ -90,13 +90,13 @@ Bun 1.4.0 ran the deviation fixtures using `bun --no-env-file --no-install respo
 
 Both benchmark binaries used GCC 14.2, `-O2 -ffunction-sections -fdata-sections`, the same driver and Boost 1.92 headers, and `mold --gc-sections`. The benchmark compiled the deployed parser entry points from the reference commit and candidate, plus the same runtime dependencies. Only the candidate linked the three llhttp C files. The allocation counter wrapped `malloc`, `calloc`, `realloc` and C++ allocation operators. Each process warmed up 500 operations per workload, then ran nine batches of 100,000 operations on the short workloads, 35,000 on split heads, and 10,000 on the 64 KiB body. Four processes ran in reference, candidate, candidate, reference order pinned to CPU 3. The table reports the mean of the two batch medians in thread CPU nanoseconds per operation. All response lengths and body sizes matched.
 
-| Workload                             | Before ns/op | After ns/op | Before allocations/op | After allocations/op |
-| ------------------------------------ | -----------: | ----------: | --------------------: | -------------------: |
-| Fetch Content-Length head            |        394.1 |       466.7 |                     7 |                    7 |
+| Workload                              | Before ns/op | After ns/op | Before allocations/op | After allocations/op |
+| ------------------------------------- | -----------: | ----------: | --------------------: | -------------------: |
+| Fetch Content-Length head             |        394.1 |       466.7 |                     7 |                    7 |
 | Fetch split head in 128-byte feeds    |      3,180.6 |     2,955.7 |                    41 |                   45 |
 | Fetch head and four 9-byte SSE chunks |        461.8 |       661.1 |                     9 |                    9 |
 | Fetch head and eight 8 KiB chunks     |      2,732.6 |     2,953.5 |                    11 |                   11 |
-| WebSocket 101 with first frame       |        652.9 |       503.4 |                     8 |                    8 |
+| WebSocket 101 with first frame        |        652.9 |       503.4 |                     8 |                    8 |
 
 The split-head test repeats head parsing on each cumulative read, as the live fetch caller does today. The chunk tests include the synthetic head setup that the live standalone chunk decoder currently uses. The allocation count covers the parser and adapter and excludes socket, TLS and content-decoder work. The reference and candidate binaries had SHA-256 digests `8d4c92f59bf95370890798eefea02652087b9d2cf13b28d8311fe65127eee8a5` and `343451f73fdf5a2e4a4d119594438953573a1d1b4cf51cdc96454c3198a70b42`.
 
