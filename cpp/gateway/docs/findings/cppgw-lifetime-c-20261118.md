@@ -201,7 +201,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/index.cpp`
 - [x] `src/codex/manual_reset.cpp`
 - [x] `src/codex/manual_reset_state.cpp`
-- [ ] `src/codex/native_auth.cpp`
+- [x] `src/codex/native_auth.cpp`
 - [ ] `src/codex/native_auth_transport.cpp`
 - [ ] `src/codex/overage_settings.cpp`
 - [ ] `src/codex/quota.cpp`
@@ -1295,3 +1295,11 @@ Manual reset keeps request, billing proof and selection data in local snapshots.
 ### `src/codex/manual_reset_state.cpp`
 
 Manual reset state comparison, JSON conversion and key construction are synchronous. Each literal-backed view is consumed in its loop iteration.
+
+### `src/codex/native_auth.cpp`
+
+Native binding carries immutable auth snapshots, exact KV rows, and owned copies of optional hook callables.
+
+- 73-93,153-178,180-235,244-291 · document, hash, and binding awaits · **SAFE** · Document text and auth snapshots belong to each frame. The installed readAuth callable is copied before invocation, pool iterators are consumed or copied before the next await, and KV stays live through each transaction.
+- 318-420 · generation, binding, and external adoption · **SAFE** · The frame owns the candidate pool and generation inputs. Persist/copy and hash operations retain their local records through joined waits.
+- 424-480 · native refresh hook and socket join · **SAFE** · The account context and hook copy stay live until refresh settles, and the transport entry point takes owned strings.
