@@ -5265,8 +5265,27 @@
       ]
     },
     "src/responses_native_headers.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed early-header dispatch wrapper and error capture.",
+      "sites": [
+        {
+          "lines": [
+            26,
+            27,
+            55,
+            56,
+            65,
+            85
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The plain callback constructs a Task with copied request, headers and context. Header processing keeps its context and response through bounded reading, and the weak-map entry owns an error snapshot."
+        }
+      ]
     },
     "src/responses_request.cpp": {
       "reviewed": false,

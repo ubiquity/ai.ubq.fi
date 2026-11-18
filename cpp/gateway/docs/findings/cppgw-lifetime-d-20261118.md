@@ -227,7 +227,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/responses_buffered.cpp`
 - [x] `src/responses_failover_stream.cpp`
 - [x] `src/responses_handler.cpp`
-- [ ] `src/responses_native_headers.cpp`
+- [x] `src/responses_native_headers.cpp`
 - [ ] `src/responses_request.cpp`
 - [x] `src/responses_stream.cpp`
 - [ ] `src/runtime_config.cpp`
@@ -1197,6 +1197,12 @@ Reviewed request-state construction, recovery, delivery and telemetry, including
 - L315, 317, 318, 319, 360 **SAFE** · The interval closure owns a copied probe. The checked-in circuit provides no probe, so this timer cannot start on a current route. Terminal, cancel and failure callbacks clear an armed timer.
 - L361, 365, 368, 372, 374, 375, 378, 379, 382, 383, 386, 388, 389, 392, 397, 398, 405, 407, 412, 415, 418, 420, 424, 426, 428 **SAFE** · Delegated request and telemetry tasks are directly awaited with their request, parsed body and context retained by the route/image caller. Streaming callbacks after handoff use a separate Delivery snapshot.
 
+### `src/responses_native_headers.cpp`
+
+Reviewed early-header dispatch wrapper and error capture.
+
+- L26, 27, 55, 56, 65, 85 **SAFE** · The plain callback constructs a Task with copied request, headers and context. Header processing keeps its context and response through bounded reading, and the weak-map entry owns an error snapshot.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1445,4 +1451,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-120/286 files reviewed. 239 sites: 221 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+121/286 files reviewed. 240 sites: 222 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
