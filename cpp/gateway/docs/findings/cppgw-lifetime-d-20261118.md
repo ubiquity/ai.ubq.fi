@@ -301,7 +301,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_codex_evaluation.hpp`
 - [x] `include/uos/authority/native_codex_mutations.hpp`
 - [x] `include/uos/authority/native_contracts.hpp`
-- [ ] `include/uos/authority/native_kernel.hpp`
+- [x] `include/uos/authority/native_kernel.hpp`
 - [ ] `include/uos/authority/native_kernel_contracts.hpp`
 - [ ] `include/uos/authority/native_paid.hpp`
 - [ ] `include/uos/authority/native_paid_contracts.hpp`
@@ -1682,6 +1682,12 @@ Reviewed the native quota value contracts and synchronous helpers.
 
 - L49, 58, 62, 67, 75, 79 **SAFE** · The plan labels refer to static literals, and variant members own their payloads.
 
+### `include/uos/authority/native_kernel.hpp`
+
+Reviewed synchronous usage-plan and kernel ID interfaces.
+
+- L230, 233, 236 **SAFE** · Plan labels have static storage, and the plan records and optional results own their data.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1930,4 +1936,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-193/286 files reviewed. 365 sites: 344 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+194/286 files reviewed. 366 sites: 345 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

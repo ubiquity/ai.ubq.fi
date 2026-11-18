@@ -8161,8 +8161,23 @@
       ]
     },
     "include/uos/authority/native_kernel.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed synchronous usage-plan and kernel ID interfaces.",
+      "sites": [
+        {
+          "lines": [
+            230,
+            233,
+            236
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Plan labels have static storage, and the plan records and optional results own their data."
+        }
+      ]
     },
     "include/uos/authority/native_kernel_contracts.hpp": {
       "reviewed": false,
