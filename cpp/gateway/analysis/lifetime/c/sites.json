@@ -2457,7 +2457,8 @@
       "sites": []
     },
     "src/deepseek/context_admission_failure.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Failure marking and recognition are synchronous. Response identity tracking uses weak keys.",
       "sites": []
     },
     "src/deepseek/flash_aliases.cpp": {

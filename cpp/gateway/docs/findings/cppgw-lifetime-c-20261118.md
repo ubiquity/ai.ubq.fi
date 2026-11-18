@@ -225,7 +225,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/supervisor_secret.cpp`
 - [x] `src/codex/supervisor_transport.cpp`
 - [x] `src/deepseek/chat_projection.cpp`
-- [ ] `src/deepseek/context_admission_failure.cpp`
+- [x] `src/deepseek/context_admission_failure.cpp`
 - [ ] `src/deepseek/flash_aliases.cpp`
 - [ ] `src/deepseek/forwarded_payload_policy.cpp`
 - [ ] `src/deepseek/handlers.cpp`
@@ -1453,3 +1453,7 @@ Socket events now use weak connection state. The separate per-call abort callbac
 ### `src/deepseek/chat_projection.cpp`
 
 Projection and normalization are synchronous. The system message iterator is used only while its local vector is live.
+
+### `src/deepseek/context_admission_failure.cpp`
+
+Failure marking and recognition are synchronous. Response identity tracking uses weak keys.
