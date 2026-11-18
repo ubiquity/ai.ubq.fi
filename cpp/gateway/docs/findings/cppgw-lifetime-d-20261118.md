@@ -131,7 +131,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/catalog/store.cpp`
 - [x] `src/catalog/types.cpp`
 - [x] `src/config.cpp`
-- [ ] `src/debug_routing.cpp`
+- [x] `src/debug_routing.cpp`
 - [ ] `src/decisions/handlers.cpp`
 - [ ] `src/defaults.cpp`
 - [ ] `src/handler/admission.cpp`
@@ -808,6 +808,12 @@ Reviewed metadata, lease and protocol constants and record conversion. The synch
 
 Reviewed synchronous model and transport environment configuration. Views and regex inputs are consumed during parsing and derived configuration owns its values. No suspension or escaping callback.
 
+### `src/debug_routing.cpp`
+
+Reviewed debug-route cache reads and mutation helpers.
+
+- L89, 102, 105, 122, 137, 141 **SAFE** · The cache hit returns a copy before any await. Each in-flight load or write retains its KV, parsed values and options until the delegated task settles.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -913,4 +919,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-65/286 files reviewed. 148 sites: 139 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+66/286 files reviewed. 149 sites: 140 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

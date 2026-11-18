@@ -2959,8 +2959,27 @@
       "sites": []
     },
     "src/debug_routing.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed debug-route cache reads and mutation helpers.",
+      "sites": [
+        {
+          "lines": [
+            89,
+            102,
+            105,
+            122,
+            137,
+            141
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The cache hit returns a copy before any await. Each in-flight load or write retains its KV, parsed values and options until the delegated task settles."
+        }
+      ]
     },
     "src/decisions/handlers.cpp": {
       "reviewed": false,
