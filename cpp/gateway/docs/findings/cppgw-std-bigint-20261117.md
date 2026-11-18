@@ -124,3 +124,29 @@ The final source and the baseline reran the seven paired samples described above
 | Convert 256 bits to binary64           |     26.46 |        9.67 |              1.000 |                0.000 |
 
 The type remains 32 bytes. The larger number of allocations for wide decimal formatting reflects Boost's `str()` implementation.
+
+### Independent controls and handoff
+
+GCC 14.2.0 compiled the final BigInt source and its regression with the strict port flags at `-O2`, and the test passed 4/4 cases. The scratch Number control using the final release and sanitizer objects passed 21/21 cases in each profile inside the CI driver's namespaces. It changes exactly the three expected values for `"-"`, `"+"` and `"0x "` from zero to rejection. The checked-in Number vector file is outside this job's write scope.
+
+The URL baseline control uses the unchanged `src/rt/{url,string}.cpp` and `tests/rt/url_idna_test.cpp`. It failed both cases against system ICU 74.2. The same sources passed both cases against ICU 78.3 in release and ASan/UBSan. The upstream ICU archive verified against the release's `SHASUM512.txt`. The control is reproducible on this runner with `bash "$scratch/icu-idna-control.sh"`. [ICU 78.3 source release](https://github.com/unicode-org/icu/releases/tag/release-78.3)
+
+The v3 benchmark compile commands use the following inputs. Each of the seven runs invokes `env -i HOME="$scratch/bench/final/home" TMPDIR="$scratch/bench/final/tmp" PATH=/usr/bin:/bin LANG=C.UTF-8 taskset -c 3 "$scratch/bench/final/<old-or-new>"`.
+
+```bash
+strict=(-O2 -std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror
+  -DBOOST_JSON_NO_LIB -DBOOST_CONTAINER_NO_LIB -DBOOST_SYSTEM_NO_LIB
+  -DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING -DUOS_GATEWAY_NATIVE_LIBRARIES=1
+  -isystem "$scratch/boost_1_92_0" -I cpp/gateway/include -I cpp/gateway)
+clang++-21 -I "$scratch/old/include" "${strict[@]}" "$scratch/old/number.cpp" \
+  "$scratch/bench/bigint-bench.cpp" -o "$scratch/bench/old"
+clang++-21 "${strict[@]}" cpp/gateway/src/rt/number.cpp \
+  "$scratch/bench/bigint-bench.cpp" -o "$scratch/bench/final/new"
+git diff --numstat 093a9e05 HEAD -- cpp/gateway/src/rt/number.cpp cpp/gateway/include/uos/rt/number.hpp
+```
+
+At 01:48 UTC, release had completed 355 of 442 closures with 353 passing binaries and 3,841 passing cases out of 3,844. ASan/UBSan had completed 220 of 442 with 218 passing binaries and 1,914 passing cases out of 1,917. Each reported two failing binaries, Number and IDNA. Every completed application binary passed, including the FNV-1a reliability hash in both profiles.
+
+A fetch refreshed `origin/development` to `6bd78fc5e3b0783809691c6bd45d25ac45e9696e` and the port branch to `45118332b287b7ba9534bb66ab1518f1990a9d9e`. The development tree has no `cpp/gateway` entry. `git merge-tree --write-tree --name-only origin/claude/cpp-gateway-port HEAD` found one add/add conflict in the shared `DEVIATIONS-FROM-BUN.md`, which the two branches created independently. The fuzz registry merged in the preview.
+
+`GIT_TERMINAL_PROMPT=0 git push --dry-run --porcelain origin HEAD:refs/heads/pool-partial/cppgw-std-bigint-20261117-44188151110` failed with GitHub requiring authentication. The same dry run with GitHub CLI's credential helper failed. The BigInt commits are in the local task branch pending repository handoff.
