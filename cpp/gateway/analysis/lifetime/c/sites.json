@@ -140,8 +140,22 @@
       ]
     },
     "include/uos/codex/banked_reset_provider.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Reset provider interface and read-only display APIs.",
+      "sites": [
+        {
+          "lines": "163-166",
+          "kind": "member task interface",
+          "verdict": "SAFE",
+          "reason": "The built-in upstream implementation synchronously copies its shared binding into free tasks; production callers also retain their provider handle."
+        },
+        {
+          "lines": "184,279,282",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Display tasks own options including the clock/fetch dependencies, and their abort signal."
+        }
+      ]
     },
     "include/uos/codex/banked_reset_submission.hpp": {
       "status": "pending",
