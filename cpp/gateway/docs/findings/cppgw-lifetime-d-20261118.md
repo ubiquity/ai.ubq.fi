@@ -107,7 +107,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_authority_kernel.cpp`
 - [x] `src/authority/native_authority_paid.cpp`
 - [x] `src/authority/native_authority_principals.cpp`
-- [ ] `src/authority/native_authority_rpc.cpp`
+- [x] `src/authority/native_authority_rpc.cpp`
 - [ ] `src/authority/native_authority_runtime.cpp`
 - [ ] `src/authority/native_authority_sql.cpp`
 - [ ] `src/authority/native_codex.cpp`
@@ -691,6 +691,13 @@ Reviewed the principal control capability, synchronous commit closures, and shar
 - L267, 268, 282, 287, 289, 290, 295, 296, 299, 301 **SAFE** · The pending work is copied out of each map to an owned Promise and maps are looked up again by key after suspension. Commit and cleanup tasks remain awaited by a control frame retaining their receiver and borrowed SQL components.
 - L306, 307, 308, 311, 319, 321, 322, 330, 331, 335, 341, 348 **SAFE** · Callback captures move or copy the command, binding and verified arguments into stable frames. SQL uses its reference captures inline. The admin variant pointer refers to the current frame's immutable verified value.
 
+### `src/authority/native_authority_rpc.cpp`
+
+Reviewed command parsing, server and client adapters, and escaping transport callbacks.
+
+- L133, 143, 152, 161, 256, 257, 260, 264, 267, 277, 278 **SAFE** · Each server transport lambda is a noncoroutine factory and transfers a port or copied callable and binding to an owning child frame before returning. Each injected callable remains live through its direct wait.
+- L175, 184, 193, 270, 271, 272, 273, 281, 282 **SAFE** · The synchronous facade copies each transport, epoch and argument object into the named client Task. The Task owns its encoded command and callback until the reply.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -796,4 +803,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-42/286 files reviewed. 131 sites: 122 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+43/286 files reviewed. 133 sites: 124 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

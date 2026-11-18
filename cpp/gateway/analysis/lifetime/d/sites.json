@@ -2397,8 +2397,52 @@
       ]
     },
     "src/authority/native_authority_rpc.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed command parsing, server and client adapters, and escaping transport callbacks.",
+      "sites": [
+        {
+          "lines": [
+            133,
+            143,
+            152,
+            161,
+            256,
+            257,
+            260,
+            264,
+            267,
+            277,
+            278
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each server transport lambda is a noncoroutine factory and transfers a port or copied callable and binding to an owning child frame before returning. Each injected callable remains live through its direct wait."
+        },
+        {
+          "lines": [
+            175,
+            184,
+            193,
+            270,
+            271,
+            272,
+            273,
+            281,
+            282
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The synchronous facade copies each transport, epoch and argument object into the named client Task. The Task owns its encoded command and callback until the reply."
+        }
+      ]
     },
     "src/authority/native_authority_runtime.cpp": {
       "reviewed": false,
