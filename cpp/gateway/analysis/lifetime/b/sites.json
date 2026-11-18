@@ -1464,8 +1464,9 @@
       "note": "The inventory overloads own their KV and input sets. Private borrowed collectors are classified in the source."
     },
     "include/uos/cache/kv_migration_projection.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "Both projection entries own their KV and pair vector. Private borrows and snapshots are classified at their definitions."
     },
     "include/uos/cache/kv_migration_usage.hpp": {
       "reviewed": false,
