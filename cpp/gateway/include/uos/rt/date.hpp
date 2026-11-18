@@ -1,9 +1,8 @@
 #pragma once
-// JavaScript Date with Bun 1.4's results: a time value in epoch milliseconds (NaN is an
-// Invalid Date), Date.parse, Date.UTC, the UTC getters and setters and the string forms.
-// Local time is UTC: the service runs with TZ=UTC (docs/rt/text.md), so every local-time
-// reading (date-time strings without an offset, toString) uses offset 0.
+// A UTC time value in epoch milliseconds, with NaN representing an invalid date.
+// Date-time strings without an offset and the local string form use UTC.
 #include "uos/rt/error.hpp"
+#include <chrono>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -26,33 +25,23 @@ namespace uos::rt {
     // 1900..1999. Every argument is truncated toward zero first.
     static double UTC(double year, double month = 0, double date = 1, double hours = 0, double minutes = 0, double seconds = 0, double ms = 0) noexcept;
 
-    // `date.getTime()` / `date.valueOf()` / `+date`.
     double getTime() const noexcept { return time_; }
-    double valueOf() const noexcept { return time_; }
-
-    // UTC getters (NaN for an Invalid Date). getUTCMonth is 0-based, getUTCDay 0 = Sunday.
+    // Calendar getters return NaN for an invalid date. getUTCMonth is zero-based.
     double getUTCFullYear() const noexcept;
     double getUTCMonth() const noexcept;
     double getUTCDate() const noexcept;
-    double getUTCDay() const noexcept;
-    double getUTCHours() const noexcept;
-    double getUTCMinutes() const noexcept;
-    double getUTCSeconds() const noexcept;
-    double getUTCMilliseconds() const noexcept;
-    // `date.getTimezoneOffset()`: 0 under TZ=UTC (NaN for an Invalid Date).
-    double getTimezoneOffset() const noexcept;
 
-    // UTC setters: each returns the new time value. An omitted optional argument keeps
-    // the current field, as in JS. On an Invalid Date they return NaN, except
-    // setUTCFullYear, which starts from time value 0.
-    double setTime(double time) noexcept;
-    double setUTCFullYear(double year, std::optional<double> month = std::nullopt, std::optional<double> date = std::nullopt) noexcept;
-    double setUTCMonth(double month, std::optional<double> date = std::nullopt) noexcept;
-    double setUTCDate(double date) noexcept;
-    double setUTCHours(double hours, std::optional<double> minutes = std::nullopt, std::optional<double> seconds = std::nullopt, std::optional<double> ms = std::nullopt) noexcept;
-    double setUTCMinutes(double minutes, std::optional<double> seconds = std::nullopt, std::optional<double> ms = std::nullopt) noexcept;
-    double setUTCSeconds(double seconds, std::optional<double> ms = std::nullopt) noexcept;
-    double setUTCMilliseconds(double ms) noexcept;
+    struct UtcFields {
+      int year;  // TimeClip spans more than chrono::year.
+      std::chrono::month month;
+      std::chrono::day day;
+      std::chrono::weekday weekday;
+      std::chrono::hh_mm_ss<std::chrono::milliseconds> clock;
+    };
+    std::optional<UtcFields> utcFields() const noexcept;
+
+    // Truncate and normalize the UTC components, using a zero-based month and a literal year.
+    static Date fromUtc(double year, double month, double day, double hour = 0, double minute = 0, double second = 0, double ms = 0) noexcept;
 
     // `date.toISOString()`: YYYY-MM-DDTHH:mm:ss.sssZ, with a signed six-digit year outside
     // 0..9999. RangeError "Invalid Date" for an Invalid Date.
