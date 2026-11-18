@@ -47,7 +47,7 @@ namespace {
     }
     if (msg.is_object() && rt::hasOwn(msg.get_object(), "prompt_cache_breakpoint")) return invalid("prompt_cache_breakpoint is only valid on supported input content blocks", param + ".prompt_cache_breakpoint");
     if (utils::isRecord(msg) && messageType && *messageType != "message") {
-      if (rt::startsWith(*messageType, "input_") || *messageType == "text" || *messageType == "image_url" || *messageType == "output_text") return invalid(param + ".type is not supported", param + ".type");
+      if (messageType->starts_with("input_") || *messageType == "text" || *messageType == "image_url" || *messageType == "output_text") return invalid(param + ".type is not supported", param + ".type");
       flushResponsesContentBuffer(accumulator);
       const auto normalized = n::normalizeFunctionCallOutputItem(msg.get_object(), param);
       if (const auto* error = std::get_if<n::NormalizationResultNotOk>(&normalized)) return invalid(error->message, error->param);
