@@ -211,6 +211,7 @@ namespace uos::rt::ws {
   }
 
   bool EventEmitter::emit(std::string_view event, const EventArgs& args) {
+    const auto receiver = pinEventReceiver();
     std::vector<Registration> listeners;
     for (const Registration& entry : registrations_) {
       if (entry.event == event) listeners.push_back(entry);

@@ -100,6 +100,22 @@ TEST("a synchronous Unix handshake exception releases the unpublished WebSocket"
   EXPECT_THROWS(ws::WebSocket::create(address), boost::system::system_error);
 }
 
+TEST("public event delivery retains the WebSocket through its last listener") {
+  auto websocket = std::make_shared<ws::WebSocket>(nullptr);
+  const std::weak_ptr<ws::WebSocket> weak = websocket;
+  ws::EventEmitter& emitter = *websocket;
+  int calls = 0;
+  emitter.on("message", [&] { websocket.reset(); });
+  emitter.once("message", [&] {
+    EXPECT(!weak.expired());
+    ++calls;
+  });
+
+  EXPECT(emitter.emit("message"));
+  EXPECT_EQ(calls, 1);
+  EXPECT(weak.expired());
+}
+
 TEST("backpressured socket writes survive partial completion and report cancellation once") {
   rt::FakeClock clock;
   rt::Loop loop(clock);
