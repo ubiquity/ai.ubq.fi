@@ -231,7 +231,7 @@ describe("Sentinel complete CI check set", () => {
     for (const paths of ["AGENTS.md", "scripts/test-scope.test.ts", "rust/crates/gateway-native/src/lib.rs"]) {
       const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], context, paths);
       expect(ci.status).toBe(0);
-      expect(JSON.parse(ci.stdout)).toMatchObject({ completeCheckSet: true, needsDocs: true, needsArtifact: true, needsRustNative: true, needsRustWasm: true });
+      expect(JSON.parse(ci.stdout)).toMatchObject({ completeCheckSet: true, needsDocs: true, needsArtifact: true });
     }
     const eventPath = join(fixture, "invalid-dispatch.json");
     const spoofed = { ...context, GITHUB_BASE_REF: "development", GITHUB_PR_AUTHOR: "ubiquity-sentinel[bot]", GITHUB_ACTOR: "ubiquity-sentinel[bot]" };
@@ -477,33 +477,18 @@ describe("Sentinel complete CI check set", () => {
     expect(Object.values(jobs).every((job) => job.env?.GITHUB_PR_AUTHOR === undefined)).toBe(true);
     for (const job of Object.values(jobs)) expect(job.if).toContain(mergedOnly);
     const jobNames = Object.keys(jobs).sort((left, right) => left.localeCompare(right));
-    expect(jobNames).toEqual([
-      "darwin-native",
-      "docs",
-      "mac-containment",
-      "native",
-      "portable",
-      "rust-native",
-      "rust-wasm",
-      "scope",
-      "validate",
-      "verify-artifact",
-    ]);
+    expect(jobNames).toEqual(["darwin-native", "docs", "mac-containment", "native", "portable", "scope", "validate", "verify-artifact"]);
     expect(jobs.scope.needs).toBeUndefined();
     expect(jobs.docs.needs).toBe("scope");
     expect(jobs.portable.needs).toBe("scope");
-    expect(jobs["rust-native"].needs).toEqual(["scope", "portable"]);
-    expect(jobs["rust-wasm"].needs).toEqual(["scope", "portable", "rust-native"]);
-    expect(jobs.native.needs).toEqual(["scope", "portable", "rust-native", "rust-wasm"]);
+    expect(jobs.native.needs).toEqual(["scope", "portable"]);
     expect(jobs["mac-containment"].needs).toEqual(["scope", "portable"]);
     expect(jobs["darwin-native"].needs).toEqual(["scope", "portable"]);
-    expect(jobs.validate.needs).toEqual(["scope", "portable", "rust-native", "rust-wasm"]);
+    expect(jobs.validate.needs).toEqual(["scope", "portable"]);
     expect(jobs["verify-artifact"].needs).toEqual(["scope", "validate", "native", "mac-containment", "darwin-native"]);
     expect(jobs.scope["timeout-minutes"]).toBe(5);
     expect(jobs.docs["timeout-minutes"]).toBe(10);
     expect(jobs.portable["timeout-minutes"]).toBe(20);
-    expect(jobs["rust-native"]["timeout-minutes"]).toBe(30);
-    expect(jobs["rust-wasm"]["timeout-minutes"]).toBe(30);
     expect(jobs.validate["timeout-minutes"]).toBe(5);
     expect(jobs.native["timeout-minutes"]).toBe(45);
     expect(jobs["mac-containment"]["timeout-minutes"]).toBe(10);
@@ -528,9 +513,6 @@ describe("Sentinel complete CI check set", () => {
       "needs_darwin_tests",
       "needs_artifact",
       "needs_typescript_validate",
-      "needs_rust_native",
-      "needs_rust_wasm",
-      "needs_rust_build",
     ]) {
       expect(jobs.scope.outputs?.[output]).toBe(`\${{ steps.scope.outputs.${output} }}`);
     }
@@ -564,38 +546,15 @@ describe("Sentinel complete CI check set", () => {
     expect(portableCommands).toContain("bun --no-env-file run check");
     expect(portableCommands).toContain("spec:drift --verify-source");
     expect(portableCommands).toContain("sh scripts/verify.sh --no-native-kv");
-    expect(jobs["rust-native"].if).toContain("needs.portable.result == 'success'");
-    expect(jobs["rust-wasm"].if).toContain("needs.rust-native.result == 'success'");
     expect(jobs.native.if).toContain("needs.portable.result == 'success'");
-    expect(jobs.native.if).toContain("needs.rust-native.result == 'skipped'");
-    expect(jobs.native.if).toContain("needs.rust-wasm.result == 'skipped'");
-    expect(jobs["rust-native"].steps.some((step) => step.run?.includes("scripts/rust-verify.ts --stage native"))).toBe(true);
-    expect(jobs["rust-wasm"].steps.some((step) => step.run?.includes("scripts/rust-verify.ts --stage wasm"))).toBe(true);
+    expect(commands).not.toContain("scripts/rust-verify.ts");
     const requiredGates = jobs.validate.steps.find((step) => step.name === "Require every selected gate")?.run ?? "";
     expect(requiredGates).toContain('test "$PORTABLE_RESULT" = success');
-    expect(requiredGates).toContain('test "$RUST_NATIVE_RESULT" = success');
-    expect(requiredGates).toContain('test "$RUST_WASM_RESULT" = success');
-    for (const result of ["failure", "cancelled", "skipped"]) {
-      const rejected = spawnSync("/bin/sh", ["-c", requiredGates], {
-        env: {
-          PORTABLE_REQUIRED: "false",
-          PORTABLE_RESULT: "skipped",
-          RUST_NATIVE_REQUIRED: "true",
-          RUST_NATIVE_RESULT: result,
-          RUST_WASM_REQUIRED: "false",
-          RUST_WASM_RESULT: "skipped",
-        },
-      });
-      expect(rejected.status).not.toBe(0);
-    }
+    expect(requiredGates).not.toContain("RUST_");
     const portableRejected = spawnSync("/bin/sh", ["-c", requiredGates], {
       env: {
         PORTABLE_REQUIRED: "true",
         PORTABLE_RESULT: "failure",
-        RUST_NATIVE_REQUIRED: "false",
-        RUST_NATIVE_RESULT: "skipped",
-        RUST_WASM_REQUIRED: "false",
-        RUST_WASM_RESULT: "skipped",
       },
     });
     expect(portableRejected.status).not.toBe(0);
@@ -603,10 +562,6 @@ describe("Sentinel complete CI check set", () => {
       env: {
         PORTABLE_REQUIRED: "true",
         PORTABLE_RESULT: "success",
-        RUST_NATIVE_REQUIRED: "true",
-        RUST_NATIVE_RESULT: "success",
-        RUST_WASM_REQUIRED: "true",
-        RUST_WASM_RESULT: "success",
       },
     });
     expect(accepted.status).toBe(0);
@@ -762,23 +717,24 @@ describe("test scope", () => {
   });
 });
 
-describe("Rust changed-path CI selection", () => {
-  test("Rust-only source gets both Rust gates without unrelated TypeScript tests", () => {
+describe("Rust changes are manual-only", () => {
+  test("Rust source selects no Rust gate and no unrelated TypeScript tests", () => {
     const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], {}, "rust/crates/gateway-core/src/state.rs");
     expect(ci.status).toBe(0);
-    expect(JSON.parse(ci.stdout)).toMatchObject({
+    const scope = JSON.parse(ci.stdout);
+    expect(scope).toMatchObject({
       paths: ["rust/crates/gateway-core/src/state.rs"],
       affectedTests: [],
       runAll: false,
       needsValidate: true,
       needsTypeScriptValidate: false,
-      needsRustNative: true,
-      needsRustWasm: true,
-      needsRustBuild: true,
       needsNativeKv: false,
       needsNativeBuild: false,
       needsArtifact: false,
     });
+    expect(scope).not.toHaveProperty("needsRustNative");
+    expect(scope).not.toHaveProperty("needsRustWasm");
+    expect(scope).not.toHaveProperty("needsRustBuild");
   });
 
   test("Rust documentation stays documentation-only on an ordinary PR", () => {
@@ -789,8 +745,6 @@ describe("Rust changed-path CI selection", () => {
       affectedTests: [],
       needsDocs: true,
       needsValidate: false,
-      needsRustNative: false,
-      needsRustWasm: false,
     });
   });
 
@@ -800,54 +754,18 @@ describe("Rust changed-path CI selection", () => {
     expect(JSON.parse(ci.stdout).affectedTests).toEqual(["scripts/test-scope.test.ts"]);
   });
 
-  test("complete contexts schedule real Rust jobs without widening selected tests", () => {
+  test("complete contexts do not restore Rust jobs", () => {
     for (const context of protectedContexts) {
       for (const selection of [docsSelection, { ...sourceSelection, paths: ["rust/crates/gateway-native/src/lib.rs"], affectedTests: [] }]) {
-        expect(ciScopeForSelection(selection, ROOT, context)).toMatchObject({
-          ...selection,
-          completeCheckSet: true,
-          needsRustNative: true,
-          needsRustWasm: true,
-          needsRustBuild: true,
-        });
+        const scope = ciScopeForSelection(selection, ROOT, context);
+        expect(scope.completeCheckSet).toBe(true);
+        expect(scope).not.toHaveProperty("needsRustNative");
+        expect(scope).not.toHaveProperty("needsRustWasm");
+        expect(scope).not.toHaveProperty("needsRustBuild");
       }
     }
   });
 });
-
-test.each([
-  "gateway-native",
-  "gateway-native-supervisor-read",
-  "gateway-quality",
-  "gateway-quality-syntax",
-  "gateway-claude-runtime-test-support",
-  "gateway-migration-test-support",
-])("native-only %s source does not schedule WASM compilation on ordinary PRs", (name) => {
-  const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], {}, `rust/crates/${name}/src/lib.rs`);
-  expect(ci.status).toBe(0);
-  expect(JSON.parse(ci.stdout)).toMatchObject({
-    affectedTests: [],
-    needsRustNative: true,
-    needsRustWasm: false,
-    needsRustBuild: false,
-    needsTypeScriptValidate: false,
-  });
-});
-
-test.each(["gateway-admin-test-support", "gateway-extras-runtime-test-support"])(
-  "portable %s fixture source keeps WASM compilation on ordinary PRs",
-  (name) => {
-    const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], {}, `rust/crates/${name}/src/lib.rs`);
-    expect(ci.status).toBe(0);
-    expect(JSON.parse(ci.stdout)).toMatchObject({
-      affectedTests: [],
-      needsRustNative: true,
-      needsRustWasm: true,
-      needsRustBuild: true,
-      needsTypeScriptValidate: false,
-    });
-  }
-);
 
 test("parser launcher and staged Clippy tests are in the selected quality profile", () => {
   for (const path of ["scripts/rust-quality.ts", "scripts/rust-quality-clippy.ts"]) {
@@ -965,7 +883,6 @@ describe("the exact lint project is validation-only", () => {
       affectedTests: [],
       needsValidate: true,
       needsTypeScriptValidate: true,
-      needsRustNative: false,
       needsDarwinTests: false,
       needsDarwinNative: false,
       needsNativeKv: false,
@@ -986,7 +903,6 @@ describe("the exact lint project is validation-only", () => {
     const selection: TestSelection = { paths: ["tsconfig.lint.json"], documentationOnly: false, affectedTests: [], runAll: false, reason: "validation-only" };
     expect(ciScopeForSelection(selection, fixture, { GITHUB_EVENT_NAME: "merge_group" })).toMatchObject({
       completeCheckSet: true,
-      needsRustNative: true,
       needsDarwinNative: true,
     });
   });
