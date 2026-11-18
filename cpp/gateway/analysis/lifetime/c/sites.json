@@ -2869,7 +2869,8 @@
       ]
     },
     "src/harmony/tools/schemas.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Schema parsing and argument validation are synchronous and return owned data.",
       "sites": []
     },
     "src/harmony/types.cpp": {

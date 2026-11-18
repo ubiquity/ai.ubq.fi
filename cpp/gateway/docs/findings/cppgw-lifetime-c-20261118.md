@@ -261,7 +261,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/tools/fakes.cpp`
 - [x] `src/harmony/tools/result.cpp`
 - [x] `src/harmony/tools/router.cpp`
-- [ ] `src/harmony/tools/schemas.cpp`
+- [x] `src/harmony/tools/schemas.cpp`
 - [ ] `src/harmony/types.cpp`
 - [ ] `src/live/calls.cpp`
 - [ ] `src/live/handler.cpp`
@@ -1649,3 +1649,7 @@ The tool router owns its backend and validated argument snapshots.
 
 - 68-87,163-200 · shell receiver and tool dispatch await · **SAFE** · execShell retains a shared workspace while the virtual shell task runs, and runToolImpl awaits it with its other inputs live.
 - 203-217 · borrowed JSON task factories · **SAFE** · The pointer overloads copy optional JSON into runToolImpl before returning its task.
+
+### `src/harmony/tools/schemas.cpp`
+
+Schema parsing and argument validation are synchronous and return owned data.
