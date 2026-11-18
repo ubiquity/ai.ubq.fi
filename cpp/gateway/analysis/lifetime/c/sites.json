@@ -1040,7 +1040,8 @@
       ]
     },
     "include/uos/provider/anthropic_chat_stream.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "The public stream factory is synchronous. The body and adapter state are retained by its returned stream.",
       "sites": []
     },
     "include/uos/provider/anthropic_replay.hpp": {

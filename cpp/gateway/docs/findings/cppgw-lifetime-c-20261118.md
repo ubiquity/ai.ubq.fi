@@ -134,7 +134,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/paid_fallback/rollups.hpp`
 - [x] `include/uos/paid_fallback/routing.hpp`
 - [x] `include/uos/provider/anthropic_chat_responses.hpp`
-- [ ] `include/uos/provider/anthropic_chat_stream.hpp`
+- [x] `include/uos/provider/anthropic_chat_stream.hpp`
 - [ ] `include/uos/provider/anthropic_replay.hpp`
 - [ ] `include/uos/provider/anthropic_response_wire.hpp`
 - [ ] `include/uos/provider/anthropic_responses.hpp`
@@ -867,3 +867,7 @@ Paid waterfall API.
 Provider Chat normalization owns a response and its options.
 
 - 27 · owning task parameters · **SAFE** · The normalizer retains the response handle and options in its coroutine frame.
+
+### `include/uos/provider/anthropic_chat_stream.hpp`
+
+The public stream factory is synchronous. The body and adapter state are retained by its returned stream.
