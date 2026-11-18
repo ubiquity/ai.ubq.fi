@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <limits>
+#include <utility>
 
 using uos::rt::BigInt;
 
@@ -48,4 +49,22 @@ TEST("BigInt converts binary64 ties and the overflow boundary") {
   EXPECT_EQ(BigInt::fromUint64(9007199254740993ULL).toNumber(), 9007199254740992.0);
   EXPECT_EQ(BigInt::fromUint64(9007199254740995ULL).toNumber(), 9007199254740996.0);
   EXPECT(!BigInt::fromNumber(-0.0).isNegative());
+}
+
+TEST("BigInt copies and moves its wide integer storage") {
+  const BigInt expected = -(BigInt(1) << BigInt(512));
+  BigInt copy = expected;
+  BigInt moved = std::move(copy);
+  EXPECT(moved == expected);
+  EXPECT(copy.isZero());
+
+  copy = moved;
+  moved += BigInt(1);
+  EXPECT(copy == expected);
+  EXPECT(moved != expected);
+
+  moved = std::move(copy);
+  EXPECT(moved == expected);
+  EXPECT(copy.isZero());
+  EXPECT_EQ(copy.toNumber(), 0.0);
 }

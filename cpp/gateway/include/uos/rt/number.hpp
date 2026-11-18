@@ -169,14 +169,20 @@ namespace uos::rt {
   }
 }
 
-#include <boost/multiprecision/cpp_int.hpp>
+#include <boost/multiprecision/fwd.hpp>
+#include <cstddef>
 
 namespace uos::rt {
   // Arbitrary-precision integer with JavaScript's signed bit operations.
   class BigInt {
   public:
-    BigInt() = default;
+    BigInt() noexcept;
     explicit BigInt(std::int64_t value);
+    BigInt(const BigInt& other);
+    BigInt(BigInt&& other) noexcept;
+    BigInt& operator=(const BigInt& other);
+    BigInt& operator=(BigInt&& other) noexcept;
+    ~BigInt();
     static BigInt fromUint64(std::uint64_t value);
     // BigInt(number). RangeError "Not an integer" for NaN, infinities and fractions.
     static BigInt fromNumber(double value);
@@ -194,12 +200,12 @@ namespace uos::rt {
     // BigInt.asIntN(64, b) / BigInt.asUintN(64, b) as native integers.
     std::int64_t toInt64() const;
     std::uint64_t toUint64() const;
-    bool isZero() const { return value_ == 0; }
-    bool isNegative() const { return value_ < 0; }
+    bool isZero() const;
+    bool isNegative() const;
     // b ** exponent. RangeError "Negative exponent is not allowed".
     BigInt pow(const BigInt& exponent) const;
 
-    friend bool operator==(const BigInt& a, const BigInt& b) = default;
+    friend bool operator==(const BigInt& a, const BigInt& b);
     friend std::strong_ordering operator<=>(const BigInt& a, const BigInt& b);
     friend BigInt operator+(const BigInt& a, const BigInt& b);
     friend BigInt operator-(const BigInt& a, const BigInt& b);
@@ -230,6 +236,10 @@ namespace uos::rt {
 
   private:
     explicit BigInt(boost::multiprecision::cpp_int value);
-    boost::multiprecision::cpp_int value_;
+    boost::multiprecision::cpp_int& value();
+    const boost::multiprecision::cpp_int& value() const;
+
+    // Keep Boost's implementation header private without allocating for small integers.
+    alignas(std::max_align_t) std::byte storage_[32];
   };
 }

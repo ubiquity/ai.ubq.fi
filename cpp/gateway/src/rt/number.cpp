@@ -9,7 +9,10 @@
 #include <cstring>
 #include <system_error>
 
+#include <boost/multiprecision/cpp_int.hpp>
 #include <iterator>
+#include <memory>
+#include <new>
 
 namespace uos::rt {
   namespace {
@@ -572,11 +575,48 @@ namespace uos::rt {
 
   // ---- BigInt ----
 
-  BigInt::BigInt(std::int64_t value) : value_(value) {}
-
-  BigInt::BigInt(cpp_int value) : value_(std::move(value)) {
-    if (bitLength(value_) > maxLengthBits) throw RangeError(kOutOfMemory);
+  BigInt::BigInt() noexcept {
+    static_assert(sizeof(cpp_int) <= sizeof(storage_));
+    static_assert(alignof(cpp_int) <= alignof(std::max_align_t));
+    std::construct_at(reinterpret_cast<cpp_int*>(storage_));
   }
+
+  BigInt::BigInt(std::int64_t value) { std::construct_at(reinterpret_cast<cpp_int*>(storage_), value); }
+
+  BigInt::BigInt(cpp_int value) {
+    if (bitLength(value) > maxLengthBits) throw RangeError(kOutOfMemory);
+    std::construct_at(reinterpret_cast<cpp_int*>(storage_), std::move(value));
+  }
+
+  BigInt::BigInt(const BigInt& other) { std::construct_at(reinterpret_cast<cpp_int*>(storage_), other.value()); }
+
+  BigInt::BigInt(BigInt&& other) noexcept {
+    std::construct_at(reinterpret_cast<cpp_int*>(storage_), std::move(other.value()));
+    other.value() = 0;
+  }
+
+  BigInt& BigInt::operator=(const BigInt& other) {
+    value() = other.value();
+    return *this;
+  }
+
+  BigInt& BigInt::operator=(BigInt&& other) noexcept {
+    if (this != &other) {
+      value() = std::move(other.value());
+      other.value() = 0;
+    }
+    return *this;
+  }
+
+  BigInt::~BigInt() { std::destroy_at(&value()); }
+
+  cpp_int& BigInt::value() { return *std::launder(reinterpret_cast<cpp_int*>(storage_)); }
+
+  const cpp_int& BigInt::value() const { return *std::launder(reinterpret_cast<const cpp_int*>(storage_)); }
+
+  bool BigInt::isZero() const { return value() == 0; }
+
+  bool BigInt::isNegative() const { return value() < 0; }
 
   BigInt BigInt::fromUint64(std::uint64_t value) { return BigInt(cpp_int(value)); }
 
@@ -639,35 +679,35 @@ namespace uos::rt {
 
   BigInt BigInt::asUintN(std::uint64_t bits, const BigInt& value) {
     if (bits == 0 || value.isZero()) return BigInt();
-    if (!value.isNegative() && bitLength(value.value_) <= bits) return value;
+    if (!value.isNegative() && bitLength(value.value()) <= bits) return value;
     if (bits > maxLengthBits) throw RangeError(kOutOfMemory);
-    return BigInt(value.value_ & ((cpp_int(1) << bits) - 1));
+    return BigInt(value.value() & ((cpp_int(1) << bits) - 1));
   }
 
   BigInt BigInt::asIntN(std::uint64_t bits, const BigInt& value) {
     if (bits > maxLengthBits) return value;
     BigInt result = asUintN(bits, value);
-    if (bits != 0 && mp::bit_test(result.value_, static_cast<unsigned>(bits - 1))) result.value_ -= cpp_int(1) << bits;
+    if (bits != 0 && mp::bit_test(result.value(), static_cast<unsigned>(bits - 1))) result.value() -= cpp_int(1) << bits;
     return result;
   }
 
   std::string BigInt::toString(int radix) const {
     if (radix < 2 || radix > 36) throw RangeError(kRadixRange);
-    if (radix == 10) return value_.str();
+    if (radix == 10) return value().str();
     if (radix == 8 || radix == 16) {
       const auto format = radix == 8 ? std::ios_base::oct : std::ios_base::hex;
-      if (!isNegative()) return value_.str(0, format);
-      return '-' + cpp_int(-value_).str(0, format);
+      if (!isNegative()) return value().str(0, format);
+      return '-' + cpp_int(-value()).str(0, format);
     }
-    auto result = formatBigIntRadix(mp::abs(value_), radix);
+    auto result = formatBigIntRadix(mp::abs(value()), radix);
     if (isNegative()) result.insert(result.begin(), '-');
     return result;
   }
 
-  double BigInt::toNumber() const { return value_.convert_to<double>(); }
+  double BigInt::toNumber() const { return value().convert_to<double>(); }
 
   std::uint64_t BigInt::toUint64() const {
-    const cpp_int low = value_ & std::numeric_limits<std::uint64_t>::max();
+    const cpp_int low = value() & std::numeric_limits<std::uint64_t>::max();
     return low.convert_to<std::uint64_t>();
   }
 
@@ -676,41 +716,43 @@ namespace uos::rt {
   BigInt BigInt::pow(const BigInt& exponent) const {
     if (exponent.isNegative()) throw RangeError("Negative exponent is not allowed");
     if (exponent.isZero()) return BigInt(1);
-    if (isZero() || value_ == 1) return *this;
-    if (value_ == -1) return BigInt(mp::bit_test(exponent.value_, 0) ? -1 : 1);
+    if (isZero() || value() == 1) return *this;
+    if (value() == -1) return BigInt(mp::bit_test(exponent.value(), 0) ? -1 : 1);
 
     // |value| >= 2. Reject exponents whose result cannot fit before invoking pow.
     // This also bounds conversion to Boost's unsigned exponent.
-    if (exponent.value_ > (maxLengthBits - 1) / (bitLength(value_) - 1)) throw RangeError(kOutOfMemory);
-    return BigInt(mp::pow(value_, exponent.value_.convert_to<unsigned>()));
+    if (exponent.value() > (maxLengthBits - 1) / (bitLength(value()) - 1)) throw RangeError(kOutOfMemory);
+    return BigInt(mp::pow(value(), exponent.value().convert_to<unsigned>()));
   }
 
-  std::strong_ordering operator<=>(const BigInt& a, const BigInt& b) { return a.value_.compare(b.value_) <=> 0; }
+  bool operator==(const BigInt& a, const BigInt& b) { return a.value() == b.value(); }
 
-  BigInt operator+(const BigInt& a, const BigInt& b) { return BigInt(a.value_ + b.value_); }
-  BigInt operator-(const BigInt& a, const BigInt& b) { return BigInt(a.value_ - b.value_); }
+  std::strong_ordering operator<=>(const BigInt& a, const BigInt& b) { return a.value().compare(b.value()) <=> 0; }
+
+  BigInt operator+(const BigInt& a, const BigInt& b) { return BigInt(a.value() + b.value()); }
+  BigInt operator-(const BigInt& a, const BigInt& b) { return BigInt(a.value() - b.value()); }
 
   BigInt operator*(const BigInt& a, const BigInt& b) {
-    if (bitLength(a.value_) + bitLength(b.value_) > BigInt::maxLengthBits + 1) throw RangeError(kOutOfMemory);
-    return BigInt(a.value_ * b.value_);
+    if (bitLength(a.value()) + bitLength(b.value()) > BigInt::maxLengthBits + 1) throw RangeError(kOutOfMemory);
+    return BigInt(a.value() * b.value());
   }
 
   BigInt operator/(const BigInt& a, const BigInt& b) {
     if (b.isZero()) throw RangeError("0 is an invalid divisor value.");
-    return BigInt(a.value_ / b.value_);
+    return BigInt(a.value() / b.value());
   }
 
   BigInt operator%(const BigInt& a, const BigInt& b) {
     if (b.isZero()) throw RangeError("0 is an invalid divisor value.");
-    return BigInt(a.value_ % b.value_);
+    return BigInt(a.value() % b.value());
   }
 
-  BigInt operator&(const BigInt& a, const BigInt& b) { return BigInt(a.value_ & b.value_); }
-  BigInt operator|(const BigInt& a, const BigInt& b) { return BigInt(a.value_ | b.value_); }
-  BigInt operator^(const BigInt& a, const BigInt& b) { return BigInt(a.value_ ^ b.value_); }
-  BigInt operator<<(const BigInt& a, const BigInt& shift) { return BigInt(shiftBy(a.value_, shift.value_, true)); }
-  BigInt operator>>(const BigInt& a, const BigInt& shift) { return BigInt(shiftBy(a.value_, shift.value_, false)); }
+  BigInt operator&(const BigInt& a, const BigInt& b) { return BigInt(a.value() & b.value()); }
+  BigInt operator|(const BigInt& a, const BigInt& b) { return BigInt(a.value() | b.value()); }
+  BigInt operator^(const BigInt& a, const BigInt& b) { return BigInt(a.value() ^ b.value()); }
+  BigInt operator<<(const BigInt& a, const BigInt& shift) { return BigInt(shiftBy(a.value(), shift.value(), true)); }
+  BigInt operator>>(const BigInt& a, const BigInt& shift) { return BigInt(shiftBy(a.value(), shift.value(), false)); }
 
-  BigInt BigInt::operator-() const { return BigInt(-value_); }
-  BigInt BigInt::operator~() const { return BigInt(~value_); }
+  BigInt BigInt::operator-() const { return BigInt(-value()); }
+  BigInt BigInt::operator~() const { return BigInt(~value()); }
 }

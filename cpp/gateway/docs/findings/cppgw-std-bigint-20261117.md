@@ -67,3 +67,7 @@ The full suites are still running. The first portable-driver invocation found th
 A fresh isolated Bun 1.4.0 probe corrected the v2 observation about full-width casts. `BigInt.asUintN(1048576, -1n).toString(2).length` returns `1048576`, and `BigInt.asUintN(1048577, -1n)` throws `RangeError`. `BigInt.asIntN(1048576, 1n << 1048575n)` returns the negative of its second argument. The Boost adapter agrees in all three cases. It also fixes the old C++ signed cast's size check on a temporary mask. The deviations section describes the stricter parser cases.
 
 The portable CI compiler applies strict warnings to `base64.cpp`, including its tree-relative simdutf header. Clang 21 reports upstream sign-conversion diagnostics there. The scratch runner uses the same `--system-header-prefix=third_party/` setting as the repository sanitizer driver for that source. The first-party warning set stays fatal.
+
+## Contract v3
+
+The complete link closure exposed a compilation regression in the inherited BigInt header. Boost's `<iomanip>` include introduces `std::quoted` into argument-dependent lookup in `src/rt/kv_value.cpp`. The BigInt header will use Boost's forward declaration. The adapter will manage a `cpp_int` in aligned inline storage with compile-time size and alignment checks, retaining allocation-free small integers. All production writes stay in the BigInt regions. The source change supersedes the previous build, fuzz and benchmark receipts for acceptance. The same gates and prior stop condition apply to the revised source.
