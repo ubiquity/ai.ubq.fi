@@ -136,7 +136,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/anthropic_chat_responses.hpp`
 - [x] `include/uos/provider/anthropic_chat_stream.hpp`
 - [x] `include/uos/provider/anthropic_replay.hpp`
-- [ ] `include/uos/provider/anthropic_response_wire.hpp`
+- [x] `include/uos/provider/anthropic_response_wire.hpp`
 - [ ] `include/uos/provider/anthropic_responses.hpp`
 - [ ] `include/uos/provider/capacity.hpp`
 - [ ] `include/uos/provider/capacity_analytics.hpp`
@@ -877,3 +877,7 @@ The public stream factory is synchronous. The body and adapter state are retaine
 Replay metadata transformation is synchronous.
 
 - 58 · clock callback · **SAFE** · Replay options hold a callable value used by synchronous normalization.
+
+### `include/uos/provider/anthropic_response_wire.hpp`
+
+Synchronous Anthropic wire event and output conversion declarations.
