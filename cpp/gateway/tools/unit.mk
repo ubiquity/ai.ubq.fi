@@ -2,22 +2,23 @@
 # written to a private temporary name and renamed, so concurrent builds are safe.
 OBJECTS := $(SOURCES:%.cpp=$(OUT)/obj/%.o)
 VENDOR_OBJECTS := $(VENDORS:%=$(OUT)/vendor/%.o)
-VENDOR_NAMES := $(sort $(notdir $(patsubst %/,%,$(dir $(VENDORS)))))
+VENDOR_NAMES := $(sort $(foreach source,$(VENDORS),$(word 2,$(subst /, ,$(source)))))
 VENDOR_LIBS := $(VENDOR_NAMES:%=$(OUT)/vendor/libuos_vendor_%.a)
 VENDOR_FLAGS := $(filter-out -Wall -Wextra -Wshadow -Wconversion -Werror,$(CXXFLAGS))
 VENDOR_C_FLAGS := $(filter-out -std=c++%, $(VENDOR_FLAGS)) -std=c11
+QCBOR_INCLUDE := $(if $(filter qcbor,$(VENDOR_NAMES)),-isystem $(ROOT)/third_party/qcbor/inc)
 ICU_LIBS := $(if $(filter src/rt/string.cpp,$(SOURCES)),-licui18n -licuuc)
 .SECONDARY:
 $(OUT)/obj/%.o: $(ROOT)/%.cpp
 	@mkdir -p $(@D)
 	@echo "compile $*.cpp"
-	@$(CXX_WRAPPER) $(CXXFLAGS) $(if $(filter $*.cpp,$(SIMDJSON_SOURCES)),-DUOS_GATEWAY_SIMDJSON -isystem $(ROOT)/third_party/simdjson) -MMD -MP -MT $@ -MF $@.$(TOKEN).d -c $< -o $@.$(TOKEN).tmp && mv -f $@.$(TOKEN).d $(@:.o=.d) && mv -f $@.$(TOKEN).tmp $@
+	@$(CXX_WRAPPER) $(CXXFLAGS) $(QCBOR_INCLUDE) $(if $(filter $*.cpp,$(SIMDJSON_SOURCES)),-DUOS_GATEWAY_SIMDJSON -isystem $(ROOT)/third_party/simdjson) -MMD -MP -MT $@ -MF $@.$(TOKEN).d -c $< -o $@.$(TOKEN).tmp && mv -f $@.$(TOKEN).d $(@:.o=.d) && mv -f $@.$(TOKEN).tmp $@
 $(OUT)/vendor/%.cpp.o: $(ROOT)/%.cpp
 	@mkdir -p $(@D)
 	@$(CXX_WRAPPER) $(VENDOR_FLAGS) -MMD -MP -MT $@ -MF $@.$(TOKEN).d -c $< -o $@.$(TOKEN).tmp && mv -f $@.$(TOKEN).d $(@:.o=.d) && mv -f $@.$(TOKEN).tmp $@
 $(OUT)/vendor/%.c.o: $(ROOT)/%.c
 	@mkdir -p $(@D)
-	@$(CXX_WRAPPER) --vendor-c $(VENDOR_C_FLAGS) -MMD -MP -MT $@ -MF $@.$(TOKEN).d -c $< -o $@.$(TOKEN).tmp && mv -f $@.$(TOKEN).d $(@:.o=.d) && mv -f $@.$(TOKEN).tmp $@
+	@$(CXX_WRAPPER) --vendor-c $(VENDOR_C_FLAGS) $(if $(filter third_party/qcbor/%,$*),$(QCBOR_INCLUDE)) -MMD -MP -MT $@ -MF $@.$(TOKEN).d -c $< -o $@.$(TOKEN).tmp && mv -f $@.$(TOKEN).d $(@:.o=.d) && mv -f $@.$(TOKEN).tmp $@
 define vendor_archive_rule
 $(OUT)/vendor/libuos_vendor_$(1).a: $(filter $(OUT)/vendor/third_party/$(1)/%,$(VENDOR_OBJECTS)) $(ROOT)/tools/vendor_sources.py
 	@$(CXX_WRAPPER) --vendor-archive rcs $$@.$(TOKEN).tmp $$(filter %.o,$$^) && mv -f $$@.$(TOKEN).tmp $$@

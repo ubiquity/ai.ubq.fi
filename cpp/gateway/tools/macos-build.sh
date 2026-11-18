@@ -146,6 +146,8 @@ def compile_one(source, selected_flags=None):
         source_flags = source_flags + vendor_sources.simdjson_flags(gateway)
     if args.legacy_loaders and str(source) in {"src/rt/gzip.cpp", "src/rt/sqlite.cpp", "src/rt/fetch_transport_codec.cpp"}:
         source_flags = [f for f in flags if f != "-DUOS_GATEWAY_NATIVE_LIBRARIES"]
+    for library in vendor_sources.required(vendors, [source]):
+        source_flags = source_flags + vendor_sources.include_flags(library, gateway)
     command = source_flags + ["-MMD", "-MF", str(target.with_suffix(".d")), "-c", str(gateway / source), "-o", str(target)]
     receipt = target.with_suffix(".json")
     previous = json.loads(receipt.read_text()) if receipt.exists() else {}
@@ -196,7 +198,8 @@ for library in vendor_sources.required(vendors, runtime + modules):
     members = []
     for source in library.sources:
         relative = Path(source)
-        compiled = compile_one(relative, vendor_c_flags if relative.suffix == ".c" else vendor_cxx_flags)
+        compiler_flags = vendor_c_flags if relative.suffix == ".c" else vendor_cxx_flags
+        compiled = compile_one(relative, compiler_flags + vendor_sources.include_flags(library, gateway))
         if compiled["status"]:
             raise SystemExit("Vendor compile failed: " + compiled["log"])
         members.append(obj(relative))

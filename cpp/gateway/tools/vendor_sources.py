@@ -13,13 +13,21 @@ REGISTRY = Path("cmake/vendors.json")
 SOURCES = {
     "ada": ("ada.cpp",),
     "llhttp": ("llhttp.c", "api.c", "http.c"),
+    "qcbor": ("src/qcbor_decode.c", "src/qcbor_encode.c", "src/qcbor_err_to_str.c", "src/UsefulBuf.c", "src/ieee754.c"),
     "simdjson": ("simdjson.cpp",),
     "simdutf": ("simdutf.cpp",),
+}
+VENDOR_INCLUDES = {"qcbor": "third_party/qcbor/inc"}
+QCBOR_HEADERS = {
+    "inc/UsefulBuf.h", "inc/qcbor.h", "inc/qcbor/UsefulBuf.h", "inc/qcbor/qcbor.h", "inc/qcbor/qcbor_common.h",
+    "inc/qcbor/qcbor_decode.h", "inc/qcbor/qcbor_encode.h", "inc/qcbor/qcbor_private.h", "inc/qcbor/qcbor_spiffy_decode.h",
+    "src/ieee754.h",
 }
 SIMDJSON_HEADER = "third_party/simdjson/simdjson.h"
 VENDOR_MANIFESTS = {
     "ada": "a6085f89c35fc39b06802935130c4aeffb449b695e568f71b14db0bb7a6e403f",
     "llhttp": "b9b8ae35e0b43ea291899360441bf4b6e4acf5942253118158c0d95fe1c9b8eb",
+    "qcbor": "c149f42818ce685d5b2fc99f67ae7dd617274b111b28f2ceee185f9fc9aa4fbe",
     "simdjson": "e958e232e00f9de08ca1118888fbe15ddf75e5b9ffb0c4d5b606eb645909d834",
     "simdutf": "f7b0cb9c96b51c837550c4a68f0f5305833cc8649aa7f25897c5dab487c60481",
 }
@@ -55,13 +63,14 @@ def selected(root=GATEWAY):
         provenance = directory / "PROVENANCE.md"
         manifest = directory / "SHA256SUMS"
         sources = SOURCES[name]
-        filenames = {*sources, name + ".h", "LICENSE"}
+        headers = QCBOR_HEADERS if name == "qcbor" else {name + ".h"}
+        filenames = {*sources, *headers, "LICENSE"}
         entries = {}
         manifest_bytes = (root / manifest).read_bytes()
         if hashlib.sha256(manifest_bytes).hexdigest() != VENDOR_MANIFESTS[name]:
             raise ValueError("Selected vendor manifest differs from the qualified upstream release: " + name)
         for line in manifest_bytes.decode().splitlines():
-            match = re.fullmatch(r"([0-9a-f]{64})  ([a-zA-Z0-9_.-]+)", line)
+            match = re.fullmatch(r"([0-9a-f]{64})  ([a-zA-Z0-9_/.-]+)", line)
             if not match or match[2] not in filenames or match[2] in entries:
                 raise ValueError("Invalid upstream SHA256SUMS for " + name)
             entries[match[2]] = match[1]
@@ -91,6 +100,11 @@ def vendor_flags(flags):
     return [arg for arg in flags if arg not in STRICT_WARNINGS and not arg.startswith("-Werror=")]
 
 
+def include_flags(library, root=GATEWAY):
+    directory = VENDOR_INCLUDES.get(library.name)
+    return ["-isystem", str(root / directory)] if directory else []
+
+
 def simdjson_consumers(libraries):
     return {source for lib in libraries if lib.name == "simdjson" for source in lib.consumers}
 
@@ -105,7 +119,11 @@ def main(args):
         for library in libraries:
             sources = " ".join(f'"{source}"' for source in library.sources)
             consumers = " ".join(f'"{source}"' for source in library.consumers)
-            print(f'uos_register_vendor("{library.name}" SOURCES {sources} CONSUMERS {consumers})')
+            inputs = " ".join(f'"{path}"' for path in library.inputs)
+            print(f'uos_register_vendor("{library.name}" SOURCES {sources} CONSUMERS {consumers} INPUTS {inputs})')
+            directory = VENDOR_INCLUDES.get(library.name)
+            if directory:
+                print(f'target_include_directories({library.target} SYSTEM PUBLIC "${{CMAKE_CURRENT_SOURCE_DIR}}/{directory}")')
     elif args[0] == "unit":
         print(" ".join(sorted(simdjson_consumers(libraries))))
         print(" ".join(source for lib in required(libraries, args[1:]) for source in lib.sources))

@@ -155,6 +155,31 @@
       "included_implementation": "src/auth/passkeys.cpp",
       "entry": "isoCBOR::decodeFirst / asn1::fromBER / parseCertificate",
       "max_len": 4096
+    },
+    "passkeys_cbor_library": {
+      "harness": "fuzz/passkeys_cbor_library.cpp",
+      "entry": "uos::auth::passkeys::cbor::reencode",
+      "max_len": 16384,
+      "extra_sources": [
+        "src/auth/passkeys.cpp",
+        "src/auth/relay.cpp",
+        "src/config.cpp",
+        "src/http.cpp",
+        "src/kv.cpp",
+        "src/provider/cerebras_rate_limits.cpp",
+        "src/release.cpp",
+        "src/request.cpp",
+        "src/storage/kv.cpp",
+        "src/storage/native_addon.cpp",
+        "src/storage/native_kv.cpp",
+        "src/storage/sqlite_readonly.cpp",
+        "src/utils.cpp",
+        "third_party/qcbor/src/UsefulBuf.c",
+        "third_party/qcbor/src/ieee754.c",
+        "third_party/qcbor/src/qcbor_decode.c",
+        "third_party/qcbor/src/qcbor_encode.c",
+        "third_party/qcbor/src/qcbor_err_to_str.c"
+      ]
     }
   },
   "libraries": [

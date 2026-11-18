@@ -73,7 +73,7 @@ def main():
         "  deps = gcc",
         "  description = CXX $in",
         "rule cc",
-        "  command = " + ninja_args([args.cc, "-std=c11", *options]) + " -MMD -MF $out.d -c $in -o $out",
+        "  command = " + ninja_args([args.cc, "-std=c11", *options]) + " $flags -MMD -MF $out.d -c $in -o $out",
         "  depfile = $out.d",
         "  deps = gcc",
         "  description = CC $in",
@@ -96,12 +96,15 @@ def main():
             lines.append("  flags = " + ninja_args(source_flags))
         return path
 
-    app = [object_file(source, flags + (tools["simdjson_flags"](gateway) if source in simdjson else [])) for source in sources]
+    include_flags = tools.get("include_flags", lambda _library, _gateway: [])
+    app = [object_file(source, flags + (tools["simdjson_flags"](gateway) if source in simdjson else []) +
+                       [flag for lib in tools["required"](vendors, [source]) for flag in include_flags(lib, gateway)])
+           for source in sources]
     archives = []
     for library in vendors:
         # Benchmark snapshots predating multi-file vendors still use `source`.
         members = library.sources if hasattr(library, "sources") else (library.source,)
-        objects = [ninja_path(object_file(source, [])) for source in members]
+        objects = [ninja_path(object_file(source, include_flags(library, gateway))) for source in members]
         lines.append(f"build {library.archive}: archive " + " ".join(objects))
         archives.append(library.archive)
     startup = object_file("runtime/startup.cpp", flags)
