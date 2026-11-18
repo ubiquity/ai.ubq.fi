@@ -313,7 +313,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/lithos_rate_limits.cpp`
 - [x] `src/provider/lithos_streams.cpp`
 - [x] `src/provider/metered.cpp`
-- [ ] `src/provider/openrouter.cpp`
+- [x] `src/provider/openrouter.cpp`
 - [ ] `src/provider/openrouter_handlers.cpp`
 - [ ] `src/provider/openrouter_request_controls.cpp`
 - [ ] `src/provider/openrouter_streams.cpp`
@@ -2004,3 +2004,11 @@ Metered transport and metadata use owning fetch and body tasks. Its abort race r
 - 243-274,334-365,462-487,611-661,777-884 · provider fetch, admission and body waits · **SAFE** · Frames own the request data, hooks, body and response handles. rt::Fetch and Response::json retain the underlying operations if their abort race settles first. The header timer is scoped to dispatch.
 - 684-707,712-717 · coalescing cell after an abandoned wait · **DEFECT** · Destroying a fixture Loop with an unresolved coalesced discovery destroys its waiting frame before the explicit global clear. A later Loop in the same process can join that old Promise with no producer. Use an identity-checked scope guard as in lithos_models.cpp.
 - 731-771 · pricing fail-fast fan-out · **SAFE** · Each fetchMetadataJson child owns its fetcher, URL, signal and error strings, and settled envelope references are to the local result vector.
+
+### `src/provider/openrouter.cpp`
+
+Catalog and transport requests own their parameters, and the public reference-taking entry points are synchronous forwarders.
+
+- 18-32,177-185 · model lookup refresh and rejection continuation · **SAFE** · The child owns the model string and a resolver function pointer. The rejection reaction has no captures, and warm resolution uses fresh snapshots.
+- 34-79,81-147 · dispatch hooks, deadline and body tasks · **SAFE** · Options own the hooks through invocation. Fetch and body operations retain their own state, and detached error-body cancellation keeps its stream state and a stateless rejection reaction.
+- 151-175,187-207 · catalog snapshots and reference-taking factories · **SAFE** · Catalog scans retain a shared snapshot during synchronous iteration. The reference-taking entry points construct owned body and options arguments before returning the child task.

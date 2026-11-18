@@ -3791,8 +3791,28 @@
       ]
     },
     "src/provider/openrouter.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Catalog and transport requests own their parameters, and the public reference-taking entry points are synchronous forwarders.",
+      "sites": [
+        {
+          "lines": "18-32,177-185",
+          "kind": "model lookup refresh and rejection continuation",
+          "verdict": "SAFE",
+          "reason": "The child owns the model string and a resolver function pointer. The rejection reaction has no captures, and warm resolution uses fresh snapshots."
+        },
+        {
+          "lines": "34-79,81-147",
+          "kind": "dispatch hooks, deadline and body tasks",
+          "verdict": "SAFE",
+          "reason": "Options own the hooks through invocation. Fetch and body operations retain their own state, and detached error-body cancellation keeps its stream state and a stateless rejection reaction."
+        },
+        {
+          "lines": "151-175,187-207",
+          "kind": "catalog snapshots and reference-taking factories",
+          "verdict": "SAFE",
+          "reason": "Catalog scans retain a shared snapshot during synchronous iteration. The reference-taking entry points construct owned body and options arguments before returning the child task."
+        }
+      ]
     },
     "src/provider/openrouter_handlers.cpp": {
       "status": "pending",
