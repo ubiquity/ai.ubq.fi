@@ -152,3 +152,32 @@ bash "$q/finish-release.sh" 124
 ```
 
 The release build used four compile slots in its scratch Ninja file. The Python runner used `cmake/ci/isolate.py` for each executable with a fresh private tmpfs home and temporary directory, loopback-only fixture networking and a credential-free environment. `run-release-final/results.tsv` records case counts per binary. The CMake source fix is commit `110ed4761ca568dca2218a22b13fd1127b3a2d7d`, tree `3cf1aaa1c71044fc961ee9ca05cffe04b45a6f95`.
+
+### Terminal results
+
+The complement linked and ran the remaining 212 binaries. Both batches together covered every entry in the 442-test Links registry, with distinct results per binary. The release gate retained `-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror` and the pinned Boost definitions. The three production executables and all 442 test binaries compiled and linked.
+
+| Gate                           | Binaries passed | Harness cases passed |
+| ------------------------------ | --------------: | -------------------: |
+| Full GCC release sweep         |         440/442 |          5,034/5,037 |
+| GCC passkeys Links closure     |           58/59 |              736/737 |
+| Clang ASan/UBSan Links closure |           58/59 |              736/737 |
+
+The sanitizer closure carries forward the earlier production-source receipt. The direct Clang command set remained byte-identical after the CMake fix, and the fresh focused sanitizer run reproduced the same result. The codec contributed all 13 passing cases to both closures. The committed WebAuthn replay matched 146 of 155 vectors, with one failed harness case. The scratch fixture patch passed 157 of 157 vectors in each profile. The other release failure was `tests/rt/url_idna_test.cpp`, with two failed cases. Its unchanged source closure links ICU 74.2 on this runner, while the qualified port uses 78.3. Its closure excludes passkeys and QCBOR.
+
+```sh
+q=/tmp/qcbor-c1
+export UOS_GATEWAY_TOOL_ROOT="$q/cmake-sdk" UOS_GATEWAY_BUILD_EVIDENCE=qcbor-c1-runner
+timeout --signal=INT --kill-after=20s 9m cmake --build "$q/release" -j 4 --target uos_gateway_tests -- -k 0
+python3 -B "$q/run-tests.py" "$PWD/cpp/gateway" "$q/release" available "$q/run-release-complement" \
+  --jobs 4 --exclude-run "$q/run-release-final/results.tsv"
+```
+
+### Handoff
+
+The branch carries the QCBOR migration, strict codec tests, two-minute fuzz smoke evidence, benchmark results and the corrected Clang profile. Passkey production code removes 516 lines and adds 271. The adapter retains owning verifier values, canonical checks and consumed-byte accounting. It also retains the specific Firefox 117 EdDSA map-count correction.
+
+- The differential replay fixture update is ready in scratch and requires approval for the existing fixture path. The remaining passkey mismatch is in that fixture.
+- The portable `cmake/ci/driver.py` and legacy `tools/unit.mk` still require multi-source C vendor support. The existing TPM manufacturer check also preserves JavaScript's inherited property names, as the dedicated replay vector shows. These paths sit outside the owned CBOR slice.
+- A merge preview against `origin/claude/cpp-gateway-port` at `45118332b287b7ba9534bb66ab1518f1990a9d9e` found an add/add conflict in `docs/DEVIATIONS-FROM-BUN.md`. Each branch contributes its own section.
+- The checkout is on `agent-job`. The GitHub push dry run requires authentication, which is unavailable on the runner. The refreshed `origin/development` at `6bd78fc5e3b0783809691c6bd45d25ac45e9696e` has no `cpp/gateway/` tree and does not contain the task tip.
