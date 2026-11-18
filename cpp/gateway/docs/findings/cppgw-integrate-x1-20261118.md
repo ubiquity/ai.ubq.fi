@@ -16,11 +16,10 @@ stage 2a tip.
 | Confinement                                        | Explicit opt-in to the incoming reduced ABI policy. Match the incoming default policy and seccomp source bytes.                                                       |
 | Build and packaging                                | Preserve both lines' dependency closure across portable CI, CMake, standalone tools and package recipes. Compare canonical vendor bytes against the accepted parents. |
 
-Changes are scoped to integration under `cpp/gateway/` and any necessary C++
-gateway workflow wiring. First-party application contracts include wire
-formats, status codes, stored data, authentication, validation and accounting.
-TypeScript, other `cpp/` paths, vendor source edits, unrelated feature branches
-and deployment are outside this integration.
+Changes are scoped to integration under `cpp/gateway/` and the compiler
+selection in `.github/workflows/cpp-gateway-ci.yml`. Preserve wire formats,
+status codes, stored data, authentication, validation and accounting. Retain
+the exact upstream vendor bytes.
 
 Acceptance is four passing Linux ARM64 Release shards from
 `bash cpp/gateway/tools/ci-build.sh --config release --shard N/4`, focused
@@ -28,9 +27,9 @@ Acceptance is four passing Linux ARM64 Release shards from
 merges and exact receipts. Dependencies and build output stay under runner
 scratch. Test processes have a fresh home and temporary directory, a
 credential-free environment and the driver's real loopback-only fixture
-boundary. The exact conflict inventory, compilation and fixture results are
-open at discovery. Prepare dependencies while merging; build, reconcile
-shard 1, then finish the remaining shards and focused sanitizer selection.
+boundary. The conflict inventory, compilation and fixture results were open at
+discovery. Prepare dependencies while merging. Build and reconcile shard 1
+before running the remaining shards and the focused sanitizer selection.
 
 ## Stage 1 merge resolutions
 
@@ -62,11 +61,13 @@ rejections, bounded Header errors, ISO/IMF date validation and retention
 of raw Claude usage reset text. The newer JSON, UTF, WebSocket and
 request-path fixtures from stage 2a remain in the merged inventory. The merge
 commit records why the strict expectations follow the selected libraries.
-The ISO/IMF parser rejects legacy numeric date strings for Codex refresh
-validation. The Claude schema vectors retain the original reset text and
-expect an absent parsed deadline for those strings. The HTTP vectors retain
-the inputs and assert the applicable strict framing or header-size response.
-Every test binary from either input branch remains in the Release inventory.
+The Codex refresh vectors keep the original inputs and reject legacy dates
+outside the ISO/IMF grammar, including `"1"`, `"Nov 16 2026"` and
+`" 2026-11-16 "`. The Claude schema vectors retain the raw reset text
+`"0"` and expect an absent parsed deadline. The HTTP vectors retain their
+inputs and expect a 400 for invalid framing or field syntax and a 431 for
+exceeding the request-head bound. Every test binary from either input branch
+remains in the Release inventory. [Stage 1 fixture decisions](cppgw-integrate-s1-20261118.md#build-and-fixture-reconciliation)
 
 ## Stage X merge resolution
 
@@ -83,7 +84,9 @@ seccomp thread synchronization requirement.
 
 Stage 2a's vendor tree matches exactly outside `third_party/llhttp`, and
 `third_party/llhttp` matches stage 1 exactly. The vendor registry verified
-all three libraries' source and license hashes.
+all three libraries' source and license hashes. The unfiltered whitespace
+check reports 147 lines in generated upstream `llhttp.c`. The first-party
+diff passes its whitespace check.
 
 ## Initial Release shard and build path fixes
 
@@ -108,12 +111,14 @@ and WebSocket objects in the existing `uos_fuzz_http_request` closure. Both
 HTTP harnesses now link those objects. The portable build profile records the
 statically linked llhttp 9.4.4. A separate standalone fuzz attempt mixed
 ICU 78 headers with the system ICU 74 libraries. The rerun uses the same
-staged headers and libraries through Clang's search paths.
+staged headers and libraries. Clang appended `LIBRARY_PATH` after the
+system directories, so `902d71bc` passes `LDFLAGS` to the standalone
+fuzz link command before the library names.
 
 ## Linux ARM64 release and sanitizer results
 
-The final build-input commit was `20cad4cf8b0ab8bb0fe0b74b40dfc27c5126feb4`,
-tree `073aabe4c1034a4b1638df6d69ec38919870d627`. All five driver receipts
+The final build-input commit was `902d71bc648041199b8f867e562175992b5f8c38`,
+tree `f1c8f227b847fb5b2c1f28f05801801911806fe9`. All five driver receipts
 have input SHA-256
 `4487834eff106fc599066c9688b3f5231e9a6df888d521efe898af1aac6d3aa0`, equal
 before and after each run. Release covered the 445 sorted tests exactly
@@ -123,12 +128,12 @@ objects, plus the three vendor archives.
 
 | Configuration | Binaries passed | Cases passed | Object phase (s) | Link and run (s) | Total wall (s) |
 | ------------- | --------------: | -----------: | ---------------: | ---------------: | -------------: |
-| Release 1/4   |             112 |        1,311 |            0.008 |           23.607 |         24.138 |
-| Release 2/4   |             111 |        1,125 |            0.008 |           13.703 |         14.230 |
-| Release 3/4   |             111 |        1,455 |            0.008 |           24.081 |         24.613 |
-| Release 4/4   |             111 |        1,163 |            0.009 |           41.602 |         42.251 |
-| Release total |             445 |        5,054 |                  |                  |        105.232 |
-| Focused ASan  |             113 |        1,280 |            0.007 |          170.892 |        171.571 |
+| Release 1/4   |             112 |        1,311 |            0.095 |           34.878 |         35.745 |
+| Release 2/4   |             111 |        1,125 |            0.011 |           29.459 |         30.860 |
+| Release 3/4   |             111 |        1,455 |            0.017 |           36.834 |         37.608 |
+| Release 4/4   |             111 |        1,163 |            0.017 |           43.180 |         44.227 |
+| Release total |             445 |        5,054 |                  |                  |        148.440 |
+| Focused ASan  |             113 |        1,280 |            0.009 |          143.085 |        143.765 |
 
 There were zero failures, build failures, or timeouts in these runs. The
 sanitizer profile enabled AddressSanitizer, UndefinedBehaviorSanitizer and
@@ -137,7 +142,10 @@ contains `src/runtime/http.cpp`, plus the runtime helper and codec tests,
 application date-sensitive fixtures, request and delivery fixtures, and
 startup and permissions tests listed below. The two permissions binaries
 passed five cases each, the standalone llhttp binary passed seven, and
-startup passed 18 in both configurations.
+startup passed 18 in both configurations. The reduced fixture applied real
+rulesets capped at ABIs 3–8 on the ABI 8 host. It verified that an ABI 3
+child and its later worker thread both got `EACCES` on out-of-grant writes
+and that the TCP port rules applied at ABI 4 and newer.
 
 The final timings are incremental. Before that check, the interrupted
 sanitizer build left 285 completed Ninja edges. Compiling the remaining 219
@@ -146,11 +154,11 @@ in 88.705 seconds and passed 1,280 cases, taking 894.167 seconds overall.
 
 | File under the runner scratch directory | Receipt SHA-256                                                    |
 | --------------------------------------- | ------------------------------------------------------------------ |
-| `receipts/final/release-1.json`         | `5b7036e43087a2609d4f7f4d0a850e43bca759b3ced2f7c17a8b2ae1928ccb8c` |
-| `receipts/final/release-2.json`         | `5b603018b5a6e76bef9a0d140488df91dfd4ccecc14e78e4f0aba39c3dc7cd57` |
-| `receipts/final/release-3.json`         | `d81dcaf115f2215cf5e0691b9f181b886a8e917f9105b7e052f0451f3b000872` |
-| `receipts/final/release-4.json`         | `8b6500a06f03ee6d7e18c06d0bd52905424a844aee3f16e6a125277fd85646a0` |
-| `receipts/final/asan.json`              | `32373edcf1ec6d4a4d7999fcf8b1fdcab0c330631ea52dad52cee6cda1499349` |
+| `receipts/handoff/release-1.json`       | `313a69027edc450f54f57aea73577d4a71008ea2736f19ea18a2a0b3bd41c3c3` |
+| `receipts/handoff/release-2.json`       | `3217b1559935ec46e9dec0adf29c33d4c33d362c6ed3931bf1e2f5057a8c35aa` |
+| `receipts/handoff/release-3.json`       | `81eeab993674df2da4199d5e897a97d830e9283481af328fa47649eeb2c9130c` |
+| `receipts/handoff/release-4.json`       | `e52715dd0985c050b460d3b3fb7971ff3ddac84011bb6775850e3b9879ffba30` |
+| `receipts/handoff/asan.json`            | `607bd7e23d2bf718aa7a3bb67df8ae1d64b57b6e3e327a11e0577197ef5bfaf8` |
 
 The runner was Ubuntu 24.04.5, Linux `7.0.0-1017-azure`, aarch64, with four
 CPUs and 15 GiB RAM. Clang and Clang++ were 21.1.8, Ninja 1.13.2 and mold
@@ -174,7 +182,7 @@ for shard in 1 2 3 4; do
   bash "$scratch/ci-env.sh" bash cpp/gateway/tools/ci-build.sh --config release --shard "$shard/4"
 done
 bash "$scratch/ci-env.sh" python3 -B "$scratch/asan-focus.py"
-python3 -B "$scratch/audit-final.py" "$scratch" 20cad4cf
+python3 -B "$scratch/audit-handoff.py" "$scratch" 902d71bc
 ```
 
 The wrapper sets the following dependency paths alongside `CC=clang-21`,
@@ -203,47 +211,143 @@ rt/text_codec rt/url_idna rt/websocket
 The seven portable driver controls passed in Debug and in ASan in 13.981
 and 13.601 seconds, respectively. The registry validator resolved 445
 test closures, and CMake generated all 445 CTests with zero skipped.
+Actionlint passed for the merged workflow.
 
 ```bash
 bash "$scratch/ci-env.sh" python3 -B cpp/gateway/cmake/ci/test_driver.py
 bash "$scratch/ci-env.sh" env UOS_CI_SELFTEST_CONFIG=asan python3 -B cpp/gateway/cmake/ci/test_driver.py
 python3 -B cpp/gateway/tools/links.py --check
 python3 -B cpp/gateway/tools/vendor_sources.py cmake
-git diff --check 30e53aa7..HEAD
+"$scratch/bin/actionlint" -config-file "$scratch/actionlint.yaml" .github/workflows/cpp-gateway-ci.yml
+git diff --check 30e53aa7..HEAD -- . ':!cpp/gateway/third_party'
+```
+
+## Request-path benchmark build wiring
+
+The benchmark generator produced a Ninja graph with 369 production sources
+and all three vendor libraries. Each of the gateway and two offline CLI targets
+links `libuos_vendor_llhttp.a`. GCC 14 compiled the three C11 objects and
+G++ 14 compiled `runtime/http.cpp` with fatal warnings. A relocatable link
+resolved the HTTP object's llhttp entry points from the generated archive.
+The full benchmark and its throughput measurements remain unrun on the
+integrated tree.
+
+```bash
+bench=$(cat "$scratch/bench-closure.dir")
+# The scratch tools/ directory contains a wrapper that adds -n to Ninja.
+bash "$scratch/ci-env.sh" env PATH="$bench/tools:/usr/local/bin:/usr/bin:/bin" \
+  python3 -I cpp/gateway/bench/request_path/build.py --source "$PWD" --out "$bench/build" \
+  --boost "$scratch/boost_1_92_0" --cxx g++-14 --cc gcc-14 --jobs 4
+bash "$scratch/ci-env.sh" ninja -C "$bench/build" -j 4 libuos_vendor_llhttp.a obj/src/runtime/http.cpp.o
+bash "$scratch/ci-env.sh" g++-14 -r "$bench/build/obj/src/runtime/http.cpp.o" \
+  "$bench/build/libuos_vendor_llhttp.a" -o "$bench/http-llhttp.o"
+nm --defined-only "$bench/http-llhttp.o" | rg ' T llhttp_(execute|init|reset)$'
+rg --count '^build uos_\w+: link .*libuos_vendor_llhttp\.a' "$bench/build/build.ninja"
+```
+
+## Fuzz build paths
+
+The standalone runner linked against staged ICU 78 and completed both
+HTTP smoke campaigns with four workers. The classifier recorded one
+known ARM64 libFuzzer fork-parent exit leak per campaign. Each produced
+an empty artifact after its workers exited successfully. Both campaigns
+reported zero input findings and the driver exited zero.
+
+| Target                | Compiling and linking (s) | Campaign (s) | Reported fuzzing (s) | Corpus files |
+| --------------------- | ------------------------: | -----------: | -------------------: | -----------: |
+| `http_request`        |                   187.145 |       11.332 |                   11 |          331 |
+| `http_server_library` |                   139.881 |       10.628 |                   10 |          474 |
+
+The standalone commands used the following settings. The receipts are
+`fuzz-handoff-http_request/summary.json` and
+`fuzz-handoff-http_server_library/summary.json` under scratch.
+
+```bash
+for target in http_request http_server_library; do
+  out=$(mktemp -d "$scratch/fuzz-$target.XXXXXXXX")
+  mkdir "$out/home" "$out/tmp"
+  sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --no-new-privs \
+    env -i PATH=/usr/lib/llvm-21/bin:/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$out/home" TMPDIR="$out/tmp" \
+    CC=clang-21 CXX=clang++-21 CPLUS_INCLUDE_PATH="$scratch/boost_1_92_0:$scratch/icu78/include:$scratch/sqlite/include" \
+    LDFLAGS="-L$scratch/icu78/lib -L$scratch/sqlite/lib -L$scratch/boost_1_92_0/stage/lib" \
+    LD_LIBRARY_PATH="$scratch/icu78/lib:$scratch/sqlite/lib" \
+    python3 -B cpp/gateway/fuzz/ci.py "$target" --seconds 10 --jobs 4 --out "$out"
+done
+```
+
+The CMake sanitizer build linked 10 fuzz harnesses. All 10 completed
+1,000 serial runs each with ASan, UBSan and leak detection enabled.
+This exercised the helper harnesses, both HTTP link closures, and the
+existing Base64, ICU and WebSocket registrations.
+
+```bash
+harnesses=(base64 console_format date_parse env_file headers_library http_request http_server_library
+           posix_path string_icu_library websocket_library)
+targets=()
+for harness in "${harnesses[@]}"; do targets+=("uos_fuzz_$harness"); done
+bash "$scratch/ci-env.sh" env UOS_GATEWAY_BUILD_EVIDENCE="$scratch/cmake-check" UOS_GATEWAY_TOOL_ROOT="$scratch" \
+  cmake --build "$scratch/cmake-check" --parallel 4 --target "${targets[@]}"
+for harness in "${harnesses[@]}"; do
+  out=$(mktemp -d "$scratch/cmake-x1-$harness.XXXXXXXX")
+  mkdir "$out/home" "$out/tmp" "$out/corpus"
+  cp -- cpp/gateway/fuzz/corpus/"$harness"/* "$out/corpus/"
+  sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --no-new-privs \
+    env -i PATH=/usr/lib/llvm-21/bin:/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$out/home" TMPDIR="$out/tmp" \
+    LD_LIBRARY_PATH="$scratch/icu78/lib:$scratch/sqlite/lib" ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 \
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 "$scratch/cmake-check/uos_fuzz_$harness" \
+    -runs=1000 -max_len=4096 -timeout=10 -rss_limit_mb=1024 -artifact_prefix="$out/" "$out/corpus"
+done
 ```
 
 ## Portable packaging
 
-The portable Docker build produced an 83,123,797-byte ARM64 archive with
-SHA-256 `5933dd26713c5dd25e0366abea2836b8329894a07c56f235a6b7a35a886cfa6b`
-at `20cad4cf`. Its sealed build profile includes llhttp 9.4.4. The Debian 12
-and 13 proofs passed with two CPUs at 256 and 512 MiB. Each run completed
+The portable Docker build produced an 83,123,798-byte ARM64 archive with
+SHA-256 `a36592e8cf4bb8938be5b492a07947cea5b8855bfb0abffc914d5afff5dcc0c0`
+at `902d71bc`. Its sealed build profile includes llhttp 9.4.4. Debian 12
+and 13 each passed the two-CPU checks at 256 and 512 MiB on the ABI 8
+Linux host. Each run returned 401 for an unauthenticated chat, completed
 1,161 loopback mock chats and read 1,161 accounted requests after reopen.
-Cgroup peaks ranged from 38,162,432 to 39,006,208 bytes with zero OOM events.
+Cgroup peaks ranged from 38,014,976 to 38,690,816 bytes with zero OOM events.
 
 ```bash
-bash "$scratch/ci-env.sh" env PORTABLE_JOBS=4 bash cpp/gateway/packaging/portable/build.sh "$scratch/gateway-arm64.tar.gz"
-bash "$scratch/ci-env.sh" bash cpp/gateway/packaging/portable/verify.sh "$scratch/gateway-arm64.tar.gz" "$scratch/portable-proof"
+bash "$scratch/ci-env.sh" env PORTABLE_JOBS=4 bash cpp/gateway/packaging/portable/build.sh "$scratch/gateway-arm64-handoff.tar.gz"
+bash "$scratch/ci-env.sh" bash cpp/gateway/packaging/portable/verify.sh \
+  "$scratch/gateway-arm64-handoff.tar.gz" "$scratch/portable-handoff-proof"
 ```
 
 ## Handoff status
 
-The Release, sanitizer and portable package runs above finished. Standalone
-fuzz verification is pending. The retry showed that Clang appends
-`LIBRARY_PATH` entries after its system paths. The standalone runner needs
-an explicit first-priority linker search path for staged ICU. The macOS
-script passed shell and embedded Python syntax checks. Apple Silicon
-execution requires a Darwin host, and a physical Pi was outside this
-runner's verification.
+The macOS script passed shell and embedded Python syntax checks. Native
+Apple Silicon execution, the owner-installed native and comparison SDK
+profiles, and physical Raspberry Pi startup still need their target
+environments. The reduced rulesets were exercised by ABI caps on the
+Linux 7.0 runner.
+
+The portable mock proof continued to report `unknown` for the release
+identity. The operator kit tracks the separate live identity gate.
+[Stage 2a findings](cppgw-integrate-s2a-20261118.md#remaining-work-and-findings)
 
 The GitHub push preflight for
 `agent-jobs/cppgw-integrate-x1-20261118-44302040764-1` exited 128 because
-HTTPS authentication was unavailable. Fetched `origin/development` was
-`2ac5aae69b0f0bac77cf1c6f329995cf1187616c`; the port branch is outside that
-history. `agent-job` holds the two merges for the maintainer's integration.
+HTTPS authentication was unavailable. The fetch returned
+`origin/development` at `2ac5aae69b0f0bac77cf1c6f329995cf1187616c`. The
+integration tip is outside that history. `agent-job` holds the two merges
+for the maintainer's integration. The Git bundle in runner scratch preserves
+that branch using the stage 2a history as its prerequisite. The final report
+commit changes only this Markdown file. Its isolated `format:check` and
+`git diff --check` passed, and the driver input digest matches the five
+receipts above.
 
 ```bash
-git fetch origin development
+git fetch --no-tags origin refs/heads/development:refs/remotes/origin/development
 GIT_TERMINAL_PROMPT=0 git -c core.askPass=/bin/false push --dry-run origin \
   HEAD:refs/heads/agent-jobs/cppgw-integrate-x1-20261118-44302040764-1
+git bundle create "$scratch/cppgw-integrate-x1-20261118.bundle" agent-job ^30e53aa7
+git bundle verify "$scratch/cppgw-integrate-x1-20261118.bundle"
 ```
+
+**Summary.** Stage 1 and the opt-in Landlock fallback are merged in `a05c6088` and `88d62fe3`.
+Linux ARM64 Release passed all four shards, totaling 445 binaries and 5,054 cases.
+Focused ASan, UBSan and LeakSanitizer passed 113 binaries and 1,280 cases.
+The default Landlock policy and seccomp filter match stage X byte for byte.
+GitHub HTTPS authentication blocked publication. The committed integration is on `agent-job`.
