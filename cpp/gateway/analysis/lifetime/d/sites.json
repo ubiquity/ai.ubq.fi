@@ -5581,7 +5581,8 @@
       "sites": []
     },
     "src/sentinel/replay_model.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed replay key creation, value conversion, list shape validation and byte helpers. Spans and references are consumed synchronously and outputs own their data.",
       "sites": []
     },
     "src/sentinel/replay_observation.cpp": {

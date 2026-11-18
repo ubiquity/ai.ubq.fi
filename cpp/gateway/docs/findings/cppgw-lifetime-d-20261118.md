@@ -236,7 +236,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/sentinel/replay_capture.cpp`
 - [x] `src/sentinel/replay_envelope.cpp`
 - [x] `src/sentinel/replay_limits.cpp`
-- [ ] `src/sentinel/replay_model.cpp`
+- [x] `src/sentinel/replay_model.cpp`
 - [ ] `src/sentinel/replay_observation.cpp`
 - [ ] `src/sentinel/replay_read.cpp`
 - [ ] `src/sentinel/replay_retention.cpp`
@@ -1242,6 +1242,10 @@ Reviewed digest, compression, key import and synchronous replay envelope helpers
 
 Reviewed synchronous replay capacity arithmetic. No deferred operation or retained view.
 
+### `src/sentinel/replay_model.cpp`
+
+Reviewed replay key creation, value conversion, list shape validation and byte helpers. Spans and references are consumed synchronously and outputs own their data.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1490,4 +1494,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-128/286 files reviewed. 246 sites: 228 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+129/286 files reviewed. 246 sites: 228 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
