@@ -1952,8 +1952,132 @@
       ]
     },
     "include/uos/rt/http.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed the Blob, File, FormData, Request and Response API. The public Task methods are ordinary entry points that acquire ownership before the corresponding implementation coroutine starts.",
+      "sites": [
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b"
+          ],
+          "lines": [
+            48,
+            51,
+            52,
+            62,
+            66,
+            68,
+            69,
+            70,
+            72,
+            75,
+            76,
+            80,
+            81,
+            91,
+            95,
+            101
+          ],
+          "label": "Blob and File construction, getters and asynchronous reads",
+          "reason": "Value construction consumes views synchronously, borrowed getters refer to the owning handle, and asynchronous reads copy the backing shared_ptr at call time."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "d"
+          ],
+          "lines": [
+            118,
+            120,
+            121,
+            122,
+            124,
+            125,
+            126,
+            129,
+            131,
+            132,
+            135,
+            136,
+            137,
+            138,
+            139,
+            142,
+            143
+          ],
+          "label": "FormData borrowed entries and iterators",
+          "reason": "Mutators and accessors execute synchronously. The reader and serializer paths finish entry traversal before returning or suspending."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            177,
+            180,
+            184,
+            189,
+            192,
+            193,
+            201,
+            205,
+            209,
+            210,
+            211,
+            216,
+            219,
+            224,
+            229,
+            230,
+            231,
+            235,
+            236
+          ],
+          "label": "Response handle and body methods",
+          "reason": "Response owns shared state, reference getters are synchronous in the checked callers, and the body adapters return tasks with independently owned inputs."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            249,
+            261,
+            262,
+            263,
+            265,
+            268,
+            269,
+            279,
+            287,
+            288,
+            290,
+            292,
+            293,
+            294,
+            296,
+            298,
+            299,
+            300,
+            301,
+            302,
+            303,
+            307,
+            308,
+            312,
+            313,
+            314,
+            323
+          ],
+          "label": "Request construction, body APIs and transfer",
+          "reason": "The constructors consume URL and init borrows synchronously, property access borrows a live handle, and each deferred body reader takes owned state from the ordinary wrapper."
+        }
+      ]
     },
     "include/uos/rt/fetch.hpp": {
       "status": "pending",

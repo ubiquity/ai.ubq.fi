@@ -43,7 +43,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/stream.cpp`
 - [x] `include/uos/rt/stream.hpp`
 - [x] `src/rt/http.cpp`
-- [ ] `include/uos/rt/http.hpp`
+- [x] `include/uos/rt/http.hpp`
 - [ ] `include/uos/rt/fetch.hpp`
 - [ ] `include/uos/rt/fetch_transport.hpp`
 - [ ] `include/uos/rt/gzip.hpp`
@@ -200,18 +200,27 @@ Read the body readers and stream adapters, clone/transfer paths, synchronous For
 - **SAFE** `777, 789, 790, 797, 803, 806, 809, 810, 812, 813, 815, 817, 833, 834, 835, 839, 841, 847, 849, 857, 859, 862, 865, 867, 869, 872, 878, 879, 883, 1141, 1145, 1234, 1238` (b/c/d/e), Request and Response read tasks and their inputs. The wrappers snapshot owned data or a reader before returning, and each frame owns the read operation, complete step, accumulated bytes and form boundary during later awaits.
 - **UNCLEAR** `771, 797, 803, 809, 812, 813, 817, 1141, 1234` (b/c), Abandoned streamed-body reader lock. The eager wrapper locks the body before the lazy Task starts and release is reached on success. Decide the required lock and cancellation behavior when a caller discards an unstarted Task or a stream read rejects, then exercise that behavior with an independently retained body handle.
 
+### `include/uos/rt/http.hpp`
+
+Reviewed the Blob, File, FormData, Request and Response API. The public Task methods are ordinary entry points that acquire ownership before the corresponding implementation coroutine starts.
+
+- **SAFE** `48, 51, 52, 62, 66, 68, 69, 70, 72, 75, 76, 80, 81, 91, 95, 101` (b), Blob and File construction, getters and asynchronous reads. Value construction consumes views synchronously, borrowed getters refer to the owning handle, and asynchronous reads copy the backing shared_ptr at call time.
+- **SAFE** `118, 120, 121, 122, 124, 125, 126, 129, 131, 132, 135, 136, 137, 138, 139, 142, 143` (b/d), FormData borrowed entries and iterators. Mutators and accessors execute synchronously. The reader and serializer paths finish entry traversal before returning or suspending.
+- **SAFE** `177, 180, 184, 189, 192, 193, 201, 205, 209, 210, 211, 216, 219, 224, 229, 230, 231, 235, 236` (b/c), Response handle and body methods. Response owns shared state, reference getters are synchronous in the checked callers, and the body adapters return tasks with independently owned inputs.
+- **SAFE** `249, 261, 262, 263, 265, 268, 269, 279, 287, 288, 290, 292, 293, 294, 296, 298, 299, 300, 301, 302, 303, 307, 308, 312, 313, 314, 323` (b/c), Request construction, body APIs and transfer. The constructors consume URL and init borrows synchronously, property access borrows a live handle, and each deferred body reader takes owned state from the ordinary wrapper.
+
 ## Ranked defects and counts
 
-Reviewed **11/30 files** and **75 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **12/30 files** and **79 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 1 | 14 | 0 |
-| b. Borrowed coroutine parameter or receiver | 4 | 38 | 3 |
-| c. Callback ownership or cycle | 10 | 50 | 3 |
-| d. Container invalidation | 3 | 21 | 0 |
+| b. Borrowed coroutine parameter or receiver | 4 | 42 | 3 |
+| c. Callback ownership or cycle | 10 | 52 | 3 |
+| d. Container invalidation | 3 | 22 | 0 |
 | e. GCC 12 await-expression rule | 4 | 7 | 1 |
-| **Unique site groups** | 14 | 57 | 4 |
+| **Unique site groups** | 14 | 61 | 4 |
 
 ### 1. A-STREAM-CANCEL-OWNER (memory safety in stream cancellation) — Stream cancel borrows the owner slot through callback invocation
 
