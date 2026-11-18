@@ -380,7 +380,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/sentinel/replay_envelope.hpp`
 - [x] `include/uos/sentinel/replay_limits.hpp`
 - [x] `include/uos/sentinel/replay_model.hpp`
-- [ ] `include/uos/sentinel/replay_observation.hpp`
+- [x] `include/uos/sentinel/replay_observation.hpp`
 - [ ] `include/uos/sentinel/replay_read.hpp`
 - [ ] `include/uos/sentinel/replay_retention.hpp`
 - [ ] `include/uos/sentinel/replay_retention_bootstrap.hpp`
@@ -2162,6 +2162,13 @@ Reviewed view-backed literals, shared capture buffers and synchronous byte helpe
 - L100, 122, 147, 207, 277, 278, 294, 297, 300, 301 **SAFE** · Body buffers are explicitly shared. Constant views refer to literals, and the salt is an owning byte vector built by an immediately invoked lambda.
 - L321, 323, 324 **SAFE** · Clone and concat consume input spans synchronously and return owned byte copies.
 
+### `include/uos/sentinel/replay_observation.hpp`
+
+Reviewed persistence dependencies, request capture APIs and the response inspector callback interface.
+
+- L52, 54, 56, 57, 58, 67, 74, 77, 87, 91, 95 **SAFE** · Capture records carry shared candidate and body owners, while the body observer holds the candidate weakly. Persistence takes its own key and dependency data, and the option functions are synchronous.
+- L99, 102, 107, 108, 111, 113 **SAFE** · The buffered inspection Task owns its Response. SSE inspector callbacks retain shared parsing state and consume byte spans during synchronous calls.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2411,4 +2418,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-272/286 files reviewed. 459 sites: 434 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+273/286 files reviewed. 461 sites: 436 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

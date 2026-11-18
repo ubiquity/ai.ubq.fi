@@ -10185,8 +10185,50 @@
       ]
     },
     "include/uos/sentinel/replay_observation.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed persistence dependencies, request capture APIs and the response inspector callback interface.",
+      "sites": [
+        {
+          "lines": [
+            52,
+            54,
+            56,
+            57,
+            58,
+            67,
+            74,
+            77,
+            87,
+            91,
+            95
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Capture records carry shared candidate and body owners, while the body observer holds the candidate weakly. Persistence takes its own key and dependency data, and the option functions are synchronous."
+        },
+        {
+          "lines": [
+            99,
+            102,
+            107,
+            108,
+            111,
+            113
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The buffered inspection Task owns its Response. SSE inspector callbacks retain shared parsing state and consume byte spans during synchronous calls."
+        }
+      ]
     },
     "include/uos/sentinel/replay_read.hpp": {
       "reviewed": false,
