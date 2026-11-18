@@ -11,3 +11,12 @@
 ## Environment
 
 Ubuntu 24.04 ARM64 runner, Linux `7.0.0-1017-azure`, four CPUs. The runner already provides GCC 14.2.0. Prerequisites and build outputs are prepared outside the checkout.
+
+## Continuation and work contract v2
+
+The inherited `b99f24ca6f3e1b610f084da9fa55332897c20d4a` commit added the report. The worktree was clean. Clang 21.1.8 compiled the untouched permissions implementation, the original permissions test, and both native startup units with `-std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion -Werror` and the driver’s release definitions. A raw `landlock_create_ruleset(..., LANDLOCK_CREATE_RULESET_VERSION)` returned ABI 8 on the ARM64 runner. The tracked launcher call sites are `cpp/gateway/runtime/startup.cpp` and `cpp/gateway/entrypoints/gateway.cpp`.
+
+- The default keeps the current filesystem rights and seccomp program and requires Landlock TSYNC. The exact startup environment value `UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1` selects the ABI-adaptive ruleset. ABI 3–7 requires a verified single-threaded bootstrap. Every accepted ABI uses the same seccomp program with TSYNC. ABI 7 uses the kernel's default audit settings. A test-only C++ argument can lower the queried ABI.
+- The opt-in TCP policy permits bind on the manifest's validated listener port. Normal egress permits TCP 53 for DNS and 443 for the current HTTPS/WSS upstreams. The isolated fixture can connect to its separately validated loopback mock port. Landlock controls port numbers, and redirect targets on other TCP ports will be denied in this mode. TLS trust loads synchronously before confinement so configured CA bundles keep their existing preflight access.
+- The existing confinement receipt and a single startup line report the applied controls. The HTTP health response has no confinement field. Existing path and syscall grants, full-policy tests, provider routing, package verification, wire contracts and the build registry stay within their prior contracts.
+- Use the driver for the four ARM64 release shards, the permissions link closures for the focused sanitizer gate, and strict compilation for the launcher units that the portable driver omits. External scratch holds dependencies, objects, and complete command logs. Expect a cold run to take several minutes per profile with four cores. The driver logs object counts and per-test results. Diagnose the first new failure and retain exact receipts. Stop with a committed bounded diff and a documented qualification or delivery blocker if one remains.
