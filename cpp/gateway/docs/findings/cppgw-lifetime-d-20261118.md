@@ -257,7 +257,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/admin/capacity_observation_sync.hpp`
 - [x] `include/uos/admin/chart_source_proxy.hpp`
 - [x] `include/uos/admin/claude_code.hpp`
-- [ ] `include/uos/admin/codex.hpp`
+- [x] `include/uos/admin/codex.hpp`
 - [ ] `include/uos/admin/codex_reset.hpp`
 - [ ] `include/uos/admin/defaults.hpp`
 - [ ] `include/uos/admin/error_log.hpp`
@@ -1416,6 +1416,13 @@ Reviewed overloads, request ownership and injected credential, quota and clock d
 
 - L11, 16, 17, 22, 24, 25, 28, 30, 31, 32 **SAFE** · The handlers receive request and options values. The clock is used synchronously, and the persistence operations remain within the awaiting frames that own their options.
 
+### `include/uos/admin/codex.hpp`
+
+Reviewed admin boundaries and callback aliases. The fail-fast catalog and refresh overrides at lines 35–49 are the interfaces for the three defects recorded under src/admin/codex.cpp.
+
+- L20, 21, 22, 23, 30, 31, 32, 33, 34, 47, 50 **SAFE** · These request handlers take owning request or scalar arguments.
+- L24, 25, 26, 27, 28, 29 **SAFE** · The telemetry and analytics interfaces take their callback objects by value, and the active callable remains in an awaiting frame for the child Task.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1664,4 +1671,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-149/286 files reviewed. 316 sites: 295 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+150/286 files reviewed. 318 sites: 297 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
