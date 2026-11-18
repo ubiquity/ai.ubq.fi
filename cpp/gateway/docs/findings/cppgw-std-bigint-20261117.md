@@ -199,3 +199,24 @@ env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/driver-home" TMPDIR="$sc
 ```
 
 Sixty-six closures were relinked and rerun using the already compiled objects. The IDNA result in the same cohort used ICU 78.3 and passed 2/2, with no SQLite calls or child processes in that test. The three affected SQLite and KV binaries passed 29/29, 17/17 and 7/7 after the recovery. At the 123-closure checkpoint, reconciling those reruns gave 122 passing binaries and 1,607 passing cases out of 1,608. The remaining failure is the documented Number parser fixture.
+
+### Full sanitizer sweep and optimized controls
+
+The `-O0` sweep built 829 distinct first-party translation units and both vendor archives, then attempted all 442 registered test binaries in 2,572.436 seconds. The raw result was 435 passing binaries, 6 failing binaries and 1 timeout. The harness reported 4,985 passing cases out of 4,993. JSON and Sentinel retention exited before printing case summaries, so those binaries contribute zero to the raw case totals. The source digest was `173c881ddb9a3698a4387278b11f2c247ddcf3cb161a0cf038f1087d0be05416` both at launch and at completion, matching the inherited full release receipt. The raw sanitizer receipt SHA-256 is `d35ef6f67819db76f7232ece50edf879a1fcdb5ac9fb23da0fc937521ed00d45`.
+
+Alongside the Number and loader failures, the `-O0` run recorded three results in other components. The supervisor redaction binary passed 39/41 cases, missing two 2-second wall-clock assertions. The deep JSON equality test hit an AddressSanitizer stack overflow inside `matchesAt` in `src/rt/json.cpp:1008` and `:1013`. The Sentinel retention metadata binary was CPU-active when the driver killed it at 300 seconds. The same strict ASan/UBSan closure build with `-O1` passed the JSON binary's 25/25 and the redaction binary's 41/41 cases. The retention closure is running at `-O1` with a 600-second driver limit.
+
+```bash
+controls=(tests/codex_supervisor_secret_test.cpp tests/rt/json_test.cpp tests/sentinel_replay_retention_metadata_test.cpp)
+env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/driver-home" TMPDIR="$scratch/driver-tmp" \
+  LANG=C.UTF-8 python3 -B "$scratch/optimized-asan-control.py" "$PWD/cpp/gateway" "$scratch" build "${controls[@]}"
+for test in tests/rt/json_test.cpp tests/codex_supervisor_secret_test.cpp; do
+  env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/driver-home" TMPDIR="$scratch/driver-tmp" \
+    LANG=C.UTF-8 python3 -B "$scratch/optimized-asan-control.py" "$PWD/cpp/gateway" "$scratch" run "$test"
+done
+env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/driver-home" TMPDIR="$scratch/driver-tmp" \
+  LANG=C.UTF-8 UOS_BIGINT_CONTROL_TIMEOUT=600 \
+  python3 -B "$scratch/optimized-asan-control.py" "$PWD/cpp/gateway" "$scratch" run tests/sentinel_replay_retention_metadata_test.cpp
+```
+
+The optimized build reused its compiled objects as closures were added. The redaction run began after the full sweep released the runner CPUs. The receipt retains the original JSON stack overflow and the passing optimized rerun.
