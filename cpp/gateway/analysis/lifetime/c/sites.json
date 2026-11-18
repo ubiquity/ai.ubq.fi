@@ -631,8 +631,16 @@
       ]
     },
     "include/uos/embeddings/jobs.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Job API with a shared store and borrowed request telemetry.",
+      "sites": [
+        {
+          "lines": "6-25",
+          "kind": "borrowed context and store ownership",
+          "verdict": "SAFE",
+          "reason": "The create and get entry points are joined by their route, and job-attempt callers keep the telemetry context alive while the job retains its store."
+        }
+      ]
     },
     "include/uos/embeddings/ledger.hpp": {
       "status": "pending",

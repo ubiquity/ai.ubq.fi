@@ -91,7 +91,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/deepseek/waterfall.hpp`
 - [x] `include/uos/deepseek/waterfall_handler.hpp`
 - [x] `include/uos/embeddings/handlers.hpp`
-- [ ] `include/uos/embeddings/jobs.hpp`
+- [x] `include/uos/embeddings/jobs.hpp`
 - [ ] `include/uos/embeddings/ledger.hpp`
 - [ ] `include/uos/embeddings/voyage.hpp`
 - [ ] `include/uos/harmony/adapter.hpp`
@@ -641,3 +641,9 @@ The waterfall awaits each provider and paid-tail callback before attempting anot
 Embeddings handler API with optional telemetry.
 
 - 8-9 · borrowed context · **SAFE** · Existing route callers join the handler with a live context, and the implementation copies it into owned telemetry dispatch state.
+
+### `include/uos/embeddings/jobs.hpp`
+
+Job API with a shared store and borrowed request telemetry.
+
+- 6-25 · borrowed context and store ownership · **SAFE** · The create and get entry points are joined by their route, and job-attempt callers keep the telemetry context alive while the job retains its store.
