@@ -109,7 +109,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_authority_principals.cpp`
 - [x] `src/authority/native_authority_rpc.cpp`
 - [x] `src/authority/native_authority_runtime.cpp`
-- [ ] `src/authority/native_authority_sql.cpp`
+- [x] `src/authority/native_authority_sql.cpp`
 - [ ] `src/authority/native_codex.cpp`
 - [ ] `src/authority/native_codex_429.cpp`
 - [ ] `src/authority/native_codex_capacity.cpp`
@@ -704,6 +704,12 @@ Reviewed native runtime verification and routing, including retained-history aut
 
 - L72, 121, 142 **SAFE** · The bound NativeAuthority port retains its enclosing State, runtime and injected verifier through settlement. The binding, request and intent offered to the verifier are value parameters of the awaiting frame.
 
+### `src/authority/native_authority_sql.cpp`
+
+Reviewed SQLite storage, initialization, pagination and row materialization.
+
+- L75, 127, 128, 133 **SAFE** · The storage calls transactionSync inline and the initializer invokes its borrowed callback inside that transaction. Reads return copied rows and no callback is retained.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -809,4 +815,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-44/286 files reviewed. 134 sites: 125 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+45/286 files reviewed. 135 sites: 126 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

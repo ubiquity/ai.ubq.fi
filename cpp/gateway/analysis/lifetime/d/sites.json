@@ -2465,8 +2465,25 @@
       ]
     },
     "src/authority/native_authority_sql.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed SQLite storage, initialization, pagination and row materialization.",
+      "sites": [
+        {
+          "lines": [
+            75,
+            127,
+            128,
+            133
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The storage calls transactionSync inline and the initializer invokes its borrowed callback inside that transaction. Reads return copied rows and no callback is retained."
+        }
+      ]
     },
     "src/authority/native_codex.cpp": {
       "reviewed": false,
