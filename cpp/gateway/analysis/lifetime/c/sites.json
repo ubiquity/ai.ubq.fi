@@ -1365,8 +1365,16 @@
       ]
     },
     "include/uos/provider/lithos.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Lithos provider transport API with owned options.",
+      "sites": [
+        {
+          "lines": "124-126,234-235",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "Request and dispatch hook values stay in the task frame through fetch and retry."
+        }
+      ]
     },
     "include/uos/provider/lithos_handlers.hpp": {
       "status": "pending",

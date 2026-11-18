@@ -163,7 +163,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/claude_code_usage_refresh.hpp`
 - [x] `include/uos/provider/claude_code_usage_schema.hpp`
 - [x] `include/uos/provider/health.hpp`
-- [ ] `include/uos/provider/lithos.hpp`
+- [x] `include/uos/provider/lithos.hpp`
 - [ ] `include/uos/provider/lithos_handlers.hpp`
 - [ ] `include/uos/provider/lithos_models.hpp`
 - [ ] `include/uos/provider/lithos_rate_limits.hpp`
@@ -1033,3 +1033,9 @@ Synchronous usage schema records and converters.
 Health API returns shared recorder promises and owns clock callables for reads.
 
 - 75-96,101-123 · task and callback interface · **SAFE** · Each health operation uses owned provider/clock data and returns a copied promise or a task with owning inputs.
+
+### `include/uos/provider/lithos.hpp`
+
+Lithos provider transport API with owned options.
+
+- 124-126,234-235 · task and callback interface · **SAFE** · Request and dispatch hook values stay in the task frame through fetch and retry.
