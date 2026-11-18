@@ -409,8 +409,108 @@
       ]
     },
     "src/admin/claude_code.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed credential validation and persistence, account targeting, guard and access handlers, and the compatibility quota read.",
+      "sites": [
+        {
+          "lines": [
+            67,
+            88
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The validation frame owns both parsed credentials and workspace, and the passive status projection uses its snapshot only after the wait."
+        },
+        {
+          "lines": [
+            132,
+            186,
+            193
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "JSON member pointers refer to unchanged frame-local body storage while account resolution is pending."
+        },
+        {
+          "lines": [
+            171,
+            174
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The persistence frame owns its submission, account patch and store while both writes are awaited."
+        },
+        {
+          "lines": [
+            202,
+            209,
+            212,
+            225,
+            234,
+            238,
+            242
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The upload frame retains request, input, options and the settled variant. The account reference after the final status wait still points into that frame-local variant."
+        },
+        {
+          "lines": [
+            250,
+            253,
+            257,
+            259,
+            267,
+            272,
+            276,
+            279,
+            287,
+            292,
+            299,
+            306,
+            310
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The quota, deletion and guard operations await each child with a frame-local store and account or body snapshot. The raw member used after resolution is in the unchanged local JSON."
+        },
+        {
+          "lines": [
+            316,
+            321,
+            324,
+            328,
+            335,
+            338,
+            342,
+            345
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Both access and active-account handlers retain request, store and parsed IDs until completion, including the store borrowed by the access write."
+        }
+      ]
     },
     "src/admin/codex.cpp": {
       "reviewed": false,

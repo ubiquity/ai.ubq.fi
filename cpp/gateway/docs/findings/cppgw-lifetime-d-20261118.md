@@ -28,7 +28,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/admin/api_keys.cpp`
 - [x] `src/admin/capacity_observation_sync.cpp`
 - [x] `src/admin/chart_source_proxy.cpp`
-- [ ] `src/admin/claude_code.cpp`
+- [x] `src/admin/claude_code.cpp`
 - [ ] `src/admin/codex.cpp`
 - [ ] `src/admin/codex_reset.cpp`
 - [ ] `src/admin/defaults.cpp`
@@ -362,6 +362,17 @@ Reviewed the body cancellation, local and remote response reads, and retained ca
 - L152, 168, 169, 170 **SAFE** · The push task owns copied samples, fetcher and shared state. The normal transport's timeout aborts the exchange and the owned finally reaction clears inFlight on settlement.
 - L179, 186, 191, 196, 205, 207, 212, 215, 218, 221 **SAFE** · The proxy frame owns request, pathname string, dependency callbacks and local response. Work escaping through the push is copied into its own frame.
 
+### `src/admin/claude_code.cpp`
+
+Reviewed credential validation and persistence, account targeting, guard and access handlers, and the compatibility quota read.
+
+- L67, 88 **SAFE** · The validation frame owns both parsed credentials and workspace, and the passive status projection uses its snapshot only after the wait.
+- L132, 186, 193 **SAFE** · JSON member pointers refer to unchanged frame-local body storage while account resolution is pending.
+- L171, 174 **SAFE** · The persistence frame owns its submission, account patch and store while both writes are awaited.
+- L202, 209, 212, 225, 234, 238, 242 **SAFE** · The upload frame retains request, input, options and the settled variant. The account reference after the final status wait still points into that frame-local variant.
+- L250, 253, 257, 259, 267, 272, 276, 279, 287, 292, 299, 306, 310 **SAFE** · The quota, deletion and guard operations await each child with a frame-local store and account or body snapshot. The raw member used after resolution is in the unchanged local JSON.
+- L316, 321, 324, 328, 335, 338, 342, 345 **SAFE** · Both access and active-account handlers retain request, store and parsed IDs until completion, including the store borrowed by the access write.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -370,4 +381,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-5/286 files reviewed. 23 sites: 23 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+6/286 files reviewed. 29 sites: 29 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
