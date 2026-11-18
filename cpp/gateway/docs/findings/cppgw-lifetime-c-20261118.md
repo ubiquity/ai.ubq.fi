@@ -273,7 +273,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/paid_fallback/index.cpp`
 - [x] `src/paid_fallback/ledger_admission.cpp`
 - [x] `src/paid_fallback/ledger_backfill.cpp`
-- [ ] `src/paid_fallback/ledger_settlement.cpp`
+- [x] `src/paid_fallback/ledger_settlement.cpp`
 - [ ] `src/paid_fallback/ledger_state.cpp`
 - [ ] `src/paid_fallback/ledger_stats.cpp`
 - [ ] `src/paid_fallback/removed_provider.cpp`
@@ -1731,3 +1731,12 @@ Backfill and reconciliation use serialized leases and owned scan state. One read
 - 458-527,530-594,597-648 · predicate, lease, and reconciliation awaits · **SAFE** · Scans and settlement join frame-owned candidates, stores and log maps. deferAll itself starts a child with a KV owner for each entry. Nested virtual read fan-outs are reviewed in ledger_settlement.cpp.
 - 652-792,794-806 · backfill driver and single-flight callbacks · **SAFE** · The worker owns KV and progress through its leases. The scheduled reactions have no captures and pass the resolved KV by value to the worker.
 - 808-1074 · public reconciliation and queue awaits · **SAFE** · Keys, leases, override handles, and row lists remain in the frame or become child values. Iteration uses live local snapshots and each queue/commit call is joined.
+
+### `src/paid_fallback/ledger_settlement.cpp`
+
+Settlement keeps transaction values and cursor rows local. Directly injected store receivers need ownership in each fail-fast read child.
+
+- 99-223 · leased scan, preparation, and commit awaits · **SAFE** · KV, pending rows, and transaction handles are coroutine parameters or locals alive through each awaited operation.
+- 225-260,388-445 · request-bound settlement against global KV · **SAFE** · The production store has a module owner and each guarded get also retains an inner native store. Durable settlement inputs are copied before the joins.
+- 266-271,322-327 · deferral and settlement KV fan-outs · **DEFECT** · A rejecting virtual read can end deferral or settlement while a sibling coroutine get from an injected store is pending. After the last public caller releases KV the sibling can use its dead receiver. Give each parallel read its own store owner.
+- 272-296,299-314,328-386 · row selection, provider log, and settlement CAS · **SAFE** · Tuple alternatives refer to named local await results, and rollup and commit inputs are owned by their respective child frames.

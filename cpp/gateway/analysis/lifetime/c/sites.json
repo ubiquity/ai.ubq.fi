@@ -3088,8 +3088,34 @@
       ]
     },
     "src/paid_fallback/ledger_settlement.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Settlement keeps transaction values and cursor rows local. Directly injected store receivers need ownership in each fail-fast read child.",
+      "sites": [
+        {
+          "lines": "99-223",
+          "kind": "leased scan, preparation, and commit awaits",
+          "verdict": "SAFE",
+          "reason": "KV, pending rows, and transaction handles are coroutine parameters or locals alive through each awaited operation."
+        },
+        {
+          "lines": "225-260,388-445",
+          "kind": "request-bound settlement against global KV",
+          "verdict": "SAFE",
+          "reason": "The production store has a module owner and each guarded get also retains an inner native store. Durable settlement inputs are copied before the joins."
+        },
+        {
+          "lines": "266-271,322-327",
+          "kind": "deferral and settlement KV fan-outs",
+          "verdict": "DEFECT",
+          "reason": "A rejecting virtual read can end deferral or settlement while a sibling coroutine get from an injected store is pending. After the last public caller releases KV the sibling can use its dead receiver. Give each parallel read its own store owner."
+        },
+        {
+          "lines": "272-296,299-314,328-386",
+          "kind": "row selection, provider log, and settlement CAS",
+          "verdict": "SAFE",
+          "reason": "Tuple alternatives refer to named local await results, and rollup and commit inputs are owned by their respective child frames."
+        }
+      ]
     },
     "src/paid_fallback/ledger_state.cpp": {
       "status": "pending",
