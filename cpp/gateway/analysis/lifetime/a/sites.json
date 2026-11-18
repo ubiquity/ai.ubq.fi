@@ -1336,8 +1336,80 @@
       ]
     },
     "include/uos/rt/process.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "The ProcessLoop public interface is split from its implementation in process_loop.cpp and the loop-free functions in process.cpp.",
+      "sites": [
+        {
+          "lines": [
+            80,
+            84,
+            90,
+            92,
+            93,
+            95,
+            100,
+            103,
+            106,
+            110,
+            111,
+            112,
+            113,
+            117,
+            118
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Signal Listener closure and signal-name views",
+          "reason": "Registration copies the owning Listener identity, delivery invokes an owned snapshot, and the event/name views are used synchronously or point to static signal-name strings."
+        },
+        {
+          "lines": [
+            137,
+            141,
+            143,
+            144,
+            146,
+            148,
+            151,
+            155,
+            158,
+            162,
+            164,
+            165,
+            168,
+            178,
+            181,
+            190
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "FileSink and Subprocess handle APIs",
+          "reason": "Writes and kill consume their views synchronously, and deferred work gets shared state from the handle or returns an owning stream or Promise copy."
+        },
+        {
+          "lines": [
+            212,
+            214,
+            216,
+            220,
+            223,
+            225
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "BunFile path and stream declaration",
+          "reason": "The object owns its path and stream copies that path into the source before returning, allowing the BunFile wrapper to be a temporary."
+        }
+      ]
     },
     "src/rt/stream.cpp": {
       "status": "pending",

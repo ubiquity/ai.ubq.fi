@@ -39,7 +39,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/async.cpp`
 - [x] `include/uos/rt/async.hpp`
 - [x] `src/rt/process_loop.cpp`
-- [ ] `include/uos/rt/process.hpp`
+- [x] `include/uos/rt/process.hpp`
 - [ ] `src/rt/stream.cpp`
 - [ ] `include/uos/rt/stream.hpp`
 - [ ] `src/rt/http.cpp`
@@ -158,18 +158,26 @@ Reviewed both pidfd and SIGCHLD branches, subprocess pipe streams, process liste
 - **SAFE** `433, 437, 446, 448, 451, 459, 465, 474, 513, 524, 527, 528, 531, 533, 534, 536, 538, 540, 543, 545` (a/b/c/d), Spawn setup and watcher detachment. The borrowing lambdas and argv or env pointers are synchronous, and the detached watchers receive state and their native wait inputs by value.
 - **SAFE** `551, 555, 560, 561, 570, 581, 591, 600, 602, 604, 605, 606, 608` (b/c), BunFile stream callbacks and descriptor lifetime. The source owns its pathname and descriptor, the synchronous pull and cancel closures own that source, and close clears the fd before teardown.
 
+### `include/uos/rt/process.hpp`
+
+The ProcessLoop public interface is split from its implementation in process_loop.cpp and the loop-free functions in process.cpp.
+
+- **SAFE** `80, 84, 90, 92, 93, 95, 100, 103, 106, 110, 111, 112, 113, 117, 118` (b/c), Signal Listener closure and signal-name views. Registration copies the owning Listener identity, delivery invokes an owned snapshot, and the event/name views are used synchronously or point to static signal-name strings.
+- **SAFE** `137, 141, 143, 144, 146, 148, 151, 155, 158, 162, 164, 165, 168, 178, 181, 190` (b/c), FileSink and Subprocess handle APIs. Writes and kill consume their views synchronously, and deferred work gets shared state from the handle or returns an owning stream or Promise copy.
+- **SAFE** `212, 214, 216, 220, 223, 225` (b/c), BunFile path and stream declaration. The object owns its path and stream copies that path into the source before returning, allowing the BunFile wrapper to be a temporary.
+
 ## Ranked defects and counts
 
-Reviewed **7/30 files** and **53 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **8/30 files** and **56 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 1 | 12 | 0 |
-| b. Borrowed coroutine parameter or receiver | 3 | 26 | 1 |
-| c. Callback ownership or cycle | 7 | 38 | 2 |
+| b. Borrowed coroutine parameter or receiver | 3 | 29 | 1 |
+| c. Callback ownership or cycle | 7 | 41 | 2 |
 | d. Container invalidation | 2 | 15 | 0 |
 | e. GCC 12 await-expression rule | 2 | 6 | 1 |
-| **Unique site groups** | 9 | 42 | 2 |
+| **Unique site groups** | 9 | 45 | 2 |
 
 ### 1. A-PROMISE-CALLBACK-INPUT (memory safety in the public runtime API) — Task-returning Promise callbacks can borrow a destroyed outcome
 
