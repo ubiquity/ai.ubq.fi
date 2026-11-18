@@ -259,7 +259,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/admin/claude_code.hpp`
 - [x] `include/uos/admin/codex.hpp`
 - [x] `include/uos/admin/codex_reset.hpp`
-- [ ] `include/uos/admin/defaults.hpp`
+- [x] `include/uos/admin/defaults.hpp`
 - [ ] `include/uos/admin/error_log.hpp`
 - [ ] `include/uos/admin/index.hpp`
 - [ ] `include/uos/admin/kernel.hpp`
@@ -1429,6 +1429,12 @@ Reviewed the two reset-consume overloads.
 
 - L6, 7 **SAFE** · Requests and manual-reset dependency objects cross the boundary by value.
 
+### `include/uos/admin/defaults.hpp`
+
+Reviewed defaults and KV migration interfaces. The injected diagnostics slot at line 10 is the interface for the fail-fast defect in src/admin/defaults.cpp.
+
+- L8, 9, 11 **SAFE** · Migration and ordinary defaults requests transfer Request values and take no borrowed asynchronous inputs.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1677,4 +1683,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-151/286 files reviewed. 319 sites: 298 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+152/286 files reviewed. 320 sites: 299 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

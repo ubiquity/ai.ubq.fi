@@ -7122,8 +7122,23 @@
       ]
     },
     "include/uos/admin/defaults.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed defaults and KV migration interfaces. The injected diagnostics slot at line 10 is the interface for the fail-fast defect in src/admin/defaults.cpp.",
+      "sites": [
+        {
+          "lines": [
+            8,
+            9,
+            11
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Migration and ordinary defaults requests transfer Request values and take no borrowed asynchronous inputs."
+        }
+      ]
     },
     "include/uos/admin/error_log.hpp": {
       "reviewed": false,
