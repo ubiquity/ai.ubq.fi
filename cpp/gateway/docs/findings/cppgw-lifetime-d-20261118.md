@@ -375,7 +375,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/responses_stream.hpp`
 - [x] `include/uos/runtime_config.hpp`
 - [x] `include/uos/sentinel/incident_outbox.hpp`
-- [ ] `include/uos/sentinel/replay_admin.hpp`
+- [x] `include/uos/sentinel/replay_admin.hpp`
 - [ ] `include/uos/sentinel/replay_capture.hpp`
 - [ ] `include/uos/sentinel/replay_envelope.hpp`
 - [ ] `include/uos/sentinel/replay_limits.hpp`
@@ -2134,6 +2134,12 @@ Reviewed incident dependency callbacks, event/read Tasks and fingerprint wrapper
 - L54, 59, 60, 61, 62, 63, 76, 77, 79, 80, 96, 98, 101, 102 **SAFE** · Current callers hold KV through their direct waits. The Tasks own options and events, Fetch retains its callable and the clock, UUID and signal suppliers are invoked synchronously.
 - L108, 109, 111, 112, 236, 262, 263, 290, 311, 312 **SAFE** · Environment and admin owners keep shared KV handles. Fingerprinting serializes its input before returning the owning hash Task, and list/bind Tasks own their input values.
 
+### `include/uos/sentinel/replay_admin.hpp`
+
+Reviewed captured replay lookup and injected dependency interfaces.
+
+- L18, 19, 21, 23, 29, 30 **SAFE** · The public adapter copies dependencies. The admin frame owns the exact opening or list callable and the shared KV through each direct wait.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2383,4 +2389,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-267/286 files reviewed. 454 sites: 429 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+268/286 files reviewed. 455 sites: 430 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

@@ -10075,8 +10075,28 @@
       ]
     },
     "include/uos/sentinel/replay_admin.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed captured replay lookup and injected dependency interfaces.",
+      "sites": [
+        {
+          "lines": [
+            18,
+            19,
+            21,
+            23,
+            29,
+            30
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The public adapter copies dependencies. The admin frame owns the exact opening or list callable and the shared KV through each direct wait."
+        }
+      ]
     },
     "include/uos/sentinel/replay_capture.hpp": {
       "reviewed": false,
