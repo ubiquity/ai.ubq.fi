@@ -2191,7 +2191,8 @@
       "sites": []
     },
     "src/authority/native_api_key_policy.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed verification, policy mutation planning, paid input normalization and key generation. JSON and string views are synchronous inputs, and output records contain copied values. No suspension or escaping callback.",
       "sites": []
     },
     "src/authority/native_authority.cpp": {
