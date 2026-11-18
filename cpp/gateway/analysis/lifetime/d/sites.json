@@ -9036,8 +9036,23 @@
       ]
     },
     "include/uos/kv_conversion/profile_json.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the stream-export boundary and synchronous profile codecs.",
+      "sites": [
+        {
+          "lines": [
+            50
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Export creates its list cursor before returning and both stream algorithms retain that shared cursor. Native cursors own their ongoing storage access."
+        }
+      ]
     },
     "include/uos/kv_conversion/proof.hpp": {
       "reviewed": false,

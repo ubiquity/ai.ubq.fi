@@ -338,7 +338,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/kv_conversion/cursors.hpp`
 - [x] `include/uos/kv_conversion/legacy_codec.hpp`
 - [x] `include/uos/kv_conversion/native_schema.hpp`
-- [ ] `include/uos/kv_conversion/profile_json.hpp`
+- [x] `include/uos/kv_conversion/profile_json.hpp`
 - [ ] `include/uos/kv_conversion/proof.hpp`
 - [ ] `include/uos/kv_conversion/typed_value.hpp`
 - [ ] `include/uos/lib/jev_compaction/client.hpp`
@@ -1903,6 +1903,12 @@ Reviewed synchronous SQLite interfaces, returned iterators and adapter lifetimes
 
 - L28, 42, 51, 58, 64, 65, 66, 71, 76, 80, 94, 105 **SAFE** · Readers, prepared statements and iterators retain their underlying database or statement. Schema validation consumes its codec view synchronously.
 
+### `include/uos/kv_conversion/profile_json.hpp`
+
+Reviewed the stream-export boundary and synchronous profile codecs.
+
+- L50 **SAFE** · Export creates its list cursor before returning and both stream algorithms retain that shared cursor. Native cursors own their ongoing storage access.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2151,4 +2157,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-230/286 files reviewed. 405 sites: 383 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+231/286 files reviewed. 406 sites: 384 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
