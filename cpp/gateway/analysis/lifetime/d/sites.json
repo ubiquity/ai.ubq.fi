@@ -2546,7 +2546,8 @@
       "sites": []
     },
     "src/authority/native_paid.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed paid reservation, usage, reconciliation and deletion planning. Key and JSON borrows are processed synchronously during the plan construction, and results own their storage.",
       "sites": []
     },
     "src/authority/native_paid_contracts.cpp": {

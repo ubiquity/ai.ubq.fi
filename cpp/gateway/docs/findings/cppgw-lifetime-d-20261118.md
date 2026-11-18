@@ -119,7 +119,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_contracts.cpp`
 - [x] `src/authority/native_kernel.cpp`
 - [x] `src/authority/native_kernel_contracts.cpp`
-- [ ] `src/authority/native_paid.cpp`
+- [x] `src/authority/native_paid.cpp`
 - [ ] `src/authority/native_paid_contracts.cpp`
 - [ ] `src/authority/native_paid_policy.cpp`
 - [ ] `src/authority/native_principal_contracts.cpp`
@@ -748,6 +748,10 @@ Reviewed usage arithmetic, terminal accounting and synchronous storage plan help
 
 Reviewed kernel reservation, quota, terminal and configuration codecs. JSON or record borrows are confined to synchronous conversion and results own their data.
 
+### `src/authority/native_paid.cpp`
+
+Reviewed paid reservation, usage, reconciliation and deletion planning. Key and JSON borrows are processed synchronously during the plan construction, and results own their storage.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -853,4 +857,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-54/286 files reviewed. 136 sites: 127 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+55/286 files reviewed. 136 sites: 127 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
