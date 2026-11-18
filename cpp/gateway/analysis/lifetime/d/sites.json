@@ -7291,8 +7291,49 @@
       ]
     },
     "include/uos/api_key_policy.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed quota decision and reservation callback interfaces.",
+      "sites": [
+        {
+          "lines": [
+            56,
+            57,
+            74,
+            76
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The shipped reservation callbacks own their dependencies, and each returned Task copies the state it will use while cancel, release and dispatch are pending."
+        },
+        {
+          "lines": [
+            169,
+            170,
+            183,
+            184,
+            186,
+            187,
+            189,
+            190,
+            192,
+            193,
+            195,
+            203,
+            204
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Quota, usage and authentication Tasks take their policy, IDs, options and KV handles by value."
+        }
+      ]
     },
     "include/uos/api_keys.hpp": {
       "reviewed": false,
