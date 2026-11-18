@@ -258,7 +258,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/reliability/verify.cpp`
 - [x] `src/harmony/render.cpp`
 - [x] `src/harmony/tools/backend.cpp`
-- [ ] `src/harmony/tools/fakes.cpp`
+- [x] `src/harmony/tools/fakes.cpp`
 - [ ] `src/harmony/tools/result.cpp`
 - [ ] `src/harmony/tools/router.cpp`
 - [ ] `src/harmony/tools/schemas.cpp`
@@ -1632,3 +1632,9 @@ Rendering runs synchronously over input turns and static option literals.
 ### `src/harmony/tools/backend.cpp`
 
 Backend path normalization operates synchronously on the supplied text.
+
+### `src/harmony/tools/fakes.cpp`
+
+The fake workspace performs synchronous in-memory operations.
+
+- 162-165 · fake backend task factory · **SAFE** · execShell calls shell_ before returning and transfers only the result value to fulfilledTask.

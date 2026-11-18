@@ -2834,8 +2834,16 @@
       "sites": []
     },
     "src/harmony/tools/fakes.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The fake workspace performs synchronous in-memory operations.",
+      "sites": [
+        {
+          "lines": "162-165",
+          "kind": "fake backend task factory",
+          "verdict": "SAFE",
+          "reason": "execShell calls shell_ before returning and transfers only the result value to fulfilledTask."
+        }
+      ]
     },
     "src/harmony/tools/result.cpp": {
       "status": "pending",
