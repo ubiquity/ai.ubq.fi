@@ -74,7 +74,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/storage/value_compatibility.cpp`
 - [x] `include/uos/cache/kv_migration.hpp`
 - [x] `include/uos/cache/kv_migration_base.hpp`
-- [ ] `include/uos/cache/kv_migration_paid_fallback.hpp`
+- [x] `include/uos/cache/kv_migration_paid_fallback.hpp`
 - [ ] `include/uos/cache/kv_migration_projection.hpp`
 - [ ] `include/uos/cache/kv_migration_usage.hpp`
 - [ ] `include/uos/cache/kv_migration_validation.hpp`
@@ -490,6 +490,10 @@ The migration entry takes an owning shared KV. The progress borrow is private an
 | --- | --- | --- | --- |
 | 129-136 | Migration import options and scan ownership | **SAFE** | Import overloads are ordinary functions that synchronously copy options into ImportState. The returned tasks own their input lines or generator, state, and KV. |
 
+### `include/uos/cache/kv_migration_paid_fallback.hpp`
+
+The inventory overloads own their KV and input sets. Private borrowed collectors are classified in the source.
+
 
 ## Ranked defects and counts
 
@@ -695,4 +699,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-51/97 files reviewed. **DEFECT 8, SAFE 107, UNCLEAR 3.**
+52/97 files reviewed. **DEFECT 8, SAFE 107, UNCLEAR 3.**
