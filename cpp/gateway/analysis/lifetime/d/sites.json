@@ -9194,8 +9194,22 @@
       ]
     },
     "include/uos/lib/jev_compaction/state.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed transcript state helpers and token estimation.",
+      "sites": [
+        {
+          "lines": [
+            14,
+            25
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The context view refers to a static literal, and estimation consumes the caller's view synchronously."
+        }
+      ]
     },
     "include/uos/lib/jev_compaction/types.hpp": {
       "reviewed": false,
