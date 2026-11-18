@@ -31,8 +31,7 @@ tree=$(git -C "$root" rev-parse "$commit^{tree}")
 epoch=$(git -C "$root" show -s --format=%ct "$commit")
 mkdir "$scratch/context"
 # The context contains only committed build inputs. It never includes .env, state or a host home directory.
-git -C "$root" archive "$commit" cpp/gateway scripts/build-native-kv.ts tools/native-kv \
-  src/runtime/permissions-native.c src/kv-conversion static | tar -x -C "$scratch/context"
+git -C "$root" archive "$commit" cpp/gateway static favicon.png favicon-32.png | tar -x -C "$scratch/context"
 
 docker buildx build --platform linux/arm64 --progress plain --target package "${cache_options[@]}" \
   -f "$scratch/context/cpp/gateway/packaging/portable/Dockerfile" \

@@ -152,10 +152,12 @@ def main():
                 raise ValueError(f"Static assets must not be symlinks: {source}")
             if source.is_file():
                 copy_file(source, stage / "static" / source.relative_to(assets))
+        for name in ("favicon.png", "favicon-32.png"):
+            copy_file(WORKSPACE / name, stage / name)
         # The pinned offline V8 helper imports this unchanged TypeScript graph
         # primitive; neither is application code executed at gateway startup.
         for name in ("v8-helper.mjs", "typed-value.ts"):
-            copy_file(WORKSPACE / "src/kv-conversion" / name, stage / "src/kv-conversion" / name)
+            copy_file(GATEWAY / "runtime/legacy-codec" / name, stage / "src/kv-conversion" / name)
         for name in ("native-kv.node", "native-kv.provenance.json"):
             copy_file(args.native_kv / name, stage / "native/kv" / name)
         copy_file(args.native_kv_inputs, stage / "native/kv/inputs.json")

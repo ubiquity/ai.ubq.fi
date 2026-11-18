@@ -169,7 +169,8 @@ def build(work, output, jobs):
                              if line.split()[:1] == ["minos"])
         run("/usr/bin/codesign", "--verify", "--strict", target, env=env)
 
-    for relative in capture("git", "ls-files", "-z", "--", "static/", env=env).rstrip("\0").split("\0"):
+    assets = capture("git", "ls-files", "-z", "--", "static/", "favicon.png", "favicon-32.png", env=env)
+    for relative in assets.rstrip("\0").split("\0"):
         source = ROOT / relative
         if source.is_symlink() or not source.is_file():
             raise ValueError(f"Invalid static asset: {source}")
