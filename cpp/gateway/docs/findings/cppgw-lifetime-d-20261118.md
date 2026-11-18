@@ -170,7 +170,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/inference_admission.cpp`
 - [x] `src/inference_deadline.cpp`
 - [x] `src/input_normalization.cpp`
-- [ ] `src/jev_compaction/compaction.cpp`
+- [x] `src/jev_compaction/compaction.cpp`
 - [ ] `src/jev_compaction/hybrid.cpp`
 - [ ] `src/kv.cpp`
 - [ ] `src/kv_conversion/cli.cpp`
@@ -931,6 +931,14 @@ Reviewed request-body and multipart parsing, image fan-out and cancellation coor
 - L376, 380, 382, 385, 388, 390, 445, 450, 454, 457, 463, 464, 468, 470, 548, 549, 551 **SAFE** · Fan-out callbacks and child tasks each own their shared state. The child waits with its context and dispatch closure live, allSettled waits for every child, and response reordering uses fresh local iterators.
 - L480, 499, 512, 515, 521, 522, 528, 563, 566 **SAFE** · The facade copies context before making the Task, and the frame owns parsed variants, response vectors and upstream receiver handles. No other child mutates the vectors during traversal.
 
+### `src/jev_compaction/compaction.cpp`
+
+Reviewed compaction and rewrite tasks, request parsing, timed fetch callbacks, and stream wrapper cleanup.
+
+- L185, 197, 213, 335, 355, 376 **SAFE** · Build and request tasks own their JSON and options. The shared asker and injected rewrite closure remain live through direct waits, and JSON member views point into the caller's immutable value.
+- L261, 266, 268, 282, 381, 385, 388, 390, 392, 397, 398, 400, 401, 407 **SAFE** · Fetch and source adapters retain their callable through returned Tasks. The pending response reaction and stream own shared State, and abort callbacks use weak state with release on normal rejection, drain or cancel.
+- L238, 246, 250, 385, 388, 390 **DEFECT** · A timed fetch wrapper can be discarded after returning a body that has buffered a chunk and while its external abort signal remains live. State destruction leaves the weak forwarding listener installed, and the weak timeout callback can no longer unregister it. Release on State destruction as well as normal stream completion.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1144,4 +1152,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-80/286 files reviewed. 176 sites: 163 SAFE, 13 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+81/286 files reviewed. 179 sites: 165 SAFE, 14 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

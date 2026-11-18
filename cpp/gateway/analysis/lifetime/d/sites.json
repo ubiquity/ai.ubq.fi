@@ -3703,8 +3703,67 @@
       "sites": []
     },
     "src/jev_compaction/compaction.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed compaction and rewrite tasks, request parsing, timed fetch callbacks, and stream wrapper cleanup.",
+      "sites": [
+        {
+          "lines": [
+            185,
+            197,
+            213,
+            335,
+            355,
+            376
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Build and request tasks own their JSON and options. The shared asker and injected rewrite closure remain live through direct waits, and JSON member views point into the caller's immutable value."
+        },
+        {
+          "lines": [
+            261,
+            266,
+            268,
+            282,
+            381,
+            385,
+            388,
+            390,
+            392,
+            397,
+            398,
+            400,
+            401,
+            407
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Fetch and source adapters retain their callable through returned Tasks. The pending response reaction and stream own shared State, and abort callbacks use weak state with release on normal rejection, drain or cancel."
+        },
+        {
+          "lines": [
+            238,
+            246,
+            250,
+            385,
+            388,
+            390
+          ],
+          "kinds": [
+            "c"
+          ],
+          "verdict": "DEFECT",
+          "detail": "A timed fetch wrapper can be discarded after returning a body that has buffered a chunk and while its external abort signal remains live. State destruction leaves the weak forwarding listener installed, and the weak timeout callback can no longer unregister it. Release on State destruction as well as normal stream completion."
+        }
+      ]
     },
     "src/jev_compaction/hybrid.cpp": {
       "reviewed": false,
