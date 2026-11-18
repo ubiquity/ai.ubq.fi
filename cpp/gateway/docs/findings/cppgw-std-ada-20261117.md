@@ -150,3 +150,55 @@ The existing production-host `fuzz/run.py` reads `common_sources` and the harnes
 per-target `extra_sources`. The disposable `fuzz/ci.py` honors the Ada entry and discovers the
 library for the original URL target as well. The host runner is outside the owned paths.
 [Host fuzz runner](../../fuzz/run.py) · [Disposable fuzz runner](../../fuzz/ci.py)
+
+## Continuation on 2026-11-18
+
+The incoming implementation and tests are at commit `51ca744888eeeef06c0f5027ca6b3e12495bf0c9`, tree
+`748af35c1463713cb78a7b1a0792b55136ba0fd0`. The previous sections record the completed differential,
+benchmark and two-minute fuzz work. The remaining check covers all 441 consumer closures, which all link
+`src/rt/url.cpp`. CMake configured 441 tests with zero skips and compiled the Ada archive and the first-party
+URL object with Clang 21.1.8. The URL object references Ada and has no ICU IDNA references.
+
+The continuation uses the portable CI driver's two profiles on four ARM64 cores, with two workers per
+profile and one LLD thread per link. The driver records object and test outcomes in its receipt. The expected
+cold build and test time is up to an hour. A failing binary is checked against its log and the pre-Ada
+baseline if the failure could originate outside the URL component. The finish condition is a reconciled
+terminal receipt for each profile, with any failures and delivery blockers recorded here.
+
+The runner installed Clang/LLD 21.1.8 and compiler-rt from apt.llvm.org and prepared the pinned Boost 1.92.0
+JSON and Container archives with GCC 14.2.0. SQLite 3.54.0, built with `SQLITE_DQS=3`, is linked statically
+so fixture binaries can see it with a private `/tmp`. The CI driver mounts a fresh tmpfs and checks both
+loopback access and outside-route denial before each test. The header prefix flag exempts the unmodified
+Ada header from Clang's first-party warning set.
+
+```sh
+work=/tmp/cppgw-std-ada-20261117
+root="$PWD/cpp/gateway"
+ln -s "$work/boost_1_92_0" "$work/native/boost-1.92.0"
+UOS_GATEWAY_BUILD_EVIDENCE=1 UOS_GATEWAY_TOOL_ROOT="$work/native" \
+  cmake -S "$root" -B "$work/cmake" -G Ninja -DCMAKE_CXX_COMPILER=clang++-21 \
+  -DCMAKE_BUILD_TYPE=Release -DUOS_GATEWAY_FRAME_RECYCLING_DISABLED=ON \
+  -DUOS_GATEWAY_TESTS=ON -DUOS_GATEWAY_FOCUS_TEST=tests/rt/url_test.cpp
+ninja -C "$work/cmake" -j1 uos_vendor_ada uos_obj_67539c0929b9a07a
+
+mkdir -p "$work/pkgconfig"
+sed "s|^Libs:.*|Libs: $work/sqlite/lib/libsqlite3.a -lm -lz|" \
+  "$work/sqlite/lib/pkgconfig/sqlite3.pc" > "$work/pkgconfig/sqlite3.pc"
+export CXX=/usr/bin/clang++-21 PKG_CONFIG_PATH="$work/pkgconfig" TZ=UTC
+export UOS_CI_BUILD_DIR="$work/ci" UOS_CI_JOBS=2
+export UOS_CI_CXXFLAGS="-isystem $work/boost_1_92_0 --system-header-prefix=third_party/ada/ -ffunction-sections -fdata-sections -pthread"
+export UOS_CI_LDFLAGS="-L$work/boost_1_92_0/stage/lib --ld-path=/usr/bin/ld.lld-21 -Wl,--threads=1,--gc-sections"
+bash "$root/tools/ci-build.sh" --config release > "$work/release.log" 2>&1 &
+UOS_CI_CXXFLAGS="$UOS_CI_CXXFLAGS -O0 -gline-tables-only -fno-sanitize-recover=all" \
+  bash "$root/tools/ci-build.sh" --config asan > "$work/asan.log" 2>&1 &
+wait
+```
+
+The repository's portable shell wrapper is tracked without an executable bit, so the commands invoke it
+with Bash. The profiles have started and passed their fixture network probes. Terminal counts are pending.
+
+Publication remains blocked. Reading and fetching `origin/development` and `origin/claude/cpp-gateway-port`
+succeeded. Development at `6bd78fc5e3b0783809691c6bd45d25ac45e9696e` has no `cpp/gateway`, and the
+port branch and this lane share ancestor `093a9e0511e9d0deae5495dc324e53ff4dccd719`. The runner's
+credential-free dry-run push to the existing task branch returned 128. GitHub requires an authenticated
+writer. The continuation preserves the job branch for the port integration.
