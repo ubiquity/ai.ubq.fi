@@ -2982,8 +2982,44 @@
       ]
     },
     "src/decisions/handlers.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the Decisions route's request body, selection, shared dispatch telemetry and handler wrappers.",
+      "sites": [
+        {
+          "lines": [
+            235,
+            245,
+            249,
+            257
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The handler copies Request and UsageContext on entry, and its parsed JSON, model and telemetry context stay live in the frame through body and admission waits."
+        },
+        {
+          "lines": [
+            267,
+            269,
+            272,
+            273,
+            275,
+            287,
+            294,
+            297
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Dispatch, headers and before-dispatch callbacks own the shared telemetry context, while fetch owns its input and injected fetcher. The handler keeps the context through completion accounting."
+        }
+      ]
     },
     "src/defaults.cpp": {
       "reviewed": false,
