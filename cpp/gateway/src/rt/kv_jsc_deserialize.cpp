@@ -1,7 +1,6 @@
 // The JavaScriptCore SerializedScriptValue reader (version 14) that Bun 1.4's node:v8
-// `deserialize` uses: the inverse of kvJscSerialize for every form Bun writes. Bytes are
-// parsed into a graph first (JSC's object table is what ObjectReferenceTag indexes), then
-// materialized as a KvValue tree; shared references become copies and cycles are refused.
+// `deserialize` uses. The object table indexes nodes in the stored-value graph,
+// allowing shared references and cycles to point to the original node.
 #include "kv_internal.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/regex.hpp"
@@ -58,33 +57,15 @@ namespace uos::rt {
     constexpr std::uint32_t MaxBigIntWords = 1u << 14;
     // Bun wraps a graph that holds Buffers as `[value, buffers]` behind this prefix.
     constexpr std::array<std::uint8_t, 5> BufferEnvelope = {0xFF, 0x42, 0x55, 0x4E, 0x01};
-    // JavaScriptCore accepts 40001 nested containers. KvValue copies and destroys
-    // recursively and overflows an 8 MiB stack (unoptimised) beyond about 3000 levels, so
-    // the reader stops where kv-conversion's typed-value codec does.
+    // Keep the existing runtime nesting bound for callers that traverse values recursively.
     constexpr std::size_t MaxDepth = 2000;
-    constexpr std::uint64_t MaxDenseLength = std::uint64_t{1} << 24;
-    constexpr std::size_t MaxMaterializedValues = std::size_t{1} << 24;
 
     [[noreturn]] void malformed() { throw TypeError("Unable to deserialize data."); }
     [[noreturn]] void tooDeep() { throw RangeError("Maximum call stack size exceeded."); }
     [[noreturn]] void unrepresentable(const std::string& what) { throw TypeError("Serialized value " + what + " has no KvValue representation"); }
 
-    using NodeId = std::uint32_t;
-
-    // One JavaScript value of the graph. Primitives and leaf objects are finished
-    // values; containers keep their children as node ids so references can share them.
-    struct Node {
-      enum class Kind : std::uint8_t { value, array, object, map, set };
-      Kind kind = Kind::value;
-      KvValue value{};
-      // An array's length: its declared length, grown by elements stored past it.
-      std::uint64_t length = 0;
-      std::vector<std::pair<std::uint32_t, NodeId>> elements{};
-      // Object members; extra properties of an array, Map or Set.
-      std::vector<std::pair<std::string, NodeId>> properties{};
-      std::vector<std::pair<NodeId, NodeId>> entries{};
-      std::vector<NodeId> members{};
-    };
+    using kv_detail::GraphNode;
+    using kv_detail::ValueGraph;
 
     std::size_t elementSize(std::uint8_t subtag) {
       switch (subtag) {
@@ -128,39 +109,39 @@ namespace uos::rt {
       return out;
     }
 
-    // The bytes-to-graph pass: CloneDeserializer's reads and validation. Containers are
-    // parsed with an explicit stack (JSC's state machine), so nesting costs no C++ stack.
+    // CloneDeserializer's reads and validation, with an explicit stack of open containers.
     class GraphReader {
     public:
       explicit GraphReader(std::span<const std::uint8_t> bytes) : bytes_(bytes) {}
 
-      std::vector<Node> nodes;
-
-      // The version header and the root value.
-      NodeId read() {
+      KvValue read() {
         const std::uint32_t version = u32();
         if (version > CurrentVersion) malformed();
-        const NodeId root = value();
+        KvValue root = value();
         while (!frames_.empty()) step();
-        return root;
+        if (unsupportedProperty_) unrepresentable(*unsupportedProperty_);
+        return ValueGraph::finish(std::move(root));
       }
 
     private:
-      // A container whose contents are being read: its next slot is a member, an array
-      // index, a Map key or value, a Set member, or (after the data) a property.
+      enum class Kind { array, object, map, set };
+
       struct Frame {
-        NodeId id = 0;
-        Node::Kind kind = Node::Kind::object;
-        bool properties = false;
-        std::optional<NodeId> mapKey{};
+        GraphNode* node;
+        Kind kind;
+        bool properties;
+        std::size_t childHeight = 0;
+        std::optional<KvValue> mapKey{};
       };
 
       std::span<const std::uint8_t> bytes_;
       std::size_t position_ = 0;
       std::vector<std::string> pool_;
       // JSC's object table, in the order ObjectReferenceTag indexes it.
-      std::vector<NodeId> objects_;
+      std::vector<GraphNode*> objects_;
       std::vector<Frame> frames_;
+      std::shared_ptr<ValueGraph> graph_;
+      std::optional<std::string> unsupportedProperty_;
 
       std::size_t remaining() const noexcept { return bytes_.size() - position_; }
       void need(std::uint64_t count) const {
@@ -209,18 +190,15 @@ namespace uos::rt {
         return u32();
       }
 
-      NodeId add(Node node) {
-        nodes.push_back(std::move(node));
-        return static_cast<NodeId>(nodes.size() - 1);
-      }
-      NodeId add(KvValue value) {
-        Node node;
-        node.value = std::move(value);
-        return add(std::move(node));
-      }
-      NodeId record(NodeId id) {
-        objects_.push_back(id);
-        return id;
+      KvValue record(KvValue value) {
+        if (value.isNull()) {
+          objects_.push_back(nullptr);
+          return value;
+        }
+        if (!graph_) graph_ = std::make_shared<ValueGraph>();
+        KvValue link = graph_->add(std::move(value));
+        objects_.push_back(&ValueGraph::node(link));
+        return link;
       }
 
       // readStringData: a new string (appended to the constant pool), a pool reference, or
@@ -269,64 +247,75 @@ namespace uos::rt {
       }
 
       // The ArrayBuffer a view reads (readTerminal): a new buffer or a reference to one.
-      NodeId viewBuffer() {
+      KvValue viewBuffer() {
         const std::uint8_t tag = u8();
         if (tag == ArrayBufferTag) return arrayBuffer();
         if (tag == ResizableArrayBufferTag) unrepresentable("resizable ArrayBuffer");
         if (tag != ObjectReferenceTag) malformed();
-        const NodeId referenced = reference();
-        if (nodes[referenced].kind != Node::Kind::value || !nodes[referenced].value.is<KvArrayBuffer>()) malformed();
-        return referenced;
+        KvValue backing = reference();
+        if (!backing.is<KvArrayBuffer>()) malformed();
+        return backing;
       }
 
-      NodeId arrayBuffer() {
+      KvValue arrayBuffer() {
         const std::uint64_t length = u64();
         need(length);
         KvArrayBuffer buffer;
         buffer.bytes.assign(bytes_.begin() + static_cast<std::ptrdiff_t>(position_), bytes_.begin() + static_cast<std::ptrdiff_t>(position_ + length));
         position_ += static_cast<std::size_t>(length);
-        return record(add(KvValue(std::move(buffer))));
+        return record(KvValue(std::move(buffer)));
       }
 
-      NodeId reference() {
+      KvValue reference() {
         const std::uint32_t index = poolIndex(objects_.size());
         if (index >= objects_.size()) malformed();
-        return objects_[index];
+        GraphNode* target = objects_[index];
+        if (!target) return nullptr;
+        if (!frames_.empty()) {
+          // An already closed subtree still counts toward the depth limit. An
+          // open node is a back-reference and needs no additional traversal.
+          const std::size_t height = target->height;
+          if (frames_.size() + height > MaxDepth) tooDeep();
+          frames_.back().childHeight = std::max(frames_.back().childHeight, height);
+        }
+        return graph_->link(*target);
       }
 
-      NodeId view() {
+      KvValue view() {
         const std::uint8_t subtag = u8();
         if (subtag > Float16ArraySubtag) malformed();
         const std::uint64_t byteOffset = u64();
         const std::uint64_t byteLength = u64();
-        const NodeId bufferId = viewBuffer();
+        const KvValue backing = viewBuffer();
         if (byteLength == std::numeric_limits<std::uint64_t>::max()) unrepresentable("length-tracking typed array");
         const std::size_t size = elementSize(subtag);
         if (byteLength % size != 0) malformed();
         if (subtag == Float16ArraySubtag) unrepresentable("Float16Array");
-        const KvBytes& buffer = nodes[bufferId].value.as<KvArrayBuffer>().bytes;
-        KvValue result(nullptr);
+        const KvBytes& buffer = backing.as<KvArrayBuffer>().bytes;
         // A view outside its buffer, or misaligned, deserializes as null.
-        if (byteOffset <= buffer.size() && byteLength <= buffer.size() - byteOffset && byteOffset % size == 0) {
-          const auto kind = static_cast<KvViewKind>(subtag);
-          if (kind == KvViewKind::Uint8Array && byteOffset == 0 && byteLength == buffer.size()) result = KvValue(buffer);
-          else result = KvValue(KvArrayBufferView{kind, buffer, byteOffset, byteLength});
-        }
-        return record(add(std::move(result)));
+        if (byteOffset > buffer.size() || byteLength > buffer.size() - byteOffset || byteOffset % size != 0) return record(nullptr);
+        const auto kind = static_cast<KvViewKind>(subtag);
+        KvValue result = kind == KvViewKind::Uint8Array && byteOffset == 0 && byteLength == buffer.size()
+                           ? KvValue(buffer)
+                           : KvValue(KvArrayBufferView{kind, buffer, byteOffset, byteLength});
+        KvValue link = record(std::move(result));
+        ValueGraph::node(link).backing = std::make_unique<KvValue>(ValueGraph::borrow(backing));
+        return link;
       }
 
-      // A new container: recorded, and its contents read by the frames loop.
-      NodeId container(Node::Kind kind) {
-        Node node;
-        node.kind = kind;
-        if (kind == Node::Kind::array) node.length = u32();
-        const NodeId id = record(add(std::move(node)));
+      KvValue container(Kind kind, KvValue containerValue) {
         if (frames_.size() >= MaxDepth) tooDeep();
-        Frame frame;
-        frame.id = id;
-        frame.kind = kind;
-        frames_.push_back(frame);
-        return id;
+        KvValue link = record(std::move(containerValue));
+        frames_.push_back(Frame{&ValueGraph::node(link), kind, kind == Kind::object});
+        return link;
+      }
+
+      void closeContainer() {
+        const Frame& frame = frames_.back();
+        const std::size_t height = frame.childHeight + 1;
+        frame.node->height = height;
+        frames_.pop_back();
+        if (!frames_.empty()) frames_.back().childHeight = std::max(frames_.back().childHeight, height);
       }
 
       // consumeCollectionDataTerminationIfPossible: the tag that ends a collection's data.
@@ -341,38 +330,43 @@ namespace uos::rt {
       // Reads the next slot of the innermost open container, or closes it.
       void step() {
         const std::size_t top = frames_.size() - 1;
-        const Frame frame = frames_[top];
-        if (frame.properties || frame.kind == Node::Kind::object) {
+        const Kind kind = frames_[top].kind;
+        KvValue& self = frames_[top].node->value;
+        if (frames_[top].properties) {
           std::optional<std::string> key = string(true);
           if (!key) {
-            frames_.pop_back();
+            closeContainer();
             return;
           }
-          const NodeId child = value();
-          nodes[frame.id].properties.emplace_back(std::move(*key), child);
+          KvValue child = value();
+          if (kind == Kind::object) {
+            self.asObject().set(std::move(*key), std::move(child));
+          } else if (kind == Kind::array && isArrayIndex(*key)) {
+            self.asArray().set(static_cast<std::size_t>(stringToNumber(*key)), std::move(child));
+          } else if (!unsupportedProperty_) {
+            const char* name = kind == Kind::array ? "array" : kind == Kind::map ? "Map" : "Set";
+            unsupportedProperty_ = std::string(name) + " property " + jsonQuote(*key);
+          }
           return;
         }
-        switch (frame.kind) {
-          case Node::Kind::array: {
+        switch (kind) {
+          case Kind::array: {
             const std::uint32_t index = u32();
             if (index == TerminatorTag) {
-              frames_.pop_back();
+              closeContainer();
               return;
             }
             if (index == NonIndexPropertiesTag) {
               frames_[top].properties = true;
               return;
             }
-            const NodeId child = value();
-            Node& self = nodes[frame.id];
-            self.elements.emplace_back(index, child);
-            if (std::uint64_t{index} + 1 > self.length) self.length = std::uint64_t{index} + 1;
+            self.asArray().set(index, value());
             return;
           }
-          case Node::Kind::map: {
-            if (frame.mapKey) {
-              const NodeId entry = value();
-              nodes[frame.id].entries.emplace_back(*frame.mapKey, entry);
+          case Kind::map: {
+            if (frames_[top].mapKey) {
+              KvValue entry = value();
+              self.as<KvMap>().set(std::move(*frames_[top].mapKey), std::move(entry));
               frames_[top].mapKey.reset();
               return;
             }
@@ -380,23 +374,17 @@ namespace uos::rt {
               frames_[top].properties = true;
               return;
             }
-            const NodeId key = value();
-            frames_[top].mapKey = key;
+            KvValue key = value();
+            frames_[top].mapKey = std::move(key);
             return;
           }
-          default: {
-            if (collectionEnd(NonSetPropertiesTag)) {
-              frames_[top].properties = true;
-              return;
-            }
-            const NodeId member = value();
-            nodes[frame.id].members.push_back(member);
-            return;
-          }
+          default:
+            if (collectionEnd(NonSetPropertiesTag)) frames_[top].properties = true;
+            else self.as<KvSet>().add(value());
         }
       }
 
-      NodeId regexp() {
+      KvValue regexp() {
         const std::string source = requiredString();
         const std::string flags = requiredString();
         const std::optional<std::string> canonical = canonicalRegExpFlags(flags);
@@ -409,10 +397,10 @@ namespace uos::rt {
             malformed();
           }
         }
-        return record(add(KvValue(KvRegExp{source, *canonical})));
+        return record(KvValue(KvRegExp{source, *canonical}));
       }
 
-      NodeId error() {
+      KvValue error() {
         static constexpr std::array<std::string_view, 7> names = {"Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", "URIError"};
         const std::uint8_t type = u8();
         if (type >= names.size()) malformed();
@@ -423,43 +411,43 @@ namespace uos::rt {
         error.column = u32();
         error.sourceURL = nullableString();
         error.stack = nullableString();
-        return record(add(KvValue(std::move(error))));
+        return record(KvValue(std::move(error)));
       }
 
       // One value: a terminal is read whole; a container is opened (see step()).
-      NodeId value() {
+      KvValue value() {
         const std::uint8_t tag = u8();
         switch (tag) {
           case ArrayTag:
-            return container(Node::Kind::array);
+            return container(Kind::array, KvArray(u32(), KvHole{}));
           case ObjectTag:
-            return container(Node::Kind::object);
+            return container(Kind::object, KvObject());
           case MapObjectTag:
-            return container(Node::Kind::map);
+            return container(Kind::map, KvMap());
           case SetObjectTag:
-            return container(Node::Kind::set);
+            return container(Kind::set, KvSet());
           case UndefinedTag:
-            return add(KvValue());
+            return KvValue();
           case NullTag:
-            return add(KvValue(nullptr));
+            return KvValue(nullptr);
           case IntTag:
-            return add(KvValue(static_cast<double>(static_cast<std::int32_t>(u32()))));
+            return KvValue(static_cast<double>(static_cast<std::int32_t>(u32())));
           case ZeroTag:
-            return add(KvValue(0.0));
+            return KvValue(0.0);
           case OneTag:
-            return add(KvValue(1.0));
+            return KvValue(1.0);
           case FalseTag:
-            return add(KvValue(false));
+            return KvValue(false);
           case TrueTag:
-            return add(KvValue(true));
+            return KvValue(true);
           case DoubleTag:
-            return add(KvValue(f64()));
+            return KvValue(f64());
           case DateTag:
-            return record(add(KvValue(KvDate{timeClip(f64())})));
+            return record(KvValue(KvDate{timeClip(f64())}));
           case StringTag:
-            return add(KvValue(requiredString()));
+            return KvValue(requiredString());
           case EmptyStringTag:
-            return add(KvValue(std::string()));
+            return KvValue(std::string());
           case RegExpTag:
             return regexp();
           case ObjectReferenceTag:
@@ -469,7 +457,7 @@ namespace uos::rt {
           case ArrayBufferViewTag:
             return view();
           case BigIntTag:
-            return add(KvValue(bigint()));
+            return KvValue(bigint());
           case ErrorInstanceTag:
             return error();
           case TrueObjectTag:
@@ -494,166 +482,18 @@ namespace uos::rt {
       }
     };
 
-    // The graph-to-tree pass, with an explicit stack of containers under construction.
-    class Materializer {
-    public:
-      explicit Materializer(const std::vector<Node>& nodes) : nodes_(nodes), building_(nodes.size(), false) {}
-
-      // The tree for `root`, which sits `depth` containers deep.
-      KvValue tree(NodeId root, std::size_t depth) {
-        depth_ = depth;
-        enter(root);
-        while (!stack_.empty()) {
-          const std::optional<NodeId> child = nextChild();
-          if (child) {
-            enter(*child);
-            continue;
-          }
-          Frame& done = stack_.back();
-          building_[done.id] = false;
-          KvValue built = std::move(done.built);
-          stack_.pop_back();
-          deliver(std::move(built));
-        }
-        return std::move(*result_);
-      }
-
-    private:
-      struct Frame {
-        NodeId id = 0;
-        KvValue built{};
-        // Children visited so far: elements, members, or Map keys and values in turn.
-        std::size_t next = 0;
-        std::optional<KvValue> mapKey{};
-      };
-
-      const std::vector<Node>& nodes_;
-      std::vector<bool> building_;
-      std::vector<Frame> stack_;
-      std::optional<KvValue> result_;
-      std::size_t count_ = 0;
-      std::size_t depth_ = 0;
-
-      void enter(NodeId id) {
-        if (++count_ > MaxMaterializedValues) unrepresentable("whose shared references expand past " + std::to_string(MaxMaterializedValues) + " values");
-        const Node& node = nodes_[id];
-        if (node.kind == Node::Kind::value) {
-          deliver(node.value);
-          return;
-        }
-        if (depth_ + stack_.size() >= MaxDepth) tooDeep();
-        if (building_[id]) unrepresentable("cycle");
-        Frame frame;
-        frame.id = id;
-        switch (node.kind) {
-          case Node::Kind::array:
-            if (!node.properties.empty()) unrepresentable("array property " + jsonQuote(node.properties.front().first));
-            if (node.length > MaxDenseLength) unrepresentable("sparse array length " + std::to_string(node.length));
-            frame.built = KvValue(KvArray(static_cast<std::size_t>(node.length), KvValue(KvHole{})));
-            break;
-          case Node::Kind::object:
-            frame.built = KvValue(KvObject());
-            break;
-          case Node::Kind::map:
-            if (!node.properties.empty()) unrepresentable("Map property " + jsonQuote(node.properties.front().first));
-            frame.built = KvValue(KvMap());
-            break;
-          default:
-            if (!node.properties.empty()) unrepresentable("Set property " + jsonQuote(node.properties.front().first));
-            frame.built = KvValue(KvSet());
-            break;
-        }
-        building_[id] = true;
-        stack_.push_back(std::move(frame));
-      }
-
-      std::optional<NodeId> nextChild() {
-        Frame& frame = stack_.back();
-        const Node& node = nodes_[frame.id];
-        const std::size_t index = frame.next;
-        std::optional<NodeId> child;
-        switch (node.kind) {
-          case Node::Kind::array:
-            if (index < node.elements.size()) child = node.elements[index].second;
-            break;
-          case Node::Kind::object:
-            if (index < node.properties.size()) child = node.properties[index].second;
-            break;
-          case Node::Kind::map:
-            if (index < node.entries.size() * 2) child = index % 2 == 0 ? node.entries[index / 2].first : node.entries[index / 2].second;
-            break;
-          default:
-            if (index < node.members.size()) child = node.members[index];
-            break;
-        }
-        if (child) ++frame.next;
-        return child;
-      }
-
-      // Puts a finished value in the slot the innermost container visited last.
-      void deliver(KvValue value) {
-        if (stack_.empty()) {
-          result_ = std::move(value);
-          return;
-        }
-        Frame& frame = stack_.back();
-        const Node& node = nodes_[frame.id];
-        const std::size_t index = frame.next - 1;
-        switch (node.kind) {
-          case Node::Kind::array:
-            frame.built.asArray()[node.elements[index].first] = std::move(value);
-            break;
-          case Node::Kind::object:
-            frame.built.asObject().set(node.properties[index].first, std::move(value));
-            break;
-          case Node::Kind::map:
-            if (index % 2 == 0) {
-              frame.mapKey = std::move(value);
-            } else {
-              std::get<KvMap>(frame.built.variant()).set(std::move(*frame.mapKey), std::move(value));
-              frame.mapKey.reset();
-            }
-            break;
-          default:
-            std::get<KvSet>(frame.built.variant()).add(std::move(value));
-            break;
-        }
-      }
-    };
-
-    // The element at `index` of an array node, or std::nullopt for a hole.
-    std::optional<NodeId> element(const Node& array, std::uint32_t index) {
-      std::optional<NodeId> found;
-      for (const auto& [at, child] : array.elements)
-        if (at == index) found = child;
-      return found;
-    }
   }
 
   KvValue kvJscDeserialize(std::span<const std::uint8_t> bytes) {
     if (bytes.empty()) return KvValue(nullptr);
     const bool envelope = bytes.size() >= BufferEnvelope.size() && std::equal(BufferEnvelope.begin(), BufferEnvelope.end(), bytes.begin());
-    if (!envelope) {
-      GraphReader reader(bytes);
-      const NodeId root = reader.read();
-      Materializer materializer(reader.nodes);
-      return materializer.tree(root, 0);
-    }
+    if (!envelope) return GraphReader(bytes).read();
+
     const std::span<const std::uint8_t> inner = bytes.subspan(BufferEnvelope.size());
-    const auto invalidEnvelope = [] { return JsError("failed to parse serialized buffer envelope"); };
-    // The inner bytes deserialize like any input: empty is null, which is not an envelope.
-    if (inner.empty()) throw invalidEnvelope();
-    GraphReader reader(inner);
-    const NodeId root = reader.read();
-    const Node& pair = reader.nodes[root];
-    if (pair.kind != Node::Kind::array || pair.length != 2) throw invalidEnvelope();
-    const std::optional<NodeId> buffers = element(pair, 1);
-    if (!buffers || reader.nodes[*buffers].kind != Node::Kind::array) throw invalidEnvelope();
-    // The second element lists the Uint8Arrays Bun revives as Buffers; a Buffer is the
-    // Uint8Array it wraps, so only the first element is read.
-    const std::optional<NodeId> value = element(pair, 0);
-    if (!value) return KvValue();
-    Materializer materializer(reader.nodes);
-    return materializer.tree(*value, 1);
+    const KvValue pair = inner.empty() ? KvValue(nullptr) : GraphReader(inner).read();
+    if (!pair.isArray() || pair.asArray().size() != 2 || !pair[1].isArray()) throw JsError("failed to parse serialized buffer envelope");
+    // The second element lists the Uint8Arrays Bun revives as Buffers. The
+    // reader already represents those Buffers as their underlying Uint8Arrays.
+    return pair[0];
   }
 }

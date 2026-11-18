@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <optional>
 #include <unordered_map>
 
 namespace uos::rt {
@@ -24,6 +25,7 @@ namespace uos::rt {
       StringTag = 16,
       EmptyStringTag = 17,
       RegExpTag = 18,
+      ObjectReferenceTag = 19,
       ArrayBufferTag = 21,
       ArrayBufferViewTag = 22,
       SetObjectTag = 29,
@@ -36,6 +38,7 @@ namespace uos::rt {
     constexpr std::uint32_t CurrentVersion = 14;
     constexpr std::uint32_t TerminatorTag = 0xFFFFFFFF;
     constexpr std::uint32_t StringPoolTag = 0xFFFFFFFE;
+    constexpr std::uint32_t NonIndexPropertiesTag = 0xFFFFFFFD;
     constexpr std::uint32_t StringDataIs8BitFlag = 0x80000000;
 
     std::uint8_t errorType(std::string_view name) {
@@ -69,14 +72,18 @@ namespace uos::rt {
       }
       void f64(double value) { u64(std::isnan(value) ? 0x7FF8000000000000ull : std::bit_cast<std::uint64_t>(value)); }
 
+      void poolIndex(std::uint32_t index, std::size_t size) {
+        if (size <= 0xFF) u8(static_cast<std::uint8_t>(index));
+        else if (size <= 0xFFFF) u16(static_cast<std::uint16_t>(index));
+        else u32(index);
+      }
+
       // CloneSerializer::write(const String&): atomized into the constant pool.
       void identifier(std::string_view text) {
         std::u16string units = kv_internal::utf16Units(text);
         if (const auto found = pool_.find(units); found != pool_.end()) {
           u32(StringPoolTag);
-          if (pool_.size() <= 0xFF) u8(static_cast<std::uint8_t>(found->second));
-          else if (pool_.size() <= 0xFFFF) u16(static_cast<std::uint16_t>(found->second));
-          else u32(found->second);
+          poolIndex(found->second, pool_.size());
           return;
         }
         const auto index = static_cast<std::uint32_t>(pool_.size());
@@ -131,16 +138,33 @@ namespace uos::rt {
         out.insert(out.end(), bytes.begin(), bytes.end());
       }
 
-      void view(KvViewKind kind, std::span<const std::uint8_t> buffer, std::uint64_t byteOffset, std::uint64_t byteLength) {
+      void view(const KvValue& input, const void* identity, KvViewKind kind, std::span<const std::uint8_t> buffer, std::uint64_t byteOffset,
+                std::uint64_t byteLength) {
         if (byteOffset > buffer.size() || byteLength > buffer.size() - byteOffset) throw RangeError("KV value has an ArrayBuffer view outside its buffer");
         u8(ArrayBufferViewTag);
         u8(static_cast<std::uint8_t>(kind));
         u64(byteOffset);
         u64(byteLength);
-        arrayBuffer(buffer);
+        if (const KvValue* backing = identity ? input.backingBuffer() : nullptr) value(*backing);
+        else {
+          record(nullptr);
+          arrayBuffer(buffer);
+        }
+        // The backing buffer is entered into the object table before its view.
+        record(identity);
       }
 
       void value(const KvValue& input) {
+        const void* identity = input.identity();
+        if (identity) {
+          if (!objectIndices_) objectIndices_.emplace();
+          const auto found = objectIndices_->find(identity);
+          if (found != objectIndices_->end()) {
+            u8(ObjectReferenceTag);
+            poolIndex(found->second, objectCount_);
+            return;
+          }
+        }
         std::visit(
           [&](const auto& item) {
             using T = std::decay_t<decltype(item)>;
@@ -158,22 +182,28 @@ namespace uos::rt {
               u8(BigIntTag);
               bigint(item);
             } else if constexpr (std::is_same_v<T, KvU64>) {
+              record(identity);
               u8(ObjectTag);
               identifier("value");
               u8(BigIntTag);
               bigint(item.toBigInt());
               u32(TerminatorTag);
-            } else if constexpr (std::is_same_v<T, KvBytes>) view(KvViewKind::Uint8Array, item, 0, item.size());
-            else if constexpr (std::is_same_v<T, KvArrayBuffer>) arrayBuffer(item.bytes);
-            else if constexpr (std::is_same_v<T, KvArrayBufferView>) view(item.kind, item.buffer, item.byteOffset, item.byteLength);
+            } else if constexpr (std::is_same_v<T, KvBytes>) view(input, identity, KvViewKind::Uint8Array, item, 0, item.size());
+            else if constexpr (std::is_same_v<T, KvArrayBuffer>) {
+              record(identity);
+              arrayBuffer(item.bytes);
+            } else if constexpr (std::is_same_v<T, KvArrayBufferView>) view(input, identity, item.kind, item.buffer, item.byteOffset, item.byteLength);
             else if constexpr (std::is_same_v<T, KvDate>) {
+              record(identity);
               u8(DateTag);
               f64(item.time);
             } else if constexpr (std::is_same_v<T, KvRegExp>) {
+              record(identity);
               u8(RegExpTag);
               identifier(item.source);
               identifier(canonicalFlags(item.flags));
             } else if constexpr (std::is_same_v<T, KvError>) {
+              record(identity);
               u8(ErrorInstanceTag);
               u8(errorType(item.name));
               nullableString(item.message);
@@ -182,15 +212,25 @@ namespace uos::rt {
               nullableString(item.sourceURL);
               nullableString(item.stack);
             } else if constexpr (std::is_same_v<T, KvArray>) {
+              record(identity);
               u8(ArrayTag);
               u32(static_cast<std::uint32_t>(item.size()));
-              for (std::size_t index = 0; index < item.size(); ++index) {
-                if (item[index].template is<KvHole>()) continue;
+              std::size_t index = item.nextPresent(0);
+              for (; index < item.size() && index != NonIndexPropertiesTag; index = item.nextPresent(index + 1)) {
                 u32(static_cast<std::uint32_t>(index));
                 value(item[index]);
               }
+              if (index < item.size()) {
+                // This valid index collides with the marker when written as a raw u32.
+                u32(NonIndexPropertiesTag);
+                for (; index < item.size(); index = item.nextPresent(index + 1)) {
+                  identifier(std::to_string(index));
+                  value(item[index]);
+                }
+              }
               u32(TerminatorTag);
             } else if constexpr (std::is_same_v<T, KvObject>) {
+              record(identity);
               u8(ObjectTag);
               for (const auto& [key, member] : item) {
                 identifier(key);
@@ -198,6 +238,7 @@ namespace uos::rt {
               }
               u32(TerminatorTag);
             } else if constexpr (std::is_same_v<T, KvMap>) {
+              record(identity);
               u8(MapObjectTag);
               for (const auto& [key, member] : item) {
                 value(key);
@@ -205,26 +246,36 @@ namespace uos::rt {
               }
               u8(NonMapPropertiesTag);
               u32(TerminatorTag);
-            } else {
+            } else if constexpr (std::is_same_v<T, KvSet>) {
+              record(identity);
               u8(SetObjectTag);
               for (const KvValue& member : item) value(member);
               u8(NonSetPropertiesTag);
               u32(TerminatorTag);
-            }
+            } else std::terminate();
           },
           input.variant());
       }
 
     private:
+      void record(const void* identity) {
+        if (identity) objectIndices_->emplace(identity, objectCount_);
+        ++objectCount_;
+      }
+
       struct UnitsHash {
         std::size_t operator()(const std::u16string& units) const noexcept { return std::hash<std::u16string>{}(units); }
       };
       std::unordered_map<std::u16string, std::uint32_t, UnitsHash> pool_;
+      std::optional<std::unordered_map<const void*, std::uint32_t>> objectIndices_;
+      std::uint32_t objectCount_ = 0;
     };
   }
 
   KvBytes kvJscSerialize(const KvValue& value) {
     Serializer serializer;
+    // The version and a fixed-width scalar fit without growing the buffer.
+    serializer.out.reserve(16);
     serializer.u32(CurrentVersion);
     serializer.value(value);
     return std::move(serializer.out);

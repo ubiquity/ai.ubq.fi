@@ -232,7 +232,7 @@ namespace uos::kv_conversion::convert {
         Transcoded encoded{.bytes = std::move(bytes), .changed = translated.changed};
         co_return encoded;
       }
-      const rt::KvValue convertedValue = typed_value::decodeTypedValue(targetGraph);
+      const rt::KvValue& convertedValue = translated.value;
       storage::kv::assertPortableKvValue(convertedValue);
       std::vector<std::uint8_t> bytes = rt::kvJscSerialize(convertedValue);
       if (rt::jsonStringify(typed_value::encodeTypedValue(storage::kv::deserialize()(bytes))) != rt::jsonStringify(targetGraph))

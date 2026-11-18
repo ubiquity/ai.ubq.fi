@@ -2,9 +2,32 @@
 // Helpers shared by the src/rt/kv*.cpp translation units. Not a public header.
 #include "uos/rt/kv.hpp"
 #include <cstdint>
+#include <deque>
 #include <span>
 #include <string>
 #include <string_view>
+
+namespace uos::rt::kv_detail {
+  struct GraphNode {
+    KvValue value;
+    std::unique_ptr<KvValue> backing;
+    std::size_t height = 0;
+  };
+
+  // Codecs build a graph through borrowed links. The arena owns every node,
+  // and only handles that leave it own the arena, so cycles reclaim normally.
+  class ValueGraph : public std::enable_shared_from_this<ValueGraph> {
+  public:
+    KvValue add(KvValue value);
+    KvValue link(GraphNode& node) const;
+    static KvValue borrow(const KvValue& value);
+    static GraphNode& node(const KvValue& link);
+    static KvValue finish(KvValue value);
+
+  private:
+    std::deque<GraphNode> nodes_;
+  };
+}
 
 namespace uos::rt::kv_internal {
   // The UTF-16 code units of a WTF-8 string (docs/rt/text.md): a split surrogate
