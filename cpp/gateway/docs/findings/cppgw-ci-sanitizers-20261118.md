@@ -88,6 +88,7 @@ The seven slow inputs were retained as artifacts. The runs reported zero fork-pa
 The checkout resumed at `c75cd79e2b7d8b0a21e8f68534f8516d549da07f`, tree `d96fb32987663d5a130147d97c00a82bf8dbd3fe`. The sanitizer process had stopped before running tests. Its last Ninja line recorded step 443 of 501 at 3,207.012 seconds. The resumed command below reuses those objects and the existing compiler wrapper, with fresh home and temporary directories. Both parts used the same driver, C++ inputs and Clang flags. The original logs were preserved in `$scratch/asan-resume`.
 
 ```sh
+set -o pipefail
 export UOS_CI_BUILD_DIR="$scratch/asan-scoped-build"
 out="$scratch/asan-resume"
 CONFIG=asan
@@ -99,3 +100,31 @@ env -i PATH="$scratch/compiler:/usr/local/bin:/usr/bin:/bin" LANG=C.UTF-8 HOME="
 ```
 
 `actionlint` 1.7.11 passed again with the external ARM runner-label config. The union of the four `--list` outputs matched the unsharded list for each configuration. The seven ASan driver controls passed again in 14.757 seconds, and all twelve campaign classification controls passed. `bun --no-env-file run format:check` passed for the active workflow and both changed documents in the locked scratch formatter checkout.
+
+```sh
+"$scratch/actionlint/actionlint" -config-file "$scratch/actionlint/config.yaml" .github/workflows/cpp-gateway-ci.yml
+CXX=clang++ UOS_CI_SELFTEST_CONFIG=asan python3 -B cpp/gateway/cmake/ci/test_driver.py
+python3 -B cpp/gateway/cmake/ci/summary.py "$UOS_CI_BUILD_DIR" --config asan
+git diff --check 1769741e..HEAD
+```
+
+## ASan shard 1 receipt
+
+On four x86_64 cores with Clang 21.1.8, the resumed command completed all 58 remaining Ninja steps. Compilation finished with all 369 production objects and both vendor archives. All 111 selected tests linked and ran with ASan, UBSan and `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1` under the real Linux namespace boundary. The job summary reported 107 passing and four failing binaries, with 1,286 passing and five failing cases. There were zero build failures, timeouts or sanitizer diagnostics. The driver exited 1 for the failed assertions.
+
+The last recorded Ninja step before interruption was at 3,207.012 seconds. The resumed object build took 435.977 seconds and linking and testing took 48.775 seconds, for a 485.111-second resumed invocation including setup and receipt creation. The recorded work across both segments totals 3,692.123 seconds (61 minutes 32 seconds), excluding the interruption and dependency installation. Some of the first segment overlapped the robustness jobs. Four shards leave ample room under the 240-minute job limit on this measurement. ARM64 shard timings still need hosted receipts.
+
+The driver wrote its terminal receipt to `$scratch/asan-scoped-build/clang++-ef45513c90b3/asan/receipt.json` (SHA-256 `93732a810244b38311a6b43f6aa77391559e4a249b35e68eab1643488fed72c9`). It binds commit `c75cd79e2b7d8b0a21e8f68534f8516d549da07f`, tree `d96fb32987663d5a130147d97c00a82bf8dbd3fe`, and unchanged driver input digest `ba34aa4f8d4f05e064ed711cd944f0beef96aaada4f7f164501ad20b9d1c27d0`. The workflow summary command rendered the terminal receipt and the four failing binaries.
+
+## Findings outside the CI paths
+
+- `tests/anthropic_replay_test.cpp` failed one assertion on restored payload key order.
+- `tests/deepseek_stream_differential_test.cpp` failed two malformed SSE assertions that expect the Bun parse error text.
+- `tests/jev_compaction_differential_test.cpp` failed one recorded `noulAnswer` case with `Invalid JSON`.
+- `tests/native_addon_differential_test.cpp` failed one recorded artifact-verification case on the JSON error text.
+
+The same four binaries and five cases failed in the Release shard 1 diagnostic. The two ARM64-only fixtures are in shards 3 and 4. The shared `src/rt/crypto.cpp` build blocker still requires the runtime owner’s fix for an ordinary CI build. [Release diagnostics](cppgw-ci-workflow-20261118.md#runtime-diagnostic)
+
+## Handoff
+
+The Release and ASan matrices and all 11 harness jobs are configured. The two local campaigns met their five-minute budgets. Matching ARM64 runs, the 40-minute campaigns and the full set of sanitizer shard results remain pending hosted validation. The push dry run for `refs/heads/agent-jobs/cppgw-ci-sanitizers-20261118-44214118327-1` failed because this runner lacks GitHub write credentials. The result commits are on the clean `agent-job` checkout for the agent-branch handoff.
