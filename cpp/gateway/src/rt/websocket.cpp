@@ -747,6 +747,7 @@ namespace uos::rt::ws {
   }
 
   void WebSocketServer::completeUpgrade(const std::string& key, const std::vector<std::string>& protocols, const UpgradeRequest& request, UpgradeSocket& socket, Bytes head, UpgradeCallback cb) {
+    const auto self = weak_from_this().lock();
     // Destroy the socket if the client has already sent a FIN packet.
     if (!socket.readable || !socket.writable) {
       takeSocket(socket)->destroy();

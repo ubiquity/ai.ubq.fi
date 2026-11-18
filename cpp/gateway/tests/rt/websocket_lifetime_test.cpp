@@ -116,6 +116,35 @@ TEST("public event delivery retains the WebSocket through its last listener") {
   EXPECT(weak.expired());
 }
 
+TEST("a WebSocket upgrade retains its server through callbacks that release it") {
+  rt::FakeClock clock;
+  rt::Loop loop(clock);
+  rt::LoopScope scope(loop);
+  asio::local::stream_protocol::socket client(rt::executor()), peer(rt::executor());
+  asio::local::connect_pair(client, peer);
+  ws::UpgradeSocket socket{ws::detail::Socket::Stream(std::move(client))};
+  const ws::UpgradeRequest request{"GET", "/", {{"Upgrade", "websocket"}, {"Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ=="}, {"Sec-WebSocket-Version", "13"}}};
+  std::shared_ptr<ws::WebSocketServer> server;
+  ws::ServerOptions options;
+  options.noServer = true;
+  options.WebSocket = [&server](const ws::ServerOptions& duringUpgrade) {
+    server.reset();
+    return std::make_shared<ws::WebSocket>(nullptr, duringUpgrade.autoPong);
+  };
+  server = std::make_shared<ws::WebSocketServer>(std::move(options));
+  const std::weak_ptr<ws::WebSocketServer> weak = server;
+  std::shared_ptr<ws::WebSocket> accepted;
+  server->handleUpgrade(request, socket, {}, [&](std::shared_ptr<ws::WebSocket> websocket, const ws::UpgradeRequest&) {
+    EXPECT(!weak.expired());
+    accepted = std::move(websocket);
+  });
+  EXPECT(weak.expired());
+  ASSERT(accepted);
+  EXPECT_EQ(accepted->readyState(), ws::WebSocket::OPEN);
+  accepted->terminate();
+  loop.run();
+}
+
 TEST("backpressured socket writes survive partial completion and report cancellation once") {
   rt::FakeClock clock;
   rt::Loop loop(clock);
