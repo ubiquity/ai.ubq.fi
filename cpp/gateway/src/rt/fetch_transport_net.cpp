@@ -51,6 +51,7 @@ namespace uos::rt::detail::fetch {
     open_ = false;
     boost::system::error_code ignored;
     socket_.close(ignored);
+    if (stopUpload) stopUpload();
   }
 
   void Connection::watchIdle(double ms) {

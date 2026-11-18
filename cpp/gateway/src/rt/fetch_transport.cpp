@@ -179,7 +179,8 @@ namespace uos::rt::detail::fetch {
       return text;
     }
 
-    Task<void> writeRequest(std::shared_ptr<Connection> connection, std::shared_ptr<const std::string> head, RequestBody body, std::shared_ptr<WriterState> state) {
+    Task<void> writeRequest(
+        std::shared_ptr<Connection> connection, std::shared_ptr<const std::string> head, RequestBody body, std::shared_ptr<WriterState> state, AbortSignal signal) {
       try {
         const auto* headBytes = reinterpret_cast<const std::uint8_t*>(head->data());
         if (body.kind == RequestBody::Kind::bytes && body.bytes->size() <= 65536) {
@@ -202,6 +203,15 @@ namespace uos::rt::detail::fetch {
         if (body.kind == RequestBody::Kind::stream) {
           state->reader = body.stream->getReader();
           const ReadableStreamDefaultReader<ByteChunk> reader = *state->reader;
+          auto clearStop = scopeExit([&connection] { connection->stopUpload = {}; });
+          connection->stopUpload = [weak = std::weak_ptr(state), signal] {
+            auto upload = weak.lock();
+            if (!upload) return;
+            auto active = std::exchange(upload->reader, std::nullopt);
+            if (!active) return;
+            if (signal.aborted()) spawn(active->cancel(signal.reason()), ignoreRejection);
+            active->releaseLock();
+          };
           for (;;) {
             ReadableStreamReadResult<ByteChunk> step;
             Reason failure;
@@ -211,13 +221,15 @@ namespace uos::rt::detail::fetch {
             } catch (...) {
               failure = std::current_exception();
             }
+            // Closing released this reader. Its synthetic rejection must
+            // not replace the transport error or the abort reason.
+            if (!connection->isOpen()) co_return;
             if (failure) {
               state->bodyFailure = failure;
               connection->close();
               co_return;
             }
             if (step.done) break;
-            if (!connection->isOpen()) co_return;
             if (step.value->empty()) continue;
             auto framed = std::make_shared<std::string>(chunkSizeLine(step.value->size()));
             framed->append(reinterpret_cast<const char*>(step.value->data()), step.value->size());
@@ -275,14 +287,12 @@ namespace uos::rt::detail::fetch {
       auto head = std::make_shared<const std::string>(requestHead(method, url, headers, framing, length, client->userAgent, acceptEncoding()));
       auto writer = std::make_shared<WriterState>();
       bool completed = false;
-      // A failed or abandoned exchange closes its connection; on abort the
-      // request body stream is cancelled with the signal's reason.
-      auto cleanup = scopeExit([&completed, connection, writer, signal] {
+      // A failed or abandoned exchange closes its connection and stops any upload.
+      auto cleanup = scopeExit([&completed, connection] {
         if (completed) return;
         connection->close();
-        if (writer->reader && signal.aborted()) spawn(writer->reader->cancel(signal.reason()), ignoreRejection);
       });
-      spawn(writeRequest(connection, head, body, writer));
+      spawn(writeRequest(connection, head, body, writer, signal));
       auto exchange = std::make_shared<Exchange>();
       std::size_t headBytes = 0;
       for (;;) {
