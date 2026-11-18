@@ -117,3 +117,20 @@ A scratch-only diagnostic copy of the original fetch transport test kept every f
 A separate Bun 1.4.0 control used the repository WebSocket loader with the frozen `ws@8.18.3` install. It delivered a text frame coalesced with the valid HTTP/1.1 upgrade and rejected HTTP/1.2, an extra status-space, duplicate lengths, and conflicting framing under its node:http parser. The native WebSocket tests passed on the same source tree.
 
 The changed-content check used `bun --no-env-file run format:check` with the frozen repository formatter in scratch. It passed for the added findings text, the deviations, provenance, and both JSON registries. The existing findings prefix was compared byte-for-byte with the inherited report. First-party `git diff --check` passed. The vendored generated C file contains upstream whitespace and matches the pinned archive.
+
+## Failure controls and final disposition
+
+The scratch strict-expectation control passed all 33 fetch transport cases with GCC and with Clang ASan/UBSan. Both used the original fixture inputs. The control source was generated outside the checkout and the checked-in assertions were used for the suite totals above.
+
+The ICU mismatch resolved on ICU 78.3. The published source archive had SHA-256 `3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0`. It was built with `CC=gcc-14 CXX=g++-14 ./configure --prefix="$scratch/icu-prefix" --disable-tests --disable-samples --disable-extras`, followed by `make -j3` and `make install`. The control recompiled the unchanged `src/rt/url.cpp` with the new headers and relinked the original IDNA binary against the new libraries. The original IDNA suite passed 2/2 in both the optimized and sanitizer configurations. The gate totals above retain the initial run counts.
+
+```sh
+python3 -B "$scratch/expectation-control.py" release
+python3 -B "$scratch/expectation-control.py" asan
+python3 -B "$scratch/icu-control.py" release
+python3 -B "$scratch/icu-control.py" asan
+```
+
+The release gateway entry point also linked as an ARM64 ELF executable from the 369 production objects, the startup and entrypoint objects, and the three selected vendor archives. The release and sanitizer test evidence applies to the source tree recorded above. Subsequent commits append documentation only.
+
+The remaining work requires the separately owned fetch response-read and body-pump blocks and the Bun-era expectation table. The client lane can be handed off on its clean local branch. The GitHub write and C++ integration receipts are pending.
