@@ -61,6 +61,8 @@ The qualified baseline rerun is `env -i PATH="$scratch/tool-bin:/usr/local/bin:/
 
 The corrected baseline reused 770 objects, rebuilt 62 in 161.809 seconds, and linked and tested in 87.482 seconds. It passed **441/442 binaries and 5,027/5,028 cases** with zero build failures and timeouts. The inherited BigInt parser assertion is the sole failure. Its receipt SHA-256 is `6d66c1ea36ddb2fc8e5578840fcbb1e11c99c01ae8d24c5cff0fb79cf976d0a3`.
 
+The candidate release run completed the 369-object production build, recorded **441/442 passing binaries and 5,027/5,028 passing cases**, and matched the corrected baseline on every binary's case counts and status. Its incremental object phase took 2,262.056 seconds and its link and test phase 91.248 seconds. The receipt SHA-256 is `62107ab2eb269c25a3483a691001c5ec700429a133ffd4654f30b012a5e25e52`. The driver recorded input SHA-256 `ef523eabef62f11b3793ea321430e87f6cd3cdfa4216be51a2e9f9dd113eca79` at start and finish. The sanitizer sweep is in progress.
+
 `docs/rt/values.md` still lists the retired C++ APIs and needs the shared runtime documentation update after integration.
 
 `GIT_TERMINAL_PROMPT=0 git push --dry-run --porcelain origin HEAD:refs/heads/agent-jobs/cppgw-slim-numbers-20261118` failed because GitHub write authentication is unavailable. The fetched `origin/development` at `2ac5aae69b0f0bac77cf1c6f329995cf1187616c` lacks the implementation in its ancestry and has no `cpp/gateway` tree.
