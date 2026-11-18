@@ -143,3 +143,25 @@ the last absolute segment, drops terminal separators except at the root, and
 uses the current directory for relative inputs. Relative comparisons return an
 empty string for equal paths and reject a comparison without absolute endpoints.
 Percent-encoded and backslash bytes stay literal in these operations.
+
+## Ordered containers
+
+Catalog membership checks use `std::unordered_set<std::string>`. The
+catalog arrays and vectors determine model order. An OpenRouter payload
+keeps the first valid row for each ID. Catalog merges that check against
+an existing list still use that list as the membership snapshot.
+
+Ordered Map and Set store stable list nodes. Erasing a key removes it
+from lookup immediately and keeps its node readable by active traversals.
+Reinserting the key appends a fresh node. A traversal can visit entries
+appended before it reaches the end. A C++ iterator already at the list's
+end remains there.
+
+## Whole-buffer gzip
+
+Whole-buffer decoding feeds fixed 64 KiB slices into the zlib inflater.
+Callbacks receive pieces up to 64 KiB. Compression and decoding return
+the complete bytes. The inflater still validates every gzip member and
+applies the format's trailing-data policy. Sentinel checks its plaintext
+limit before appending each piece and schedules both decode outcomes by
+one microtask. Fetch uses its existing streaming decoder.
