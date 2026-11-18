@@ -341,7 +341,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/kv_conversion/profile_json.hpp`
 - [x] `include/uos/kv_conversion/proof.hpp`
 - [x] `include/uos/kv_conversion/typed_value.hpp`
-- [ ] `include/uos/lib/jev_compaction/client.hpp`
+- [x] `include/uos/lib/jev_compaction/client.hpp`
 - [ ] `include/uos/lib/jev_compaction/codex_items.hpp`
 - [ ] `include/uos/lib/jev_compaction/compact.hpp`
 - [ ] `include/uos/lib/jev_compaction/jev_codex_smoke.hpp`
@@ -1919,6 +1919,12 @@ Reviewed offline proof entry points and argument ownership.
 
 Reviewed the typed-value codec. All inputs are borrowed for synchronous conversion and the resulting graphs own their data.
 
+### `include/uos/lib/jev_compaction/client.hpp`
+
+Reviewed the Jev client's options and explicit receiver-lifetime contract.
+
+- L28, 30, 37, 38, 44, 45 **SAFE** · The constructor copies its options. The batch owns the JevClient through every virtual ask, and the Fetch and signal are owned handles.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2167,4 +2173,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-233/286 files reviewed. 407 sites: 385 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+234/286 files reviewed. 408 sites: 386 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

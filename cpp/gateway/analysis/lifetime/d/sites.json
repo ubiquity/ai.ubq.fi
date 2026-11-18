@@ -9078,8 +9078,28 @@
       "sites": []
     },
     "include/uos/lib/jev_compaction/client.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the Jev client's options and explicit receiver-lifetime contract.",
+      "sites": [
+        {
+          "lines": [
+            28,
+            30,
+            37,
+            38,
+            44,
+            45
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The constructor copies its options. The batch owns the JevClient through every virtual ask, and the Fetch and signal are owned handles."
+        }
+      ]
     },
     "include/uos/lib/jev_compaction/codex_items.hpp": {
       "reviewed": false,
