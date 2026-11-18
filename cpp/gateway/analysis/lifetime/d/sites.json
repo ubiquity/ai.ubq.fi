@@ -9073,7 +9073,8 @@
       ]
     },
     "include/uos/kv_conversion/typed_value.hpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed the typed-value codec. All inputs are borrowed for synchronous conversion and the resulting graphs own their data.",
       "sites": []
     },
     "include/uos/lib/jev_compaction/client.hpp": {

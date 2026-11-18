@@ -340,7 +340,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/kv_conversion/native_schema.hpp`
 - [x] `include/uos/kv_conversion/profile_json.hpp`
 - [x] `include/uos/kv_conversion/proof.hpp`
-- [ ] `include/uos/kv_conversion/typed_value.hpp`
+- [x] `include/uos/kv_conversion/typed_value.hpp`
 - [ ] `include/uos/lib/jev_compaction/client.hpp`
 - [ ] `include/uos/lib/jev_compaction/codex_items.hpp`
 - [ ] `include/uos/lib/jev_compaction/compact.hpp`
@@ -1915,6 +1915,10 @@ Reviewed offline proof entry points and argument ownership.
 
 - L26, 31 **SAFE** · Proof work owns all path and digest inputs through the awaited offline stages.
 
+### `include/uos/kv_conversion/typed_value.hpp`
+
+Reviewed the typed-value codec. All inputs are borrowed for synchronous conversion and the resulting graphs own their data.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2163,4 +2167,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-232/286 files reviewed. 407 sites: 385 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+233/286 files reviewed. 407 sites: 385 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
