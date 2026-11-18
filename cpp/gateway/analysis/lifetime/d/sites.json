@@ -8537,8 +8537,43 @@
       ]
     },
     "include/uos/handler/http.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed delivery completion, background registration, principal resolution and routing declarations.",
+      "sites": [
+        {
+          "lines": [
+            23,
+            29,
+            37,
+            40
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The delivery metadata owns its Promise handle. The registrar receives a Promise copy synchronously. The runtime owns the registrar slot and the scheduled task has independent ownership obligations."
+        },
+        {
+          "lines": [
+            54,
+            66,
+            68,
+            81,
+            95,
+            97,
+            100
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Principal inputs are passed by value and route normalization consumes borrowed text inline. Kind and header names refer to static literals."
+        }
+      ]
     },
     "include/uos/handler/index.hpp": {
       "reviewed": false,

@@ -319,7 +319,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/decisions/handlers.hpp`
 - [x] `include/uos/defaults.hpp`
 - [x] `include/uos/handler/admission.hpp`
-- [ ] `include/uos/handler/http.hpp`
+- [x] `include/uos/handler/http.hpp`
 - [ ] `include/uos/handler/index.hpp`
 - [ ] `include/uos/handler/serve_handler.hpp`
 - [ ] `include/uos/handler/terminal_log.hpp`
@@ -1785,6 +1785,13 @@ Reviewed admission controller access and local overload response interfaces.
 
 - L27, 32, 39, 41, 49 **SAFE** · The route set and error label have static storage. The controller is a shared-state value and the borrowed overload cause is consumed synchronously.
 
+### `include/uos/handler/http.hpp`
+
+Reviewed delivery completion, background registration, principal resolution and routing declarations.
+
+- L23, 29, 37, 40 **SAFE** · The delivery metadata owns its Promise handle. The registrar receives a Promise copy synchronously. The runtime owns the registrar slot and the scheduled task has independent ownership obligations.
+- L54, 66, 68, 81, 95, 97, 100 **SAFE** · Principal inputs are passed by value and route normalization consumes borrowed text inline. Kind and header names refer to static literals.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2033,4 +2040,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-211/286 files reviewed. 382 sites: 361 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+212/286 files reviewed. 384 sites: 363 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
