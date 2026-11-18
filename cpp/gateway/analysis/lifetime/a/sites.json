@@ -386,8 +386,259 @@
       ]
     },
     "src/rt/async.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Read the complete loop implementation and the PromiseCore callbacks. The process loop is intentionally permanent. Scoped loops have an explicit teardown path.",
+      "sites": [
+        {
+          "lines": [
+            147,
+            148,
+            149,
+            156,
+            163,
+            379,
+            380,
+            385
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Loop owns the context and timer queue and borrows its Clock",
+          "reason": "A scoped Loop's clock is declared before it in the runtime fixture, and the permanent default Loop uses the static SystemClock."
+        },
+        {
+          "lines": [
+            178,
+            184,
+            186,
+            190,
+            191,
+            193,
+            194,
+            198,
+            199,
+            203,
+            209,
+            383,
+            384
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Asio executor's Loop implementation pointer",
+          "reason": "The Loop contract confines I/O and executor users to the owner lifetime, and execute owns dispatched handlers or discards them once the context is gone."
+        },
+        {
+          "lines": [
+            215,
+            216,
+            284,
+            288,
+            289,
+            290,
+            291,
+            293,
+            298,
+            299
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Microtask callback dispatch",
+          "reason": "Each one-shot job is moved out before it can reenter the loop, and rejection candidates live in a detached vector while they are inspected."
+        },
+        {
+          "lines": [
+            219,
+            227,
+            238,
+            242,
+            243,
+            244,
+            245,
+            246,
+            408,
+            413,
+            422
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Intrusive Promise waiting-list mutation",
+          "reason": "Promise destruction unlinks synchronously, and teardown unlinks and pins each node before destroying its reactions and any continuations they own."
+        },
+        {
+          "lines": [
+            252,
+            257,
+            258,
+            261,
+            263,
+            266,
+            268,
+            367,
+            368,
+            396,
+            397,
+            400,
+            401,
+            443,
+            445
+          ],
+          "classes": [
+            "c"
+          ],
+          "verdict": "DEFECT",
+          "label": "Scoped Loop teardown runs callbacks under the ambient loop",
+          "reason": "A destroyed frame can queue a microtask from a ScopeExit while the dying loop is absent from currentLoop, letting that job survive in an unrelated loop.",
+          "defect": {
+            "id": "A-LOOP-TEARDOWN-OWNER",
+            "priority": 65,
+            "severity": "wrong-loop teardown and retention",
+            "interleaving": [
+              "A pending coroutine belongs to a local Loop. Loop::run or blockOn returns and its LoopScope restores the previous loop.",
+              "Destroying the local Loop drops the frame. A destructor that queues a cleanup job sends it to the previous or permanent process loop, outside the teardown drain."
+            ],
+            "diff": "--- a/cpp/gateway/src/rt/async.cpp\n+++ b/cpp/gateway/src/rt/async.cpp\n@@ -252,1 +252,2 @@\n   Loop::Impl::~Impl() {\n+    LoopScope scope(owner);"
+          }
+        },
+        {
+          "lines": [
+            313,
+            316,
+            319,
+            322,
+            325,
+            332,
+            338,
+            349,
+            355,
+            364,
+            367,
+            372,
+            376,
+            454
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Run-loop stop predicate and scope guards",
+          "reason": "The synchronous caller holds the stop Promise through runLoop, and the local guards restore the running flag and scope before returning."
+        },
+        {
+          "lines": [
+            410,
+            414,
+            416,
+            420,
+            424,
+            425,
+            427,
+            431
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Promise settlement traversal",
+          "reason": "Reactions move into the microtask queue without invocation during traversal, and unhandled rejections keep a separate shared owner until the checkpoint."
+        },
+        {
+          "lines": [
+            437,
+            438,
+            439,
+            443,
+            481,
+            482
+          ],
+          "classes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Native start and user microtask registration",
+          "reason": "Asio owns the moved task and a captureless completion handler, and the queue owns the moved user callable."
+        },
+        {
+          "lines": [
+            449,
+            450,
+            451
+          ],
+          "classes": [
+            "b",
+            "c",
+            "e"
+          ],
+          "verdict": "UNCLEAR",
+          "label": "Parked awaiter and pending Promise ownership",
+          "reason": "The waiter job owns the coroutine that owns the Promise; settlement and loop teardown break the cycle. Identifying indefinitely abandoned request waiters would establish where this topology retains request state on the permanent loop."
+        },
+        {
+          "lines": [
+            456,
+            457,
+            458,
+            462,
+            465,
+            467,
+            470,
+            472,
+            476,
+            477,
+            478
+          ],
+          "classes": [
+            "a",
+            "b",
+            "c",
+            "e"
+          ],
+          "verdict": "SAFE",
+          "label": "Waker, abandon and microtask initiations",
+          "reason": "Each initiation is named and synchronous, and the handler goes to a weakly linked slot, to the loop, or is intentionally discarded."
+        },
+        {
+          "lines": [
+            485,
+            490,
+            491,
+            492,
+            494,
+            497
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "DEFECT",
+          "label": "Pending Promise reactions self-own their source",
+          "reason": "A dropped never-settled input keeps its reaction and combinator output alive until Loop destruction, including losers of a completed combination on the permanent loop.",
+          "defect": {
+            "id": "A-PROMISE-REACTION-CYCLE",
+            "priority": 55,
+            "severity": "retention on long-running loops",
+            "interleaving": [
+              "all registers a reaction whose owning source capture points to the state storing that reaction. Another input can reject the combined Promise.",
+              "Drop the pending input and every resolver. Its last ownership is the reaction inside itself, so neither that source nor the captured output/continuations can be reclaimed."
+            ],
+            "diff": "--- a/cpp/gateway/src/rt/async.cpp\n+++ b/cpp/gateway/src/rt/async.cpp\n@@ -416,1 +416,3 @@\n-      currentLoop().impl().microtasks.push_back(std::move(reaction));\n+      currentLoop().impl().microtasks.push_back(\n+          [source = shared_from_this(), job = std::move(reaction)]() mutable { job(); });\n+\n@@ -424,1 +426,4 @@\n-    for (auto& reaction : reactions) impl.microtasks.push_back(std::move(reaction));\n+    for (auto& reaction : reactions) {\n+      impl.microtasks.push_back(\n+          [source = shared_from_this(), job = std::move(reaction)]() mutable { job(); });\n+    }\n@@ -492,1 +497,1 @@\n-      source->react([source, out, remaining] {\n+      source->react([source = source.get(), out, remaining] {"
+          }
+        }
+      ]
     },
     "include/uos/rt/async.hpp": {
       "status": "pending",

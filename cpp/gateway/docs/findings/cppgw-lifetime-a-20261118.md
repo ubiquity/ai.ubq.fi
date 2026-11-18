@@ -36,7 +36,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `include/uos/rt/abort.hpp`
 - [x] `src/rt/clock.cpp`
 - [x] `include/uos/rt/clock.hpp`
-- [ ] `src/rt/async.cpp`
+- [x] `src/rt/async.cpp`
 - [ ] `include/uos/rt/async.hpp`
 - [ ] `src/rt/process_loop.cpp`
 - [ ] `include/uos/rt/process.hpp`
@@ -108,18 +108,34 @@ The injected Clock methods are synchronous. Loop's borrowed Clock dependency is 
 - **SAFE** `75, 78, 94, 96, 99` (b/c), Timeout timer ownership. Timeout is a shared handle and the implementation consumes its state accessor within synchronous timer operations.
 - **SAFE** `102, 108, 111, 115, 117, 127, 128, 129, 130, 134, 141, 145, 151, 153` (b/c), Timer registration and scheduling API. Registration accepts an owning callable by value, clearing borrows only synchronously, and sleep creates and owns its result independently of the caller.
 
+### `src/rt/async.cpp`
+
+Read the complete loop implementation and the PromiseCore callbacks. The process loop is intentionally permanent. Scoped loops have an explicit teardown path.
+
+- **SAFE** `147, 148, 149, 156, 163, 379, 380, 385` (b/c), Loop owns the context and timer queue and borrows its Clock. A scoped Loop's clock is declared before it in the runtime fixture, and the permanent default Loop uses the static SystemClock.
+- **SAFE** `178, 184, 186, 190, 191, 193, 194, 198, 199, 203, 209, 383, 384` (b/c), Asio executor's Loop implementation pointer. The Loop contract confines I/O and executor users to the owner lifetime, and execute owns dispatched handlers or discards them once the context is gone.
+- **SAFE** `215, 216, 284, 288, 289, 290, 291, 293, 298, 299` (c/d), Microtask callback dispatch. Each one-shot job is moved out before it can reenter the loop, and rejection candidates live in a detached vector while they are inspected.
+- **SAFE** `219, 227, 238, 242, 243, 244, 245, 246, 408, 413, 422` (c/d), Intrusive Promise waiting-list mutation. Promise destruction unlinks synchronously, and teardown unlinks and pins each node before destroying its reactions and any continuations they own.
+- **DEFECT (A-LOOP-TEARDOWN-OWNER)** `252, 257, 258, 261, 263, 266, 268, 367, 368, 396, 397, 400, 401, 443, 445` (c), Scoped Loop teardown runs callbacks under the ambient loop. A destroyed frame can queue a microtask from a ScopeExit while the dying loop is absent from currentLoop, letting that job survive in an unrelated loop.
+- **SAFE** `313, 316, 319, 322, 325, 332, 338, 349, 355, 364, 367, 372, 376, 454` (b/c), Run-loop stop predicate and scope guards. The synchronous caller holds the stop Promise through runLoop, and the local guards restore the running flag and scope before returning.
+- **SAFE** `410, 414, 416, 420, 424, 425, 427, 431` (c/d), Promise settlement traversal. Reactions move into the microtask queue without invocation during traversal, and unhandled rejections keep a separate shared owner until the checkpoint.
+- **SAFE** `437, 438, 439, 443, 481, 482` (a/b/c), Native start and user microtask registration. Asio owns the moved task and a captureless completion handler, and the queue owns the moved user callable.
+- **UNCLEAR** `449, 450, 451` (b/c/e), Parked awaiter and pending Promise ownership. The waiter job owns the coroutine that owns the Promise; settlement and loop teardown break the cycle. Identifying indefinitely abandoned request waiters would establish where this topology retains request state on the permanent loop.
+- **SAFE** `456, 457, 458, 462, 465, 467, 470, 472, 476, 477, 478` (a/b/c/e), Waker, abandon and microtask initiations. Each initiation is named and synchronous, and the handler goes to a weakly linked slot, to the loop, or is intentionally discarded.
+- **DEFECT (A-PROMISE-REACTION-CYCLE)** `485, 490, 491, 492, 494, 497` (c/d), Pending Promise reactions self-own their source. A dropped never-settled input keeps its reaction and combinator output alive until Loop destruction, including losers of a completed combination on the permanent loop.
+
 ## Ranked defects and counts
 
-Reviewed **4/30 files** and **18 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **5/30 files** and **29 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
-| a. Capturing coroutine closure | 0 | 1 | 0 |
-| b. Borrowed coroutine parameter or receiver | 0 | 6 | 0 |
-| c. Callback ownership or cycle | 1 | 16 | 1 |
-| d. Container invalidation | 1 | 5 | 0 |
-| e. GCC 12 await-expression rule | 0 | 0 | 0 |
-| **Unique site groups** | 1 | 16 | 1 |
+| a. Capturing coroutine closure | 0 | 3 | 0 |
+| b. Borrowed coroutine parameter or receiver | 0 | 11 | 1 |
+| c. Callback ownership or cycle | 3 | 24 | 2 |
+| d. Container invalidation | 2 | 8 | 0 |
+| e. GCC 12 await-expression rule | 0 | 1 | 1 |
+| **Unique site groups** | 3 | 24 | 2 |
 
 ### 1. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
 
@@ -134,4 +150,45 @@ Reviewed **4/30 files** and **18 site groups**. A site group can have multiple l
 @@ -81,1 +81,1 @@
 -    void signalAbort(const std::shared_ptr<State>& signal, Reason reason) {
 +    void signalAbort(std::shared_ptr<State> signal, Reason reason) {
+```
+
+### 2. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
+
+`src/rt/async.cpp:485, 490, 491, 492, 494, 497`
+
+- all registers a reaction whose owning source capture points to the state storing that reaction. Another input can reject the combined Promise.
+- Drop the pending input and every resolver. Its last ownership is the reaction inside itself, so neither that source nor the captured output/continuations can be reclaimed.
+
+```diff
+--- a/cpp/gateway/src/rt/async.cpp
++++ b/cpp/gateway/src/rt/async.cpp
+@@ -416,1 +416,3 @@
+-      currentLoop().impl().microtasks.push_back(std::move(reaction));
++      currentLoop().impl().microtasks.push_back(
++          [source = shared_from_this(), job = std::move(reaction)]() mutable { job(); });
++
+@@ -424,1 +426,4 @@
+-    for (auto& reaction : reactions) impl.microtasks.push_back(std::move(reaction));
++    for (auto& reaction : reactions) {
++      impl.microtasks.push_back(
++          [source = shared_from_this(), job = std::move(reaction)]() mutable { job(); });
++    }
+@@ -492,1 +497,1 @@
+-      source->react([source, out, remaining] {
++      source->react([source = source.get(), out, remaining] {
+```
+
+### 3. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
+
+`src/rt/async.cpp:252, 257, 258, 261, 263, 266, 268, 367, 368, 396, 397, 400, 401, 443, 445`
+
+- A pending coroutine belongs to a local Loop. Loop::run or blockOn returns and its LoopScope restores the previous loop.
+- Destroying the local Loop drops the frame. A destructor that queues a cleanup job sends it to the previous or permanent process loop, outside the teardown drain.
+
+```diff
+--- a/cpp/gateway/src/rt/async.cpp
++++ b/cpp/gateway/src/rt/async.cpp
+@@ -252,1 +252,2 @@
+   Loop::Impl::~Impl() {
++    LoopScope scope(owner);
 ```
