@@ -8963,8 +8963,21 @@
       ]
     },
     "include/uos/kv_conversion/cursors.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the cursor transcoder span and return record.",
+      "sites": [
+        {
+          "lines": [
+            27
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Cursor transcoding consumes the key span synchronously and returns owning converted data."
+        }
+      ]
     },
     "include/uos/kv_conversion/legacy_codec.hpp": {
       "reviewed": false,
