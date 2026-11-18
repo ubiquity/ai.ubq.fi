@@ -8468,8 +8468,24 @@
       "sites": []
     },
     "include/uos/debug_routing.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed debug route configuration interfaces and operation parameters.",
+      "sites": [
+        {
+          "lines": [
+            30,
+            31,
+            36,
+            37
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The load and set methods own their routing choice and take durations or clock readings by value."
+        }
+      ]
     },
     "include/uos/decisions/handlers.hpp": {
       "reviewed": false,

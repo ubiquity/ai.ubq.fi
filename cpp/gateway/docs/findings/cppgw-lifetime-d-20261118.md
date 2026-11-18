@@ -315,7 +315,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/catalog/store.hpp`
 - [x] `include/uos/catalog/types.hpp`
 - [x] `include/uos/config.hpp`
-- [ ] `include/uos/debug_routing.hpp`
+- [x] `include/uos/debug_routing.hpp`
 - [ ] `include/uos/decisions/handlers.hpp`
 - [ ] `include/uos/defaults.hpp`
 - [ ] `include/uos/handler/admission.hpp`
@@ -1763,6 +1763,12 @@ Reviewed the catalog snapshot types. They own stored chunks, tags and parsed JSO
 
 Reviewed process configuration storage. Configuration values and returned build identity strings have owners, and this interface declares no suspension or escaping callback.
 
+### `include/uos/debug_routing.hpp`
+
+Reviewed debug route configuration interfaces and operation parameters.
+
+- L30, 31, 36, 37 **SAFE** · The load and set methods own their routing choice and take durations or clock readings by value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2011,4 +2017,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-207/286 files reviewed. 379 sites: 358 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+208/286 files reviewed. 380 sites: 359 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
