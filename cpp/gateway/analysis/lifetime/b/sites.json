@@ -1194,8 +1194,20 @@
       ]
     },
     "src/rt/sqlite_darwin.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "32-56,59-84",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "Darwin read-only VFS and URI parsing",
+          "evidence": "Registration copies the parent into static VFS storage and installs a captureless callback through the process-lifetime parent. The query view is consumed before path mutation."
+        }
+      ]
     },
     "include/uos/storage/key_compatibility.hpp": {
       "reviewed": false,

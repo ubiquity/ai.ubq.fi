@@ -59,7 +59,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/rt/kv_value.cpp`
 - [x] `src/rt/process.cpp`
 - [x] `src/rt/sqlite.cpp`
-- [ ] `src/rt/sqlite_darwin.hpp`
+- [x] `src/rt/sqlite_darwin.hpp`
 - [ ] `include/uos/storage/key_compatibility.hpp`
 - [ ] `include/uos/storage/kv.hpp`
 - [ ] `include/uos/storage/native_addon.hpp`
@@ -401,6 +401,12 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | 811-832,866-886 | SQLite lazy RowIterator | **SAFE** | The iterator owns a statement handle and a copy of positional or named bindings. next uses them synchronously and returns an owning Row. |
 | 1002-1031 | Synchronous database transaction dispatcher | **SAFE** | The database and controller are owned by Transaction during invocation; runTransaction calls body inline before commit or rollback. |
 
+### `src/rt/sqlite_darwin.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 32-56,59-84 | Darwin read-only VFS and URI parsing | **SAFE** | Registration copies the parent into static VFS storage and installs a captureless callback through the process-lifetime parent. The query view is consumed before path mutation. |
+
 
 ## Ranked defects and counts
 
@@ -566,4 +572,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-36/97 files reviewed. **DEFECT 8, SAFE 89, UNCLEAR 3.**
+37/97 files reviewed. **DEFECT 8, SAFE 90, UNCLEAR 3.**
