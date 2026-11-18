@@ -1,13 +1,12 @@
-// HTTP/1.1 wire rules of Bun's fetch client: error texts, the request head,
-// the response head parser (picohttpparser's grammar as Bun applies it), body
-// framing and chunked decoding.
+// Fetch's HTTP/1.x request writer and llhttp response parser.
 #include "fetch_transport_internal.hpp"
 
 #include "uos/rt/string.hpp"
 
+#include <boost/beast/http/rfc7230.hpp>
+
 #include <algorithm>
 #include <array>
-#include <limits>
 
 using namespace std::string_view_literals;
 
@@ -15,29 +14,12 @@ namespace uos::rt::detail::fetch {
   namespace {
     char lowerAscii(char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c + 32) : c; }
 
-    bool equalsIgnoringCase(std::string_view left, std::string_view right) {
-      if (left.size() != right.size()) return false;
-      for (std::size_t index = 0; index < left.size(); ++index) {
-        if (lowerAscii(left[index]) != lowerAscii(right[index])) return false;
-      }
-      return true;
-    }
+    using boost::beast::iequals;
 
     std::string_view trimSpaces(std::string_view text) {
       while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
       while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
       return text;
-    }
-
-    std::vector<std::string_view> splitTokens(std::string_view text) {
-      std::vector<std::string_view> tokens;
-      std::size_t start = 0;
-      for (;;) {
-        const std::size_t comma = text.find(',', start);
-        tokens.push_back(trimSpaces(text.substr(start, comma == std::string_view::npos ? std::string_view::npos : comma - start)));
-        if (comma == std::string_view::npos) return tokens;
-        start = comma + 1;
-      }
     }
 
     // A JS string holding only code points up to U+00FF, as wire bytes.
@@ -77,65 +59,39 @@ namespace uos::rt::detail::fetch {
       return entry.size() < target.size();
     }
 
-    // RFC 9110 tchar: the bytes picohttpparser accepts in a field name.
-    bool isTokenByte(unsigned char c) {
-      if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return true;
-      return std::string_view("!#$%&'*+-.^_`|~").find(static_cast<char>(c)) != std::string_view::npos;
+    template<typename Store>
+    int storeParserBytes(llhttp_t* parser, Store store) noexcept {
+      try {
+        store();
+        return 0;
+      } catch (...) {
+        llhttp_set_error_reason(parser, "Could not store HTTP response bytes");
+        return HPE_USER;
+      }
     }
 
-    // picohttpparser's get_token_to_eol: the bytes up to the line end (CRLF or
-    // LF). Control bytes other than tab end the token; one that is not a line
-    // end is an error.
-    enum class LineResult : std::uint8_t { complete, incomplete, invalid };
-    LineResult tokenToEol(std::string_view data, std::size_t& position, std::string_view& token) {
-      const std::size_t start = position;
-      for (;;) {
-        if (position >= data.size()) return LineResult::incomplete;
-        const auto byte = static_cast<unsigned char>(data[position]);
-        if ((byte < 0x20 && byte != '\t') || byte == 0x7F) break;
-        ++position;
+    // llhttp permits responses with repeated or non-final chunked coding.
+    // Reject ambiguous framing across all Transfer-Encoding fields.
+    bool validTransferEncoding(const ResponseHead& head, bool chunked) {
+      bool sawChunked = false;
+      for (const auto& [name, value] : head.fields) {
+        if (!iequals(name, "transfer-encoding")) continue;
+        if (sawChunked && value.find_first_not_of(" ,\t") != std::string::npos) return false;
+        if (iequals(value, "chunked")) {
+          sawChunked = true;
+          continue;
+        }
+        for (const auto& extension : boost::beast::http::ext_list(value)) {
+          const auto coding = extension.first;
+          if (!iequals(coding, "chunked")) continue;
+          // The field value is already OWS-trimmed. Any suffix after
+          // chunked is another coding, a parameter, or a malformed tail.
+          if (coding.data() + coding.size() != value.data() + value.size()) return false;
+          sawChunked = true;
+        }
       }
-      const auto byte = static_cast<unsigned char>(data[position]);
-      if (byte == '\r') {
-        if (position + 1 >= data.size()) return LineResult::incomplete;
-        if (data[position + 1] != '\n') return LineResult::invalid;
-        token = data.substr(start, position - start);
-        position += 2;
-        return LineResult::complete;
-      }
-      if (byte == '\n') {
-        token = data.substr(start, position - start);
-        position += 1;
-        return LineResult::complete;
-      }
-      return LineResult::invalid;
-    }
-
-    HeadParse incomplete() { return HeadParse{}; }
-    HeadParse malformed() {
-      HeadParse result;
-      result.status = HeadStatus::malformed;
-      return result;
-    }
-
-    std::optional<std::uint64_t> parseContentLength(std::string_view value) {
-      const std::string_view digits = trimSpaces(value);
-      if (digits.empty()) return std::nullopt;
-      std::uint64_t length = 0;
-      for (const char c : digits) {
-        if (c < '0' || c > '9') return std::nullopt;
-        const auto digit = static_cast<std::uint64_t>(c - '0');
-        if (length > (std::numeric_limits<std::uint64_t>::max() - digit) / 10) return std::nullopt;
-        length = length * 10 + digit;
-      }
-      return length;
-    }
-
-    int hexValue(char c) {
-      if (c >= '0' && c <= '9') return c - '0';
-      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-      if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-      return -1;
+      // A trailing comma can make llhttp use EOF despite seeing chunked.
+      return sawChunked == chunked;
     }
   }
 
@@ -165,7 +121,7 @@ namespace uos::rt::detail::fetch {
     std::string lowercase(name);
     for (char& c : lowercase) c = lowerAscii(c);
     const auto position = std::lower_bound(kCommonHeaderNames.begin(), kCommonHeaderNames.end(), std::string_view(lowercase), lowercaseLess);
-    if (position != kCommonHeaderNames.end() && equalsIgnoringCase(*position, name)) return std::string(*position);
+    if (position != kCommonHeaderNames.end() && iequals(*position, name)) return std::string(*position);
     return name;
   }
 
@@ -177,7 +133,7 @@ namespace uos::rt::detail::fetch {
     std::vector<std::pair<std::string, std::string>> lines;
     std::vector<std::string> cookies;
     for (const auto& [name, value] : detail::headerWireFields(headers)) {
-      if (equalsIgnoringCase(name, "content-length") || equalsIgnoringCase(name, "transfer-encoding")) continue;
+      if (iequals(name, "content-length") || iequals(name, "transfer-encoding")) continue;
       lines.emplace_back(wireName(name), latin1Bytes(value));
     }
     for (const std::string& value : headers.getSetCookie()) cookies.push_back(latin1Bytes(value));
@@ -202,208 +158,202 @@ namespace uos::rt::detail::fetch {
 
   // ---- response head ------------------------------------------------------------
 
-  std::vector<std::string> ResponseHead::values(std::string_view lowercaseName) const {
-    std::vector<std::string> found;
-    for (const auto& [name, value] : fields) {
-      if (equalsIgnoringCase(name, lowercaseName)) found.push_back(value);
-    }
-    return found;
-  }
-
   std::optional<std::string> ResponseHead::field(std::string_view lowercaseName) const {
-    const std::vector<std::string> found = values(lowercaseName);
-    if (found.empty()) return std::nullopt;
-    std::string joined = found.front();
-    for (std::size_t index = 1; index < found.size(); ++index) joined += ", " + found[index];
+    std::optional<std::string> joined;
+    for (const auto& [name, value] : fields) {
+      if (!iequals(name, lowercaseName)) continue;
+      if (joined) joined->append(", ").append(value);
+      else joined = value;
+    }
     return joined;
   }
 
   bool ResponseHead::connectionHas(std::string_view token) const {
-    for (const std::string& value : values("connection")) {
-      for (const std::string_view item : splitTokens(value)) {
-        if (equalsIgnoringCase(item, token)) return true;
+    for (const auto& [name, value] : fields) {
+      if (!iequals(name, "connection")) continue;
+      std::string_view tokens = value;
+      for (;;) {
+        const auto comma = tokens.find(',');
+        if (iequals(trimSpaces(tokens.substr(0, comma)), token)) return true;
+        if (comma == std::string_view::npos) break;
+        tokens.remove_prefix(comma + 1);
       }
     }
     return false;
   }
 
-  HeadParse parseResponseHead(std::string_view data) {
-    HeadParse result;
-    std::size_t position = 0;
-    // "HTTP/1." and one digit.
-    constexpr std::string_view prefix = "HTTP/1.";
-    for (std::size_t index = 0; index < prefix.size(); ++index) {
-      if (position >= data.size()) return incomplete();
-      if (data[position] != prefix[index]) return malformed();
-      ++position;
-    }
-    if (position >= data.size()) return incomplete();
-    if (data[position] < '0' || data[position] > '9') return malformed();
-    result.head.minorVersion = data[position] - '0';
-    ++position;
-    // One or more spaces.
-    if (position >= data.size()) return incomplete();
-    if (data[position] != ' ') return malformed();
-    while (position < data.size() && data[position] == ' ') ++position;
-    // Three digits and the next byte are needed before the status is judged.
-    if (data.size() - position < 4) return incomplete();
-    int status = 0;
-    for (int digit = 0; digit < 3; ++digit) {
-      const char c = data[position++];
-      if (c < '0' || c > '9') return malformed();
-      status = status * 10 + (c - '0');
-    }
-    result.head.status = status;
-    std::string_view reason;
-    const LineResult reasonLine = tokenToEol(data, position, reason);
-    if (reasonLine == LineResult::incomplete) return incomplete();
-    if (reasonLine == LineResult::invalid) return malformed();
-    if (!reason.empty()) {
-      if (reason.front() != ' ') return malformed();
-      while (!reason.empty() && reason.front() == ' ') reason.remove_prefix(1);
-    }
-    result.head.reason = std::string(reason);
-    for (;;) {
-      if (position >= data.size()) return incomplete();
-      if (data[position] == '\r') {
-        if (position + 1 >= data.size()) return incomplete();
-        if (data[position + 1] != '\n') return malformed();
-        position += 2;
-        break;
+  const llhttp_settings_t ResponseParser::settings_ = [] {
+    llhttp_settings_t settings{};
+    settings.on_status = [](llhttp_t* parser, const char* data, std::size_t size) {
+      if (std::any_of(data, data + size, [](unsigned char c) { return (c < 0x20 && c != '\t') || c == 0x7f; })) {
+        llhttp_set_error_reason(parser, "Invalid HTTP reason phrase");
+        return static_cast<int>(HPE_INVALID_STATUS);
       }
-      if (data[position] == '\n') {
-        ++position;
-        break;
+      auto& self = *static_cast<ResponseParser*>(parser->data);
+      return storeParserBytes(parser, [&] { self.head_.reason.append(data, size); });
+    };
+    settings.on_header_field = [](llhttp_t* parser, const char* data, std::size_t size) {
+      if (parser->flags & F_TRAILING) return 0;
+      auto& self = *static_cast<ResponseParser*>(parser->data);
+      if (self.startField_ && self.head_.fields.size() == self.maxFields_) {
+        llhttp_set_error_reason(parser, "Too many HTTP response headers");
+        return static_cast<int>(HPE_INVALID_HEADER_TOKEN);
       }
-      if (result.head.fields.size() == kMaxResponseFields) return malformed();
-      // A continuation line (obs-fold) or an empty name is rejected.
-      const std::size_t nameStart = position;
-      for (;;) {
-        if (position >= data.size()) return incomplete();
-        const auto byte = static_cast<unsigned char>(data[position]);
-        if (byte == ':') break;
-        if (!isTokenByte(byte)) return malformed();
-        ++position;
+      return storeParserBytes(parser, [&] {
+        if (self.startField_) {
+          if (self.head_.fields.empty()) self.head_.fields.reserve(std::min<std::size_t>(self.maxFields_, 4));
+          self.head_.fields.emplace_back();
+          self.startField_ = false;
+        }
+        self.head_.fields.back().first.append(data, size);
+      });
+    };
+    settings.on_header_value = [](llhttp_t* parser, const char* data, std::size_t size) {
+      if (parser->flags & F_TRAILING) return 0;
+      auto& self = *static_cast<ResponseParser*>(parser->data);
+      return storeParserBytes(parser, [&] { self.head_.fields.back().second.append(data, size); });
+    };
+    settings.on_header_value_complete = [](llhttp_t* parser) {
+      if (parser->flags & F_TRAILING) return 0;
+      auto& self = *static_cast<ResponseParser*>(parser->data);
+      std::string& value = self.head_.fields.back().second;
+      const auto last = value.find_last_not_of(" \t");
+      value.erase(last == std::string::npos ? 0 : last + 1);
+      self.startField_ = true;
+      return 0;
+    };
+    settings.on_headers_complete = [](llhttp_t*) { return static_cast<int>(HPE_PAUSED); };
+    settings.on_body = [](llhttp_t* parser, const char* data, std::size_t size) {
+      if (size == 0) return 0;
+      auto& self = *static_cast<ResponseParser*>(parser->data);
+      if (auto* out = self.bodyBytes_) {
+        const auto* first = reinterpret_cast<const std::uint8_t*>(data);
+        return storeParserBytes(parser, [&] {
+          if (out->empty()) out->reserve(self.bodyInputSize_);
+          out->insert(out->end(), first, first + size);
+        });
       }
-      if (position == nameStart) return malformed();
-      const std::string_view name = data.substr(nameStart, position - nameStart);
-      ++position;
-      while (position < data.size() && (data[position] == ' ' || data[position] == '\t')) ++position;
-      std::string_view value;
-      const LineResult valueLine = tokenToEol(data, position, value);
-      if (valueLine == LineResult::incomplete) return incomplete();
-      if (valueLine == LineResult::invalid) return malformed();
-      while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) value.remove_suffix(1);
-      result.head.fields.emplace_back(std::string(name), std::string(value));
-    }
-    result.status = HeadStatus::complete;
-    result.length = position;
+      if (self.body_) return storeParserBytes(parser, [&] { self.body_->append(data, size); });
+      return 0;
+    };
+    settings.on_message_complete = [](llhttp_t*) { return static_cast<int>(HPE_PAUSED); };
+    return settings;
+  }();
+
+  ResponseParser::ResponseParser(std::size_t maxFields) : maxFields_(maxFields) {
+    llhttp_init(&parser_, HTTP_RESPONSE, &settings_);
+    parser_.data = this;
+  }
+
+  llhttp_errno_t ResponseParser::execute(std::string_view input, std::size_t& consumed) {
+    consumed = 0;
+    if (parser_.error != HPE_OK) return static_cast<llhttp_errno_t>(parser_.error);
+    const char* const bytes = input.empty() ? "" : input.data();
+    const auto result = llhttp_execute(&parser_, bytes, input.size());
+    if (result == HPE_OK) consumed = input.size();
+    if (result == HPE_PAUSED) consumed = static_cast<std::size_t>(llhttp_get_error_pos(&parser_) - bytes);
     return result;
   }
 
-  // ---- response body ------------------------------------------------------------
+  llhttp_errno_t ResponseParser::readHead(std::string_view input, std::size_t& consumed) {
+    const bool invalidPrefix = firstHeadBytes_ && !input.empty() && input.front() != 'H';
+    firstHeadBytes_ = firstHeadBytes_ && input.empty();
+    const auto result = execute(input, consumed);
+    // llhttp also accepts leading blank lines, RTSP and ICE. The client
+    // transports expect the response to start directly with HTTP.
+    if (invalidPrefix && (result == HPE_OK || result == HPE_PAUSED)) {
+      consumed = 0;
+      llhttp_set_error_reason(&parser_, "Expected an HTTP response");
+      return HPE_INVALID_CONSTANT;
+    }
+    if (result != HPE_PAUSED) return result;
+    if (llhttp_get_http_major(&parser_) != 1) {
+      llhttp_set_error_reason(&parser_, "Expected HTTP/1.x");
+      return HPE_INVALID_VERSION;
+    }
+    head_.status = llhttp_get_status_code(&parser_);
+    head_.minorVersion = llhttp_get_http_minor(&parser_);
+    const bool chunked = parser_.flags & F_CHUNKED;
+    if (needsEof()) {
+      head_.framing.framing = Framing::close;
+    } else if (chunked) {
+      head_.framing.framing = Framing::chunked;
+    } else if (parser_.flags & F_CONTENT_LENGTH) {
+      head_.framing = {Framing::length, parser_.content_length};
+    }
+    if ((parser_.flags & F_TRANSFER_ENCODING) && !validTransferEncoding(head_, chunked)) head_.framing.error = "UnsupportedTransferEncoding";
+    return result;
+  }
+
+  llhttp_errno_t ResponseParser::beginBody(bool headRequest) {
+    // llhttp handles 204, 304 and common 1xx statuses. Mark HEAD and all
+    // informational responses so unknown 1xx codes also terminate at the head.
+    if (headRequest || parser_.status_code / 100 == 1) parser_.flags |= F_SKIPBODY;
+    llhttp_resume(&parser_);
+    std::size_t consumed;
+    return execute({}, consumed);
+  }
+
+  void ResponseParser::reset() {
+    llhttp_reset(&parser_);
+    head_ = {};
+    firstHeadBytes_ = true;
+    startField_ = true;
+  }
+
+  llhttp_errno_t ResponseParser::readBody(std::string_view input, std::size_t& consumed, ByteChunk* out) {
+    bodyBytes_ = out;
+    bodyInputSize_ = input.size();
+    const auto result = execute(input, consumed);
+    bodyBytes_ = nullptr;
+    return result;
+  }
+
+  llhttp_errno_t ResponseParser::readBody(std::string_view input, std::size_t& consumed, std::string& out) {
+    body_ = &out;
+    const auto result = execute(input, consumed);
+    body_ = nullptr;
+    return result;
+  }
+
+  HeadParse parseResponseHead(std::string_view data, std::size_t maxBytes, std::size_t maxFields) {
+    ResponseParser parser(maxFields);
+    HeadParse parsed;
+    parsed.error = parser.readHead(data.substr(0, maxBytes), parsed.length);
+    if (parsed.error == HPE_OK) {
+      parsed.length = 0;
+    } else if (parsed.error == HPE_PAUSED) {
+      parsed.head = parser.takeHead();
+      parsed.status = HeadStatus::complete;
+    } else {
+      parsed.length = 0;
+      parsed.status = HeadStatus::malformed;
+      parsed.errorReason = parser.errorReason();
+    }
+    return parsed;
+  }
 
   FramingRule responseFraming(const std::string& method, const ResponseHead& head) {
-    FramingRule rule;
-    bool chunked = false;
-    std::optional<std::uint64_t> length;
-    std::vector<std::string_view> transferCodings;
-    for (const auto& [name, value] : head.fields) {
-      if (equalsIgnoringCase(name, "content-length")) {
-        const std::optional<std::uint64_t> parsed = parseContentLength(value);
-        if (!parsed || (length && *length != *parsed)) {
-          rule.error = "InvalidContentLength";
-          return rule;
-        }
-        length = parsed;
-      } else if (equalsIgnoringCase(name, "transfer-encoding")) {
-        for (const std::string_view token : splitTokens(value)) {
-          if (!token.empty()) transferCodings.push_back(token);
-        }
-        std::size_t count = 0;
-        for (const std::string_view token : transferCodings) {
-          if (equalsIgnoringCase(token, "chunked")) ++count;
-        }
-        if (count > 1 || (count == 1 && !equalsIgnoringCase(transferCodings.back(), "chunked"))) {
-          rule.error = "UnsupportedTransferEncoding";
-          return rule;
-        }
-        chunked = count == 1;
-      }
-    }
-    if (method == "HEAD" || method == "TRACE" || head.status == 204 || head.status == 304) {
-      rule.framing = Framing::empty;
-    } else if (chunked) {
-      rule.framing = Framing::chunked;
-    } else if (length) {
-      rule.framing = Framing::length;
-      rule.length = *length;
-    } else {
-      rule.framing = Framing::close;
-    }
-    return rule;
+    if (head.framing.error) return head.framing;
+    if (method == "HEAD" || head.status / 100 == 1 || head.status == 204 || head.status == 304) return {};
+    return head.framing;
   }
 
   ChunkedDecoder::Result ChunkedDecoder::decode(std::string_view input, std::size_t& offset, std::string& out) {
-    for (;;) {
-      switch (step_) {
-        case Step::size: {
-          // Hex digits (at most 16), then anything up to the LF.
-          std::size_t position = offset;
-          std::uint64_t size = 0;
-          std::size_t digits = 0;
-          for (;;) {
-            if (position >= input.size()) return Result::more;
-            const int value = hexValue(input[position]);
-            if (value < 0) break;
-            if (digits == 16) return Result::invalid;
-            size = size * 16 + static_cast<std::uint64_t>(value);
-            ++digits;
-            ++position;
-          }
-          if (digits == 0) return Result::invalid;
-          const std::size_t lineEnd = input.find('\n', position);
-          if (lineEnd == std::string_view::npos) return Result::more;
-          offset = lineEnd + 1;
-          remaining_ = size;
-          step_ = size == 0 ? Step::trailer : Step::data;
-          break;
-        }
-        case Step::data: {
-          if (offset >= input.size()) return Result::more;
-          const std::size_t take = static_cast<std::size_t>(std::min<std::uint64_t>(remaining_, input.size() - offset));
-          out.append(input.data() + offset, take);
-          offset += take;
-          remaining_ -= take;
-          if (remaining_ == 0) step_ = Step::dataEnd;
-          break;
-        }
-        case Step::dataEnd: {
-          // CRs, then the LF ending the chunk data.
-          std::size_t position = offset;
-          while (position < input.size() && input[position] == '\r') ++position;
-          if (position >= input.size()) return Result::more;
-          if (input[position] != '\n') return Result::invalid;
-          offset = position + 1;
-          step_ = Step::size;
-          break;
-        }
-        case Step::trailer: {
-          // Trailer lines up to an empty line.
-          std::size_t position = offset;
-          while (position < input.size() && input[position] == '\r') ++position;
-          if (position >= input.size()) return Result::more;
-          if (input[position] == '\n') {
-            offset = position + 1;
-            return Result::done;
-          }
-          const std::size_t lineEnd = input.find('\n', position);
-          if (lineEnd == std::string_view::npos) return Result::more;
-          offset = lineEnd + 1;
-          break;
-        }
-      }
+    if (!started_) {
+      // Establish the framing for callers that supply an already identified
+      // chunked body and have no HTTP head to feed into llhttp.
+      constexpr auto head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"sv;
+      std::size_t consumed = 0;
+      if (parser_.readHead(head, consumed) != HPE_PAUSED) return Result::invalid;
+      parser_.beginBody();
+      started_ = true;
     }
+    std::size_t consumed = 0;
+    const auto result = parser_.readBody(input.substr(offset), consumed, out);
+    offset += consumed;
+    if (result == HPE_OK) return Result::more;
+    return result == HPE_PAUSED ? Result::done : Result::invalid;
   }
 
   // ---- byte queue -----------------------------------------------------------------

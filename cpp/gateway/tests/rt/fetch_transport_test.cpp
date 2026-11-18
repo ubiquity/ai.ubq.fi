@@ -416,6 +416,7 @@ CFShBFtmBnNFXu0YN3ax8r59aRShRANCAATNbnn4xk/62kpuBt1sqi4mUR0t2Bkk
     std::string url;
     bool redirected = false;
     std::optional<std::string> body;
+    Reason failure;
     std::string error;
     std::string code;
   };
@@ -423,17 +424,16 @@ CFShBFtmBnNFXu0YN3ax8r59aRShRANCAATNbnn4xk/62kpuBt1sqi4mUR0t2Bkk
   Task<Outcome> fetchOutcome(std::string url, RequestInit init) {
     Outcome outcome;
     std::optional<Response> response;
-    Reason failure;
     try {
       auto calling = fetch(RequestInfo(url), std::move(init));
       Response received = co_await std::move(calling);
       response = received;
     } catch (...) {
-      failure = std::current_exception();
+      outcome.failure = std::current_exception();
     }
-    if (failure) {
-      outcome.error = reasonToString(failure);
-      outcome.code = codeOf(failure);
+    if (outcome.failure) {
+      outcome.error = reasonToString(outcome.failure);
+      outcome.code = codeOf(outcome.failure);
       co_return outcome;
     }
     outcome.status = response->status();
@@ -446,11 +446,11 @@ CFShBFtmBnNFXu0YN3ax8r59aRShRANCAATNbnn4xk/62kpuBt1sqi4mUR0t2Bkk
       std::string text = co_await std::move(reading);
       outcome.body = std::move(text);
     } catch (...) {
-      failure = std::current_exception();
+      outcome.failure = std::current_exception();
     }
-    if (failure) {
-      outcome.error = reasonToString(failure);
-      outcome.code = codeOf(failure);
+    if (outcome.failure) {
+      outcome.error = reasonToString(outcome.failure);
+      outcome.code = codeOf(outcome.failure);
     }
     co_return outcome;
   }
@@ -775,8 +775,7 @@ namespace {
     std::string statusText;
     std::vector<Headers::Entry> headers;
     std::optional<std::string> body;
-    // Bun's rejection (fetch or body read), with PORT for the port.
-    std::string error;
+    // FetchError code for a rejected head or failed body read.
     std::string code;
   };
 
@@ -795,7 +794,6 @@ namespace {
     ResponseCase item;
     item.name = std::move(name);
     item.steps = std::move(steps);
-    item.error = verbose(code, "http://127.0.0.1:PORT/");
     item.code = std::move(code);
     return item;
   }
@@ -822,9 +820,9 @@ namespace {
     cases.push_back(ok("UTF-8 reason, UTF-8 bytes in a value", "HTTP/1.1 200 Gr\xc3\xbc\xc3\x9f" "e \xe2\x82\xac\r\nX-U: \xc3\xa9\r\nContent-Length: 2\r\n\r\nok", 200,
                        "Gr\xc3\xbc\xc3\x9f" "e \xe2\x82\xac", {{"content-length", "2"}, {"x-u", latin1("\xc3\xa9")}}, "ok"));
     cases.push_back(ok("tab in the reason", "HTTP/1.1 200 A\tB\r\nContent-Length: 2\r\n\r\nok", 200, "A\tB", {{"content-length", "2"}}, "ok"));
-    cases.push_back(ok("two spaces before the status", "HTTP/1.1  200 OK\r\nContent-Length: 2\r\n\r\nok", 200, "OK", {{"content-length", "2"}}, "ok"));
-    cases.push_back(ok("HTTP/1.2", "HTTP/1.2 200 OK\r\nContent-Length: 2\r\n\r\nok", 200, "OK", {{"content-length", "2"}}, "ok"));
-    cases.push_back(ok("LF line ends", "HTTP/1.1 200 OK\nContent-Length: 2\nX-L: 1\n\nok", 200, "OK", {{"content-length", "2"}, {"x-l", "1"}}, "ok"));
+    cases.push_back(malformed("two spaces before the status", "HTTP/1.1  200 OK\r\nContent-Length: 2\r\n\r\nok"));
+    cases.push_back(malformed("HTTP/1.2", "HTTP/1.2 200 OK\r\nContent-Length: 2\r\n\r\nok"));
+    cases.push_back(malformed("LF line ends", "HTTP/1.1 200 OK\nContent-Length: 2\nX-L: 1\n\nok"));
     cases.push_back(ok("values are trimmed, empty values kept", "HTTP/1.1 200 OK\r\nX-S:   padded value   \r\nX-E:\r\nContent-Length: 0\r\n\r\n", 200, "OK",
                        {{"content-length", "0"}, {"x-e", ""}, {"x-s", "padded value"}}, ""));
     {
@@ -837,8 +835,7 @@ namespace {
     }
     cases.push_back(ok("chunked with extensions and trailers", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5;ext=1\r\nhello\r\n6\r\n world\r\n0\r\nTrailer-X: t\r\n\r\n", 200, "OK",
                        {{"transfer-encoding", "chunked"}}, "hello world"));
-    cases.push_back(ok("chunked wins over Content-Length", "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nwxyz\r\n0\r\n\r\n", 200, "OK",
-                       {{"content-length", "3"}, {"transfer-encoding", "chunked"}}, "wxyz"));
+    cases.push_back(malformed("chunked and Content-Length", "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nwxyz\r\n0\r\n\r\n"));
     cases.push_back(ok("100 Continue is skipped", "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", 200, "OK", {{"content-length", "2"}}, "ok"));
     cases.push_back(ok("103 Early Hints is skipped", "HTTP/1.1 103 Early Hints\r\nLink: </a>\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", 200, "OK", {{"content-length", "2"}}, "ok"));
     cases.push_back(ok("199 is skipped", "HTTP/1.1 199 Odd\r\nContent-Length: 0\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", 200, "OK", {{"content-length", "0"}}, ""));
@@ -848,19 +845,17 @@ namespace {
       ResponseCase head = ok("HEAD has no body", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n", 200, "OK", {{"content-length", "5"}}, "");
       head.method = "HEAD";
       cases.push_back(head);
-      ResponseCase trace = ok("TRACE has no body", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\ntrace", 200, "OK", {{"content-length", "5"}}, "");
+      ResponseCase trace = ok("TRACE can return a body", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\ntrace", 200, "OK", {{"content-length", "5"}}, "trace");
       trace.method = "TRACE";
       cases.push_back(trace);
     }
     cases.push_back(ok("Content-Length with spaces", "HTTP/1.1 200 OK\r\nContent-Length:  2 \r\n\r\nok", 200, "OK", {{"content-length", "2"}}, "ok"));
-    cases.push_back(ok("equal Content-Length twice", "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\nok", 200, "OK", {{"content-length", "2, 2"}}, "ok"));
+    cases.push_back(malformed("equal Content-Length twice", "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\nok"));
     cases.push_back(ok("Transfer-Encoding gzip, chunked: chunked only", "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n2\r\nab\r\n0\r\n\r\n", 200, "OK",
                        {{"transfer-encoding", "gzip, chunked"}}, "ab"));
-    cases.push_back(ok("Transfer-Encoding identity", "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nContent-Length: 2\r\n\r\nab", 200, "OK",
-                       {{"content-length", "2"}, {"transfer-encoding", "identity"}}, "ab"));
+    cases.push_back(malformed("Transfer-Encoding identity with a length", "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nContent-Length: 2\r\n\r\nab"));
     cases.push_back(ok("Transfer-Encoding CHUNKED", "HTTP/1.1 200 OK\r\nTransfer-Encoding: CHUNKED\r\n\r\n2\r\nok\r\n0\r\n\r\n", 200, "OK", {{"transfer-encoding", "CHUNKED"}}, "ok"));
-    cases.push_back(ok("Transfer-Encoding gzip alone is ignored", "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\nContent-Length: 2\r\n\r\nok", 200, "OK",
-                       {{"content-length", "2"}, {"transfer-encoding", "gzip"}}, "ok"));
+    cases.push_back(malformed("Transfer-Encoding gzip with a length", "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\nContent-Length: 2\r\n\r\nok"));
     cases.push_back(ok("two Transfer-Encoding fields", "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n", 200, "OK",
                        {{"transfer-encoding", "gzip, chunked"}}, "ok"));
     {
@@ -868,10 +863,8 @@ namespace {
       item.steps.push_back(fin());
       cases.push_back(item);
     }
-    for (const auto& [name, chunks] : std::vector<std::pair<std::string, std::string>>{{"chunk sizes with LF only", "3\nabc\n0\n\n"},
-                                                                                       {"quoted chunk extension", "3;name=\"v;x\"\r\nabc\r\n0\r\n\r\n"},
+    for (const auto& [name, chunks] : std::vector<std::pair<std::string, std::string>>{{"quoted chunk extension", "3;name=\"v;x\"\r\nabc\r\n0\r\n\r\n"},
                                                                                        {"leading zeros", "0003\r\nabc\r\n0\r\n\r\n"},
-                                                                                       {"space before CRLF", "3 \r\nabc\r\n0\r\n\r\n"},
                                                                                        {"trailers", "3\r\nabc\r\n0\r\nX-T: 1\r\nY: 2\r\n\r\n"}}) {
       cases.push_back(ok(name, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + chunks, 200, "OK", {{"transfer-encoding", "chunked"}}, "abc"));
     }
@@ -884,7 +877,6 @@ namespace {
       ResponseCase item;
       item.name = "connection closed before the head";
       item.steps = closeAtOnce;
-      item.error = kClosed;
       item.code = "ECONNRESET";
       cases.push_back(item);
     }
@@ -909,7 +901,7 @@ namespace {
                                                                                      {"Content-Length overflow", "Content-Length: 99999999999999999999999"},
                                                                                      {"different Content-Lengths", "Content-Length: 2\r\nContent-Length: 3"}}) {
       std::vector<Step> steps{bytes("HTTP/1.1 200 OK\r\n" + field + "\r\n\r\nzz"), fin()};
-      cases.push_back(failing(name, steps, "InvalidContentLength"));
+      cases.push_back(failing(name, steps, "Malformed_HTTP_Response"));
     }
     {
       std::vector<Step> upgrade{bytes("HTTP/1.1 101 Switching Protocols\r\nUpgrade: x\r\nConnection: upgrade\r\n\r\n"), fin()};
@@ -922,7 +914,9 @@ namespace {
       cases.push_back(failing("a 2 MiB head", huge, "ResponseHeadersTooLarge"));
     }
     // Failures inside the body (the response resolved first).
-    for (const auto& [name, chunks] : std::vector<std::pair<std::string, std::string>>{{"bad chunk size", "zz\r\nabc\r\n0\r\n\r\n"},
+    for (const auto& [name, chunks] : std::vector<std::pair<std::string, std::string>>{{"chunk sizes with LF only", "3\nabc\n0\n\n"},
+                                                                                       {"space before CRLF", "3 \r\nabc\r\n0\r\n\r\n"},
+                                                                                       {"bad chunk size", "zz\r\nabc\r\n0\r\n\r\n"},
                                                                                        {"no CRLF after chunk data", "3\r\nabcXX0\r\n\r\n"},
                                                                                        {"chunk size over 16 hex digits", "ffffffffffffffffff\r\nabc"},
                                                                                        {"negative chunk size", "-3\r\nabc\r\n0\r\n\r\n"}}) {
@@ -941,7 +935,6 @@ namespace {
       item.status = 200;
       item.statusText = "OK";
       item.headers = {{"content-length", "10"}};
-      item.error = kClosed;
       item.code = "ECONNRESET";
       cases.push_back(item);
       std::vector<Step> truncated{bytes("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel"), pause(20), fin()};
@@ -955,7 +948,7 @@ namespace {
   }
 }
 
-ASYNC_TEST("responses parse as Bun parses them, and fail with its errors") {
+ASYNC_TEST("responses preserve HTTP status, fields and body and reject invalid framing") {
   auto peer = Peer::start();
   TransportScope scope;
   for (const ResponseCase& item : responseCases()) {
@@ -971,7 +964,8 @@ ASYNC_TEST("responses parse as Bun parses them, and fail with its errors") {
       if (item.name != "256 fields" && item.name != "a 1 MiB field") EXPECT_EQ(describe(outcome.headers), describe(item.headers));
     }
     EXPECT_EQ(outcome.body, item.body);
-    EXPECT_EQ(peer->scrub(outcome.error), item.error);
+    EXPECT_EQ(static_cast<bool>(outcome.failure), !item.code.empty());
+    if (outcome.failure) EXPECT_THROWS(std::rethrow_exception(outcome.failure), FetchError);
     EXPECT_EQ(outcome.code, item.code);
   }
   peer->stop();
@@ -1088,19 +1082,20 @@ ASYNC_TEST("bytes after a response are never read as the next response") {
   const std::string secondBody = co_await std::move(second);
   EXPECT_EQ(secondBody, std::string("next"));
   EXPECT_EQ(peer->connectionIds(), (std::vector<int>{0, 1}));
-  // The same after a HEAD or TRACE response whose server sent a body anyway.
+  // HEAD cannot consume a body. TRACE can consume its framed response and reuse the socket.
   for (const char* method : {"HEAD", "TRACE"}) {
     scope.transport->closeIdleConnections();
     peer->respond = answer("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\ntrace");
     RequestInit init{.method = method};
     auto running = fetchOutcome(peer->url("/t"), std::move(init));
     const Outcome outcome = co_await std::move(running);
-    EXPECT_EQ(outcome.body, std::optional<std::string>(""));
+    const bool head = std::string_view(method) == "HEAD";
+    EXPECT_EQ(outcome.body, std::optional<std::string>(head ? "" : "trace"));
     auto after = get(peer, "/after");
     const std::string afterBody = co_await std::move(after);
     EXPECT_EQ(afterBody, std::string("trace"));
     const std::vector<int> ids = lastConnections(*peer, 2);
-    EXPECT(ids[0] != ids[1]);
+    EXPECT_EQ(ids[0] != ids[1], head);
   }
   peer->stop();
 }
