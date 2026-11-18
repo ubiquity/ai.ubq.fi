@@ -25,17 +25,20 @@ COPY cpp/gateway/bench cpp/gateway/bench
 COPY cpp/gateway/fuzz cpp/gateway/fuzz
 COPY cpp/gateway/tests/production_smoke/serve_failure_gate.cpp cpp/gateway/tests/production_smoke/
 COPY cpp/gateway/packaging/portable/clang-warnings.txt /opt/uos/clang-warnings.txt
+COPY cpp/gateway/packaging/portable/vendor-headers.cmake /opt/uos/vendor-headers.cmake
 ENV CCACHE_DIR=/var/cache/ccache CCACHE_COMPILERCHECK=content CCACHE_EXTRAFILES=/opt/uos/clang-warnings.txt
 RUN --network=none --mount=type=cache,target=/var/cache/ccache \
     UOS_GATEWAY_BUILD_EVIDENCE=bookworm-arm64 UOS_GATEWAY_TOOL_ROOT=/opt/uos \
     cmake -S cpp/gateway -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_CXX_COMPILER=clang++-21 -DUOS_GATEWAY_FRAME_RECYCLING_DISABLED=ON \
       -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+      -DCMAKE_PROJECT_INCLUDE=/opt/uos/vendor-headers.cmake \
       '-DCMAKE_CXX_FLAGS=-march=armv8-a -isystem /opt/uos/include -ffile-prefix-map=/source=. --warning-suppression-mappings=/opt/uos/clang-warnings.txt' \
       '-DCMAKE_CXX_FLAGS_RELEASE=-O2 -g0' \
       '-DCMAKE_EXE_LINKER_FLAGS=-L/opt/uos/lib -static-libstdc++ -static-libgcc' \
       '-DCMAKE_CXX_STANDARD_LIBRARIES=/opt/uos/lib/libicudata.a -lm' \
-    && cmake --build /build --parallel "$JOBS" --target uos_gateway uos_kv_convert uos_kv_proof
+    && cmake --build /build --parallel "$JOBS" --target uos_gateway uos_kv_convert uos_kv_proof \
+    && ccache --show-stats
 
 FROM base AS native
 RUN apt-get update && apt-get install -y --no-install-recommends libnode-dev patch unzip xz-utils \
