@@ -277,7 +277,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/paid_fallback/ledger_state.cpp`
 - [x] `src/paid_fallback/ledger_stats.cpp`
 - [x] `src/paid_fallback/removed_provider.cpp`
-- [ ] `src/paid_fallback/rollups.cpp`
+- [x] `src/paid_fallback/rollups.cpp`
 - [ ] `src/paid_fallback/routing.cpp`
 - [ ] `src/provider/anthropic_chat_responses.cpp`
 - [ ] `src/provider/anthropic_chat_stream.cpp`
@@ -1758,3 +1758,9 @@ Stats merges keep their transform closure and snapshot data in the writer frame.
 ### `src/paid_fallback/removed_provider.cpp`
 
 Retired provider compatibility has synchronous implementation and immutable literals.
+
+### `src/paid_fallback/rollups.cpp`
+
+Rollup writes and listing use shared KV and independent local cursors.
+
+- 42-75,76-100 · CAS and listing ownership · **SAFE** · The frame keeps KV, the AtomicOperation and its list iterator alive through awaited commits or reads.

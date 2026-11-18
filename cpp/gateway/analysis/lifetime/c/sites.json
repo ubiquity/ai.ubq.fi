@@ -3159,8 +3159,16 @@
       "sites": []
     },
     "src/paid_fallback/rollups.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Rollup writes and listing use shared KV and independent local cursors.",
+      "sites": [
+        {
+          "lines": "42-75,76-100",
+          "kind": "CAS and listing ownership",
+          "verdict": "SAFE",
+          "reason": "The frame keeps KV, the AtomicOperation and its list iterator alive through awaited commits or reads."
+        }
+      ]
     },
     "src/paid_fallback/routing.cpp": {
       "status": "pending",
