@@ -2186,7 +2186,8 @@
       "sites": []
     },
     "src/authority/native_api_key_audit.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed API-key event field selection, cursor decoding and key construction. The field table is backed by literals and outputs own their values. No suspension or escaping callback.",
       "sites": []
     },
     "src/authority/native_api_key_policy.cpp": {

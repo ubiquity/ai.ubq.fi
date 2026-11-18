@@ -98,7 +98,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/delivery_outbox.cpp`
 - [x] `src/authority/durable_store.cpp`
 - [x] `src/authority/native_api_key.cpp`
-- [ ] `src/authority/native_api_key_audit.cpp`
+- [x] `src/authority/native_api_key_audit.cpp`
 - [ ] `src/authority/native_api_key_policy.cpp`
 - [ ] `src/authority/native_authority.cpp`
 - [ ] `src/authority/native_authority_api.cpp`
@@ -641,6 +641,10 @@ Reviewed SQL row snapshots and the synchronous durable implementation of the Pro
 
 Reviewed validation, usage-window selectors and write-plan construction. All borrows refer to current JSON or records consumed synchronously, and plans own their records. No suspension or escaping callback.
 
+### `src/authority/native_api_key_audit.cpp`
+
+Reviewed API-key event field selection, cursor decoding and key construction. The field table is backed by literals and outputs own their values. No suspension or escaping callback.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -746,4 +750,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-33/286 files reviewed. 122 sites: 113 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+34/286 files reviewed. 122 sites: 113 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
