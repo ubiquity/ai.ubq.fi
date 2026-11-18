@@ -82,7 +82,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/cache/prompt_analytics_core.hpp`
 - [x] `include/uos/cache/prompt_analytics_queue.hpp`
 - [x] `include/uos/cache/prompt_analytics_read.hpp`
-- [ ] `include/uos/cache/scope_experiment.hpp`
+- [x] `include/uos/cache/scope_experiment.hpp`
 - [ ] `include/uos/cache/scope_experiment_model.hpp`
 - [ ] `include/uos/cache/scope_experiment_targets.hpp`
 - [ ] `include/uos/cache/scope_targets.hpp`
@@ -530,6 +530,10 @@ Exports types and APIs defined by the related cache headers. No inline coroutine
 
 Public reads own their options. Group-by validation borrows JSON only in a synchronous check. Read suspension points are reviewed in the source.
 
+### `include/uos/cache/scope_experiment.hpp`
+
+The experiment takes an owning telemetry baseline value. No inline coroutine or registration.
+
 
 ## Ranked defects and counts
 
@@ -735,4 +739,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-59/97 files reviewed. **DEFECT 8, SAFE 111, UNCLEAR 3.**
+60/97 files reviewed. **DEFECT 8, SAFE 111, UNCLEAR 3.**

@@ -1539,8 +1539,9 @@
       "note": "Public reads own their options. Group-by validation borrows JSON only in a synchronous check. Read suspension points are reviewed in the source."
     },
     "include/uos/cache/scope_experiment.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "The experiment takes an owning telemetry baseline value. No inline coroutine or registration."
     },
     "include/uos/cache/scope_experiment_model.hpp": {
       "reviewed": false,
