@@ -299,7 +299,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/claude_capacity_rollups.cpp`
 - [x] `src/provider/claude_code.cpp`
 - [x] `src/provider/claude_code_access.cpp`
-- [ ] `src/provider/claude_code_accounts.cpp`
+- [x] `src/provider/claude_code_accounts.cpp`
 - [ ] `src/provider/claude_code_credentials.cpp`
 - [ ] `src/provider/claude_code_models.cpp`
 - [ ] `src/provider/claude_code_quota.cpp`
@@ -1902,3 +1902,10 @@ Claude Messages transport owns fetch callbacks and request state. Its preheader 
 Access policy helpers consume environment/row inputs synchronously and join their writes.
 
 - 32-41,59-86 · borrowed store and owning arguments · **SAFE** · The storePolicy coroutine borrows KV from an awaited admin caller. Public forwarders copy allowed key IDs synchronously, and their result tasks keep the JSON values.
+
+### `src/provider/claude_code_accounts.cpp`
+
+Account roster state is snapshotted at each read and mutation.
+
+- 62-71,111-131,173-214 · credential hash and account update snapshots · **SAFE** · The reference-taking fingerprint is a synchronous task factory that creates owned digest input. The roster and account update frames retain their copied records.
+- 263-372,375-441 · KV read, account generation, and CAS waits · **SAFE** · Frames retain KV, typed rows and transaction owners. Borrowed account data is consumed synchronously or copied into each child operation.

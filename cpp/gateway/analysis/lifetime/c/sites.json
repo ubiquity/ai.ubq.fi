@@ -3510,8 +3510,22 @@
       ]
     },
     "src/provider/claude_code_accounts.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Account roster state is snapshotted at each read and mutation.",
+      "sites": [
+        {
+          "lines": "62-71,111-131,173-214",
+          "kind": "credential hash and account update snapshots",
+          "verdict": "SAFE",
+          "reason": "The reference-taking fingerprint is a synchronous task factory that creates owned digest input. The roster and account update frames retain their copied records."
+        },
+        {
+          "lines": "263-372,375-441",
+          "kind": "KV read, account generation, and CAS waits",
+          "verdict": "SAFE",
+          "reason": "Frames retain KV, typed rows and transaction owners. Borrowed account data is consumed synchronously or copied into each child operation."
+        }
+      ]
     },
     "src/provider/claude_code_credentials.cpp": {
       "status": "pending",
