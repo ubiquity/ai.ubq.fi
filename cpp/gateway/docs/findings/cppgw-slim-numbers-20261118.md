@@ -49,7 +49,7 @@ bash "$scratch/run-suite.sh" "$scratch/qualification" release
 
 The direct changed-unit syntax check used `clang++-21 -std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion -Werror -fsyntax-only` with the portable driver definitions and Boost headers. `python3 -B cpp/gateway/tools/links.py --check`, changed-document Prettier from the frozen lint lock and `git diff --check` passed.
 
-## Verification checkpoint
+## Verification
 
 The implementation commit is `0dfd9055865e66e7a2a39787227b5dd2f0843af3`, tree `8ee5aae1b4b42cb841597284a19fd9d238f2792e`. The isolated release Number control ran both the starting and patched test using `python3 -B "$scratch/number-control.py" "$scratch" "$PWD"` with the same runtime link closure. Each passed 20/21 cases. Each failed at `BigInt(string) follows JSC StringToBigInt` on the inherited incomplete-token expectation. All three migrated Number cases passed.
 
@@ -61,8 +61,23 @@ The qualified baseline rerun is `env -i PATH="$scratch/tool-bin:/usr/local/bin:/
 
 The corrected baseline reused 770 objects, rebuilt 62 in 161.809 seconds, and linked and tested in 87.482 seconds. It passed **441/442 binaries and 5,027/5,028 cases** with zero build failures and timeouts. The inherited BigInt parser assertion is the sole failure. Its receipt SHA-256 is `6d66c1ea36ddb2fc8e5578840fcbb1e11c99c01ae8d24c5cff0fb79cf976d0a3`.
 
-The candidate release run completed the 369-object production build, recorded **441/442 passing binaries and 5,027/5,028 passing cases**, and matched the corrected baseline on every binary's case counts and status. Its incremental object phase took 2,262.056 seconds and its link and test phase 91.248 seconds. The receipt SHA-256 is `62107ab2eb269c25a3483a691001c5ec700429a133ffd4654f30b012a5e25e52`. The driver recorded input SHA-256 `ef523eabef62f11b3793ea321430e87f6cd3cdfa4216be51a2e9f9dd113eca79` at start and finish. The sanitizer sweep is in progress.
+The candidate release run completed the 369-object production build, recorded **441/442 passing binaries and 5,027/5,028 passing cases**, and matched the corrected baseline on every binary's case counts and status. Its incremental object phase took 2,262.056 seconds and its link and test phase 91.248 seconds. The receipt SHA-256 is `62107ab2eb269c25a3483a691001c5ec700429a133ffd4654f30b012a5e25e52`.
+
+The candidate ASan and UBSan run completed the same production build and passed **441/442 binaries and 5,027/5,028 cases**, with zero sanitizer diagnostics, build failures or timeouts. Its cold object phase took 4,986.812 seconds and its link and test phase 180.283 seconds. The receipt SHA-256 is `73007690e498a006fd07ea575dfd0c02830d2a6be2cc624080cf1f124e54a190`.
+
+`python3 -B "$scratch/compare-receipts.py" "$scratch"` verified the recorded commit and tree for each run and checked every binary's status and case counts. All 442 rows agree across the baseline, candidate release and candidate sanitizer runs. The only failure is the inherited BigInt assertion in `tests/rt/number_test.cpp`. Both candidate runs recorded the same input SHA-256 `ef523eabef62f11b3793ea321430e87f6cd3cdfa4216be51a2e9f9dd113eca79` at start and finish. The subsequent commits update only this findings report.
+
+| Fixture                                | Release cases passed | ASan and UBSan cases passed |
+| -------------------------------------- | -------------------: | --------------------------: |
+| `rt/number_test.cpp`                   |                20/21 |                       20/21 |
+| `rt/json_test.cpp`                     |                25/25 |                       25/25 |
+| `rt/kv_test.cpp`                       |                53/53 |                       53/53 |
+| `codex_dispatch_differential_test.cpp` |                13/13 |                       13/13 |
+| `api_key_policy_differential_test.cpp` |                  1/1 |                         1/1 |
+| `rt/sqlite_test.cpp`                   |                29/29 |                       29/29 |
+
+## Handoff
 
 `docs/rt/values.md` still lists the retired C++ APIs and needs the shared runtime documentation update after integration.
 
-`GIT_TERMINAL_PROMPT=0 git push --dry-run --porcelain origin HEAD:refs/heads/agent-jobs/cppgw-slim-numbers-20261118` failed because GitHub write authentication is unavailable. The fetched `origin/development` at `2ac5aae69b0f0bac77cf1c6f329995cf1187616c` lacks the implementation in its ancestry and has no `cpp/gateway` tree.
+The implementation and verified receipts are committed on `agent-job`. `GIT_TERMINAL_PROMPT=0 git push --dry-run --porcelain origin HEAD:refs/heads/agent-jobs/cppgw-slim-numbers-20261118` failed because GitHub write authentication is unavailable. Branch publication and PR integration remain pending. The fetched `origin/development` at `2ac5aae69b0f0bac77cf1c6f329995cf1187616c` lacks the implementation in its ancestry and has no `cpp/gateway` tree.
