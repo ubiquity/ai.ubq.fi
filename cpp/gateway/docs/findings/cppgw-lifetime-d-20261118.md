@@ -36,7 +36,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/admin/index.cpp`
 - [x] `src/admin/kernel.cpp`
 - [x] `src/admin/sentinel_incident.cpp`
-- [ ] `src/agent_messages.cpp`
+- [x] `src/agent_messages.cpp`
 - [ ] `src/analytics.cpp`
 - [ ] `src/api_key_policy.cpp`
 - [ ] `src/api_keys.cpp`
@@ -435,6 +435,13 @@ Reviewed incident ID validation and the paged incident response.
 
 - L121, 137, 138, 145, 146, 156, 158 **SAFE** · Query strings and the URL are frame-local, the query callbacks are inline algorithms, and the handler keeps both the KV owner and its injected reader closure through the directly awaited list.
 
+### `src/agent_messages.cpp`
+
+Reviewed both GitHub-authenticated handlers and their shared synchronous normalization.
+
+- L169, 177, 183, 195, 199, 223, 224, 241 **SAFE** · The post frame owns dependency callbacks and the authentication variant that supplies the GitHub reference. The clock and ID functions are synchronous and the request and atomic inputs are values.
+- L250, 256, 268, 288, 294 **SAFE** · The list frame owns authentication, request, query, store and iterator and awaits each step with the iterator still in scope.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -443,4 +450,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-13/286 files reviewed. 57 sites: 52 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+14/286 files reviewed. 59 sites: 54 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

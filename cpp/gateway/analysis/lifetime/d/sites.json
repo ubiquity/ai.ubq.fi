@@ -1048,8 +1048,45 @@
       ]
     },
     "src/agent_messages.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed both GitHub-authenticated handlers and their shared synchronous normalization.",
+      "sites": [
+        {
+          "lines": [
+            169,
+            177,
+            183,
+            195,
+            199,
+            223,
+            224,
+            241
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The post frame owns dependency callbacks and the authentication variant that supplies the GitHub reference. The clock and ID functions are synchronous and the request and atomic inputs are values."
+        },
+        {
+          "lines": [
+            250,
+            256,
+            268,
+            288,
+            294
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The list frame owns authentication, request, query, store and iterator and awaits each step with the iterator still in scope."
+        }
+      ]
     },
     "src/analytics.cpp": {
       "reviewed": false,
