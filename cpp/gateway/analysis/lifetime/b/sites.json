@@ -1215,8 +1215,20 @@
       "note": "The only API consumes a byte span synchronously. No coroutine or deferred callback."
     },
     "include/uos/storage/kv.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "53-69",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Replaceable native opener and codec interface",
+          "evidence": "The real opener is a free coroutine taking path/options by value. Test overrides delegate to free tasks and stay installed until their scopes finish. Codec views are synchronous."
+        }
+      ]
     },
     "include/uos/storage/native_addon.hpp": {
       "reviewed": false,
