@@ -468,8 +468,85 @@
       ]
     },
     "src/runtime/http_upgrade.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "22-42",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "Upgrade refusal serialization and close wait",
+          "evidence": "The frame owns socket and response. Header iteration ends before suspension; newPromise invokes its reference-capturing executor synchronously and the socket owns only a copied resolver."
+        },
+        {
+          "lines": "83-99",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Authorization handler and refusal",
+          "evidence": "The owning Upgrades parameter retains the handler closure. Both request and handler info are value arguments, and refusal takes a Response copy out of the parent frame's variant."
+        },
+        {
+          "lines": "96-111,176-195",
+          "verdict": "DEFECT",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "WebSocket added after shutdown snapshot",
+          "evidence": "Authorization checks stopping before the asynchronously resumed module wait. Shutdown can snapshot sockets during that wait; the resumed authorization can then accept a socket the shutdown task never closed.",
+          "defect": "D06"
+        },
+        {
+          "lines": "112-145",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "WebSocket construction, handshake callback and close registration",
+          "evidence": "The selected ws options complete the handoff synchronously. Headers and accept callable are owned, close removes the map edge, and WebSocketRegistry clears attached socket listeners on loop destruction."
+        },
+        {
+          "lines": "148-173",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "Upgrade socket close/error listeners",
+          "evidence": "The upgrade frame owns state and socket. Listeners own a controller with no strong socket edge and are removed after either outcome."
+        },
+        {
+          "lines": "176-195",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "WebSocket shutdown timer and aggregate ownership",
+          "evidence": "The loop traverses an owning socket snapshot. newPromise immediately consumes its socket reference; the timer target is weak and close owns only the timer and resolver. Sibling operations remain independently owned if all rejects."
+        },
+        {
+          "lines": "199-208",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b"
+          ],
+          "symbol": "Returned WebSocketUpgrades wrappers",
+          "evidence": "Both wrappers are synchronous closures that pass an owning copy of Upgrades into free coroutine frames."
+        }
+      ]
     },
     "src/runtime/native_kv_bootstrap.cpp": {
       "reviewed": false,

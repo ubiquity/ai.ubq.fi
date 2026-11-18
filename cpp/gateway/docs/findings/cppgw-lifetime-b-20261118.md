@@ -35,7 +35,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/runtime/http_body.cpp`
 - [x] `src/runtime/http_early_sse.cpp`
 - [x] `src/runtime/http_tasks.cpp`
-- [ ] `src/runtime/http_upgrade.cpp`
+- [x] `src/runtime/http_upgrade.cpp`
 - [ ] `src/runtime/native_kv_bootstrap.cpp`
 - [ ] `src/runtime/permissions_linux.cpp`
 - [ ] `src/runtime/websocket.cpp`
@@ -224,6 +224,18 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 17-24,42-45 | Request drain and settlement aggregation | **SAFE** | The synchronous wrapper copies task set and receipt into the child frame. Each iteration snapshots promise values before allSettled; no iterator or entry reference survives the wait. |
 | 27-39 | Settlement removal | **SAFE** | The map lookup is copied before use. The reaction owns the promise identity token and weakly locks the TaskSet so the set and task reaction cannot own each other. |
 
+### `src/runtime/http_upgrade.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 22-42 | Upgrade refusal serialization and close wait | **SAFE** | The frame owns socket and response. Header iteration ends before suspension; newPromise invokes its reference-capturing executor synchronously and the socket owns only a copied resolver. |
+| 83-99 | Authorization handler and refusal | **SAFE** | The owning Upgrades parameter retains the handler closure. Both request and handler info are value arguments, and refusal takes a Response copy out of the parent frame's variant. |
+| 96-111,176-195 | WebSocket added after shutdown snapshot | **DEFECT** ([D06](#d06)) | Authorization checks stopping before the asynchronously resumed module wait. Shutdown can snapshot sockets during that wait; the resumed authorization can then accept a socket the shutdown task never closed. |
+| 112-145 | WebSocket construction, handshake callback and close registration | **SAFE** | The selected ws options complete the handoff synchronously. Headers and accept callable are owned, close removes the map edge, and WebSocketRegistry clears attached socket listeners on loop destruction. |
+| 148-173 | Upgrade socket close/error listeners | **SAFE** | The upgrade frame owns state and socket. Listeners own a controller with no strong socket edge and are removed after either outcome. |
+| 176-195 | WebSocket shutdown timer and aggregate ownership | **SAFE** | The loop traverses an owning socket snapshot. newPromise immediately consumes its socket reference; the timer target is weak and close owns only the timer and resolver. Sibling operations remain independently owned if all rejects. |
+| 199-208 | Returned WebSocketUpgrades wrappers | **SAFE** | Both wrappers are synchronous closures that pass an owning copy of Upgrades into free coroutine frames. |
+
 
 ## Ranked defects and counts
 
@@ -389,4 +401,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-12/97 files reviewed. **DEFECT 6, SAFE 33, UNCLEAR 2.**
+13/97 files reviewed. **DEFECT 7, SAFE 39, UNCLEAR 2.**
