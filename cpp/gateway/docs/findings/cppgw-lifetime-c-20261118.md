@@ -128,7 +128,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/paid_fallback/ledger_admission.hpp`
 - [x] `include/uos/paid_fallback/ledger_backfill.hpp`
 - [x] `include/uos/paid_fallback/ledger_settlement.hpp`
-- [ ] `include/uos/paid_fallback/ledger_state.hpp`
+- [x] `include/uos/paid_fallback/ledger_state.hpp`
 - [ ] `include/uos/paid_fallback/ledger_stats.hpp`
 - [ ] `include/uos/paid_fallback/removed_provider.hpp`
 - [ ] `include/uos/paid_fallback/rollups.hpp`
@@ -831,3 +831,9 @@ Backfill and reconciliation API with a copied shared-work promise.
 Settlement and lease APIs.
 
 - 19-33,46-53,76 · owning task parameters · **SAFE** · Settlement/lease tasks retain the store and their request, result, lease and provider-log values throughout awaits.
+
+### `include/uos/paid_fallback/ledger_state.hpp`
+
+KV read and pending-gate APIs.
+
+- 53,61-65,80-86,104-115 · owning task parameters · **SAFE** · Tasks own their store or override and all query keys, time bounds or limit values.

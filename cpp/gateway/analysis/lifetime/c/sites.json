@@ -968,8 +968,16 @@
       ]
     },
     "include/uos/paid_fallback/ledger_state.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "KV read and pending-gate APIs.",
+      "sites": [
+        {
+          "lines": "53,61-65,80-86,104-115",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Tasks own their store or override and all query keys, time bounds or limit values."
+        }
+      ]
     },
     "include/uos/paid_fallback/ledger_stats.hpp": {
       "status": "pending",
