@@ -59,6 +59,7 @@ class DriverTests(unittest.TestCase):
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 rows = list(pool.map(lambda name: self.fixture(name, body), ["isolation_a", "isolation_b"]))
             for row in rows:
+                self.assertTrue(row["built"])
                 self.assertEqual((row["status"], row["run"], row["passed"], row["failed"]), ("PASS", 2, 2, 0))
         finally:
             if old is None:
@@ -77,10 +78,12 @@ class DriverTests(unittest.TestCase):
     def test_timeout_kills_namespace_descendants(self):
         row = self.fixture("timeout", 'if (::fork() == 0) { for (;;) ::pause(); } for (;;) ::pause();', timeout=1)
         self.assertEqual(row["status"], "TIMEOUT")
+        self.assertTrue(row["built"])
 
     def test_link_error_is_build_failure(self):
         row = self.fixture("bad_link", 'extern void missing(); missing(); return 0;')
         self.assertEqual((row["status"], row["run"]), ("BUILD_FAIL", 0))
+        self.assertFalse(row["built"])
 
     def test_shards_cover_selection_once(self):
         script = driver.GATEWAY / "tools/ci-build.sh"

@@ -205,8 +205,8 @@ def write_ninja(build, sources, compiler, flags, vendors=()):
     (build / "build.ninja").write_text("\n".join(lines) + "\n")
 
 
-def result(test, status, note="", **extra):
-    return dict(test=test, status=status, run=0, passed=0, failed=0, note=note, **extra)
+def result(test, status, note="", *, built=False, **extra):
+    return dict(test=test, status=status, built=built, run=0, passed=0, failed=0, note=note, **extra)
 
 
 def input_digest(vendors=()):
@@ -267,9 +267,11 @@ def run_test(selected, runtime, build, compiler, flags, libraries, environment, 
         controlled = output.count("UOS_CI_NETWORK ") == 1
         status = "TIMEOUT" if expired else "PASS" if code == 0 and controlled and complete and failed == 0 else "FAIL"
         row = result(test, status, "" if status == "PASS" else "exit %d; see run.log" % code,
-                     build_seconds=link_s, seconds=run_s, log=str(log_dir))
+                     built=True, build_seconds=link_s, seconds=run_s, log=str(log_dir))
         row.update(run=ran, passed=passed, failed=failed)
         return row
+    except Exception as error:
+        return result(test, "FAIL", str(error), built=True, build_seconds=link_s, log=str(log_dir))
     finally:
         # At most jobs binaries exist at once, including on small CI disks.
         binary.unlink(missing_ok=True)

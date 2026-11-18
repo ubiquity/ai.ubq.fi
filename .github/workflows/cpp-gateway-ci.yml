@@ -6,10 +6,9 @@ run-name: C++ gateway CI ${{ github.sha }}
 # This is the build-and-test gate for branches produced off the production host.
 on:
   push:
-    branches: [claude/cpp-gateway-port, "pool-merge/**"]
-    paths:
-      - .github/workflows/cpp-gateway-ci.yml
-      - cpp/gateway/**
+    branches: [claude/cpp-gateway-port, "pool-merge/**", "agent-jobs/**"]
+  pull_request:
+    branches: [claude/cpp-gateway-port]
   workflow_dispatch:
 
 concurrency:
@@ -30,6 +29,7 @@ jobs:
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
+        id: checkout
         with:
           persist-credentials: false
       - name: Install build dependencies
@@ -48,19 +48,28 @@ jobs:
           make -j4 > /dev/null && sudo make install > /dev/null && sudo ldconfig
           pkg-config --modversion sqlite3
       - name: Build and test
+        shell: bash
         env:
           CXX: clang++
           UOS_CI_JOBS: 4
           UOS_CI_BUILD_DIR: ${{ runner.temp }}/uos-gateway-build
           SHARD: ${{ matrix.shard }}
-        run: cpp/gateway/tools/ci-build.sh --config release --shard "$SHARD/4"
+        run: |
+          mkdir -p "$UOS_CI_BUILD_DIR"
+          bash cpp/gateway/tools/ci-build.sh --config release --shard "$SHARD/4" 2>&1 | tee "$UOS_CI_BUILD_DIR/driver.log"
+      - name: Summarize results
+        if: always() && steps.checkout.outcome == 'success'
+        env:
+          UOS_CI_BUILD_DIR: ${{ runner.temp }}/uos-gateway-build
+        run: python3 -B cpp/gateway/cmake/ci/summary.py "$UOS_CI_BUILD_DIR" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ci-release-shard-${{ matrix.shard }}
           path: |
-            ${{ runner.temp }}/uos-gateway-build/**/results*.json
+            ${{ runner.temp }}/uos-gateway-build/*/release/receipt.json
+            ${{ runner.temp }}/uos-gateway-build/*/release/results.tsv
             ${{ runner.temp }}/uos-gateway-build/**/*.log
-          if-no-files-found: ignore
+          if-no-files-found: warn
           retention-days: 14
