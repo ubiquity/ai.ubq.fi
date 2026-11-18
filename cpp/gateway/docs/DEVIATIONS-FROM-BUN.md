@@ -302,3 +302,16 @@ The typed-value codecs round-trip the original `/a/v` graph with source `a` and 
 Malformed stored regexes still raise `SyntaxError`. An unclosed group reports `expecting ')'`,
 an unfinished class reports `unexpected end`, and invalid or duplicate flags report
 `invalid regular expression flags`.
+
+## String operations at protocol boundaries
+
+Codex quota header names and the Responses `input_` type prefix use C++20
+byte comparisons. ASCII bytes decode directly, including after a truncated or
+malformed UTF-8 subpart. The shared string predicates also use native byte
+operations for ASCII tokens at byte-defined boundaries. User-text positions
+and search results continue to count UTF-16 code units.
+
+The C++ runtime drops the unused `codePointAt` and `trimStart` wrappers.
+Their fixture vectors use `charAt`, `slice`, code-point iteration and the
+existing whitespace predicate to check the same ranges, surrogates and
+whitespace behavior.
