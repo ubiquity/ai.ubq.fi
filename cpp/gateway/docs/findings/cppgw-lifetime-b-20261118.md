@@ -114,7 +114,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/kernel/quota_reservations.cpp`
 - [x] `src/kernel/quota_reserve.cpp`
 - [x] `src/kernel/quota_v2.cpp`
-- [ ] `src/kernel/quota_write.cpp`
+- [x] `src/kernel/quota_write.cpp`
 - [ ] `src/kernel/usage.cpp`
 - [ ] `include/uos/worker/entrypoint.hpp`
 - [ ] `include/uos/worker/transport.hpp`
@@ -789,6 +789,15 @@ Usage read methods own identities and options, with a shared store or a resolved
 | 99-135 | Read projected policy rows | **SAFE** | The scan frame owns its iterator and moves each row into an owning child. Each key projection is copied into strings and sort runs synchronously on the completed vector. |
 | 213-247 | Public snapshot and list projections | **SAFE** | Child scope or identity arguments are owning values and all variant/vector projections are into local results after the last wait. |
 
+### `src/kernel/quota_write.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 61-65,116-143,236-247 | Policy write, deletion and strong-read fan-outs | **SAFE** | The free read coroutine owns the key and store, and each launched read is independent of its siblings' results. The returned tuple is named before binding structured references. |
+| 72-99,144-174,248-272 | Window inheritance, reset guard and compare-and-set | **SAFE** | Parameters and frame-local variant/entry storage own all projections across waits. Named builders hold staged copies, and no shared container iterator is held. |
+| 177-199,275-296 | Capturing quota write and delete lock operations | **SAFE** | Both closures capture values and move into the lock frame. That frame directly awaits the invoked coroutine and keeps the callable alive on success or exception. |
+| 208-228,305-315 | Public policy write and delete adapters | **SAFE** | Both wrapper and child own identities and options, and returned variants are projected into owning values. |
+
 
 ## Ranked defects and counts
 
@@ -1060,4 +1069,4 @@ removes the registrations on frame destruction as well as on normal return.
 +  const auto bindingHash = co_await std::move(bindingHashing);
 ```
 
-91/97 files reviewed. **DEFECT 10, SAFE 216, UNCLEAR 4.**
+92/97 files reviewed. **DEFECT 10, SAFE 220, UNCLEAR 4.**

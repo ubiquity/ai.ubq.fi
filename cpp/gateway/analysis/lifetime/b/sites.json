@@ -2820,8 +2820,51 @@
       ]
     },
     "src/kernel/quota_write.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "61-65,116-143,236-247",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Policy write, deletion and strong-read fan-outs",
+          "evidence": "The free read coroutine owns the key and store, and each launched read is independent of its siblings' results. The returned tuple is named before binding structured references."
+        },
+        {
+          "lines": "72-99,144-174,248-272",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Window inheritance, reset guard and compare-and-set",
+          "evidence": "Parameters and frame-local variant/entry storage own all projections across waits. Named builders hold staged copies, and no shared container iterator is held."
+        },
+        {
+          "lines": "177-199,275-296",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b"
+          ],
+          "symbol": "Capturing quota write and delete lock operations",
+          "evidence": "Both closures capture values and move into the lock frame. That frame directly awaits the invoked coroutine and keeps the callable alive on success or exception."
+        },
+        {
+          "lines": "208-228,305-315",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Public policy write and delete adapters",
+          "evidence": "Both wrapper and child own identities and options, and returned variants are projected into owning values."
+        }
+      ]
     },
     "src/kernel/usage.cpp": {
       "reviewed": false,
