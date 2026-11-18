@@ -17,6 +17,12 @@ The later v40 limit enforcement has its own [runtime table](RUNTIME.md#input-lim
 
 The simdutf 9.4.0 checkpoint kept the tested generic outputs and error classes. For example, a multibyte UTF-8 sequence split across streamed chunks is held until the next chunk by the bounded state adapter. Simdutf handles well-formed scans and transcoding, while the WHATWG adapter handles incomplete sequences, replacement, fatal errors and BOM state. Tested WTF-8/UTF-16 behavior protects callers' code-unit and storage contracts. The four focused Linux ARM64 binaries passed 56/56 cases. [Behavior handback](/tmp/claude-1002/prod/assignment3/runtime/c2-20261117T230537Z/GENERIC-BEHAVIOR.md) [Focused results](/tmp/claude-1002/prod/assignment3/runtime/c2-20261117T230537Z/focused-results.json)
 
+## Unicode case mapping and default collation
+
+The C++ runtime follows the Unicode data in the linked ICU release. On ICU 78.3, the existing Bun 1.4.0 case and collation vectors keep their expected values. The gateway uses ICU root-locale collation independently of machine locale.
+
+Outside the old port's recorded collation repertoire, ICU supplies the order and canonical equivalences. With ICU 78.3, Deseret U+10400 sorts before the lone surrogate U+D83D, and `가` and `가` compare equal. Both results match Bun 1.4.0. This extends collation to names in additional scripts and keeps tertiary ordering for catalog and schema names.
+
 ## Incoming integrations
 
 Add a component section after its verified handback. Record the changed behavior, one concrete input/outcome, the application or security rationale, and the exact source and test receipt. Use this location for URL/IDNA, HTTP, regex, WebSocket, passkey codecs, BigInt, ICU and the small helpers as their integrations land. Record limit-specific exceptions and tested boundary outcomes in [Runtime](RUNTIME.md#input-limits).
