@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <random>
 #include <string>
 #include <string_view>
@@ -385,6 +386,34 @@ TEST("entries stay readable after being deleted inside the loop that visits them
   EXPECT(visited > 0);
   map.set("again", "1");
   EXPECT_EQ(rt::arrayFrom(map.keys()), std::vector<std::string>({"again"}));
+}
+
+TEST("retired entries survive cursor copies and are reclaimed when the last cursor leaves") {
+  rt::OrderedMap<int, std::shared_ptr<int>> map;
+  auto value = std::make_shared<int>(42);
+  const std::weak_ptr<int> retired = value;
+  map.set(1, std::move(value));
+  map.set(2, std::make_shared<int>(20));
+
+  {
+    auto first = map.begin();
+    auto cursor = first;
+    const auto& entry = *cursor;
+    map.clear();
+    EXPECT(!map.has(1));
+    auto copy = map;
+    EXPECT_EQ(copy.size(), 0u);
+
+    for (int key = 1; key <= 128; ++key) map.set(key, std::make_shared<int>(key));
+    first = map.end();
+    ASSERT(!retired.expired());
+    EXPECT_EQ(*entry.second, 42);
+    ++cursor;
+    ASSERT(cursor != map.end());
+    EXPECT_EQ(cursor->first, 1);
+    EXPECT_EQ(*cursor->second, 1);
+  }
+  EXPECT(retired.expired());
 }
 
 TEST("copies are independent and compacted; LRU eviction idiom") {

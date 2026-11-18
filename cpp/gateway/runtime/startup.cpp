@@ -1,6 +1,7 @@
 #include "runtime/startup.hpp"
 
 #include "runtime/paths.hpp"
+#include "src/rt/tls_internal.hpp"
 #include "uos/config.hpp"
 #include "uos/deepseek/index.hpp"
 #include "uos/kv.hpp"
@@ -9,6 +10,7 @@
 #include "uos/rt/fetch.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/process.hpp"
+#include "uos/rt/string.hpp"
 #include "uos/rt/url.hpp"
 #include "uos/runtime/permissions_linux.hpp"
 #include "uos/serve.hpp"
@@ -27,6 +29,8 @@
 #include <array>
 #include <cerrno>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -316,7 +320,8 @@ namespace uos::runtime::startup {
       if (::fsync(directory) != 0) refuse("fixture state directory durability failed");
     }
 
-    void enforce(const fs::path& package, const fs::path& state, const permissions_linux::LinuxPermissionsArtifact& artifact) {
+    void enforce(const fs::path& package, const fs::path& state, const permissions_linux::LinuxPermissionsArtifact& artifact, int port,
+                 const std::optional<std::string>& origin) {
       permissions_linux::LinuxPermissions permissions;
       permissions.read = {package.string(), state.string()};
       permissions.write = {(state / ".data").string()};
@@ -350,8 +355,34 @@ namespace uos::runtime::startup {
           }
         }
       }
+      if (const char* optIn = std::getenv("UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT"); optIn && std::string_view(optIn) == "1") {
+        permissions_linux::LinuxPermissionsTcpPorts ports{static_cast<std::uint16_t>(port)};
+        if (origin) ports.connectPorts.push_back(static_cast<std::uint16_t>(std::stoi(rt::URL(*origin).port())));
+        else ports.connectPorts = {53, 443}; // DNS TCP fallback and the gateway's HTTPS/WSS upstreams.
+        permissions.allowReducedConfinement = std::move(ports);
+      }
       const auto receipt = permissions_linux::applyLinuxPermissions(permissions, artifact);
-      if (!receipt.filesystemThreadSync || !receipt.processThreadSync) refuse("kernel confinement did not produce both enforcement receipts");
+      if (!receipt.processThreadSync || (!receipt.filesystemThreadSync && !permissions.allowReducedConfinement))
+        refuse("kernel confinement did not produce both enforcement receipts");
+      const std::string active = rt::join(receipt.activeProtections);
+      const std::string missing = rt::join(receipt.missingProtections);
+      std::fprintf(stderr, "Linux confinement Landlock ABI=%g active=%s missing=%s\n", receipt.landlockAbi, active.c_str(), missing.empty() ? "none" : missing.c_str());
+    }
+
+    rt::Task<void> serveGateway(serve::ServeStartupOptions options, std::optional<std::string> origin, std::string databasePath) {
+      std::unique_ptr<FixtureRouting> routing;
+      if (origin) routing = std::make_unique<FixtureRouting>(*origin);
+      rt::Task<std::shared_ptr<rt::Kv>> opening = storage::kv::openKv(databasePath);
+      std::shared_ptr<rt::Kv> store = co_await std::move(opening);
+      auto closeStore = rt::scopeExit([store] {
+        try {
+          store->close();
+        } catch (...) {}
+      });
+      kv::initializeKv(store);
+      rt::Task<void> serving = serve::importMetaMain(options);
+      closeStore.release();
+      co_await std::move(serving);
     }
   }
 
@@ -449,25 +480,13 @@ namespace uos::runtime::startup {
     } else {
       regular(data / "kv-bun.sqlite3", true);
     }
-    enforce(package, state, artifact);
+    // Load the existing operator-selected CA bundles while startup can read them.
+    rt::detail::tls::defaultContext();
+    enforce(package, state, artifact, port, origin);
     if (newFixture) createFixtureBinding(data, binding);
     paths::setResourceRoot(package.string());
     if (::chdir(state.c_str()) != 0) refuse("private state working directory is unavailable");
     if (::setenv("SQLITE_TMPDIR", data.c_str(), 1) != 0) refuse("private SQLite temporary directory is unavailable");
-    std::unique_ptr<FixtureRouting> routing;
-    if (origin) routing = std::make_unique<FixtureRouting>(*origin);
-    const std::string databasePath = (data / "kv-bun.sqlite3").string();
-    rt::Task<std::shared_ptr<rt::Kv>> opening = storage::kv::openKv(databasePath);
-    std::shared_ptr<rt::Kv> store = co_await std::move(opening);
-    auto closeStore = rt::scopeExit([store] {
-      try {
-        store->close();
-      } catch (...) {}
-    });
-    kv::initializeKv(store);
-    const serve::ServeStartupOptions options{hostname, port};
-    rt::Task<void> serving = serve::importMetaMain(options);
-    closeStore.release();
-    co_await std::move(serving);
+    return serveGateway(serve::ServeStartupOptions{hostname, port}, std::move(origin), (data / "kv-bun.sqlite3").string());
   }
 }

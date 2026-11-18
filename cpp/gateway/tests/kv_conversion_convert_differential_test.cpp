@@ -167,7 +167,7 @@ namespace {
     const json::object& expected = recorded().at(name).as_object();
     const Scenario s = scenario(name);
     const std::string base = rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "uos-convert-differential-"));
-    const std::string root = rt::fs::mkdtempSync(rt::path::join(base, "case-"));
+    const std::string root = rt::fs::mkdtempSync(rt::path::join(base, "case %?#-"));
     const std::string fake = rt::path::join(root, "fake-deno");
     rt::fs::WriteFileOptions executable;
     executable.mode = 0700;

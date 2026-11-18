@@ -21,6 +21,7 @@
 #include "uos/rt/process.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
+#include "uos/rt/url.hpp"
 
 #include <unistd.h>
 
@@ -57,7 +58,7 @@ namespace {
   }
 
   struct Fixtures {
-    std::string root = rt::fs::realpathSync(rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "uos-m21-native-startup-")));
+    std::string root = rt::fs::realpathSync(rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "uos-m21-native-startup %?#-")));
     ~Fixtures() {
       rt::fs::RmOptions options;
       options.recursive = true;
@@ -256,6 +257,23 @@ namespace {
     EXPECT(!rt::fs::existsSync(rt::path::join(paths.data, "kv-bun.sqlite3")));
     EXPECT(!storage::native_addon::nativeKvBackendIsPrepared());
   }
+}
+
+TEST("native KV defaults resolve relative to the source checkout") {
+  const auto paths = nativeKvDevelopmentPaths();
+  EXPECT_EQ(paths.root, workspace());
+  EXPECT_EQ(paths.inputs, nativeKvDevelopmentPaths(workspace()).inputs);
+#if defined(__linux__) && defined(__aarch64__)
+  const Fixtures fixtures;
+  const SourceArtifact source = sourceArtifact(fixtures.root);
+  const auto verified = storage::native_addon::verifyNativeKvArtifact({
+      .artifactDirectory = rt::pathToFileURL(source.artifactDirectory),
+      .expectedProvenanceSha256 = source.expectedProvenanceSha256,
+      .inputsManifest = std::nullopt,
+  });
+  EXPECT_EQ(verified.path, rt::path::join(source.artifactDirectory, "native-kv.node"));
+  EXPECT_EQ(verified.inputsSha256, sha256(rt::fs::readFileSync(paths.inputs)));
+#endif
 }
 
 ASYNC_TEST("development startup refuses absent receipt without database or marker writes") { co_await refuses("absent receipt"); }

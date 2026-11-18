@@ -379,7 +379,7 @@ namespace {
   }
 }
 
-ASYNC_TEST("differential: wire bytes of serveHttp and of the node:http server match Bun") {
+ASYNC_TEST("differential: serveHttp and node:http wire bytes") {
   ServeHttpOptions options;
   options.hostname = "127.0.0.1";
   options.port = 0;
@@ -420,7 +420,7 @@ ASYNC_TEST("differential: wire bytes of serveHttp and of the node:http server ma
     EXPECT_EQ(actual, expected);
     compared += 1;
   }
-  EXPECT_EQ(compared, 106);
+  EXPECT_EQ(compared, 107);
   node->close();
   auto stopping = serve.shutdown();
   co_await stopping.wait();

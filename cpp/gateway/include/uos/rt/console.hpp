@@ -1,35 +1,16 @@
 #pragma once
-// console.log / info / debug (stdout) and console.warn / error (stderr) with
-// Bun 1.4's formatting, plus a capture hook for ported tests. Each call writes
-// one line: the arguments formatted and joined by " ", then "\n".
-//
-// Formatting (Bun's): a top-level string prints raw; a string followed by more
-// arguments is a format string (%s %d %i %f %j %o %O %c %%, consuming the next
-// arguments; anything else stays literal). Other values print like Bun's
-// inspect: numbers as JS (-0 is "-0"), objects multi-line with two-space
-// indent and a comma after every property, keys quoted unless ASCII
-// identifiers, nested strings JSON-quoted, arrays on one line up to 10
-// primitive elements, else multi-line wrapped after 80 columns (100 elements,
-// then "... N more items"), objects nested 3 or more levels deep as
-// "[Object ...]" (arrays never collapse). Errors print as Bun prints an Error
-// without stack frames: "error: <message>" (console.warn: "warn: <message>")
-// for name "Error" with a message, else "<name>: <message>"; own properties
-// follow on their own lines (keys right-aligned, a comma after each but
-// `code`, which comes last), then the cause chain.
-// Bun additionally prints a source excerpt and stack frames for Errors that
-// have them and dumps DOMException as an object; the port cannot reproduce
-// those and prints the header form (documented in docs/rt/platform.md).
+// Console arguments render as literal text or compact JSON, joined by spaces.
 #include "uos/rt/prelude.hpp"
-#include <cstdint>
+#include <cstddef>
 #include <exception>
 #include <functional>
-#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace uos::rt::console {
@@ -38,77 +19,52 @@ namespace uos::rt::console {
   class Value;
   using Properties = std::vector<std::pair<std::string, Value>>;
 
-  // An Error as console prints it.
   struct ErrorInfo {
     std::string name = "Error";
     std::string message;
-    // Bun's own system errors (rt::fs::ErrnoError): the header is the message alone.
-    bool native = false;
-    // Own enumerable properties other than name/message/stack/cause, in order.
-    std::shared_ptr<const Properties> properties;
+    json::object properties;  // Explicit diagnostics such as code, path and errno.
     std::shared_ptr<const ErrorInfo> cause;
   };
 
-  // One console argument: undefined, null, a boolean, a number, a string, an
-  // array, an object (ordered properties), or an Error.
   class Value {
   public:
     enum class Kind { undefined, null, boolean, number, string, array, object, error };
 
-    // undefined
     Value() noexcept = default;
-    Value(std::nullopt_t) noexcept {}
-    // null
-    Value(std::nullptr_t) noexcept : kind_(Kind::null) {}
-    Value(bool value) noexcept : kind_(Kind::boolean), number_(value ? 1 : 0) {}
-    template <class N>
-      requires(std::is_arithmetic_v<N> && !std::is_same_v<N, bool> && !std::is_same_v<N, char>)
-    Value(N value) noexcept : kind_(Kind::number), number_(static_cast<double>(value)) {}
-    Value(std::string_view text) : kind_(Kind::string), text_(text) {}
+    Value(std::nullptr_t) : data_(json::value(nullptr)) {}
+    template <class N> requires std::is_arithmetic_v<N>
+    Value(N value) : data_(json::value(value)) {}
+    Value(std::string_view text) : data_(std::string(text)) {}
     Value(const char* text) : Value(std::string_view(text)) {}
-    Value(const std::string& text) : Value(std::string_view(text)) {}
-    // A parsed JSON value; a JSON string is a string.
+    Value(std::string text) : data_(std::move(text)) {}
+    Value(const json::string& text) : Value(std::string_view(text)) {}
     Value(const json::value& value);
     Value(const json::object& value);
     Value(const json::array& value);
-    Value(const json::string& value) : Value(std::string_view(value)) {}
-    // An Error: rt::JsError (name, message, cause chain), rt::fs::ErrnoError
-    // (Bun's native fields), or any other exception as Error(what()).
     Value(const std::exception& error);
-    // A caught value (rt::Reason): a null pointer is undefined, an exception an Error.
-    // A thrown non-Error (rt::ThrownValue) prints its what(); pass
-    // rt::thrownValue(reason) instead to print the value itself.
     Value(const std::exception_ptr& error);
+    explicit Value(ErrorInfo error) : data_(std::make_shared<const ErrorInfo>(std::move(error))) {}
     template <class T> Value(const std::optional<T>& value) : Value(value ? Value(*value) : Value()) {}
 
-    // `{ key: value, ... }` with values that JSON cannot hold (Errors, undefined).
+    // Existing mixed argument builders project nested errors into JSON fields.
     static Value object(Properties properties);
     static Value array(std::vector<Value> elements);
-    // An Error with own properties, as a custom error class carries them
-    // (`class CodexError extends Error { code; status }`).
-    static Value error(const std::exception& error, Properties properties);
-    static Value error(ErrorInfo info);
 
-    Kind kind() const noexcept { return kind_; }
-    bool isString() const noexcept { return kind_ == Kind::string; }
-    // The string (Kind::string), else "".
-    const std::string& string() const noexcept { return text_; }
-    double number() const noexcept { return number_; }
-    bool boolean() const noexcept { return number_ != 0; }
-    const std::vector<Value>& elements() const;
-    const Properties& properties() const;
+    Kind kind() const noexcept;
+    bool isString() const noexcept { return std::holds_alternative<std::string>(data_); }
+    const std::string& string() const noexcept;
+    double number() const noexcept;
+    bool boolean() const noexcept;
+    const json::value& jsonValue() const noexcept;
+    std::vector<Value> elements() const;
+    Properties properties() const;
     const ErrorInfo& errorInfo() const;
 
-    // `args[i] === "text"` in a captured call.
-    friend bool operator==(const Value& value, std::string_view text) noexcept { return value.kind_ == Kind::string && value.text_ == text; }
+    friend bool operator==(const Value& value, std::string_view text) noexcept { return value.isString() && value.string() == text; }
 
   private:
-    Kind kind_ = Kind::undefined;
-    double number_ = 0;
-    std::string text_;
-    std::shared_ptr<const std::vector<Value>> elements_;
-    std::shared_ptr<const Properties> properties_;
-    std::shared_ptr<const ErrorInfo> error_;
+    json::value asField() &&;
+    std::variant<std::monostate, std::string, json::value, std::shared_ptr<const ErrorInfo>> data_;
   };
 
   // The text one call prints, without the trailing newline.
@@ -122,8 +78,7 @@ namespace uos::rt::console {
   template <class... A> void error(const A&... args) { write(Method::error, {Value(args)...}); }
   template <class... A> void debug(const A&... args) { write(Method::debug, {Value(args)...}); }
 
-  // One recorded call: the arguments as the TS mock receives them and the line
-  // Bun would print.
+  // One recorded call: the captured arguments and the text sent to the sink.
   struct Call {
     Method method;
     std::vector<Value> args;

@@ -37,6 +37,7 @@
 // src/authority/native_paid_contracts.cpp src/lib/jev_compaction/types.cpp tests/helpers/counting_kv.cpp
 // Source330 prototype read-count/FormData substitution instrumentation has no rt value-type seam;
 // this port checks the real file bounds instead. Prior Sentinel ingress deferrals remain with w10c1.
+#include "helpers/image_multipart_fixture.hpp"
 #include "uos/images.hpp"
 #include "uos/config.hpp"
 #include "uos/http.hpp"
@@ -56,6 +57,8 @@ namespace im = uos::images;
 namespace tel = uos::openai_telemetry;
 #define AWAIT(name, expression) auto name##Task = (expression); auto name = co_await std::move(name##Task)
 namespace {
+  using namespace uos::test::image_multipart;
+
   struct ImageScope {
     std::string tmp = rt::env::get("TMPDIR").value_or("/tmp");
     rt::env::ScopedEnvironment environment{std::vector<std::pair<std::string, std::string>>{{"HOME", tmp + "/h"}, {"TMPDIR", tmp}}};
@@ -69,9 +72,6 @@ namespace {
   }
   rt::Request imagesRequest(const std::string& body, const std::string& path = "/v1/images/generations") { return imagesRequest(rt::jsonParse(body), path); }
   rt::Request imagesRequest(const char* body, const std::string& path = "/v1/images/generations") { return imagesRequest(std::string(body), path); }
-  rt::Request multipartRequest(const rt::FormData& form) { rt::RequestInit init; init.method = "POST"; init.body = form; return rt::Request("http://127.0.0.1/v1/images/edits", init); }
-  rt::File file(rt::Bytes bytes, const std::string& name = "source.png", const std::string& type = "image/png") { return rt::File({rt::BlobPart(std::move(bytes))}, name, type); }
-  rt::FormData editForm() { rt::FormData form; form.append("prompt", "edit the source"); form.append("image", file({1})); return form; }
   rt::Response imageResponse(const std::string& result, double createdAt = 1787431659, const rt::Headers& headers = {}, const std::optional<std::string>& revised = std::nullopt) {
     json::object item{{"type", "image_generation_call"}, {"result", result}, {"output_format", "png"}};
     if (revised && !revised->empty()) item["revised_prompt"] = *revised;
@@ -128,9 +128,9 @@ ASYNC_TEST("image prompt limits count Unicode code points") {
   AWAIT(response, im::handleImages(request, "generations", nullptr, options)); EXPECT_EQ(response.status(), 200); EXPECT_EQ(rt::toString(nested), prompt);
 }
 ASYNC_TEST("multipart edits become JSON Responses input with a binary mask") {
-  ImageScope scope; rt::FormData form; form.append("model", "gpt-image-2"); form.append("prompt", "combine these images");
-  form.append("image", file({1,2,3}, "first.png", "")); form.append("image[]", file({5,6}, "second.webp", "application/octet-stream")); form.append("image", file({7}, "third.png")); form.append("mask", file({4}, "mask.png", ""));
-  form.append("input_fidelity", "high"); form.append("quality", "high"); form.append("output_compression", "50"); form.append("response_format", "b64_json"); form.append("stream", "false"); form.append("user", "customer-2");
+  ImageScope scope; MultipartFixture form; form.emplace_back("model", "gpt-image-2"); form.emplace_back("prompt", "combine these images");
+  form.emplace_back("image", file({1,2,3}, "first.png", "")); form.emplace_back("image[]", file({5,6}, "second.webp", "application/octet-stream")); form.emplace_back("image", file({7}, "third.png")); form.emplace_back("mask", file({4}, "mask.png", ""));
+  form.emplace_back("input_fidelity", "high"); form.emplace_back("quality", "high"); form.emplace_back("output_compression", "50"); form.emplace_back("response_format", "b64_json"); form.emplace_back("stream", "false"); form.emplace_back("user", "customer-2");
   std::vector<json::value> nested;
   im::ImageHandlerOptions options{[&nested](rt::Request child) -> rt::Task<rt::Response> { EXPECT_EQ(child.headers().get("content-type"), std::optional<std::string>("application/json")); EXPECT(!child.headers().get("content-length")); AWAIT(body, child.json()); nested.push_back(body); co_return imageResponse("CCCC"); }};
   const auto request = multipartRequest(form); AWAIT(response, im::handleImages(request, "edits", nullptr, options)); EXPECT_EQ(response.status(), 200); ASSERT_EQ(nested.size(), std::size_t{1});
@@ -139,36 +139,36 @@ ASYNC_TEST("multipart edits become JSON Responses input with a binary mask") {
   expectJson(*rt::get(nested[0], "tools"), R"([{"type":"image_generation","action":"edit","model":"gpt-image-2","input_fidelity":"high","quality":"high","output_compression":50,"input_image_mask":{"image_url":"data:image/png;base64,BA=="}}])");
 }
 ASYNC_TEST("multipart edits reject DALL-E-only quality before Responses dispatch") {
-  ImageScope scope; auto form = editForm(); form.append("quality", "standard"); int calls = 0; auto options = countingDispatch(calls); const auto request = multipartRequest(form);
+  ImageScope scope; auto form = editForm(); form.emplace_back("quality", "standard"); int calls = 0; auto options = countingDispatch(calls); const auto request = multipartRequest(form);
   AWAIT(response, im::handleImages(request, "edits", nullptr, options)); EXPECT_EQ(response.status(), 400); AWAIT(body, response.json()); EXPECT_EQ(errorParam(body), std::string("quality")); EXPECT_EQ(calls, 0);
 }
 ASYNC_TEST("multipart edits reject JSON-only moderation before dispatch") {
-  ImageScope scope; auto form = editForm(); form.append("moderation", "auto"); int calls = 0; auto options = countingDispatch(calls); const auto request = multipartRequest(form);
+  ImageScope scope; auto form = editForm(); form.emplace_back("moderation", "auto"); int calls = 0; auto options = countingDispatch(calls); const auto request = multipartRequest(form);
   AWAIT(response, im::handleImages(request, "edits", nullptr, options)); EXPECT_EQ(response.status(), 400); AWAIT(body, response.json()); EXPECT_EQ(errorParam(body), std::string("moderation")); EXPECT_EQ(calls, 0);
 }
 ASYNC_TEST("multipart edits reject unsupported source and mask files before dispatch") {
   ImageScope scope; int calls = 0; auto options = countingDispatch(calls);
   for (int index = 0; index < 2; ++index) {
-    auto form = editForm(); if (index == 0) form.set("image", file({1}, "source.gif", "image/gif")); else form.set("mask", file({2}, "mask.jpeg", "image/jpeg"));
+    auto form = editForm(); if (index == 0) putPart(form, "image", file({1}, "source.gif", "image/gif")); else putPart(form, "mask", file({2}, "mask.jpeg", "image/jpeg"));
     const auto request = multipartRequest(form); AWAIT(response, im::handleImages(request, "edits", nullptr, options)); EXPECT_EQ(response.status(), 400); AWAIT(body, response.json()); EXPECT_EQ(errorParam(body), std::string(index == 0 ? "image" : "mask"));
   }
   EXPECT_EQ(calls, 0);
 }
 ASYNC_TEST("multipart edits accept PNG masks above the legacy 4 MiB limit") {
-  ImageScope scope; auto form = editForm(); form.append("mask", file(rt::Bytes(5 * 1024 * 1024), "mask.png")); int calls = 0; auto options = countingDispatch(calls); const auto request = multipartRequest(form);
+  ImageScope scope; auto form = editForm(); form.emplace_back("mask", file(rt::Bytes(5 * 1024 * 1024), "mask.png")); int calls = 0; auto options = countingDispatch(calls); const auto request = multipartRequest(form);
   AWAIT(response, im::handleImages(request, "edits", nullptr, options)); EXPECT_EQ(response.status(), 200); EXPECT_EQ(calls, 1);
 }
 ASYNC_TEST("multipart edits validate file limits before reading file bytes") {
   ImageScope scope; int calls = 0; auto options = countingDispatch(calls);
-  // rt File has no prototype read spy. Exercise the same seven refusals using actual form/file bytes.
+  // Exercise the seven refusals with raw multipart requests.
   for (int index = 0; index < 7; ++index) {
     auto form = editForm();
-    if (index == 0) form.delete_("prompt");
-    if (index == 1) form.append("n", "11");
-    if (index == 2) { form.delete_("image"); for (int i = 0; i < 17; ++i) form.append("image[]", file({1}, rt::numberToString(static_cast<double>(i)) + ".png")); }
-    if (index == 3) form.set("image", file(rt::Bytes(50 * 1024 * 1024), "large.png"));
-    if (index == 4) { form.set("image", file(rt::Bytes(26 * 1024 * 1024), "first.png")); form.append("image", file(rt::Bytes(26 * 1024 * 1024), "second.png")); }
-    if (index == 5) { form.append("n", "10"); form.set("image", file(rt::Bytes(6 * 1024 * 1024), "large.png")); }
+    if (index == 0) removePart(form, "prompt");
+    if (index == 1) form.emplace_back("n", "11");
+    if (index == 2) { removePart(form, "image"); for (int i = 0; i < 17; ++i) form.emplace_back("image[]", file({1}, rt::numberToString(static_cast<double>(i)) + ".png")); }
+    if (index == 3) putPart(form, "image", file(rt::Bytes(50 * 1024 * 1024), "large.png"));
+    if (index == 4) { putPart(form, "image", file(rt::Bytes(26 * 1024 * 1024), "first.png")); form.emplace_back("image", file(rt::Bytes(26 * 1024 * 1024), "second.png")); }
+    if (index == 5) { form.emplace_back("n", "10"); putPart(form, "image", file(rt::Bytes(6 * 1024 * 1024), "large.png")); }
     auto request = multipartRequest(form); if (index == 6) request.headers().set("content-length", "67108865");
     AWAIT(response, im::handleImages(request, "edits", nullptr, options)); EXPECT_EQ(response.status(), 400);
     if (index == 4) { AWAIT(body, response.json()); EXPECT_EQ(errorParam(body), std::string("image")); }
@@ -176,11 +176,11 @@ ASYNC_TEST("multipart edits validate file limits before reading file bytes") {
   EXPECT_EQ(calls, 0);
 }
 ASYNC_TEST("multipart edits retain the documented file allowance after internal base64 conversion") {
-  ImageScope scope; auto form = editForm(); form.set("image", file(rt::Bytes(16 * 1024 * 1024), "large.png")); int calls = 0; auto options = countingDispatch(calls); const auto request = multipartRequest(form);
+  ImageScope scope; auto form = editForm(); putPart(form, "image", file(rt::Bytes(16 * 1024 * 1024), "large.png")); int calls = 0; auto options = countingDispatch(calls); const auto request = multipartRequest(form);
   AWAIT(response, im::handleImages(request, "edits", nullptr, options)); EXPECT_EQ(response.status(), 200); EXPECT_EQ(calls, 1);
 }
 ASYNC_TEST("multipart image failures retain raw bodies within the Sentinel replay cap") {
-  ImageScope scope; auto form = editForm(); form.set("prompt", "replay this multipart failure"); form.set("image", file({1,2,3})); const auto request = multipartRequest(form);
+  ImageScope scope; auto form = editForm(); putPart(form, "prompt", "replay this multipart failure"); putPart(form, "image", file({1,2,3})); const auto request = multipartRequest(form);
   const auto candidate = sentinel::replay_observation::captureAcceptedSentinelReplayInput(request, "multipart-replay"); ASSERT(candidate);
   const auto upstream = rt::Response(std::string(R"({"error":{"message":"upstream failed"}})"), {.status = 502}); const auto options = constantDispatch(upstream);
   AWAIT(response, im::handleImages(request, "edits", nullptr, options)); EXPECT_EQ(response.status(), 502);
@@ -360,7 +360,7 @@ ASYNC_TEST("malformed image requests are rejected before any dispatch") {
   const std::vector<std::string> edits{
     R"({"prompt":"edit","image":{"image_url":"https://example.com/legacy.png"}})",R"({"prompt":"edit","images":[]})",R"({"prompt":"edit","images":[{"image_url":"https://example.com/a.png"}],"quality":"hd"})",R"({"prompt":"edit","images":[{"image_url":"https://example.com/a.png"}],"input_fidelity":"medium"})",R"({"prompt":"edit","images":[{"image_url":"https://example.com/a.png"}],"response_format":null})",R"({"prompt":"edit","images":[{"image_url":"","file_id":""}]})",R"({"prompt":"edit","images":[{"image_url":"","file_id":"file-a"}]})",R"({"prompt":"edit","images":[{"image_url":"https://example.com/a.png","file_id":"file-a"}]})",R"({"prompt":"edit","images":[{"file_id":"file-a","extra":true}]})",R"({"prompt":"edit","images":[{"image_url":"https://example.com/source.png"}],"mask":{}})",R"({"prompt":"edit","images":[{"image_url":"https://example.com/source.png"}],"mask":{"image_url":"data:image/svg+xml;base64,PHN2Zz4="}})",R"({"prompt":"edit","images":[{"image_url":"https://example.com/source.png"}],"mask":{"image_url":"data:image/png;base64,not-valid-base64"}})"};
   for(const auto& raw:edits){const auto request=imagesRequest(raw,"/v1/images/edits");AWAIT(response,im::handleImages(request,"edits",nullptr,options));EXPECT_EQ(response.status(),400);}
-  for(int index=0;index<6;++index){auto form=editForm();if(index==0)form.append("image","not a file");if(index==1)form.append("n","1e1");if(index==2)form.append("output_compression","50.5");if(index==3)form.append("stream","true");if(index==4)form.append("response_format","url");if(index==5)form.append("unknown_option","customer-1");const auto request=multipartRequest(form);AWAIT(response,im::handleImages(request,"edits",nullptr,options));EXPECT_EQ(response.status(),400);if(index==2){AWAIT(body,response.json());EXPECT_EQ(errorParam(body),std::string("output_compression"));}}
+  for(int index=0;index<6;++index){auto form=editForm();if(index==0)form.emplace_back("image","not a file");if(index==1)form.emplace_back("n","1e1");if(index==2)form.emplace_back("output_compression","50.5");if(index==3)form.emplace_back("stream","true");if(index==4)form.emplace_back("response_format","url");if(index==5)form.emplace_back("unknown_option","customer-1");const auto request=multipartRequest(form);AWAIT(response,im::handleImages(request,"edits",nullptr,options));EXPECT_EQ(response.status(),400);if(index==2){AWAIT(body,response.json());EXPECT_EQ(errorParam(body),std::string("output_compression"));}}
   rt::RequestInit init;init.method="POST";init.body="not json";const rt::Request invalid("http://127.0.0.1/v1/images/generations",init);AWAIT(response,im::handleImages(invalid,"generations",nullptr,options));EXPECT_EQ(response.status(),400);EXPECT_EQ(calls,0);
 }
 
@@ -388,12 +388,12 @@ ASYNC_TEST("images match95 isolated Bun validation, multipart, metadata and tele
       source.start=[mode=std::string(*stream)](auto controller){if(mode=="error")controller.error(rt::makeReason(rt::JsError("fixture stream failed")));else{controller.enqueue(rt::Bytes(64*1024*1024+1));controller.close();}};
       init.headers=rt::Headers{{"content-type","multipart/form-data; boundary=fixture"}};init.body=rt::ByteStream(source);
     }else if(rt::getBool(row,"multipart").value_or(false)) {
-      rt::FormData form;form.append("prompt","fixture");const auto imageName=std::string(rt::getString(row,"imageName").value_or("source.png"));const auto imageBytes=rt::getBool(row,"emptyImage").value_or(false)?rt::Bytes():rt::Bytes{1,2,3};
-      form.append("image",file(imageBytes,imageName,rt::getString(row,"imageName")?"":"image/png"));
-      if(const auto* fields=rt::getArray(row,"fields"))for(const auto& field: *fields)form.append(rt::toString(field.as_array()[0]),rt::toString(field.as_array()[1]));
-      if(const auto field=rt::getString(row,"fileField")){form.delete_(*field);form.append(*field,file({1},"value.png"));}
-      for(int index=0;index<rt::getNumber(row,"masks").value_or(0);++index)form.append("mask",file({1},"mask.png"));
-      init.body=form;
+      MultipartFixture form;form.emplace_back("prompt","fixture");const auto imageName=std::string(rt::getString(row,"imageName").value_or("source.png"));const auto imageBytes=rt::getBool(row,"emptyImage").value_or(false)?rt::Bytes():rt::Bytes{1,2,3};
+      form.emplace_back("image",file(imageBytes,imageName,rt::getString(row,"imageName")?"":"image/png"));
+      if(const auto* fields=rt::getArray(row,"fields"))for(const auto& field: *fields)form.emplace_back(rt::toString(field.as_array()[0]),rt::toString(field.as_array()[1]));
+      if(const auto field=rt::getString(row,"fileField")){removePart(form, *field);form.emplace_back(*field,file({1},"value.png"));}
+      for(int index=0;index<rt::getNumber(row,"masks").value_or(0);++index)form.emplace_back("mask",file({1},"mask.png"));
+      init.headers=multipartHeaders();init.body=multipartBody(form);
     }else{init.headers=rt::Headers{{"content-type","application/json"}};auto body=*rt::get(row,"body");if(const auto repeat=rt::getNumber(row,"userRepeat"))body.as_object()["user"]=std::string(static_cast<std::size_t>(*repeat),'u');init.body=rt::jsonStringify(body);}
     const rt::Request request("http://127.0.0.1/v1/images/"+kind,init);if(const auto length=rt::getString(row,"declaredLength"))request.headers().set("content-length",*length);
     im::ImageHandlerOptions options{[&row,&calls,&seen,mode](rt::Request child)->rt::Task<rt::Response>{
@@ -425,7 +425,7 @@ ASYNC_TEST("images match95 isolated Bun validation, multipart, metadata and tele
   }
 }
 ASYNC_TEST("unnamed multipart files preserve the source File.name TypeError") {
-  ImageScope scope;rt::FormData form;form.append("prompt","fixture");form.append("image",file({1,2,3},""));const auto request=multipartRequest(form);
+  ImageScope scope;MultipartFixture form;form.emplace_back("prompt","fixture");form.emplace_back("image",file({1,2,3},""));const auto request=multipartRequest(form);
   const auto options=constantDispatch(rt::Response(std::string("{}")));rt::Reason failure;
   try{auto task=im::handleImages(request,"edits",nullptr,options);const auto response=co_await std::move(task);(void)response;}catch(...){failure=std::current_exception();}
   EXPECT_EQ(rt::errorName(failure),std::optional<std::string>("TypeError"));EXPECT_EQ(rt::errorMessage(failure),std::optional<std::string>("undefined is not an object (evaluating 'file.name.trim')"));

@@ -2,6 +2,7 @@
 // expected value was recorded from Bun 1.4.0 running the TypeScript module
 // (JSON.stringify of the interchange graphs, and the name/message of every error).
 #include "uos/kv_conversion/typed_value.hpp"
+#include "uos/rt/base64.hpp"
 
 #include "uos/rt/json.hpp"
 #include "uos/rt/string.hpp"
@@ -136,6 +137,10 @@ namespace {
   std::optional<json::value> divergence(const std::string& name, const json::value& recorded) {
     const auto reencoded = [&](std::string text) { return std::optional<json::value>(json::object{{"ok", rt::jsonParse(text)}}); };
     const auto failure = [](std::string message) { return std::optional<json::value>(json::object{{"error", "TypeError"}, {"message", json::string(message)}}); };
+    if (name == "regexp bad pattern") return json::object{{"error", "SyntaxError"}, {"message", "expecting ')'"}};
+    if (name == "regexp dup flags" || name == "regexp flags number" || name == "regexp flags undefined atom" ||
+        name == "regexp flags empty set" || name == "regexp flags bigint")
+      return json::object{{"error", "SyntaxError"}, {"message", "invalid regular expression flags"}};
     if (name == "error type key") return reencoded(R"({"root":{"type":"ref","ref":0},"nodes":[{"type":"TypeError","entries":[["message",{"type":"string","value":"m"}],["stack",{"type":"undefined"}]]}]})");
     if (name == "error no entries") return reencoded(R"({"root":{"type":"ref","ref":0},"nodes":[{"type":"RangeError","entries":[["message",{"type":"string","value":""}],["stack",{"type":"undefined"}]]}]})");
     if (name == "array entry named") return failure("Typed-value interchange array property \"foo\" has no KvValue representation");
@@ -185,13 +190,6 @@ TEST("differential: decodeTypedValue round-trips every recorded graph") {
   for (const EncodeVector& vector : ENCODE_VECTORS) {
     if (*vector.message) continue;
     const json::value graph = rt::jsonParse(vector.graph);
-    if (std::string_view(vector.name) == "regexps") {
-      // rt gap: rt::Regex rejects the v flag that JavaScriptCore accepts (/a/v in this vector).
-      EXPECT_THROWS_MESSAGE(decodeTypedValue(graph), rt::SyntaxError, "Invalid regular expression: rt::Regex does not support the v flag");
-      const KvValue supported = KvValue::array({rt::KvRegExp{"a\\/b", "giu"}, rt::KvRegExp{"x\\ny", "dmsy"}});
-      EXPECT(decodeTypedValue(encodeTypedValue(supported)) == supported);
-      continue;
-    }
     const KvValue decoded = decodeTypedValue(graph);
     if (std::string_view(vector.name) == "errors") {
       // As in JavaScript: the inherited message decodes to an own "", an unknown name to Error.
@@ -215,6 +213,10 @@ TEST("differential: decoding malformed and unusual graphs matches Bun") {
   for (const json::value& row : vectors.as_array()) {
     const json::array& vector = row.as_array();
     const std::string name(vector[0].as_string());
+    if (name == "dag" || name == "map entries") {
+      EXPECT_EQ(outcome(vector[1], vector[2].as_bool()), vector[3]);
+      continue;
+    }
     const json::value expected = divergence(name, vector[3]).value_or(vector[3]);
     const json::value actual = outcome(vector[1], vector[2].as_bool());
     if (!rt::deepEqual(actual, expected)) {
@@ -261,9 +263,11 @@ TEST("nesting up to 2000 levels encodes and decodes") {
   EXPECT_THROWS_MESSAGE(decodeTypedValue(graphTooDeep), rt::RangeError, "Maximum call stack size exceeded.");
 }
 
-TEST("cycles and over-deep graphs fail closed") {
+TEST("object cycles are preserved and recursive allocation fails closed") {
   const json::value cycle = rt::jsonParse(R"({"root":{"type":"ref","ref":0},"nodes":[{"type":"object","entries":[["self",{"type":"ref","ref":0}]]}]})");
-  EXPECT_THROWS_MESSAGE(decodeTypedValue(cycle), rt::TypeError, "Typed-value interchange cycle has no KvValue representation");
+  const KvValue decoded = decodeTypedValue(cycle);
+  EXPECT(decoded.identity() && decoded["self"].identity() == decoded.identity());
+  EXPECT_EQ(encodeTypedValue(decoded), cycle);
   // A view whose backing is itself recurses without end in JavaScript as well.
   const json::value selfBacked = rt::jsonParse(R"({"root":{"type":"ref","ref":0},"nodes":[{"type":"Uint8Array","buffer":{"type":"ref","ref":0},"offset":0,"length":0}]})");
   EXPECT_THROWS_MESSAGE(decodeTypedValue(selfBacked), rt::RangeError, "Maximum call stack size exceeded.");
@@ -284,4 +288,54 @@ TEST("a node named by two keys decodes twice and its shared children stay readab
       R"({"type":"object","entries":[["c",{"type":"ref","ref":2}]]},{"type":"object","entries":[["d",{"type":"number","value":4}]]}]})");
   const KvValue expected = KvValue::object({{"a", KvValue::object({{"c", KvValue::object({{"d", 4}})}})}, {"b", KvValue::object({{"c", KvValue::object({{"d", 4}})}})}});
   EXPECT(decodeTypedValue(graph) == expected);
+  const KvValue decoded = decodeTypedValue(graph);
+  EXPECT(decoded["a"].identity() != decoded["b"].identity());
+  EXPECT(decoded["a"]["c"].identity() && decoded["a"]["c"].identity() == decoded["b"]["c"].identity());
+}
+
+TEST("JSC and interchange preserve Bun's cyclic collections, sparse indices and shared buffers") {
+  // Bun 1.4.0 node:v8 serialize and the TypeScript encodeTypedValue on its deserialized result.
+  const std::string expected = R"JSON({"root":{"type":"ref","ref":0},"nodes":[{"type":"object","entries":[["array",{"type":"ref","ref":1}],["map",{"type":"ref","ref":2}],["set",{"type":"ref","ref":3}],["view",{"type":"ref","ref":4}],["full",{"type":"ref","ref":6}],["repeated",{"type":"ref","ref":6}],["backing",{"type":"ref","ref":5}],["self",{"type":"ref","ref":0}]]},{"type":"Array","length":16777217,"entries":[["16777216",{"type":"ref","ref":0}]]},{"type":"Map","entries":[[{"type":"ref","ref":0},{"type":"ref","ref":1}],[{"type":"ref","ref":1},{"type":"ref","ref":3}]]},{"type":"Set","items":[{"type":"ref","ref":3},{"type":"ref","ref":2}]},{"type":"DataView","buffer":{"type":"ref","ref":5},"offset":1,"length":2},{"type":"ArrayBuffer","value":"AAEC/w=="},{"type":"Uint8Array","buffer":{"type":"ref","ref":5},"offset":0,"length":4}]})JSON";
+  const rt::KvBytes bytes = rt::fromHex("0e000000020500008061727261790101000001000000011300ffffffff030000806d61701e1300130113011d1303130220ffffffff1fffffffff0300008073657413030400008076696577160001000000000000000200000000000000150400000000000000000102ff0400008066756c6c16020000000000000000040000000000000013040800008072657065617465641306070000806261636b696e6713040400008073656c661300ffffffff");
+  const auto verify = [&](const KvValue& value) {
+    const KvValue& array = value["array"];
+    EXPECT_EQ(array.asArray().size(), std::size_t{16777217});
+    EXPECT(array[16777216].identity() == value.identity());
+    EXPECT(value["repeated"].identity() == value["full"].identity());
+    ASSERT(value["view"].backingBuffer() && value["full"].backingBuffer());
+    EXPECT(value["view"].backingBuffer()->identity() == value["backing"].identity());
+    EXPECT(value["full"].backingBuffer()->identity() == value["backing"].identity());
+    EXPECT_EQ(rt::jsonStringify(encodeTypedValue(value)), expected);
+    EXPECT_EQ(rt::kvJscSerialize(value), bytes);
+  };
+  verify(rt::kvJscDeserialize(bytes));
+  verify(decodeTypedValue(rt::jsonParse(expected)));
+
+  // A copy of an interior handle owns the graph after the root goes out of scope.
+  KvValue array;
+  {
+    const KvValue root = rt::kvJscDeserialize(bytes);
+    array = root["array"];
+  }
+  const KvValue& owned = array;
+  verify(owned[16777216]);
+}
+
+TEST("an interchange Error cause can reference its own node") {
+  const auto graph = rt::jsonParse(R"JSON({"root":{"type":"ref","ref":0},"nodes":[{"type":"Error","entries":[["message",{"type":"string","value":"e"}],["stack",{"type":"undefined"}],["cause",{"type":"ref","ref":0}]]}]})JSON");
+  rt::KvError error;
+  {
+    const KvValue value = decodeTypedValue(graph);
+    EXPECT_EQ(encodeTypedValue(value), graph);
+    EXPECT_THROWS_MESSAGE(rt::assertPortableKvValue(value), rt::TypeError, "Bun KV cannot preserve Error.cause; persist an explicit error record instead");
+    error = value.as<rt::KvError>();
+  }
+  ASSERT(error.cause);
+  EXPECT_EQ(encodeTypedValue(*error.cause), graph);
+}
+
+TEST("coercing a cyclic array while allocating a RegExp throws Bun's RangeError") {
+  const auto graph = rt::jsonParse(
+      R"JSON({"root":{"type":"ref","ref":0},"nodes":[{"type":"RegExp","value":"a","items":[{"type":"ref","ref":1}]},{"type":"Array","length":1,"entries":[["0",{"type":"ref","ref":1}]]}]})JSON");
+  EXPECT_THROWS_MESSAGE(decodeTypedValue(graph), rt::RangeError, "Maximum call stack size exceeded.");
 }

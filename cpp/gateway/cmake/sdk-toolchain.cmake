@@ -6,9 +6,12 @@ if(UOS_SDK STREQUAL "" OR UOS_VIEW STREQUAL "")
   message(FATAL_ERROR "Qualified SDK and bounded executable view are required")
 endif()
 set(CMAKE_SYSROOT "${UOS_SDK}/root")
+set(CMAKE_C_COMPILER "${UOS_VIEW}/bin/uos-cc" CACHE FILEPATH "Always-bounded qualified C compiler" FORCE)
 set(CMAKE_CXX_COMPILER "${UOS_VIEW}/bin/uos-cxx" CACHE FILEPATH "Always-bounded qualified compiler" FORCE)
 # A second launcher would reacquire the same slots and deadlock. Clear retained
 # launcher cache values too, so regeneration cannot reintroduce nested locks.
+set(CMAKE_C_COMPILER_LAUNCHER "" CACHE STRING "The compiler executable owns resource limits" FORCE)
+set(CMAKE_C_LINKER_LAUNCHER "" CACHE STRING "The compiler executable owns resource limits" FORCE)
 set(CMAKE_CXX_COMPILER_LAUNCHER "" CACHE STRING "The compiler executable owns resource limits" FORCE)
 set(CMAKE_CXX_LINKER_LAUNCHER "" CACHE STRING "The compiler executable owns resource limits" FORCE)
 set(CMAKE_MAKE_PROGRAM "${UOS_VIEW}/bin/ninja" CACHE FILEPATH "Qualified SDK Ninja")

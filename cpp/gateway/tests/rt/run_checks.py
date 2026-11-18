@@ -90,7 +90,8 @@ def build(args, profile, tests):
         "target_compile_options(runtime PRIVATE " + " ".join(flags) + ")",
     ]
     for library in vendors:
-        lines += [f"add_library({library.target} STATIC {quote(GATEWAY / library.source)})",
+        members = " ".join(quote(GATEWAY / member) for member in library.sources)
+        lines += [f"add_library({library.target} STATIC {members})",
                   f"target_compile_options({library.target} PRIVATE " + " ".join(vendor_sources.vendor_flags(flags)) + ")"]
     for source_path in sorted(json_sources):
         source_path = quote(GATEWAY / source_path)
@@ -117,7 +118,7 @@ def build(args, profile, tests):
         lines += [
             f"add_executable({test.stem} {quote(test)} $<TARGET_OBJECTS:runtime>)",
             f"target_compile_options({test.stem} PRIVATE " + " ".join(flags) + ")",
-            f"target_link_libraries({test.stem} PRIVATE " + " ".join(library.target for library in vendors) + " boost_json boost_container ssl crypto pthread dl {sqlite_library} z brotlidec zstd icuuc)",
+            f"target_link_libraries({test.stem} PRIVATE " + " ".join(library.target for library in vendors) + " boost_json boost_container ssl crypto pthread dl {sqlite_library} z brotlidec zstd icui18n icuuc)",
         ]
     content = "\n".join(lines) + "\n"
     cmake_file = source / "CMakeLists.txt"

@@ -35,7 +35,9 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
 
+#include <charconv>
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -90,8 +92,10 @@ namespace {
   }
 
   json::object tombstoneRow(double index, const std::string& requestId) {
+    char hex[8];
+    const auto end = std::to_chars(hex, hex + sizeof hex, static_cast<std::uint32_t>(index), 16).ptr;
     return object({{"version", 1},
-                   {"fingerprint", json::string(rt::padStart(rt::numberToString(index, 16), 64, "0"))},
+                   {"fingerprint", json::string(rt::padStart(std::string(hex, end), 64, "0"))},
                    {"request_id", json::string(requestId)},
                    {"evicted_at_ms", rt::makeNumber(NOW)},
                    {"reason", json::string(std::string(schema::SENTINEL_REPLAY_EXPIRED_REASON))}});

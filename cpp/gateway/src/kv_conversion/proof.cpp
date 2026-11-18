@@ -75,7 +75,7 @@ namespace uos::kv_conversion::proof {
 
     // util.inspect's strEscape: single quotes, else double quotes when the text has a single
     // quote and no double quote, else backticks when it has neither a backtick nor "${".
-    std::string quoted(std::string_view text) {
+    std::string escapeInspectedString(std::string_view text) {
       int quote = 39;
       if (rt::includes(text, "'")) {
         if (!rt::includes(text, "\"")) quote = -1;
@@ -133,7 +133,7 @@ namespace uos::kv_conversion::proof {
 
     std::string propertyName(const std::string& key) {
       static const rt::Regex IDENTIFIER("^[a-zA-Z_][a-zA-Z_0-9]*$", "");
-      return IDENTIFIER.test(key) ? key : quoted(key);
+      return IDENTIFIER.test(key) ? key : escapeInspectedString(key);
     }
 
     template <class T> std::vector<std::string> typedElements(const rt::KvArrayBufferView& view) {
@@ -165,7 +165,7 @@ namespace uos::kv_conversion::proof {
       if (value.isNull()) return "null";
       if (value.isBool()) return value.asBool() ? "true" : "false";
       if (value.isNumber()) return formatNumber(value.asNumber());
-      if (value.isString()) return quoted(value.asString());
+      if (value.isString()) return escapeInspectedString(value.asString());
       if (value.isBigInt()) return value.asBigInt().toString() + "n";
       if (value.isU64()) return block("_KvU64 {", {"value: " + value.asU64().toBigInt().toString() + "n"}, "}", indentation, true);
       if (value.isBytes()) {
@@ -461,7 +461,7 @@ namespace uos::kv_conversion::proof {
       if (!expected) co_return;
       const std::string input = rt::reasonToString(failure);
       if (expected->test(input)) co_return;
-      throw AssertionError("The input did not match the regular expression " + expected->toString() + ". Input:\n\n" + quoted(input) + "\n");
+      throw AssertionError("The input did not match the regular expression " + expected->toString() + ". Input:\n\n" + escapeInspectedString(input) + "\n");
     }
 
     // ---- the proof --------------------------------------------------------------------------------

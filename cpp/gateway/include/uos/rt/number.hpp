@@ -14,7 +14,7 @@
 #include <vector>
 
 namespace uos::rt {
-  // `Number.*` statics. The global `parseInt`/`parseFloat` are the same functions.
+  // `Number.*` statics. The global `parseInt` is the same function.
   namespace Number {
     inline constexpr double MAX_SAFE_INTEGER = 9007199254740991.0;
     inline constexpr double MIN_SAFE_INTEGER = -9007199254740991.0;
@@ -31,9 +31,7 @@ namespace uos::rt {
     bool isSafeInteger(double value);
     // parseInt(string, radix): `radix` is the already ToInt32-converted argument; 0 means absent.
     double parseInt(std::string_view text, std::int32_t radix = 0);
-    double parseFloat(std::string_view text);
   }
-  using Number::parseFloat;
   using Number::parseInt;
   // Global isNaN/isFinite applied to a number (they ToNumber their argument first:
   // for a string use isNaN(stringToNumber(s))).
@@ -42,10 +40,6 @@ namespace uos::rt {
 
   // String(n), `${n}`, n.toString(), and every number JSON.stringify prints.
   std::string numberToString(double value);
-  // n.toString(radix). RangeError "toString() radix argument must be between 2 and 36".
-  std::string numberToString(double value, int radix);
-  // n.toFixed(digits). RangeError "toFixed() argument must be between 0 and 100".
-  std::string toFixed(double value, int fractionDigits);
   // Number(string) / unary + on a string: StringToNumber with JSC's literal rounding.
   double stringToNumber(std::string_view text);
   // StrWhiteSpaceChar: what String.prototype.trim and Number() strip (one code point).
@@ -167,18 +161,28 @@ namespace uos::rt {
       return min(std::span<const double>(list, sizeof...(T)));
     }
   }
+}
 
-  // Arbitrary-precision JavaScript BigInt (JSC limits and error texts).
+#include <boost/multiprecision/fwd.hpp>
+#include <cstddef>
+
+namespace uos::rt {
+  // Arbitrary-precision integer with JavaScript's signed bit operations.
   class BigInt {
   public:
-    BigInt() = default;
+    BigInt() noexcept;
     explicit BigInt(std::int64_t value);
+    BigInt(const BigInt& other);
+    BigInt(BigInt&& other) noexcept;
+    BigInt& operator=(const BigInt& other);
+    BigInt& operator=(BigInt&& other) noexcept;
+    ~BigInt();
     static BigInt fromUint64(std::uint64_t value);
     // BigInt(number). RangeError "Not an integer" for NaN, infinities and fractions.
     static BigInt fromNumber(double value);
     // BigInt(string). SyntaxError "Failed to parse String to BigInt".
     static BigInt fromString(std::string_view text);
-    // StringToBigInt without throwing; std::nullopt where BigInt(string) would throw.
+    // Returns std::nullopt for invalid text. Throws RangeError for an oversized value.
     static std::optional<BigInt> parse(std::string_view text);
     static BigInt asUintN(std::uint64_t bits, const BigInt& value);
     static BigInt asIntN(std::uint64_t bits, const BigInt& value);
@@ -190,12 +194,12 @@ namespace uos::rt {
     // BigInt.asIntN(64, b) / BigInt.asUintN(64, b) as native integers.
     std::int64_t toInt64() const;
     std::uint64_t toUint64() const;
-    bool isZero() const { return magnitude_.empty(); }
-    bool isNegative() const { return negative_; }
+    bool isZero() const;
+    bool isNegative() const;
     // b ** exponent. RangeError "Negative exponent is not allowed".
     BigInt pow(const BigInt& exponent) const;
 
-    friend bool operator==(const BigInt& a, const BigInt& b) = default;
+    friend bool operator==(const BigInt& a, const BigInt& b);
     friend std::strong_ordering operator<=>(const BigInt& a, const BigInt& b);
     friend BigInt operator+(const BigInt& a, const BigInt& b);
     friend BigInt operator-(const BigInt& a, const BigInt& b);
@@ -221,13 +225,16 @@ namespace uos::rt {
     BigInt& operator<<=(const BigInt& shift) { return *this = *this << shift; }
     BigInt& operator>>=(const BigInt& shift) { return *this = *this >> shift; }
 
-    // Largest magnitude JSC allows, in bits; larger results throw
-    // RangeError "Out of memory: BigInt generated from this operation is too big".
+    // Limit the arithmetic and allocation requested by untrusted inputs.
     static constexpr std::uint64_t maxLengthBits = std::uint64_t{1} << 20;
 
   private:
-    bool negative_ = false;
-    std::vector<std::uint32_t> magnitude_;  // little-endian limbs, no high zero limbs; zero is empty
-    friend struct BigIntAccess;
+    explicit BigInt(boost::multiprecision::cpp_int value);
+    boost::multiprecision::cpp_int& value();
+    const boost::multiprecision::cpp_int& value() const;
+
+    // Keep Boost's implementation header private without allocating for small integers.
+    static constexpr std::size_t storageAlignment = 16;
+    alignas(storageAlignment) std::byte storage_[32];
   };
 }

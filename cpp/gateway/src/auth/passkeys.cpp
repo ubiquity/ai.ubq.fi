@@ -10,7 +10,6 @@
 #include "uos/rt/clock.hpp"
 #include "uos/rt/console.hpp"
 #include "uos/rt/crypto.hpp"
-#include "uos/rt/date.hpp"
 #include "uos/rt/error.hpp"
 #include "uos/rt/fetch.hpp"
 #include "uos/rt/headers.hpp"
@@ -22,21 +21,29 @@
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/url.hpp"
 
+#include <openssl/asn1t.h>
 #include <openssl/bn.h>
 #include <openssl/core_names.h>
 #include <openssl/ec.h>
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/param_build.h>
+#include <openssl/pem.h>
 #include <openssl/rsa.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
+
+#include <qcbor/qcbor_decode.h>
+#include <qcbor/qcbor_encode.h>
 
 #include <algorithm>
 #include <array>
-#include <cfloat>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <ctime>
 #include <exception>
 #include <functional>
 #include <limits>
@@ -44,6 +51,7 @@
 #include <memory>
 #include <span>
 #include <utility>
+#include <variant>
 
 namespace uos::auth::passkeys {
   namespace {
@@ -53,9 +61,8 @@ namespace uos::auth::passkeys {
     using BytesView = std::span<const std::uint8_t>;
 
     // ===================================================================================
-    // @simplewebauthn/server 13.2.2 and the dependencies it calls (@hexagon/base64 1.1.28,
-    // @levischuck/tiny-cbor 0.2.11, asn1js 3.0.10 under @peculiar/asn1-schema 2.11.0,
-    // @peculiar/x509) as far as passkeys.ts reaches them.
+    // @simplewebauthn/server 13.2.2 and the libraries used here (@hexagon/base64 1.1.28,
+    // QCBOR 1.6.1 and OpenSSL 3) as far as passkeys.ts reaches them.
     // ===================================================================================
 
     [[noreturn]] void fail(std::string message) { throw rt::JsError(std::move(message)); }
@@ -191,37 +198,27 @@ namespace uos::auth::passkeys {
       return isoBase64URL::isBase64URL(value->as_string());
     }
 
-    // ---- @levischuck/tiny-cbor ----------------------------------------------------------
+    // ---- WebAuthn CBOR (QCBOR) ---------------------------------------------------------
 
+    using CborKey = std::variant<std::int64_t, std::string>;
     struct CborEntry;
 
-    // A decoded CBOR item as a JS value: numbers are JS numbers, maps are Maps keyed by
-    // string or number (SameValueZero, -0 stored as +0), tags are CBORTag objects.
+    // QCBOR streams items. The verifier needs owning values across asynchronous calls.
     struct Cbor {
-      enum class Kind { undefined_, null_, boolean, number, string, bytes, array, map, tag };
-      Kind kind = Kind::undefined_;
-      bool boolean = false;
-      double number = 0;
-      std::string text;
-      Bytes bytes;
-      std::vector<Cbor> items;  // array elements; a tag's single tagged value
-      std::vector<CborEntry> entries;
-      double tag = 0;
+      using Array = std::vector<Cbor>;
+      using Map = std::vector<CborEntry>;
+      enum class Kind { undefined_, null_, boolean, number, string, bytes, array, map };
+      std::variant<std::monostate, std::nullptr_t, bool, double, std::string, Bytes, Array, Map> data;
 
-      bool isMap() const noexcept { return kind == Kind::map; }
-      bool isNumber() const noexcept { return kind == Kind::number; }
-      bool isBytes() const noexcept { return kind == Kind::bytes; }
-      // `map.get(key)`; nullptr is undefined.
-      const Cbor* get(double key) const;
+      Kind kind() const noexcept { return static_cast<Kind>(data.index()); }
+      bool boolean() const { return std::get<bool>(data); }
+      double number() const { return std::get<double>(data); }
+      const std::string& text() const { return std::get<std::string>(data); }
+      const Bytes& bytes() const { return std::get<Bytes>(data); }
+      const Array& items() const { return std::get<Array>(data); }
+      const Map& entries() const { return std::get<Map>(data); }
+      const Cbor* get(std::int64_t key) const;
       const Cbor* get(std::string_view key) const;
-      bool truthy() const noexcept;
-    };
-
-    // A Map key: `typeof key === "string" || typeof key === "number"`.
-    struct CborKey {
-      bool isString = false;
-      std::string text;
-      double number = 0;
     };
 
     struct CborEntry {
@@ -229,1252 +226,524 @@ namespace uos::auth::passkeys {
       Cbor value;
     };
 
-    bool sameKey(const CborKey& a, const CborKey& b) {
-      if (a.isString != b.isString) return false;
-      if (a.isString) return a.text == b.text;
-      return a.number == b.number || (std::isnan(a.number) && std::isnan(b.number));
-    }
-
-    const Cbor* Cbor::get(double key) const {
-      if (kind != Kind::map) return nullptr;
-      const CborKey wanted{.isString = false, .text = {}, .number = key};
-      for (const CborEntry& entry : entries)
-        if (sameKey(entry.key, wanted)) return &entry.value;
+    template <class Label, class Key> const Cbor* getCborMember(const Cbor& map, Key key) {
+      if (map.kind() != Cbor::Kind::map) return nullptr;
+      for (const CborEntry& entry : map.entries()) {
+        const Label* label = std::get_if<Label>(&entry.key);
+        if (label != nullptr && *label == key) return &entry.value;
+      }
       return nullptr;
     }
 
-    const Cbor* Cbor::get(std::string_view key) const {
-      if (kind != Kind::map) return nullptr;
-      const CborKey wanted{.isString = true, .text = std::string(key), .number = 0};
-      for (const CborEntry& entry : entries)
-        if (sameKey(entry.key, wanted)) return &entry.value;
-      return nullptr;
-    }
+    const Cbor* Cbor::get(std::int64_t key) const { return getCborMember<std::int64_t>(*this, key); }
+    const Cbor* Cbor::get(std::string_view key) const { return getCborMember<std::string>(*this, key); }
 
-    bool Cbor::truthy() const noexcept {
-      switch (kind) {
-        case Kind::undefined_:
-        case Kind::null_: return false;
-        case Kind::boolean: return boolean;
-        case Kind::number: return !(number == 0 || std::isnan(number));
-        case Kind::string: return !text.empty();
-        default: return true;  // objects (Uint8Array, arrays, Maps, CBORTag) are truthy
+    bool truthy(const Cbor* value) {
+      if (value == nullptr) return false;
+      switch (value->kind()) {
+        case Cbor::Kind::undefined_:
+        case Cbor::Kind::null_: return false;
+        case Cbor::Kind::boolean: return value->boolean();
+        case Cbor::Kind::number: return value->number() != 0 && !std::isnan(value->number());
+        case Cbor::Kind::string: return !value->text().empty();
+        default: return true;
       }
     }
 
-    bool truthy(const Cbor* value) { return value != nullptr && value->truthy(); }
-
-    // `String(value)` / `${value}` of a decoded item, for the library's error messages.
-    std::string jsString(const Cbor* value);
+    // Diagnostic and coercion helpers used by the attestation verifier.
     std::string jsString(const Cbor& value) {
-      switch (value.kind) {
+      switch (value.kind()) {
         case Cbor::Kind::undefined_: return "undefined";
         case Cbor::Kind::null_: return "null";
-        case Cbor::Kind::boolean: return value.boolean ? "true" : "false";
-        case Cbor::Kind::number: return rt::numberToString(value.number);
-        case Cbor::Kind::string: return value.text;
+        case Cbor::Kind::boolean: return value.boolean() ? "true" : "false";
+        case Cbor::Kind::number: return rt::numberToString(value.number());
+        case Cbor::Kind::string: return value.text();
         case Cbor::Kind::bytes: {
           std::string out;
-          for (std::size_t i = 0; i < value.bytes.size(); ++i) out += (i ? "," : "") + std::to_string(value.bytes[i]);
+          for (std::uint8_t byte : value.bytes()) out += (out.empty() ? "" : ",") + std::to_string(byte);
           return out;
         }
         case Cbor::Kind::array: {
           std::string out;
-          for (std::size_t i = 0; i < value.items.size(); ++i) {
-            if (i) out += ",";
-            const Cbor& item = value.items[i];
-            if (item.kind != Cbor::Kind::undefined_ && item.kind != Cbor::Kind::null_) out += jsString(item);
+          for (std::size_t i = 0; i < value.items().size(); ++i) {
+            if (i != 0) out += ",";
+            const Cbor& item = value.items()[i];
+            if (item.kind() != Cbor::Kind::undefined_ && item.kind() != Cbor::Kind::null_) out += jsString(item);
           }
           return out;
         }
         case Cbor::Kind::map: return "[object Map]";
-        case Cbor::Kind::tag: return "[object Object]";
       }
       return "";
     }
+
     std::string jsString(const Cbor* value) { return value == nullptr ? "undefined" : jsString(*value); }
 
-    namespace cbor {
-      constexpr int MAJOR_TYPE_UNSIGNED_INTEGER = 0;
-      constexpr int MAJOR_TYPE_NEGATIVE_INTEGER = 1;
-      constexpr int MAJOR_TYPE_BYTE_STRING = 2;
-      constexpr int MAJOR_TYPE_TEXT_STRING = 3;
-      constexpr int MAJOR_TYPE_ARRAY = 4;
-      constexpr int MAJOR_TYPE_MAP = 5;
-      constexpr int MAJOR_TYPE_TAG = 6;
-      constexpr int MAJOR_TYPE_SIMPLE_OR_FLOAT = 7;
-      constexpr const char* MAP_ERROR = "Map is not supported or well formed";
+    namespace isoCBOR {
+      constexpr std::size_t maxInput = 1024 * 1024;
+      constexpr int maxDepth = 8;
+      constexpr std::int64_t maxInteger = 9007199254740991;
+      constexpr std::int64_t minInteger = -maxInteger - 1;
 
-      // Positions and lengths are JS numbers: a declared length can reach 2^53.
       struct Decoded {
         Cbor value;
-        double length;
+        std::size_t consumed;
       };
 
-      std::uint64_t readBigEndian(BytesView data, std::size_t start, std::size_t count) {
-        std::uint64_t out = 0;
-        for (std::size_t i = 0; i < count; ++i) out = (out << 8) | data[start + i];
-        return out;
+      [[noreturn]] void invalid(std::string_view reason) { fail("Invalid passkey CBOR (" + std::string(reason) + ")"); }
+
+      void checkWidth(unsigned additional, std::uint64_t argument) {
+        constexpr std::array<std::uint64_t, 4> minimum{24, 256, 65536, 4294967296};
+        if (additional >= 24 && argument < minimum[additional - 24]) invalid("non-minimal argument");
       }
 
-      std::pair<double, double> decodeLength(BytesView data, int argument, double index) {
-        if (argument < 24) return {static_cast<double>(argument), 1};
-        const double remainingDataLength = static_cast<double>(data.size()) - index - 1;
-        const std::size_t at = static_cast<std::size_t>(index) + 1;
-        std::optional<double> output;
-        double bytes = 0;
-        switch (argument) {
-          case 24:
-            if (remainingDataLength > 0) {
-              output = data[at];
-              bytes = 2;
-            }
-            break;
-          case 25:
-            if (remainingDataLength > 1) {
-              output = static_cast<double>(readBigEndian(data, at, 2));
-              bytes = 3;
-            }
-            break;
-          case 26:
-            if (remainingDataLength > 3) {
-              output = static_cast<double>(readBigEndian(data, at, 4));
-              bytes = 5;
-            }
-            break;
-          case 27:
-            if (remainingDataLength > 7) {
-              const std::uint64_t bigOutput = readBigEndian(data, at, 8);
-              // Bound it to [24, MAX_SAFE_INTEGER], where it is safe
-              // to encode as a javascript number
-              if (bigOutput >= 24 && bigOutput <= 9007199254740991ULL) return {static_cast<double>(bigOutput), 9};
-            }
-            break;
-          default: break;
-        }
-        if (output && *output != 0 && *output >= 24) return {*output, bytes};
-        fail("Length not supported or not well formed");
-      }
+      Cbor readValue(QCBORDecodeContext& decoder, BytesView input, bool mapKey = false) {
+        const std::size_t start = QCBORDecode_Tell(&decoder);
+        if (start >= input.size()) invalid("truncated item");
+        const unsigned head = input[start];
+        const unsigned major = head >> 5;
+        const unsigned additional = head & 31;
+        if (additional >= 28 || major == 6 || (major == 7 && head != 0xf4 && head != 0xf5)) invalid("unsupported type");
+        if (mapKey && major != 0 && major != 1 && major != 3) invalid("unsupported map key");
 
-      Decoded decodeNext(BytesView data, double index);
-
-      Decoded decodeByteString(BytesView data, int argument, double index) {
-        const auto [lengthValue, lengthConsumed] = decodeLength(data, argument, index);
-        const double dataStartIndex = index + lengthConsumed;
-        const double size = static_cast<double>(data.size());
-        // `buffer.slice(start, start + length)` clamps to the buffer.
-        const double start = std::min(dataStartIndex, size);
-        const double end = std::min(dataStartIndex + lengthValue, size);
-        Cbor value;
-        value.kind = Cbor::Kind::bytes;
-        if (end > start) value.bytes.assign(data.begin() + static_cast<std::ptrdiff_t>(start), data.begin() + static_cast<std::ptrdiff_t>(end));
-        return {std::move(value), lengthConsumed + lengthValue};
-      }
-
-      Decoded decodeString(BytesView data, int argument, double index) {
-        Decoded decoded = decodeByteString(data, argument, index);
-        Cbor value;
-        value.kind = Cbor::Kind::string;
-        value.text = rt::decodeUtf8(BytesView(decoded.value.bytes));
-        return {std::move(value), decoded.length};
-      }
-
-      Decoded decodeArray(BytesView data, int argument, double index) {
-        Cbor value;
-        value.kind = Cbor::Kind::array;
-        if (argument == 0) return {std::move(value), 1};
-        const auto [length, lengthConsumed] = decodeLength(data, argument, index);
-        double consumedLength = lengthConsumed;
-        for (double i = 0; i < length; i++) {
-          const double remainingDataLength = static_cast<double>(data.size()) - index - consumedLength;
-          if (remainingDataLength <= 0) fail("array is not supported or well formed");
-          Decoded next = decodeNext(data, index + consumedLength);
-          value.items.push_back(std::move(next.value));
-          consumedLength += next.length;
-        }
-        return {std::move(value), consumedLength};
-      }
-
-      Decoded decodeMap(BytesView data, int argument, double index) {
-        Cbor result;
-        result.kind = Cbor::Kind::map;
-        if (argument == 0) return {std::move(result), 1};
-        const auto [length, lengthConsumed] = decodeLength(data, argument, index);
-        double consumedLength = lengthConsumed;
-        for (double i = 0; i < length; i++) {
-          double remainingDataLength = static_cast<double>(data.size()) - index - consumedLength;
-          if (remainingDataLength <= 0) fail(MAP_ERROR);
-          // Load key
-          Decoded key = decodeNext(data, index + consumedLength);
-          consumedLength += key.length;
-          remainingDataLength -= key.length;
-          // Check that there's enough to have a value
-          if (remainingDataLength <= 0) fail(MAP_ERROR);
-          // Technically CBOR maps can have any type as the key, and so can JS Maps
-          // However, JS Maps can only reference such keys as references which would
-          // require key iteration and pattern matching.
-          // For simplicity, since such keys are not in use with WebAuthn, this
-          // capability is not implemented and the types are restricted to strings
-          // and numbers.
-          if (key.value.kind != Cbor::Kind::string && key.value.kind != Cbor::Kind::number) fail(MAP_ERROR);
-          CborKey mapKey;
-          if (key.value.kind == Cbor::Kind::string) {
-            mapKey.isString = true;
-            mapKey.text = key.value.text;
-          } else {
-            mapKey.number = key.value.number == 0 ? 0 : key.value.number;  // Map stores -0 as +0
+        QCBORItem item;
+        if (QCBORDecode_GetNext(&decoder, &item) != QCBOR_SUCCESS) invalid("malformed item");
+        switch (item.uDataType) {
+          case QCBOR_TYPE_INT64: {
+            const std::int64_t n = item.val.int64;
+            if (n < minInteger || n > maxInteger) invalid("integer outside the supported range");
+            checkWidth(additional, static_cast<std::uint64_t>(n < 0 ? -1 - n : n));
+            return Cbor{static_cast<double>(n)};
           }
-          // CBOR Maps are not well formed if there are duplicate keys
-          for (const CborEntry& entry : result.entries)
-            if (sameKey(entry.key, mapKey)) fail(MAP_ERROR);
-          // Load value
-          Decoded value = decodeNext(data, index + consumedLength);
-          consumedLength += value.length;
-          result.entries.push_back(CborEntry{.key = std::move(mapKey), .value = std::move(value.value)});
-        }
-        return {std::move(result), consumedLength};
-      }
-
-      Cbor numberValue(double number) {
-        Cbor value;
-        value.kind = Cbor::Kind::number;
-        value.number = number;
-        return value;
-      }
-
-      Decoded decodeFloat16(BytesView data, double index) {
-        if (index + 3 > static_cast<double>(data.size())) fail("CBOR stream ended before end of Float 16");
-        // Skip the first byte
-        const std::uint64_t result = readBigEndian(data, static_cast<std::size_t>(index) + 1, 2);
-        // A minimal selection of supported values
-        if (result == 0x7c00) return {numberValue(std::numeric_limits<double>::infinity()), 3};
-        if (result == 0x7e00) return {numberValue(std::numeric_limits<double>::quiet_NaN()), 3};
-        if (result == 0xfc00) return {numberValue(-std::numeric_limits<double>::infinity()), 3};
-        fail("Float16 data is unsupported");
-      }
-
-      Decoded decodeFloat32(BytesView data, double index) {
-        if (index + 5 > static_cast<double>(data.size())) fail("CBOR stream ended before end of Float 32");
-        const std::uint32_t bits = static_cast<std::uint32_t>(readBigEndian(data, static_cast<std::size_t>(index) + 1, 4));
-        float result;
-        std::memcpy(&result, &bits, sizeof result);
-        // First byte + 4 byte float
-        return {numberValue(static_cast<double>(result)), 5};
-      }
-
-      Decoded decodeFloat64(BytesView data, double index) {
-        if (index + 9 > static_cast<double>(data.size())) fail("CBOR stream ended before end of Float 64");
-        const std::uint64_t bits = readBigEndian(data, static_cast<std::size_t>(index) + 1, 8);
-        double result;
-        std::memcpy(&result, &bits, sizeof result);
-        // First byte + 8 byte float
-        return {numberValue(result), 9};
-      }
-
-      Decoded decodeTag(BytesView data, int argument, double index) {
-        const auto [tag, tagBytes] = decodeLength(data, argument, index);
-        Decoded value = decodeNext(data, index + tagBytes);
-        Cbor result;
-        result.kind = Cbor::Kind::tag;
-        result.tag = tag;
-        result.items.push_back(std::move(value.value));
-        return {std::move(result), tagBytes + value.length};
-      }
-
-      Decoded decodeNext(BytesView data, double index) {
-        if (index >= static_cast<double>(data.size())) fail("CBOR stream ended before tag value");
-        const std::uint8_t byte = data[static_cast<std::size_t>(index)];
-        const int majorType = byte >> 5;
-        const int argument = byte & 0x1f;
-        switch (majorType) {
-          case MAJOR_TYPE_UNSIGNED_INTEGER: {
-            const auto [value, length] = decodeLength(data, argument, index);
-            return {numberValue(value), length};
+          case QCBOR_TYPE_FALSE: return Cbor{false};
+          case QCBOR_TYPE_TRUE: return Cbor{true};
+          case QCBOR_TYPE_BYTE_STRING: {
+            const auto* bytes = static_cast<const std::uint8_t*>(item.val.string.ptr);
+            checkWidth(additional, item.val.string.len);
+            BytesView view(bytes, item.val.string.len);
+            return Cbor{Bytes(view.begin(), view.end())};
           }
-          case MAJOR_TYPE_NEGATIVE_INTEGER: {
-            const auto [value, length] = decodeLength(data, argument, index);
-            return {numberValue(-value - 1), length};
+          case QCBOR_TYPE_TEXT_STRING: {
+            const auto* chars = static_cast<const char*>(item.val.string.ptr);
+            const std::string_view text(chars, item.val.string.len);
+            checkWidth(additional, text.size());
+            if (!rt::isUtf8(text)) invalid("invalid UTF-8");
+            // The previous decoder stripped a leading BOM before comparing keys.
+            if (mapKey && text.starts_with("\xef\xbb\xbf")) invalid("BOM in map key");
+            return Cbor{std::string(text)};
           }
-          case MAJOR_TYPE_BYTE_STRING: return decodeByteString(data, argument, index);
-          case MAJOR_TYPE_TEXT_STRING: return decodeString(data, argument, index);
-          case MAJOR_TYPE_ARRAY: return decodeArray(data, argument, index);
-          case MAJOR_TYPE_MAP: return decodeMap(data, argument, index);
-          case MAJOR_TYPE_TAG: return decodeTag(data, argument, index);
-          case MAJOR_TYPE_SIMPLE_OR_FLOAT: {
-            Cbor simple;
-            switch (argument) {
-              case 20:
-                simple.kind = Cbor::Kind::boolean;
-                simple.boolean = false;
-                return {std::move(simple), 1};
-              case 21:
-                simple.kind = Cbor::Kind::boolean;
-                simple.boolean = true;
-                return {std::move(simple), 1};
-              case 22: simple.kind = Cbor::Kind::null_; return {std::move(simple), 1};
-              case 23: simple.kind = Cbor::Kind::undefined_; return {std::move(simple), 1};
-              // 24: Simple value (value 32..255 in following byte)
-              case 25:  // IEEE 754 Half-Precision Float (16 bits follow)
-                return decodeFloat16(data, index);
-              case 26:  // IEEE 754 Single-Precision Float (32 bits follow)
-                return decodeFloat32(data, index);
-              case 27:  // IEEE 754 Double-Precision Float (64 bits follow)
-                return decodeFloat64(data, index);
-              // 28-30: Reserved, not well-formed in the present document
-              // 31: "break" stop code for indefinite-length items
-              default: break;
+          case QCBOR_TYPE_ARRAY:
+          case QCBOR_TYPE_MAP_AS_ARRAY: {
+            if (item.uNestingLevel >= maxDepth) invalid("nesting limit");
+            const bool isMap = item.uDataType == QCBOR_TYPE_MAP_AS_ARRAY;
+            const std::size_t count = item.val.uCount;
+            checkWidth(additional, isMap ? count / 2 : count);
+            if (count > input.size() - QCBORDecode_Tell(&decoder)) invalid("truncated container");
+            if (!isMap) {
+              Cbor::Array values;
+              values.reserve(count);
+              for (std::size_t i = 0; i < count; ++i) values.push_back(readValue(decoder, input));
+              return Cbor{std::move(values)};
             }
-            break;
+
+            Cbor::Map entries;
+            entries.reserve(count / 2);
+            BytesView previous;
+            for (std::size_t i = 0; i < count / 2; ++i) {
+              const std::size_t keyStart = QCBORDecode_Tell(&decoder);
+              Cbor key = readValue(decoder, input, true);
+              const BytesView encodedKey = input.subspan(keyStart, QCBORDecode_Tell(&decoder) - keyStart);
+              // For the admitted key types, CTAP2 order is lexicographic over canonical encodings.
+              if (!previous.empty() && !std::lexicographical_compare(previous.begin(), previous.end(), encodedKey.begin(), encodedKey.end()))
+                invalid("duplicate or out-of-order map key");
+              previous = encodedKey;
+              CborKey label = key.kind() == Cbor::Kind::number ? CborKey{static_cast<std::int64_t>(key.number())} :
+                                                               CborKey{std::get<std::string>(std::move(key.data))};
+              entries.push_back(CborEntry{std::move(label), readValue(decoder, input)});
+            }
+            return Cbor{std::move(entries)};
           }
-          default: break;
-        }
-        fail("Unsupported or not well formed at " + rt::numberToString(index));
-      }
-
-      Decoded decodePartialCBOR(BytesView data, double index) {
-        if (data.empty() || static_cast<double>(data.size()) <= index || index < 0) fail("No data");
-        return decodeNext(data, index);
-      }
-
-      void encodeLength(Bytes& output, int major, std::uint64_t argument, bool negative = false) {
-        const std::uint8_t majorEncoded = static_cast<std::uint8_t>(major << 5);
-        // Negative 0 is not a thing
-        if (negative) {
-          if (argument == 0) fail("CBOR Data Item argument cannot be zero when negative");
-          argument -= 1;
-        }
-        if (argument <= 23) {
-          output.push_back(static_cast<std::uint8_t>(majorEncoded | argument));
-        } else if (argument <= 255) {
-          output.push_back(static_cast<std::uint8_t>(majorEncoded | 24));
-          output.push_back(static_cast<std::uint8_t>(argument));
-        } else if (argument <= 65535) {
-          output.push_back(static_cast<std::uint8_t>(majorEncoded | 25));
-          for (int shift = 8; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(argument >> shift));
-        } else if (argument <= 4294967295ULL) {
-          output.push_back(static_cast<std::uint8_t>(majorEncoded | 26));
-          for (int shift = 24; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(argument >> shift));
-        } else {
-          output.push_back(static_cast<std::uint8_t>(majorEncoded | 27));
-          for (int shift = 56; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(argument >> shift));
+          default: invalid("unsupported item");
         }
       }
 
-      void encodeFloat(Bytes& output, double data) {
-        const bool fitsFloat32 = std::isfinite(data) && std::fabs(data) <= static_cast<double>(FLT_MAX) &&
-                                 static_cast<double>(static_cast<float>(data)) == data;
-        if (fitsFloat32 || !std::isfinite(data)) {
-          // Float32
-          std::uint32_t bits;
-          if (std::isnan(data)) {
-            bits = 0x7fc00000U;
-          } else {
-            const float narrowed = static_cast<float>(data);
-            std::memcpy(&bits, &narrowed, sizeof bits);
-          }
-          output.push_back(0xfa);
-          for (int shift = 24; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(bits >> shift));
-        } else {
-          // Float64
-          std::uint64_t bits;
-          std::memcpy(&bits, &data, sizeof bits);
-          output.push_back(0xfb);
-          for (int shift = 56; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(bits >> shift));
-        }
+      Decoded decodeItem(BytesView input, bool requireComplete = false) {
+        if (input.size() > maxInput) invalid("input limit");
+        QCBORDecodeContext decoder;
+        QCBORDecode_Init(&decoder, {input.data(), input.size()}, QCBOR_DECODE_MODE_MAP_AS_ARRAY);
+        Cbor value = readValue(decoder, input);
+        std::size_t consumed = 0;
+        const QCBORError result = QCBORDecode_PartialFinish(&decoder, &consumed);
+        if (result != QCBOR_SUCCESS && result != QCBOR_ERR_EXTRA_BYTES) invalid("incomplete item");
+        if (requireComplete && result == QCBOR_ERR_EXTRA_BYTES) invalid("trailing bytes");
+        return {std::move(value), consumed};
       }
 
-      void encodeNumber(Bytes& output, double data) {
-        if (rt::Number::isSafeInteger(data)) {
-          // Encode integer
-          if (data < 0) encodeLength(output, MAJOR_TYPE_NEGATIVE_INTEGER, static_cast<std::uint64_t>(-data), true);
-          else encodeLength(output, MAJOR_TYPE_UNSIGNED_INTEGER, static_cast<std::uint64_t>(data == 0 ? 0 : data));
-          return;
-        }
-        encodeFloat(output, data);
-      }
+      Cbor decodeFirst(BytesView input) { return decodeItem(input, true).value; }
 
-      void encodePartialCBOR(const Cbor& data, Bytes& output) {
-        switch (data.kind) {
-          case Cbor::Kind::boolean: output.push_back(data.boolean ? 0xf5 : 0xf4); return;
-          case Cbor::Kind::null_: output.push_back(0xf6); return;
-          case Cbor::Kind::undefined_: output.push_back(0xf7); return;
-          case Cbor::Kind::number: encodeNumber(output, data.number); return;
-          case Cbor::Kind::string: {
-            // The length prefix counts UTF-16 code units (`data.length`), the payload is UTF-8.
-            encodeLength(output, MAJOR_TYPE_TEXT_STRING, static_cast<std::uint64_t>(rt::length(data.text)));
-            const Bytes encoded = rt::encodeUtf8(data.text);
-            output.insert(output.end(), encoded.begin(), encoded.end());
+      void addText(QCBOREncodeContext& encoder, std::string_view text) { QCBOREncode_AddText(&encoder, {text.data(), text.size()}); }
+
+      void addValue(QCBOREncodeContext& encoder, const Cbor& value) {
+        switch (value.kind()) {
+          case Cbor::Kind::boolean: QCBOREncode_AddBool(&encoder, value.boolean()); return;
+          case Cbor::Kind::number: {
+            const double number = value.number();
+            if (!(number >= static_cast<double>(minInteger) && number <= static_cast<double>(maxInteger)) || std::trunc(number) != number)
+              invalid("unsupported number for encoding");
+            QCBOREncode_AddInt64(&encoder, static_cast<std::int64_t>(number));
             return;
           }
-          case Cbor::Kind::bytes:
-            encodeLength(output, MAJOR_TYPE_BYTE_STRING, data.bytes.size());
-            output.insert(output.end(), data.bytes.begin(), data.bytes.end());
-            return;
+          case Cbor::Kind::string: addText(encoder, value.text()); return;
+          case Cbor::Kind::bytes: QCBOREncode_AddBytes(&encoder, {value.bytes().data(), value.bytes().size()}); return;
           case Cbor::Kind::array:
-            encodeLength(output, MAJOR_TYPE_ARRAY, data.items.size());
-            for (const Cbor& element : data.items) encodePartialCBOR(element, output);
+            QCBOREncode_OpenArray(&encoder);
+            for (const Cbor& item : value.items()) addValue(encoder, item);
+            QCBOREncode_CloseArray(&encoder);
             return;
           case Cbor::Kind::map:
-            encodeLength(output, MAJOR_TYPE_MAP, data.entries.size());
-            for (const CborEntry& entry : data.entries) {
-              if (entry.key.isString) {
-                Cbor key;
-                key.kind = Cbor::Kind::string;
-                key.text = entry.key.text;
-                encodePartialCBOR(key, output);
-              } else {
-                encodeNumber(output, entry.key.number);
-              }
-              encodePartialCBOR(entry.value, output);
+            QCBOREncode_OpenMap(&encoder);
+            for (const CborEntry& entry : value.entries()) {
+              if (const auto* label = std::get_if<std::int64_t>(&entry.key)) QCBOREncode_AddInt64(&encoder, *label);
+              else addText(encoder, std::get<std::string>(entry.key));
+              addValue(encoder, entry.value);
             }
+            QCBOREncode_CloseMap(&encoder);
             return;
-          case Cbor::Kind::tag:
-            encodeLength(output, MAJOR_TYPE_TAG, static_cast<std::uint64_t>(data.tag));
-            encodePartialCBOR(data.items.front(), output);
-            return;
+          default: invalid("unsupported value for encoding");
         }
       }
 
-      Bytes encodeCBOR(const Cbor& data) {
-        Bytes output;
-        encodePartialCBOR(data, output);
+      // A validated item already has minimal widths and sorted labels. The encoded size is exact.
+      Bytes encode(const Decoded& decoded) {
+        Bytes output(decoded.consumed);
+        QCBOREncodeContext encoder;
+        QCBOREncode_Init(&encoder, {output.data(), output.size()});
+        addValue(encoder, decoded.value);
+        UsefulBufC encoded;
+        if (QCBOREncode_Finish(&encoder, &encoded) != QCBOR_SUCCESS || encoded.len != output.size()) invalid("encoding failed");
         return output;
       }
     }
+  }
 
-    // isoCBOR.decodeFirst / isoCBOR.encode
-    namespace isoCBOR {
-      Cbor decodeFirst(BytesView input) { return cbor::decodePartialCBOR(input, 0).value; }
-      Bytes encode(const Cbor& input) { return cbor::encodeCBOR(input); }
+  namespace cbor {
+    std::pair<Bytes, std::size_t> reencode(BytesView input, bool requireComplete) {
+      const auto decoded = isoCBOR::decodeItem(input, requireComplete);
+      return {isoCBOR::encode(decoded), decoded.consumed};
     }
+  }
 
-    // ---- asn1js (BER decoding as @peculiar/asn1-schema's AsnParser.parse drives it) -----
+  namespace {
+    // ---- ASN.1 and X.509 decoding (OpenSSL 3) ---------------------------------------------
 
     namespace asn1 {
-      // The asn1js block class a tag decodes to; it picks the value decoder.
-      enum class Type {
-        EndOfContent, Boolean, Integer, BitString, OctetString, Null, ObjectIdentifier, Enumerated, Utf8String, RelativeObjectIdentifier, TIME,
-        Sequence, Set, NumericString, PrintableString, TeletexString, VideotexString, IA5String, UTCTime, GeneralizedTime, GraphicString,
-        VisibleString, GeneralString, UniversalString, CharacterString, BmpString, DATE, TimeOfDay, DateTime, Duration, Primitive, Constructed
+      constexpr std::size_t maxInput = 16 * 1024 * 1024;
+      constexpr int maxDepth = 100;
+      constexpr int maxElements = 10'000;
+
+      [[noreturn]] void invalid(std::string_view structure) { fail("Invalid DER " + std::string(structure)); }
+
+      struct ErrorScope {
+        const bool marked = ERR_set_mark() == 1;
+        ~ErrorScope() {
+          if (marked) ERR_pop_to_mark();
+          else ERR_clear_error();
+        }
       };
 
-      struct Node {
-        Type type = Type::Primitive;
-        int tagClass = -1;  // 1 universal, 2 application, 3 context-specific, 4 private
-        double tagNumber = -1;
-        bool isHexOnly = false;
-        bool isConstructed = false;
-        bool isIndefiniteForm = false;
-        double length = 0;
-        double blockLength = 0;
-        std::string error;
-        Bytes valueHex;           // primitive content (valueBlock.valueHexView)
-        std::vector<Node> value;  // constructed content
-        int unusedBits = 0;       // BIT STRING
-        std::string text;         // string types: the decoded value
-        double year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0, millisecond = 0;  // UTCTime / GeneralizedTime
-        Bytes raw;                // valueBeforeDecode: the whole encoding
+      template <class T, auto Free>
+      struct Deleter {
+        void operator()(T* value) const noexcept { Free(value); }
       };
 
-      struct Context {
-        int depth = 0;
-        int maxDepth = 100;
-        int nodesCount = 0;
-        int maxNodes = 10000;
-        double maxContentLength = 16 * 1024 * 1024;
+      template <class T, auto Free>
+      using Ptr = std::unique_ptr<T, Deleter<T, Free>>;
+
+      struct BufferFree {
+        void operator()(unsigned char* data) const noexcept { OPENSSL_free(data); }
+      };
+      using Buffer = std::unique_ptr<unsigned char, BufferFree>;
+
+      struct DerElement {
+        BytesView contents;
+        int tag;
+        int tagClass;
+        bool constructed;
       };
 
-      struct Result {
-        double offset;
-        Node result;
-      };
-
-      bool checkBufferParams(std::string& error, BytesView inputBuffer, double inputOffset, double inputLength) {
-        if (inputBuffer.empty()) {
-          error = "Wrong parameter: inputBuffer has zero length";
-          return false;
-        }
-        if (inputOffset < 0) {
-          error = "Wrong parameter: inputOffset less than zero";
-          return false;
-        }
-        if (inputLength < 0) {
-          error = "Wrong parameter: inputLength less than zero";
-          return false;
-        }
-        if (static_cast<double>(inputBuffer.size()) - inputOffset - inputLength < 0) {
-          error = "End of input reached before message was fully decoded (inconsistent offset and length values)";
-          return false;
-        }
-        return true;
+      DerElement takeDer(BytesView& remaining, std::string_view structure) {
+        if (remaining.empty()) invalid(structure);
+        const unsigned char* cursor = remaining.data();
+        int tag = 0, tagClass = 0;
+        long size = 0;
+        const int flags = ASN1_get_object(&cursor, &size, &tag, &tagClass, static_cast<long>(remaining.size()));
+        if ((flags & ~V_ASN1_CONSTRUCTED) != 0 || size < 0) invalid(structure);
+        const bool constructed = (flags & V_ASN1_CONSTRUCTED) != 0;
+        const auto headerSize = cursor - remaining.data();
+        const int derSize = ASN1_object_size(constructed ? 1 : 0, static_cast<int>(size), tag);
+        if (derSize != headerSize + size) invalid(structure);
+        const auto contents = remaining.subspan(static_cast<std::size_t>(headerSize), static_cast<std::size_t>(size));
+        remaining = remaining.subspan(static_cast<std::size_t>(derSize));
+        return {contents, tag, tagClass, constructed};
       }
 
-      BytesView sub(BytesView buffer, double offset, double length) {
-        return buffer.subspan(static_cast<std::size_t>(offset), static_cast<std::size_t>(length));
+      // d2i accepts BER and can flatten constructed strings or mask unused bits. Check framing
+      // and the existing resource ceilings before typed decoding can normalize the input.
+      void checkDerElement(const DerElement& element, int depth, int& elements, std::string_view structure) {
+        if (depth > maxDepth || --elements < 0) invalid(structure);
+        if (element.tagClass == V_ASN1_UNIVERSAL) {
+          const int tag = element.tag;
+          const bool container = tag == V_ASN1_SEQUENCE || tag == V_ASN1_SET;
+          if (element.constructed != container || tag == V_ASN1_EOC || tag == 15 || tag >= 37) invalid(structure);
+          const BytesView contents = element.contents;
+          if (tag == V_ASN1_BIT_STRING) {
+            if (contents.empty() || contents[0] > 7) invalid(structure);
+            const unsigned int unused = contents[0];
+            if (unused != 0 && (contents.size() == 1 || (contents.back() & ((1U << unused) - 1U)) != 0)) invalid(structure);
+          }
+        }
+        if (!element.constructed) return;
+        BytesView remaining = element.contents;
+        while (!remaining.empty()) checkDerElement(takeDer(remaining, structure), depth + 1, elements, structure);
       }
 
-      // `pvutils.utilFromBase(bytes, bits)`
-      double fromBase(BytesView bytes, int bits) {
-        double out = 0;
-        for (std::uint8_t byte : bytes) out = out * std::pow(2.0, bits) + byte;
-        return out;
+      void checkDer(BytesView bytes, std::string_view structure) {
+        if (bytes.size() > maxInput) invalid(structure);
+        int elements = maxElements;
+        checkDerElement(takeDer(bytes, structure), 0, elements, structure);
+        if (!bytes.empty()) invalid(structure);
       }
 
-      Result localFromBER(BytesView inputBuffer, double inputOffset, double inputLength, Context& context);
-
-      Result localFromBERWithChildContext(BytesView inputBuffer, double inputOffset, double inputLength, Context& context) {
-        const int childDepth = context.depth + 1;
-        if (childDepth > context.maxDepth) {
-          Node failed;
-          failed.error = "Maximum ASN.1 nesting depth exceeded";
-          return {-1, std::move(failed)};
-        }
-        context.depth = childDepth;
-        struct Restore {
-          Context& context;
-          ~Restore() { context.depth -= 1; }
-        } restore{context};
-        return localFromBER(inputBuffer, inputOffset, inputLength, context);
+      template <auto Free, class T>
+      Ptr<T, Free> decode(BytesView bytes, T* (*decoder)(T**, const unsigned char**, long), std::string_view structure) {
+        const ErrorScope errors;
+        checkDer(bytes, structure);
+        const unsigned char* cursor = bytes.data();
+        Ptr<T, Free> value(decoder(nullptr, &cursor, static_cast<long>(bytes.size())));
+        if (!value || cursor != bytes.data() + bytes.size()) invalid(structure);
+        return value;
       }
 
-      // LocalConstructedValueBlock.fromBER; returns the offset or -1 with node.error set.
-      double constructedValueFromBER(Node& node, BytesView view, double inputOffset, double inputLength, Context& context, double& valueBlockLength) {
-        if (!checkBufferParams(node.error, view, inputOffset, inputLength)) return -1;
-        if (inputLength == 0) return inputOffset;  // "Zero buffer length" warning
-        double currentOffset = inputOffset;
-        while ((node.isIndefiniteForm ? 1 : inputLength) > 0) {
-          Result returnObject = localFromBERWithChildContext(view, currentOffset, inputLength, context);
-          if (returnObject.offset == -1) {
-            node.error = returnObject.result.error;
-            return -1;
-          }
-          currentOffset = returnObject.offset;
-          valueBlockLength += returnObject.result.blockLength;
-          inputLength -= returnObject.result.blockLength;
-          const bool endOfContent = returnObject.result.type == Type::EndOfContent;
-          node.value.push_back(std::move(returnObject.result));
-          if (node.isIndefiniteForm && endOfContent) break;
-        }
-        if (node.isIndefiniteForm && !node.value.empty() && node.value.back().type == Type::EndOfContent) node.value.pop_back();
-        return currentOffset;
+      template <class T, auto Item>
+      T* decodeItem(T**, const unsigned char** cursor, long size) {
+        return reinterpret_cast<T*>(ASN1_item_d2i(nullptr, cursor, size, Item()));
       }
 
-      // HexBlock.fromBER
-      double hexValueFromBER(Node& node, BytesView view, double inputOffset, double inputLength, double& valueBlockLength) {
-        if (!checkBufferParams(node.error, view, inputOffset, inputLength)) return -1;
-        const BytesView content = sub(view, inputOffset, inputLength);
-        node.valueHex.assign(content.begin(), content.end());
-        if (content.empty()) return inputOffset;  // "Zero buffer length" warning
-        valueBlockLength = inputLength;
-        return inputOffset + inputLength;
+      template <class T, auto Item>
+      void freeItem(T* value) { ASN1_item_free(reinterpret_cast<ASN1_VALUE*>(value), Item()); }
+
+      auto fromBER(BytesView bytes) { return decode<ASN1_TYPE_free>(bytes, d2i_ASN1_TYPE, "ASN.1 value"); }
+
+      BytesView stringBytes(const ASN1_STRING* value) {
+        const int size = value ? ASN1_STRING_length(value) : 0;
+        if (size <= 0) return {};
+        return {ASN1_STRING_get0_data(value), static_cast<std::size_t>(size)};
       }
 
-      // `String.fromCharCode.apply(null, bytes)`
-      std::string latin1(BytesView bytes) { return rt::binaryString(bytes); }
-
-      void decodeUtcTime(Node& node) {
-        // `/(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z/ig.exec(input)`
-        static const rt::Regex parser("(\\d{2})(\\d{2})(\\d{2})(\\d{2})(\\d{2})(\\d{2})Z", "i");
-        const std::optional<rt::RegexMatch> parserArray = parser.exec(node.text);
-        if (!parserArray) {
-          node.error = "Wrong input string for conversion";
-          return;
-        }
-        const double year = rt::parseInt(*(*parserArray)[1], 10);
-        node.year = year >= 50 ? 1900 + year : 2000 + year;
-        node.month = rt::parseInt(*(*parserArray)[2], 10);
-        node.day = rt::parseInt(*(*parserArray)[3], 10);
-        node.hour = rt::parseInt(*(*parserArray)[4], 10);
-        node.minute = rt::parseInt(*(*parserArray)[5], 10);
-        node.second = rt::parseInt(*(*parserArray)[6], 10);
+      std::string oidText(const ASN1_OBJECT* id) {
+        if (!id) invalid("object identifier");
+        std::array<char, 96> buffer{};
+        const int size = OBJ_obj2txt(buffer.data(), static_cast<int>(buffer.size()), id, 1);
+        if (size <= 0) invalid("object identifier");
+        if (size < static_cast<int>(buffer.size())) return {buffer.data(), static_cast<std::size_t>(size)};
+        std::string text(static_cast<std::size_t>(size), '\0');
+        if (OBJ_obj2txt(text.data(), size + 1, id, 1) != size) invalid("object identifier");
+        return text;
       }
 
-      // GeneralizedTime.fromString: throws Error("Wrong input string for conversion").
-      void decodeGeneralizedTime(Node& node) {
-        const std::string& inputString = node.text;
-        const auto wrong = [] { fail("Wrong input string for conversion"); };
-        bool isUTC = false;
-        std::string timeString;
-        std::string dateTimeString;
-        double fractionPart = 0;
-        double hourDifference = 0;
-        double minuteDifference = 0;
-        const double inputLength = static_cast<double>(rt::length(inputString));
-        const std::string last = inputLength > 0 ? rt::charAt(inputString, inputLength - 1) : std::string();
-        if (last == "Z") {
-          timeString = rt::substring(inputString, 0, inputLength - 1);
-          isUTC = true;
-        } else {
-          // `new Number(inputString[inputString.length - 1])`: undefined is NaN.
-          if (inputLength == 0 || std::isnan(rt::stringToNumber(last))) wrong();
-          timeString = inputString;
-        }
-        if (isUTC) {
-          if (rt::indexOf(timeString, "+") != -1) wrong();
-          if (rt::indexOf(timeString, "-") != -1) wrong();
-        } else {
-          double multiplier = 1;
-          double differencePosition = static_cast<double>(rt::indexOf(timeString, "+"));
-          std::string differenceString;
-          if (differencePosition == -1) {
-            differencePosition = static_cast<double>(rt::indexOf(timeString, "-"));
-            multiplier = -1;
-          }
-          if (differencePosition != -1) {
-            differenceString = rt::substring(timeString, differencePosition + 1);
-            timeString = rt::substring(timeString, 0, differencePosition);
-            const auto differenceLength = rt::length(differenceString);
-            if (differenceLength != 2 && differenceLength != 4) wrong();
-            double number = rt::parseInt(rt::substring(differenceString, 0, 2), 10);
-            if (std::isnan(number)) wrong();
-            hourDifference = multiplier * number;
-            if (differenceLength == 4) {
-              number = rt::parseInt(rt::substring(differenceString, 2, 4), 10);
-              if (std::isnan(number)) wrong();
-              minuteDifference = multiplier * number;
-            }
-          }
-        }
-        double fractionPointPosition = static_cast<double>(rt::indexOf(timeString, "."));
-        if (fractionPointPosition == -1) fractionPointPosition = static_cast<double>(rt::indexOf(timeString, ","));
-        if (fractionPointPosition != -1) {
-          const double fractionPartCheck = rt::stringToNumber("0" + rt::substring(timeString, fractionPointPosition));
-          if (std::isnan(fractionPartCheck)) wrong();
-          fractionPart = fractionPartCheck;
-          dateTimeString = rt::substring(timeString, 0, fractionPointPosition);
-        } else {
-          dateTimeString = timeString;
-        }
-        const char* pattern = nullptr;
-        switch (rt::length(dateTimeString)) {
-          case 8:
-            pattern = "(\\d{4})(\\d{2})(\\d{2})";
-            if (fractionPointPosition != -1) wrong();
-            break;
-          case 10: {
-            pattern = "(\\d{4})(\\d{2})(\\d{2})(\\d{2})";
-            if (fractionPointPosition != -1) {
-              double fractionResult = 60 * fractionPart;
-              node.minute = std::floor(fractionResult);
-              fractionResult = 60 * (fractionResult - node.minute);
-              node.second = std::floor(fractionResult);
-              fractionResult = 1000 * (fractionResult - node.second);
-              node.millisecond = std::floor(fractionResult);
-            }
-            break;
-          }
-          case 12: {
-            pattern = "(\\d{4})(\\d{2})(\\d{2})(\\d{2})(\\d{2})";
-            if (fractionPointPosition != -1) {
-              double fractionResult = 60 * fractionPart;
-              node.second = std::floor(fractionResult);
-              fractionResult = 1000 * (fractionResult - node.second);
-              node.millisecond = std::floor(fractionResult);
-            }
-            break;
-          }
-          case 14: {
-            pattern = "(\\d{4})(\\d{2})(\\d{2})(\\d{2})(\\d{2})(\\d{2})";
-            if (fractionPointPosition != -1) node.millisecond = std::floor(1000 * fractionPart);
-            break;
-          }
-          default: wrong();
-        }
-        const rt::Regex parser(pattern, "i");
-        const std::optional<rt::RegexMatch> parserArray = parser.exec(dateTimeString);
-        if (!parserArray) wrong();
-        for (std::size_t j = 1; j < parserArray->captures.size(); j++) {
-          const double parsed = rt::parseInt(*(*parserArray)[j], 10);
-          switch (j) {
-            case 1: node.year = parsed; break;
-            case 2: node.month = parsed; break;
-            case 3: node.day = parsed; break;
-            case 4: node.hour = parsed + hourDifference; break;
-            case 5: node.minute = parsed + minuteDifference; break;
-            case 6: node.second = parsed; break;
-            default: wrong();
-          }
-        }
-        if (!isUTC) {
-          // `new Date(year, month, day, ...)` in local time (UTC on the host), then read back with
-          // the UTC getters (getUTCDay is the weekday: the library's own quirk).
-          const rt::Date tempDate(rt::Date::UTC(node.year, node.month, node.day, node.hour, node.minute, node.second, node.millisecond));
-          node.year = tempDate.getUTCFullYear();
-          node.month = tempDate.getUTCMonth();
-          node.day = tempDate.getUTCDay();
-          node.hour = tempDate.getUTCHours();
-          node.minute = tempDate.getUTCMinutes();
-          node.second = tempDate.getUTCSeconds();
-          node.millisecond = tempDate.getUTCMilliseconds();
-        }
-      }
-
-      // BaseStringBlock.fromBER's `fromBuffer` for each string class.
-      void decodeString(Node& node) {
-        const BytesView bytes(node.valueHex);
-        switch (node.type) {
-          case Type::Utf8String:
-          case Type::DATE:
-          case Type::TimeOfDay:
-          case Type::DateTime:
-          case Type::Duration:
-          case Type::TIME:
-            // `decodeURIComponent(escape(binary))`, the raw binary string when that throws.
-            if (rt::isUtf8(bytes)) node.text = rt::decodeUtf8(bytes, {.ignoreBOM = true});
-            else node.text = latin1(bytes);
-            return;
-          case Type::BmpString: {
-            if (bytes.size() % 2 != 0) throw rt::RangeError("Out of bounds access");
-            std::u16string units;
-            for (std::size_t i = 0; i + 1 < bytes.size(); i += 2) units.push_back(static_cast<char16_t>((bytes[i] << 8) | bytes[i + 1]));
-            node.text = rt::fromUtf16(units);
-            return;
-          }
-          case Type::UniversalString: {
-            if (bytes.size() % 4 != 0) throw rt::RangeError("byte length of Uint32Array should be a multiple of 4");
-            std::u16string units;
-            for (std::size_t i = 0; i < bytes.size(); i += 4) units.push_back(static_cast<char16_t>(bytes[i + 3] | (bytes[i + 2] << 8)));
-            node.text = rt::fromUtf16(units);
-            return;
-          }
-          case Type::UTCTime:
-            node.text = latin1(bytes);
-            decodeUtcTime(node);
-            return;
-          case Type::GeneralizedTime:
-            node.text = latin1(bytes);
-            decodeGeneralizedTime(node);
-            return;
-          default: node.text = latin1(bytes); return;
-        }
-      }
-
-      // `localFromBERWithChildContext(buf, 0, buf.byteLength, context)` inside try/catch: the
-      // OCTET STRING and BIT STRING decoders probe their content for an embedded encoding. Only
-      // its side effects on the shared context (node count) are observable.
-      void probeEmbedded(BytesView content, Context& context) {
-        if (content.empty()) return;
-        try {
-          (void)localFromBERWithChildContext(content, 0, static_cast<double>(content.size()), context);
-        } catch (...) {
-        }
-      }
-
-      // The class-specific fromBER after the identification and length blocks.
-      double valueFromBER(Node& node, BytesView view, double inputOffset, double valueLength, Context& context) {
-        const double headerLength = node.blockLength;  // id + length blocks
-        double valueBlockLength = 0;
-        double resultOffset = -1;
-        switch (node.type) {
-          case Type::EndOfContent: resultOffset = inputOffset; break;
-          case Type::Null: {
-            node.blockLength = headerLength + valueLength;
-            if (inputOffset + valueLength > static_cast<double>(view.size())) {
-              node.error = "End of input reached before message was fully decoded (inconsistent offset and length values)";
-              return -1;
-            }
-            return inputOffset + valueLength;
-          }
-          case Type::Boolean: {
-            if (!checkBufferParams(node.error, view, inputOffset, valueLength)) return -1;
-            const BytesView content = sub(view, inputOffset, valueLength);
-            node.valueHex.assign(content.begin(), content.end());
-            valueBlockLength = valueLength;
-            resultOffset = inputOffset + valueLength;
-            break;
-          }
-          case Type::Integer:
-          case Type::Enumerated:
-          case Type::Primitive: resultOffset = hexValueFromBER(node, view, inputOffset, valueLength, valueBlockLength); break;
-          case Type::OctetString: {
-            if (valueLength == 0) {
-              node.blockLength = headerLength;
-              return inputOffset;
-            }
-            if (!node.isConstructed) probeEmbedded(sub(view, inputOffset, std::min(valueLength, static_cast<double>(view.size()) - inputOffset)), context);
-            if (node.isConstructed) {
-              resultOffset = constructedValueFromBER(node, view, inputOffset, valueLength, context, valueBlockLength);
-              if (resultOffset == -1) return -1;
-              for (const Node& child : node.value) {
-                if (child.type == Type::EndOfContent) {
-                  if (node.isIndefiniteForm) break;
-                  node.error = "EndOfContent is unexpected, OCTET STRING may consists of OCTET STRINGs only";
-                  return -1;
-                }
-                if (child.type != Type::OctetString) {
-                  node.error = "OCTET STRING may consists of OCTET STRINGs only";
-                  return -1;
-                }
-              }
-            } else {
-              resultOffset = hexValueFromBER(node, view, inputOffset, valueLength, valueBlockLength);
-              valueBlockLength = valueLength;
-            }
-            break;
-          }
-          case Type::BitString: {
-            if (valueLength == 0) {
-              resultOffset = inputOffset;
-              break;
-            }
-            if (node.isConstructed) {
-              resultOffset = constructedValueFromBER(node, view, inputOffset, valueLength, context, valueBlockLength);
-              if (resultOffset == -1) return -1;
-              int unusedBits = 0;
-              for (const Node& child : node.value) {
-                if (child.type == Type::EndOfContent) {
-                  if (node.isIndefiniteForm) break;
-                  node.error = "EndOfContent is unexpected, BIT STRING may consists of BIT STRINGs only";
-                  return -1;
-                }
-                if (child.type != Type::BitString) {
-                  node.error = "BIT STRING may consists of BIT STRINGs only";
-                  return -1;
-                }
-                if (unusedBits > 0 && child.unusedBits > 0) {
-                  node.error = "Using of \"unused bits\" inside constructive BIT STRING allowed for least one only";
-                  return -1;
-                }
-                unusedBits = child.unusedBits;
-              }
-              node.unusedBits = unusedBits;
-              break;
-            }
-            if (!checkBufferParams(node.error, view, inputOffset, valueLength)) return -1;
-            const BytesView content = sub(view, inputOffset, valueLength);
-            node.unusedBits = content[0];
-            if (node.unusedBits > 7) {
-              node.error = "Unused bits for BitString must be in range 0-7";
-              return -1;
-            }
-            if (node.unusedBits == 0) probeEmbedded(content.subspan(1), context);
-            node.valueHex.assign(content.begin() + 1, content.end());
-            valueBlockLength = valueLength;
-            resultOffset = inputOffset + valueLength;
-            break;
-          }
-          case Type::ObjectIdentifier:
-          case Type::RelativeObjectIdentifier: {
-            resultOffset = inputOffset;
-            double remaining = valueLength;
-            while (remaining > 0) {
-              if (!checkBufferParams(node.error, view, resultOffset, remaining)) return -1;
-              const BytesView content = sub(view, resultOffset, remaining);
-              std::size_t sidLength = 0;
-              for (std::size_t i = 0; i < content.size(); ++i) {
-                ++sidLength;
-                if ((content[i] & 0x80) == 0) break;
-              }
-              if ((content[sidLength - 1] & 0x80) != 0) {
-                node.error = "End of input reached before message was fully decoded";
-                return -1;
-              }
-              node.valueHex.insert(node.valueHex.end(), content.begin(), content.begin() + static_cast<std::ptrdiff_t>(sidLength));
-              valueBlockLength += static_cast<double>(sidLength);
-              remaining -= static_cast<double>(sidLength);
-              resultOffset += static_cast<double>(sidLength);
-            }
-            break;
-          }
-          case Type::Sequence:
-          case Type::Set:
-          case Type::Constructed: resultOffset = constructedValueFromBER(node, view, inputOffset, valueLength, context, valueBlockLength); break;
-          default: {
-            // BaseStringBlock.fromBER
-            resultOffset = hexValueFromBER(node, view, inputOffset, valueLength, valueBlockLength);
-            if (resultOffset == -1) return -1;
-            decodeString(node);
-            break;
-          }
-        }
-        if (resultOffset == -1) return -1;
-        node.blockLength = headerLength + valueBlockLength;
-        return resultOffset;
-      }
-
-      Result localFromBER(BytesView inputBuffer, double inputOffset, double inputLength, Context& context) {
-        const double incomingOffset = inputOffset;
-        Node node;
-        const auto failed = [&](std::string error) {
-          node.error = std::move(error);
-          return Result{-1, std::move(node)};
-        };
-        if (!checkBufferParams(node.error, inputBuffer, inputOffset, inputLength)) return Result{-1, std::move(node)};
-        if (inputLength == 0) return failed("Zero buffer length");
-        if (++context.nodesCount > context.maxNodes) return failed("Maximum ASN.1 node count exceeded");
-
-        // Identification block
-        const BytesView idBuffer = sub(inputBuffer, inputOffset, inputLength);
-        const std::uint8_t first = idBuffer[0];
-        node.tagClass = (first >> 6) + 1;
-        node.isConstructed = (first & 0x20) == 0x20;
-        double idBlockLength = 1;
-        if ((first & 0x1F) != 0x1F) {
-          node.tagNumber = first & 0x1F;
-        } else {
-          std::size_t count = 0;
-          while (true) {
-            const std::size_t tagByteIndex = count + 1;
-            if (tagByteIndex >= idBuffer.size()) return failed("End of input reached before message was fully decoded");
-            count++;
-            if ((idBuffer[tagByteIndex] & 0x80) == 0x00) break;
-          }
-          idBlockLength = static_cast<double>(count + 1);
-          if (idBlockLength <= 9) {
-            double tagNumber = 0;
-            for (std::size_t i = 0; i < count; i++) tagNumber = tagNumber * 128 + (idBuffer[i + 1] & 0x7F);
-            node.tagNumber = tagNumber;
-          } else {
-            node.isHexOnly = true;
-          }
-        }
-        if (node.tagClass == 1 && node.isConstructed && !node.isHexOnly) {
-          const double t = node.tagNumber;
-          if (t == 1 || t == 2 || t == 5 || t == 6 || t == 9 || t == 13 || t == 14 || t == 23 || t == 24 || t == 31 || t == 32 || t == 33 || t == 34)
-            return failed("Constructed encoding used for primitive type");
-        }
-        inputOffset += idBlockLength;
-        inputLength -= idBlockLength;
-
-        // Length block
-        if (!checkBufferParams(node.error, inputBuffer, inputOffset, inputLength)) return Result{-1, std::move(node)};
-        const BytesView lenBuffer = sub(inputBuffer, inputOffset, inputLength);
-        if (lenBuffer.empty()) return failed("Zero buffer length");
-        if (lenBuffer[0] == 0xFF) return failed("Length block 0xFF is reserved by standard");
-        double lenBlockLength = 1;
-        node.isIndefiniteForm = lenBuffer[0] == 0x80;
-        if (!node.isIndefiniteForm) {
-          if ((lenBuffer[0] & 0x80) == 0) {
-            node.length = lenBuffer[0];
-          } else {
-            const std::size_t count = lenBuffer[0] & 0x7F;
-            if (count > 8) return failed("Too big integer");
-            if (count + 1 > lenBuffer.size()) return failed("End of input reached before message was fully decoded");
-            node.length = fromBase(lenBuffer.subspan(1, count), 8);
-            lenBlockLength = static_cast<double>(count + 1);
-          }
-        }
-        inputOffset += lenBlockLength;
-        inputLength -= lenBlockLength;
-        node.blockLength = idBlockLength + lenBlockLength;
-
-        const double valueLength = node.isIndefiniteForm ? inputLength : node.length;
-        if (valueLength > context.maxContentLength) return failed("Maximum ASN.1 content length exceeded");
-        if (!node.isConstructed && node.isIndefiniteForm) return failed("Indefinite length form used for primitive encoding form");
-
-        if (node.tagClass == 1) {
-          if (node.tagNumber >= 37 && !node.isHexOnly) return failed("UNIVERSAL 37 and upper tags are reserved by ASN.1 standard");
-          switch (node.isHexOnly ? -1 : static_cast<int>(node.tagNumber)) {
-            case 0:
-              if (node.isConstructed && node.length > 0) return failed("Type [UNIVERSAL 0] is reserved");
-              node.type = Type::EndOfContent;
-              break;
-            case 1: node.type = Type::Boolean; break;
-            case 2: node.type = Type::Integer; break;
-            case 3: node.type = Type::BitString; break;
-            case 4: node.type = Type::OctetString; break;
-            case 5: node.type = Type::Null; break;
-            case 6: node.type = Type::ObjectIdentifier; break;
-            case 10: node.type = Type::Enumerated; break;
-            case 12: node.type = Type::Utf8String; break;
-            case 13: node.type = Type::RelativeObjectIdentifier; break;
-            case 14: node.type = Type::TIME; break;
-            case 15: return failed("[UNIVERSAL 15] is reserved by ASN.1 standard");
-            case 16: node.type = Type::Sequence; break;
-            case 17: node.type = Type::Set; break;
-            case 18: node.type = Type::NumericString; break;
-            case 19: node.type = Type::PrintableString; break;
-            case 20: node.type = Type::TeletexString; break;
-            case 21: node.type = Type::VideotexString; break;
-            case 22: node.type = Type::IA5String; break;
-            case 23: node.type = Type::UTCTime; break;
-            case 24: node.type = Type::GeneralizedTime; break;
-            case 25: node.type = Type::GraphicString; break;
-            case 26: node.type = Type::VisibleString; break;
-            case 27: node.type = Type::GeneralString; break;
-            case 28: node.type = Type::UniversalString; break;
-            case 29: node.type = Type::CharacterString; break;
-            case 30: node.type = Type::BmpString; break;
-            case 31: node.type = Type::DATE; break;
-            case 32: node.type = Type::TimeOfDay; break;
-            case 33: node.type = Type::DateTime; break;
-            case 34: node.type = Type::Duration; break;
-            default: node.type = node.isConstructed ? Type::Constructed : Type::Primitive; break;
-          }
-        } else {
-          node.type = node.isConstructed ? Type::Constructed : Type::Primitive;
-        }
-        const double resultOffset = valueFromBER(node, inputBuffer, inputOffset, valueLength, context);
-        if (resultOffset == -1) return Result{-1, std::move(node)};
-        const double rawLength = std::min(node.blockLength, static_cast<double>(inputBuffer.size()) - incomingOffset);
-        const BytesView raw = sub(inputBuffer, incomingOffset, rawLength);
-        node.raw.assign(raw.begin(), raw.end());
-        return Result{resultOffset, std::move(node)};
-      }
-
-      // `asn1js.fromBER(buffer)`: one top-level element; trailing bytes are ignored.
-      Result fromBER(BytesView inputBuffer) {
-        if (inputBuffer.empty()) {
-          Node node;
-          node.error = "Input buffer has zero length";
-          return {-1, std::move(node)};
-        }
-        Context context;
-        return localFromBER(inputBuffer, 0, static_cast<double>(inputBuffer.size()), context);
-      }
-
-      // AsnParser.parse's first step: throws Error(result.error) when the top element failed.
-      Node parse(BytesView data) {
-        Result parsed = fromBER(data);
-        if (!parsed.result.error.empty()) fail(parsed.result.error);
-        return std::move(parsed.result);
-      }
-
-      bool is(const Node& node, int tagClass, double tagNumber, bool constructed) {
-        return node.tagClass == tagClass && !node.isHexOnly && node.tagNumber == tagNumber && node.isConstructed == constructed;
-      }
-      bool isUniversal(const Node& node, Type type) { return node.tagClass == 1 && node.type == type; }
-
-      // The ObjectIdentifier converter's dotted string.
-      std::string oidString(const Node& node) {
-        std::string out;
-        std::uint64_t sid = 0;
-        std::size_t sidBytes = 0;
-        bool firstSid = true;
-        const auto flush = [&] {
-          if (firstSid && node.type == Type::ObjectIdentifier) {
-            if (sid < 40) out += "0." + std::to_string(sid);
-            else if (sid < 80) out += "1." + std::to_string(sid - 40);
-            else out += "2." + std::to_string(sid - 80);
-          } else {
-            if (!out.empty()) out += ".";
-            out += std::to_string(sid);
-          }
-          firstSid = false;
-          sid = 0;
-          sidBytes = 0;
-        };
-        for (std::uint8_t byte : node.valueHex) {
-          sid = (sid << 7) | (byte & 0x7F);
-          ++sidBytes;
-          if ((byte & 0x80) == 0) flush();
-        }
-        return out;
-      }
-
-      // `Date.UTC(...)` of a parsed UTCTime / GeneralizedTime (`toDate().getTime()`).
-      double timeValue(const Node& node) {
-        if (node.type == Type::UTCTime) return rt::Date::UTC(node.year, node.month - 1, node.day, node.hour, node.minute, node.second);
-        return rt::Date::UTC(node.year, node.month - 1, node.day, node.hour, node.minute, node.second, node.millisecond);
+      const ASN1_OBJECT* algorithmOid(const X509_ALGOR* algorithm) {
+        const ASN1_OBJECT* oid = nullptr;
+        X509_ALGOR_get0(&oid, nullptr, nullptr, algorithm);
+        return oid;
       }
     }
 
-    // AsnParser.parse(signature, ECDSASigValue) with its exact errors; {r, s} as stored.
-    struct EcdsaSigValue {
-      Bytes r;
-      Bytes s;
+    auto parseEcdsaSigValue(BytesView signature) {
+      // Two scalars of at most 66 bytes, each with a possible DER sign byte.
+      if (signature.size() > 141) asn1::invalid("ECDSA signature");
+      auto decoded = asn1::decode<ECDSA_SIG_free>(signature, d2i_ECDSA_SIG, "ECDSA signature");
+      const BIGNUM* r = ECDSA_SIG_get0_r(decoded.get());
+      const BIGNUM* s = ECDSA_SIG_get0_s(decoded.get());
+      if (BN_is_negative(r) || BN_is_zero(r) || BN_is_negative(s) || BN_is_zero(s)) asn1::invalid("ECDSA signature");
+      return decoded;
+    }
+
+    Bytes parseOctetString(BytesView data) {
+      const auto value = asn1::fromBER(data);
+      if (ASN1_TYPE_get(value.get()) != V_ASN1_OCTET_STRING) asn1::invalid("OCTET STRING");
+      const BytesView bytes = asn1::stringBytes(value->value.octet_string);
+      return {bytes.begin(), bytes.end()};
+    }
+
+    struct AndroidKeyDescription {
+      ASN1_INTEGER* attestationVersion;
+      ASN1_ENUMERATED* attestationSecurityLevel;
+      ASN1_INTEGER* keymasterVersion;
+      ASN1_ENUMERATED* keymasterSecurityLevel;
+      ASN1_OCTET_STRING* attestationChallenge;
+      ASN1_OCTET_STRING* uniqueId;
+      ASN1_STRING* softwareEnforced;
+      ASN1_STRING* teeEnforced;
     };
 
-    EcdsaSigValue parseEcdsaSigValue(BytesView signature) {
-      asn1::Node top = asn1::parse(signature);
-      // asn1-schema compares a generic constructed (context-class) element against a
-      // context-class schema with the element's own tag number.
-      int schemaClass = 1;
-      double schemaNumber = 16;
-      if (top.type == asn1::Type::Constructed) {
-        schemaClass = 3;
-        schemaNumber = top.tagNumber;
-        if (top.isHexOnly) fail("Data does not match to ECDSASigValue ASN1 schema. Error decoding idBlock for ASN.1 schema");
-      }
-      const std::string mismatch = "Data does not match to ECDSASigValue ASN1 schema.";
-      if (top.tagClass != schemaClass || top.tagNumber != schemaNumber || !top.isConstructed || top.isHexOnly) fail(mismatch);
-      if (top.value.empty()) fail(mismatch + " Inconsistent object length");
-      if (!asn1::is(top.value[0], 1, 2, false)) fail(mismatch);
-      if (top.value.size() < 2) fail(mismatch + " Inconsistent length between ASN.1 data and schema");
-      if (!asn1::is(top.value[1], 1, 2, false)) fail(mismatch);
-      return {.r = top.value[0].valueHex, .s = top.value[1].valueHex};
+    ASN1_SEQUENCE(AndroidKeyDescription) = {
+      ASN1_SIMPLE(AndroidKeyDescription, attestationVersion, ASN1_INTEGER),
+      ASN1_SIMPLE(AndroidKeyDescription, attestationSecurityLevel, ASN1_ENUMERATED),
+      ASN1_SIMPLE(AndroidKeyDescription, keymasterVersion, ASN1_INTEGER),
+      ASN1_SIMPLE(AndroidKeyDescription, keymasterSecurityLevel, ASN1_ENUMERATED),
+      ASN1_SIMPLE(AndroidKeyDescription, attestationChallenge, ASN1_OCTET_STRING),
+      ASN1_SIMPLE(AndroidKeyDescription, uniqueId, ASN1_OCTET_STRING),
+      ASN1_SIMPLE(AndroidKeyDescription, softwareEnforced, ASN1_SEQUENCE),
+      ASN1_SIMPLE(AndroidKeyDescription, teeEnforced, ASN1_SEQUENCE),
+    } static_ASN1_SEQUENCE_END(AndroidKeyDescription)
+
+    auto parseAndroidKeyDescription(BytesView bytes) {
+      return asn1::decode<asn1::freeItem<AndroidKeyDescription, AndroidKeyDescription_it>>(
+        bytes, asn1::decodeItem<AndroidKeyDescription, AndroidKeyDescription_it>, "Android KeyDescription");
     }
 
-    // ---- X.509 structures as @peculiar/asn1-x509 parses them ---------------------------
+    struct AppleAttestationNonce {
+      ASN1_OCTET_STRING* nonce;
+    };
 
-    // One AttributeTypeAndValue: the type OID and the AttributeValue's `toString()`.
+    ASN1_SEQUENCE(AppleAttestationNonce) = {
+      ASN1_EXP(AppleAttestationNonce, nonce, ASN1_OCTET_STRING, 1),
+    } static_ASN1_SEQUENCE_END(AppleAttestationNonce)
+
+    Bytes parseAppleNonce(BytesView bytes) {
+      const auto value = asn1::decode<asn1::freeItem<AppleAttestationNonce, AppleAttestationNonce_it>>(
+        bytes, asn1::decodeItem<AppleAttestationNonce, AppleAttestationNonce_it>, "Apple attestation nonce");
+      const BytesView nonce = asn1::stringBytes(value->nonce);
+      return {nonce.begin(), nonce.end()};
+    }
+
     struct NameAttribute {
       std::string type;
       std::string value;
     };
     using RelativeDistinguishedName = std::vector<NameAttribute>;
 
-    struct Extension {
-      std::string extnID;
-      bool critical = false;
-      Bytes extnValue;
-    };
+    std::vector<RelativeDistinguishedName> parseName(const X509_NAME* name) {
+      const asn1::ErrorScope errors;
+      // X509_NAME's flat entry list drops empty RDNs. Reject them before comparing names.
+      const unsigned char* der = nullptr;
+      std::size_t derSize = 0;
+      if (X509_NAME_get0_der(name, &der, &derSize) != 1 || derSize > asn1::maxInput) asn1::invalid("X.509 distinguished name");
+      BytesView encoded(der, derSize);
+      BytesView rdns = asn1::takeDer(encoded, "X.509 distinguished name").contents;
+      while (!rdns.empty()) {
+        if (asn1::takeDer(rdns, "X.509 distinguished name").contents.empty()) asn1::invalid("X.509 relative distinguished name");
+      }
+
+      std::vector<RelativeDistinguishedName> out;
+      int lastSet = -1;
+      const int count = X509_NAME_entry_count(name);
+      for (int i = 0; i < count; ++i) {
+        const X509_NAME_ENTRY* entry = X509_NAME_get_entry(name, i);
+        const int set = X509_NAME_ENTRY_set(entry);
+        if (set != lastSet) {
+          out.emplace_back();
+          lastSet = set;
+        }
+        const ASN1_STRING* data = X509_NAME_ENTRY_get_data(entry);
+        switch (ASN1_STRING_type(data)) {
+          case V_ASN1_UTF8STRING:
+          case V_ASN1_PRINTABLESTRING:
+          case V_ASN1_T61STRING:
+          case V_ASN1_IA5STRING:
+          case V_ASN1_UNIVERSALSTRING:
+          case V_ASN1_BMPSTRING: break;
+          default: asn1::invalid("X.509 name attribute type");
+        }
+        unsigned char* raw = nullptr;
+        const int size = ASN1_STRING_to_UTF8(&raw, data);
+        const asn1::Buffer utf8(raw);
+        if (size < 0) asn1::invalid("X.509 distinguished name");
+        std::string value;
+        if (size > 0) value.assign(reinterpret_cast<const char*>(utf8.get()), static_cast<std::size_t>(size));
+        out.back().push_back({asn1::oidText(X509_NAME_ENTRY_get_object(entry)), std::move(value)});
+      }
+      return out;
+    }
+
+    double parseTime(const ASN1_TIME* time) {
+      const BytesView bytes = asn1::stringBytes(time);
+      const int type = time ? ASN1_STRING_type(time) : V_ASN1_UNDEF;
+      const std::size_t size = type == V_ASN1_UTCTIME ? 13 : 15;
+      std::tm fields{};
+      if ((type != V_ASN1_UTCTIME && type != V_ASN1_GENERALIZEDTIME) || bytes.size() != size ||
+          bytes.back() != 'Z' || ASN1_TIME_to_tm(time, &fields) != 1)
+        asn1::invalid("X.509 time");
+
+      using namespace std::chrono;
+      const auto day = sys_days(year(fields.tm_year + 1900) / (fields.tm_mon + 1) / fields.tm_mday);
+      const auto point = day + hours(fields.tm_hour) + minutes(fields.tm_min) + seconds(fields.tm_sec);
+      return duration<double, std::milli>(point.time_since_epoch()).count();
+    }
+
+    std::string serialHex(const ASN1_INTEGER* serial) {
+      if (!serial || ASN1_STRING_type(serial) != V_ASN1_INTEGER) asn1::invalid("X.509 serial number");
+      // OpenSSL stores the unsigned magnitude without DER's sign-padding byte.
+      return toHex(asn1::stringBytes(serial));
+    }
 
     struct Certificate {
-      Bytes der;
-      Bytes tbsRaw;
-      double version = 0;
-      Bytes serialNumber;
-      std::string signature;  // tbsCertificate.signature.algorithm
-      std::vector<RelativeDistinguishedName> issuer;
-      Bytes issuerRaw;
-      std::vector<RelativeDistinguishedName> subject;
-      Bytes subjectRaw;
-      double notBefore = 0;
-      double notAfter = 0;
-      std::string publicKeyAlgorithm;
-      std::optional<Bytes> publicKeyParameters;  // the raw encoding of `parameters`
-      Bytes subjectPublicKey;
-      Bytes subjectPublicKeyInfoRaw;
-      std::optional<std::vector<Extension>> extensions;
-      std::string signatureAlgorithm;
-      Bytes signatureAlgorithmRaw;
-      Bytes signatureValue;
+      std::shared_ptr<X509> x509;
+      double notBefore;
+      double notAfter;
     };
 
-    [[noreturn]] void schemaMismatch(std::string_view schema) { fail("Data does not match to " + std::string(schema) + " ASN1 schema."); }
-
-    const asn1::Node& requireChild(const asn1::Node& node, std::size_t index, std::string_view schema) {
-      if (index >= node.value.size()) schemaMismatch(schema);
-      return node.value[index];
+    void checkOctetAligned(const ASN1_BIT_STRING* bits, std::string_view structure) {
+      if (!bits || (bits->flags & 7) != 0 || ASN1_STRING_length(bits) == 0) asn1::invalid(structure);
     }
 
-    // AttributeValue.toString(): ia5String, else the hex of anyValue, else the DirectoryString.
-    std::string attributeValueString(const asn1::Node& value) {
-      if (value.tagClass == 1) {
-        switch (value.type) {
-          case asn1::Type::IA5String:
-          case asn1::Type::BmpString:
-          case asn1::Type::PrintableString:
-          case asn1::Type::TeletexString:
-          case asn1::Type::UniversalString:
-          case asn1::Type::Utf8String: return value.text;
-          default: break;
-        }
-      }
-      return toHex(value.raw);
-    }
-
-    std::vector<RelativeDistinguishedName> parseName(const asn1::Node& name, std::string_view schema) {
-      if (!asn1::isUniversal(name, asn1::Type::Sequence)) schemaMismatch(schema);
-      std::vector<RelativeDistinguishedName> out;
-      for (const asn1::Node& set : name.value) {
-        if (!asn1::isUniversal(set, asn1::Type::Set)) schemaMismatch("RelativeDistinguishedName");
-        RelativeDistinguishedName rdn;
-        for (const asn1::Node& attribute : set.value) {
-          if (!asn1::isUniversal(attribute, asn1::Type::Sequence) || attribute.value.size() < 2 ||
-              !asn1::isUniversal(attribute.value[0], asn1::Type::ObjectIdentifier))
-            schemaMismatch("AttributeTypeAndValue");
-          rdn.push_back(NameAttribute{.type = asn1::oidString(attribute.value[0]), .value = attributeValueString(attribute.value[1])});
-        }
-        out.push_back(std::move(rdn));
-      }
-      return out;
-    }
-
-    double parseTime(const asn1::Node& time) {
-      if (!(asn1::isUniversal(time, asn1::Type::UTCTime) || asn1::isUniversal(time, asn1::Type::GeneralizedTime))) schemaMismatch("Time");
-      return asn1::timeValue(time);
-    }
-
-    std::pair<std::string, std::optional<Bytes>> parseAlgorithmIdentifier(const asn1::Node& node) {
-      if (!asn1::isUniversal(node, asn1::Type::Sequence) || node.value.empty() || !asn1::isUniversal(node.value[0], asn1::Type::ObjectIdentifier))
-        schemaMismatch("AlgorithmIdentifier");
-      std::optional<Bytes> parameters;
-      if (node.value.size() > 1) parameters = node.value[1].raw;
-      return {asn1::oidString(node.value[0]), std::move(parameters)};
-    }
-
-    std::vector<Extension> parseExtensions(const asn1::Node& sequence) {
-      if (!asn1::isUniversal(sequence, asn1::Type::Sequence)) schemaMismatch("Extensions");
-      std::vector<Extension> out;
-      for (const asn1::Node& item : sequence.value) {
-        if (!asn1::isUniversal(item, asn1::Type::Sequence) || item.value.empty() || !asn1::isUniversal(item.value[0], asn1::Type::ObjectIdentifier))
-          schemaMismatch("Extension");
-        Extension extension;
-        extension.extnID = asn1::oidString(item.value[0]);
-        std::size_t index = 1;
-        if (index < item.value.size() && asn1::isUniversal(item.value[index], asn1::Type::Boolean)) {
-          extension.critical = std::any_of(item.value[index].valueHex.begin(), item.value[index].valueHex.end(), [](std::uint8_t b) { return b != 0; });
-          ++index;
-        }
-        if (index >= item.value.size() || !asn1::isUniversal(item.value[index], asn1::Type::OctetString)) schemaMismatch("Extension");
-        extension.extnValue = item.value[index].valueHex;
-        out.push_back(std::move(extension));
-      }
-      return out;
-    }
-
-    // `AsnParser.parse(bytes, Certificate)`
     Certificate parseCertificate(BytesView bytes) {
-      const asn1::Node top = asn1::parse(bytes);
-      if (!asn1::isUniversal(top, asn1::Type::Sequence) || top.value.size() < 3) schemaMismatch("Certificate");
-      const asn1::Node& tbs = top.value[0];
-      if (!asn1::isUniversal(tbs, asn1::Type::Sequence)) schemaMismatch("Certificate");
-      Certificate certificate;
-      certificate.der = top.raw;
-      certificate.tbsRaw = tbs.raw;
-      std::size_t index = 0;
-      if (index < tbs.value.size() && asn1::is(tbs.value[index], 3, 0, true)) {
-        const asn1::Node& wrapper = tbs.value[index];
-        if (wrapper.value.empty() || !asn1::isUniversal(wrapper.value[0], asn1::Type::Integer)) schemaMismatch("TBSCertificate");
-        double version = 0;
-        for (std::uint8_t byte : wrapper.value[0].valueHex) version = version * 256 + byte;
-        certificate.version = version;
-        ++index;
-      }
-      const asn1::Node& serial = requireChild(tbs, index++, "TBSCertificate");
-      if (!asn1::isUniversal(serial, asn1::Type::Integer)) schemaMismatch("TBSCertificate");
-      certificate.serialNumber = serial.valueHex;
-      certificate.signature = parseAlgorithmIdentifier(requireChild(tbs, index++, "TBSCertificate")).first;
-      const asn1::Node& issuer = requireChild(tbs, index++, "TBSCertificate");
-      certificate.issuer = parseName(issuer, "Name");
-      certificate.issuerRaw = issuer.raw;
-      const asn1::Node& validity = requireChild(tbs, index++, "TBSCertificate");
-      if (!asn1::isUniversal(validity, asn1::Type::Sequence) || validity.value.size() < 2) schemaMismatch("Validity");
-      certificate.notBefore = parseTime(validity.value[0]);
-      certificate.notAfter = parseTime(validity.value[1]);
-      const asn1::Node& subject = requireChild(tbs, index++, "TBSCertificate");
-      certificate.subject = parseName(subject, "Name");
-      certificate.subjectRaw = subject.raw;
-      const asn1::Node& spki = requireChild(tbs, index++, "TBSCertificate");
-      if (!asn1::isUniversal(spki, asn1::Type::Sequence) || spki.value.size() < 2 || !asn1::isUniversal(spki.value[1], asn1::Type::BitString))
-        schemaMismatch("SubjectPublicKeyInfo");
-      auto [algorithm, parameters] = parseAlgorithmIdentifier(spki.value[0]);
-      certificate.publicKeyAlgorithm = std::move(algorithm);
-      certificate.publicKeyParameters = std::move(parameters);
-      certificate.subjectPublicKey = spki.value[1].valueHex;
-      certificate.subjectPublicKeyInfoRaw = spki.raw;
-      for (; index < tbs.value.size(); ++index) {
-        const asn1::Node& optional = tbs.value[index];
-        if (asn1::is(optional, 3, 3, true)) {
-          if (optional.value.empty()) schemaMismatch("TBSCertificate");
-          certificate.extensions = parseExtensions(optional.value[0]);
-          break;
-        }
-        if (!(optional.tagClass == 3 && (optional.tagNumber == 1 || optional.tagNumber == 2))) break;
-      }
-      const auto [signatureAlgorithm, signatureParameters] = parseAlgorithmIdentifier(top.value[1]);
-      certificate.signatureAlgorithm = signatureAlgorithm;
-      certificate.signatureAlgorithmRaw = top.value[1].raw;
-      if (!asn1::isUniversal(top.value[2], asn1::Type::BitString)) schemaMismatch("Certificate");
-      certificate.signatureValue = top.value[2].valueHex;
-      return certificate;
+      auto x509 = asn1::decode<X509_free>(bytes, d2i_X509, "X.509 certificate");
+      const long version = X509_get_version(x509.get());
+      if (version < 0 || version > 2 || ASN1_STRING_type(X509_get0_serialNumber(x509.get())) != V_ASN1_INTEGER)
+        asn1::invalid("X.509 certificate");
+      const ASN1_BIT_STRING* signature = nullptr;
+      X509_get0_signature(&signature, nullptr, x509.get());
+      checkOctetAligned(signature, "X.509 certificate signature");
+      checkOctetAligned(X509_get0_pubkey_bitstr(x509.get()), "X.509 public key");
+      const double notBefore = parseTime(X509_get0_notBefore(x509.get()));
+      const double notAfter = parseTime(X509_get0_notAfter(x509.get()));
+      if (notBefore > notAfter) asn1::invalid("X.509 validity period");
+      return {std::move(x509), notBefore, notAfter};
     }
 
-    // `parsedCert.tbsCertificate.extensions?.find((ext) => ext.extnID === id)`
-    const Extension* findExtension(const Certificate& certificate, std::string_view id) {
-      if (!certificate.extensions) return nullptr;
-      for (const Extension& extension : *certificate.extensions)
-        if (extension.extnID == id) return &extension;
-      return nullptr;
+    BytesView subjectPublicKey(const Certificate& certificate) {
+      return asn1::stringBytes(X509_get0_pubkey_bitstr(certificate.x509.get()));
     }
 
-    // `AsnParser.parse(extnValue, OctetString)`: the content of a primitive OCTET STRING.
-    Bytes parseOctetString(BytesView data) {
-      const asn1::Node node = asn1::parse(data);
-      if (node.type != asn1::Type::OctetString) throw rt::TypeError("Argument 'asn' is not instance of ASN.1 OctetString");
-      return node.isConstructed ? Bytes() : node.valueHex;
+    BytesView extensionBytes(X509_EXTENSION* extension) { return asn1::stringBytes(X509_EXTENSION_get_data(extension)); }
+
+    X509_EXTENSION* findExtension(const Certificate& certificate, const char* oid) {
+      const asn1::ErrorScope errors;
+      const asn1::Ptr<ASN1_OBJECT, ASN1_OBJECT_free> id(OBJ_txt2obj(oid, 1));
+      if (!id) asn1::invalid("X.509 extension OID");
+      X509* x509 = certificate.x509.get();
+      const int index = X509_get_ext_by_OBJ(x509, id.get(), -1);
+      if (index < 0) return nullptr;
+      if (X509_get_ext_by_OBJ(x509, id.get(), index) >= 0) fail("Duplicate X.509 extension " + std::string(oid));
+      return X509_get_ext(x509, index);
+    }
+
+    template <class T, auto Free>
+    asn1::Ptr<T, Free> certificateExtension(const Certificate& certificate, int nid, std::string_view name) {
+      const asn1::ErrorScope errors;
+      X509* x509 = certificate.x509.get();
+      const int index = X509_get_ext_by_NID(x509, nid, -1);
+      if (index < 0) return {};
+      const BytesView encoded = extensionBytes(X509_get_ext(x509, index));
+      asn1::checkDer(encoded, name);
+      int critical = -1;
+      asn1::Ptr<T, Free> value(static_cast<T*>(X509_get_ext_d2i(x509, nid, &critical, nullptr)));
+      if (!value || critical < 0) asn1::invalid(name);
+      // Implicit string tags can hide constructed BER from the generic DER preflight.
+      const asn1::Ptr<X509_EXTENSION, X509_EXTENSION_free> canonical(X509V3_EXT_i2d(nid, critical, value.get()));
+      if (!canonical || !bytesEqual(encoded, extensionBytes(canonical.get()))) asn1::invalid(name);
+      return value;
     }
 
     // ---- WebCrypto as Bun runs the library's calls (OpenSSL 3) ---------------------------
@@ -1497,9 +766,6 @@ namespace uos::auth::passkeys {
       };
       struct BnFree {
         void operator()(BIGNUM* number) const noexcept { BN_free(number); }
-      };
-      struct EcdsaSigFree {
-        void operator()(ECDSA_SIG* signature) const noexcept { ECDSA_SIG_free(signature); }
       };
       using Pkey = std::unique_ptr<EVP_PKEY, PkeyFree>;
       using PkeyCtx = std::unique_ptr<EVP_PKEY_CTX, PkeyCtxFree>;
@@ -1569,25 +835,6 @@ namespace uos::auth::passkeys {
       return key;
     }
 
-    // subtle.verify({ name: "ECDSA", hash }, key, r || s, data)
-    bool ecdsaVerify(EVP_PKEY* key, const EcCurve& curve, std::string_view hash, BytesView signature, BytesView data) {
-      if (signature.size() != 2 * curve.fieldBytes) return false;
-      std::unique_ptr<ECDSA_SIG, ossl::EcdsaSigFree> sig(ECDSA_SIG_new());
-      BIGNUM* r = BN_bin2bn(signature.data(), static_cast<int>(curve.fieldBytes), nullptr);
-      BIGNUM* s = BN_bin2bn(signature.data() + curve.fieldBytes, static_cast<int>(curve.fieldBytes), nullptr);
-      if (!sig || !r || !s || ECDSA_SIG_set0(sig.get(), r, s) != 1) {
-        BN_free(r);
-        BN_free(s);
-        return false;
-      }
-      unsigned char* der = nullptr;
-      const int derLength = i2d_ECDSA_SIG(sig.get(), &der);
-      if (derLength <= 0) return false;
-      const Bytes encoded(der, der + derLength);
-      OPENSSL_free(der);
-      return ossl::digestVerify(key, ossl::digestOf(hash), encoded, data);
-    }
-
     // importKey("jwk", { kty: "OKP", crv: "Ed25519", x }, { name: "Ed25519" }, false, ["verify"])
     ossl::Pkey importEd25519Jwk(std::string_view xBase64Url) {
       const Bytes x = rt::fromBase64(xBase64Url);
@@ -1618,21 +865,21 @@ namespace uos::auth::passkeys {
     // ---- COSE (helpers/cose.ts) -------------------------------------------------------
 
     namespace COSEKEYS {
-      constexpr double kty = 1;
-      constexpr double alg = 3;
-      constexpr double crv = -1;
-      constexpr double x = -2;
-      constexpr double y = -3;
-      constexpr double n = -1;
-      constexpr double e = -2;
+      constexpr std::int64_t kty = 1;
+      constexpr std::int64_t alg = 3;
+      constexpr std::int64_t crv = -1;
+      constexpr std::int64_t x = -2;
+      constexpr std::int64_t y = -3;
+      constexpr std::int64_t n = -1;
+      constexpr std::int64_t e = -2;
     }
 
     // `Object.values(Enum).indexOf(value) >= 0` over a TS numeric enum: its member names and
     // its numbers both match.
     bool inEnumValues(const Cbor* value, std::initializer_list<std::string_view> names, std::initializer_list<double> numbers) {
       if (value == nullptr) return false;
-      if (value->kind == Cbor::Kind::string) return std::find(names.begin(), names.end(), value->text) != names.end();
-      if (value->kind == Cbor::Kind::number) return std::find(numbers.begin(), numbers.end(), value->number) != numbers.end();
+      if (value->kind() == Cbor::Kind::string) return std::find(names.begin(), names.end(), value->text()) != names.end();
+      if (value->kind() == Cbor::Kind::number) return std::find(numbers.begin(), numbers.end(), value->number()) != numbers.end();
       return false;
     }
     bool isCOSEKty(const Cbor* kty) { return inEnumValues(kty, {"OKP", "EC2", "RSA"}, {1, 2, 3}); }
@@ -1641,23 +888,23 @@ namespace uos::auth::passkeys {
       return inEnumValues(alg, {"ES256", "EdDSA", "ES384", "ES512", "PS256", "PS384", "PS512", "ES256K", "RS256", "RS384", "RS512", "RS1"},
                           {-7, -8, -35, -36, -37, -38, -39, -47, -257, -258, -259, -65535});
     }
-    bool numberIs(const Cbor* value, double number) { return value != nullptr && value->kind == Cbor::Kind::number && value->number == number; }
+    bool numberIs(const Cbor* value, double number) { return value != nullptr && value->kind() == Cbor::Kind::number && value->number() == number; }
     bool isCOSEPublicKeyOKP(const Cbor& key) { return isCOSEKty(key.get(COSEKEYS::kty)) && numberIs(key.get(COSEKEYS::kty), 1); }
     bool isCOSEPublicKeyEC2(const Cbor& key) { return isCOSEKty(key.get(COSEKEYS::kty)) && numberIs(key.get(COSEKEYS::kty), 2); }
     bool isCOSEPublicKeyRSA(const Cbor& key) { return isCOSEKty(key.get(COSEKEYS::kty)) && numberIs(key.get(COSEKEYS::kty), 3); }
 
     // `name.get(...)` on a decoded value that may not be a Map (JavaScriptCore's TypeErrors).
     const Cbor& requireMap(const Cbor& value, std::string_view name, std::string_view key) {
-      if (value.kind == Cbor::Kind::map) return value;
+      if (value.kind() == Cbor::Kind::map) return value;
       const std::string variable(name);
-      if (value.kind == Cbor::Kind::null_ || value.kind == Cbor::Kind::undefined_)
-        throw rt::TypeError(std::string(value.kind == Cbor::Kind::null_ ? "null" : "undefined") + " is not an object (evaluating '" + variable + ".get')");
+      if (value.kind() == Cbor::Kind::null_ || value.kind() == Cbor::Kind::undefined_)
+        throw rt::TypeError(std::string(value.kind() == Cbor::Kind::null_ ? "null" : "undefined") + " is not an object (evaluating '" + variable + ".get')");
       throw rt::TypeError(variable + ".get is not a function. (In '" + variable + ".get(" + std::string(key) + ")', '" + variable + ".get' is undefined)");
     }
 
     // `mapCoseAlgToWebCryptoAlg(alg)`
     std::string mapCoseAlgToWebCryptoAlg(const Cbor* alg) {
-      const auto in = [&](std::initializer_list<double> values) { return alg != nullptr && alg->kind == Cbor::Kind::number && std::find(values.begin(), values.end(), alg->number) != values.end(); };
+      const auto in = [&](std::initializer_list<double> values) { return alg != nullptr && alg->kind() == Cbor::Kind::number && std::find(values.begin(), values.end(), alg->number()) != values.end(); };
       if (in({-65535})) return "SHA-1";
       if (in({-7, -37, -257})) return "SHA-256";
       if (in({-35, -38, -258})) return "SHA-384";
@@ -1667,7 +914,7 @@ namespace uos::auth::passkeys {
 
     // `mapCoseAlgToWebCryptoKeyAlgName(alg)`
     std::string mapCoseAlgToWebCryptoKeyAlgName(const Cbor* alg) {
-      const auto in = [&](std::initializer_list<double> values) { return alg != nullptr && alg->kind == Cbor::Kind::number && std::find(values.begin(), values.end(), alg->number) != values.end(); };
+      const auto in = [&](std::initializer_list<double> values) { return alg != nullptr && alg->kind() == Cbor::Kind::number && std::find(values.begin(), values.end(), alg->number()) != values.end(); };
       if (in({-8})) return "Ed25519";
       if (in({-7, -35, -36, -47})) return "ECDSA";
       if (in({-257, -258, -259, -65535})) return "RSASSA-PKCS1-v1_5";
@@ -1677,16 +924,15 @@ namespace uos::auth::passkeys {
 
     // `Number(value)` of a decoded item, for `new Uint8Array(array)` elements.
     double cborToNumber(const Cbor& value) {
-      switch (value.kind) {
+      switch (value.kind()) {
         case Cbor::Kind::undefined_: return std::numeric_limits<double>::quiet_NaN();
         case Cbor::Kind::null_: return 0;
-        case Cbor::Kind::boolean: return value.boolean ? 1 : 0;
-        case Cbor::Kind::number: return value.number;
-        case Cbor::Kind::string: return rt::stringToNumber(value.text);
+        case Cbor::Kind::boolean: return value.boolean() ? 1 : 0;
+        case Cbor::Kind::number: return value.number();
+        case Cbor::Kind::string: return rt::stringToNumber(value.text());
         case Cbor::Kind::bytes:
         case Cbor::Kind::array: return rt::stringToNumber(jsString(value));
-        case Cbor::Kind::map:
-        case Cbor::Kind::tag: return std::numeric_limits<double>::quiet_NaN();
+        case Cbor::Kind::map: return std::numeric_limits<double>::quiet_NaN();
       }
       return 0;
     }
@@ -1704,23 +950,22 @@ namespace uos::auth::passkeys {
 
     // `new Uint8Array(value)` of a decoded item (isoBase64URL.fromBuffer's first step).
     Bytes cborToUint8Array(const Cbor& value) {
-      switch (value.kind) {
-        case Cbor::Kind::bytes: return value.bytes;
+      switch (value.kind()) {
+        case Cbor::Kind::bytes: return value.bytes();
         case Cbor::Kind::array: {
           Bytes out;
-          for (const Cbor& item : value.items) {
+          for (const Cbor& item : value.items()) {
             const double number = cborToNumber(item);
             out.push_back(std::isfinite(number) ? static_cast<std::uint8_t>(static_cast<std::int64_t>(std::fmod(std::trunc(number), 256.0) + 256) % 256) : 0);
           }
           return out;
         }
-        case Cbor::Kind::map: return Bytes(value.entries.size(), 0);  // each entry is a [key, value] array: NaN
-        case Cbor::Kind::tag: return {};                               // not iterable, no length
+        case Cbor::Kind::map: return Bytes(value.entries().size(), 0);  // each entry is a [key, value] array: NaN
         case Cbor::Kind::null_: return {};
         case Cbor::Kind::undefined_: return {};
-        case Cbor::Kind::boolean: return Bytes(value.boolean ? 1 : 0, 0);
-        case Cbor::Kind::number: return Bytes(typedArrayLength(value.number), 0);
-        case Cbor::Kind::string: return Bytes(typedArrayLength(rt::stringToNumber(value.text)), 0);
+        case Cbor::Kind::boolean: return Bytes(value.boolean() ? 1 : 0, 0);
+        case Cbor::Kind::number: return Bytes(typedArrayLength(value.number()), 0);
+        case Cbor::Kind::string: return Bytes(typedArrayLength(rt::stringToNumber(value.text())), 0);
       }
       return {};
     }
@@ -1729,34 +974,21 @@ namespace uos::auth::passkeys {
 
     // ---- isoCrypto.verify ----------------------------------------------------------------
 
-    // `unwrapEC2Signature`'s component length; throws for any other curve.
-    std::size_t getSignatureComponentLength(const Cbor* crv) {
+    int getSignatureComponentLength(const Cbor* crv) {
       if (numberIs(crv, 1)) return 32;
       if (numberIs(crv, 2)) return 48;
       if (numberIs(crv, 3)) return 66;
       fail("Unexpected COSE crv value of " + jsString(crv) + " (EC2)");
     }
 
-    Bytes toNormalizedBytes(const Bytes& bytes, std::size_t componentLength) {
-      if (bytes.size() < componentLength) {
-        // In case the bytes are shorter than expected, we need to pad it with leading `0`s.
-        Bytes normalized(componentLength, 0);
-        std::copy(bytes.begin(), bytes.end(), normalized.begin() + static_cast<std::ptrdiff_t>(componentLength - bytes.size()));
-        return normalized;
+    void validateEC2Signature(BytesView signature, const Cbor* crv) {
+      const auto parsed = parseEcdsaSigValue(signature);
+      const int componentLength = getSignatureComponentLength(crv);
+      for (const BIGNUM* scalar : {ECDSA_SIG_get0_r(parsed.get()), ECDSA_SIG_get0_s(parsed.get())}) {
+        const int size = BN_num_bytes(scalar);
+        if (size > componentLength)
+          fail("Invalid signature component length " + std::to_string(size) + ", expected " + std::to_string(componentLength));
       }
-      if (bytes.size() == componentLength) return bytes;
-      if (bytes.size() == componentLength + 1 && bytes[0] == 0 && (bytes[1] & 0x80) == 0x80) {
-        // The bytes contain a leading `0` to encode that the integer is positive. This leading `0`
-        // needs to be removed for compatibility with the SubtleCrypto Web Crypto API.
-        return Bytes(bytes.begin() + 1, bytes.end());
-      }
-      fail("Invalid signature component length " + std::to_string(bytes.size()) + ", expected " + std::to_string(componentLength));
-    }
-
-    Bytes unwrapEC2Signature(BytesView signature, const Cbor* crv) {
-      const EcdsaSigValue parsedSignature = parseEcdsaSigValue(signature);
-      const std::size_t componentLength = getSignatureComponentLength(crv);
-      return concatBytes({toNormalizedBytes(parsedSignature.r, componentLength), toNormalizedBytes(parsedSignature.s, componentLength)});
     }
 
     // A hash override: a COSE alg number (or absent).
@@ -1781,8 +1013,8 @@ namespace uos::auth::passkeys {
       const ossl::Pkey key = importEcJwk(curve, keyX, keyY);
       // Determine which SHA algorithm to use for signature verification
       std::string subtleAlg = mapCoseAlgToWebCryptoAlg(alg);
-      if (shaHashOverride && shaHashOverride->truthy()) subtleAlg = mapCoseAlgToWebCryptoAlg(&*shaHashOverride);
-      return ecdsaVerify(key.get(), curve, subtleAlg, signature, data);
+      if (shaHashOverride && truthy(&*shaHashOverride)) subtleAlg = mapCoseAlgToWebCryptoAlg(&*shaHashOverride);
+      return ossl::digestVerify(key.get(), ossl::digestOf(subtleAlg), signature, data);
     }
 
     bool verifyRSA(const Cbor& cosePublicKey, BytesView signature, BytesView data, const ShaHashOverride& shaHashOverride) {
@@ -1797,7 +1029,7 @@ namespace uos::auth::passkeys {
       const std::string keyE = cborBase64Url(*e);
       const std::string keyAlgorithmName = mapCoseAlgToWebCryptoKeyAlgName(alg);
       std::string hashName = mapCoseAlgToWebCryptoAlg(alg);
-      if (shaHashOverride && shaHashOverride->truthy()) hashName = mapCoseAlgToWebCryptoAlg(&*shaHashOverride);
+      if (shaHashOverride && truthy(&*shaHashOverride)) hashName = mapCoseAlgToWebCryptoAlg(&*shaHashOverride);
       std::string jwkAlg;
       std::optional<int> saltLength;
       if (keyAlgorithmName == "RSASSA-PKCS1-v1_5") {
@@ -1874,15 +1106,15 @@ namespace uos::auth::passkeys {
       if (isCOSEPublicKeyEC2(key)) {
         const Cbor* crv = key.get(COSEKEYS::crv);
         if (!isCOSECrv(crv)) fail("unknown COSE curve " + jsString(crv));
-        const Bytes unwrappedSignature = unwrapEC2Signature(signature, crv);
-        return verifyEC2(key, unwrappedSignature, data, shaHashOverride);
+        validateEC2Signature(signature, crv);
+        return verifyEC2(key, signature, data, shaHashOverride);
       }
       if (isCOSEPublicKeyRSA(key)) return verifyRSA(key, signature, data, shaHashOverride);
       if (isCOSEPublicKeyOKP(key)) return verifyOKP(key, signature, data);
       fail("Signature verification with public key of kty " + jsString(key.get(COSEKEYS::kty)) + " is not supported by this method");
     }
 
-    Cbor numberCbor(double value) { return cbor::numberValue(value); }
+    Cbor numberCbor(double value) { return Cbor{value}; }
 
     // `mapX509SignatureAlgToCOSEAlg(oid)`
     double mapX509SignatureAlgToCOSEAlg(std::string_view signatureAlgorithm) {
@@ -1896,68 +1128,70 @@ namespace uos::auth::passkeys {
       fail("Unable to map X.509 signature algorithm " + std::string(signatureAlgorithm) + " to a COSE algorithm");
     }
 
-    Cbor coseMap(std::vector<std::pair<double, Cbor>> entries) {
-      Cbor map;
-      map.kind = Cbor::Kind::map;
-      for (auto& [key, value] : entries) map.entries.push_back(CborEntry{.key = CborKey{.isString = false, .text = {}, .number = key}, .value = std::move(value)});
-      return map;
+    Cbor coseMap(std::vector<std::pair<std::int64_t, Cbor>> entries) {
+      Cbor::Map map;
+      map.reserve(entries.size());
+      for (auto& [key, value] : entries) map.push_back(CborEntry{CborKey{key}, std::move(value)});
+      return Cbor{std::move(map)};
     }
 
-    Cbor bytesCbor(Bytes bytes) {
-      Cbor value;
-      value.kind = Cbor::Kind::bytes;
-      value.bytes = std::move(bytes);
-      return value;
+    Cbor bytesCbor(Bytes bytes) { return Cbor{std::move(bytes)}; }
+
+    Bytes rsaPublicComponent(EVP_PKEY* key, const char* name) {
+      BIGNUM* raw = nullptr;
+      const int read = EVP_PKEY_get_bn_param(key, name, &raw);
+      const ossl::Bn value(raw);
+      if (read != 1 || !value || BN_is_negative(value.get()) || BN_is_zero(value.get())) asn1::invalid("RSA public key");
+      Bytes bytes(static_cast<std::size_t>(BN_num_bytes(value.get())));
+      BN_bn2bin(value.get(), bytes.data());
+      return bytes;
     }
 
     // `convertX509PublicKeyToCOSE(x509Certificate)`
     Cbor convertX509PublicKeyToCOSE(BytesView x509Certificate) {
       const Certificate x509 = parseCertificate(x509Certificate);
-      const std::string& publicKeyAlgorithmID = x509.publicKeyAlgorithm;
-      if (publicKeyAlgorithmID == "1.2.840.10045.2.1") {
-        /**
-         * EC2 Public Key
-         */
-        if (!x509.publicKeyParameters) fail("Certificate public key was missing parameters (EC2)");
-        // ECParameters ::= CHOICE { namedCurve OBJECT IDENTIFIER, ... }
-        const asn1::Node ecParameters = asn1::parse(*x509.publicKeyParameters);
-        if (!asn1::isUniversal(ecParameters, asn1::Type::ObjectIdentifier)) fail("Data does not match to ECParameters ASN1 schema.");
-        const std::string namedCurve = asn1::oidString(ecParameters);
-        double crv = -999;
-        if (namedCurve == "1.2.840.10045.3.1.7") crv = 1;
-        else if (namedCurve == "1.3.132.0.34") crv = 2;
-        else fail("Certificate public key contained unexpected namedCurve " + namedCurve + " (EC2)");
-        const Bytes& subjectPublicKey = x509.subjectPublicKey;
-        if (subjectPublicKey.empty() || subjectPublicKey[0] != 0x04) fail("TODO: Figure out how to handle public keys in \"compressed form\"");
-        // Public key is in "uncompressed form", so we can split the remaining bytes in half
-        const double halfLength = static_cast<double>(subjectPublicKey.size() - 1) / 2;
-        const std::size_t xEnd = std::min(subjectPublicKey.size(), 1 + static_cast<std::size_t>(std::trunc(halfLength)));
-        Bytes x(subjectPublicKey.begin() + 1, subjectPublicKey.begin() + static_cast<std::ptrdiff_t>(xEnd));
-        Bytes y(subjectPublicKey.begin() + static_cast<std::ptrdiff_t>(xEnd), subjectPublicKey.end());
-        std::vector<std::pair<double, Cbor>> entries;
+      const asn1::ErrorScope errors;
+      X509_ALGOR* algorithm = nullptr;
+      if (X509_PUBKEY_get0_param(nullptr, nullptr, nullptr, &algorithm, X509_get_X509_PUBKEY(x509.x509.get())) != 1)
+        asn1::invalid("X.509 public key");
+      const ASN1_OBJECT* publicKeyAlgorithm = asn1::algorithmOid(algorithm);
+      const int keyType = OBJ_obj2nid(publicKeyAlgorithm);
+      const auto* signatureAlgorithm = asn1::algorithmOid(X509_get0_tbs_sigalg(x509.x509.get()));
+      if (keyType == NID_X9_62_id_ecPublicKey) {
+        int parameterType = V_ASN1_UNDEF;
+        const void* parameter = nullptr;
+        X509_ALGOR_get0(nullptr, &parameterType, &parameter, algorithm);
+        if (parameterType != V_ASN1_OBJECT) asn1::invalid("X.509 EC named curve");
+        const auto* namedCurve = static_cast<const ASN1_OBJECT*>(parameter);
+        const int curve = OBJ_obj2nid(namedCurve);
+        if (curve != NID_X9_62_prime256v1 && curve != NID_secp384r1)
+          fail("Certificate public key contained unexpected namedCurve " + asn1::oidText(namedCurve) + " (EC2)");
+        const bool p256 = curve == NID_X9_62_prime256v1;
+        const std::size_t fieldBytes = p256 ? 32 : 48;
+        const BytesView point = subjectPublicKey(x509);
+        if (point.size() != 1 + 2 * fieldBytes || point[0] != 0x04) asn1::invalid("uncompressed X.509 EC public key");
+        const BytesView x = point.subspan(1, fieldBytes);
+        const BytesView y = point.subspan(1 + fieldBytes);
+        std::vector<std::pair<std::int64_t, Cbor>> entries;
         entries.emplace_back(COSEKEYS::kty, numberCbor(2));
-        entries.emplace_back(COSEKEYS::alg, numberCbor(mapX509SignatureAlgToCOSEAlg(x509.signature)));
-        entries.emplace_back(COSEKEYS::crv, numberCbor(crv));
-        entries.emplace_back(COSEKEYS::x, bytesCbor(std::move(x)));
-        entries.emplace_back(COSEKEYS::y, bytesCbor(std::move(y)));
+        entries.emplace_back(COSEKEYS::alg, numberCbor(mapX509SignatureAlgToCOSEAlg(asn1::oidText(signatureAlgorithm))));
+        entries.emplace_back(COSEKEYS::crv, numberCbor(p256 ? 1 : 2));
+        entries.emplace_back(COSEKEYS::x, bytesCbor(Bytes(x.begin(), x.end())));
+        entries.emplace_back(COSEKEYS::y, bytesCbor(Bytes(y.begin(), y.end())));
         return coseMap(std::move(entries));
       }
-      if (publicKeyAlgorithmID == "1.2.840.113549.1.1.1") {
-        /**
-         * RSA public key
-         */
-        const asn1::Node rsaPublicKey = asn1::parse(x509.subjectPublicKey);
-        if (!asn1::isUniversal(rsaPublicKey, asn1::Type::Sequence) || !rsaPublicKey.isConstructed || rsaPublicKey.value.size() < 2 ||
-            !asn1::is(rsaPublicKey.value[0], 1, 2, false) || !asn1::is(rsaPublicKey.value[1], 1, 2, false))
-          fail("Data does not match to RSAPublicKey ASN1 schema.");
-        std::vector<std::pair<double, Cbor>> entries;
+      if (keyType == NID_rsaEncryption) {
+        asn1::checkDer(subjectPublicKey(x509), "RSA public key");
+        EVP_PKEY* key = X509_get0_pubkey(x509.x509.get());
+        if (!key || EVP_PKEY_get_base_id(key) != EVP_PKEY_RSA) asn1::invalid("RSA public key");
+        std::vector<std::pair<std::int64_t, Cbor>> entries;
         entries.emplace_back(COSEKEYS::kty, numberCbor(3));
-        entries.emplace_back(COSEKEYS::alg, numberCbor(mapX509SignatureAlgToCOSEAlg(x509.signature)));
-        entries.emplace_back(COSEKEYS::n, bytesCbor(rsaPublicKey.value[0].valueHex));
-        entries.emplace_back(COSEKEYS::e, bytesCbor(rsaPublicKey.value[1].valueHex));
+        entries.emplace_back(COSEKEYS::alg, numberCbor(mapX509SignatureAlgToCOSEAlg(asn1::oidText(signatureAlgorithm))));
+        entries.emplace_back(COSEKEYS::n, bytesCbor(rsaPublicComponent(key, OSSL_PKEY_PARAM_RSA_N)));
+        entries.emplace_back(COSEKEYS::e, bytesCbor(rsaPublicComponent(key, OSSL_PKEY_PARAM_RSA_E)));
         return coseMap(std::move(entries));
       }
-      fail("Certificate public key contained unexpected algorithm ID " + publicKeyAlgorithmID);
+      fail("Certificate public key contained unexpected algorithm ID " + asn1::oidText(publicKeyAlgorithm));
     }
 
     // `verifySignature({ signature, data, credentialPublicKey | x509Certificate, hashAlgorithm })`
@@ -2021,34 +1255,20 @@ namespace uos::auth::passkeys {
     // can fail (Maps are the only values it recurses into); the object it builds is never read.
     void convertMapToObjectDeep(const Cbor& input) {
       const auto notIterable = [](const Cbor& value, std::string_view expression) {
-        switch (value.kind) {
+        switch (value.kind()) {
           case Cbor::Kind::null_: throw rt::TypeError("null is not an object (evaluating '" + std::string(expression) + "')");
           case Cbor::Kind::undefined_: throw rt::TypeError("undefined is not an object (evaluating '" + std::string(expression) + "')");
-          case Cbor::Kind::boolean: throw rt::TypeError(std::string(value.boolean ? "true" : "false") + " is not iterable");
+          case Cbor::Kind::boolean: throw rt::TypeError(std::string(value.boolean() ? "true" : "false") + " is not iterable");
           case Cbor::Kind::number: throw rt::TypeError("number is not iterable");
-          case Cbor::Kind::tag: throw rt::TypeError("{} is not iterable");
           default: break;
         }
       };
       notIterable(input, "const [key, value] of input");
-      if (input.kind == Cbor::Kind::bytes) {
-        if (!input.bytes.empty()) throw rt::TypeError("number is not iterable");
-      } else if (input.kind == Cbor::Kind::array) {
-        for (const Cbor& element : input.items) notIterable(element, "[key, value]");
+      if (input.kind() == Cbor::Kind::bytes) {
+        if (!input.bytes().empty()) throw rt::TypeError("number is not iterable");
+      } else if (input.kind() == Cbor::Kind::array) {
+        for (const Cbor& element : input.items()) notIterable(element, "[key, value]");
       }
-    }
-
-    /**
-     * Convert authenticator extension data buffer to a proper object
-     */
-    void decodeAuthenticatorExtensions(BytesView extensionData) {
-      Cbor toCBOR;
-      try {
-        toCBOR = isoCBOR::decodeFirst(extensionData);
-      } catch (const rt::JsError& err) {
-        fail("Error decoding authenticator extensions: " + err.message);
-      }
-      convertMapToObjectDeep(toCBOR);
     }
 
     /**
@@ -2075,6 +1295,7 @@ namespace uos::auth::passkeys {
       };
       parsed.counter = getUint(authData, pointer, 4);
       pointer += 4;
+      const BytesView encodedAuthData(authData);
       if (parsed.flags.at) {
         parsed.aaguid = sliceBytes(authData, pointer, pointer + 16);
         pointer += 16;
@@ -2093,29 +1314,27 @@ namespace uos::auth::passkeys {
          */
         // Bytes decode to `{ 1: "OKP", 3: -8, -1: "Ed25519" }` (it's missing key -2 a.k.a. COSEKEYS.x)
         static const Bytes badEdDSACBOR = rt::fromHex("a301634f4b500327206745643235353139");
-        const Bytes bytesAtCurrentPosition = sliceBytes(authData, pointer, pointer + badEdDSACBOR.size());
+        if (pointer > authData.size()) fail("Truncated credential ID");
+        const BytesView remaining = encodedAuthData.subspan(pointer);
         bool foundBadCBOR = false;
-        if (bytesEqual(badEdDSACBOR, bytesAtCurrentPosition)) {
+        if (remaining.size() >= badEdDSACBOR.size() && bytesEqual(badEdDSACBOR, remaining.first(badEdDSACBOR.size()))) {
           // Change the bad CBOR 0xa3 to 0xa4 so that the credential public key can be recognized
           foundBadCBOR = true;
           authData[pointer] = 0xa4;
         }
-        // Decode the next CBOR item in the buffer, then re-encode it back to a Buffer
-        const Cbor firstDecoded = isoCBOR::decodeFirst(sliceBytes(authData, pointer, authData.size()));
-        Bytes firstEncoded = isoCBOR::encode(firstDecoded);
+        auto [publicKey, consumed] = cbor::reencode(remaining, false);
         if (foundBadCBOR) {
           // Restore the bit we changed so that `authData` is the same as it came in and won't break
           // signature verification.
           authData[pointer] = 0xa3;
         }
-        pointer += firstEncoded.size();
-        parsed.credentialPublicKey = std::move(firstEncoded);
+        pointer += consumed;
+        parsed.credentialPublicKey = std::move(publicKey);
       }
       if (parsed.flags.ed) {
-        const Cbor firstDecoded = isoCBOR::decodeFirst(sliceBytes(authData, pointer, authData.size()));
-        const Bytes extensionsDataBuffer = isoCBOR::encode(firstDecoded);
-        decodeAuthenticatorExtensions(extensionsDataBuffer);
-        pointer += extensionsDataBuffer.size();
+        const isoCBOR::Decoded extensions = isoCBOR::decodeItem(encodedAuthData.subspan(pointer));
+        convertMapToObjectDeep(extensions.value);
+        pointer += extensions.consumed;
       }
       // Pointer should be at the end of the authenticator data, otherwise too much data was sent
       if (authData.size() > pointer) fail("Leftover bytes detected while parsing authenticator data");
@@ -2184,18 +1403,18 @@ namespace uos::auth::passkeys {
 
     // `value.length` of a decoded item: Uint8Array, array and string have one.
     std::optional<double> cborLength(const Cbor& value) {
-      switch (value.kind) {
-        case Cbor::Kind::bytes: return static_cast<double>(value.bytes.size());
-        case Cbor::Kind::array: return static_cast<double>(value.items.size());
-        case Cbor::Kind::string: return static_cast<double>(rt::length(value.text));
+      switch (value.kind()) {
+        case Cbor::Kind::bytes: return static_cast<double>(value.bytes().size());
+        case Cbor::Kind::array: return static_cast<double>(value.items().size());
+        case Cbor::Kind::string: return static_cast<double>(rt::length(value.text()));
         default: return std::nullopt;
       }
     }
 
     // `value[index]` of a decoded item as the strict-equality operand isoUint8Array.areEqual reads.
     std::optional<double> cborElementNumber(const Cbor& value, std::size_t index) {
-      if (value.kind == Cbor::Kind::bytes) return index < value.bytes.size() ? std::optional<double>(value.bytes[index]) : std::nullopt;
-      if (value.kind == Cbor::Kind::array && index < value.items.size() && value.items[index].kind == Cbor::Kind::number) return value.items[index].number;
+      if (value.kind() == Cbor::Kind::bytes) return index < value.bytes().size() ? std::optional<double>(value.bytes()[index]) : std::nullopt;
+      if (value.kind() == Cbor::Kind::array && index < value.items().size() && value.items()[index].kind() == Cbor::Kind::number) return value.items()[index].number();
       return std::nullopt;  // undefined, a string character or another type: never === a byte
     }
 
@@ -2221,15 +1440,15 @@ namespace uos::auth::passkeys {
       double pointer = 0;
       for (const Cbor* array : arrays) {
         const double offset = std::isnan(pointer) ? 0 : pointer;
-        if (array->kind == Cbor::Kind::null_ || array->kind == Cbor::Kind::undefined_) throw rt::TypeError("Argument is not an object");
+        if (array->kind() == Cbor::Kind::null_ || array->kind() == Cbor::Kind::undefined_) throw rt::TypeError("Argument is not an object");
         const std::optional<double> length = cborLength(*array);
         const double srcLength = length ? *length : 0;
         if (srcLength + offset > static_cast<double>(toReturn.size())) throw rt::RangeError("Source is too large");
         for (std::size_t i = 0; i < static_cast<std::size_t>(srcLength); ++i) {
           double number = 0;
-          if (array->kind == Cbor::Kind::bytes) number = array->bytes[i];
-          else if (array->kind == Cbor::Kind::array) number = cborToNumber(array->items[i]);
-          else number = rt::stringToNumber(rt::charAt(array->text, static_cast<double>(i)));
+          if (array->kind() == Cbor::Kind::bytes) number = array->bytes()[i];
+          else if (array->kind() == Cbor::Kind::array) number = cborToNumber(array->items()[i]);
+          else number = rt::stringToNumber(rt::charAt(array->text(), static_cast<double>(i)));
           toReturn[static_cast<std::size_t>(offset) + i] =
             std::isfinite(number) ? static_cast<std::uint8_t>(static_cast<std::int64_t>(std::fmod(std::trunc(number), 256.0) + 256) % 256) : 0;
         }
@@ -2241,15 +1460,15 @@ namespace uos::auth::passkeys {
     // A decoded item that the library hands to a byte API (AsnParser, DataView, digest, verify):
     // anything but a Uint8Array makes that API throw.
     const Bytes& requireBytes(const Cbor* value, std::string_view what) {
-      if (value == nullptr || value->kind != Cbor::Kind::bytes)
+      if (value == nullptr || value->kind() != Cbor::Kind::bytes)
         throw rt::TypeError("The provided value is not of type '(ArrayBuffer or ArrayBufferView)' (" + std::string(what) + ")");
-      return value->bytes;
+      return value->bytes();
     }
 
     // `value[0]` of an attestation statement's x5c, which must be a Uint8Array for the parsers.
     const Bytes& firstCertificate(const Cbor* x5c) {
-      if (x5c == nullptr || x5c->kind != Cbor::Kind::array || x5c->items.empty()) throw rt::TypeError("x5c[0] is not a certificate");
-      return requireBytes(&x5c->items.front(), "x5c[0]");
+      if (x5c == nullptr || x5c->kind() != Cbor::Kind::array || x5c->items().empty()) throw rt::TypeError("x5c[0] is not a certificate");
+      return requireBytes(&x5c->items().front(), "x5c[0]");
     }
 
     /**
@@ -2277,9 +1496,9 @@ namespace uos::auth::passkeys {
       /**
        * Get certBuffer to a base64 representation
        */
-      if (certBuffer.kind == Cbor::Kind::string) {
-        if (isoBase64URL::isBase64URL(certBuffer.text)) b64cert = isoBase64URL::toBase64(certBuffer.text);
-        else if (isoBase64URL::isBase64(certBuffer.text)) b64cert = certBuffer.text;
+      if (certBuffer.kind() == Cbor::Kind::string) {
+        if (isoBase64URL::isBase64URL(certBuffer.text())) b64cert = isoBase64URL::toBase64(certBuffer.text());
+        else if (isoBase64URL::isBase64(certBuffer.text())) b64cert = certBuffer.text();
         else fail("Certificate is not a valid base64 or base64url string");
       } else {
         b64cert = isoBase64URL::fromBuffer(cborToUint8Array(certBuffer), false);
@@ -2292,9 +1511,9 @@ namespace uos::auth::passkeys {
 
     // `x5c.map(convertCertBufferToPEM)` on a decoded attestation statement member.
     std::vector<std::string> mapCertsToPEM(const Cbor* x5c) {
-      if (x5c == nullptr || x5c->kind != Cbor::Kind::array) throw rt::TypeError("x5c.map is not a function");
+      if (x5c == nullptr || x5c->kind() != Cbor::Kind::array) throw rt::TypeError("x5c.map is not a function");
       std::vector<std::string> out;
-      for (const Cbor& certBuffer : x5c->items) out.push_back(convertCertBufferToPEM(certBuffer));
+      for (const Cbor& certBuffer : x5c->items()) out.push_back(convertCertBufferToPEM(certBuffer));
       return out;
     }
 
@@ -2338,15 +1557,6 @@ namespace uos::auth::passkeys {
       return party;
     }
 
-    // `AsnParser.parse(extnValue, BasicConstraints).cA`
-    bool basicConstraintsCA(BytesView extnValue) {
-      const asn1::Node node = asn1::parse(extnValue);
-      if (!asn1::isUniversal(node, asn1::Type::Sequence) || !node.isConstructed) schemaMismatch("BasicConstraints");
-      if (!node.value.empty() && asn1::isUniversal(node.value[0], asn1::Type::Boolean))
-        return std::any_of(node.value[0].valueHex.begin(), node.value[0].valueHex.end(), [](std::uint8_t b) { return b != 0; });
-      return false;
-    }
-
     /**
      * Extract PEM certificate info
      */
@@ -2354,13 +1564,12 @@ namespace uos::auth::passkeys {
       CertificateInfo info;
       info.parsedCertificate = parseCertificate(leafCertBuffer);
       const Certificate& parsedCert = info.parsedCertificate;
-      info.issuer = certificateParty(parsedCert.issuer);
-      info.subject = certificateParty(parsedCert.subject);
-      if (parsedCert.extensions) {
-        for (const Extension& ext : *parsedCert.extensions)
-          if (ext.extnID == "2.5.29.19") info.basicConstraintsCA = basicConstraintsCA(ext.extnValue);
-      }
-      info.version = parsedCert.version;
+      X509* x509 = parsedCert.x509.get();
+      info.issuer = certificateParty(parseName(X509_get_issuer_name(x509)));
+      info.subject = certificateParty(parseName(X509_get_subject_name(x509)));
+      const auto constraints = certificateExtension<BASIC_CONSTRAINTS, BASIC_CONSTRAINTS_free>(parsedCert, NID_basic_constraints, "Basic Constraints");
+      info.basicConstraintsCA = constraints && constraints->ca != 0;
+      info.version = static_cast<double>(X509_get_version(x509));
       info.notBefore = parsedCert.notBefore;
       info.notAfter = parsedCert.notAfter;
       return info;
@@ -2371,13 +1580,11 @@ namespace uos::auth::passkeys {
      * the attestation statement AAGUID.
      */
     void validateExtFIDOGenCEAAGUID(const Certificate& certificate, BytesView aaguid) {
-      // The certificate had no extensions so there's nothing to validate
-      if (!certificate.extensions) return;
-      const Extension* extFIDOGenCEAAGUID = findExtension(certificate, "1.3.6.1.4.1.45724.1.1.4");
+      X509_EXTENSION* extFIDOGenCEAAGUID = findExtension(certificate, "1.3.6.1.4.1.45724.1.1.4");
       // The extension isn't present so there's nothing to validate
       if (extFIDOGenCEAAGUID == nullptr) return;
       // Parse the extension value
-      const Bytes extValue = parseOctetString(extFIDOGenCEAAGUID->extnValue);
+      const Bytes extValue = parseOctetString(extensionBytes(extFIDOGenCEAAGUID));
       // Compare the two values
       if (!bytesEqual(aaguid, extValue))
         fail("Certificate extension id-fido-gen-ce-aaguid (1.3.6.1.4.1.45724.1.1.4) value of \"" + toHex(extValue) +
@@ -2562,97 +1769,83 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       return {};
     }
 
-    // ---- @peculiar/x509 X509Certificate / X509Crl as validateCertificatePath reads them -----
+    // ---- X.509 certificate path and revocation inputs -------------------------------------
 
-    // `new X509Certificate(pem)`
     Certificate parsePemCertificate(std::string_view pem) {
-      std::string body(pem);
-      for (const std::string_view marker : {std::string_view("-----BEGIN CERTIFICATE-----"), std::string_view("-----END CERTIFICATE-----")}) {
-        const std::size_t at = body.find(marker);
-        if (at != std::string::npos) body.erase(at, marker.size());
+      if (pem.empty() || pem.size() > 2 * asn1::maxInput) fail("Invalid PEM certificate");
+      unsigned char* data = nullptr;
+      long size = 0;
+      {
+        const asn1::ErrorScope errors;
+        const asn1::Ptr<BIO, BIO_free> input(BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size())));
+        if (!input || PEM_bytes_read_bio(&data, &size, nullptr, PEM_STRING_X509, input.get(), nullptr, nullptr) != 1)
+          fail("Invalid PEM certificate");
       }
-      std::string base64;
-      for (char c : body)
-        if (!rt::isJsWhitespace(static_cast<unsigned char>(c))) base64 += c;
-      return parseCertificate(rt::fromBase64(base64));
+      const asn1::Buffer der(data);
+      if (size <= 0) fail("Invalid PEM certificate");
+      return parseCertificate(BytesView(der.get(), static_cast<std::size_t>(size)));
     }
 
-    // `cert.subject === cert.issuer` (the Name strings).
-    bool sameName(const std::vector<RelativeDistinguishedName>& a, const std::vector<RelativeDistinguishedName>& b) {
-      if (a.size() != b.size()) return false;
-      for (std::size_t i = 0; i < a.size(); ++i) {
-        if (a[i].size() != b[i].size()) return false;
-        for (std::size_t j = 0; j < a[i].size(); ++j)
-          if (a[i][j].type != b[i][j].type || a[i][j].value != b[i][j].value) return false;
+    bool sameName(const Certificate& certificate) {
+      const auto issuer = parseName(X509_get_issuer_name(certificate.x509.get()));
+      const auto subject = parseName(X509_get_subject_name(certificate.x509.get()));
+      if (issuer.size() != subject.size()) return false;
+      for (std::size_t i = 0; i < issuer.size(); ++i) {
+        if (issuer[i].size() != subject[i].size()) return false;
+        for (std::size_t j = 0; j < issuer[i].size(); ++j)
+          if (issuer[i][j].type != subject[i][j].type || issuer[i][j].value != subject[i][j].value) return false;
       }
       return true;
     }
 
-    // `subject.verify({ publicKey: issuer.publicKey, signatureOnly: true }, crypto)`: a key that
-    // does not import for the signature algorithm verifies false; an algorithm @peculiar/x509
-    // cannot map throws.
-    bool verifyCertificateSignature(const Certificate& subject, const Certificate& issuer) {
-      const std::string& algorithm = subject.signatureAlgorithm;
-      enum class Scheme { rsaPkcs1, rsaPss, ecdsa, ed25519 };
-      Scheme scheme = Scheme::rsaPkcs1;
-      const EVP_MD* md = nullptr;
-      int saltLength = 20;
-      if (algorithm == "1.2.840.113549.1.1.5") md = EVP_sha1();
-      else if (algorithm == "1.2.840.113549.1.1.11") md = EVP_sha256();
-      else if (algorithm == "1.2.840.113549.1.1.12") md = EVP_sha384();
-      else if (algorithm == "1.2.840.113549.1.1.13") md = EVP_sha512();
-      else if (algorithm == "1.2.840.10045.4.1") {
-        scheme = Scheme::ecdsa;
-        md = EVP_sha1();
-      } else if (algorithm == "1.2.840.10045.4.3.2") {
-        scheme = Scheme::ecdsa;
-        md = EVP_sha256();
-      } else if (algorithm == "1.2.840.10045.4.3.3") {
-        scheme = Scheme::ecdsa;
-        md = EVP_sha384();
-      } else if (algorithm == "1.2.840.10045.4.3.4") {
-        scheme = Scheme::ecdsa;
-        md = EVP_sha512();
-      } else if (algorithm == "1.3.101.112") {
-        scheme = Scheme::ed25519;
-      } else if (algorithm == "1.2.840.113549.1.1.10") {
-        // RSASSA-PSS-params: hashAlgorithm [0] (default SHA-1), saltLength [2] (default 20).
-        scheme = Scheme::rsaPss;
-        md = EVP_sha1();
-        const asn1::Node top = asn1::parse(subject.signatureAlgorithmRaw);
-        if (top.value.size() > 1 && asn1::isUniversal(top.value[1], asn1::Type::Sequence)) {
-          for (const asn1::Node& field : top.value[1].value) {
-            if (asn1::is(field, 3, 0, true) && !field.value.empty() && !field.value[0].value.empty()) {
-              const std::string hash = asn1::oidString(field.value[0].value[0]);
-              if (hash == "2.16.840.1.101.3.4.2.1") md = EVP_sha256();
-              else if (hash == "2.16.840.1.101.3.4.2.2") md = EVP_sha384();
-              else if (hash == "2.16.840.1.101.3.4.2.3") md = EVP_sha512();
-            } else if (asn1::is(field, 3, 2, true) && !field.value.empty()) {
-              double value = 0;
-              for (std::uint8_t byte : field.value[0].valueHex) value = value * 256 + byte;
-              saltLength = static_cast<int>(value);
-            }
-          }
-        }
-      } else {
-        fail("Cannot get WebCrypto algorithm for '" + algorithm + "'");
-      }
-      const unsigned char* cursor = issuer.subjectPublicKeyInfoRaw.data();
-      ossl::Pkey key(d2i_PUBKEY(nullptr, &cursor, static_cast<long>(issuer.subjectPublicKeyInfoRaw.size())));
-      if (!key) return false;
-      const int type = EVP_PKEY_get_base_id(key.get());
-      if ((scheme == Scheme::rsaPkcs1 || scheme == Scheme::rsaPss) && type != EVP_PKEY_RSA) return false;
-      if (scheme == Scheme::ecdsa && type != EVP_PKEY_EC) return false;
-      if (scheme == Scheme::ed25519 && type != EVP_PKEY_ED25519) return false;
-      return ossl::digestVerify(key.get(), md, subject.signatureValue, subject.tbsRaw,
-                                scheme == Scheme::rsaPss ? std::optional<int>(saltLength) : std::nullopt);
+    bool supportedPssParameters(const X509_ALGOR* algorithm) {
+      int type = V_ASN1_UNDEF;
+      const void* value = nullptr;
+      X509_ALGOR_get0(nullptr, &type, &value, algorithm);
+      if (type != V_ASN1_SEQUENCE) asn1::invalid("RSA-PSS parameters");
+      const auto pss = asn1::decode<RSA_PSS_PARAMS_free>(asn1::stringBytes(static_cast<const ASN1_STRING*>(value)),
+                                                       d2i_RSA_PSS_PARAMS, "RSA-PSS parameters");
+      const int hash = pss->hashAlgorithm ? OBJ_obj2nid(asn1::algorithmOid(pss->hashAlgorithm)) : NID_sha1;
+      if (hash != NID_sha1 && hash != NID_sha256 && hash != NID_sha384 && hash != NID_sha512) return false;
+      std::int64_t saltLength = 20, trailer = 1;
+      if ((pss->saltLength && ASN1_INTEGER_get_int64(&saltLength, pss->saltLength) != 1) ||
+          (pss->trailerField && ASN1_INTEGER_get_int64(&trailer, pss->trailerField) != 1) ||
+          saltLength < 0 || saltLength > std::numeric_limits<int>::max() || trailer != 1)
+        return false;
+
+      // Require MGF1 with the signature digest, as in the previous EVP verification.
+      if (!pss->maskGenAlgorithm) return hash == NID_sha1;
+      const ASN1_OBJECT* maskOid = nullptr;
+      X509_ALGOR_get0(&maskOid, &type, &value, pss->maskGenAlgorithm);
+      if (OBJ_obj2nid(maskOid) != NID_mgf1 || type != V_ASN1_SEQUENCE) return false;
+      const auto maskHash = asn1::decode<X509_ALGOR_free>(asn1::stringBytes(static_cast<const ASN1_STRING*>(value)),
+                                                        d2i_X509_ALGOR, "RSA-PSS MGF1 parameters");
+      return OBJ_obj2nid(asn1::algorithmOid(maskHash.get())) == hash;
     }
 
-    // X509Certificate.serialNumber: hex, without a leading 00 before a byte above 0x7F.
-    std::string certificateSerialHex(const Certificate& certificate) {
-      BytesView serial(certificate.serialNumber);
-      if (serial.size() > 1 && serial[0] == 0x00 && serial[1] > 0x7F) serial = serial.subspan(1);
-      return toHex(serial);
+    bool verifyCertificateSignature(const Certificate& subject, const Certificate& issuer) {
+      int expectedKey = EVP_PKEY_RSA;
+      const X509_ALGOR* algorithm = nullptr;
+      X509_get0_signature(nullptr, &algorithm, subject.x509.get());
+      const ASN1_OBJECT* oid = asn1::algorithmOid(algorithm);
+      switch (OBJ_obj2nid(oid)) {
+        case NID_rsassaPss:
+          if (!supportedPssParameters(algorithm)) return false;
+          break;
+        case NID_sha1WithRSAEncryption:
+        case NID_sha256WithRSAEncryption:
+        case NID_sha384WithRSAEncryption:
+        case NID_sha512WithRSAEncryption: break;
+        case NID_ecdsa_with_SHA1:
+        case NID_ecdsa_with_SHA256:
+        case NID_ecdsa_with_SHA384:
+        case NID_ecdsa_with_SHA512: expectedKey = EVP_PKEY_EC; break;
+        case NID_ED25519: expectedKey = EVP_PKEY_ED25519; break;
+        default: fail("Cannot get WebCrypto algorithm for '" + asn1::oidText(oid) + "'");
+      }
+      const asn1::ErrorScope errors;
+      EVP_PKEY* key = X509_get0_pubkey(issuer.x509.get());
+      return key && EVP_PKEY_get_base_id(key) == expectedKey && X509_verify(subject.x509.get(), key) == 1;
     }
 
     struct CachedCrl {
@@ -2666,62 +1859,50 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       return cache;
     }
 
-    // `new X509Crl(bytes)`: nextUpdate (undefined when absent) and the entries' serial hex.
     CachedCrl parseCrl(BytesView bytes) {
-      const asn1::Node top = asn1::parse(bytes);
-      if (!asn1::isUniversal(top, asn1::Type::Sequence) || top.value.size() < 3 || !asn1::isUniversal(top.value[0], asn1::Type::Sequence))
-        schemaMismatch("CertificateList");
-      const asn1::Node& tbs = top.value[0];
-      std::size_t index = 0;
-      if (index < tbs.value.size() && asn1::isUniversal(tbs.value[index], asn1::Type::Integer)) ++index;
-      (void)parseAlgorithmIdentifier(requireChild(tbs, index++, "TBSCertList"));
-      (void)parseName(requireChild(tbs, index++, "TBSCertList"), "Name");
-      (void)parseTime(requireChild(tbs, index++, "TBSCertList"));
+      const auto value = asn1::decode<X509_CRL_free>(bytes, d2i_X509_CRL, "X.509 CRL");
+      const ASN1_BIT_STRING* signature = nullptr;
+      X509_CRL_get0_signature(value.get(), &signature, nullptr);
+      checkOctetAligned(signature, "X.509 CRL signature");
+      (void)parseTime(X509_CRL_get0_lastUpdate(value.get()));
       CachedCrl crl;
-      if (index < tbs.value.size() && (asn1::isUniversal(tbs.value[index], asn1::Type::UTCTime) || asn1::isUniversal(tbs.value[index], asn1::Type::GeneralizedTime))) {
-        const double nextUpdate = parseTime(tbs.value[index]);
-        // `nextUpdate?.getTime() || undefined`
-        if (nextUpdate != 0 && !std::isnan(nextUpdate)) crl.nextUpdate = nextUpdate;
-        ++index;
-      }
-      if (index < tbs.value.size() && asn1::isUniversal(tbs.value[index], asn1::Type::Sequence)) {
-        for (const asn1::Node& entry : tbs.value[index].value) {
-          if (!asn1::isUniversal(entry, asn1::Type::Sequence) || entry.value.size() < 2 || !asn1::isUniversal(entry.value[0], asn1::Type::Integer))
-            schemaMismatch("RevokedCertificate");
-          crl.revokedCerts.push_back(toHex(entry.value[0].valueHex));
-        }
+      if (const ASN1_TIME* nextUpdate = X509_CRL_get0_nextUpdate(value.get())) crl.nextUpdate = parseTime(nextUpdate);
+      const STACK_OF(X509_REVOKED)* entries = X509_CRL_get_REVOKED(value.get());
+      const int count = sk_X509_REVOKED_num(entries);
+      if (count > 0) crl.revokedCerts.reserve(static_cast<std::size_t>(count));
+      for (int i = 0; i < count; ++i) {
+        const X509_REVOKED* entry = sk_X509_REVOKED_value(entries, i);
+        (void)parseTime(X509_REVOKED_get0_revocationDate(entry));
+        crl.revokedCerts.push_back(serialHex(X509_REVOKED_get0_serialNumber(entry)));
       }
       return crl;
     }
 
-    // The keyIdentifier of an AuthorityKeyIdentifier extension ([0] IMPLICIT OCTET STRING).
-    std::string authorityKeyId(BytesView extnValue) {
-      const asn1::Node node = asn1::parse(extnValue);
-      if (!asn1::isUniversal(node, asn1::Type::Sequence)) schemaMismatch("AuthorityKeyIdentifier");
-      for (const asn1::Node& field : node.value)
-        if (field.tagClass == 3 && field.tagNumber == 0 && !field.isConstructed) return toHex(field.valueHex);
-      return "";
+    bool hasAsn1SequenceHeader(BytesView bytes) {
+      if (bytes.empty()) return false;
+      const asn1::ErrorScope errors;
+      const unsigned char* cursor = bytes.data();
+      long size = 0;
+      int tag = 0, tagClass = 0;
+      const int flags = ASN1_get_object(&cursor, &size, &tag, &tagClass, static_cast<long>(std::min(bytes.size(), asn1::maxInput)));
+      return (flags & V_ASN1_CONSTRUCTED) != 0 && tagClass == V_ASN1_UNIVERSAL && tag == V_ASN1_SEQUENCE;
     }
 
-    // `extCRLDistributionPoints?.distributionPoints?.[0].distributionPoint?.fullName?.[0].uniformResourceIdentifier`
-    std::optional<std::string> crlDistributionPointUrl(BytesView extnValue) {
-      const asn1::Node points = asn1::parse(extnValue);
-      if (!asn1::isUniversal(points, asn1::Type::Sequence)) schemaMismatch("CRLDistributionPoints");
-      if (points.value.empty()) throw rt::TypeError("undefined is not an object (evaluating 'distributionPoints?.[0].distributionPoint')");
-      const asn1::Node& point = points.value[0];
-      for (const asn1::Node& field : point.value) {
-        if (!(field.tagClass == 3 && field.tagNumber == 0 && field.isConstructed)) continue;
-        // DistributionPointName: fullName [0] GeneralNames
-        for (const asn1::Node& name : field.value) {
-          if (!(name.tagClass == 3 && name.tagNumber == 0 && name.isConstructed)) continue;
-          if (name.value.empty()) throw rt::TypeError("undefined is not an object (evaluating 'fullName?.[0].uniformResourceIdentifier')");
-          const asn1::Node& general = name.value[0];
-          if (general.tagClass == 3 && general.tagNumber == 6 && !general.isConstructed) return asn1::latin1(general.valueHex);
-          return std::nullopt;
-        }
-        return std::nullopt;
-      }
-      return std::nullopt;
+    // Revocation fetches use the first distribution point and its first fullName.
+    std::optional<std::string> crlDistributionPointUrl(const Certificate& cert) {
+      const auto points = certificateExtension<CRL_DIST_POINTS, CRL_DIST_POINTS_free>(cert, NID_crl_distribution_points, "CRL Distribution Points");
+      if (!points) return std::nullopt;
+      const DIST_POINT* point = sk_DIST_POINT_value(points.get(), 0);
+      if (!point) asn1::invalid("CRL Distribution Points");
+      if (!point->distpoint || point->distpoint->type != 0) return std::nullopt;
+      const GENERAL_NAME* name = sk_GENERAL_NAME_value(point->distpoint->name.fullname, 0);
+      if (!name) asn1::invalid("CRL Distribution Point fullName");
+      if (name->type != GEN_URI) return std::nullopt;
+      const BytesView uri = asn1::stringBytes(name->d.uniformResourceIdentifier);
+      if (uri.empty()) return std::nullopt;
+      if (!std::all_of(uri.begin(), uri.end(), [](std::uint8_t c) { return c >= 0x21 && c <= 0x7e; }))
+        asn1::invalid("CRL Distribution Point URI");
+      return std::string(reinterpret_cast<const char*>(uri.data()), uri.size());
     }
 
     /**
@@ -2731,28 +1912,20 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
      * CRL certificate structure referenced from https://tools.ietf.org/html/rfc5280#page-117
      */
     rt::Task<bool> isCertRevoked(Certificate cert) {
-      if (!cert.extensions) co_return false;
-      const Extension* extAuthorityKeyID = nullptr;
-      const Extension* extSubjectKeyID = nullptr;
-      const Extension* extCRLDistributionPoints = nullptr;
-      for (const Extension& ext : *cert.extensions) {
-        if (ext.extnID == "2.5.29.35") extAuthorityKeyID = &ext;
-        else if (ext.extnID == "2.5.29.14") extSubjectKeyID = &ext;
-        else if (ext.extnID == "2.5.29.31") extCRLDistributionPoints = &ext;
-      }
+      if (!X509_get0_extensions(cert.x509.get())) co_return false;
       // Check to see if we've got cached info for the cert's CA
       std::string keyIdentifier;
-      const std::string authorityKeyIdentifier = extAuthorityKeyID != nullptr ? authorityKeyId(extAuthorityKeyID->extnValue) : std::string();
-      if (extAuthorityKeyID != nullptr && !authorityKeyIdentifier.empty()) {
-        keyIdentifier = authorityKeyIdentifier;
-      } else if (extSubjectKeyID != nullptr) {
+      const auto authority = certificateExtension<AUTHORITY_KEYID, AUTHORITY_KEYID_free>(cert, NID_authority_key_identifier, "Authority Key Identifier");
+      if (authority) keyIdentifier = toHex(asn1::stringBytes(authority->keyid));
+      if (keyIdentifier.empty()) {
         /**
          * We might be dealing with a self-signed root certificate. Check the
          * Subject key Identifier extension next.
          */
-        keyIdentifier = toHex(parseOctetString(extSubjectKeyID->extnValue));
+        const auto subject = certificateExtension<ASN1_OCTET_STRING, ASN1_OCTET_STRING_free>(cert, NID_subject_key_identifier, "Subject Key Identifier");
+        if (subject) keyIdentifier = toHex(asn1::stringBytes(subject.get()));
       }
-      const std::string serialNumber = certificateSerialHex(cert);
+      const std::string serialNumber = serialHex(X509_get0_serialNumber(cert.x509.get()));
       if (!keyIdentifier.empty()) {
         const auto cached = cacheRevokedCerts().find(keyIdentifier);
         if (cached != cacheRevokedCerts().end()) {
@@ -2762,26 +1935,29 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
             co_return rt::includes(cached->second.revokedCerts, serialNumber);
         }
       }
-      const std::optional<std::string> crlURL = extCRLDistributionPoints != nullptr ? crlDistributionPointUrl(extCRLDistributionPoints->extnValue) : std::nullopt;
+      const std::optional<std::string> crlURL = crlDistributionPointUrl(cert);
       // If no URL is provided then we have nothing to check
       if (!crlURL || crlURL->empty()) co_return false;
       // Download and read the CRL
       Bytes certListBytes;
       bool downloaded = false;
+      bool published = false;
       try {
         auto fetching = rt::fetch(rt::RequestInfo(*crlURL), rt::RequestInit());
         const rt::Response respCRL = co_await std::move(fetching);
         auto reading = respCRL.arrayBuffer();
         certListBytes = co_await std::move(reading);
         downloaded = true;
+        published = respCRL.ok();
       } catch (...) {
       }
       if (!downloaded) co_return false;
       CachedCrl newCached;
       try {
         newCached = parseCrl(certListBytes);
-      } catch (...) {
-        // Something was malformed with the CRL, so pass
+      } catch (const rt::JsError&) {
+        // A server can return a CRL body with an error status. Fail closed if that body looks like a list.
+        if (published || hasAsn1SequenceHeader(certListBytes)) throw;
         co_return false;
       }
       // Cache the results
@@ -2860,7 +2036,7 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
             const Certificate& issuer = *x5cWithTrustAnchor[i + 1];
             // Leaf or intermediate cert, make sure the next cert in the chain signed it
             if (!verifyCertificateSignature(subject, issuer)) throw InvalidSubjectAndIssuer();
-            if (sameName(issuer.subject, issuer.issuer)) {
+            if (sameName(issuer)) {
               // Root cert detected, make sure it signed itself
               if (!verifyCertificateSignature(issuer, issuer)) throw InvalidSubjectAndIssuer();
               // Don't process anything else after a root cert
@@ -2898,9 +2074,9 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
 
     // `attStmt.get(key)`: the statement must be a Map.
     const Cbor* statementMember(const Cbor& attStmt, std::string_view key) {
-      if (attStmt.kind == Cbor::Kind::null_ || attStmt.kind == Cbor::Kind::undefined_)
-        throw rt::TypeError(std::string(attStmt.kind == Cbor::Kind::null_ ? "null" : "undefined") + " is not an object (evaluating 'attStmt.get')");
-      if (attStmt.kind != Cbor::Kind::map) throw rt::TypeError("attStmt.get is not a function. (In 'attStmt.get(\"" + std::string(key) + "\")', 'attStmt.get' is undefined)");
+      if (attStmt.kind() == Cbor::Kind::null_ || attStmt.kind() == Cbor::Kind::undefined_)
+        throw rt::TypeError(std::string(attStmt.kind() == Cbor::Kind::null_ ? "null" : "undefined") + " is not an object (evaluating 'attStmt.get')");
+      if (attStmt.kind() != Cbor::Kind::map) throw rt::TypeError("attStmt.get is not a function. (In 'attStmt.get(\"" + std::string(key) + "\")', 'attStmt.get' is undefined)");
       return attStmt.get(key);
     }
 
@@ -3067,17 +2243,13 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
         for (const json::value& item : headerX5c->as_array()) {
           Cbor certBuffer;
           if (item.is_string()) {
-            certBuffer.kind = Cbor::Kind::string;
-            certBuffer.text = std::string(item.as_string());
+            certBuffer = Cbor{std::string(item.as_string())};
           } else if (rt::isNumber(item)) {
             certBuffer = numberCbor(rt::toNumber(item));
           } else if (item.is_bool()) {
-            certBuffer.kind = Cbor::Kind::boolean;
-            certBuffer.boolean = item.as_bool();
+            certBuffer = Cbor{item.as_bool()};
           } else if (item.is_null()) {
-            certBuffer.kind = Cbor::Kind::null_;
-          } else {
-            certBuffer.kind = Cbor::Kind::tag;  // a JSON object or array: not a certificate buffer
+            certBuffer = Cbor{nullptr};
           }
           certs.push_back(convertCertBufferToPEM(certBuffer));
         }
@@ -3100,26 +2272,14 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       co_return verifySignature(verify);
     }
 
-    // The AuthorizationList fields in @peculiar/asn1-android's declaration order (context tags).
-    constexpr std::array<int, 45> AUTHORIZATION_LIST_TAGS = {1,   2,   3,   5,   6,   10,  200, 203, 303, 305, 400, 401, 402, 405, 503,
-                                                              504, 505, 506, 507, 508, 509, 600, 601, 701, 702, 703, 704, 705, 706, 709,
-                                                              710, 711, 712, 713, 714, 715, 716, 717, 718, 719, 720, 723, 724, -1, -1};
-
-    // `authorizationList.allApplications !== undefined`: asn1-schema walks the optional fields in
-    // declaration order and only reaches [600] when the elements before it matched in order.
-    bool hasAllApplications(const asn1::Node& list) {
-      std::size_t admission = 0;
-      for (std::size_t i = 0; i < AUTHORIZATION_LIST_TAGS.size() && AUTHORIZATION_LIST_TAGS[i] >= 0; ++i) {
-        const std::size_t dataIndex = i - admission;
-        if (dataIndex >= list.value.size()) return false;
-        const asn1::Node& element = list.value[dataIndex];
-        bool matched = asn1::is(element, 3, AUTHORIZATION_LIST_TAGS[i], true);
-        if (matched && AUTHORIZATION_LIST_TAGS[i] == 600) matched = !element.value.empty() && asn1::is(element.value[0], 1, 5, false);
-        if (!matched) {
-          admission++;
-          continue;
-        }
-        if (AUTHORIZATION_LIST_TAGS[i] == 600) return true;
+    // AuthorizationList fields are explicitly tagged. Any occurrence of [600] is forbidden.
+    bool hasAllApplications(const ASN1_STRING* list) {
+      BytesView encoded = asn1::stringBytes(list);
+      BytesView fields = asn1::takeDer(encoded, "Android AuthorizationList").contents;
+      while (!fields.empty()) {
+        const auto field = asn1::takeDer(fields, "Android AuthorizationList");
+        if (field.tagClass != V_ASN1_CONTEXT_SPECIFIC || !field.constructed) asn1::invalid("Android AuthorizationList");
+        if (field.tag == 600) return true;
       }
       return false;
     }
@@ -3143,23 +2303,16 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       const Certificate parsedCert = parseCertificate(firstCertificate(x5c));
       // Convert the credentialPublicKey to PKCS
       const Bytes credPubKeyPKCS = convertCOSEtoPKCS(options.credentialPublicKey);
-      if (!bytesEqual(credPubKeyPKCS, parsedCert.subjectPublicKey)) fail("Credential public key does not equal leaf cert public key (Android Key)");
+      if (!bytesEqual(credPubKeyPKCS, subjectPublicKey(parsedCert))) fail("Credential public key does not equal leaf cert public key (Android Key)");
       /**
        * Verify that the attestationChallenge field in the attestation certificate extension data is
        * identical to clientDataHash.
        */
       // Find Android KeyStore Extension in certificate extensions
-      const Extension* extKeyStore = findExtension(parsedCert, "1.3.6.1.4.1.11129.2.1.17");
+      X509_EXTENSION* extKeyStore = findExtension(parsedCert, "1.3.6.1.4.1.11129.2.1.17");
       if (extKeyStore == nullptr) fail("Certificate did not contain extKeyStore (Android Key)");
-      const asn1::Node keyDescription = asn1::parse(extKeyStore->extnValue);
-      if (!asn1::isUniversal(keyDescription, asn1::Type::Sequence) || keyDescription.value.size() < 8 ||
-          !asn1::isUniversal(keyDescription.value[0], asn1::Type::Integer) || !asn1::isUniversal(keyDescription.value[1], asn1::Type::Enumerated) ||
-          !asn1::isUniversal(keyDescription.value[2], asn1::Type::Integer) || !asn1::isUniversal(keyDescription.value[3], asn1::Type::Enumerated) ||
-          !asn1::isUniversal(keyDescription.value[4], asn1::Type::OctetString) || !asn1::isUniversal(keyDescription.value[5], asn1::Type::OctetString) ||
-          !asn1::isUniversal(keyDescription.value[6], asn1::Type::Sequence) || !asn1::isUniversal(keyDescription.value[7], asn1::Type::Sequence))
-        schemaMismatch("KeyDescription");
-      // Verify extKeyStore values
-      const Bytes attestationChallenge = keyDescription.value[4].isConstructed ? Bytes() : keyDescription.value[4].valueHex;
+      const auto keyDescription = parseAndroidKeyDescription(extensionBytes(extKeyStore));
+      const BytesView attestationChallenge = asn1::stringBytes(keyDescription->attestationChallenge);
       if (!bytesEqual(attestationChallenge, options.clientDataHash)) fail("Attestation challenge was not equal to client data hash (Android Key)");
       /**
        * The AuthorizationList.allApplications field is not present on either authorization list
@@ -3167,8 +2320,8 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
        *
        * (i.e. These shouldn't contain the [600] tag)
        */
-      if (hasAllApplications(keyDescription.value[7])) fail("teeEnforced contained \"allApplications [600]\" tag (Android Key)");
-      if (hasAllApplications(keyDescription.value[6])) fail("teeEnforced contained \"allApplications [600]\" tag (Android Key)");
+      if (hasAllApplications(keyDescription->teeEnforced)) fail("teeEnforced contained \"allApplications [600]\" tag (Android Key)");
+      if (hasAllApplications(keyDescription->softwareEnforced)) fail("teeEnforced contained \"allApplications [600]\" tag (Android Key)");
       // MetadataService is DISABLED (never initialized): `getStatement` returns undefined.
       /**
        * Verify that x5c contains a full certificate path.
@@ -3449,26 +2602,26 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
     // number (a string concatenation or NaN), which never equals the pubArea exponent.
     std::optional<double> exponentSum(const Cbor& eBuffer) {
       const auto element = [&](std::size_t index) -> std::optional<const Cbor*> {
-        if (eBuffer.kind == Cbor::Kind::array) return index < eBuffer.items.size() ? std::optional<const Cbor*>(&eBuffer.items[index]) : std::nullopt;
+        if (eBuffer.kind() == Cbor::Kind::array) return index < eBuffer.items().size() ? std::optional<const Cbor*>(&eBuffer.items()[index]) : std::nullopt;
         return std::nullopt;
       };
       const auto shifted = [&](std::size_t index, int shift) -> double {
         double value = 0;
-        if (eBuffer.kind == Cbor::Kind::bytes) value = index < eBuffer.bytes.size() ? eBuffer.bytes[index] : 0;
+        if (eBuffer.kind() == Cbor::Kind::bytes) value = index < eBuffer.bytes().size() ? eBuffer.bytes()[index] : 0;
         else if (const auto item = element(index)) value = cborToNumber(**item);
         return static_cast<double>(rt::toInt32(rt::toInt32(value) * std::pow(2.0, shift)));
       };
       double first = std::numeric_limits<double>::quiet_NaN();
-      if (eBuffer.kind == Cbor::Kind::bytes) {
-        if (!eBuffer.bytes.empty()) first = eBuffer.bytes[0];
+      if (eBuffer.kind() == Cbor::Kind::bytes) {
+        if (!eBuffer.bytes().empty()) first = eBuffer.bytes()[0];
       } else if (const auto item = element(0)) {
         const Cbor& value = **item;
-        if (value.kind == Cbor::Kind::number) first = value.number;
-        else if (value.kind == Cbor::Kind::boolean) first = value.boolean ? 1 : 0;
-        else if (value.kind == Cbor::Kind::null_) first = 0;
-        else if (value.kind != Cbor::Kind::undefined_) return std::nullopt;  // string concatenation
-      } else if (eBuffer.kind == Cbor::Kind::string) {
-        if (!eBuffer.text.empty()) return std::nullopt;  // `"x"[0] + ...` concatenates
+        if (value.kind() == Cbor::Kind::number) first = value.number();
+        else if (value.kind() == Cbor::Kind::boolean) first = value.boolean() ? 1 : 0;
+        else if (value.kind() == Cbor::Kind::null_) first = 0;
+        else if (value.kind() != Cbor::Kind::undefined_) return std::nullopt;  // string concatenation
+      } else if (eBuffer.kind() == Cbor::Kind::string) {
+        if (!eBuffer.text().empty()) return std::nullopt;  // `"x"[0] + ...` concatenates
       }
       const double sum = first + shifted(1, 8) + shifted(2, 16);
       if (std::isnan(sum)) return std::nullopt;
@@ -3504,7 +2657,7 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       /**
        * Verify structures
        */
-      if (ver == nullptr || ver->kind != Cbor::Kind::string || ver->text != "2.0") fail("Unexpected ver \"" + jsString(ver) + "\", expected \"2.0\" (TPM)");
+      if (ver == nullptr || ver->kind() != Cbor::Kind::string || ver->text() != "2.0") fail("Unexpected ver \"" + jsString(ver) + "\", expected \"2.0\" (TPM)");
       if (!truthy(sig)) fail("No attestation signature provided in attestation statement (TPM)");
       if (!truthy(alg)) fail("Attestation statement did not contain alg (TPM)");
       if (!isCOSEAlg(alg)) fail("Attestation statement contained invalid alg " + jsString(alg) + " (TPM)");
@@ -3584,40 +2737,15 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
        * Plumb the depths of the certificate's ASN.1-formatted data for some values we need to verify
        */
       const Certificate& parsedCert = leafCertInfo.parsedCertificate;
-      if (!parsedCert.extensions) fail("Certificate was missing extensions (TPM)");
-      std::optional<std::vector<asn1::Node>> subjectAltNamePresent;
-      std::optional<std::vector<std::string>> extKeyUsage;
-      for (const Extension& ext : *parsedCert.extensions) {
-        if (ext.extnID == "2.5.29.17") {
-          const asn1::Node names = asn1::parse(ext.extnValue);
-          if (!asn1::isUniversal(names, asn1::Type::Sequence)) schemaMismatch("SubjectAlternativeName");
-          subjectAltNamePresent = names.value;
-        } else if (ext.extnID == "2.5.29.37") {
-          const asn1::Node usages = asn1::parse(ext.extnValue);
-          if (!asn1::isUniversal(usages, asn1::Type::Sequence)) schemaMismatch("ExtendedKeyUsage");
-          std::vector<std::string> oids;
-          for (const asn1::Node& usage : usages.value) {
-            if (!asn1::isUniversal(usage, asn1::Type::ObjectIdentifier)) schemaMismatch("ExtendedKeyUsage");
-            oids.push_back(asn1::oidString(usage));
-          }
-          extKeyUsage = std::move(oids);
-        }
-      }
-      // Check that certificate contains subjectAltName (2.5.29.17) extension,
-      if (!subjectAltNamePresent) fail("Certificate did not contain subjectAltName extension (TPM)");
-      // TPM-specific values are buried within `directoryName`, so first make sure there are values
-      // there.
-      if (subjectAltNamePresent->empty()) throw rt::TypeError("undefined is not an object (evaluating 'subjectAltNamePresent[0].directoryName')");
-      const asn1::Node& firstName = subjectAltNamePresent->front();
-      std::vector<RelativeDistinguishedName> directoryName;
-      bool hasDirectoryName = false;
-      if (asn1::is(firstName, 3, 4, true)) {
-        if (firstName.value.empty()) schemaMismatch("GeneralName");
-        directoryName = parseName(firstName.value[0], "Name");
-        hasDirectoryName = true;
-      }
-      if (hasDirectoryName && directoryName.empty()) throw rt::TypeError("undefined is not an object (evaluating 'subjectAltNamePresent[0].directoryName?.[0].length')");
-      if (!hasDirectoryName || directoryName.front().empty()) fail("Certificate subjectAltName extension directoryName was empty (TPM)");
+      if (!X509_get0_extensions(parsedCert.x509.get())) fail("Certificate was missing extensions (TPM)");
+      const auto subjectAltNames = certificateExtension<GENERAL_NAMES, GENERAL_NAMES_free>(parsedCert, NID_subject_alt_name, "Subject Alternative Name");
+      if (!subjectAltNames) fail("Certificate did not contain subjectAltName extension (TPM)");
+      const auto extKeyUsage = certificateExtension<EXTENDED_KEY_USAGE, EXTENDED_KEY_USAGE_free>(parsedCert, NID_ext_key_usage, "Extended Key Usage");
+      // TPM-specific values are buried within the first GeneralName's directoryName.
+      const GENERAL_NAME* firstName = sk_GENERAL_NAME_value(subjectAltNames.get(), 0);
+      if (!firstName || firstName->type != GEN_DIRNAME) fail("Certificate subjectAltName extension directoryName was empty (TPM)");
+      const auto directoryName = parseName(firstName->d.directoryName);
+      if (directoryName.empty() || directoryName.front().empty()) fail("Certificate subjectAltName extension directoryName was empty (TPM)");
       const TcgAtTpmValues tpmValues = getTcgAtTpmValues(directoryName);
       if (!rt::truthy(tpmValues.tcgAtTpmManufacturer) || !rt::truthy(tpmValues.tcgAtTpmModel) || !rt::truthy(tpmValues.tcgAtTpmVersion))
         fail("Certificate contained incomplete subjectAltName data (TPM)");
@@ -3626,8 +2754,9 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       if (!isTpmManufacturer(*tpmValues.tcgAtTpmManufacturer)) fail("Could not match TPM manufacturer \"" + *tpmValues.tcgAtTpmManufacturer + "\" (TPM)");
       // Check that certificate contains extKeyUsage (2.5.29.37) extension and it must contain
       // tcg-kp-AIKCertificate (2.23.133.8.3) OID.
-      if (extKeyUsage->empty() || extKeyUsage->front() != "2.23.133.8.3")
-        fail("Unexpected extKeyUsage \"" + (extKeyUsage->empty() ? std::string("undefined") : extKeyUsage->front()) + "\", expected \"2.23.133.8.3\" (TPM)");
+      const ASN1_OBJECT* usage = sk_ASN1_OBJECT_value(extKeyUsage.get(), 0);
+      if (!usage || asn1::oidText(usage) != "2.23.133.8.3")
+        fail("Unexpected extKeyUsage \"" + (usage ? asn1::oidText(usage) : std::string("undefined")) + "\", expected \"2.23.133.8.3\" (TPM)");
       // Validate attestation statement AAGUID against leaf cert AAGUID
       try {
         validateExtFIDOGenCEAAGUID(parsedCert, options.aaguid);
@@ -3670,22 +2799,18 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
        * Compare nonce in certificate extension to computed nonce
        */
       const Certificate parsedCredCert = parseCertificate(firstCertificate(x5c));
-      if (!parsedCredCert.extensions) fail("credCert missing extensions (Apple)");
-      const Extension* extCertNonce = findExtension(parsedCredCert, "1.2.840.113635.100.8.2");
+      if (!X509_get0_extensions(parsedCredCert.x509.get())) fail("credCert missing extensions (Apple)");
+      X509_EXTENSION* extCertNonce = findExtension(parsedCredCert, "1.2.840.113635.100.8.2");
       if (extCertNonce == nullptr) fail("credCert missing \"1.2.840.113635.100.8.2\" extension (Apple)");
       const Bytes nonceToHash = concatBytes({options.authData, options.clientDataHash});
       const Bytes nonce = toHash(nonceToHash);
-      /**
-       * Ignore the first six ASN.1 structure bytes that define the nonce as an OCTET STRING. Should
-       * trim off <Buffer 30 24 a1 22 04 20>
-       */
-      const Bytes extNonce = sliceBytes(extCertNonce->extnValue, 6, extCertNonce->extnValue.size());
+      const Bytes extNonce = parseAppleNonce(extensionBytes(extCertNonce));
       if (!bytesEqual(nonce, extNonce)) fail("credCert nonce was not expected value (Apple)");
       /**
        * Verify credential public key matches the Subject Public Key of credCert
        */
       const Bytes credPubKeyPKCS = convertCOSEtoPKCS(options.credentialPublicKey);
-      if (!bytesEqual(credPubKeyPKCS, parsedCredCert.subjectPublicKey)) fail("Credential public key does not equal credCert public key (Apple)");
+      if (!bytesEqual(credPubKeyPKCS, subjectPublicKey(parsedCredCert))) fail("Credential public key does not equal credCert public key (Apple)");
       co_return true;
     }
 
@@ -3763,12 +2888,12 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       if (!parsedAuthData.aaguid) fail("No AAGUID was present during registration");
       const Cbor decodedPublicKey = isoCBOR::decodeFirst(*parsedAuthData.credentialPublicKey);
       const Cbor* alg = requireMap(decodedPublicKey, "decodedPublicKey", "COSEKEYS.alg").get(COSEKEYS::alg);
-      if (alg == nullptr || alg->kind != Cbor::Kind::number) fail("Credential public key was missing numeric alg");
+      if (alg == nullptr || alg->kind() != Cbor::Kind::number) fail("Credential public key was missing numeric alg");
       // Make sure the key algorithm is one we specified within the registration options
-      if (std::find(supportedCOSEAlgorithmIdentifiers.begin(), supportedCOSEAlgorithmIdentifiers.end(), alg->number) == supportedCOSEAlgorithmIdentifiers.end())
-        fail("Unexpected public key alg \"" + rt::numberToString(alg->number) + "\", expected one of \"-8, -7, -36, -37, -38, -39, -257, -258, -259, -65535\"");
+      if (std::find(supportedCOSEAlgorithmIdentifiers.begin(), supportedCOSEAlgorithmIdentifiers.end(), alg->number()) == supportedCOSEAlgorithmIdentifiers.end())
+        fail("Unexpected public key alg \"" + rt::numberToString(alg->number()) + "\", expected one of \"-8, -7, -36, -37, -38, -39, -257, -258, -259, -65535\"");
       const Bytes clientDataHash = toHash(isoBase64URL::toBuffer(clientDataJSONText->as_string()));
-      const std::string fmtText = fmt != nullptr && fmt->kind == Cbor::Kind::string ? fmt->text : std::string();
+      const std::string fmtText = fmt != nullptr && fmt->kind() == Cbor::Kind::string ? fmt->text() : std::string();
       // Prepare arguments to pass to the relevant verification method
       AttestationFormatVerifierOpts verifierOpts{
         .aaguid = *parsedAuthData.aaguid,
@@ -3785,7 +2910,7 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
        * Verification can only be performed when attestation = 'direct'
        */
       bool verified = false;
-      const bool knownFormat = fmt != nullptr && fmt->kind == Cbor::Kind::string;
+      const bool knownFormat = fmt != nullptr && fmt->kind() == Cbor::Kind::string;
       if (knownFormat && fmtText == "fido-u2f") {
         rt::Task<bool> verifying = verifyAttestationFIDOU2F(std::move(verifierOpts));
         verified = co_await std::move(verifying);
@@ -3806,9 +2931,9 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
         verified = co_await std::move(verifying);
       } else if (knownFormat && fmtText == "none") {
         // `attStmt.size > 0`: only a non-empty Map has a size above zero; null and undefined throw.
-        if (attStmt.kind == Cbor::Kind::null_ || attStmt.kind == Cbor::Kind::undefined_)
-          throw rt::TypeError(std::string(attStmt.kind == Cbor::Kind::null_ ? "null" : "undefined") + " is not an object (evaluating 'attStmt.size')");
-        if (attStmt.kind == Cbor::Kind::map && !attStmt.entries.empty()) fail("None attestation had unexpected attestation statement");
+        if (attStmt.kind() == Cbor::Kind::null_ || attStmt.kind() == Cbor::Kind::undefined_)
+          throw rt::TypeError(std::string(attStmt.kind() == Cbor::Kind::null_ ? "null" : "undefined") + " is not an object (evaluating 'attStmt.size')");
+        if (attStmt.kind() == Cbor::Kind::map && !attStmt.entries().empty()) fail("None attestation had unexpected attestation statement");
         // This is the weaker of the attestations, so there's nothing else to really check
         verified = true;
       } else {

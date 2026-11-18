@@ -12,6 +12,7 @@
 #include "uos/rt/headers.hpp"
 #include "uos/rt/http.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
 #include "uos/rt/text_codec.hpp"
@@ -199,6 +200,30 @@ ASYNC_TEST("differential: classifyCodex429 over buffered bodies and Retry-After 
   }
   EXPECT_EQ(replay.mismatches, 0);
   EXPECT_EQ(replay.next - start, bodies.size() * headerSets.size());
+}
+
+ASYNC_TEST("Codex 429 requires a body within the JSON depth limit for quota proof") {
+  constexpr double now = 1700000000000;
+  for (const std::size_t depth : {rt::limits::kJsonDepth, rt::limits::kJsonDepth + 1}) {
+    // The response root contributes one level to the generated array nesting.
+    const auto bytes = generate(json::object{{"generator", "nestedArrays"}, {"size", rt::makeNumber(static_cast<double>(depth - 1))}});
+    rt::ResponseInit init;
+    init.status = 429;
+    init.headers = rt::Headers{{"Retry-After", "15"}};
+    const rt::Response upstream(rt::BodyInit(bytes), std::move(init));
+    auto classifying = codex429::classifyCodex429(upstream, now);
+    const auto parsed = co_await std::move(classifying);
+    const bool withinLimit = depth == rt::limits::kJsonDepth;
+    EXPECT_EQ(parsed.usageLimitReached, withinLimit);
+    EXPECT_EQ(parsed.retryAtMs, std::optional<double>(now + (withinLimit ? 60000 : 15000)));
+    EXPECT_EQ(parsed.quotaBlockSource.value_or(""), withinLimit ? "body_resets_at" : "header_retry_after");
+    EXPECT_EQ(parsed.resetDeadlineIsStable, withinLimit);
+    EXPECT(!parsed.resetDeadlineConflict);
+    EXPECT_EQ(parsed.response.status(), 429);
+    auto reading = parsed.response.arrayBuffer();
+    const auto responseBytes = co_await std::move(reading);
+    EXPECT_EQ(responseBytes, bytes);
+  }
 }
 
 TEST("differential: slot transitions over parsed states, accounts and classifications") {

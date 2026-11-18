@@ -10,6 +10,7 @@ compiler="$UOS_COMPILER"
 compiler_options=(--sysroot="$UOS_SYSROOT" "-B$UOS_SDK/host-tools/bin/")
 mode=link
 case "${1-}" in
+  --vendor-c) compiler="$UOS_C_COMPILER"; shift ;;
   --vendor-archive) compiler="$UOS_SDK/host-tools/bin/ar"; compiler_options=(); mode=archive; shift ;;
 esac
 [ -x "$compiler" ] || { echo "cpp/gateway: SDK tool missing: $compiler" >&2; exit 2; }

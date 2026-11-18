@@ -35,6 +35,7 @@
 // src/sentinel/upstream_capture.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp
 // src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/upstream_wire.cpp src/utils.cpp src/types.cpp
 // src/authority/native_paid_contracts.cpp src/lib/jev_compaction/types.cpp tests/helpers/counting_kv.cpp
+#include "helpers/image_multipart_fixture.hpp"
 #include "uos/images.hpp"
 #include "uos/config.hpp"
 #include "uos/http.hpp"
@@ -52,6 +53,8 @@ namespace im = uos::images;
 namespace tel = uos::openai_telemetry;
 #define AWAIT(name, expression) auto name##Task = (expression); auto name = co_await std::move(name##Task)
 namespace {
+  using namespace uos::test::image_multipart;
+
   struct ImageScope {
     std::string tmp = rt::env::get("TMPDIR").value_or("/tmp");
     rt::env::ScopedEnvironment environment{std::vector<std::pair<std::string, std::string>>{{"HOME", tmp + "/h"}, {"TMPDIR", tmp}}};
@@ -65,9 +68,6 @@ namespace {
   }
   rt::Request imagesRequest(const std::string& body, const std::string& path = "/v1/images/generations") { return imagesRequest(rt::jsonParse(body), path); }
   rt::Request imagesRequest(const char* body, const std::string& path = "/v1/images/generations") { return imagesRequest(std::string(body), path); }
-  rt::Request multipartRequest(const rt::FormData& form) { rt::RequestInit init; init.method = "POST"; init.body = form; return rt::Request("http://127.0.0.1/v1/images/edits", init); }
-  rt::File file(rt::Bytes bytes, const std::string& name = "source.png", const std::string& type = "image/png") { return rt::File({rt::BlobPart(std::move(bytes))}, name, type); }
-  rt::FormData editForm() { rt::FormData form; form.append("prompt", "edit the source"); form.append("image", file({1})); return form; }
   rt::Response imageResponse(const std::string& result, double createdAt = 1787431659, const rt::Headers& headers = {}, const std::optional<std::string>& revised = std::nullopt) {
     json::object item{{"type", "image_generation_call"}, {"result", result}, {"output_format", "png"}};
     if (revised && !revised->empty()) item["revised_prompt"] = *revised;
@@ -119,14 +119,14 @@ TEST("image extraction reads only complete image-generation items") {
 ASYNC_TEST("multipart image edits validate every part before dispatch") {
   ImageScope scope;const auto marker=constantDispatch(rt::Response(std::string("{}"),{.status=599}));
   const rt::Bytes png{137,80,78,71,13,10,26,10};
-  for(int index=0;index<9;++index){rt::FormData form;form.set("prompt","a cat");form.set("image",file(png,"cat.png"));
-    if(index==0)form.set("unsupported","value");
-    if(index==1)form.delete_("image");
-    if(index==2)form.set("image","not-a-file");
-    if(index==3)form.set("image",file(rt::encodeUtf8("not an image"),"cat.png"));
-    if(index==4)form.set("mask",file(png,"mask.jpg","image/jpeg"));
-    if(index==5)form.set("mask",file({},"mask.png"));
-    if(index==6){form.set("stream","true");form.set("size","1024x1024");}if(index==7)form.set("size","1024x1024");
+  for(int index=0;index<9;++index){MultipartFixture form;putPart(form, "prompt","a cat");putPart(form, "image",file(png,"cat.png"));
+    if(index==0)putPart(form, "unsupported","value");
+    if(index==1)removePart(form, "image");
+    if(index==2)putPart(form, "image","not-a-file");
+    if(index==3)putPart(form, "image",file(rt::encodeUtf8("not an image"),"cat.png"));
+    if(index==4)putPart(form, "mask",file(png,"mask.jpg","image/jpeg"));
+    if(index==5)putPart(form, "mask",file({},"mask.png"));
+    if(index==6){putPart(form, "stream","true");putPart(form, "size","1024x1024");}if(index==7)putPart(form, "size","1024x1024");
     const auto request=multipartRequest(form);const auto options=index>=7?constantDispatch(imageResponse("aW1n")):marker;AWAIT(response,im::handleImages(request,"edits",nullptr,options));EXPECT_EQ(response.status(),index>=7?200:index==3?599:400);AWAIT(body,response.json());
     if(index==0)EXPECT_EQ(errorParam(body),std::string("unsupported"));
     if(index==1)EXPECT_EQ(errorParam(body),std::string("image"));

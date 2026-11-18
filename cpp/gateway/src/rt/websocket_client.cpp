@@ -4,8 +4,9 @@
 // parser and the "response" / "upgrade" / "timeout" / "error" events.
 #include "websocket_internal.hpp"
 
+#include "fetch_transport_internal.hpp"
+
 #include "uos/rt/base64.hpp"
-#include "uos/rt/crypto.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/url.hpp"
@@ -14,6 +15,7 @@
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/local/stream_protocol.hpp>
+#include <boost/beast/websocket/detail/hybi13.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -24,7 +26,6 @@ namespace asio = boost::asio;
 
 namespace uos::rt::ws::detail {
   namespace {
-    constexpr const char* GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     // node:http's default limit on a response head.
     constexpr std::size_t MAX_HEADER_SIZE = 16 * 1024;
 
@@ -125,51 +126,30 @@ namespace uos::rt::ws::detail {
   // ---- response head -----------------------------------------------------------
 
   std::optional<ParsedResponse> parseResponseHead(BytesView data) {
-    static constexpr std::string_view prefix = "HTTP/";
-    for (std::size_t index = 0; index < std::min<std::size_t>(prefix.size(), data.size()); ++index) {
-      if (data[index] != static_cast<std::uint8_t>(prefix[index])) rethrow(parseError("Expected HTTP/, RTSP/ or ICE/", "HPE_INVALID_CONSTANT"));
-    }
     const std::string_view text(reinterpret_cast<const char*>(data.data()), data.size());
-    const std::size_t end = text.find("\r\n\r\n");
-    if (end == std::string_view::npos) {
-      if (data.size() > MAX_HEADER_SIZE) rethrow(parseError("Header overflow", "HPE_HEADER_OVERFLOW"));
+    namespace http = ::uos::rt::detail::fetch;
+    auto parsedHead = http::parseResponseHead(text, MAX_HEADER_SIZE, MAX_HEADER_SIZE);
+    if (parsedHead.status == http::HeadStatus::malformed) {
+      const char* const code = llhttp_errno_name(parsedHead.error);
+      rethrow(parseError(parsedHead.errorReason ? parsedHead.errorReason : code, code));
+    }
+    if (parsedHead.status == http::HeadStatus::incomplete) {
+      if (data.size() >= MAX_HEADER_SIZE) rethrow(parseError("Header overflow", "HPE_HEADER_OVERFLOW"));
       return std::nullopt;
     }
-    if (end + 4 > MAX_HEADER_SIZE) rethrow(parseError("Header overflow", "HPE_HEADER_OVERFLOW"));
-    ParsedResponse parsed;
-    parsed.length = end + 4;
-    const std::string_view head = text.substr(0, end + 2);
-    std::size_t lineEnd = head.find("\r\n");
-    const std::string_view statusLine = head.substr(0, lineEnd);
-    if (statusLine.size() < 8 || statusLine[5] < '0' || statusLine[5] > '9' || statusLine[6] != '.' || statusLine[7] < '0' || statusLine[7] > '9')
-      rethrow(parseError("Invalid HTTP version", "HPE_INVALID_VERSION"));
-    parsed.response.httpVersion = std::string(statusLine.substr(5, 3));
-    if (statusLine.size() < 9 || statusLine[8] != ' ') rethrow(parseError("Expected space after version", "HPE_INVALID_VERSION"));
-    if (statusLine.size() < 12 || !std::all_of(statusLine.begin() + 9, statusLine.begin() + 12, [](char c) { return c >= '0' && c <= '9'; }) ||
-        (statusLine.size() > 12 && statusLine[12] != ' '))
-      rethrow(parseError("Invalid status code", "HPE_INVALID_STATUS"));
-    parsed.response.statusCode = std::stoi(std::string(statusLine.substr(9, 3)));
-    if (statusLine.size() > 13) {
-      const std::string_view reason = statusLine.substr(13);
-      parsed.response.statusMessage = latin1(BytesView(reinterpret_cast<const std::uint8_t*>(reason.data()), reason.size()));
-    }
-    std::size_t position = lineEnd + 2;
-    while (position < head.size()) {
-      lineEnd = head.find("\r\n", position);
-      const std::string_view line = head.substr(position, lineEnd - position);
-      position = lineEnd + 2;
-      const std::size_t colon = line.find(':');
-      if (colon == std::string_view::npos || colon == 0 || !validHeaderName(line.substr(0, colon))) rethrow(parseError("Invalid header token", "HPE_INVALID_HEADER_TOKEN"));
-      std::string_view value = line.substr(colon + 1);
-      while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) value.remove_prefix(1);
-      while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) value.remove_suffix(1);
-      for (const char c : value) {
-        const auto byte = static_cast<unsigned char>(c);
-        if ((byte < 0x20 && byte != '\t') || byte == 0x7f) rethrow(parseError("Invalid header value char", "HPE_INVALID_HEADER_TOKEN"));
+    const auto asLatin1 = [](std::string value) {
+      if (std::any_of(value.begin(), value.end(), [](unsigned char byte) { return byte >= 0x80; })) {
+        return latin1(BytesView(reinterpret_cast<const std::uint8_t*>(value.data()), value.size()));
       }
-      const std::string_view name = line.substr(0, colon);
-      parsed.response.rawHeaders.emplace_back(std::string(name), latin1(BytesView(reinterpret_cast<const std::uint8_t*>(value.data()), value.size())));
-    }
+      return value;
+    };
+    ParsedResponse parsed;
+    parsed.length = parsedHead.length;
+    parsed.response.httpVersion = "1." + std::to_string(parsedHead.head.minorVersion);
+    parsed.response.statusCode = parsedHead.head.status;
+    parsed.response.statusMessage = asLatin1(std::move(parsedHead.head.reason));
+    parsed.response.rawHeaders = std::move(parsedHead.head.fields);
+    for (auto& field : parsed.response.rawHeaders) field.second = asLatin1(std::move(field.second));
     return parsed;
   }
 
@@ -410,7 +390,9 @@ namespace uos::rt::ws::detail {
     if (invalidUrlMessage) throw SyntaxError(*invalidUrlMessage);
 
     const int defaultPort = isSecure ? 443 : 80;
-    const std::string key = toBase64(rt::crypto::randomBytes(16));
+    boost::beast::websocket::detail::sec_ws_key_type nonce;
+    boost::beast::websocket::detail::make_sec_ws_key(nonce);
+    const std::string key(nonce.data(), nonce.size());
     std::string hostname = parsedUrl.hostname();
     if (!hostname.empty() && hostname.front() == '[') hostname = hostname.substr(1, hostname.size() - 2);
     const std::string portText = parsedUrl.port();
@@ -512,7 +494,7 @@ namespace uos::rt::ws::detail {
       current.req = nullptr;
       const std::optional<std::string> upgrade = response->header("upgrade");
       if (!upgrade || toLowerCase(*upgrade) != "websocket") return abortHandshakeSocket(websocket, socket, "Invalid Upgrade header");
-      const std::string digest = rt::crypto::createHash("sha1").update(key + GUID).digest("base64");
+      const std::string digest = handshakeAccept(key);
       if (response->header("sec-websocket-accept") != digest) return abortHandshakeSocket(websocket, socket, "Invalid Sec-WebSocket-Accept header");
       if (response->header("sec-websocket-protocol")) return abortHandshakeSocket(websocket, socket, "Server sent a subprotocol but none was requested");
       if (response->header("sec-websocket-extensions"))
