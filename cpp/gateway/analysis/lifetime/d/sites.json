@@ -8614,8 +8614,28 @@
       ]
     },
     "include/uos/handler/serve_handler.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the delivery handoff closure and injected request callback.",
+      "sites": [
+        {
+          "lines": [
+            11,
+            14,
+            16,
+            18,
+            19,
+            21
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The returned handoff owns its delivery state and removes the request listener. Created handlers transfer the injected callback into each awaiting request Task before it starts."
+        }
+      ]
     },
     "include/uos/handler/terminal_log.hpp": {
       "reviewed": false,

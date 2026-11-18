@@ -321,7 +321,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/handler/admission.hpp`
 - [x] `include/uos/handler/http.hpp`
 - [x] `include/uos/handler/index.hpp`
-- [ ] `include/uos/handler/serve_handler.hpp`
+- [x] `include/uos/handler/serve_handler.hpp`
 - [ ] `include/uos/handler/terminal_log.hpp`
 - [ ] `include/uos/handler/terminal_route.hpp`
 - [ ] `include/uos/health.hpp`
@@ -1799,6 +1799,12 @@ Reviewed the inline agent route table and its coroutine lambda.
 - L18, 23, 24, 25, 26, 28, 29, 32, 33 **SAFE** · The route table is immutable process storage. Its only coroutine lambda is captureless, and its frame owns the Request and both awaited results.
 - L36, 38 **SAFE** · The request and delivery or upgrade data pass by value into their handler frames.
 
+### `include/uos/handler/serve_handler.hpp`
+
+Reviewed the delivery handoff closure and injected request callback.
+
+- L11, 14, 16, 18, 19, 21 **SAFE** · The returned handoff owns its delivery state and removes the request listener. Created handlers transfer the injected callback into each awaiting request Task before it starts.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2047,4 +2053,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-213/286 files reviewed. 386 sites: 365 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+214/286 files reviewed. 387 sites: 366 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
