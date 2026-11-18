@@ -252,7 +252,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/reliability/harness.cpp`
 - [x] `src/harmony/reliability/hash.cpp`
 - [x] `src/harmony/reliability/loops.cpp`
-- [ ] `src/harmony/reliability/retry.cpp`
+- [x] `src/harmony/reliability/retry.cpp`
 - [ ] `src/harmony/reliability/state.cpp`
 - [ ] `src/harmony/reliability/surfaces.cpp`
 - [ ] `src/harmony/reliability/verify.cpp`
@@ -1608,3 +1608,7 @@ Reliability hashes are calculated synchronously from live input views.
 ### `src/harmony/reliability/loops.cpp`
 
 Loop detection and ordered-map observation execute synchronously. Returned flags own their inspection results.
+
+### `src/harmony/reliability/retry.cpp`
+
+Retry policy and ledger inspection are synchronous. Entry copies and scalar delay values travel outside the function.

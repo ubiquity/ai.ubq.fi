@@ -2804,7 +2804,8 @@
       "sites": []
     },
     "src/harmony/reliability/retry.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Retry policy and ledger inspection are synchronous. Entry copies and scalar delay values travel outside the function.",
       "sites": []
     },
     "src/harmony/reliability/state.cpp": {
