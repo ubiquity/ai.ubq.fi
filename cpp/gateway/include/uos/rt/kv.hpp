@@ -228,6 +228,8 @@ namespace uos::rt {
     iterator insert(const_iterator position, const_iterator first, const_iterator last);
     const KvValue& operator[](std::size_t index) const noexcept;
     KvValue& operator[](std::size_t index);
+    const KvValue& front() const noexcept { return (*this)[0]; }
+    KvValue& front() { return (*this)[0]; }
     iterator begin() noexcept { return iterator(this, 0); }
     iterator end() noexcept { return iterator(this, size()); }
     const_iterator begin() const noexcept { return const_iterator(this, 0); }
