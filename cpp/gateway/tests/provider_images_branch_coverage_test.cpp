@@ -1,4 +1,5 @@
 // Links: tests/provider_images_branch_coverage_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/sentinel/replay_model.cpp src/sentinel/replay_observation.cpp src/images.cpp src/lib/jev_compaction/codex_items.cpp src/lib/jev_compaction/compact.cpp src/lib/jev_compaction/request.cpp
 // src/lib/jev_compaction/state.cpp src/api_key_policy.cpp src/api_keys.cpp src/auth/relay.cpp src/authority/native_api_key_policy.cpp
 // src/authority/native_api_key.cpp src/authority/native_codex_429.cpp src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp src/authority/native_codex_evaluation.cpp

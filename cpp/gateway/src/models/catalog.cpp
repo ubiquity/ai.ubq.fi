@@ -10,6 +10,7 @@
 #include "uos/models/metadata.hpp"
 #include "uos/models/openrouter_models.hpp"
 #include "uos/provider/cerebras.hpp"
+#include "uos/provider/gemini.hpp"
 #include "uos/provider/claude_code_credentials.hpp"
 #include "uos/provider/claude_code_models.hpp"
 #include "uos/provider/lithos.hpp"
@@ -110,9 +111,23 @@ namespace {
     return rows;
   }
   ModelCatalogSource credentialGatedCatalogSource(bool configured, double count) { return {.status = catalogAvailabilityStatus(configured), .count = configured ? count : 0, .updated_at_ms = std::nullopt, .configured = configured}; }
-  struct CredentialCounts { double deepseek = 0; double cerebras = 0; double lithos = 0; };
+  struct CredentialCounts { double deepseek = 0; double cerebras = 0; double lithos = 0; double gemini = 0; };
   CredentialCounts addCredentialGatedCatalogProviders(ModelMap& models) {
     CredentialCounts count;
+    if (provider::gemini::geminiCliConfigured()) {
+      PublicModelProvider provider{"gemini", "google", {"/v1/chat/completions", "/v1/responses"}};
+      for (const auto id : provider::gemini::GEMINI_MODEL_IDS) {
+        metadata::ModelMetadataHint hint;
+        hint.context_window_tokens = provider::gemini::GEMINI_CONTEXT_WINDOW_TOKENS;
+        hint.max_context_window_tokens = provider::gemini::GEMINI_CONTEXT_WINDOW_TOKENS;
+        const std::string effort = rt::endsWith(id, "-high") ? "high" : rt::endsWith(id, "-medium") ? "medium" : "low";
+        hint.supported_reasoning_levels = json::array{effort};
+        hint.default_reasoning_effort = effort;
+        metadata::ModelMetadataSources sources; sources.provider = hint;
+        addPublicModelCatalogEntry(models, std::string(id), provider, nullptr, sources);
+        ++count.gemini;
+      }
+    }
     if (deepseek::index::readDeepSeekApiKey()) {
       PublicModelProvider provider{"deepseek", "deepseek", {"/v1/chat/completions", "/v1/responses"}};
       metadata::ModelMetadataHint hint; hint.context_window_tokens = deepseek::index::DEEPSEEK_CONTEXT_WINDOW_TOKENS; hint.max_context_window_tokens = deepseek::index::DEEPSEEK_CONTEXT_WINDOW_TOKENS;
@@ -176,6 +191,7 @@ rt::Task<rt::Response> handleModels(std::optional<rt::Request> req) {
   std::optional<json::object> normalized; if (snapshot) if (const auto* rows = rt::getArray(*snapshot, "models"); rows && !rows->empty()) normalized = norm::normalizeModelList(json::value(*snapshot));
   json::array codexModels; if (sel::isProviderEnabled("codex", selection) && normalized) if (auto* rows = rt::getArray(*normalized, "data")) codexModels = *rows;
   auto merged = norm::withConfiguredCerebrasModel(codexModels, sel::isProviderEnabled("cerebras", selection));
+  merged = norm::withConfiguredGeminiModels(merged, sel::isProviderEnabled("gemini", selection));
   merged = norm::withConfiguredDeepSeekModels(merged, sel::isProviderEnabled("deepseek", selection)); merged = norm::withConfiguredLithosModels(merged, sel::isProviderEnabled("lithos", selection)); merged = norm::withConfiguredDeepSeekWaterfallModels(merged, deepseek::waterfall::deepSeekWaterfallCatalogEnabled(selection));
   auto m = sel::isProviderEnabled("openlux", selection) ? rt::Promise(provider::metered::fetchMeteredModels()) : rt::Promise<std::optional<provider::metered::MeteredModelsSnapshot>>::resolve(std::nullopt);
   auto s = sel::isProviderEnabled("surplus", selection) ? rt::Promise(provider::surplus::fetchSurplusModels()) : rt::Promise<std::optional<provider::surplus::SurplusModelsSnapshot>>::resolve(std::nullopt);
@@ -224,7 +240,7 @@ rt::Task<ModelCatalogSnapshot> buildModelCatalogSnapshot() {
   ModelCatalogSource claudeSource{.status = catalogAvailabilityStatus(claude && !claude->stale.value_or(false)), .count = claude ? static_cast<double>(claude->models.size()) : 0, .updated_at_ms = claude ? std::optional(claude->updated_at_ms) : std::nullopt, .configured = std::get<3>(all).has_value()}; if (claude && claude->stale.value_or(false)) claudeSource.stale = true; result.sources.set("claude_code", claudeSource);
   result.sources.set("openlux", {.status = catalogAvailabilityStatus(metered.has_value()), .count = metered ? static_cast<double>(metered->models.size()) : 0, .updated_at_ms = metered ? std::optional(metered->updated_at_ms) : std::nullopt});
   result.sources.set("surplus", {.status = catalogAvailabilityStatus(surplus.has_value()), .count = surplus ? static_cast<double>(surplus->models.size()) : 0, .updated_at_ms = surplus ? std::optional(surplus->updated_at_ms) : std::nullopt});
-  result.sources.set("deepseek", credentialGatedCatalogSource(deepseek::index::readDeepSeekApiKey().has_value(), counts.deepseek)); result.sources.set("cerebras", credentialGatedCatalogSource(provider::cerebras::readCerebrasApiKey().has_value(), counts.cerebras)); result.sources.set("lithos", credentialGatedCatalogSource(provider::lithos::readLithosApiKey().has_value(), counts.lithos));
+  result.sources.set("gemini", credentialGatedCatalogSource(provider::gemini::geminiCliConfigured(), counts.gemini)); result.sources.set("deepseek", credentialGatedCatalogSource(deepseek::index::readDeepSeekApiKey().has_value(), counts.deepseek)); result.sources.set("cerebras", credentialGatedCatalogSource(provider::cerebras::readCerebrasApiKey().has_value(), counts.cerebras)); result.sources.set("lithos", credentialGatedCatalogSource(provider::lithos::readLithosApiKey().has_value(), counts.lithos));
   auto orSource = credentialGatedCatalogSource(provider::openrouter::readOpenRouterApiKey().has_value(), openrouter); auto orSnapshot = openrouter_models::openRouterModelsSnapshot(); orSource.updated_at_ms = orSnapshot ? std::optional(orSnapshot->updated_at_ms) : std::nullopt; result.sources.set("openrouter", orSource);
   co_return result;
 }
@@ -253,6 +269,7 @@ rt::Task<rt::Response> handleModelCapabilities() {
   for (const auto& row : claudeCapabilities(claude ? claude->models : empty)) if (!seen.has(rt::getString(row, "id").value_or(""))) data.push_back(row);
   for (const auto& row : discoveryRows(std::get<0>(all))) if (!hasId(data, rt::getString(row, "id").value_or(""))) data.push_back(discoveredModelCapabilitiesEntry(row.as_object(), "metered"));
   for (const auto& row : discoveryRows(std::get<1>(all))) if (!hasId(data, rt::getString(row, "id").value_or(""))) data.push_back(discoveredModelCapabilitiesEntry(row.as_object(), "surplus"));
+  data = norm::withConfiguredGeminiCapabilities(data, sel::isProviderEnabled("gemini", selection));
   data = norm::withConfiguredDeepSeekCapabilities(data, sel::isProviderEnabled("deepseek", selection)); data = norm::withConfiguredLithosCapabilities(data, sel::isProviderEnabled("lithos", selection)); data = norm::withConfiguredDeepSeekWaterfallCapabilities(data, deepseek::waterfall::deepSeekWaterfallCatalogEnabled(selection));
   auto kp = kv::getKv(); auto database = co_await kp.wait(); std::optional<codex_models_whitelist::CodexModelsWhitelist> wl; if (database) wl = co_await codex_models_whitelist::loadCodexModelsWhitelist(database);
   auto filtered = codex_models_whitelist::filterWhitelistedModelList(data, wl); seen.clear(); for (const auto& row : filtered) seen.add(std::string(rt::getString(row, "id").value_or("")));

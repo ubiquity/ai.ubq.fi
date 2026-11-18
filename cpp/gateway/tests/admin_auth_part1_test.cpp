@@ -1,5 +1,6 @@
 // Port of all 27 original tests/admin-auth-part1.test.ts registrations, in source order.
 // Links: tests/admin_auth_part1_test.cpp tests/helpers/admin_auth_harness.cpp src/agent_messages.cpp src/authority/native_kernel.cpp src/admin/defaults.cpp src/defaults.cpp src/kernel/quota_v2.cpp src/admin/api_keys.cpp src/models/codex_models_fetch.cpp src/runtime_config.cpp src/admin/kernel.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/authority/native_api_key_policy.cpp src/api_keys.cpp src/codex/banked_reset_provider.cpp src/types.cpp src/kernel/usage.cpp src/metered_quota.cpp src/paid_fallback/ledger_stats.cpp src/api_key_policy.cpp src/config.cpp src/paid_fallback/rollups.cpp src/cache/kv_migration_base.cpp src/models/catalog.cpp
 // src/authority/native_paid_policy.cpp src/release.cpp src/deepseek/waterfall.cpp src/provider/capacity_parse.cpp src/input_normalization.cpp src/codex/auth_refresh.cpp src/quota_projection.cpp src/authority/native_paid.cpp src/codex/dispatch.cpp src/codex/auth.cpp src/paid_fallback/ledger_state.cpp
 // src/kv_conversion/profile_json.cpp src/authority/native_paid_contracts.cpp src/codex/reset_settings.cpp src/models/metadata.cpp src/paid_fallback/ledger_backfill.cpp src/models/codex_models.cpp src/admin/api_key_mutations.cpp src/kernel/quota_reservations.cpp src/paid_fallback/ledger_settlement.cpp

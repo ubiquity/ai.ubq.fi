@@ -5,6 +5,7 @@
 #include "uos/provider/lithos_handlers.hpp"
 #include "uos/provider/lithos.hpp"
 #include "uos/provider/cerebras.hpp"
+#include "uos/provider/gemini.hpp"
 #include "uos/provider/cerebras_responses.hpp"
 #include "uos/provider/openrouter_handlers.hpp"
 #include "uos/provider/openrouter_request_controls.hpp"
@@ -369,6 +370,14 @@ namespace {
     const auto invalid = reqs::validateResponsesRequestFields(rawRecord, rawBody, extensions ? &*extensions : nullptr); if (invalid) co_return *invalid;
     const auto dispatchContext = responses_native_headers::nativeHeaderUsageContext(req, rawRecord, context); const auto* dispatch = dispatchContext ? &*dispatchContext : nullptr;
     const auto requested = rt::trim(rt::getString(rawRecord, "model").value_or(""));
+    if (!requested.empty() && provider::gemini::isGeminiModel(requested)) {
+      const auto selection = co_await provider::selection::loadProviderSelectionCached(); co_await rt::microtask();
+      if (provider::selection::isProviderEnabled("gemini", selection)) {
+        auto task = provider::gemini::handleGeminiResponses(req, rawRecord, requested, dispatch);
+        rt::Promise<rt::Response> pending(std::move(task));
+        co_return co_await pending.wait();
+      }
+    }
     if (!requested.empty() && deepseek::waterfall::isDeepSeekWaterfallModel(requested)) { auto task = deepseek::waterfall_handler::handleDeepSeekWaterfallResponses(req, rawRecord, rawBody, dispatch); rt::Promise<rt::Response> pending(std::move(task)); auto awaitedResult6 = co_await pending.wait(); co_return awaitedResult6; }
     if (!requested.empty() && deepseek::index::deepSeekUpstreamModelFor(requested)) {
       const auto selection = co_await provider::selection::loadProviderSelectionCached(); co_await rt::microtask();

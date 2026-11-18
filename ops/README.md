@@ -26,6 +26,19 @@ The verified Bun launcher explicitly loads the repository-root `.env`; automatic
 unit so paid billing reconciliation, capacity sampling, and telemetry pruning run on the VPS. Do not add Deno Deploy
 identity variables to `.env`; they cause the VPS launcher to reject startup.
 
+## Serve the Antigravity Gemini subscription
+
+The C++ `gemini` provider invokes the official Antigravity CLI headless stream-json interface. Install CLI 1.5.11 or the
+current verified version at `~/.local/bin/agy`, sign it in interactively as the gateway OS user, and confirm
+`agy models` lists the `gemini-3.8-flash-*` IDs. The executable and `~/.gemini/antigravity-cli` must remain owner-private
+with modes that exclude group and world access. The native launcher checks these properties before granting its narrow
+child-execution exception. The gateway does not read, copy, log, or forward the OAuth token.
+
+The provider is text-only. It rejects caller tool declarations, images, files, and replay of tool-generated items rather
+than silently dropping them. Provider selection and the model allowlist control availability like every other gateway
+provider. Account switching, credential renewal, overage settings, and banked credits remain owned by the Antigravity CLI;
+Admin Analytics exposes only the measured subscription quota and an explicit `/usage` refresh.
+
 ## Deploy a change
 
 Required GitHub CI checks must pass first. GitHub no longer deploys to Deno Deploy.

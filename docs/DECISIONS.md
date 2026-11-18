@@ -6,6 +6,22 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Antigravity subscription serves Gemini through the documented CLI headless contract - 2026-11-18
+
+The owner authorized the project-specific use of the existing `ubiquitydao@gmail.com` Antigravity Starter subscription. The C++ gateway now exposes a `gemini` subscription provider with the installed Gemini 3.8 Flash `high`, `medium`, and `low` model IDs. Each inference starts the owner-private `agy` together with its signed-in CLI state is separate from the gateway, and the gateway never reads or forwards the OAuth token itself.
+
+Reason: the official headless stream-json interface is the programmatic surface installed in this environment. A live probe returned the requested marked response with 8,699 measured tokens, and a separate documented `/usage` command showed the Gemini weekly bucket fall from 98.9199996% to 98.6355186% remaining. The owner explicitly required this normal subscription path rather than a paid Gemini API key or developer credits.
+
+Reversal risk: consumer subscription entitlements and CLI arguments can change independently of the gateway. Removing the exact `agy` execution grant restores the stronger no-child-process boundary but disables this provider. Switching to a paid API key changes the credential, billing, and owner, and therefore requires a new decision.
+
+## Antigravity quota is refreshable and never spends inference - 2026-11-18
+
+Admin Analytics reads `.data/antigravity-quota.json` and can explicitly refresh it through `POST /admin/providers/gemini/quota/refresh`. Refresh runs the documented CLI `/usage` command, projects only bucket IDs, remaining fractions or amounts, reset instants and disabled state, and atomically replaces an owner-private `0600` snapshot. Successful gateway inference schedules the same best-effort refresh so the meter follows subscription use without a periodic gateway process.
+
+Reason: the earlier status-line-only snapshot was display-only and could remain stale. The CLI `/usage` command returned the exact Gemini and third-party weekly buckets with zero token usage, providing a direct meter source that does not probe inference capacity.
+
+Reversal risk: removing the explicit refresh returns the panel to stale CLI status-line observations. Treating the meter as a routing cooldown would couple independent quota presentations to inference denial; this decision grants no such authority. Credential renewal, account switching, overage settings and model routing beyond the provider/model allowlists remain CLI- or admin-owned surfaces and are not invented by this meter.
+
 ## Direct Claude Messages omits the unsupported hosted web_search - 2026-11-05
 
 The direct Claude subscription and native Messages lane omits every hosted `web_search` declaration from the upstream request instead of rejecting the whole turn. This includes Codex's default `external_web_access:true` declaration, which the TUI restores after a per-thread disable. Function, namespace, MCP and other representable tools remain unchanged. Surplus and other reseller adapters retain their existing rejection of an enabled hosted declaration.

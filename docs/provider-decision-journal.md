@@ -547,3 +547,19 @@ Mock transport regressions cover streamed and buffered native requests, explicit
 usage counters. These tests verify payload preservation and cache accounting; they do not establish production cache
 hits or cost savings. Live cache acceptance remains a separate validation step. Removing the default leaves caching
 dependent on client controls; overriding explicit breakpoints could change the selected cache behavior.
+
+## 2026-11-18 — Antigravity subscription joins the C++ provider waterfall as `gemini`
+
+### Decision
+
+The owner-authorized Antigravity Starter subscription is an ordinary selectable subscription provider in the C++ gateway. It serves the installed `gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, and `gemini-3.8-flash-low` IDs on Responses and Chat Completions. The provider executes the owner-private official `agy` headless stream-json command as a child of the gateway, passes the prompt on stdin, disables slash-command expansion for inference, and never reads the OAuth token. Text is the complete request/response surface: caller tool declarations, tool replay, images, and files are rejected rather than silently dropped.
+
+Successful turns record the CLI's own input, output, cache-read, and total token counts under `x-uos-upstream: gemini`, preserve the CLI conversation ID as provider correlation, and run the normal API-key admission and gateway terminal lifecycle. Provider selection, model whitelist, health, request analytics, and admin visibility use the same surfaces as Codex and Claude. The gateway does not invent account switching, reset, banked-credit, or overage controls that the CLI does not expose.
+
+### Why
+
+The owner supplied project-specific authorization for the existing normal subscription and required parity with the mature Codex route. The installed CLI is the supported programmatic surface available to this account. A live direct probe returned `GATEWAY_GEMINI_OK` with 8,699 tokens, and the documented `/usage` command reported the Gemini weekly bucket moving from 98.9199996% to 98.6355186% remaining.
+
+### Status and reversal risk
+
+Implemented in the C++ worktree with a route-level authenticated-handler test and release compilation of every touched consumer. Live acceptance through the serving candidate and its authenticated admin readback is tracked separately. The native package permits child execution only when it finds the exact owner-private `agy` binary and CLI state directory; all other providers retain the no-child-process boundary. Removing that grant disables Gemini but restores the stricter original boundary. Consumer entitlement, CLI arguments, quota units, and model availability can drift independently, so model discovery and `/usage` evidence remain authoritative.

@@ -1,4 +1,5 @@
 // Links: tests/responses_conformance_http_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 //   tests/helpers/responses_conformance_fixture.cpp src/provider/capacity_events.cpp src/api_key_policy.cpp tests/helpers/responses_conformance_client.cpp tests/helpers/loopback_http.cpp src/runtime/http.cpp src/utils.cpp src/codex/banked_reset.cpp src/provider/capacity.cpp
 //   src/provider/capacity_contract.cpp src/provider/claude_capacity_rollups.cpp src/provider/claude_code_accounts.cpp src/authority/native_api_key.cpp src/runtime/http_body.cpp src/api_keys.cpp src/provider/health.cpp src/provider/capacity_history.cpp src/provider/capacity_parse.cpp
 //   src/serve.cpp src/agent_messages.cpp src/runtime/http_early_sse.cpp src/codex/experiment.cpp src/codex/dispatch.cpp src/cache/prompt_analytics_queue.cpp src/kv.cpp src/types.cpp src/paid_fallback/ledger_stats.cpp

@@ -50,7 +50,7 @@ namespace uos::runtime::permissions_linux {
     struct NativePermissions {
       std::function<NativeSupport()> support;
       std::function<bool(const std::string& path)> readonlyMount;
-      std::function<bool(const std::vector<NativeGrant>& grants)> enforce;
+      std::function<bool(const std::vector<NativeGrant>& grants, bool allowChildProcess)> enforce;
     };
 
 #if defined(__linux__) && defined(__aarch64__)
@@ -102,7 +102,7 @@ namespace uos::runtime::permissions_linux {
       return (filesystem.f_flags & 1) != 0;
     }
 
-    int installProcessFilter() {
+    int installProcessFilter(bool allowChildProcess) {
       struct sock_filter filter[128];
       std::size_t length = 0;
       const auto statement = [&](std::uint16_t code, std::uint32_t value) { filter[length++] = sock_filter{code, 0, 0, value}; };
@@ -118,8 +118,10 @@ namespace uos::runtime::permissions_linux {
       /* clone3's pointer cannot be inspected by BPF. glibc's ENOSYS fallback uses clone. */
       jump(BPF_JMP | BPF_JEQ | BPF_K, __NR_clone3, 0, 1);
       statement(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | ENOSYS);
-      deny(__NR_execve);
-      deny(__NR_execveat);
+      if (!allowChildProcess) {
+        deny(__NR_execve);
+        deny(__NR_execveat);
+      }
       deny(__NR_fchmod);
       deny(__NR_fchmodat);
       deny(__NR_fchownat);
@@ -138,10 +140,12 @@ namespace uos::runtime::permissions_linux {
       deny(__NR_setxattrat);
       deny(__NR_removexattrat);
       deny(__NR_file_setattr);
-      jump(BPF_JMP | BPF_JEQ | BPF_K, __NR_clone, 0, 3);
-      statement(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[0]));
-      jump(BPF_JMP | BPF_JSET | BPF_K, CLONE_THREAD, 1, 0);
-      statement(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM);
+      if (!allowChildProcess) {
+        jump(BPF_JMP | BPF_JEQ | BPF_K, __NR_clone, 0, 3);
+        statement(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[0]));
+        jump(BPF_JMP | BPF_JSET | BPF_K, CLONE_THREAD, 1, 0);
+        statement(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM);
+      }
       statement(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
       struct sock_fprog program {};
       program.len = static_cast<unsigned short>(length);
@@ -149,7 +153,7 @@ namespace uos::runtime::permissions_linux {
       return static_cast<int>(syscall(__NR_seccomp, SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, &program));
     }
 
-    bool nativeEnforce(const std::vector<NativeGrant>& grants) {
+    bool nativeEnforce(const std::vector<NativeGrant>& grants, bool allowChildProcess) {
       if (grants.size() > 1024) throw rt::TypeError("Confinement requires a bounded grant array");
       const int abi = landlockAbi();
       if (abi < 8) {
@@ -163,7 +167,7 @@ namespace uos::runtime::permissions_linux {
       for (const NativeGrant& grant : grants) {
         // napi_get_value_uint32: the access number as a 32-bit unsigned integer.
         const std::uint32_t access = rt::toUint32(grant.access);
-        if ((access & 1) || (access & ~attributes.handled_access_fs)) {
+        if (access & ~attributes.handled_access_fs) {
           close(ruleset);
           throw rt::TypeError("Invalid non-executable filesystem grant");
         }
@@ -198,7 +202,7 @@ namespace uos::runtime::permissions_linux {
         _exit(78);
       }
       close(ruleset);
-      if (installProcessFilter() != 0) {
+      if (installProcessFilter(allowChildProcess) != 0) {
         dprintf(STDERR_FILENO, "Seccomp thread synchronization failed: errno %d\n", errno);
         _exit(78);
       }
@@ -282,6 +286,8 @@ namespace uos::runtime::permissions_linux {
     for (const std::string& path : permissions.read) readPaths.push_back(canonicalize(path));
     std::vector<std::string> writePaths;
     for (const std::string& path : permissions.write) writePaths.push_back(canonicalize(path));
+    std::vector<std::string> executePaths;
+    for (const std::string& path : permissions.execute) executePaths.push_back(canonicalize(path));
     std::vector<std::string> immutablePaths;
     for (const std::string& path : permissions.immutable.value_or(std::vector<std::string>{})) immutablePaths.push_back(canonicalize(path));
     std::vector<std::string> immutableMounts;
@@ -300,6 +306,11 @@ namespace uos::runtime::permissions_linux {
       const double* granted = grants.get(path);
       grants.set(path, rt::bitOr(granted != nullptr ? *granted : 0, readable));
     }
+    for (const std::string& path : executePaths) {
+      if (rt::fs::statSync(path).isDirectory()) throw rt::TypeError("Executable confinement grant must name a file");
+      const double* granted = grants.get(path);
+      grants.set(path, rt::bitOr(granted != nullptr ? *granted : 0, 5)); // LANDLOCK_ACCESS_FS_EXECUTE | READ_FILE
+    }
     for (const std::string& path : writePaths) {
       const double writable = rt::fs::statSync(path).isDirectory() ? rt::bitAnd(0x7fff, rt::bitNot(1 | 4 | 8 | 64 | 2048)) : rt::bitOr(2, 0x4000);
       const double* granted = grants.get(path);
@@ -307,7 +318,7 @@ namespace uos::runtime::permissions_linux {
     }
     std::vector<NativeGrant> list;
     for (const auto& [path, access] : grants) list.push_back(NativeGrant{path, access});
-    if (!native.enforce(list)) throw rt::JsError("Native confinement did not produce an enforcement receipt");
+    if (!native.enforce(list, !executePaths.empty())) throw rt::JsError("Native confinement did not produce an enforcement receipt");
     LinuxPermissionsReceipt receipt;
     static_cast<LinuxPermissionsSupport&>(receipt) = support;
     receipt.filesystemThreadSync = true;

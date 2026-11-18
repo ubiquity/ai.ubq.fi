@@ -10,8 +10,8 @@ def main():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads((root / "PORT-MANIFEST.json").read_text())
     modules = manifest["modules"]
-    if len(modules) != 325 or manifest["summary"]["ported_modules"] != len(modules):
-        raise RuntimeError("Port manifest is incomplete; expected all 325 ported modules")
+    if manifest["summary"]["modules"] != len(modules) or manifest["summary"]["ported_modules"] != len(modules):
+        raise RuntimeError("Port manifest is incomplete; every registered module must be ported")
     implementations = []
     for key, module in sorted(modules.items()):
         if not module["ported"]:

@@ -1,4 +1,5 @@
 // Links: tests/kv_budget_part2_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/openai_schema.cpp src/agent_messages.cpp src/request.cpp src/auth/index.cpp src/kernel/quota_reservations.cpp src/authority/native_kernel_contracts.cpp src/openai.cpp src/utils.cpp
 // src/authority/native_kernel.cpp src/provider/metered.cpp src/api_key_policy.cpp src/models/codex_models.cpp src/authority/native_api_key.cpp src/kv.cpp src/auth/passport.cpp src/inference_deadline.cpp
 // src/provider/surplus_claude_request.cpp src/kernel/quota_v2.cpp src/kernel/attestation.cpp src/api_keys.cpp src/authority/native_api_key_policy.cpp src/models/catalog.cpp src/config.cpp src/http.cpp

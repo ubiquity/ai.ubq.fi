@@ -445,6 +445,7 @@ tests/admin_index_harness_test.cpp: tests/helpers/kv_budget_harness.cpp src/conf
     note: preserve every original static-registration source and add read-only symbol-proven completed handler closure
 
 tests/lithos_wiring_test.cpp: src/catalog/index.cpp src/catalog/models.cpp src/catalog/store.cpp src/catalog/types.cpp
+    src/provider/gemini.cpp src/admin/gemini_quota.cpp
     src/responses_failover_stream.cpp src/provider/stream_relay.cpp src/chat/stream_translation.cpp
     src/openai_telemetry.cpp src/upstream_wire.cpp src/deepseek/index.cpp src/provider/lithos.cpp
     src/provider/cerebras_rate_limits.cpp src/utils.cpp src/provider/removed_provider_telemetry.cpp
@@ -504,6 +505,7 @@ tests/lithos_wiring_test.cpp: src/catalog/index.cpp src/catalog/models.cpp src/c
     note: retain all prior static sources and add symbol-proven real route-table dependencies from completed openai_compat_harness
 
 tests/openai_compat_part11_test.cpp: src/kernel/attestation.cpp src/responses_failover_stream.cpp
+    src/provider/gemini.cpp src/admin/gemini_quota.cpp
     src/provider/stream_relay.cpp src/chat/stream_translation.cpp src/openai_telemetry.cpp src/upstream_wire.cpp
     src/deepseek/index.cpp src/provider/lithos.cpp src/provider/cerebras_rate_limits.cpp src/utils.cpp
     src/provider/removed_provider_telemetry.cpp src/codex/responses_error.cpp src/deepseek/stream.cpp
@@ -566,8 +568,8 @@ tests/openai_compat_part11_test.cpp: src/kernel/attestation.cpp src/responses_fa
     src/kernel/quota_reservations.cpp src/analytics.cpp src/kernel/quota_v2.cpp src/authority/native_kernel.cpp
     src/kernel/policy_queue.cpp src/authority/native_kernel_contracts.cpp
     note: retain all original static sources and add symbol-proven expanded openai_compat_harness route dependencies
-
 tests/public_provider_cache_controls_test.cpp: src/responses_failover_stream.cpp src/provider/stream_relay.cpp
+    src/provider/gemini.cpp src/admin/gemini_quota.cpp
     src/chat/stream_translation.cpp src/openai_telemetry.cpp src/upstream_wire.cpp src/deepseek/index.cpp
     src/provider/lithos.cpp src/provider/cerebras_rate_limits.cpp src/utils.cpp
     src/provider/removed_provider_telemetry.cpp src/codex/responses_error.cpp src/deepseek/stream.cpp

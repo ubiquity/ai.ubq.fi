@@ -1,4 +1,5 @@
 // Links: tests/openai_compat_metered_matrix_part2_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // tests/helpers/openai_compat_harness.cpp src/codex/capacity_routing.cpp src/codex/routing_mutations.cpp src/provider/metered.cpp src/authority/native_codex_mutations.cpp src/authority/native_codex_capacity.cpp src/provider/capacity_events.cpp src/provider/anthropic_responses.cpp
 // src/codex/banked_reset.cpp src/auth/index.cpp src/kv.cpp src/authority/native_codex_contracts.cpp src/provider/capacity_contract.cpp src/provider/anthropic_response_wire.cpp src/responses_handler.cpp src/openai_telemetry.cpp
 // src/provider/removed_provider_circuit.cpp src/codex/banked_reset_provider.cpp src/types.cpp src/utils.cpp src/http.cpp src/responses_attempts.cpp src/codex/auth.cpp src/responses_failover_stream.cpp

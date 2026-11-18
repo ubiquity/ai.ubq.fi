@@ -11,6 +11,7 @@
 #include "uos/rt/test.hpp"
 
 #include <fcntl.h>
+#include <spawn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -193,5 +194,50 @@ TEST("a confined child reads and writes only its grants and cannot change modes"
   const int fd = ::open((outside + "/secret.txt").c_str(), O_RDONLY);
   EXPECT(fd >= 0);
   if (fd >= 0) ::close(fd);
+#endif
+}
+
+TEST("an explicit executable grant permits only that binary for the confined child") {
+  const Fixture fixture;
+#if defined(__APPLE__)
+  return;
+#else
+  const LinuxPermissionsSupport support = getLinuxPermissionsSupport(fixture.artifact);
+  if (!support.landlockThreadSync || !support.seccomp) return;
+  const std::string writable = fixture.root + "/writable";
+  rt::fs::mkdirSync(writable);
+  std::fflush(nullptr);
+  const pid_t child = ::fork();
+  ASSERT(child >= 0);
+  if (child == 0) {
+    int code = 0;
+    try {
+      LinuxPermissions permissions;
+      permissions.read = {"/usr/lib", "/lib", "/bin/true", "/lib/ld-linux-aarch64.so.1"};
+      permissions.write = {writable};
+      permissions.execute = {"/bin/true", "/lib/ld-linux-aarch64.so.1"};
+      const auto receipt = applyLinuxPermissions(permissions, fixture.artifact);
+      if (!receipt.processThreadSync || !receipt.filesystemThreadSync) code |= 1;
+      pid_t allowed = -1;
+      char* const allowedArgv[] = {const_cast<char*>("/bin/true"), nullptr};
+      const int allowedStatus = ::posix_spawn(&allowed, "/bin/true", nullptr, nullptr, allowedArgv, environ);
+      if (allowedStatus != 0 || allowed <= 0) code |= 2;
+      else {
+        int waited = 0;
+        if (::waitpid(allowed, &waited, 0) != allowed || !WIFEXITED(waited) || WEXITSTATUS(waited) != 0) code |= 4;
+      }
+      pid_t denied = -1;
+      char* const deniedArgv[] = {const_cast<char*>("/bin/false"), nullptr};
+      const int deniedStatus = ::posix_spawn(&denied, "/bin/false", nullptr, nullptr, deniedArgv, environ);
+      if (deniedStatus != EACCES) code |= 8;
+    } catch (...) {
+      code |= 16;
+    }
+    ::_exit(code);
+  }
+  int status = 0;
+  ASSERT(::waitpid(child, &status, 0) == child);
+  EXPECT(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
 #endif
 }

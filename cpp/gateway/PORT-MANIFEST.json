@@ -1,5 +1,21 @@
 {
   "modules": {
+    "cpp/gateway/src/admin/gemini_quota.cpp": {
+      "deps": [],
+      "header": "cpp/gateway/include/uos/admin/gemini_quota.hpp",
+      "impl": "cpp/gateway/src/admin/gemini_quota.cpp",
+      "loc": 0,
+      "ported": true,
+      "tests": ["tests/gemini_subscription_test.cpp"]
+    },
+    "cpp/gateway/src/provider/gemini.cpp": {
+      "deps": [],
+      "header": "cpp/gateway/include/uos/provider/gemini.hpp",
+      "impl": "cpp/gateway/src/provider/gemini.cpp",
+      "loc": 0,
+      "ported": true,
+      "tests": ["tests/gemini_subscription_test.cpp"]
+    },
     "lib/jev_compaction/client.ts": {
       "deps": ["lib/jev_compaction/request.ts", "lib/jev_compaction/types.ts"],
       "header": "cpp/gateway/include/uos/lib/jev_compaction/client.hpp",
@@ -5728,8 +5744,8 @@
   },
   "summary": {
     "loc": 113485,
-    "modules": 325,
+    "modules": 327,
     "ported_loc": 113485,
-    "ported_modules": 325
+    "ported_modules": 327
   }
 }

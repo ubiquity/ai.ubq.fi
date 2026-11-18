@@ -1,4 +1,5 @@
 // Links: tests/sentinel_replay_export_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 //        src/models/catalog.cpp src/input_normalization.cpp src/deepseek/waterfall.cpp src/provider/surplus.cpp src/provider/claude_code_models.cpp src/provider/metered.cpp src/sentinel/replay_admin.cpp src/sentinel/upstream_capture.cpp src/provider/surplus_claude_chat_request.cpp src/models/codex_models.cpp src/sentinel/replay_read.cpp
 //        src/provider/selection.cpp src/sentinel/replay_model.cpp src/config.cpp src/provider/claude_code_accounts.cpp src/provider/claude_code_credentials.cpp src/provider/surplus_claude_request.cpp src/defaults.cpp src/types.cpp src/utils.cpp src/sentinel/incident_outbox.cpp src/sentinel/replay_observation.cpp src/responses_stream.cpp
 //        src/provider/cerebras.cpp src/auth/passkeys.cpp src/models/metadata.cpp src/request.cpp src/request_policy.cpp src/sentinel/replay_envelope.cpp src/auth/index.cpp src/agent_messages.cpp src/auth/passport.cpp src/http.cpp src/models/openrouter_models.cpp src/provider/anthropic_chat_responses.cpp src/authority/native_api_key_policy.cpp
