@@ -168,7 +168,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/lithos_models.hpp`
 - [x] `include/uos/provider/lithos_rate_limits.hpp`
 - [x] `include/uos/provider/lithos_streams.hpp`
-- [ ] `include/uos/provider/metered.hpp`
+- [x] `include/uos/provider/metered.hpp`
 - [ ] `include/uos/provider/openrouter.hpp`
 - [ ] `include/uos/provider/openrouter_handlers.hpp`
 - [ ] `include/uos/provider/openrouter_request_controls.hpp`
@@ -1063,3 +1063,9 @@ Retry wait factory interface.
 Synchronous construction of stream adapters.
 
 - 17 · model callback · **SAFE** · The adapter receives the model function as a value and retains it with its stream state.
+
+### `include/uos/provider/metered.hpp`
+
+Metered Models and Responses request declarations.
+
+- 65-66,108,125-126,154-161 · task and callback interface · **SAFE** · Each operation owns its catalog, request and dispatch option values, including hook objects and clock.
