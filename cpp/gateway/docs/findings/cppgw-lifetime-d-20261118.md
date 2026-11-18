@@ -225,7 +225,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/request_policy.cpp`
 - [x] `src/responses_attempts.cpp`
 - [x] `src/responses_buffered.cpp`
-- [ ] `src/responses_failover_stream.cpp`
+- [x] `src/responses_failover_stream.cpp`
 - [ ] `src/responses_handler.cpp`
 - [ ] `src/responses_native_headers.cpp`
 - [ ] `src/responses_request.cpp`
@@ -1180,6 +1180,14 @@ Reviewed buffered iterators, accumulator, telemetry and cancellation.
 
 - L74, 75, 78, 80, 84, 85, 87, 92, 99, 109, 112 **SAFE** · Generator and SourceAlgorithm holders own their callbacks, and the caller's options capture shared Delivery backing the usage pointer. Collection owns the source and awaits cleanup before releasing its frame.
 
+### `src/responses_failover_stream.cpp`
+
+Reviewed precommit iteration, event parsing and rewriting, stream delivery and lifecycle callbacks.
+
+- L262, 276, 283, 287, 298, 301, 323 **SAFE** · Iterator helpers take copies and precommit owns buffers and event callbacks during direct awaits. Event references are used before the next loop iteration.
+- L894, 916, 935, 942, 943, 956, 966, 979, 980, 984, 993, 1037, 1038 **SAFE** · Pull and cancel share flags, while each asynchronous pull owns State and controller. Original-event lookups become value snapshots before suspension and detached generator return owns its core.
+- L944, 972 **DEFECT** · emitFailureTerminal receives an owning ResponsesStreamEvent aggregate by value directly in the await expression. The GCC 12.2 porting rule requires constructing the Task in a named statement before awaiting each call.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1428,4 +1436,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-118/286 files reviewed. 232 sites: 215 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+119/286 files reviewed. 235 sites: 217 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

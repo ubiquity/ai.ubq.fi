@@ -5072,8 +5072,65 @@
       ]
     },
     "src/responses_failover_stream.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed precommit iteration, event parsing and rewriting, stream delivery and lifecycle callbacks.",
+      "sites": [
+        {
+          "lines": [
+            262,
+            276,
+            283,
+            287,
+            298,
+            301,
+            323
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Iterator helpers take copies and precommit owns buffers and event callbacks during direct awaits. Event references are used before the next loop iteration."
+        },
+        {
+          "lines": [
+            894,
+            916,
+            935,
+            942,
+            943,
+            956,
+            966,
+            979,
+            980,
+            984,
+            993,
+            1037,
+            1038
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Pull and cancel share flags, while each asynchronous pull owns State and controller. Original-event lookups become value snapshots before suspension and detached generator return owns its core."
+        },
+        {
+          "lines": [
+            944,
+            972
+          ],
+          "kinds": [
+            "e"
+          ],
+          "verdict": "DEFECT",
+          "detail": "emitFailureTerminal receives an owning ResponsesStreamEvent aggregate by value directly in the await expression. The GCC 12.2 porting rule requires constructing the Task in a named statement before awaiting each call."
+        }
+      ]
     },
     "src/responses_handler.cpp": {
       "reviewed": false,
