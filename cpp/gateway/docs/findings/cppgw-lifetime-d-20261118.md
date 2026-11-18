@@ -177,7 +177,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/kv_conversion/convert.cpp`
 - [x] `src/kv_conversion/cursors.cpp`
 - [x] `src/kv_conversion/legacy_codec.cpp`
-- [ ] `src/kv_conversion/native_schema.cpp`
+- [x] `src/kv_conversion/native_schema.cpp`
 - [ ] `src/kv_conversion/profile_json.cpp`
 - [ ] `src/kv_conversion/proof.cpp`
 - [ ] `src/kv_conversion/typed_value.cpp`
@@ -978,6 +978,10 @@ Reviewed the offline codec subprocess, stdout/stderr streams, callback lifetime,
 - L75, 78, 80, 82, 84, 101, 111, 191, 200, 201 **SAFE** · The public facade transfers its shared codec State to the exchange tasks. Buffer scans happen synchronously after owned reads, with the process reader and file reader retained in their awaiting frames.
 - L120, 123, 137, 144, 155, 158, 159, 160, 162, 174, 175, 176, 179, 202, 203 **SAFE** · The abort callback owns only the subprocess and is unregistered by close or abort. The subprocess read tasks capture stream state before being joined, and conversion serializes codec calls while retaining the codec owner.
 
+### `src/kv_conversion/native_schema.cpp`
+
+Reviewed SQLite adapters, schema and row metadata materialization. Live statements and iterators have shared database handles and synchronous callbacks consume local validation views.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1191,4 +1195,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-87/286 files reviewed. 189 sites: 174 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+88/286 files reviewed. 189 sites: 174 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

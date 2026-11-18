@@ -3993,7 +3993,8 @@
       ]
     },
     "src/kv_conversion/native_schema.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed SQLite adapters, schema and row metadata materialization. Live statements and iterators have shared database handles and synchronous callbacks consume local validation views.",
       "sites": []
     },
     "src/kv_conversion/profile_json.cpp": {
