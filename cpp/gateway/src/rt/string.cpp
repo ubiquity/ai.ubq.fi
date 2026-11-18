@@ -869,11 +869,12 @@ namespace uos::rt {
     }
     const std::u16string units = toUtf16(text);
     const std::u16string needle = toUtf16(pattern);
-    const std::size_t found = std::u16string_view(units).find(needle);
-    if (found == std::u16string_view::npos) return fromUtf16(units);
-    std::string out = fromUtf16(std::u16string_view(units).substr(0, found));
-    appendSubstitution(out, units, found, needle.size(), toUtf16(replacement));
-    append(out, fromUtf16(std::u16string_view(units).substr(found + needle.size())));
+    const std::u16string_view view(units);
+    const std::size_t found = view.find(needle);
+    if (found == std::u16string_view::npos) return fromUtf16(view);
+    std::string out = fromUtf16(view.substr(0, found));
+    appendSubstitution(out, view, found, needle.size(), toUtf16(replacement));
+    append(out, fromUtf16(view.substr(found + needle.size())));
     return out;
   }
 
@@ -899,17 +900,11 @@ namespace uos::rt {
     const std::u16string replacementUnits = toUtf16(replacement);
     const std::u16string_view view(units);
     const std::size_t advance = std::max<std::size_t>(1, needle.size());
-    std::vector<std::size_t> positions;
-    std::size_t position = view.find(needle, 0);
-    while (position != std::u16string_view::npos) {
-      positions.push_back(position);
-      position = position + advance > view.size() ? std::u16string_view::npos : view.find(needle, position + advance);
-    }
     std::string out;
     std::size_t endOfLastMatch = 0;
-    for (const std::size_t match : positions) {
+    for (std::size_t match = view.find(needle); match != std::u16string_view::npos; match = view.find(needle, match + advance)) {
       append(out, fromUtf16(view.substr(endOfLastMatch, match - endOfLastMatch)));
-      appendSubstitution(out, units, match, needle.size(), replacementUnits);
+      appendSubstitution(out, view, match, needle.size(), replacementUnits);
       endOfLastMatch = match + needle.size();
     }
     if (endOfLastMatch < view.size()) append(out, fromUtf16(view.substr(endOfLastMatch)));
