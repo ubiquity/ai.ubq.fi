@@ -2,199 +2,78 @@
 
 #include "uos/rt/error.hpp"
 #include "uos/rt/fs.hpp"
-#include "uos/rt/text_codec.hpp"
+#include "uos/rt/json.hpp"
 #include <unistd.h>
 #include <algorithm>
 #include <cerrno>
-#include <charconv>
-#include <cmath>
-#include <cstdio>
-#include <limits>
 
 namespace uos::rt::console {
   namespace {
-    const std::vector<Value>& emptyElements() {
-      static const std::vector<Value> empty;
-      return empty;
-    }
-    const Properties& emptyProperties() {
-      static const Properties empty;
-      return empty;
-    }
-
     constexpr std::string_view truncated = "[truncated]";
     constexpr std::size_t maxOutput = 256 * 1024;
     constexpr unsigned maxDepth = 16;
 
-    std::string scalarNumber(double number) {
-      char buffer[64];
-      const auto result = std::to_chars(buffer, buffer + sizeof buffer, number);
-      if (result.ec != std::errc{}) return std::string(truncated);
-      return std::string(buffer, result.ptr);
-    }
-
-    double numericArgument(const Value& value) {
-      if (value.kind() == Value::Kind::number) return value.number();
-      if (value.kind() == Value::Kind::boolean) return value.boolean() ? 1 : 0;
-      if (value.kind() == Value::Kind::null) return 0;
-      if (value.isString() && !value.string().empty()) {
-        const auto& text = value.string();
-        double number = 0;
-        const auto result = std::from_chars(text.data(), text.data() + text.size(), number);
-        if (result.ec == std::errc{} && result.ptr == text.data() + text.size()) return number;
-      }
-      return std::numeric_limits<double>::quiet_NaN();
-    }
-
-    class JsonProjection {
-    public:
-      json::value value(const Value& item, unsigned depth = 0) {
-        using Kind = Value::Kind;
-        if (remaining < 32) return json::string(truncated);
-        remaining -= 32;
-        if (depth >= maxDepth) return json::string(truncated);
-        switch (item.kind()) {
-          case Kind::undefined:
-          case Kind::null: return nullptr;
-          case Kind::boolean: return item.boolean();
-          case Kind::number: {
-            const double number = item.number();
-            if (!std::isfinite(number)) return nullptr;
-            if (number >= -0x1p63 && number < 0x1p63 && std::trunc(number) == number) return static_cast<std::int64_t>(number);
-            return number;
-          }
-          case Kind::string: return string(item.string());
-          case Kind::object: return object(item.properties(), depth);
-          case Kind::error: return error(item.errorInfo(), depth);
-          case Kind::array: {
-            json::array array;
-            const auto& elements = item.elements();
-            std::size_t index = 0;
-            for (; index < elements.size() && index < 100 && remaining >= 32; ++index) array.push_back(value(elements[index], depth + 1));
-            if (index < elements.size()) array.emplace_back(truncated);
-            return array;
-          }
-        }
-        return nullptr;
-      }
-
-    private:
-      // Charge bytes for text and for each projected value before building the JSON tree.
+    // Bound the input to serialization before escaping can expand it.
+    struct DiagnosticBudget {
       std::size_t remaining = 32 * 1024;
 
-      json::string string(std::string_view text) {
-        if (text.size() > remaining) {
+      bool take(std::size_t size) {
+        if (size > remaining) {
           remaining = 0;
-          return json::string(truncated);
+          return false;
         }
-        remaining -= text.size();
-        if (rt::isUtf8(text)) return json::string(text);
-        return json::string(rt::decodeUtf8(text, {.ignoreBOM = true}));
+        remaining -= size;
+        return true;
       }
 
-      json::object object(const Properties& properties, unsigned depth) {
-        json::object object;
-        for (const auto& [key, item] : properties) {
-          if (remaining < 32) break;
-          if (item.kind() == Value::Kind::undefined) continue;
-          const auto member = string(key);
-          object.insert_or_assign(member, value(item, depth + 1));
+      json::string text(std::string_view source) { return json::string(take(source.size()) ? source : truncated); }
+
+      json::value project(const json::value& value, unsigned depth = 0) {
+        if (!take(32) || depth >= maxDepth) return json::string(truncated);
+        if (const auto* source = value.if_string()) return text(*source);
+        if (const auto* source = value.if_object()) {
+          json::object fields;
+          for (const auto& member : *source) {
+            if (remaining < 32 || !take(member.key().size())) break;
+            fields.emplace(member.key(), project(member.value(), depth + 1));
+          }
+          return fields;
         }
-        return object;
+        if (const auto* source = value.if_array()) {
+          json::array elements;
+          std::size_t i = 0;
+          for (; i < source->size() && i < 100 && remaining >= 32; ++i) elements.push_back(project((*source)[i], depth + 1));
+          if (i < source->size()) elements.emplace_back(truncated);
+          return elements;
+        }
+        return value;
       }
 
-      json::value error(const ErrorInfo& info, unsigned depth) {
-        if (depth >= maxDepth || remaining < 32) return json::string(truncated);
-        remaining -= 32;
-        json::object error{{"name", string(info.name)}, {"message", string(info.message)}};
-        if (info.properties && !info.properties->empty()) error.emplace("properties", object(*info.properties, depth));
-        if (info.cause) error.emplace("cause", this->error(*info.cause, depth + 1));
-        return error;
+      json::value project(const ErrorInfo& info, unsigned depth = 0) {
+        if (!take(32) || depth >= maxDepth) return json::string(truncated);
+        json::object fields{{"name", text(info.name)}, {"message", text(info.message)}};
+        if (!info.properties.empty()) fields.emplace("properties", project(info.properties, depth + 1));
+        if (info.cause) fields.emplace("cause", project(*info.cause, depth + 1));
+        return fields;
       }
     };
 
-    class Printer {
-    public:
-      std::string out;
-      bool full() const { return exhausted || out.size() == maxOutput; }
-
-      void put(std::string_view text) {
-        if (full()) return;
-        if (text.size() <= maxOutput - out.size()) out += text;
-        else {
-          if (truncated.size() <= maxOutput - out.size()) out += truncated;
-          exhausted = true;
-        }
-      }
-
-      void value(const Value& item, bool quoteString = false) {
-        if (item.kind() == Value::Kind::undefined) put("undefined");
-        else if (item.isString() && !quoteString) put(item.string());
-        else if (item.kind() == Value::Kind::number) put(scalarNumber(item.number()));
-        else put(json::serialize(JsonProjection{}.value(item)));
-      }
-
-      std::size_t format(std::string_view text, const std::vector<Value>& args, std::size_t next) {
-        while (!text.empty() && !full()) {
-          const auto percent = text.find('%');
-          put(text.substr(0, percent));
-          if (percent == std::string_view::npos || full()) break;
-          text.remove_prefix(percent + 1);
-          const char token = text.empty() ? '\0' : text.front();
-          if (token == '%') {
-            put("%");
-            text.remove_prefix(1);
-            continue;
-          }
-          if (next == args.size() || std::string_view("sdifjoOc").find(token) == std::string_view::npos) {
-            put("%");
-            continue;
-          }
-          text.remove_prefix(1);
-          const Value& item = args[next++];
-          switch (token) {
-            case 's': value(item); break;
-            case 'o':
-            case 'O': value(item, true); break;
-            case 'j':
-              if (item.kind() != Value::Kind::undefined) put(json::serialize(JsonProjection{}.value(item)));
-              break;
-            case 'd':
-            case 'i': put(scalarNumber(std::trunc(numericArgument(item)))); break;
-            case 'f': put(scalarNumber(numericArgument(item))); break;
-            default: break;
-          }
-        }
-        return next;
-      }
-
-    private:
-      bool exhausted = false;
-    };
-
-    std::shared_ptr<const ErrorInfo> fromJsError(const JsError& error) {
-      auto info = std::make_shared<ErrorInfo>();
-      info->name = error.name;
-      info->message = error.message;
+    ErrorInfo fromException(const std::exception& error, unsigned depth = 0) {
+      ErrorInfo info;
+      if (const auto* js = dynamic_cast<const JsError*>(&error)) {
+        info.name = js->name;
+        info.message = js->message;
+        if (js->code) info.properties.emplace("code", *js->code);
+        if (js->cause && depth < maxDepth) info.cause = std::make_shared<const ErrorInfo>(fromException(*js->cause, depth + 1));
+      } else info.message = error.what();
       if (const auto* system = dynamic_cast<const fs::ErrnoError*>(&error)) {
-        info->native = system->name == "Error";
-        auto properties = std::make_shared<Properties>();
-        if (system->path) properties->emplace_back("path", Value(*system->path));
-        if (system->dest) properties->emplace_back("dest", Value(*system->dest));
-        if (system->fd) properties->emplace_back("fd", Value(*system->fd));
-        if (!system->syscall.empty()) properties->emplace_back("syscall", Value(system->syscall));
-        if (system->errno_) properties->emplace_back("errno", Value(*system->errno_));
-        properties->emplace_back("code", Value(system->code));
-        info->properties = std::move(properties);
+        if (system->path) info.properties.emplace("path", *system->path);
+        if (system->dest) info.properties.emplace("dest", *system->dest);
+        if (system->fd) info.properties.emplace("fd", *system->fd);
+        if (!system->syscall.empty()) info.properties.emplace("syscall", system->syscall);
+        if (system->errno_) info.properties.emplace("errno", *system->errno_);
+        info.properties.insert_or_assign("code", system->code);
       }
-      if (error.cause) info->cause = fromJsError(*error.cause);
-      return info;
-    }
-
-    std::shared_ptr<const ErrorInfo> fromException(const std::exception& error) {
-      if (const auto* js = dynamic_cast<const JsError*>(&error)) return fromJsError(*js);
-      auto info = std::make_shared<ErrorInfo>();
-      info->message = error.what();
       return info;
     }
 
@@ -229,100 +108,114 @@ namespace uos::rt::console {
   }
 
   Value::Value(const json::value& value) {
-    switch (value.kind()) {
-      case json::kind::null: kind_ = Kind::null; break;
-      case json::kind::bool_:
-        kind_ = Kind::boolean;
-        number_ = value.get_bool() ? 1 : 0;
-        break;
-      case json::kind::int64:
-      case json::kind::uint64:
-      case json::kind::double_:
-        kind_ = Kind::number;
-        number_ = value.to_number<double>();
-        break;
-      case json::kind::string:
-        kind_ = Kind::string;
-        text_ = std::string(value.get_string());
-        break;
-      case json::kind::array: *this = Value(value.get_array()); break;
-      case json::kind::object: *this = Value(value.get_object()); break;
-    }
+    if (const auto* text = value.if_string()) data_.emplace<std::string>(*text);
+    else data_.emplace<json::value>(value, json::storage_ptr{});
   }
 
-  Value::Value(const json::object& value) : kind_(Kind::object) {
-    auto properties = std::make_shared<Properties>();
-    for (const auto& member : value) properties->emplace_back(std::string(member.key()), Value(member.value()));
-    properties_ = std::move(properties);
-  }
-
-  Value::Value(const json::array& value) : kind_(Kind::array) {
-    auto elements = std::make_shared<std::vector<Value>>();
-    for (const auto& element : value) elements->emplace_back(element);
-    elements_ = std::move(elements);
-  }
-
-  Value::Value(const std::exception& error) : kind_(Kind::error), error_(fromException(error)) {}
+  Value::Value(const json::object& value) : data_(json::value(value, {})) {}
+  Value::Value(const json::array& value) : data_(json::value(value, {})) {}
+  Value::Value(const std::exception& error) : Value(fromException(error)) {}
 
   Value::Value(const std::exception_ptr& error) {
     if (!error) return;
     try {
       std::rethrow_exception(error);
     } catch (const std::exception& caught) {
-      kind_ = Kind::error;
-      error_ = fromException(caught);
+      *this = Value(caught);
     } catch (...) {
-      kind_ = Kind::error;
-      error_ = std::make_shared<ErrorInfo>();
+      *this = Value(ErrorInfo{});
     }
+  }
+
+  json::value Value::asField() && {
+    if (const auto* text = std::get_if<std::string>(&data_)) return json::value(*text);
+    if (auto* value = std::get_if<json::value>(&data_)) return std::move(*value);
+    if (kind() == Kind::error) return DiagnosticBudget{}.project(errorInfo());
+    return nullptr;
   }
 
   Value Value::object(Properties properties) {
     Value out;
-    out.kind_ = Kind::object;
-    out.properties_ = std::make_shared<Properties>(std::move(properties));
+    auto& fields = out.data_.emplace<json::value>(json::object_kind).get_object();
+    for (auto& [key, value] : properties)
+      if (value.kind() != Kind::undefined) fields.insert_or_assign(key, std::move(value).asField());
     return out;
   }
 
   Value Value::array(std::vector<Value> elements) {
     Value out;
-    out.kind_ = Kind::array;
-    out.elements_ = std::make_shared<std::vector<Value>>(std::move(elements));
+    auto& array = out.data_.emplace<json::value>(json::array_kind).get_array();
+    array.reserve(elements.size());
+    for (auto& value : elements) array.push_back(std::move(value).asField());
     return out;
   }
 
-  Value Value::error(const std::exception& error, Properties properties) {
-    ErrorInfo info = *fromException(error);
-    auto merged = info.properties ? std::make_shared<Properties>(*info.properties) : std::make_shared<Properties>();
-    for (auto& property : properties) merged->push_back(std::move(property));
-    info.properties = std::move(merged);
-    return Value::error(std::move(info));
+  Value::Kind Value::kind() const noexcept {
+    if (isString()) return Kind::string;
+    if (const auto* value = std::get_if<json::value>(&data_)) {
+      if (value->is_object()) return Kind::object;
+      if (value->is_array()) return Kind::array;
+      if (value->is_bool()) return Kind::boolean;
+      return value->is_null() ? Kind::null : Kind::number;
+    }
+    return std::holds_alternative<std::shared_ptr<const ErrorInfo>>(data_) ? Kind::error : Kind::undefined;
   }
 
-  Value Value::error(ErrorInfo info) {
-    Value out;
-    out.kind_ = Kind::error;
-    if (!info.properties) info.properties = std::make_shared<Properties>();
-    out.error_ = std::make_shared<const ErrorInfo>(std::move(info));
+  const std::string& Value::string() const noexcept {
+    static const std::string empty;
+    const auto* text = std::get_if<std::string>(&data_);
+    return text ? *text : empty;
+  }
+
+  const json::value& Value::jsonValue() const noexcept {
+    static const json::value null;
+    const auto* value = std::get_if<json::value>(&data_);
+    return value ? *value : null;
+  }
+
+  double Value::number() const noexcept { return jsonValue().is_number() ? jsonValue().to_number<double>() : 0; }
+  bool Value::boolean() const noexcept { return jsonValue().is_bool() && jsonValue().get_bool(); }
+
+  std::vector<Value> Value::elements() const {
+    if (const auto* array = jsonValue().if_array()) return {array->begin(), array->end()};
+    return {};
+  }
+
+  Properties Value::properties() const {
+    Properties out;
+    if (const auto* fields = jsonValue().if_object())
+      for (const auto& member : *fields) out.emplace_back(std::string(member.key()), member.value());
     return out;
   }
 
-  const std::vector<Value>& Value::elements() const { return elements_ ? *elements_ : emptyElements(); }
-  const Properties& Value::properties() const { return properties_ ? *properties_ : emptyProperties(); }
   const ErrorInfo& Value::errorInfo() const {
-    static const ErrorInfo none;
-    return error_ ? *error_ : none;
+    static const ErrorInfo empty;
+    const auto* error = std::get_if<std::shared_ptr<const ErrorInfo>>(&data_);
+    return error && *error ? **error : empty;
   }
 
   std::string format(Method, const std::vector<Value>& args) {
-    Printer printer;
-    for (std::size_t index = 0; index < args.size() && !printer.full();) {
-      if (index > 0) printer.put(" ");
-      const Value& arg = args[index++];
-      if (arg.isString() && index < args.size()) index = printer.format(arg.string(), args, index);
-      else printer.value(arg);
+    std::string out;
+    for (const auto& arg : args) {
+      if (out.size() == maxOutput) break;
+      if (&arg != args.data()) out += ' ';
+      std::string rendered;
+      std::string_view text = arg.string();
+      if (!arg.isString()) {
+        if (arg.kind() == Value::Kind::undefined) text = "undefined";
+        else {
+          DiagnosticBudget budget;
+          rendered = jsonStringify(arg.kind() == Value::Kind::error ? budget.project(arg.errorInfo()) : budget.project(arg.jsonValue()));
+          text = rendered;
+        }
+      }
+      if (text.size() > maxOutput - out.size()) {
+        if (truncated.size() <= maxOutput - out.size()) out += truncated;
+        break;
+      }
+      out += text;
     }
-    return std::move(printer.out);
+    return out;
   }
 
   void write(Method method, std::vector<Value> args) {

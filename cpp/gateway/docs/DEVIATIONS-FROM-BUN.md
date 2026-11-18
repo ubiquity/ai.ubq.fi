@@ -106,3 +106,20 @@ serialization, and asynchronous `Request::formData()` and
 `Response::formData()` methods. Fixtures with multipart or typed byte bodies
 supply the wire bytes and explicit Content-Type. Ordinary body readers and
 URLSearchParams content-type inference continue through the existing Body API.
+
+## Literal console arguments and shared JSON serialization
+
+The gateway joins arguments with spaces and appends a newline at the
+sink. All text is literal, including percent sequences and pre-serialized
+event payloads. Structured fields and error diagnostics use the gateway's
+compact JSON serializer. Nonfinite numbers become `null`, signed zero
+becomes `0`, and lone UTF-16 surrogates in structured strings and keys
+are escaped. The serializer replaces malformed UTF-8 and orders numeric
+object keys using its usual JSON ordering.
+
+Error diagnostics contain the name, message, known code and cause chain.
+OS errors carry the existing path, destination, descriptor, syscall and
+errno fields when present. Structured projection remains bounded to
+depth 16, 100 array elements and a 32 KiB budget for text and nodes, with
+the 256 KiB cap on the combined text. Captures retain independent text
+arguments and the original event prefix and payload.
