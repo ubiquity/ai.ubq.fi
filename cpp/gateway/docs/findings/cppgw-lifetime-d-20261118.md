@@ -221,7 +221,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/quota_projection.cpp`
 - [x] `src/recent_model_context.cpp`
 - [x] `src/release.cpp`
-- [ ] `src/request.cpp`
+- [x] `src/request.cpp`
 - [ ] `src/request_policy.cpp`
 - [ ] `src/responses_attempts.cpp`
 - [ ] `src/responses_buffered.cpp`
@@ -1152,6 +1152,13 @@ Reviewed synchronous context-window selection, source precedence and calculation
 
 Reviewed release identifier declarations. The constants use static storage and there is no asynchronous operation.
 
+### `src/request.cpp`
+
+Reviewed one-shot raw body observers, bounded reads, rejection and JSON parsing.
+
+- L42, 43, 47, 48, 56, 63, 64, 66 **SAFE** · The observer is copied before the WeakMap entry is erased. The synchronous callback is invoked with the request and bytes still owned by the caller, and the production observer holds its replay candidate weakly.
+- L86, 88, 101, 103, 106, 125, 129, 140, 171 **SAFE** · The read frame owns its Request, stream, reader and chunk result until reader cleanup. Value borrows stem from private read results and no shared buffer is mutated across a wait.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1400,4 +1407,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-114/286 files reviewed. 224 sites: 207 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+115/286 files reviewed. 226 sites: 209 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

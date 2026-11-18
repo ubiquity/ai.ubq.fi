@@ -4879,8 +4879,49 @@
       "sites": []
     },
     "src/request.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed one-shot raw body observers, bounded reads, rejection and JSON parsing.",
+      "sites": [
+        {
+          "lines": [
+            42,
+            43,
+            47,
+            48,
+            56,
+            63,
+            64,
+            66
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The observer is copied before the WeakMap entry is erased. The synchronous callback is invoked with the request and bytes still owned by the caller, and the production observer holds its replay candidate weakly."
+        },
+        {
+          "lines": [
+            86,
+            88,
+            101,
+            103,
+            106,
+            125,
+            129,
+            140,
+            171
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The read frame owns its Request, stream, reader and chunk result until reader cleanup. Value borrows stem from private read results and no shared buffer is mutated across a wait."
+        }
+      ]
     },
     "src/request_policy.cpp": {
       "reviewed": false,
