@@ -245,3 +245,9 @@ UOS_CI_JOBS=4 bash "$work/qualify.sh" "$work" "$PWD" asan
 ```
 
 The second sanitizer command took over the same cache after the two-worker registry build stopped at 162/517 object actions. The driver retained the completed objects and scheduled 355 remaining actions on four workers. The focused 10-binary sanitizer receipt above covers the component and its direct transport callers.
+
+## Complete release result
+
+The strict Linux ARM64 release replay with ICU 78.3 passed all 442 binaries and 5,029 cases with zero failures, skips or timeouts. The `url.cpp` rebuild took 15.998 seconds and linking and running the registry took 385.317 seconds. The source inputs bound to commit `4d4796869314cc4e95f5911a7b558fe711f09575`, tree `6e01acc32ea66e86ac1d60c3dd6abd4e9bad91b1`, had identical pre- and post-run SHA-256 `7c87b3c86154c35dea3f45a5a8019b4c6b718a9c00e747e9cd5d79c887e68715`. The exact release receipt SHA-256 is `2a480caf8a9362b09b960c5aa596127f7834bb4519097bb8afe6567f3dcda5fd`.
+
+All three executable links also passed with ICU 78.3. The link used the same commands as the native linkage above, with `ar rcs` replacing the single `url.cpp.o` member with the ICU 78.3 release object and the three static ICU archives in place of the system ICU flags. The `uos-gateway`, `uos-kv-convert` and `uos-kv-proof` SHA-256 digests were `1c587298d5e0a9a97086c7004e76b1956978fa1d4be6c7ae83aa02c42b1a2968`, `640c1a4724f2acc81125a1112f2fd8735f3acc434cf183e4e204cef7f69c4f07` and `b414ec3f6fdbc92409470169a92f22cb7bc8dddee541ea3ec51f400a55f2c117`, respectively.
