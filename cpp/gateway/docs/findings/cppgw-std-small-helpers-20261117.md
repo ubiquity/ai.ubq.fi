@@ -104,3 +104,30 @@ expectation updates. No previously invalid vector became valid.
 | Malformed timestamp |        593.5 |        42.2 |               1 |              0 |
 
 The HTTP path pays for the locale-fixed stream and canonical weekday validation.
+
+## Continuation checkpoint
+
+The continuation started from `8e53131d7bca965811c2b807d4f03c4c8d4f7f20`,
+tree `97b5c6186b93804fad994e92895a2939946329f2`. This runner rebuilt Boost
+and SQLite from the verified archives above. The scratch driver is at
+`/tmp/uos-small-r1/gate.py` on this runner. It uses the checked-in
+`cmake/ci/driver.py` and links the six system libraries plus the pinned
+Boost and SQLite archives. The repository fixture boundary proved loopback
+access and an unreachable external address in each test's fresh namespace.
+
+`python3 -B /tmp/uos-small-r1/gate.py release compile date 3` and
+`python3 -B /tmp/uos-small-r1/gate.py asan compile date 2` both exited 0.
+Each compiled 159 first-party translation units and linked the two vendor
+archives. The corresponding `run date 2` commands passed the six named
+binaries and all 31 of their cases in each profile. The selection also
+included `claude_code_usage_schema_test`, which passed two of three cases.
+The aggregate per profile was 6/7 binaries, 33/34 cases, exit 1. No
+sanitizer findings were reported.
+
+The extra fixture expects a raw `resets_at` string of `"0"` to project into
+a synthetic January 2000 deadline. The isolated probe
+`bun --no-env-file -e 'console.log(Date.parse("0"))'` returned
+`946684800000`. The standard parser rejects the string, yielding a null
+deadline while preserving the raw provider value. This matches the
+recorded legacy-date deviation. The application fixture
+`tests/claude_code_usage_schema_vectors.inc` is outside the assigned scope.
