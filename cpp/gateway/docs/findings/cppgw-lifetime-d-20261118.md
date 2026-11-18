@@ -265,7 +265,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/admin/kernel.hpp`
 - [x] `include/uos/admin/sentinel_incident.hpp`
 - [x] `include/uos/agent_messages.hpp`
-- [ ] `include/uos/analytics.hpp`
+- [x] `include/uos/analytics.hpp`
 - [ ] `include/uos/api_key_policy.hpp`
 - [ ] `include/uos/api_keys.hpp`
 - [ ] `include/uos/auth/index.hpp`
@@ -1464,6 +1464,13 @@ Reviewed the request, KV and authentication test seam.
 
 - L20, 21, 22, 23, 26, 27, 29, 30 **SAFE** · The handler frames own dependencies and the request. Authentication is directly awaited with the callable retained, and the clock and ID generator run synchronously.
 
+### `include/uos/analytics.hpp`
+
+Reviewed the key constructors and analytics persistence interfaces.
+
+- L25, 26, 27, 28, 29 **SAFE** · Key constructors synchronously copy each string view into an owning KV key.
+- L93, 94, 96, 97, 107, 108 **SAFE** · Log readers and writers receive owning IDs and records and an optional shared store through their by-value input or options.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1712,4 +1719,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-157/286 files reviewed. 325 sites: 304 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+158/286 files reviewed. 327 sites: 306 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

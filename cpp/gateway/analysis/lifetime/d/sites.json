@@ -7255,8 +7255,40 @@
       ]
     },
     "include/uos/analytics.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the key constructors and analytics persistence interfaces.",
+      "sites": [
+        {
+          "lines": [
+            25,
+            26,
+            27,
+            28,
+            29
+          ],
+          "kinds": [
+            "b"
+          ],
+          "verdict": "SAFE",
+          "detail": "Key constructors synchronously copy each string view into an owning KV key."
+        },
+        {
+          "lines": [
+            93,
+            94,
+            96,
+            97,
+            107,
+            108
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Log readers and writers receive owning IDs and records and an optional shared store through their by-value input or options."
+        }
+      ]
     },
     "include/uos/api_key_policy.hpp": {
       "reviewed": false,
