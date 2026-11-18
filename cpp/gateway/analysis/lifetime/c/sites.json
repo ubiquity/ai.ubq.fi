@@ -3582,8 +3582,16 @@
       ]
     },
     "src/provider/claude_code_usage.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Usage fetch keeps the credential, fetch function, options, and response in its task frame.",
+      "sites": [
+        {
+          "lines": "27-41,128-196",
+          "kind": "usage request and buffered read",
+          "verdict": "SAFE",
+          "reason": "Parser input and response handles are frame-owned. Usage hooks are copied from owned options and the fetch is joined."
+        }
+      ]
     },
     "src/provider/claude_code_usage_refresh.cpp": {
       "status": "pending",

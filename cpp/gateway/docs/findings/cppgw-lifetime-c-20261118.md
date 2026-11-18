@@ -303,7 +303,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/claude_code_credentials.cpp`
 - [x] `src/provider/claude_code_models.cpp`
 - [x] `src/provider/claude_code_quota.cpp`
-- [ ] `src/provider/claude_code_usage.cpp`
+- [x] `src/provider/claude_code_usage.cpp`
 - [ ] `src/provider/claude_code_usage_refresh.cpp`
 - [ ] `src/provider/claude_code_usage_schema.cpp`
 - [ ] `src/provider/health.cpp`
@@ -1930,3 +1930,9 @@ Quota rows and health observations keep independent store and snapshot owners.
 
 - 400-425 · accepted observation recorder · **SAFE** · The joined recorder receives KV and the observation by value and the function pointer is copied before invoking.
 - 544-555,624-715 · quota CAS, retry, and completion · **SAFE** · Each state and row is a local snapshot. Receiver, keys and AtomicOperation stay live through joined reads, recursion and writes.
+
+### `src/provider/claude_code_usage.cpp`
+
+Usage fetch keeps the credential, fetch function, options, and response in its task frame.
+
+- 27-41,128-196 · usage request and buffered read · **SAFE** · Parser input and response handles are frame-owned. Usage hooks are copied from owned options and the fetch is joined.
