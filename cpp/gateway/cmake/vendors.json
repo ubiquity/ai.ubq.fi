@@ -1,5 +1,5 @@
 {
-  "qcbor": ["src/auth/passkeys.cpp"],
+  "qcbor": ["src/auth/passkeys.cpp", "fuzz/passkeys.cpp"],
   "simdjson": ["src/rt/json.cpp"],
   "simdutf": ["src/rt/base64.cpp"]
 }

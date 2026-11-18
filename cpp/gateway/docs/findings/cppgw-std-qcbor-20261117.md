@@ -21,3 +21,16 @@ Acceptance uses the strict C++20 flags, app tests selected by `tools/links.py`, 
 - ARM64 Ubuntu 24.04 runner with GCC 14.2 and pinned Bun 1.4.0. `sudo -n unshare -n true` succeeded.
 - The QCBOR codeload archive matched SHA-256 `286badcef7227533fcd5840386177ff20b1a53ca29f1544092b1fc36d020ade8`.
 - The original registry has 441 binaries. `tools/links.py` resolves 58 existing test binaries with `src/auth/passkeys.cpp` in their closure.
+
+## Continuation checkpoint
+
+The inherited implementation at `3e496bc56494183e4ab2cab490864f9fd9bcf260` compiled and linked the two focused CMake binaries on Linux ARM64 with GCC 14.2.0, Boost 1.92.0 and the port's strict `-O2 -g0` flags. The vendored `inc/`, `src/` and `LICENSE` matched a fresh extraction of the pinned archive byte for byte. All 13 codec cases passed. The application replay ran 155 vectors in one case and reported 146 matches and nine mismatches.
+
+| Mismatches                | Inherited fixture and strict result                                                                                                                                                 |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2 TPM registrations       | The expected 200 responses became 400 because the synthetic `attStmt` maps begin with `ver` before `alg`. The replay needs canonical fixtures to reach the TPM verifier.            |
+| 2 COSE text cases         | Registration uses `61 c3 a9` for the two-byte UTF-8 value `é`. The stored-key fixture uses a correct text length with positive key `07` after the negative keys. Both returned 400. |
+| 1 authenticator extension | `a1 62 c3 a9 01` is canonical. The legacy re-encoding wrote the wrong text length before a second decode. QCBOR preserved the valid signed assertion, which returned 200.           |
+| 4 diagnostic expectations | The array containing null, tagged extension, duplicate extension label and empty stored key still return 400. The warning messages now identify the strict decoder failures.        |
+
+The existing passkeys parser fuzzer includes `src/auth/passkeys.cpp` directly. Its CMake object and link now select the same QCBOR target as the production translation unit. The generated test registry has 442 binaries, 59 with `src/auth/passkeys.cpp` in their closure. The remaining work is the release and ASan/UBSan closure, the new fuzz target's two-minute smoke, the broader release sweep, and the baseline measurement.

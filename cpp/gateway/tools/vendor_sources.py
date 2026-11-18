@@ -52,7 +52,7 @@ def selected(root=GATEWAY):
     for name, consumers in sorted(active.items()):
         if not isinstance(consumers, list) or not consumers or any(not isinstance(src, str) for src in consumers) or len(set(consumers)) != len(consumers):
             raise ValueError("Declare nonempty unique vendor consumers for " + name)
-        if any(not re.fullmatch(r"(?:src|tests|bench)/[a-zA-Z0-9_/.-]+\.cpp", source)
+        if any(not re.fullmatch(r"(?:src|tests|bench|fuzz)/[a-zA-Z0-9_/.-]+\.cpp", source)
                or ".." in Path(source).parts or not (root / source).is_file() for source in consumers):
             raise ValueError("Invalid vendor consumer for " + name)
         directory = Path("third_party") / name
