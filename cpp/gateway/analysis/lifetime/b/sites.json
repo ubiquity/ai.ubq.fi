@@ -702,8 +702,19 @@
       ]
     },
     "include/uos/rt/kv_sqlite.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "24-31,40-55,73-82",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "SQLite KV owner and callback contract",
+          "evidence": "Each handle owns its state and joins the database worker on close. Clock and codec callables are value-owned, and codec views are used synchronously. Production enqueue keeps the shared KV in its caller frame."
+        }
+      ]
     },
     "include/uos/rt/process.hpp": {
       "reviewed": false,

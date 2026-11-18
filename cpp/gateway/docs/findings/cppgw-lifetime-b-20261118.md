@@ -42,7 +42,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/rt/fs.hpp`
 - [x] `include/uos/rt/kv.hpp`
 - [x] `include/uos/rt/kv_js.hpp`
-- [ ] `include/uos/rt/kv_sqlite.hpp`
+- [x] `include/uos/rt/kv_sqlite.hpp`
 - [ ] `include/uos/rt/process.hpp`
 - [ ] `include/uos/rt/sqlite.hpp`
 - [ ] `src/rt/fs.cpp`
@@ -278,6 +278,12 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | --- | --- | --- | --- |
 | 104-106 | Uint8Array byte view contract | **SAFE** | The span borrows its input value explicitly. Implemented use in key conversion copies the bytes immediately and replay deserialization consumes them synchronously from a named entry. |
 
+### `include/uos/rt/kv_sqlite.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 24-31,40-55,73-82 | SQLite KV owner and callback contract | **SAFE** | Each handle owns its state and joins the database worker on close. Clock and codec callables are value-owned, and codec views are used synchronously. Production enqueue keeps the shared KV in its caller frame. |
+
 
 ## Ranked defects and counts
 
@@ -443,4 +449,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-19/97 files reviewed. **DEFECT 7, SAFE 51, UNCLEAR 2.**
+20/97 files reviewed. **DEFECT 7, SAFE 52, UNCLEAR 2.**
