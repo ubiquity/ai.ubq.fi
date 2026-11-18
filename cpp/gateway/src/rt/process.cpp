@@ -1,10 +1,10 @@
 #include "uos/rt/process.hpp"
 
 #include "uos/rt/env.hpp"
+#include <signal.h>
 #include <sys/utsname.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
-#include <signal.h>
 #include <sys/param.h>
 #endif
 #include <unistd.h>
@@ -26,25 +26,22 @@ namespace uos::rt::process {
       return code;
     }
 
-#if defined(__APPLE__)
     struct NativeSignal {
       std::string_view name;
       int number;
     };
     constexpr NativeSignal NATIVE_SIGNALS[] = {
       {"SIGHUP", SIGHUP}, {"SIGINT", SIGINT}, {"SIGQUIT", SIGQUIT}, {"SIGILL", SIGILL}, {"SIGTRAP", SIGTRAP}, {"SIGABRT", SIGABRT},
-      {"SIGEMT", SIGEMT}, {"SIGFPE", SIGFPE}, {"SIGKILL", SIGKILL}, {"SIGBUS", SIGBUS}, {"SIGSEGV", SIGSEGV}, {"SIGSYS", SIGSYS},
-      {"SIGPIPE", SIGPIPE}, {"SIGALRM", SIGALRM}, {"SIGTERM", SIGTERM}, {"SIGURG", SIGURG}, {"SIGSTOP", SIGSTOP}, {"SIGTSTP", SIGTSTP},
-      {"SIGCONT", SIGCONT}, {"SIGCHLD", SIGCHLD}, {"SIGTTIN", SIGTTIN}, {"SIGTTOU", SIGTTOU}, {"SIGIO", SIGIO}, {"SIGXCPU", SIGXCPU},
-      {"SIGXFSZ", SIGXFSZ}, {"SIGVTALRM", SIGVTALRM}, {"SIGPROF", SIGPROF}, {"SIGWINCH", SIGWINCH}, {"SIGINFO", SIGINFO},
-      {"SIGUSR1", SIGUSR1}, {"SIGUSR2", SIGUSR2}
-    };
-#else
-    // Bun's names for the Linux signals 1..31.
-    constexpr const char* SIGNAL_NAMES[] = {"SIGHUP",  "SIGINT",  "SIGQUIT", "SIGILL",  "SIGTRAP", "SIGABRT", "SIGBUS",    "SIGFPE",  "SIGKILL", "SIGUSR1", "SIGSEGV",
-                                            "SIGUSR2", "SIGPIPE", "SIGALRM", "SIGTERM", "SIG16",   "SIGCHLD", "SIGCONT",   "SIGSTOP", "SIGTSTP", "SIGTTIN", "SIGTTOU",
-                                            "SIGURG",  "SIGXCPU", "SIGXFSZ", "SIGVTALRM", "SIGPROF", "SIGWINCH", "SIGIO", "SIGPWR",  "SIGSYS"};
+      {"SIGFPE", SIGFPE}, {"SIGKILL", SIGKILL}, {"SIGBUS", SIGBUS}, {"SIGSEGV", SIGSEGV}, {"SIGSYS", SIGSYS}, {"SIGPIPE", SIGPIPE},
+      {"SIGALRM", SIGALRM}, {"SIGTERM", SIGTERM}, {"SIGURG", SIGURG}, {"SIGSTOP", SIGSTOP}, {"SIGTSTP", SIGTSTP}, {"SIGCONT", SIGCONT},
+      {"SIGCHLD", SIGCHLD}, {"SIGTTIN", SIGTTIN}, {"SIGTTOU", SIGTTOU}, {"SIGIO", SIGIO}, {"SIGXCPU", SIGXCPU}, {"SIGXFSZ", SIGXFSZ},
+      {"SIGVTALRM", SIGVTALRM}, {"SIGPROF", SIGPROF}, {"SIGWINCH", SIGWINCH}, {"SIGUSR1", SIGUSR1}, {"SIGUSR2", SIGUSR2},
+#if defined(__APPLE__)
+      {"SIGEMT", SIGEMT}, {"SIGINFO", SIGINFO},
+#elif defined(__linux__)
+      {"SIGSTKFLT", SIGSTKFLT}, {"SIGPWR", SIGPWR},
 #endif
+    };
   }
 
   const std::vector<std::string>& argv() { return argvStore(); }
@@ -110,25 +107,15 @@ namespace uos::rt::process {
   }
 
   std::optional<int> signalNumber(std::string_view name) {
-#if defined(__APPLE__)
     for (const auto& signal : NATIVE_SIGNALS)
       if (name == signal.name) return signal.number;
-#else
-    for (int index = 0; index < static_cast<int>(std::size(SIGNAL_NAMES)); ++index)
-      if (name == SIGNAL_NAMES[index]) return index + 1;
-#endif
     return std::nullopt;
   }
 
   std::optional<std::string_view> signalName(int number) {
-#if defined(__APPLE__)
     for (const auto& signal : NATIVE_SIGNALS)
       if (number == signal.number) return signal.name;
     return std::nullopt;
-#else
-    if (number < 1 || number > static_cast<int>(std::size(SIGNAL_NAMES))) return std::nullopt;
-    return SIGNAL_NAMES[number - 1];
-#endif
   }
 }
 

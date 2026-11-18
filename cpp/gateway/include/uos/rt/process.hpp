@@ -172,9 +172,8 @@ namespace uos::rt::process {
     // Bun reports `killed` true once the exit has been observed (whatever
     // ended the child), false before.
     bool killed() const noexcept;
-    // `subprocess.kill(signal = "SIGTERM")`: no-op once exited. Unknown names:
-    // TypeError "signal must be one of 'SIGHUP', ... or 'SIGSYS'"; numbers
-    // above 31: TypeError "Invalid signal: must be < 32".
+    // `subprocess.kill(signal = "SIGTERM")`: send a native signal to this child
+    // if it has not exited. Unknown names and numbers outside 0..31 throw TypeError.
     void kill(std::variant<std::string_view, int> signal = std::string_view("SIGTERM")) const;
 
   private:
@@ -185,8 +184,8 @@ namespace uos::rt::process {
   // A bare name is looked up in options.env's PATH (env given), else the OS
   // environment's PATH, else "/usr/bin:/bin"; a missing one throws Error
   // `Executable not found in $PATH: "<cmd>"` (code ENOENT, errno -2, path cmd).
-  // Exec or cwd failures throw rt::fs::ErrnoError "posix_spawn" with the
-  // resolved path; an empty cmd throws TypeError "cmd must not be empty".
+  // Exec or cwd failures throw rt::fs::ErrnoError with the resolved path.
+  // An empty cmd throws TypeError.
   Subprocess spawn(std::vector<std::string> cmd, SpawnOptions options = {});
 }
 

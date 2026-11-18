@@ -6,18 +6,23 @@
 #include "uos/rt/async.hpp"
 #include "uos/rt/fs.hpp"
 #include "uos/rt/stream.hpp"
-#include <boost/asio/posix/stream_descriptor.hpp>
+#include <boost/asio/connect_pipe.hpp>
+#include <boost/asio/readable_pipe.hpp>
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/writable_pipe.hpp>
 #include <boost/asio/write.hpp>
+// The child only execs. It never runs or mutates the parent's Asio context.
+#define BOOST_PROCESS_V2_DISABLE_NOTIFY_FORK
+#include <boost/process/v2/environment.hpp>
+#include <boost/process/v2/process.hpp>
+#include <boost/process/v2/start_dir.hpp>
+#include <boost/process/v2/stdio.hpp>
 #include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
-#include <spawn.h>
 #include <sys/stat.h>
-#if defined(__linux__) && !defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
-#include <sys/syscall.h>
-#endif
 #include <sys/wait.h>
 #include <unistd.h>
 #include <algorithm>
@@ -26,69 +31,11 @@
 #include <map>
 #include <stdexcept>
 
-#if defined(__APPLE__)
-#include <crt_externs.h>
-#else
-extern char** environ;
-#endif
-
 namespace uos::rt::process {
   namespace {
     namespace asio = boost::asio;
+    namespace bp = boost::process::v2;
     using Bytes = std::vector<std::uint8_t>;
-    using Descriptor = asio::posix::stream_descriptor;
-
-#if defined(__APPLE__) || defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
-#if defined(__APPLE__)
-    // Bun 1.4.0's subprocess API uses its Linux signal table even on Darwin.
-    // process.on listeners, unlike Bun.spawn, use the native signal constants.
-    constexpr std::string_view SPAWN_SIGNALS[] = {
-      "SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGTRAP", "SIGABRT", "SIGBUS", "SIGFPE", "SIGKILL", "SIGUSR1", "SIGSEGV",
-      "SIGUSR2", "SIGPIPE", "SIGALRM", "SIGTERM", "SIG16", "SIGCHLD", "SIGCONT", "SIGSTOP", "SIGTSTP", "SIGTTIN", "SIGTTOU",
-      "SIGURG", "SIGXCPU", "SIGXFSZ", "SIGVTALRM", "SIGPROF", "SIGWINCH", "SIGIO", "SIGPWR", "SIGSYS"
-    };
-
-    std::optional<std::string_view> spawnSignalName(int number) {
-      if (number < 1 || number > static_cast<int>(std::size(SPAWN_SIGNALS))) return std::nullopt;
-      return SPAWN_SIGNALS[number - 1];
-    }
-
-    std::optional<int> spawnSignalNumber(std::string_view name) {
-      for (int index = 0; index < static_cast<int>(std::size(SPAWN_SIGNALS)); ++index)
-        if (name == SPAWN_SIGNALS[index]) return index + 1;
-      return std::nullopt;
-    }
-#endif
-
-    int closeOnExecPipe(int fds[2]) {
-      if (::pipe(fds) != 0) return -1;
-      if (::fcntl(fds[0], F_SETFD, FD_CLOEXEC) == 0 && ::fcntl(fds[1], F_SETFD, FD_CLOEXEC) == 0) return 0;
-      const int failure = errno;
-      ::close(fds[0]);
-      ::close(fds[1]);
-      errno = failure;
-      return -1;
-    }
-
-    Task<int> waitForChildExit(int child, std::shared_ptr<asio::signal_set> notifications) {
-      for (;;) {
-        boost::system::error_code error;
-        auto token = asio::redirect_error(asio::use_awaitable, error);
-        // Registration precedes spawn; Asio queues a signal until a wait is armed.
-        // Await before reaping so even an immediate exit is observed asynchronously.
-        co_await notifications->async_wait(std::move(token));
-        if (error) throw fs::errnoError(error.value(), "signal");
-        int status = 0;
-        pid_t result;
-        do {
-          result = ::waitpid(child, &status, WNOHANG);
-        } while (result < 0 && errno == EINTR);
-        if (result < 0) throw fs::errnoError(errno, "waitpid");
-        if (result == child) co_return status;
-        // Another child, a stop or a continue can signal; await the next event.
-      }
-    }
-#endif
 
     // ---- signal listeners
 
@@ -177,28 +124,52 @@ namespace uos::rt::process {
 
     // ---- Bun.spawn
 
-    struct Pipe {
-      int read = -1;
-      int write = -1;
+    void connectPipe(asio::readable_pipe& read, asio::writable_pipe& write) {
+      boost::system::error_code error;
+      asio::connect_pipe(read, write, error);
+      if (error) throw fs::errnoError(error.value(), "pipe");
+      for (int fd : {read.native_handle(), write.native_handle()}) {
+        if (::fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) throw fs::errnoError(errno, "fcntl");
+      }
+    }
+
+    template <class Binding, class Pipe>
+    Binding stdioBinding(Stdio mode, Pipe& pipe) {
+      if (mode == Stdio::pipe) return pipe;
+      if (mode == Stdio::ignore) return nullptr;
+      return {};
+    }
+
+    // Prevent an inherited handler from running in the child before exec setup.
+    class BlockSignals {
+    public:
+      BlockSignals() {
+        sigset_t all;
+        ::sigfillset(&all);
+        const int error = ::pthread_sigmask(SIG_BLOCK, &all, &previous_);
+        if (error != 0) throw fs::errnoError(error, "pthread_sigmask");
+      }
+      ~BlockSignals() { ::pthread_sigmask(SIG_SETMASK, &previous_, nullptr); }
+      BlockSignals(const BlockSignals&) = delete;
+      BlockSignals& operator=(const BlockSignals&) = delete;
+
+    private:
+      sigset_t previous_{};
     };
 
-    void closeFd(int& fd) noexcept {
-      if (fd >= 0) ::close(fd);
-      fd = -1;
-    }
-
-    std::string signalList() {
-      std::string out = "signal must be one of ";
-      for (int number = 1; number <= 31; ++number) {
-        if (number > 1) out += number == 31 ? " or " : ", ";
-#if defined(__APPLE__)
-        out += "'" + std::string(*spawnSignalName(number)) + "'";
-#else
-        out += "'" + std::string(*signalName(number)) + "'";
-#endif
+    struct ResetChildSignals {
+      boost::system::error_code on_exec_setup(bp::posix::default_launcher&, const bp::filesystem::path&, const char* const*) const {
+        struct sigaction action{};
+        action.sa_handler = SIG_DFL;
+        ::sigemptyset(&action.sa_mask);
+        for (int number = 1; number < NSIG; ++number) {
+          if (::sigaction(number, &action, nullptr) < 0 && errno != EINVAL)
+            return {errno, boost::system::system_category()};
+        }
+        return ::sigprocmask(SIG_SETMASK, &action.sa_mask, nullptr) == 0
+            ? boost::system::error_code{} : boost::system::error_code(errno, boost::system::system_category());
       }
-      return out;
-    }
+    };
 
     std::optional<std::string> findExecutable(std::string_view name, std::string_view path) {
       std::size_t start = 0;
@@ -226,17 +197,15 @@ namespace uos::rt::process {
       return inherited ? inherited : DEFAULT_PATH;
     }
 
-    // GCC 12.2 destroys temporaries created inside a co_await full-expression
-    // twice: every co_await below awaits a named operation built from named locals.
-    Task<void> readChunk(std::shared_ptr<Descriptor> descriptor, ReadableStreamDefaultController<Bytes> controller) {
+    Task<void> readChunk(std::shared_ptr<asio::readable_pipe> pipe, ReadableStreamDefaultController<Bytes> controller) {
       Bytes buffer(65536);
       boost::system::error_code error;
       const auto view = asio::buffer(buffer);
       auto token = asio::redirect_error(asio::use_awaitable, error);
-      const std::size_t count = co_await descriptor->async_read_some(view, std::move(token));
+      const std::size_t count = co_await pipe->async_read_some(view, std::move(token));
       if (error == asio::error::eof || (!error && count == 0)) {
         boost::system::error_code ignored;
-        descriptor->close(ignored);
+        pipe->close(ignored);
         controller.close();
         co_return;
       }
@@ -248,13 +217,12 @@ namespace uos::rt::process {
       controller.enqueue(std::move(buffer));
     }
 
-    ReadableStream<Bytes> pipeStream(int fd) {
-      auto descriptor = std::make_shared<Descriptor>(rt::executor(), fd);
+    ReadableStream<Bytes> pipeStream(std::shared_ptr<asio::readable_pipe> pipe) {
       UnderlyingSource<Bytes> source;
-      source.pull = [descriptor](ReadableStreamDefaultController<Bytes> controller) { return readChunk(descriptor, std::move(controller)); };
-      source.cancel = [descriptor](Reason) {
+      source.pull = [pipe](ReadableStreamDefaultController<Bytes> controller) { return readChunk(pipe, std::move(controller)); };
+      source.cancel = [pipe](Reason) {
         boost::system::error_code ignored;
-        descriptor->close(ignored);
+        pipe->close(ignored);
       };
       return ReadableStream<Bytes>(std::move(source));
     }
@@ -285,9 +253,10 @@ namespace uos::rt::process {
   }
 
   struct FileSink::State {
-    std::shared_ptr<Descriptor> descriptor;
+    explicit State(Executor executor) : pipe(executor) {}
+
+    asio::writable_pipe pipe;
     Bytes pending;
-    bool ended = false;
   };
 
   FileSink::FileSink(std::shared_ptr<State> state) : state_(std::move(state)) {}
@@ -309,8 +278,7 @@ namespace uos::rt::process {
         boost::system::error_code error;
         const auto view = asio::buffer(chunk);
         auto token = asio::redirect_error(asio::use_awaitable, error);
-        Descriptor& descriptor = *state->descriptor;
-        co_await asio::async_write(descriptor, view, std::move(token));
+        co_await asio::async_write(state->pipe, view, std::move(token));
         if (error) throw fs::errnoError(error.value(), "write");
       }
     }
@@ -318,9 +286,8 @@ namespace uos::rt::process {
     Task<void> endSink(std::shared_ptr<FileSink::State> state) {
       Task<void> flushing = flushSink(state);
       co_await std::move(flushing);
-      state->ended = true;
       boost::system::error_code ignored;
-      state->descriptor->close(ignored);
+      state->pipe.close(ignored);
     }
   }
 
@@ -330,62 +297,69 @@ namespace uos::rt::process {
   struct Subprocess::State {
     int pid = -1;
     Promise<int> exited;
-    std::optional<Resolve<int>> resolveExited;
+    std::optional<bp::process> child;
     std::optional<int> exitCode;
     std::optional<std::string> signalCode;
-    bool observed = false;
     std::optional<ReadableStream<Bytes>> stdoutStream;
     std::optional<ReadableStream<Bytes>> stderrStream;
     std::shared_ptr<FileSink::State> stdinSink;
   };
 
   namespace {
-#if defined(__APPLE__) || defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
-    Task<void> watchExit(std::shared_ptr<Subprocess::State> state, std::shared_ptr<asio::signal_set> notifications) {
-      auto observation = waitForChildExit(state->pid, notifications);
-      const int status = co_await std::move(observation);
-      int code = 0;
-      if (WIFSIGNALED(status)) {
-        const int number = WTERMSIG(status);
-#if defined(__APPLE__)
-        const auto name = spawnSignalName(number);
-#else
-        const auto name = signalName(number);
-#endif
-        state->signalCode = name ? std::string(*name) : "SIG" + std::to_string(number);
-        code = 128 + number;
-      } else {
-        state->exitCode = WEXITSTATUS(status);
-        code = *state->exitCode;
-      }
-      state->observed = true;
-      (*state->resolveExited)(code);
-      state->resolveExited.reset();
-    }
-#else
-    Task<void> watchExit(std::shared_ptr<Subprocess::State> state, int pidfd) {
-      Descriptor descriptor(rt::executor(), pidfd);
+    Task<int> watchExit(std::shared_ptr<Subprocess::State> state) {
       boost::system::error_code error;
-      auto token = asio::redirect_error(asio::use_awaitable, error);
-      co_await descriptor.async_wait(Descriptor::wait_read, std::move(token));
-      int status = 0;
-      while (::waitpid(state->pid, &status, 0) < 0 && errno == EINTR) {
-      }
-      int code = 0;
+      int code;
+      do {
+        auto token = asio::redirect_error(asio::use_awaitable, error);
+        code = co_await state->child->async_wait(std::move(token));
+      } while (error == boost::system::errc::interrupted);
+      const int status = state->child->native_exit_code();
+      state->child.reset();
+      if (error) throw fs::errnoError(error.value(), "wait");
       if (WIFSIGNALED(status)) {
         const int number = WTERMSIG(status);
         const auto name = signalName(number);
         state->signalCode = name ? std::string(*name) : "SIG" + std::to_string(number);
-        code = 128 + number;
-      } else {
-        state->exitCode = WEXITSTATUS(status);
-        code = *state->exitCode;
+        co_return 128 + number;
       }
-      state->observed = true;
-      (*state->resolveExited)(code);
-      state->resolveExited.reset();
+      state->exitCode = code;
+      co_return code;
     }
-#endif
+
+    bp::process launch(Executor executor, const std::string& file, const std::vector<std::string>& cmd,
+                       const SpawnOptions& options, bp::process_stdio& stdio) {
+      // Pass a complete argv to preserve the caller's argv[0] after PATH lookup.
+      std::vector<const char*> argv;
+      argv.reserve(cmd.size() + 1);
+      for (const auto& argument : cmd) argv.push_back(argument.c_str());
+      argv.push_back(nullptr);
+
+      std::vector<std::string> entries;
+      if (options.env) {
+        entries.reserve(options.env->size());
+        for (const auto& [name, value] : *options.env) entries.push_back(name + "=" + value);
+      }
+      auto environment = options.env ? bp::process_environment(entries) : bp::process_environment(bp::environment::current());
+      bp::default_process_launcher launcher;
+      const bp::filesystem::path executable(file);
+      const BlockSignals blocked;
+      boost::system::error_code error;
+      try {
+        bp::process child = options.cwd
+            ? launcher(executor, error, executable, argv.data(), stdio, environment, bp::process_start_dir(*options.cwd), ResetChildSignals())
+            : launcher(executor, error, executable, argv.data(), stdio, environment, ResetChildSignals());
+        if (error) throw fs::errnoError(error.value(), "spawn", file);
+        return child;
+      } catch (const boost::system::system_error& failure) {
+        // The launcher can fork successfully and then fail to acquire a process handle.
+        // No Boost object owns the child on that path.
+        if (launcher.pid > 0) {
+          ::kill(launcher.pid, SIGKILL);
+          while (::waitpid(launcher.pid, nullptr, 0) < 0 && errno == EINTR) {}
+        }
+        throw fs::errnoError(failure.code().value(), "spawn", file);
+      }
+    }
   }
 
   Subprocess::Subprocess(std::shared_ptr<State> state) : state_(std::move(state)) {}
@@ -410,24 +384,20 @@ namespace uos::rt::process {
   Promise<int> Subprocess::exited() const { return state_->exited; }
   std::optional<int> Subprocess::exitCode() const noexcept { return state_->exitCode; }
   std::optional<std::string> Subprocess::signalCode() const noexcept { return state_->signalCode; }
-  bool Subprocess::killed() const noexcept { return state_->observed; }
+  bool Subprocess::killed() const noexcept { return !state_->child; }
 
   void Subprocess::kill(std::variant<std::string_view, int> signal) const {
     int number;
     if (const auto* name = std::get_if<std::string_view>(&signal)) {
-#if defined(__APPLE__)
-      const auto found = spawnSignalNumber(*name);
-#else
       const auto found = signalNumber(*name);
-#endif
-      if (!found) throw TypeError(signalList());
+      if (!found) throw TypeError("Unknown signal: " + std::string(*name));
       number = *found;
     } else {
       number = std::get<int>(signal);
-      if (number >= 32) throw TypeError("Invalid signal: must be < 32");
+      if (number < 0 || number >= 32) throw TypeError("Invalid signal number");
     }
-    if (state_->observed) return;
-    ::kill(state_->pid, number);
+    // Boost may already have reaped the PID while the completion is queued.
+    if (state_->child && bp::process_is_running(state_->child->native_exit_code())) ::kill(state_->pid, number);
   }
 
   Subprocess spawn(std::vector<std::string> cmd, SpawnOptions options) {
@@ -438,112 +408,39 @@ namespace uos::rt::process {
       if (!found) throw fs::ErrnoError("Executable not found in $PATH: \"" + file + "\"", "ENOENT", -2, "", file);
       file = std::move(*found);
     }
-    // Bun ignores SIGPIPE: a write to a pipe whose reader exited fails with EPIPE.
+    // Asio writes through POSIX pipe descriptors. A closed reader must yield EPIPE.
     ::signal(SIGPIPE, SIG_IGN);
 
-    std::vector<std::string> environment;
-    if (options.env)
-      for (const auto& [name, value] : *options.env) environment.push_back(name + "=" + value);
-    std::vector<char*> envp;
-    for (auto& entry : environment) envp.push_back(entry.data());
-    envp.push_back(nullptr);
-    std::vector<char*> args;
-    for (auto& argument : cmd) args.push_back(argument.data());
-    args.push_back(nullptr);
-
-#if defined(__APPLE__) || defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
-    // The signal handler is installed before the child can exit.
-    auto childExit = std::make_shared<asio::signal_set>(rt::executor(), SIGCHLD);
-#endif
-    Pipe in, out, err;
-    auto release = [&] {
-      for (Pipe* pipe : {&in, &out, &err}) {
-        closeFd(pipe->read);
-        closeFd(pipe->write);
-      }
-    };
-    auto makePipe = [&](Pipe& pipe) {
-      int fds[2];
-#if defined(__APPLE__) || defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
-      const int pipeStatus = closeOnExecPipe(fds);
-#else
-      const int pipeStatus = ::pipe2(fds, O_CLOEXEC);
-#endif
-      if (pipeStatus != 0) {
-        const int error = errno;
-        release();
-        throw fs::errnoError(error, "pipe");
-      }
-      pipe.read = fds[0];
-      pipe.write = fds[1];
-    };
-    if (options.stdin == Stdio::pipe) makePipe(in);
-    if (options.stdout == Stdio::pipe) makePipe(out);
-    if (options.stderr == Stdio::pipe) makePipe(err);
-
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    if (options.stdin == Stdio::pipe) posix_spawn_file_actions_adddup2(&actions, in.read, 0);
-    else if (options.stdin == Stdio::ignore) posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
-    if (options.stdout == Stdio::pipe) posix_spawn_file_actions_adddup2(&actions, out.write, 1);
-    else if (options.stdout == Stdio::ignore) posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
-    if (options.stderr == Stdio::pipe) posix_spawn_file_actions_adddup2(&actions, err.write, 2);
-    else if (options.stderr == Stdio::ignore) posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
-#if defined(__APPLE__) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 260000
-    if (options.cwd) posix_spawn_file_actions_addchdir(&actions, options.cwd->c_str());
-#else
-    if (options.cwd) posix_spawn_file_actions_addchdir_np(&actions, options.cwd->c_str());
-#endif
-
-    posix_spawnattr_t attributes;
-    posix_spawnattr_init(&attributes);
-    sigset_t empty, all;
-    sigemptyset(&empty);
-    sigfillset(&all);
-    posix_spawnattr_setsigmask(&attributes, &empty);
-    posix_spawnattr_setsigdefault(&attributes, &all);
-    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
-
-    pid_t child = -1;
-#if defined(__APPLE__)
-    char** inheritedEnvironment = *_NSGetEnviron();
-#else
-    char** inheritedEnvironment = environ;
-#endif
-    const int status = ::posix_spawn(&child, file.c_str(), &actions, &attributes, args.data(), options.env ? envp.data() : inheritedEnvironment);
-    posix_spawn_file_actions_destroy(&actions);
-    posix_spawnattr_destroy(&attributes);
-    closeFd(in.read);
-    closeFd(out.write);
-    closeFd(err.write);
-    if (status != 0) {
-      release();
-      throw fs::errnoError(status, "posix_spawn", file);
-    }
-
     auto state = std::make_shared<Subprocess::State>();
-    state->pid = static_cast<int>(child);
-    auto resolvers = withResolvers<int>();
-    state->exited = resolvers.promise;
-    state->resolveExited.emplace(resolvers.resolve);
+    const auto executor = rt::executor();
+    asio::readable_pipe childIn(executor);
+    asio::writable_pipe childOut(executor), childErr(executor);
     if (options.stdin == Stdio::pipe) {
-      state->stdinSink = std::make_shared<FileSink::State>();
-      state->stdinSink->descriptor = std::make_shared<Descriptor>(rt::executor(), std::exchange(in.write, -1));
+      state->stdinSink = std::make_shared<FileSink::State>(executor);
+      connectPipe(childIn, state->stdinSink->pipe);
     }
-    if (options.stdout == Stdio::pipe) state->stdoutStream.emplace(pipeStream(std::exchange(out.read, -1)));
-    if (options.stderr == Stdio::pipe) state->stderrStream.emplace(pipeStream(std::exchange(err.read, -1)));
-
-#if defined(__APPLE__) || defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
-    auto observation = watchExit(state, childExit);
-    rt::spawn(std::move(observation));
-#else
-    const int pidfd = static_cast<int>(::syscall(SYS_pidfd_open, child, 0));
-    if (pidfd < 0) throw fs::errnoError(errno, "pidfd_open");
-    ::fcntl(pidfd, F_SETFD, FD_CLOEXEC);
-    rt::spawn(watchExit(state, pidfd));
-#endif
-    return Subprocess(state);
+    auto parentOut = std::make_shared<asio::readable_pipe>(executor);
+    auto parentErr = std::make_shared<asio::readable_pipe>(executor);
+    if (options.stdout == Stdio::pipe) {
+      connectPipe(*parentOut, childOut);
+      state->stdoutStream.emplace(pipeStream(std::move(parentOut)));
+    }
+    if (options.stderr == Stdio::pipe) {
+      connectPipe(*parentErr, childErr);
+      state->stderrStream.emplace(pipeStream(std::move(parentErr)));
+    }
+    bp::process_stdio stdio{
+      .in = stdioBinding<decltype(stdio.in)>(options.stdin, childIn),
+      .out = stdioBinding<decltype(stdio.out)>(options.stdout, childOut),
+      .err = stdioBinding<decltype(stdio.err)>(options.stderr, childErr),
+    };
+    state->child.emplace(launch(executor, file, cmd, options, stdio));
+    state->pid = state->child->id();
+    auto observation = watchExit(state);
+    state->exited = Promise<int>(std::move(observation));
+    return Subprocess(std::move(state));
   }
+
 }
 
 namespace uos::rt::bun {
