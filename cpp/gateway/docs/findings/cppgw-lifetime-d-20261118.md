@@ -294,7 +294,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_authority_rpc.hpp`
 - [x] `include/uos/authority/native_authority_runtime.hpp`
 - [x] `include/uos/authority/native_authority_sql.hpp`
-- [ ] `include/uos/authority/native_codex.hpp`
+- [x] `include/uos/authority/native_codex.hpp`
 - [ ] `include/uos/authority/native_codex_429.hpp`
 - [ ] `include/uos/authority/native_codex_capacity.hpp`
 - [ ] `include/uos/authority/native_codex_contracts.hpp`
@@ -1642,6 +1642,12 @@ Reviewed the inline transaction helper and materializing SQL adapters.
 - L31, 32, 34, 38, 60 **SAFE** · The synchronous transaction contract keeps the local callback and receiver alive, while current transaction bodies return synchronous values and the initializer callback never escapes.
 - L44, 49, 54, 55, 56, 57 **SAFE** · Read, write and paging templates consume temporary row and index references synchronously and return owning results.
 
+### `include/uos/authority/native_codex.hpp`
+
+Reviewed Codex selection and reset planning interfaces.
+
+- L67 **SAFE** · The plan label points to a static literal and its associated record is an owning value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1890,4 +1896,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-186/286 files reviewed. 359 sites: 338 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+187/286 files reviewed. 360 sites: 339 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

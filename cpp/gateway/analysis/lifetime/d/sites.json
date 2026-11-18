@@ -8030,8 +8030,21 @@
       ]
     },
     "include/uos/authority/native_codex.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed Codex selection and reset planning interfaces.",
+      "sites": [
+        {
+          "lines": [
+            67
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The plan label points to a static literal and its associated record is an owning value."
+        }
+      ]
     },
     "include/uos/authority/native_codex_429.hpp": {
       "reviewed": false,
