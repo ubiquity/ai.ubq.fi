@@ -179,7 +179,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/removed_provider_telemetry.hpp`
 - [x] `include/uos/provider/selection.hpp`
 - [x] `include/uos/provider/stream_relay.hpp`
-- [ ] `include/uos/provider/surplus.hpp`
+- [x] `include/uos/provider/surplus.hpp`
 - [ ] `include/uos/provider/surplus_claude_chat_request.hpp`
 - [ ] `include/uos/provider/surplus_claude_request.hpp`
 - [ ] `src/chat/completions.cpp`
@@ -1124,3 +1124,9 @@ Relay factories copy per-request inputs into their state.
 
 - 20-25,32-40 · iterator and adapter callbacks · **SAFE** · The production iterator factories own generator handles and the relay state owns its callback bundle.
 - 48-71 · borrowed context copy · **SAFE** · The synchronous factories copy telemetry into relay state and copy or move the stream, signals and cancel callback before returning a response.
+
+### `include/uos/provider/surplus.hpp`
+
+Surplus catalog and Responses transport API.
+
+- 88-89,116-117,124-125 · task and callback interface · **SAFE** · Request/catalog frames own option inputs, including the dispatch hook objects.

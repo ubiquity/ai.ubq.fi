@@ -1542,8 +1542,16 @@
       ]
     },
     "include/uos/provider/surplus.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Surplus catalog and Responses transport API.",
+      "sites": [
+        {
+          "lines": "88-89,116-117,124-125",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "Request/catalog frames own option inputs, including the dispatch hook objects."
+        }
+      ]
     },
     "include/uos/provider/surplus_claude_chat_request.hpp": {
       "status": "pending",
