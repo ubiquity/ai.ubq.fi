@@ -63,3 +63,109 @@ uses the pinned Deno 2.9.7 ARM64 binary with SHA-256
 Both runs use isolated scratch state with explicit, provider-free environments.
 The benchmark compares the original and current trees on the committed KV
 fixture inputs. Compilation reuses objects per profile.
+
+## Implementation and focused verification
+
+- The JSC reader and typed-value decoder allocate graph nodes once. The object
+  tables resolve both forward population and back-references to those nodes.
+  Internal edges borrow the graph, and copies held by callers retain it.
+  C++ mutable access keeps its snapshot behavior. The JSC writer counts
+  anonymous objects as well as graph nodes so reference widths follow the
+  wire format, including when views share a backing buffer.
+- Arrays keep a bounded dense prefix and indexed present entries, with a
+  separate logical length for sparse arrays. The codec, interchange,
+  portability check, and value equality visit present slots. A direct indexed
+  read yields undefined for a hole, while iteration and the interchange
+  distinguish holes from own entries containing undefined. Named array,
+  Map and Set properties still follow the existing refusal.
+- Bun accepted both newly recorded property-block cases. A numeric property
+  grew an array from length 4 to 4,294,967,294. With both end indices present,
+  Bun returned them in ascending order. The test exercises 15 arrays from
+  both JSC versions 5 and 14 through read, interchange and write. Its
+  2 MiB allocation guard bounds cumulative requested heap bytes, which
+  also bounds peak live heap bytes for these calls.
+- The wider build identified two vector API dependencies. The catalog
+  reads `KvArray::front()`, and the admin kernel writes array entries by
+  mutable iteration. The sparse array implements both, so those callers
+  remain byte-identical. The Bun-recorded cyclic coercion probe also confirmed
+  that reading a self-referencing array as RegExp flags raises
+  `RangeError: Maximum call stack size exceeded.` The interchange now keeps
+  that recursion within its existing depth bound.
+- The C++ test's original Bun cycle and reference expectations remain in the
+  vectors. The inherited implementation changed assertions that documented the
+  C++ cycle refusal and copied references. The original proof source, fixture
+  and Deno helper match the baseline byte for byte.
+
+### ARM64 toolchain and proof
+
+Ubuntu 24.04, Clang 21.1.8, Boost 1.92.0, OpenSSL 3.0.13, SQLite 3.45.1,
+ICU 74.2, zlib 1.3, Brotli 1.1.0, and Zstd 1.5.5. The official Boost tarball
+SHA-256 was `5c1d40cb8e19adbf740a4ec2da35b3e58f3f5804b1dce44deb53df72193cbc6c`.
+Built both static archives with `./bootstrap.sh --with-libraries=json,container`
+and `./b2 -j4 --with-json --with-container link=static variant=release stage`
+under `/tmp/kv-graph/deps`.
+
+The focused `-O2` check passed 19 of 19 cases in three binaries after the
+writer and graph changes. The earlier proof/conversion/runtime group passed
+74 of 74 cases in three binaries. The release proof invoked
+`proof::importMetaMain()` with the repository's linked native KV test
+binding and real pinned Deno. A loopback-free network namespace, private
+mount namespace, and PID namespace isolated the proof, with the runner home
+mounted over and an empty child environment. The proof produced 10 forward
+rows, 11 latest-state reverse rows, and two cursor translations each way.
+Deno readback passed, and the interruption published no destination or
+receipt. Proof SHA-256
+`0f497f8f94c260eb0e6a926275094d6c5790b38bd867e7d0a6c8cfac34f6dbaa`.
+
+The scratch builder uses the current `tools/links.py` and portable driver's
+object and test functions. For the focused run this was
+`python3 -B /tmp/kv-graph/build-tests.py release --proof --jobs 2 rt/kv_jsc_sparse_test.cpp rt/kv_jsc_deserialize_test.cpp kv_conversion_typed_value_differential_test.cpp`.
+The proof wrapper prepared `tests/helpers/linked_native_kv.cpp`, pointed the
+resource root at copies of the original helper files, and called the original
+proof main with the new fixture directory, binary path and pin. It ran via
+`sudo -n unshare --net --mount --pid --fork --mount-proc --propagation private --kill-child=SIGKILL -- /bin/bash /tmp/kv-graph/proof-namespace.sh 1001 1001 release-3 release`.
+All generated files and test databases were under the scratch path.
+
+Both sweeps use `-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror`,
+`BOOST_JSON_NO_LIB`, `BOOST_CONTAINER_NO_LIB`, `BOOST_SYSTEM_NO_LIB`,
+`BOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING`, and
+`UOS_GATEWAY_NATIVE_LIBRARIES=1`. Third-party sources compile without those
+warning flags. The plain and instrumented full sweeps use `-O0`; the
+instrumented sweep uses `-fsanitize=address,undefined -gline-tables-only -fno-omit-frame-pointer`
+and runs with LeakSanitizer enabled. Each test receives an empty home,
+private temporary storage and an OS network boundary. Cold sweeps are
+in progress. Ninja tracks header dependencies and recompiles affected
+objects on a rerun.
+
+### Codec benchmark
+
+The scratch benchmark used the unchanged 86 Bun vectors in
+`tests/rt/kv_jsc_deserialize_vectors.inc`. The baseline codec came from
+`git archive 55afcc8b cpp/gateway`. Both binaries used Clang 21.1.8
+`-O2`, the flags above and Boost 1.92.0. Each group ran a warmup and
+five batches of 50,000 passes over its vectors. Reads measured the reader
+on Bun bytes and consumed the value kind. Writes measured serialization
+of the C++ fixture values and consumed output size. Times are the median
+wall ns/op on CPU 3. Allocations come from a separate pass counting
+C++ heap requests. The usage record write remained within 0.1% in this
+pair. All other groups reduced elapsed time. Some small typed terminals
+request more heap bytes because they keep graph identity and backing links.
+
+| Vector group           | Rows | Read ns/op before → after | Write ns/op before → after | Read allocations/op | Write allocations/op |
+| ---------------------- | ---: | ------------------------: | -------------------------: | ------------------: | -------------------: |
+| Primitives             |   33 |             241.9 → 154.9 |              201.3 → 150.0 |         4.27 → 2.09 |          6.52 → 2.73 |
+| Arrays                 |    5 |             385.9 → 249.6 |               144.1 → 92.4 |         9.00 → 6.00 |          6.40 → 2.40 |
+| Objects, maps, sets    |    9 |             881.4 → 570.4 |              291.9 → 247.2 |       18.11 → 13.00 |         10.00 → 6.00 |
+| Typed bytes            |   15 |             252.9 → 238.1 |               143.7 → 96.9 |         7.60 → 8.60 |          6.67 → 2.67 |
+| Usage record           |    1 |         2,350.4 → 1,459.7 |              997.4 → 998.0 |       33.00 → 22.00 |        20.00 → 16.00 |
+| Shared and enveloped   |    7 |             823.5 → 600.5 |              284.3 → 245.9 |       19.14 → 14.86 |          8.86 → 4.86 |
+| Dates, regexes, errors |   16 |             716.4 → 686.9 |              451.0 → 395.0 |       11.88 → 12.19 |         10.94 → 6.94 |
+
+The supplied 13-byte array decoded and reserialized in nine heap requests
+totaling 1,000 bytes on the final codec. The read retained a length of
+16,775,980, and the v14 serialization was 13 bytes.
+
+The out-of-scope `src/rt/kv_js.cpp` projection still constructs dense JSON
+output for arrays. Its cyclic JSON stringify path hits its recursion
+guard and emits a RangeError, while Bun's JSON.stringify emits a TypeError.
+Storage codecs and interchange avoid the dense projection.
