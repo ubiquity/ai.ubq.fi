@@ -54,7 +54,9 @@ The automatic WebSocket client merge retains Beast's handshake key and accept di
 response-head adapter where the socket transport needs HTTP parsing. The merged JSON parser remains simdjson.
 `kJsonMaxDepth` now uses the central 128-container constant for recursive operations on JSON values. KV keeps
 the separate 2,000-container graph bound and the sparse/cyclic reader. The CMake, SDK, macOS, benchmark, and
-fuzz build paths use the selected vendor inputs once per build closure.
+fuzz build paths use the selected vendor inputs once per build closure. The standalone fuzz targets for fetch,
+URL and passkey CBOR derive their vendor sources from the registry. The macOS build also tracks nested vendor
+headers in the object receipts for both the sources and consumers.
 
 The three stage 2b parser rejection assertions at depth 129 expected `RangeError` with `Maximum call stack size
 exceeded.` The merged parser expects the cross-line `SyntaxError` with `Invalid JSON` for all three inputs.
@@ -78,8 +80,9 @@ Pre-serialized gateway log records and terminal accounting fields use their exis
 | `tests/rt/http_test.cpp`                           | Keep all 346 generated HTTP scenarios and the stage 2b wire-level replacements for the retired Blob/File and FormData helpers. The cross-line `1e400` fixture changes from `null` to `SyntaxError: Failed to parse JSON`. Stream vectors 107–113 and 116 keep their inputs and change their specific JSCore syntax messages to `SyntaxError: Invalid JSON`. |
 
 The JSON fixture retains the cross-line numeric, insertion-order, UTF-8 and malformed-document expectations and
-stage 2b's depth and copy cases. The release inventory contains every standalone test from either parent. The
-other inherited fixture changes for slimmer helpers and the selected libraries are documented in the input reports.
+stage 2b's depth and copy cases. Comparing tracked `*_test.cpp` paths confirms the 450-test inventory is the
+union of the two parents. The other inherited fixture changes for slimmer helpers and the selected libraries are
+documented in the input reports.
 [Stage 1b fixture migration](cppgw-integrate-s1b-20261118.md) · [Stage 2a](cppgw-integrate-s2a-20261118.md) ·
 [Stage 2b](cppgw-integrate-s2b-20261118.md#fixture-decisions)
 
@@ -235,3 +238,75 @@ and recorded no OOM or other genuine finding. libFuzzer reported 403 MiB peak RS
 passed and retained the artifact. The receipt and campaign log are under `kv-workflow.XzdtO6dU/`, with SHA-256
 `bb4292544eb3f7cf8de596d9b7e8ebcb144c6b3fa07ecff565ef2b2f9534bd10` and
 `7e558729f1cc954a6b4e89058b4d215891cf06e2a8d62b423bd4b9df7798b1db`.
+
+## Portable Linux ARM64 package
+
+Docker 28.0.4 built and verified the package from the packaging merge `483a8684a2f615ddf267393e26be2864765fbe0c`,
+tree `778f3d439bd4bf44542eb7d4714737b1a88d30c8`. This commit supplies the same package inputs as the guides merge.
+The build took 1,536.70 s with three build jobs, and the verifier took 65.03 s. Both exited 0. The archive is
+83,898,785 bytes with SHA-256 `91370e5a44df44833326bc0898fb826194ab45bd8f392b338685704305232e18`.
+
+```bash
+scratch=/var/tmp/cppgw-integrate-f1.WpF47zpW
+work="$scratch/portable"
+cd "$work/source"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$work/home" TMPDIR="$work/tmp" \
+  DOCKER_CONFIG="$scratch/docker-config" PORTABLE_JOBS=3 \
+  bash cpp/gateway/packaging/portable/build.sh "$work/uos-gateway-linux-arm64.tar.gz"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$work/home" TMPDIR="$work/tmp" \
+  DOCKER_CONFIG="$scratch/docker-config" \
+  bash cpp/gateway/packaging/portable/verify.sh "$work/uos-gateway-linux-arm64.tar.gz" "$work/verify"
+```
+
+The verifier sealed the release on Debian 12 and 13 and checked executable relocations and native addon
+dependencies. Each networkless two-CPU proof recorded 1,161 completed authenticated Chat requests and 1,161
+accounting records after reopening the database. All four proofs returned 401 for unauthenticated Chat. They
+used the default Landlock ABI 8 policy, recorded two seccomp filters and reported zero cgroup OOM events.
+
+| Runtime   | Memory cap | Peak cgroup memory | Median mock requests/s |
+| --------- | ---------: | -----------------: | ---------------------: |
+| Debian 12 |    512 MiB |       37,773,312 B |                 204.99 |
+| Debian 12 |    256 MiB |       37,830,656 B |                 208.36 |
+| Debian 13 |    512 MiB |       41,041,920 B |                 194.48 |
+| Debian 13 |    256 MiB |       38,658,048 B |                 192.52 |
+
+The archive declares the version of each of the five linked vendors and carries their notices along with the
+Boost, ICU, SQLite, native addon, compiler and shared-library licenses. The build and verification logs are
+`portable/build.log` and `portable/verify.log` under scratch, with SHA-256
+`7989fbe166428d6a60671c1b6579be65c652c2034b7abea00908692afe17f8a0` and
+`98d911dd715b73d58bdee96f948693fbb80d8aa2e431736f015eb369b6aaeee3`.
+
+## Paired conformance
+
+The runner reused the exact Docker archive above and checked its `VERSION` commit and tree before sealing it.
+The suite and Bun source are from `0c9dfda6d2abfcf3d9c9eb733585fe8db0488b28`. The only differences from the
+packaging merge are guides and findings. The prepared scratch Bun snapshot used the pinned 1.4.0 runtime,
+frozen root dependencies and the matching, prebuilt native artifact inputs. The wrapper verified the native KV
+binding, ran all nine comparator controls, and launched `conformance/run.py` through the standard
+`bench/request_path/isolated.sh` with `timeout -k 10s 180s`. Both IPv4 and IPv6 route probes returned
+`ENETUNREACH`. The gateways used fresh state, empty homes and temporary directories and the same loopback mocks.
+
+```bash
+scratch=/var/tmp/cppgw-integrate-f1.WpF47zpW
+work="$scratch/conformance-final"
+gate=$(mktemp -d "$work/gate.XXXXXXXX")
+mkdir "$gate"/{home,tmp}
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC HOME="$gate/home" TMPDIR="$gate/tmp" \
+  /usr/bin/time -o "$work/run-portable.time" -f 'wall_s=%e peak_process_kib=%M exit=%x' \
+  bash "$work/run-portable.sh" "$scratch/portable/uos-gateway-linux-arm64.tar.gz" 483a8684a2f615ddf267393e26be2864765fbe0c
+```
+
+Native and Bun agreed on all 186 cases, with 162 before restart and 24 after it. The suite reported 184 passes,
+zero cosmetic differences, zero differential functional differences and two shared validation failures. Both
+gateways returned HTTP 200 and dispatched upstream for `chat-invalid-role` and `responses-invalid-tool-type`.
+The independent assertions require HTTP 400 and no dispatch. These same defects were present in the incoming
+conformance evidence. The paired phase took 2.996 s. The wrapper took 5.55 s with 144,232 KiB peak process RSS
+and exited 1 for the two shared assertions. [Incoming conformance findings](cppgw-conformance-e2e-20261118.md#functional-findings)
+
+| Evidence under `conformance-final/` | SHA-256                                                            |
+| ----------------------------------- | ------------------------------------------------------------------ |
+| Native executable                   | `7c806b731607672294c496cb19e594e3b2aec0c6f72e5a9645a618659b13a906` |
+| Bun executable                      | `086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9` |
+| Package manifest                    | `c4ef9e8df217234b3f6aae31091ed557b6bfeef373c2540ef56800e7634bf5d5` |
+| `run.6JWRPzZJ/output/results.json`  | `ce9bb46d2c7cd6da6ada75cdb5d790a08fcb9ce3c401837fc9d3ecf41d1d7355` |
+| `run.6JWRPzZJ/output/table.md`      | `2bea47a8a0cf89edca4f79f7da9b007578c6d65da0bc1e3028399fec1918de8e` |
