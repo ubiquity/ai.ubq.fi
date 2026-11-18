@@ -17,7 +17,8 @@ namespace uos::rt::ws::detail {
     namespace beastWs = boost::beast::websocket::detail;
 
     bool isValidStatusCode(int code) {
-      return code >= 0 && code <= 4999 && beastWs::is_valid_close_code(static_cast<std::uint16_t>(code));
+      // IANA registers 1014 (Bad Gateway). Beast only recognizes it starting in Boost 1.92.
+      return code == 1014 || (code >= 0 && code <= 4999 && beastWs::is_valid_close_code(static_cast<std::uint16_t>(code)));
     }
 
     bool validUtf8(BytesView bytes) {
@@ -201,17 +202,18 @@ namespace uos::rt::ws::detail {
 
   void Receiver::controlMessage(Bytes data) {
     if (opcode_ == 0x08) {
-      namespace websocket = boost::beast::websocket;
-      websocket::close_reason close;
-      boost::system::error_code error;
-      beastWs::read_close(close, boost::asio::buffer(data), error);
-      if (close.code > 4999 || (error && error != websocket::error::bad_close_payload))
-        return fail("RangeError", "invalid status code " + std::to_string(close.code), true, 1002, "WS_ERR_INVALID_CLOSE_CODE");
-      if (error) return fail("Error", "invalid UTF-8 sequence", true, 1007, "WS_ERR_INVALID_UTF8");
+      int code = 1005;
+      // getInfo rejects a one-byte close payload before reaching this point.
+      if (!data.empty()) {
+        code = boost::endian::load_big_u16(data.data());
+        if (!isValidStatusCode(code)) return fail("RangeError", "invalid status code " + std::to_string(code), true, 1002, "WS_ERR_INVALID_CLOSE_CODE");
+        if (!validUtf8(BytesView(data).subspan(2))) return fail("Error", "invalid UTF-8 sequence", true, 1007, "WS_ERR_INVALID_UTF8");
+        data.erase(data.begin(), data.begin() + 2);
+      }
       loop_ = false;
       state_ = Step::getInfo;
       auto listener = onConclude;
-      if (listener) listener(close.code == websocket::close_code::none ? 1005 : close.code, Bytes(close.reason.begin(), close.reason.end()));
+      if (listener) listener(code, std::move(data));
       end();
       return;
     }

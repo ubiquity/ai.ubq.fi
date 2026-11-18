@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -101,6 +102,12 @@ namespace {
     ~Umask() { ::umask(previous); }
   };
 
+  std::string filenameWithSuffixRemoved(std::string_view input, std::string_view suffix) {
+    auto filename = std::filesystem::path(input).filename().native();
+    if (filename.ends_with(suffix)) filename.resize(filename.size() - suffix.size());
+    return filename;
+  }
+
   std::span<const std::uint8_t> bytes(std::string_view text) { return {reinterpret_cast<const std::uint8_t*>(text.data()), text.size()}; }
 }
 
@@ -108,49 +115,49 @@ TEST("POSIX lexical path functions (cwd /tmp)") {
   Cwd cwd("/tmp");
   EXPECT_EQ(std::string(rt::path::sep), "/");
   EXPECT_EQ(std::string(rt::path::delimiter), ":");
-  EXPECT_EQ(rt::path::normalize("/raw//\xff\0.name"sv), std::string("/raw/\xff\0.name"sv));
-  EXPECT_EQ(rt::path::basename("/raw/\xff\0.name"sv), std::string("\xff\0.name"sv));
-  EXPECT_EQ(rt::path::normalize(""sv), std::string("."sv));
-  EXPECT_EQ(rt::path::normalize("."sv), std::string("."sv));
-  EXPECT_EQ(rt::path::normalize(".."sv), std::string(".."sv));
-  EXPECT_EQ(rt::path::normalize("/"sv), std::string("/"sv));
-  EXPECT_EQ(rt::path::normalize("//"sv), std::string("/"sv));
-  EXPECT_EQ(rt::path::normalize("///"sv), std::string("/"sv));
-  EXPECT_EQ(rt::path::normalize("a"sv), std::string("a"sv));
-  EXPECT_EQ(rt::path::normalize("a/"sv), std::string("a/"sv));
-  EXPECT_EQ(rt::path::normalize("a//"sv), std::string("a/"sv));
-  EXPECT_EQ(rt::path::normalize("/a"sv), std::string("/a"sv));
-  EXPECT_EQ(rt::path::normalize("/a/"sv), std::string("/a/"sv));
-  EXPECT_EQ(rt::path::normalize("/a/b"sv), std::string("/a/b"sv));
-  EXPECT_EQ(rt::path::normalize("/a/b/"sv), std::string("/a/b/"sv));
-  EXPECT_EQ(rt::path::normalize("a/b/c"sv), std::string("a/b/c"sv));
-  EXPECT_EQ(rt::path::normalize("./a"sv), std::string("a"sv));
-  EXPECT_EQ(rt::path::normalize("../a"sv), std::string("../a"sv));
-  EXPECT_EQ(rt::path::normalize("/a/b/../c"sv), std::string("/a/c"sv));
-  EXPECT_EQ(rt::path::normalize("/a/./b"sv), std::string("/a/b"sv));
-  EXPECT_EQ(rt::path::normalize("a/../.."sv), std::string(".."sv));
-  EXPECT_EQ(rt::path::normalize("../../a/.."sv), std::string("../.."sv));
-  EXPECT_EQ(rt::path::normalize("//a//b//"sv), std::string("/a/b/"sv));
-  EXPECT_EQ(rt::path::normalize("///a"sv), std::string("/a"sv));
-  EXPECT_EQ(rt::path::normalize("/a//b"sv), std::string("/a/b"sv));
-  EXPECT_EQ(rt::path::normalize("foo/bar/../baz/"sv), std::string("foo/baz/"sv));
-  EXPECT_EQ(rt::path::normalize("./../a/"sv), std::string("../a/"sv));
-  EXPECT_EQ(rt::path::normalize("/../a"sv), std::string("/a"sv));
-  EXPECT_EQ(rt::path::normalize("a/b/c/."sv), std::string("a/b/c/"sv));
-  EXPECT_EQ(rt::path::normalize("a/b/c/.."sv), std::string("a/b/"sv));
-  EXPECT_EQ(rt::path::normalize(".a"sv), std::string(".a"sv));
-  EXPECT_EQ(rt::path::normalize("a."sv), std::string("a."sv));
-  EXPECT_EQ(rt::path::normalize("a.b"sv), std::string("a.b"sv));
-  EXPECT_EQ(rt::path::normalize("a.b.c"sv), std::string("a.b.c"sv));
-  EXPECT_EQ(rt::path::normalize("/x/.hidden"sv), std::string("/x/.hidden"sv));
-  EXPECT_EQ(rt::path::normalize("/x/file.tar.gz"sv), std::string("/x/file.tar.gz"sv));
-  EXPECT_EQ(rt::path::normalize("..a"sv), std::string("..a"sv));
-  EXPECT_EQ(rt::path::normalize("a.."sv), std::string("a.."sv));
-  EXPECT_EQ(rt::path::normalize("/a/b.c/"sv), std::string("/a/b.c/"sv));
-  EXPECT_EQ(rt::path::normalize("/a/b.c//"sv), std::string("/a/b.c/"sv));
-  EXPECT_EQ(rt::path::normalize("a/.b"sv), std::string("a/.b"sv));
-  EXPECT_EQ(rt::path::normalize(". ."sv), std::string(". ."sv));
-  EXPECT_EQ(rt::path::normalize("..."sv), std::string("..."sv));
+  EXPECT_EQ(rt::path::join("/raw//\xff\0.name"sv), std::string("/raw/\xff\0.name"sv));
+  EXPECT_EQ(std::filesystem::path("/raw/\xff\0.name"sv).filename().native(), std::string("\xff\0.name"sv));
+  EXPECT_EQ(rt::path::join(""sv), std::string("."sv));
+  EXPECT_EQ(rt::path::join("."sv), std::string("."sv));
+  EXPECT_EQ(rt::path::join(".."sv), std::string(".."sv));
+  EXPECT_EQ(rt::path::join("/"sv), std::string("/"sv));
+  EXPECT_EQ(rt::path::join("//"sv), std::string("/"sv));
+  EXPECT_EQ(rt::path::join("///"sv), std::string("/"sv));
+  EXPECT_EQ(rt::path::join("a"sv), std::string("a"sv));
+  EXPECT_EQ(rt::path::join("a/"sv), std::string("a/"sv));
+  EXPECT_EQ(rt::path::join("a//"sv), std::string("a/"sv));
+  EXPECT_EQ(rt::path::join("/a"sv), std::string("/a"sv));
+  EXPECT_EQ(rt::path::join("/a/"sv), std::string("/a/"sv));
+  EXPECT_EQ(rt::path::join("/a/b"sv), std::string("/a/b"sv));
+  EXPECT_EQ(rt::path::join("/a/b/"sv), std::string("/a/b/"sv));
+  EXPECT_EQ(rt::path::join("a/b/c"sv), std::string("a/b/c"sv));
+  EXPECT_EQ(rt::path::join("./a"sv), std::string("a"sv));
+  EXPECT_EQ(rt::path::join("../a"sv), std::string("../a"sv));
+  EXPECT_EQ(rt::path::join("/a/b/../c"sv), std::string("/a/c"sv));
+  EXPECT_EQ(rt::path::join("/a/./b"sv), std::string("/a/b"sv));
+  EXPECT_EQ(rt::path::join("a/../.."sv), std::string(".."sv));
+  EXPECT_EQ(rt::path::join("../../a/.."sv), std::string("../.."sv));
+  EXPECT_EQ(rt::path::join("//a//b//"sv), std::string("/a/b/"sv));
+  EXPECT_EQ(rt::path::join("///a"sv), std::string("/a"sv));
+  EXPECT_EQ(rt::path::join("/a//b"sv), std::string("/a/b"sv));
+  EXPECT_EQ(rt::path::join("foo/bar/../baz/"sv), std::string("foo/baz/"sv));
+  EXPECT_EQ(rt::path::join("./../a/"sv), std::string("../a/"sv));
+  EXPECT_EQ(rt::path::join("/../a"sv), std::string("/a"sv));
+  EXPECT_EQ(rt::path::join("a/b/c/."sv), std::string("a/b/c/"sv));
+  EXPECT_EQ(rt::path::join("a/b/c/.."sv), std::string("a/b/"sv));
+  EXPECT_EQ(rt::path::join(".a"sv), std::string(".a"sv));
+  EXPECT_EQ(rt::path::join("a."sv), std::string("a."sv));
+  EXPECT_EQ(rt::path::join("a.b"sv), std::string("a.b"sv));
+  EXPECT_EQ(rt::path::join("a.b.c"sv), std::string("a.b.c"sv));
+  EXPECT_EQ(rt::path::join("/x/.hidden"sv), std::string("/x/.hidden"sv));
+  EXPECT_EQ(rt::path::join("/x/file.tar.gz"sv), std::string("/x/file.tar.gz"sv));
+  EXPECT_EQ(rt::path::join("..a"sv), std::string("..a"sv));
+  EXPECT_EQ(rt::path::join("a.."sv), std::string("a.."sv));
+  EXPECT_EQ(rt::path::join("/a/b.c/"sv), std::string("/a/b.c/"sv));
+  EXPECT_EQ(rt::path::join("/a/b.c//"sv), std::string("/a/b.c/"sv));
+  EXPECT_EQ(rt::path::join("a/.b"sv), std::string("a/.b"sv));
+  EXPECT_EQ(rt::path::join(". ."sv), std::string(". ."sv));
+  EXPECT_EQ(rt::path::join("..."sv), std::string("..."sv));
   EXPECT_EQ(rt::path::dirname(""sv), std::string("."sv));
   EXPECT_EQ(rt::path::dirname("."sv), std::string("."sv));
   EXPECT_EQ(rt::path::dirname(".."sv), std::string("."sv));
@@ -192,88 +199,88 @@ TEST("POSIX lexical path functions (cwd /tmp)") {
   EXPECT_EQ(rt::path::dirname("a/.b"sv), std::string("a"sv));
   EXPECT_EQ(rt::path::dirname(". ."sv), std::string("."sv));
   EXPECT_EQ(rt::path::dirname("..."sv), std::string("."sv));
-  EXPECT_EQ(rt::path::basename(""sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("."sv), std::string("."sv));
-  EXPECT_EQ(rt::path::basename(".."sv), std::string(".."sv));
-  EXPECT_EQ(rt::path::basename("/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("//"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("///"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("a"sv), std::string("a"sv));
-  EXPECT_EQ(rt::path::basename("a/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("a//"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("/a"sv), std::string("a"sv));
-  EXPECT_EQ(rt::path::basename("/a/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("/a/b"sv), std::string("b"sv));
-  EXPECT_EQ(rt::path::basename("/a/b/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("a/b/c"sv), std::string("c"sv));
-  EXPECT_EQ(rt::path::basename("./a"sv), std::string("a"sv));
-  EXPECT_EQ(rt::path::basename("../a"sv), std::string("a"sv));
-  EXPECT_EQ(rt::path::basename("/a/b/../c"sv), std::string("c"sv));
-  EXPECT_EQ(rt::path::basename("/a/./b"sv), std::string("b"sv));
-  EXPECT_EQ(rt::path::basename("a/../.."sv), std::string(".."sv));
-  EXPECT_EQ(rt::path::basename("../../a/.."sv), std::string(".."sv));
-  EXPECT_EQ(rt::path::basename("//a//b//"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("///a"sv), std::string("a"sv));
-  EXPECT_EQ(rt::path::basename("/a//b"sv), std::string("b"sv));
-  EXPECT_EQ(rt::path::basename("foo/bar/../baz/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("./../a/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("/../a"sv), std::string("a"sv));
-  EXPECT_EQ(rt::path::basename("a/b/c/."sv), std::string("."sv));
-  EXPECT_EQ(rt::path::basename("a/b/c/.."sv), std::string(".."sv));
-  EXPECT_EQ(rt::path::basename(".a"sv), std::string(".a"sv));
-  EXPECT_EQ(rt::path::basename("a."sv), std::string("a."sv));
-  EXPECT_EQ(rt::path::basename("a.b"sv), std::string("a.b"sv));
-  EXPECT_EQ(rt::path::basename("a.b.c"sv), std::string("a.b.c"sv));
-  EXPECT_EQ(rt::path::basename("/x/.hidden"sv), std::string(".hidden"sv));
-  EXPECT_EQ(rt::path::basename("/x/file.tar.gz"sv), std::string("file.tar.gz"sv));
-  EXPECT_EQ(rt::path::basename("..a"sv), std::string("..a"sv));
-  EXPECT_EQ(rt::path::basename("a.."sv), std::string("a.."sv));
-  EXPECT_EQ(rt::path::basename("/a/b.c/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("/a/b.c//"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("a/.b"sv), std::string(".b"sv));
-  EXPECT_EQ(rt::path::basename(". ."sv), std::string(". ."sv));
-  EXPECT_EQ(rt::path::basename("..."sv), std::string("..."sv));
-  EXPECT_EQ(rt::path::extname(""sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("."sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname(".."sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("//"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("///"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("a"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("a/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("a//"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("/a"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("/a/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("/a/b"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("/a/b/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("a/b/c"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("./a"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("../a"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("/a/b/../c"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("/a/./b"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("a/../.."sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("../../a/.."sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("//a//b//"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("///a"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("/a//b"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("foo/bar/../baz/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("./../a/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("/../a"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("a/b/c/."sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("a/b/c/.."sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname(".a"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("a."sv), std::string("."sv));
-  EXPECT_EQ(rt::path::extname("a.b"sv), std::string(".b"sv));
-  EXPECT_EQ(rt::path::extname("a.b.c"sv), std::string(".c"sv));
-  EXPECT_EQ(rt::path::extname("/x/.hidden"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("/x/file.tar.gz"sv), std::string(".gz"sv));
-  EXPECT_EQ(rt::path::extname("..a"sv), std::string(".a"sv));
-  EXPECT_EQ(rt::path::extname("a.."sv), std::string("."sv));
-  EXPECT_EQ(rt::path::extname("/a/b.c/"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("/a/b.c//"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname("a/.b"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::extname(". ."sv), std::string("."sv));
-  EXPECT_EQ(rt::path::extname("..."sv), std::string("."sv));
+  EXPECT_EQ(std::filesystem::path(""sv).filename().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("."sv).filename().native(), std::string("."sv));
+  EXPECT_EQ(std::filesystem::path(".."sv).filename().native(), std::string(".."sv));
+  EXPECT_EQ(std::filesystem::path("/"sv).filename().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("//"sv).filename().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("///"sv).filename().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("a"sv).filename().native(), std::string("a"sv));
+  EXPECT_EQ(std::filesystem::path("a/"sv).filename().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("a//"sv).filename().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/a"sv).filename().native(), std::string("a"sv));
+  EXPECT_EQ(std::filesystem::path("/a/"sv).filename().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/a/b"sv).filename().native(), std::string("b"sv));
+  EXPECT_EQ(std::filesystem::path("/a/b/"sv).filename().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("a/b/c"sv).filename().native(), std::string("c"sv));
+  EXPECT_EQ(std::filesystem::path("./a"sv).filename().native(), std::string("a"sv));
+  EXPECT_EQ(std::filesystem::path("../a"sv).filename().native(), std::string("a"sv));
+  EXPECT_EQ(std::filesystem::path("/a/b/../c"sv).filename().native(), std::string("c"sv));
+  EXPECT_EQ(std::filesystem::path("/a/./b"sv).filename().native(), std::string("b"sv));
+  EXPECT_EQ(std::filesystem::path("a/../.."sv).filename().native(), std::string(".."sv));
+  EXPECT_EQ(std::filesystem::path("../../a/.."sv).filename().native(), std::string(".."sv));
+  EXPECT_EQ(std::filesystem::path("//a//b//"sv).filename().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("///a"sv).filename().native(), std::string("a"sv));
+  EXPECT_EQ(std::filesystem::path("/a//b"sv).filename().native(), std::string("b"sv));
+  EXPECT_EQ(std::filesystem::path("foo/bar/../baz/"sv).filename().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("./../a/"sv).filename().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/../a"sv).filename().native(), std::string("a"sv));
+  EXPECT_EQ(std::filesystem::path("a/b/c/."sv).filename().native(), std::string("."sv));
+  EXPECT_EQ(std::filesystem::path("a/b/c/.."sv).filename().native(), std::string(".."sv));
+  EXPECT_EQ(std::filesystem::path(".a"sv).filename().native(), std::string(".a"sv));
+  EXPECT_EQ(std::filesystem::path("a."sv).filename().native(), std::string("a."sv));
+  EXPECT_EQ(std::filesystem::path("a.b"sv).filename().native(), std::string("a.b"sv));
+  EXPECT_EQ(std::filesystem::path("a.b.c"sv).filename().native(), std::string("a.b.c"sv));
+  EXPECT_EQ(std::filesystem::path("/x/.hidden"sv).filename().native(), std::string(".hidden"sv));
+  EXPECT_EQ(std::filesystem::path("/x/file.tar.gz"sv).filename().native(), std::string("file.tar.gz"sv));
+  EXPECT_EQ(std::filesystem::path("..a"sv).filename().native(), std::string("..a"sv));
+  EXPECT_EQ(std::filesystem::path("a.."sv).filename().native(), std::string("a.."sv));
+  EXPECT_EQ(std::filesystem::path("/a/b.c/"sv).filename().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/a/b.c//"sv).filename().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("a/.b"sv).filename().native(), std::string(".b"sv));
+  EXPECT_EQ(std::filesystem::path(". ."sv).filename().native(), std::string(". ."sv));
+  EXPECT_EQ(std::filesystem::path("..."sv).filename().native(), std::string("..."sv));
+  EXPECT_EQ(std::filesystem::path(""sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("."sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path(".."sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("//"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("///"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("a"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("a/"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("a//"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/a"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/a/"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/a/b"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/a/b/"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("a/b/c"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("./a"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("../a"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/a/b/../c"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/a/./b"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("a/../.."sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("../../a/.."sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("//a//b//"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("///a"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/a//b"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("foo/bar/../baz/"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("./../a/"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/../a"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("a/b/c/."sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("a/b/c/.."sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path(".a"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("a."sv).extension().native(), std::string("."sv));
+  EXPECT_EQ(std::filesystem::path("a.b"sv).extension().native(), std::string(".b"sv));
+  EXPECT_EQ(std::filesystem::path("a.b.c"sv).extension().native(), std::string(".c"sv));
+  EXPECT_EQ(std::filesystem::path("/x/.hidden"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/x/file.tar.gz"sv).extension().native(), std::string(".gz"sv));
+  EXPECT_EQ(std::filesystem::path("..a"sv).extension().native(), std::string(".a"sv));
+  EXPECT_EQ(std::filesystem::path("a.."sv).extension().native(), std::string("."sv));
+  EXPECT_EQ(std::filesystem::path("/a/b.c/"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("/a/b.c//"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path("a/.b"sv).extension().native(), std::string(""sv));
+  EXPECT_EQ(std::filesystem::path(". ."sv).extension().native(), std::string("."sv));
+  EXPECT_EQ(std::filesystem::path("..."sv).extension().native(), std::string("."sv));
   EXPECT_EQ(rt::path::isAbsolute(""sv), false);
   EXPECT_EQ(rt::path::isAbsolute("."sv), false);
   EXPECT_EQ(rt::path::isAbsolute(".."sv), false);
@@ -356,18 +363,18 @@ TEST("POSIX lexical path functions (cwd /tmp)") {
   EXPECT_EQ(rt::path::resolve("a/.b"sv), std::string(DARWIN_EXPECTATION("/tmp/a/.b"sv, "/private/tmp/a/.b"sv)));
   EXPECT_EQ(rt::path::resolve(". ."sv), std::string(DARWIN_EXPECTATION("/tmp/. ."sv, "/private/tmp/. ."sv)));
   EXPECT_EQ(rt::path::resolve("..."sv), std::string(DARWIN_EXPECTATION("/tmp/..."sv, "/private/tmp/..."sv)));
-  EXPECT_EQ(rt::path::basename("/a/b.txt"sv, ".txt"sv), std::string("b"sv));
-  EXPECT_EQ(rt::path::basename("/a/b.txt"sv, "txt"sv), std::string("b."sv));
-  EXPECT_EQ(rt::path::basename("/a/b.txt"sv, "b.txt"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("b.txt"sv, "b.txt"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("/a/b.txt/"sv, ".txt"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("/a/b.txt"sv, ".TXT"sv), std::string("b.txt"sv));
-  EXPECT_EQ(rt::path::basename("/a/b"sv, ""sv), std::string("b"sv));
-  EXPECT_EQ(rt::path::basename("a.js.js"sv, ".js"sv), std::string("a.js"sv));
-  EXPECT_EQ(rt::path::basename("/a/.js"sv, ".js"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("x"sv, "xx"sv), std::string("x"sv));
-  EXPECT_EQ(rt::path::basename("/aaa/"sv, "a"sv), std::string(""sv));
-  EXPECT_EQ(rt::path::basename("//"sv, "/"sv), std::string(""sv));
+  EXPECT_EQ(filenameWithSuffixRemoved("/a/b.txt"sv, ".txt"sv), std::string("b"sv));
+  EXPECT_EQ(filenameWithSuffixRemoved("/a/b.txt"sv, "txt"sv), std::string("b."sv));
+  EXPECT_EQ(filenameWithSuffixRemoved("/a/b.txt"sv, "b.txt"sv), std::string(""sv));
+  EXPECT_EQ(filenameWithSuffixRemoved("b.txt"sv, "b.txt"sv), std::string(""sv));
+  EXPECT_EQ(filenameWithSuffixRemoved("/a/b.txt/"sv, ".txt"sv), std::string(""sv));
+  EXPECT_EQ(filenameWithSuffixRemoved("/a/b.txt"sv, ".TXT"sv), std::string("b.txt"sv));
+  EXPECT_EQ(filenameWithSuffixRemoved("/a/b"sv, ""sv), std::string("b"sv));
+  EXPECT_EQ(filenameWithSuffixRemoved("a.js.js"sv, ".js"sv), std::string("a.js"sv));
+  EXPECT_EQ(filenameWithSuffixRemoved("/a/.js"sv, ".js"sv), std::string(""sv));
+  EXPECT_EQ(filenameWithSuffixRemoved("x"sv, "xx"sv), std::string("x"sv));
+  EXPECT_EQ(filenameWithSuffixRemoved("/aaa/"sv, "a"sv), std::string(""sv));
+  EXPECT_EQ(filenameWithSuffixRemoved("//"sv, "/"sv), std::string(""sv));
   EXPECT_EQ(rt::path::relative("a"sv, "b"sv), std::string("../b"sv));
   EXPECT_EQ(rt::path::relative("/a"sv, "../b"sv), std::string(DARWIN_EXPECTATION("../b"sv, "../private/b"sv)));
   EXPECT_EQ(rt::path::relative(""sv, ""sv), std::string(""sv));
@@ -469,6 +476,30 @@ TEST("POSIX lexical path functions (cwd /tmp)") {
   EXPECT_EQ(rt::path::resolve("x"sv, "/y"sv, "z"sv), std::string("/y/z"sv));
   EXPECT_EQ(rt::path::resolve(""sv, ""sv, ""sv), std::string(DARWIN_EXPECTATION("/tmp"sv, "/private/tmp"sv)));
 }
+
+TEST("lexical paths preserve raw bytes and distinguish containment boundaries") {
+  EXPECT_EQ(rt::path::join("/store", "", "//", "/%2F\\part//"), "/store/%2F\\part/");
+  EXPECT_EQ(rt::path::resolve("/store", "", "//", "/%2F\\part//"), "/%2F\\part");
+  EXPECT_EQ(rt::path::dirname("//store//%2F\\part///file"), "/store/%2F\\part");
+  EXPECT(!rt::path::isAbsolute("\\store"));
+  EXPECT_EQ(rt::path::relative("/store", "/store//./"), "");
+  EXPECT_EQ(rt::path::relative("/store", "/store/.."), "..");
+  EXPECT_EQ(rt::path::relative("/store", "/store/../store-old/file"), "../store-old/file");
+  EXPECT_EQ(rt::path::relative("/store", "/store/%2e%2e\\file"), "%2e%2e\\file");
+}
+
+#if defined(__linux__)
+TEST("relative paths fail closed when the current directory disappears") {
+  TempDir dir;
+  const std::string removed = dir.path + "/removed";
+  fs::mkdirSync(removed);
+  Cwd cwd(removed);
+  ASSERT(::rmdir(removed.c_str()) == 0);
+  EXPECT_EQ(rt::path::resolve("discarded", "//store", "file"), "/store/file");
+  EXPECT_EQ(rt::path::relative("/store", "/store/file"), "file");
+  EXPECT_THROWS(rt::path::relative("./file", "./file"), rt::JsError);
+}
+#endif
 
 TEST("fs error objects: open, read, stat, lstat, realpath (fs1 probe)") {
   TempDir dir;
@@ -688,6 +719,26 @@ TEST("file contents, modes, links, copies and existsSync (fs2 probe)") {
   }
   EXPECT_EQ(fs::readdirSync(".").size(), entries.size());
   EXPECT_EQ(entries.size(), std::size_t(13));
+}
+
+TEST("UTF-8 text I/O keeps BOM and NUL bytes and consumes from the descriptor offset") {
+  TempDir dir;
+  const std::string filePath = dir.path + "/codec";
+  const auto raw = "\xEF\xBB\xBF" "A\0\xE2\x82" "B\xED\xA0\x80" "C\xF0\x9F\x98"sv;
+  const auto decoded = "\xEF\xBB\xBF" "A\0\xEF\xBF\xBD" "B\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD" "C\xEF\xBF\xBD"sv;
+  fs::writeFileSync(filePath, bytes(raw));
+  EXPECT_EQ(fs::readFileSync(filePath, "utf8"), decoded);
+  auto handle = fs::promises::open(filePath);
+  EXPECT_EQ(fs::readFileSync(handle.fd, "UTF-8"), decoded);
+  EXPECT_EQ(fs::readFileSync(handle.fd, "utf-8"), "");
+  ASSERT_EQ(::lseek(handle.fd, 3, SEEK_SET), off_t{3});
+  EXPECT_EQ(fs::readFileSync(handle.fd, "UTF8"), decoded.substr(3));
+  EXPECT_EQ(::lseek(handle.fd, 0, SEEK_CUR), static_cast<off_t>(raw.size()));
+
+  const auto text = "\xEF\xBB\xBF" "A\0" "\xED\xA0\xBD\xED\xB8\x80\xED\xA0\x80" "B\xED\xB0\x80"sv;
+  const auto encoded = "\xEF\xBB\xBF" "A\0" "\xF0\x9F\x98\x80\xEF\xBF\xBD" "B\xEF\xBF\xBD"sv;
+  fs::writeFileSync(filePath, text);
+  EXPECT_EQ(fs::readFileSync(filePath), fs::Bytes(bytes(encoded).begin(), bytes(encoded).end()));
 }
 
 TEST("readdir keeps the directory's own order (no sorting)") {

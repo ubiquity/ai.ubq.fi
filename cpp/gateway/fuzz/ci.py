@@ -25,6 +25,9 @@ import sys
 import time
 
 GATEWAY = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(GATEWAY / "tools"))
+import vendor_sources
+
 DEFINES = ["BOOST_JSON_NO_LIB", "BOOST_CONTAINER_NO_LIB", "BOOST_SYSTEM_NO_LIB",
            "BOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING", "UOS_GATEWAY_NATIVE_LIBRARIES=1"]
 # Harnesses that include an application source need that source's own link list;
@@ -44,33 +47,12 @@ def extra_sources(name, target, common):
     return [source for source in listed if source.startswith("src/") and source not in skip]
 
 
-def third_party():
-    """Vendored libraries that first-party code includes: (include flags, sources)."""
-    root = GATEWAY / "third_party"
-    if not root.is_dir():
-        return [], []
-    used = subprocess.run(["grep", "-rhoE", r"#include [<\"][^>\"]+[>\"]", str(GATEWAY / "src"), str(GATEWAY / "include")],
-                          capture_output=True, text=True).stdout
-    flags, sources = [], []
-    for library in sorted(path for path in root.iterdir() if path.is_dir()):
-        headers = [path.name for path in library.rglob("*.h")] + [path.name for path in library.rglob("*.hpp")]
-        if not any(name in used for name in headers):
-            continue
-        flags.append("-isystem" + str(library))
-        sources += sorted(str(path.relative_to(GATEWAY)) for path in library.rglob("*")
-                          if path.suffix in (".cpp", ".c", ".cc"))
-    if flags:
-        # First-party code also includes vendored headers by their tree path ("third_party/..."):
-        # Clang then treats them as system headers too, so the port's -Werror set does not apply to them.
-        flags.append("--system-header-prefix=third_party/")
-    return flags, sources
-
-
 def compile_one(compiler, c_compiler, flags, source, objects):
     output = objects / (source.replace("/", "_") + ".o")
     if source.endswith(".c"):
+        # Use the matching C frontend and retain the same sanitizer options.
         compiler = c_compiler
-        flags = ["-std=c11"] + [flag for flag in flags if not flag.startswith("-std=c++")]
+        flags = ["-std=c11", *[flag for flag in flags if not flag.startswith("-std=c++")]]
     done = subprocess.run([compiler, *flags, "-c", str(GATEWAY / source), "-o", str(output)],
                           capture_output=True, text=True)
     return source, output, done.returncode, done.stderr[-6000:]
@@ -106,7 +88,7 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 2)
     parser.add_argument("--compiler", default=os.environ.get("CXX", "clang++"))
-    parser.add_argument("--cc", default=os.environ.get("CC"), help="C compiler for vendor sources")
+    parser.add_argument("--cc", default=os.environ.get("CC"), help="C compiler for vendor C sources")
     args = parser.parse_args()
     cxx = Path(args.compiler)
     c_name = cxx.name.replace("clang++", "clang").replace("g++", "gcc")
@@ -122,12 +104,15 @@ def main():
     flags = ["-std=c++20", "-pthread", "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY)]
     flags += ["-D" + define for define in DEFINES] + policy["compile_options"]
     sources = policy["common_sources"] + extra_sources(args.target, target, policy["common_sources"])
-    # A target may list further sources itself (for example vendored third_party libraries).
     sources += [source for source in target.get("extra_sources", []) if source not in sources]
-    library_flags, library_sources = third_party()
-    flags += library_flags
-    sources += [source for source in library_sources if source not in sources]
     sources.append(target["harness"])
+    vendors = vendor_sources.required(vendor_sources.selected(), [*sources, target.get("included_implementation", "")])
+    flags.append("--system-header-prefix=third_party/")
+    if vendor_sources.simdjson_consumers(vendors):
+        flags += vendor_sources.simdjson_flags()
+    for library in vendors:
+        flags += vendor_sources.include_flags(library)
+        sources += list(library.sources)
     failed = []
     built = []
     started = time.monotonic()

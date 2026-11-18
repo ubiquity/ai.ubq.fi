@@ -39,3 +39,35 @@ stop condition is a clean, verified handoff with all three ordered merges and an
 
 The checkout was clean on `agent-job`. The host is Ubuntu 24.04.5, Linux ARM64, with four CPUs and 15 GiB RAM.
 Passwordless network namespace setup and Docker 28.0.4 are available. Bun reports 1.4.0.
+
+## Merge 1 — stage 2b
+
+| Git conflict | Resolution |
+| ------------ | ---------- |
+| `cmake/ci/driver.py` | Combine per-vendor include flags and the explicit Ninja dependencies on every registered vendor header, including QCBOR's nested includes. |
+| `cmake/vendors.json` | Keep a single llhttp entry for server, fetch and WebSocket response-head consumers. Add Ada and QCBOR. Keep all three simdutf consumers. |
+| `docs/DEVIATIONS-FROM-BUN.md` | Keep the cross-line deviations and add the runtime, library and depth decisions from stage 2b. Describe the Beast and llhttp boundaries. |
+| `fuzz/ci.py` | Use the same verified vendor registry as the other build paths. Keep the matching C frontend, library link flags, timed campaign receipt and finding classification. |
+| `tests/rt/json_test.cpp` | Keep cross-line's document-size and array/object depth rejection cases. Keep stage 2b's value-copy coverage and exercise both arrays and objects. |
+
+The automatic WebSocket client merge retains Beast's handshake key and accept digest and uses the existing llhttp
+response-head adapter where the socket transport needs HTTP parsing. The merged JSON parser remains simdjson.
+`kJsonMaxDepth` now uses the central 128-container constant for recursive operations on JSON values. KV keeps
+the separate 2,000-container graph bound and the sparse/cyclic reader. The CMake, SDK, macOS, benchmark, and
+fuzz build paths use the selected vendor inputs once per build closure.
+
+The three stage 2b parser rejection assertions at depth 129 expected `RangeError` with `Maximum call stack size
+exceeded.` The merged parser expects the cross-line `SyntaxError` with `Invalid JSON` for all three inputs.
+The stringify, comparison and coercion tests continue to require `RangeError` when given values past the limit.
+The stage 2b depth-related Codex 429, BigInt, fetch and WebAuthn fixture changes are recorded in its
+[findings](cppgw-integrate-s2b-20261118.md#fixture-decisions).
+
+## WebSocket close code 1014
+
+On ARM64 `ubuntu:26.04`, Clang 21.1.8 and distro Boost `1.90.0-6ubuntu1`, a direct
+`boost::beast::websocket::detail::is_valid_close_code` probe returned false for the IANA-registered 1014
+(Bad Gateway). The same call returned true with staged Boost 1.92. The 1.90 receive helper also reported an
+invalid close code for a 1014 frame. The gateway now handles 1014 in its shared send and receive validator,
+uses Boost.Endian to read the code, and uses Beast to validate the reason's UTF-8. The original assertion
+still requires the client to enter CLOSING without throwing and send exactly one masked 1014 frame.
+Two new received-frame examples check a valid 1014 reason and rejection of a malformed UTF-8 reason.

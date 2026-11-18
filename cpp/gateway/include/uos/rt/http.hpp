@@ -1,9 +1,6 @@
 #pragma once
-// Fetch `Request`, `Response` and their body, plus `Blob`, `File` and
-// `FormData`, as Bun 1.4 implements them (including its departures from the
-// Fetch standard; see docs/rt/web.md). Request and Response are handles: copies
-// refer to the same JS object (same headers, same body, same identity), exactly
-// like JS references. Blob, File, FormData and Headers are values.
+// Request and Response are handles. Copies share headers, body and identity.
+// Inbound form fields and file contents are owned values.
 #include "uos/rt/abort.hpp"
 #include "uos/rt/async.hpp"
 #include "uos/rt/error.hpp"
@@ -17,6 +14,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -37,115 +35,28 @@ namespace uos::rt {
     CodedTypeError(std::string message_, std::string code_) : TypeError(std::move(message_)), code(std::move(code_)) {}
   };
 
-  class Blob;
-  namespace detail {
-    struct FormDataAccess;
-  }
-
-  // One item of `new Blob(parts)` / `new File(parts, name)`: a string (encoded as
-  // UTF-8, lone surrogates as U+FFFD), bytes, or another Blob.
-  struct BlobPart {
-    BlobPart(std::string text);
-    BlobPart(const char* text) : BlobPart(std::string(text)) {}
-    BlobPart(Bytes bytes);
-    BlobPart(const Blob& blob);
-    std::shared_ptr<const Bytes> bytes;
+  struct FormFile {
+    std::optional<std::string> filename;
+    std::string mediaType;
+    Bytes bytes;
   };
+  using FormValue = std::variant<std::string, FormFile>;
+  using FormParts = std::vector<std::pair<std::string, FormValue>>;
 
-  // `Blob`: immutable bytes and a type.
-  class Blob {
+  // The result borrows from parts, which the caller keeps alive.
+  const FormValue* findFormPart(const FormParts& parts, std::string_view name);
+
+  class InboundFormDecoder {
   public:
-    // `new Blob()`
-    Blob();
-    // `new Blob(parts, { type })`: the type is lowercased, or "" when it holds a
-    // character outside U+0020..U+007E.
-    explicit Blob(const std::vector<BlobPart>& parts, std::string_view type = "");
-    virtual ~Blob() = default;
-
-    double size() const { return static_cast<double>(bytes_->size()); }
-    const std::string& type() const { return type_; }
-    // `blob.text()`: UTF-8 decoded, BOM stripped, ill-formed bytes as U+FFFD.
-    [[nodiscard]] Task<std::string> text() const;
-    [[nodiscard]] Task<Bytes> arrayBuffer() const;
-    [[nodiscard]] Task<Bytes> bytes() const;
-    // `blob.stream()`: one chunk holding every byte (none when empty), then close.
-    ByteStream stream() const;
-
-    // The bytes, synchronously (no JS equivalent; for transports and tests).
-    const Bytes& data() const { return *bytes_; }
-    const std::shared_ptr<const Bytes>& shared() const { return bytes_; }
-
-  protected:
-    struct Internal {};
-    Blob(Internal, std::shared_ptr<const Bytes> bytes, std::string type) : bytes_(std::move(bytes)), type_(std::move(type)) {}
-    std::shared_ptr<const Bytes> bytes_;
-    std::string type_;
-    friend class FormData;
-    friend struct detail::FormDataAccess;
-  };
-
-  // `File`: a Blob with a name and lastModified.
-  class File : public Blob {
-  public:
-    // `new File(parts, name, { type, lastModified })`; lastModified defaults to Date.now().
-    File(const std::vector<BlobPart>& parts, std::string name, std::string_view type = "", std::optional<double> lastModified = std::nullopt);
-    // `file.name`. std::nullopt where Bun leaves it undefined: a File parsed from
-    // a multipart part whose filename or content is empty, and a Blob appended to
-    // FormData without a filename. TS code reading `.name` there throws.
-    const std::optional<std::string>& name() const { return name_; }
-    double lastModified() const { return lastModified_; }
+    explicit InboundFormDecoder(std::string_view contentType);
+    // The caller bounds the body before decoding. Returned parts own their data.
+    FormParts decode(std::span<const std::uint8_t> body) const;
 
   private:
-    friend class FormData;
-    friend struct detail::FormDataAccess;
-    File(Internal, std::shared_ptr<const Bytes> bytes, std::string type, std::optional<std::string> name, double lastModified);
-    std::optional<std::string> name_;
-    double lastModified_ = 0;
+    std::optional<std::string> boundary_;  // Absent for URL-encoded forms.
   };
 
-  // `FormData`. Names and string values are USVStrings (lone surrogates become
-  // U+FFFD). Copying copies the entry list.
-  class FormData {
-  public:
-    // `FormDataEntryValue`: `typeof value === "string"` is std::holds_alternative<std::string>.
-    using Value = std::variant<std::string, File>;
-    using Entry = std::pair<std::string, Value>;
-
-    FormData() = default;
-    // `form.append(name, value)` / `form.append(name, blob, filename?)`. A File
-    // keeps its own name even when a filename is given (Bun); a plain Blob
-    // becomes a File named `filename`, or with no name (Bun: undefined).
-    void append(std::string_view name, std::string_view value);
-    void append(std::string_view name, const char* value) { append(name, std::string_view(value)); }
-    void append(std::string_view name, const Blob& value, std::optional<std::string_view> filename = std::nullopt);
-    void append(std::string_view name, const File& value, std::optional<std::string_view> filename = std::nullopt);
-    void delete_(std::string_view name);
-    // `form.get(name)`: std::nullopt where JS returns null.
-    std::optional<Value> get(std::string_view name) const;
-    std::vector<Value> getAll(std::string_view name) const;
-    bool has(std::string_view name) const;
-    // `form.set(...)`: replaces the first entry with this name in place and
-    // removes the others.
-    void set(std::string_view name, std::string_view value);
-    void set(std::string_view name, const char* value) { set(name, std::string_view(value)); }
-    void set(std::string_view name, const Blob& value, std::optional<std::string_view> filename = std::nullopt);
-    void set(std::string_view name, const File& value, std::optional<std::string_view> filename = std::nullopt);
-
-    // `[...form.entries()]`, `[...form.keys()]`, `[...form.values()]` snapshots.
-    const std::vector<Entry>& entries() const { return entries_; }
-    std::vector<std::string> keys() const;
-    std::vector<Value> values() const;
-    std::vector<Entry>::const_iterator begin() const { return entries_.begin(); }
-    std::vector<Entry>::const_iterator end() const { return entries_.end(); }
-
-  private:
-    void setValue(std::string_view name, Value value);
-    std::vector<Entry> entries_;
-  };
-
-  // `BodyInit`: what `new Response(body)` and `RequestInit.body` accept.
-  // nullptr is JS `null`.
-  using BodyInit = std::variant<std::nullptr_t, std::string, Bytes, ByteStream, URLSearchParams, FormData, Blob>;
+  using BodyInit = std::variant<std::nullptr_t, std::string, Bytes, ByteStream, URLSearchParams>;
 
   // `other.body` passed on as a body (`new Response(response.body, init)`): a
   // null body stays null.
@@ -169,7 +80,7 @@ namespace uos::rt {
   class Response {
   public:
     // `new Response(body, init)`. A string body gets no content-type (Bun);
-    // URLSearchParams, FormData and typed Blobs add theirs unless the headers
+    // URLSearchParams adds its content type unless the headers
     // have one: at once with init.headers, else at the first headers() access
     // and only while the body is an untouched buffer. Throws RangeError for a
     // bad status and TypeError for a locked or disturbed stream.
@@ -209,11 +120,6 @@ namespace uos::rt {
     [[nodiscard]] Task<json::value> json() const;
     [[nodiscard]] Task<Bytes> arrayBuffer() const;
     [[nodiscard]] Task<Bytes> bytes() const;
-    // `response.formData()`: multipart/form-data (Bun's parser) or
-    // application/x-www-form-urlencoded by the content-type header (or the type
-    // of an untouched buffered body), else CodedTypeError
-    // (ERR_FORMDATA_PARSE_ERROR) without using the body.
-    [[nodiscard]] Task<FormData> formData() const;
     // `response.clone()`: CodedTypeError "Body is disturbed or locked" once
     // used; a stream body is teed between the two.
     Response clone() const;
@@ -299,7 +205,6 @@ namespace uos::rt {
     [[nodiscard]] Task<json::value> json() const;
     [[nodiscard]] Task<Bytes> arrayBuffer() const;
     [[nodiscard]] Task<Bytes> bytes() const;
-    [[nodiscard]] Task<FormData> formData() const;
     Request clone() const;
 
     friend bool operator==(const Request& left, const Request& right) noexcept { return left.state_ == right.state_; }

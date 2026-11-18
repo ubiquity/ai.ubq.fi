@@ -1,6 +1,7 @@
 // Recorded from src/authority/native-codex-429.ts under Bun 1.4.0 (scratch oracle script). kCodex429Inputs
 // holds the inputs; kCodex429Results lists, in the order tests/native_codex_429_differential_test.cpp
 // replays them, each case label and the first 16 hex digits of SHA-256 over JSON.stringify(result):
+// Over-depth JSON rows b57–b59 and b62–b63 retain their bytes and headers but use the native header-only quota classification.
 // raN.nM futureRetryAfterDeadline, bN.hM classifyCodex429 (response bytes as a digest), sN.aM.nb/rel
 // nonBlockingQuotaProbeSlot / releaseNonBlockingQuotaProbe, sN.aM.cK.nJ.{o,r} quotaBlockTransition.
 // The over-depth body rows use the C++ JSON depth limit for quota classification.

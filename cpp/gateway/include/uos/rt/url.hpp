@@ -1,16 +1,22 @@
 #pragma once
-// WHATWG URL and URLSearchParams as implemented by Bun 1.4 (WebKit's URL
-// parser), plus node:url pathToFileURL / fileURLToPath. Strings are WTF-8
-// (see docs/rt/text.md); every component the parser produces is ASCII.
+// Ada-backed WHATWG URL and URLSearchParams, plus the node:url POSIX adapter.
+// Inputs use the runtime's WTF-8 string representation (docs/rt/text.md).
 // Reference: docs/rt/web.md.
 #include "uos/rt/error.hpp"
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+namespace ada {
+  struct url_aggregator;
+  struct url_search_params;
+}
 
 namespace uos::rt {
   // `new URL(...)` / `url.href = ...` failure: TypeError "Invalid URL" with
@@ -28,8 +34,7 @@ namespace uos::rt {
   };
 
   namespace detail {
-    // A parsed URL record (https://url.spec.whatwg.org/#concept-url). Every
-    // field holds its serialized ASCII form.
+    // A snapshot of the parsed URL fields (https://url.spec.whatwg.org/#concept-url).
     struct URLRecord {
       std::string scheme;
       std::string username;
@@ -53,7 +58,7 @@ namespace uos::rt {
   public:
     using Entry = std::pair<std::string, std::string>;
 
-    URLSearchParams() = default;
+    URLSearchParams() noexcept;
     // `new URLSearchParams(string)`: one leading "?" is ignored.
     explicit URLSearchParams(std::string_view init);
     explicit URLSearchParams(const char* init) : URLSearchParams(std::string_view(init)) {}
@@ -69,12 +74,13 @@ namespace uos::rt {
     // keeps its first position and its last value.
     static URLSearchParams fromRecord(const std::vector<Entry>& record);
 
-    URLSearchParams(const URLSearchParams& other) : list_(other.list_) {}
+    URLSearchParams(const URLSearchParams& other);
     URLSearchParams& operator=(const URLSearchParams& other);
-    URLSearchParams(URLSearchParams&& other) noexcept : list_(std::move(other.list_)) {}
+    URLSearchParams(URLSearchParams&& other) noexcept;
     URLSearchParams& operator=(URLSearchParams&& other) noexcept;
+    ~URLSearchParams();
 
-    std::size_t size() const { return list_.size(); }
+    std::size_t size() const;
     void append(std::string_view name, std::string_view value);
     void delete_(std::string_view name);
     void delete_(std::string_view name, std::string_view value);
@@ -88,7 +94,7 @@ namespace uos::rt {
     std::string toString() const;
 
     // `[...params]`, `[...params.keys()]`, `[...params.values()]` snapshots.
-    std::vector<Entry> entries() const { return list_; }
+    std::vector<Entry> entries() const;
     std::vector<std::string> keys() const;
     std::vector<std::string> values() const;
     // `params.forEach((value, key) => ...)`: live, like the JS iterator, so
@@ -100,12 +106,12 @@ namespace uos::rt {
     class iterator {
     public:
       iterator(const URLSearchParams* owner, std::size_t index) : owner_(owner), index_(index) {}
-      Entry operator*() const { return owner_->list_[index_]; }
+      Entry operator*() const;
       iterator& operator++() {
         ++index_;
         return *this;
       }
-      bool operator!=(const iterator&) const { return index_ < owner_->list_.size(); }
+      bool operator!=(const iterator&) const { return index_ < owner_->size(); }
       bool operator==(const iterator& other) const { return !(*this != other); }
 
     private:
@@ -117,8 +123,10 @@ namespace uos::rt {
 
   private:
     friend class URL;
-    std::vector<Entry> list_;
+    std::unique_ptr<ada::url_search_params> params_;
     URL* url_ = nullptr;
+    ada::url_search_params& data();
+    void reset(std::string_view query);
     void update();
   };
 
@@ -136,7 +144,7 @@ namespace uos::rt {
     URL(URL&& other) noexcept;
     URL& operator=(const URL& other);
     URL& operator=(URL&& other) noexcept;
-    ~URL() = default;
+    ~URL();
 
     static bool canParse(std::string_view url);
     static bool canParse(std::string_view url, std::string_view base);
@@ -149,9 +157,9 @@ namespace uos::rt {
     std::string origin() const;
     std::string protocol() const;
     void protocol(std::string_view value);
-    std::string username() const { return record_.username; }
+    std::string username() const;
     void username(std::string_view value);
-    std::string password() const { return record_.password; }
+    std::string password() const;
     void password(std::string_view value);
     std::string host() const;
     void host(std::string_view value);
@@ -170,15 +178,18 @@ namespace uos::rt {
     std::string toString() const { return href(); }
     std::string toJSON() const { return href(); }
 
-    const detail::URLRecord& record() const { return record_; }
+    const detail::URLRecord& record() const;
 
   private:
     friend class URLSearchParams;
-    URL() = default;
-    detail::URLRecord record_;
+    std::unique_ptr<ada::url_aggregator> url_;
     URLSearchParams searchParams_;
-    void adoptRecord(detail::URLRecord record);
-    void resetSearchParams();
+    mutable std::unique_ptr<detail::URLRecord> record_;
+    explicit URL(ada::url_aggregator parsed);
+    void adopt(ada::url_aggregator parsed);
+    void setComponent(std::string_view value, bool (ada::url_aggregator::*setter)(std::string_view), bool checkHost = false);
+    void setQuery(std::string_view query);
+    void refreshRecord();
   };
 
   // node:url pathToFileURL(path): resolves `path` against the process working

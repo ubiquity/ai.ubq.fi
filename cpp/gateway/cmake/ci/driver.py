@@ -178,11 +178,17 @@ def write_ninja(build, sources, compiler, flags, c_compiler, c_flags, vendors):
     json_sources = vendor_sources.simdjson_consumers(vendors)
     vendor_headers = {}
     for library in vendors:
-        header = ninja_escape(GATEWAY / library.header)
-        for source in library.consumers:
-            vendor_headers.setdefault(source, []).append(header)
+        headers = [ninja_escape(GATEWAY / path) for path in library.headers]
+        for source in (*library.consumers, *library.sources):
+            vendor_headers.setdefault(source, []).extend(headers)
     if json_sources:
         lines += ninja_compile_rule("selected_json", compiler + flags + vendor_sources.simdjson_flags(), "CXX")
+    includes = {library.name: vendor_sources.include_flags(library) for library in vendors}
+    include_consumers = {source: library for library in vendors if includes[library.name] for source in library.consumers}
+    for library in vendors:
+        if includes[library.name]:
+            lines += ninja_compile_rule("cxx_" + library.name, compiler + flags + includes[library.name], "CXX")
+            lines += ninja_compile_rule("vendor_c_" + library.name, c_compiler + c_flags + includes[library.name], "Vendor C")
     if vendors:
         archive = shutil.which("ar")
         if not archive:
@@ -194,7 +200,9 @@ def write_ninja(build, sources, compiler, flags, c_compiler, c_flags, vendors):
         target = object_path(build, source)
         target.parent.mkdir(parents=True, exist_ok=True)
         rule = "selected_json" if source in json_sources else "cxx"
-        # -MMD omits system headers. Keep the selected vendor headers as Ninja inputs.
+        if library := include_consumers.get(source):
+            rule = "cxx_" + library.name
+        # -MMD omits system headers, including QCBOR's nested includes.
         headers = vendor_headers.get(source)
         dependency = " | " + " ".join(headers) if headers else ""
         lines.append("build " + ninja_escape(target) + ": " + rule + " " + ninja_escape(GATEWAY / source) + dependency)
@@ -204,8 +212,11 @@ def write_ninja(build, sources, compiler, flags, c_compiler, c_flags, vendors):
             target = object_path(build, source)
             target.parent.mkdir(parents=True, exist_ok=True)
             rule = "vendor_c" if source.endswith(".c") else "vendor_cxx"
+            if source.endswith(".c") and includes[library.name]:
+                rule += "_" + library.name
             members.append(ninja_escape(target))
-            lines.append("build " + members[-1] + ": " + rule + " " + ninja_escape(GATEWAY / source))
+            headers = " | " + " ".join(vendor_headers[source])
+            lines.append("build " + members[-1] + ": " + rule + " " + ninja_escape(GATEWAY / source) + headers)
         lines.append("build " + ninja_escape(build / library.archive) + ": vendor_archive " + " ".join(members))
     (build / "build.ninja").write_text("\n".join(lines) + "\n")
 

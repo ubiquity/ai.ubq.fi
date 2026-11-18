@@ -11,11 +11,13 @@
 // References to an entry stay valid while any iterator of the container is alive, even if
 // the entry is deleted meanwhile (as a JS loop variable would). Iterators must not outlive
 // their container.
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <cmath>
 #include <cstddef>
 #include <functional>
 #include <initializer_list>
 #include <iterator>
+#include <list>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -63,18 +65,24 @@ namespace uos::rt {
       bool operator()(std::string_view a, std::string_view b) const noexcept { return a == b; }
     };
 
-    // The entry list of a Map or Set: append-only slots plus a key index. A deleted entry
-    // leaves a dead slot; dead slots are reclaimed only while no iterator is alive.
-    template <class K, class Entry, class KeyOf>
+    template <class K, class Entry, auto KeyOf = std::identity{}>
     class OrderedTable {
-    public:
-      struct Slot {
-        std::unique_ptr<Entry> entry;
-        bool alive = false;
+      struct Node {
+        template <class... Args>
+        explicit Node(Args&&... args) : entry(std::forward<Args>(args)...) {}
+        Entry entry;
+        bool retired = false;
       };
 
+    public:
+      using entry_type = Entry;
+      using position_type = typename std::list<Node>::iterator;
+
       OrderedTable() = default;
-      OrderedTable(const OrderedTable& other) { copyFrom(other); }
+      OrderedTable(const OrderedTable& other) {
+        for (const auto& node : other.entries_)
+          if (!node.retired) append(node.entry);
+      }
       OrderedTable(OrderedTable&& other) noexcept = default;
       OrderedTable& operator=(const OrderedTable& other) {
         if (this != &other) {
@@ -88,109 +96,75 @@ namespace uos::rt {
       template <class Key>
       Entry* find(const Key& key) const {
         const auto found = index_.find(key);
-        return found == index_.end() ? nullptr : slots_[found->second].entry.get();
+        return found == index_.end() ? nullptr : std::addressof(found->second->entry);
       }
 
       // Appends an entry whose key is not present.
-      Entry& append(std::unique_ptr<Entry> entry) {
-        reclaim();
-        const std::size_t position = slots_.size();
-        slots_.push_back({std::move(entry), true});
-        Entry& stored = *slots_.back().entry;
-        index_.emplace(KeyOf{}(stored), position);
-        ++live_;
-        return stored;
+      template <class... Args>
+      void append(Args&&... args) {
+        const auto node = entries_.emplace(entries_.end(), std::forward<Args>(args)...);
+        try {
+          index_.emplace(std::invoke(KeyOf, node->entry), node);
+        } catch (...) {
+          entries_.erase(node);
+          throw;
+        }
       }
 
       template <class Key>
       bool erase(const Key& key) {
         const auto found = index_.find(key);
         if (found == index_.end()) return false;
-        const std::size_t position = found->second;
+        const auto node = found->second;
         index_.erase(found);
-        Slot& slot = slots_[position];
-        slot.alive = false;
-        if (!iterators_) slot.entry.reset();
-        --live_;
-        reclaim();
+        if (iterators_) {
+          node->retired = true;
+          retired_ = true;
+        } else entries_.erase(node);
         return true;
       }
 
       void clear() {
-        index_.clear();
-        live_ = 0;
-        if (!iterators_) {
-          slots_.clear();
-          return;
+        if (iterators_ && !index_.empty()) {
+          for (const auto& item : index_) item.second->retired = true;
+          retired_ = true;
         }
-        for (auto& slot : slots_) slot.alive = false;
+        index_.clear();
+        if (!iterators_) entries_.clear();
       }
 
-      std::size_t size() const noexcept { return live_; }
-      std::size_t slotCount() const noexcept { return slots_.size(); }
-      Entry* live(std::size_t position) const noexcept { return slots_[position].alive ? slots_[position].entry.get() : nullptr; }
-      void attach() const noexcept { ++iterators_; }
-      void detach() const noexcept { --iterators_; }
+      std::size_t size() const noexcept { return index_.size(); }
+      position_type begin() const noexcept { return entries_.begin(); }
+      position_type end() const noexcept { return entries_.end(); }
 
     private:
-      void copyFrom(const OrderedTable& other) {
-        for (const auto& slot : other.slots_)
-          if (slot.alive) append(std::make_unique<Entry>(*slot.entry));
+      // Iterator handles retain retired nodes until traversal ends.
+      friend void intrusive_ptr_add_ref(const OrderedTable* table) noexcept { ++table->iterators_; }
+      friend void intrusive_ptr_release(const OrderedTable* table) noexcept {
+        if (--table->iterators_ == 0 && std::exchange(table->retired_, false))
+          std::erase_if(table->entries_, [](const Node& node) { return node.retired; });
       }
 
-      // Drops dead slots once they outnumber the live ones, unless iteration is in progress.
-      void reclaim() {
-        if (iterators_ || slots_.size() - live_ <= live_ + 8) return;
-        std::size_t write = 0;
-        for (std::size_t read = 0; read < slots_.size(); ++read) {
-          if (!slots_[read].alive) continue;
-          if (write != read) {
-            slots_[write] = std::move(slots_[read]);
-            index_.find(KeyOf{}(*slots_[write].entry))->second = write;
-          }
-          ++write;
-        }
-        slots_.resize(write);
-      }
-
-      std::vector<Slot> slots_;
-      std::unordered_map<K, std::size_t, OrderedHash<K>, OrderedEqual<K>> index_;
-      std::size_t live_ = 0;
+      mutable std::list<Node> entries_;
+      std::unordered_map<K, position_type, OrderedHash<K>, OrderedEqual<K>> index_;
       mutable std::size_t iterators_ = 0;
+      mutable bool retired_ = false;
     };
 
     // A live iterator over the entries of an OrderedTable, projected to a key, value or entry.
-    template <class Table, class Projection>
+    template <class Table, class Value, auto Project = std::identity{}>
     class OrderedIterator {
-      using Reference = decltype(Projection{}(std::declval<Table&>().live(0)));
-
     public:
       using iterator_category = std::forward_iterator_tag;
       using difference_type = std::ptrdiff_t;
-      using reference = Reference;
-      using value_type = typename Projection::value_type;
-      using pointer = std::add_pointer_t<std::remove_reference_t<Reference>>;
+      using reference = decltype(std::invoke(Project, std::declval<typename Table::entry_type&>()));
+      using value_type = Value;
+      using pointer = std::add_pointer_t<std::remove_reference_t<reference>>;
 
       OrderedIterator() = default;
-      OrderedIterator(const Table* table, std::size_t position) : table_(table), position_(position) {
-        if (table_) table_->attach();
-        skipDead();
-      }
-      OrderedIterator(const OrderedIterator& other) : table_(other.table_), position_(other.position_) {
-        if (table_) table_->attach();
-      }
-      OrderedIterator& operator=(const OrderedIterator& other) {
-        if (other.table_) other.table_->attach();
-        if (table_) table_->detach();
-        table_ = other.table_;
-        position_ = other.position_;
-        return *this;
-      }
-      ~OrderedIterator() {
-        if (table_) table_->detach();
-      }
+      explicit OrderedIterator(const Table& table) : table_(&table), position_(table.begin()) { skipDead(); }
 
-      reference operator*() const { return Projection{}(table_->live(position_)); }
+      reference operator*() const { return std::invoke(Project, position_->entry); }
       pointer operator->() const { return std::addressof(**this); }
       OrderedIterator& operator++() {
         ++position_;
@@ -203,7 +177,7 @@ namespace uos::rt {
         return copy;
       }
       // True once every entry, including those appended so far, has been visited.
-      bool atEnd() const noexcept { return !table_ || position_ >= table_->slotCount(); }
+      bool atEnd() const noexcept { return !table_ || position_ == table_->end(); }
       friend bool operator==(const OrderedIterator& a, const OrderedIterator& b) noexcept {
         if (a.atEnd() || b.atEnd()) return a.atEnd() && b.atEnd();
         return a.table_ == b.table_ && a.position_ == b.position_;
@@ -211,11 +185,11 @@ namespace uos::rt {
 
     private:
       void skipDead() {
-        while (table_ && position_ < table_->slotCount() && !table_->live(position_)) ++position_;
+        while (!atEnd() && position_->retired) ++position_;
       }
 
-      const Table* table_ = nullptr;
-      std::size_t position_ = 0;
+      boost::intrusive_ptr<const Table> table_;
+      typename Table::position_type position_{};
     };
 
     template <class Iterator>
@@ -224,50 +198,21 @@ namespace uos::rt {
       Iterator begin() const { return first; }
       Iterator end() const { return Iterator(); }
     };
-
-    template <class K, class V>
-    struct MapEntryKey {
-      const K& operator()(const std::pair<const K, V>& entry) const noexcept { return entry.first; }
-    };
-    template <class K, class V>
-    struct MapEntryProjection {
-      using value_type = std::pair<K, V>;
-      std::pair<const K, V>& operator()(std::pair<const K, V>* entry) const noexcept { return *entry; }
-    };
-    template <class K, class V>
-    struct MapKeyProjection {
-      using value_type = K;
-      const K& operator()(std::pair<const K, V>* entry) const noexcept { return entry->first; }
-    };
-    template <class K, class V>
-    struct MapValueProjection {
-      using value_type = V;
-      V& operator()(std::pair<const K, V>* entry) const noexcept { return entry->second; }
-    };
-    template <class K>
-    struct SetKey {
-      const K& operator()(const K& key) const noexcept { return key; }
-    };
-    template <class K>
-    struct SetProjection {
-      using value_type = K;
-      const K& operator()(const K* key) const noexcept { return *key; }
-    };
   }
 
   // new Map(): set/get/has/delete_/clear/size, for...of over [key, value] entries.
   template <class K, class V>
   class OrderedMap {
     using Entry = std::pair<const K, V>;
-    using Table = detail::OrderedTable<K, Entry, detail::MapEntryKey<K, V>>;
+    using Table = detail::OrderedTable<K, Entry, &Entry::first>;
 
   public:
     using key_type = K;
     using mapped_type = V;
     using value_type = Entry;
-    using iterator = detail::OrderedIterator<Table, detail::MapEntryProjection<K, V>>;
-    using key_iterator = detail::OrderedIterator<Table, detail::MapKeyProjection<K, V>>;
-    using value_iterator = detail::OrderedIterator<Table, detail::MapValueProjection<K, V>>;
+    using iterator = detail::OrderedIterator<Table, std::pair<K, V>>;
+    using key_iterator = detail::OrderedIterator<Table, K, &Entry::first>;
+    using value_iterator = detail::OrderedIterator<Table, V, &Entry::second>;
 
     OrderedMap() = default;
     // new Map([[k, v], ...]): a repeated key keeps its first position and its last value.
@@ -299,7 +244,7 @@ namespace uos::rt {
     OrderedMap& set(K key, V value) {
       key = detail::normalizeKey(std::move(key));
       if (Entry* entry = table_.find(key)) entry->second = std::move(value);
-      else table_.append(std::make_unique<Entry>(std::move(key), std::move(value)));
+      else table_.append(std::move(key), std::move(value));
       return *this;
     }
     // map.delete(key): true when an entry was removed.
@@ -309,11 +254,11 @@ namespace uos::rt {
     }
     void clear() { table_.clear(); }
 
-    iterator begin() const { return iterator(&table_, 0); }
+    iterator begin() const { return iterator(table_); }
     iterator end() const { return iterator(); }
     detail::OrderedRange<iterator> entries() const { return {begin()}; }
-    detail::OrderedRange<key_iterator> keys() const { return {key_iterator(&table_, 0)}; }
-    detail::OrderedRange<value_iterator> values() const { return {value_iterator(&table_, 0)}; }
+    detail::OrderedRange<key_iterator> keys() const { return {key_iterator(table_)}; }
+    detail::OrderedRange<value_iterator> values() const { return {value_iterator(table_)}; }
     // map.forEach((value, key) => ...), with the same live semantics as for...of.
     template <class Callback>
     void forEach(Callback&& callback) const {
@@ -327,12 +272,12 @@ namespace uos::rt {
   // new Set(): add/has/delete_/clear/size, for...of over the values.
   template <class K>
   class OrderedSet {
-    using Table = detail::OrderedTable<K, K, detail::SetKey<K>>;
+    using Table = detail::OrderedTable<K, const K>;
 
   public:
     using key_type = K;
     using value_type = K;
-    using iterator = detail::OrderedIterator<Table, detail::SetProjection<K>>;
+    using iterator = detail::OrderedIterator<Table, K>;
 
     OrderedSet() = default;
     // new Set([a, b, ...]): duplicates keep their first position.
@@ -351,7 +296,7 @@ namespace uos::rt {
     }
     OrderedSet& add(K key) {
       key = detail::normalizeKey(std::move(key));
-      if (!table_.find(key)) table_.append(std::make_unique<K>(std::move(key)));
+      if (!table_.find(key)) table_.append(std::move(key));
       return *this;
     }
     template <class Key>
@@ -360,7 +305,7 @@ namespace uos::rt {
     }
     void clear() { table_.clear(); }
 
-    iterator begin() const { return iterator(&table_, 0); }
+    iterator begin() const { return iterator(table_); }
     iterator end() const { return iterator(); }
     detail::OrderedRange<iterator> values() const { return {begin()}; }
     detail::OrderedRange<iterator> keys() const { return {begin()}; }

@@ -22,6 +22,7 @@
 #include "uos/utils.hpp"
 #include <algorithm>
 #include <tuple>
+#include <unordered_set>
 
 namespace uos::models::catalog {
 namespace {
@@ -44,9 +45,9 @@ namespace {
     auto result = co_await cc::fetchClaudeCodeModels(); co_return result;
   }
   void appendClaudeModels(json::array& models, const std::vector<cc::ClaudeCodeModel>& claude) {
-    rt::OrderedSet<std::string> seen;
-    for (const auto& model : models) seen.add(std::string(rt::getString(model, "id").value_or("")));
-    for (const auto& model : claude) if (!seen.has(model.id)) models.push_back(json::object{{"id", model.id}, {"object", "model"}, {"created", model.created}, {"owned_by", "anthropic"}});
+    std::unordered_set<std::string> seen;
+    for (const auto& model : models) seen.emplace(rt::getString(model, "id").value_or(""));
+    for (const auto& model : claude) if (!seen.contains(model.id)) models.push_back(json::object{{"id", model.id}, {"object", "model"}, {"created", model.created}, {"owned_by", "anthropic"}});
   }
   json::array claudeCapabilities(const std::vector<cc::ClaudeCodeModel>& models) {
     json::array rows;
@@ -190,8 +191,8 @@ rt::Task<rt::Response> handleModels(std::optional<rt::Request> req) {
   auto kp = kv::getKv(); auto database = co_await kp.wait(); std::optional<codex_models_whitelist::CodexModelsWhitelist> wl; if (database) wl = co_await codex_models_whitelist::loadCodexModelsWhitelist(database);
   auto data = codex_models_whitelist::filterWhitelistedModelList(merged, wl);
   const auto openrouter = sel::isProviderEnabled("openrouter", selection) ? norm::configuredOpenRouterModels() : json::array{};
-  rt::OrderedSet<std::string> seen; for (const auto& row : data) seen.add(std::string(rt::getString(row, "id").value_or("")));
-  for (const auto& row : openrouter) if (!seen.has(rt::getString(row, "id").value_or(""))) data.push_back(row);
+  std::unordered_set<std::string> seen; for (const auto& row : data) seen.emplace(rt::getString(row, "id").value_or(""));
+  for (const auto& row : openrouter) if (!seen.contains(std::string(rt::getString(row, "id").value_or("")))) data.push_back(row);
   co_return http::json(200, json::object{{"object", "list"}, {"data", data}}, rt::Headers{{"x-uos-upstream", snapshotUpstreamSource(snapshot)}});
 }
 rt::Task<ModelCatalogSnapshot> buildModelCatalogSnapshot() {
@@ -249,15 +250,15 @@ rt::Task<rt::Response> handleModelCapabilities() {
   auto m = sel::isProviderEnabled("openlux", selection) ? rt::Promise(provider::metered::fetchMeteredModels()) : rt::Promise<std::optional<provider::metered::MeteredModelsSnapshot>>::resolve(std::nullopt);
   auto s = sel::isProviderEnabled("surplus", selection) ? rt::Promise(provider::surplus::fetchSurplusModels()) : rt::Promise<std::optional<provider::surplus::SurplusModelsSnapshot>>::resolve(std::nullopt);
   rt::Promise<Claude> c(enabledClaudeCatalog(selection)); auto all = co_await rt::all(m, s, c).wait(); const auto& claude = std::get<2>(all); const std::vector<cc::ClaudeCodeModel> empty;
-  rt::OrderedSet<std::string> seen; for (const auto& row : data) seen.add(std::string(rt::getString(row, "id").value_or("")));
-  for (const auto& row : claudeCapabilities(claude ? claude->models : empty)) if (!seen.has(rt::getString(row, "id").value_or(""))) data.push_back(row);
+  std::unordered_set<std::string> seen; for (const auto& row : data) seen.emplace(rt::getString(row, "id").value_or(""));
+  for (const auto& row : claudeCapabilities(claude ? claude->models : empty)) if (!seen.contains(std::string(rt::getString(row, "id").value_or("")))) data.push_back(row);
   for (const auto& row : discoveryRows(std::get<0>(all))) if (!hasId(data, rt::getString(row, "id").value_or(""))) data.push_back(discoveredModelCapabilitiesEntry(row.as_object(), "metered"));
   for (const auto& row : discoveryRows(std::get<1>(all))) if (!hasId(data, rt::getString(row, "id").value_or(""))) data.push_back(discoveredModelCapabilitiesEntry(row.as_object(), "surplus"));
   data = norm::withConfiguredDeepSeekCapabilities(data, sel::isProviderEnabled("deepseek", selection)); data = norm::withConfiguredLithosCapabilities(data, sel::isProviderEnabled("lithos", selection)); data = norm::withConfiguredDeepSeekWaterfallCapabilities(data, deepseek::waterfall::deepSeekWaterfallCatalogEnabled(selection));
   auto kp = kv::getKv(); auto database = co_await kp.wait(); std::optional<codex_models_whitelist::CodexModelsWhitelist> wl; if (database) wl = co_await codex_models_whitelist::loadCodexModelsWhitelist(database);
-  auto filtered = codex_models_whitelist::filterWhitelistedModelList(data, wl); seen.clear(); for (const auto& row : filtered) seen.add(std::string(rt::getString(row, "id").value_or("")));
+  auto filtered = codex_models_whitelist::filterWhitelistedModelList(data, wl); seen.clear(); for (const auto& row : filtered) seen.emplace(rt::getString(row, "id").value_or(""));
   const auto openrouter = sel::isProviderEnabled("openrouter", selection) ? norm::configuredOpenRouterModelCapabilities() : json::array{};
-  for (const auto& row : openrouter) if (!seen.has(rt::getString(row, "id").value_or(""))) filtered.push_back(row);
+  for (const auto& row : openrouter) if (!seen.contains(std::string(rt::getString(row, "id").value_or("")))) filtered.push_back(row);
   json::object result{{"object", "list"}, {"data", filtered}, {"upstream_provider", "codex_chatgpt"}, {"source", snapshot ? rt::getString(*snapshot, "source").value_or("stored_codex_models") : std::string_view("stored_codex_models")}, {"client_version", snapshot && rt::get(*snapshot, "client_version") ? *rt::get(*snapshot, "client_version") : json::value(nullptr)}, {"updated_at_ms", snapshot && rt::get(*snapshot, "updated_at_ms") ? *rt::get(*snapshot, "updated_at_ms") : json::value(nullptr)}};
   co_return http::json(200, result, rt::Headers{{"x-uos-upstream", snapshotUpstreamSource(snapshot)}});
 }

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <unordered_set>
 #include <utility>
 
 namespace uos::models::openrouter_models {
@@ -267,11 +268,10 @@ namespace uos::models::openrouter_models {
     const json::array* data = rt::getArray(member(payload, "data"));
     if (data == nullptr) return {};
     std::vector<OpenRouterModelMetadata> models;
-    rt::OrderedSet<std::string> seen;
+    std::unordered_set<std::string> seen;
     for (const json::value& value : *data) {
       std::optional<OpenRouterModelMetadata> model = openRouterModelFromUpstream(&value);
-      if (!model || seen.has(model->id)) continue;
-      seen.add(model->id);
+      if (!model || !seen.insert(model->id).second) continue;
       models.push_back(std::move(*model));
     }
     return models;

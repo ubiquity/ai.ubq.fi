@@ -10,15 +10,14 @@
 #include <unistd.h>
 #include <algorithm>
 #include <cerrno>
-#include <climits>
 #include <cmath>
 #include <cstdlib>
-#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 
 namespace uos::rt::fs {
@@ -382,7 +381,7 @@ namespace uos::rt::fs {
 
   std::string readFileSync(int fd, std::string_view encoding) {
     requireUtf8(encoding);
-    return rt::decodeUtf8(readAll(fd), {.ignoreBOM = true});
+    return rt::decodeUtf8(readFileSync(fd), {.ignoreBOM = true});
   }
 
   void writeFileSync(std::string_view path, std::span<const std::uint8_t> data, const WriteFileOptions& options) {
@@ -392,8 +391,7 @@ namespace uos::rt::fs {
   }
 
   void writeFileSync(std::string_view path, std::string_view data, const WriteFileOptions& options) {
-    const Bytes bytes = rt::encodeUtf8(data);
-    writeFileSync(path, bytes, options);
+    writeFileSync(path, rt::encodeUtf8(data), options);
   }
 
   int openSync(std::string_view path, std::string_view flags, std::uint32_t mode) { return openPath(path, stringToFlags(flags), mode); }
@@ -661,79 +659,58 @@ namespace uos::rt::fs {
 
 namespace uos::rt::path {
   namespace {
-    std::string currentDirectory() {
-      std::string buffer(PATH_MAX, '\0');
-      while (::getcwd(buffer.data(), buffer.size()) == nullptr) {
-        if (errno != ERANGE) return std::string();
-        buffer.resize(buffer.size() * 2);
-      }
-      buffer.resize(std::strlen(buffer.c_str()));
-      return buffer;
-    }
+    using Path = std::filesystem::path;
 
-    std::filesystem::path lexicalPath(std::string_view input) {
+    Path lexicalPath(std::string_view input) {
+      // POSIX paths in the gateway use a single leading separator.
       if (input.starts_with("//")) input.remove_prefix(std::min(input.size(), input.find_first_not_of('/')) - 1);
-      return std::filesystem::path(input);
+      return Path(input);
     }
 
-    std::string concatenateParts(std::string joined, std::span<const std::string_view> parts) {
-      for (const auto part : parts) {
-        if (part.empty()) continue;
-        if (!joined.empty()) joined += '/';
-        joined += part;
+    Path resolvedPath(std::span<const std::string_view> parts) {
+      Path path;
+      for (const auto part : parts)
+        if (!part.empty()) path /= lexicalPath(part);
+      if (!path.is_absolute()) {
+        std::error_code error;
+        path = std::filesystem::current_path(error) / path;
       }
-      return joined;
+      path = path.lexically_normal();
+      if (path.empty()) return ".";
+      if (!path.has_filename()) path = path.parent_path();
+      return path;
     }
   }
 
-  std::string resolveAll(std::span<const std::string_view> parts) {
-    std::size_t start = parts.size();
-    while (start > 0 && !isAbsolute(parts[start - 1])) --start;
-    std::string resolved = start == 0 ? concatenateParts(currentDirectory(), parts) : concatenateParts({}, parts.subspan(start - 1));
-    resolved = normalize(resolved);
-    if (resolved.size() > 1 && resolved.ends_with('/')) resolved.pop_back();
-    return resolved;
-  }
+  std::string resolve(std::span<const std::string_view> parts) { return resolvedPath(parts).generic_string(); }
 
-  std::string normalize(std::string_view input) {
-    if (input.empty()) return ".";
-    return lexicalPath(input).lexically_normal().generic_string();
-  }
+  bool isAbsolute(std::string_view input) { return lexicalPath(input).is_absolute(); }
 
-  bool isAbsolute(std::string_view input) noexcept { return input.starts_with('/'); }
-
-  std::string joinAll(std::span<const std::string_view> parts) {
-    return normalize(concatenateParts({}, parts));
+  std::string join(std::span<const std::string_view> parts) {
+    // Join retains the preceding components when a later part is absolute.
+    std::string joined;
+    for (const auto part : parts) {
+      if (part.empty()) continue;
+      if (!joined.empty()) joined += '/';
+      joined += part;
+    }
+    return joined.empty() ? "." : lexicalPath(joined).lexically_normal().generic_string();
   }
 
   std::string relative(std::string_view fromInput, std::string_view toInput) {
-    const auto from = resolve(fromInput);
-    const auto to = resolve(toInput);
-    if (!isAbsolute(from) || !isAbsolute(to)) throw JsError("Cannot resolve relative paths without a current directory");
-    if (from == to) return {};
-    const auto result = lexicalPath(to).lexically_relative(lexicalPath(from));
+    const auto from = resolvedPath({&fromInput, 1});
+    const auto to = resolvedPath({&toInput, 1});
+    if (!from.is_absolute() || !to.is_absolute()) throw JsError("Cannot resolve relative paths without a current directory");
+    const auto result = to.lexically_relative(from);
     if (result.empty()) throw JsError("Cannot compute a relative path");
-    return result.generic_string();
+    return result.native() == "." ? std::string{} : result.generic_string();
   }
 
   std::string dirname(std::string_view input) {
     const auto parent = lexicalPath(input).parent_path();
-    if (parent.empty()) return ".";
-    std::string directory;
-    for (const auto& component : parent) {
-      if (!directory.empty() && directory.back() != '/') directory += '/';
-      directory += component.native();
-    }
-    return directory;
+    // Rebuild through path components to collapse separators on both standard libraries.
+    Path directory;
+    for (const auto& component : parent) directory /= component;
+    return directory.empty() ? "." : directory.native();
   }
-
-  std::string basename(std::string_view input) { return lexicalPath(input).filename().string(); }
-
-  std::string basename(std::string_view input, std::string_view suffix) {
-    std::string name = basename(input);
-    if (name.ends_with(suffix)) name.resize(name.size() - suffix.size());
-    return name;
-  }
-
-  std::string extname(std::string_view input) { return lexicalPath(input).extension().string(); }
 }

@@ -636,6 +636,10 @@ namespace {
                      frameError("RangeError", "Invalid WebSocket frame: invalid payload length 1", "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH")});
     cases.push_back({"close reason that is not UTF-8", {masked(8, ws::Bytes{0x03, 0xe8, 0xff})}, SWITCHED, "880203ef", true,
                      frameError("Error", "Invalid WebSocket frame: invalid UTF-8 sequence", "WS_ERR_INVALID_UTF8")});
+    cases.push_back({"close 1014 with a reason", {masked(8, ws::Bytes{0x03, 0xf6, 'o', 'k'})}, SWITCHED, "880403f66f6b", true,
+                     R"([["server","close",1014,{"buffer":"6f6b"},3]])"});
+    cases.push_back({"close 1014 with an invalid reason", {masked(8, ws::Bytes{0x03, 0xf6, 0xff})}, SWITCHED, "880203ef", true,
+                     frameError("Error", "Invalid WebSocket frame: invalid UTF-8 sequence", "WS_ERR_INVALID_UTF8")});
     cases.push_back({"close 4000 with a reason", {masked(8, ws::Bytes{0x0f, 0xa0, 'c', 'u', 's', 't', 'o', 'm'})}, SWITCHED, "88080fa0637573746f6d", true,
                      R"([["server","close",4000,{"buffer":"637573746f6d"},3]])"});
     cases.push_back({"empty close frame", {masked(8, ws::Bytes{})}, SWITCHED, "8800", true, R"([["server","close",1005,{"buffer":""},3]])"});

@@ -76,7 +76,7 @@
     },
     "env_file": {
       "harness": "fuzz/env_file.cpp",
-      "entry": "uos::rt::env::parseEnvFile",
+      "entry": "uos::rt::env::ScopedEnvironment",
       "max_len": 16384,
       "extra_sources": ["src/rt/env.cpp"]
     },
@@ -103,6 +103,11 @@
       "extra_sources": [],
       "max_len": 16384
     },
+    "url_library": {
+      "harness": "fuzz/url_library.cpp",
+      "entry": "Ada-backed uos::rt::URL / URLSearchParams / file URL conversion",
+      "max_len": 16384
+    },
     "regex": {
       "harness": "fuzz/regex.cpp",
       "entry": "uos::rt::Regex compile / exec / test",
@@ -118,6 +123,12 @@
       "harness": "fuzz/kv_jsc.cpp",
       "entry": "uos::rt::kvJscDeserialize",
       "max_len": 16384
+    },
+    "bigint_library": {
+      "harness": "fuzz/bigint_library.cpp",
+      "entry": "uos::rt::BigInt parse / arithmetic / conversions",
+      "extra_sources": [],
+      "max_len": 4096
     },
     "http_request": {
       "harness": "fuzz/http_request.cpp",
@@ -143,6 +154,11 @@
       "entry": "parseResponseHead / responseFraming / ChunkedDecoder::decode",
       "max_len": 16384
     },
+    "fetch_response_library": {
+      "harness": "fuzz/fetch_response_library.cpp",
+      "entry": "ResponseParser::readHead / readBody / finish / WebSocket parseResponseHead",
+      "max_len": 16384
+    },
     "websocket": {
       "harness": "fuzz/websocket.cpp",
       "entry": "Receiver::write / end",
@@ -158,6 +174,46 @@
       "harness": "fuzz/passkeys.cpp",
       "included_implementation": "src/auth/passkeys.cpp",
       "entry": "isoCBOR::decodeFirst / asn1::fromBER / parseCertificate",
+      "max_len": 4096
+    },
+    "passkeys_cbor_library": {
+      "harness": "fuzz/passkeys_cbor_library.cpp",
+      "entry": "uos::auth::passkeys::cbor::reencode",
+      "max_len": 16384,
+      "extra_sources": [
+        "src/auth/passkeys.cpp",
+        "src/auth/relay.cpp",
+        "src/config.cpp",
+        "src/http.cpp",
+        "src/kv.cpp",
+        "src/provider/cerebras_rate_limits.cpp",
+        "src/release.cpp",
+        "src/request.cpp",
+        "src/storage/kv.cpp",
+        "src/storage/native_addon.cpp",
+        "src/storage/native_kv.cpp",
+        "src/storage/sqlite_readonly.cpp",
+        "src/utils.cpp"
+      ]
+    },
+    "passkeys_asn1_library": {
+      "harness": "fuzz/passkeys_asn1_library.cpp",
+      "included_implementation": "src/auth/passkeys.cpp",
+      "extra_sources": [
+        "src/auth/relay.cpp",
+        "src/http.cpp",
+        "src/request.cpp",
+        "src/utils.cpp",
+        "src/kv.cpp",
+        "src/storage/kv.cpp",
+        "src/release.cpp",
+        "src/storage/sqlite_readonly.cpp",
+        "src/storage/native_kv.cpp",
+        "src/storage/native_addon.cpp",
+        "src/config.cpp",
+        "src/provider/cerebras_rate_limits.cpp"
+      ],
+      "entry": "passkey ECDSA, OCTET STRING, X.509, CRL, Android KeyDescription and Apple nonce decoders",
       "max_len": 4096
     }
   },

@@ -419,33 +419,10 @@ namespace uos::sentinel::replay_envelope {
   }
 
   rt::Task<rt::Bytes> gunzip(rt::Bytes bytes) {
-    std::vector<rt::Bytes> parts;
-    double total = 0;
-    rt::Reason failure;
-    try {
-      rt::gzip::forEachDecompressedPiece(bytes, rt::gzip::Format::gzip, [&parts, &total](std::span<const std::uint8_t> value) {
-        total += static_cast<double>(value.size());
-        if (total > replay_model::MAX_REPLAY_PLAINTEXT_BYTES) throw rt::JsError("Sentinel replay plaintext exceeds its size limit");
-        parts.push_back(replay_model::cloneBytes(value));
-      });
-    } catch (...) {
-      failure = std::current_exception();
-    }
-    co_await rt::microtask();
-    if (failure) {
-      for (rt::Bytes& part : parts) zero(part);
-      std::rethrow_exception(failure);
-    }
-    rt::Bytes output = replay_model::concatBytes(parts);
-    for (rt::Bytes& part : parts) zero(part);
-    co_return output;
+    return rt::gzip::gunzip(std::move(bytes), static_cast<std::size_t>(replay_model::MAX_REPLAY_PLAINTEXT_BYTES), "Sentinel replay plaintext exceeds its size limit");
   }
 
-  rt::Task<rt::Bytes> gzip(rt::Bytes bytes) {
-    auto compressing = rt::gzip::gzip(std::move(bytes));
-    rt::Bytes compressed = co_await std::move(compressing);
-    co_return compressed;
-  }
+  rt::Task<rt::Bytes> gzip(rt::Bytes bytes) { return rt::gzip::gzip(std::move(bytes)); }
 
   rt::Task<std::string> hmacHex(rt::Bytes keyBytes, std::string purpose, std::vector<rt::Bytes> parts) {
     const rt::crypto::CryptoKey key = importHmacKey(keyBytes, purpose);

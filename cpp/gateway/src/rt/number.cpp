@@ -9,14 +9,12 @@
 #include <cstring>
 #include <system_error>
 
-namespace uos::rt {
-  struct BigIntAccess {
-    using Limbs = std::vector<std::uint32_t>;
-    static const Limbs& limbs(const BigInt& value) { return value.magnitude_; }
-    static bool negative(const BigInt& value) { return value.negative_; }
-    static BigInt make(bool negative, Limbs magnitude);
-  };
+#include <boost/multiprecision/cpp_int.hpp>
+#include <iterator>
+#include <memory>
+#include <new>
 
+namespace uos::rt {
   namespace {
     constexpr double kInfinity = std::numeric_limits<double>::infinity();
     constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
@@ -213,264 +211,59 @@ namespace uos::rt {
       return out;
     }
 
-    // ---- BigInt magnitude arithmetic (little-endian 32-bit limbs) ----
-    using Limbs = std::vector<std::uint32_t>;
+    // ---- BigInt adapter ----
+    namespace mp = boost::multiprecision;
+    using mp::cpp_int;
 
-    void trim(Limbs& limbs) {
-      while (!limbs.empty() && limbs.back() == 0) limbs.pop_back();
+    std::size_t bitLength(const cpp_int& value) {
+      if (value == 0) return 0;
+      return 1 + (value < 0 ? mp::msb(mp::abs(value)) : mp::msb(value));
     }
 
-    std::uint64_t bitLength(const Limbs& limbs) {
-      if (limbs.empty()) return 0;
-      return (limbs.size() - 1) * 32 + static_cast<std::uint64_t>(32 - std::countl_zero(limbs.back()));
-    }
-
-    int compareMagnitude(const Limbs& a, const Limbs& b) {
-      if (a.size() != b.size()) return a.size() < b.size() ? -1 : 1;
-      for (std::size_t index = a.size(); index-- > 0;)
-        if (a[index] != b[index]) return a[index] < b[index] ? -1 : 1;
-      return 0;
-    }
-
-    Limbs addMagnitude(const Limbs& a, const Limbs& b) {
-      const Limbs& longer = a.size() >= b.size() ? a : b;
-      const Limbs& shorter = a.size() >= b.size() ? b : a;
-      Limbs out(longer.size() + 1, 0);
-      std::uint64_t carry = 0;
-      for (std::size_t index = 0; index < longer.size(); ++index) {
-        const std::uint64_t sum = std::uint64_t{longer[index]} + (index < shorter.size() ? shorter[index] : 0u) + carry;
-        out[index] = static_cast<std::uint32_t>(sum);
-        carry = sum >> 32;
+    cpp_int shiftBy(const cpp_int& value, const cpp_int& count, bool left) {
+      if (value == 0 || count == 0) return value;
+      const bool grows = left != (count < 0);
+      constexpr auto limit = static_cast<int>(BigInt::maxLengthBits);
+      if (count > limit || count < -limit) {
+        if (grows) throw RangeError(kOutOfMemory);
+        return value < 0 ? -1 : 0;
       }
-      out[longer.size()] = static_cast<std::uint32_t>(carry);
-      trim(out);
-      return out;
+      const auto bits = static_cast<unsigned>(std::abs(count.convert_to<int>()));
+      if (!grows) return value >> bits;
+      if (bitLength(value) + bits > BigInt::maxLengthBits) throw RangeError(kOutOfMemory);
+      return value << bits;
     }
 
-    // a - b with a >= b.
-    Limbs subtractMagnitude(const Limbs& a, const Limbs& b) {
-      Limbs out(a.size(), 0);
-      std::int64_t borrow = 0;
-      for (std::size_t index = 0; index < a.size(); ++index) {
-        std::int64_t difference = std::int64_t{a[index]} - (index < b.size() ? std::int64_t{b[index]} : 0) - borrow;
-        borrow = difference < 0 ? 1 : 0;
-        if (difference < 0) difference += std::int64_t{1} << 32;
-        out[index] = static_cast<std::uint32_t>(difference);
+    std::string formatBigIntRadix(cpp_int magnitude, int radix) {
+      // cpp_int::str provides bases 8, 10 and 16. Group the remaining
+      // power-of-two digits with export_bits, and use Boost division for the rest.
+      const auto base = static_cast<unsigned>(radix);
+      std::string result;
+      if (std::has_single_bit(base)) {
+        mp::export_bits(magnitude, std::back_inserter(result), static_cast<unsigned>(std::countr_zero(base)));
+        for (char& digit : result) digit = kRadixDigits[static_cast<unsigned char>(digit)];
+        return result;
       }
-      trim(out);
-      return out;
-    }
 
-    Limbs multiplyMagnitude(const Limbs& a, const Limbs& b) {
-      if (a.empty() || b.empty()) return {};
-      Limbs out(a.size() + b.size(), 0);
-      for (std::size_t i = 0; i < a.size(); ++i) {
-        std::uint64_t carry = 0;
-        for (std::size_t j = 0; j < b.size(); ++j) {
-          const std::uint64_t product = std::uint64_t{a[i]} * b[j] + out[i + j] + carry;
-          out[i + j] = static_cast<std::uint32_t>(product);
-          carry = product >> 32;
-        }
-        std::size_t index = i + b.size();
-        while (carry) {
-          const std::uint64_t sum = std::uint64_t{out[index]} + carry;
-          out[index] = static_cast<std::uint32_t>(sum);
-          carry = sum >> 32;
-          ++index;
-        }
+      std::uint64_t chunkBase = base;
+      std::size_t digitsPerChunk = 1;
+      while (chunkBase <= std::numeric_limits<std::uint64_t>::max() / base) {
+        chunkBase *= base;
+        ++digitsPerChunk;
       }
-      trim(out);
-      return out;
-    }
-
-    void multiplySmallAdd(Limbs& limbs, std::uint32_t factor, std::uint32_t addend) {
-      std::uint64_t carry = addend;
-      for (auto& limb : limbs) {
-        const std::uint64_t product = std::uint64_t{limb} * factor + carry;
-        limb = static_cast<std::uint32_t>(product);
-        carry = product >> 32;
-      }
-      if (carry) limbs.push_back(static_cast<std::uint32_t>(carry));
-    }
-
-    // Divides in place by a single limb; returns the remainder.
-    std::uint32_t divideSmall(Limbs& limbs, std::uint32_t divisor) {
-      std::uint64_t remainder = 0;
-      for (std::size_t index = limbs.size(); index-- > 0;) {
-        const std::uint64_t current = (remainder << 32) | limbs[index];
-        limbs[index] = static_cast<std::uint32_t>(current / divisor);
-        remainder = current % divisor;
-      }
-      trim(limbs);
-      return static_cast<std::uint32_t>(remainder);
-    }
-
-    Limbs shiftLeftMagnitude(const Limbs& limbs, std::uint64_t bits) {
-      if (limbs.empty()) return {};
-      const std::size_t limbShift = static_cast<std::size_t>(bits / 32);
-      const unsigned bitShift = static_cast<unsigned>(bits % 32);
-      Limbs out(limbs.size() + limbShift + 1, 0);
-      for (std::size_t index = 0; index < limbs.size(); ++index) {
-        const std::uint64_t shifted = std::uint64_t{limbs[index]} << bitShift;
-        out[index + limbShift] |= static_cast<std::uint32_t>(shifted);
-        out[index + limbShift + 1] |= static_cast<std::uint32_t>(shifted >> 32);
-      }
-      trim(out);
-      return out;
-    }
-
-    // Floor shift; reports whether any one bits were shifted out.
-    Limbs shiftRightMagnitude(const Limbs& limbs, std::uint64_t bits, bool& lostBits) {
-      lostBits = false;
-      const std::uint64_t limbShift64 = bits / 32;
-      if (limbShift64 >= limbs.size()) {
-        lostBits = !limbs.empty();
-        return {};
-      }
-      const std::size_t limbShift = static_cast<std::size_t>(limbShift64);
-      const unsigned bitShift = static_cast<unsigned>(bits % 32);
-      for (std::size_t index = 0; index < limbShift; ++index)
-        if (limbs[index]) lostBits = true;
-      if (bitShift && (limbs[limbShift] & ((1u << bitShift) - 1u))) lostBits = true;
-      Limbs out(limbs.size() - limbShift, 0);
-      for (std::size_t index = 0; index < out.size(); ++index) {
-        std::uint64_t window = limbs[index + limbShift];
-        if (index + limbShift + 1 < limbs.size()) window |= std::uint64_t{limbs[index + limbShift + 1]} << 32;
-        out[index] = static_cast<std::uint32_t>(window >> bitShift);
-      }
-      trim(out);
-      return out;
-    }
-
-    // Knuth algorithm D. Requires a non-empty divisor.
-    void divideMagnitude(const Limbs& dividend, const Limbs& divisor, Limbs& quotient, Limbs& remainder) {
-      if (compareMagnitude(dividend, divisor) < 0) {
-        quotient.clear();
-        remainder = dividend;
-        return;
-      }
-      if (divisor.size() == 1) {
-        quotient = dividend;
-        const std::uint32_t rest = divideSmall(quotient, divisor[0]);
-        remainder.clear();
-        if (rest) remainder.push_back(rest);
-        return;
-      }
-      const int shift = std::countl_zero(divisor.back());
-      Limbs normalizedDivisor = shiftLeftMagnitude(divisor, static_cast<std::uint64_t>(shift));
-      Limbs normalizedDividend = shiftLeftMagnitude(dividend, static_cast<std::uint64_t>(shift));
-      normalizedDividend.resize(dividend.size() + 1, 0);
-      const std::size_t n = normalizedDivisor.size();
-      const std::size_t m = normalizedDividend.size() - n;
-      quotient.assign(m, 0);
-      const std::uint64_t base = std::uint64_t{1} << 32;
-      for (std::size_t j = m; j-- > 0;) {
-        const std::uint64_t top = (std::uint64_t{normalizedDividend[j + n]} << 32) | normalizedDividend[j + n - 1];
-        std::uint64_t estimate = top / normalizedDivisor[n - 1];
-        std::uint64_t rest = top % normalizedDivisor[n - 1];
-        while (estimate >= base || estimate * normalizedDivisor[n - 2] > ((rest << 32) | normalizedDividend[j + n - 2])) {
-          --estimate;
-          rest += normalizedDivisor[n - 1];
-          if (rest >= base) break;
-        }
-        std::int64_t borrow = 0;
-        std::uint64_t carry = 0;
-        for (std::size_t i = 0; i < n; ++i) {
-          const std::uint64_t product = estimate * normalizedDivisor[i] + carry;
-          carry = product >> 32;
-          const std::int64_t difference = std::int64_t{normalizedDividend[i + j]} - static_cast<std::int64_t>(product & 0xFFFFFFFFu) - borrow;
-          normalizedDividend[i + j] = static_cast<std::uint32_t>(difference);
-          borrow = difference < 0 ? 1 : 0;
-        }
-        const std::int64_t difference = std::int64_t{normalizedDividend[j + n]} - static_cast<std::int64_t>(carry) - borrow;
-        normalizedDividend[j + n] = static_cast<std::uint32_t>(difference);
-        if (difference < 0) {
-          --estimate;
-          std::uint64_t addCarry = 0;
-          for (std::size_t i = 0; i < n; ++i) {
-            const std::uint64_t sum = std::uint64_t{normalizedDividend[i + j]} + normalizedDivisor[i] + addCarry;
-            normalizedDividend[i + j] = static_cast<std::uint32_t>(sum);
-            addCarry = sum >> 32;
-          }
-          normalizedDividend[j + n] = static_cast<std::uint32_t>(std::uint64_t{normalizedDividend[j + n]} + addCarry);
-        }
-        quotient[j] = static_cast<std::uint32_t>(estimate);
-      }
-      trim(quotient);
-      normalizedDividend.resize(n);
-      trim(normalizedDividend);
-      bool lost = false;
-      remainder = shiftRightMagnitude(normalizedDividend, static_cast<std::uint64_t>(shift), lost);
-    }
-
-    void checkSize(const Limbs& limbs) {
-      if (bitLength(limbs) > BigInt::maxLengthBits) throw RangeError(kOutOfMemory);
-    }
-
-    // Two's complement of a signed magnitude, truncated or extended to `width` limbs.
-    Limbs twosComplement(bool negative, const Limbs& magnitude, std::size_t width) {
-      Limbs out(width, 0);
-      if (!negative) {
-        std::copy_n(magnitude.begin(), std::min(width, magnitude.size()), out.begin());
-        return out;
-      }
-      // ~(|x| - 1)
-      const Limbs one{1};
-      const Limbs decremented = subtractMagnitude(magnitude, one);
-      for (std::size_t index = 0; index < width; ++index) out[index] = ~(index < decremented.size() ? decremented[index] : 0u);
-      return out;
-    }
-
-    BigInt fromTwosComplement(Limbs limbs) {
-      const bool negative = !limbs.empty() && (limbs.back() & 0x80000000u);
-      if (!negative) {
-        trim(limbs);
-        return BigIntAccess::make(false, std::move(limbs));
-      }
-      for (auto& limb : limbs) limb = ~limb;
-      trim(limbs);
-      return BigIntAccess::make(true, addMagnitude(limbs, Limbs{1}));
-    }
-
-    template <class Operation>
-    BigInt bitwise(const BigInt& a, const BigInt& b, Operation operation) {
-      const auto& left = BigIntAccess::limbs(a);
-      const auto& right = BigIntAccess::limbs(b);
-      const std::size_t width = std::max(left.size(), right.size()) + 1;
-      const Limbs x = twosComplement(BigIntAccess::negative(a), left, width);
-      const Limbs y = twosComplement(BigIntAccess::negative(b), right, width);
-      Limbs out(width, 0);
-      for (std::size_t index = 0; index < width; ++index) out[index] = operation(x[index], y[index]);
-      return fromTwosComplement(std::move(out));
-    }
-
-    // Shift count as a signed 64-bit value, saturated beyond the BigInt size limit.
-    std::int64_t shiftCount(const BigInt& shift) {
-      const auto& limbs = BigIntAccess::limbs(shift);
-      const std::int64_t limit = static_cast<std::int64_t>(BigInt::maxLengthBits) + 1;
-      std::int64_t magnitude = 0;
-      if (bitLength(limbs) > 40) magnitude = limit;
-      else
-        for (std::size_t index = limbs.size(); index-- > 0;) magnitude = (magnitude << 32) | limbs[index];
-      magnitude = std::min(magnitude, limit);
-      return BigIntAccess::negative(shift) ? -magnitude : magnitude;
-    }
-
-    BigInt shiftBy(const BigInt& value, std::int64_t count) {
-      const auto& limbs = BigIntAccess::limbs(value);
-      if (limbs.empty() || count == 0) return value;
-      const bool negative = BigIntAccess::negative(value);
-      if (count > 0) {
-        if (static_cast<std::uint64_t>(count) > BigInt::maxLengthBits) throw RangeError(kOutOfMemory);
-        Limbs shifted = shiftLeftMagnitude(limbs, static_cast<std::uint64_t>(count));
-        checkSize(shifted);
-        return BigIntAccess::make(negative, std::move(shifted));
-      }
-      bool lost = false;
-      Limbs shifted = shiftRightMagnitude(limbs, static_cast<std::uint64_t>(-count), lost);
-      // Arithmetic shift rounds toward -Infinity.
-      if (negative && lost) shifted = addMagnitude(shifted, Limbs{1});
-      return BigIntAccess::make(negative, std::move(shifted));
+      const cpp_int divisor(chunkBase);
+      cpp_int quotient, remainder;
+      do {
+        mp::divide_qr(magnitude, divisor, quotient, remainder);
+        char chunk[64];
+        char* end = std::to_chars(chunk, chunk + sizeof(chunk), remainder.convert_to<std::uint64_t>(), radix).ptr;
+        std::reverse(chunk, end);
+        result.append(chunk, end);
+        if (quotient != 0) result.append(digitsPerChunk - static_cast<std::size_t>(end - chunk), '0');
+        magnitude.swap(quotient);
+      } while (magnitude != 0);
+      std::reverse(result.begin(), result.end());
+      return result;
     }
 
     // Exact value of a finite non-negative double scaled by 2^kFractionBits.
@@ -481,16 +274,8 @@ namespace uos::rt {
       const double mantissa = std::frexp(value, &exponent);  // value = mantissa * 2^exponent, mantissa in [0.5, 1)
       const auto integer = static_cast<std::int64_t>(std::ldexp(mantissa, 53));
       const std::int64_t shift = static_cast<std::int64_t>(kFractionBits) + exponent - 53;
-      return shiftBy(BigInt(integer), shift);
+      return BigInt(integer) << BigInt(shift);
     }
-  }
-
-  BigInt BigIntAccess::make(bool negative, Limbs magnitude) {
-    trim(magnitude);
-    BigInt out;
-    out.negative_ = negative && !magnitude.empty();
-    out.magnitude_ = std::move(magnitude);
-    return out;
   }
 
   bool isStrWhiteSpace(char32_t c) {
@@ -790,77 +575,100 @@ namespace uos::rt {
 
   // ---- BigInt ----
 
-  BigInt::BigInt(std::int64_t value) {
-    negative_ = value < 0;
-    std::uint64_t magnitude = negative_ ? std::uint64_t{0} - static_cast<std::uint64_t>(value) : static_cast<std::uint64_t>(value);
-    while (magnitude) {
-      magnitude_.push_back(static_cast<std::uint32_t>(magnitude));
-      magnitude >>= 32;
-    }
+  BigInt::BigInt() noexcept {
+    static_assert(sizeof(cpp_int) <= sizeof(storage_));
+    static_assert(alignof(cpp_int) <= storageAlignment);
+    std::construct_at(reinterpret_cast<cpp_int*>(storage_));
   }
 
-  BigInt BigInt::fromUint64(std::uint64_t value) {
-    Limbs limbs;
-    while (value) {
-      limbs.push_back(static_cast<std::uint32_t>(value));
-      value >>= 32;
-    }
-    return BigIntAccess::make(false, std::move(limbs));
+  BigInt::BigInt(std::int64_t value) { std::construct_at(reinterpret_cast<cpp_int*>(storage_), value); }
+
+  BigInt::BigInt(cpp_int value) {
+    if (bitLength(value) > maxLengthBits) throw RangeError(kOutOfMemory);
+    std::construct_at(reinterpret_cast<cpp_int*>(storage_), std::move(value));
   }
+
+  BigInt::BigInt(const BigInt& other) { std::construct_at(reinterpret_cast<cpp_int*>(storage_), other.value()); }
+
+  BigInt::BigInt(BigInt&& other) noexcept {
+    std::construct_at(reinterpret_cast<cpp_int*>(storage_), std::move(other.value()));
+    other.value() = 0;
+  }
+
+  BigInt& BigInt::operator=(const BigInt& other) {
+    value() = other.value();
+    return *this;
+  }
+
+  BigInt& BigInt::operator=(BigInt&& other) noexcept {
+    if (this != &other) {
+      value() = std::move(other.value());
+      other.value() = 0;
+    }
+    return *this;
+  }
+
+  BigInt::~BigInt() { std::destroy_at(&value()); }
+
+  cpp_int& BigInt::value() { return *std::launder(reinterpret_cast<cpp_int*>(storage_)); }
+
+  const cpp_int& BigInt::value() const { return *std::launder(reinterpret_cast<const cpp_int*>(storage_)); }
+
+  bool BigInt::isZero() const { return value() == 0; }
+
+  bool BigInt::isNegative() const { return value() < 0; }
+
+  BigInt BigInt::fromUint64(std::uint64_t value) { return BigInt(cpp_int(value)); }
 
   BigInt BigInt::fromNumber(double value) {
     if (!std::isfinite(value) || std::trunc(value) != value) throw RangeError("Not an integer");
-    if (value == 0) return BigInt();
-    int exponent = 0;
-    const double mantissa = std::frexp(std::fabs(value), &exponent);
-    const auto integer = static_cast<std::int64_t>(std::ldexp(mantissa, 53));
-    const BigInt magnitude = shiftBy(BigInt(integer), static_cast<std::int64_t>(exponent) - 53);
-    return value < 0 ? -magnitude : magnitude;
+    return BigInt(cpp_int(value));
   }
 
   std::optional<BigInt> BigInt::parse(std::string_view text) {
-    // Code points; whitespace and digits are all in the BMP, so indexes need not be UTF-16 exact.
-    std::vector<char32_t> characters;
-    for (std::size_t index = 0; index < text.size();) {
-      std::size_t length = 0;
-      characters.push_back(decodeCodePoint(text, index, length));
-      index += length;
-    }
-    std::size_t index = 0;
-    while (index < characters.size() && isStrWhiteSpace(characters[index])) ++index;
-    const auto digitsFrom = [&](std::size_t start, int radix, bool negative, bool allowEmpty) -> std::optional<BigInt> {
-      if (!allowEmpty && start == characters.size()) return std::nullopt;
-      std::size_t cursor = start;
-      while (cursor < characters.size() && characters[cursor] == '0') ++cursor;
-      std::size_t end = characters.size();
-      while (end > cursor && isStrWhiteSpace(characters[end - 1])) --end;
-      Limbs limbs;
-      for (; cursor < end; ++cursor) {
-        const char32_t c = characters[cursor];
-        const int digit = c < 0x80 ? digitValue(static_cast<char>(c), radix) : -1;
-        if (digit < 0) return std::nullopt;
-        multiplySmallAdd(limbs, static_cast<std::uint32_t>(radix), static_cast<std::uint32_t>(digit));
-        trim(limbs);
-        checkSize(limbs);
+    text.remove_prefix(skipWhiteSpace(text, 0));
+    if (text.empty()) return BigInt();
+
+    const bool negative = text.front() == '-';
+    int radix = 10;
+    if (negative || text.front() == '+') {
+      text.remove_prefix(1);
+    } else if (text.size() >= 2 && text.front() == '0') {
+      switch (text[1] | 0x20) {
+        case 'b': radix = 2; break;
+        case 'o': radix = 8; break;
+        case 'x': radix = 16; break;
       }
-      return BigIntAccess::make(negative, std::move(limbs));
-    };
-    if (index + 1 < characters.size() && characters[index] == '0') {
-      const char32_t letter = characters[index + 1] | 0x20;
-      if (letter == 'b') return digitsFrom(index + 2, 2, false, false);
-      if (letter == 'x') return digitsFrom(index + 2, 16, false, false);
-      if (letter == 'o') return digitsFrom(index + 2, 8, false, false);
+      if (radix != 10) text.remove_prefix(2);
     }
-    bool negative = false;
-    if (index < characters.size()) {
-      if (characters[index] == '+') {
-        ++index;
-      } else if (characters[index] == '-') {
-        negative = true;
-        ++index;
-      }
+
+    // Validate the entire input before passing a NUL-terminated token to Boost.
+    std::size_t end = 0;
+    while (end < text.size() && digitValue(text[end], radix) >= 0) ++end;
+    if (end == 0 || skipWhiteSpace(text, end) != text.size()) return std::nullopt;
+    auto digits = text.substr(0, end);
+    const auto first = digits.find_first_not_of('0');
+    if (first == std::string_view::npos) return BigInt();
+    digits.remove_prefix(first);
+
+    // Bound temporary work before any library allocation. The constructor also
+    // checks the exact bit length for values on the decimal or octal boundary.
+    constexpr auto maxDecimalDigits = maxLengthBits * 30103 / 100000 + 1;  // 30103/100000 > log10(2)
+    const auto bitsPerDigit = static_cast<unsigned>(std::countr_zero(static_cast<unsigned>(radix)));
+    const auto digitLimit = radix == 10 ? maxDecimalDigits : (maxLengthBits - 1) / bitsPerDigit + 1;
+    if (digits.size() > digitLimit) throw RangeError(kOutOfMemory);
+
+    if (radix == 2) {
+      std::string bits(digits);
+      for (char& digit : bits) digit = static_cast<char>(digit - '0');
+      cpp_int value;
+      mp::import_bits(value, bits.begin(), bits.end(), 1);
+      return BigInt(std::move(value));
     }
-    return digitsFrom(index, 10, negative, true);
+    // Boost recognizes 0x for hex and 0 for octal. Decimal has no leading zeroes.
+    std::string token = radix == 16 ? "0x" : radix == 8 ? "0" : negative ? "-" : "";
+    token += digits;
+    return BigInt(cpp_int(token));
   }
 
   BigInt BigInt::fromString(std::string_view text) {
@@ -871,150 +679,80 @@ namespace uos::rt {
 
   BigInt BigInt::asUintN(std::uint64_t bits, const BigInt& value) {
     if (bits == 0 || value.isZero()) return BigInt();
-    if (!value.negative_ && bitLength(value.magnitude_) <= bits) return value;
-    if (value.negative_ && bits > maxLengthBits) throw RangeError(kOutOfMemory);
-    // Here bits <= maxLengthBits: either the value is negative or it is wider than `bits`.
-    Limbs limbs = twosComplement(value.negative_, value.magnitude_, static_cast<std::size_t>((bits + 31) / 32));
-    const unsigned topBits = static_cast<unsigned>(bits % 32);
-    if (topBits) limbs.back() &= (1u << topBits) - 1u;
-    return BigIntAccess::make(false, std::move(limbs));
+    if (!value.isNegative() && bitLength(value.value()) <= bits) return value;
+    if (bits > maxLengthBits) throw RangeError(kOutOfMemory);
+    return BigInt(value.value() & ((cpp_int(1) << bits) - 1));
   }
 
   BigInt BigInt::asIntN(std::uint64_t bits, const BigInt& value) {
-    if (bits == 0 || value.isZero()) return BigInt();
     if (bits > maxLengthBits) return value;
-    BigInt unsignedValue = asUintN(bits, value);
-    if (bitLength(unsignedValue.magnitude_) == bits) return unsignedValue - (BigInt(1) << BigInt(static_cast<std::int64_t>(bits)));
-    return unsignedValue;
+    BigInt result = asUintN(bits, value);
+    if (bits != 0 && mp::bit_test(result.value(), static_cast<unsigned>(bits - 1))) result.value() -= cpp_int(1) << bits;
+    return result;
   }
 
   std::string BigInt::toString(int radix) const {
     if (radix < 2 || radix > 36) throw RangeError(kRadixRange);
-    if (magnitude_.empty()) return "0";
-    // Peel off the largest power of the radix that fits a limb at a time.
-    std::uint32_t chunk = static_cast<std::uint32_t>(radix);
-    int chunkDigits = 1;
-    while (std::uint64_t{chunk} * static_cast<std::uint64_t>(radix) <= 0xFFFFFFFFu) {
-      chunk *= static_cast<std::uint32_t>(radix);
-      ++chunkDigits;
+    if (radix == 10) return value().str();
+    if (radix == 8 || radix == 16) {
+      const auto format = radix == 8 ? std::ios_base::oct : std::ios_base::hex;
+      if (!isNegative()) return value().str(0, format);
+      return '-' + cpp_int(-value()).str(0, format);
     }
-    Limbs rest = magnitude_;
-    std::string reversed;
-    while (!rest.empty()) {
-      std::uint32_t part = divideSmall(rest, chunk);
-      for (int count = 0; count < chunkDigits && (part || !rest.empty()); ++count) {
-        reversed += kRadixDigits[part % static_cast<std::uint32_t>(radix)];
-        part /= static_cast<std::uint32_t>(radix);
-      }
-    }
-    if (negative_) reversed += '-';
-    return {reversed.rbegin(), reversed.rend()};
+    auto result = formatBigIntRadix(mp::abs(value()), radix);
+    if (isNegative()) result.insert(result.begin(), '-');
+    return result;
   }
 
-  double BigInt::toNumber() const {
-    const std::uint64_t bits = bitLength(magnitude_);
-    if (bits == 0) return 0.0;
-    double magnitude = 0.0;
-    if (bits <= 64) {
-      std::uint64_t value = 0;
-      for (std::size_t index = magnitude_.size(); index-- > 0;) value = (value << 32) | magnitude_[index];
-      magnitude = static_cast<double>(value);
-    } else if (bits > 1025) {
-      magnitude = kInfinity;
-    } else {
-      bool sticky = false;
-      const Limbs top = shiftRightMagnitude(magnitude_, bits - 64, sticky);
-      const std::uint64_t window = (std::uint64_t{top.size() > 1 ? top[1] : 0u} << 32) | top[0];
-      std::uint64_t mantissa = window >> 11;
-      const std::uint64_t guard = window & 0x7FFu;
-      if (guard > 0x400u || (guard == 0x400u && (sticky || (mantissa & 1u)))) ++mantissa;
-      magnitude = std::ldexp(static_cast<double>(mantissa), static_cast<int>(bits) - 53);
-    }
-    return negative_ ? -magnitude : magnitude;
-  }
+  double BigInt::toNumber() const { return value().convert_to<double>(); }
 
   std::uint64_t BigInt::toUint64() const {
-    const Limbs limbs = twosComplement(negative_, magnitude_, std::max<std::size_t>(magnitude_.size(), 2) + 1);
-    return (std::uint64_t{limbs[1]} << 32) | limbs[0];
+    const cpp_int low = value() & std::numeric_limits<std::uint64_t>::max();
+    return low.convert_to<std::uint64_t>();
   }
 
   std::int64_t BigInt::toInt64() const { return static_cast<std::int64_t>(toUint64()); }
 
   BigInt BigInt::pow(const BigInt& exponent) const {
-    if (exponent.negative_) throw RangeError("Negative exponent is not allowed");
+    if (exponent.isNegative()) throw RangeError("Negative exponent is not allowed");
     if (exponent.isZero()) return BigInt(1);
-    if (isZero()) return *this;
-    if (magnitude_.size() == 1 && magnitude_[0] == 1) return BigInt(negative_ && (exponent.magnitude_[0] & 1u) ? -1 : 1);
-    if (exponent.magnitude_.size() > 2 || (exponent.magnitude_.size() == 2 && exponent.magnitude_[1])) throw RangeError(kOutOfMemory);
-    const std::uint64_t power = exponent.magnitude_[0];
-    if (power == 1) return *this;
-    if (power >= maxLengthBits) throw RangeError(kOutOfMemory);
-    BigInt result(1);
-    BigInt square = *this;
-    std::uint64_t remaining = power;
-    while (true) {
-      if (remaining & 1u) result *= square;
-      remaining >>= 1;
-      if (!remaining) break;
-      square *= square;
-    }
-    return result;
+    if (isZero() || value() == 1) return *this;
+    if (value() == -1) return BigInt(mp::bit_test(exponent.value(), 0) ? -1 : 1);
+
+    // |value| >= 2. Reject exponents whose result cannot fit before invoking pow.
+    // This also bounds conversion to Boost's unsigned exponent.
+    if (exponent.value() > (maxLengthBits - 1) / (bitLength(value()) - 1)) throw RangeError(kOutOfMemory);
+    return BigInt(mp::pow(value(), exponent.value().convert_to<unsigned>()));
   }
 
-  std::strong_ordering operator<=>(const BigInt& a, const BigInt& b) {
-    if (a.negative_ != b.negative_) return a.negative_ ? std::strong_ordering::less : std::strong_ordering::greater;
-    const int magnitude = compareMagnitude(a.magnitude_, b.magnitude_);
-    const int ordered = a.negative_ ? -magnitude : magnitude;
-    return ordered < 0 ? std::strong_ordering::less : ordered > 0 ? std::strong_ordering::greater : std::strong_ordering::equal;
-  }
+  bool operator==(const BigInt& a, const BigInt& b) { return a.value() == b.value(); }
 
-  BigInt operator+(const BigInt& a, const BigInt& b) {
-    if (a.negative_ == b.negative_) {
-      Limbs sum = addMagnitude(a.magnitude_, b.magnitude_);
-      checkSize(sum);
-      return BigIntAccess::make(a.negative_, std::move(sum));
-    }
-    const int comparison = compareMagnitude(a.magnitude_, b.magnitude_);
-    if (comparison == 0) return BigInt();
-    if (comparison > 0) return BigIntAccess::make(a.negative_, subtractMagnitude(a.magnitude_, b.magnitude_));
-    return BigIntAccess::make(b.negative_, subtractMagnitude(b.magnitude_, a.magnitude_));
-  }
+  std::strong_ordering operator<=>(const BigInt& a, const BigInt& b) { return a.value().compare(b.value()) <=> 0; }
 
-  BigInt operator-(const BigInt& a, const BigInt& b) { return a + (-b); }
+  BigInt operator+(const BigInt& a, const BigInt& b) { return BigInt(a.value() + b.value()); }
+  BigInt operator-(const BigInt& a, const BigInt& b) { return BigInt(a.value() - b.value()); }
 
   BigInt operator*(const BigInt& a, const BigInt& b) {
-    if (bitLength(a.magnitude_) + bitLength(b.magnitude_) > BigInt::maxLengthBits + 1) throw RangeError(kOutOfMemory);
-    Limbs product = multiplyMagnitude(a.magnitude_, b.magnitude_);
-    checkSize(product);
-    return BigIntAccess::make(a.negative_ != b.negative_, std::move(product));
+    if (bitLength(a.value()) + bitLength(b.value()) > BigInt::maxLengthBits + 1) throw RangeError(kOutOfMemory);
+    return BigInt(a.value() * b.value());
   }
 
   BigInt operator/(const BigInt& a, const BigInt& b) {
     if (b.isZero()) throw RangeError("0 is an invalid divisor value.");
-    Limbs quotient, remainder;
-    divideMagnitude(a.magnitude_, b.magnitude_, quotient, remainder);
-    return BigIntAccess::make(a.negative_ != b.negative_, std::move(quotient));
+    return BigInt(a.value() / b.value());
   }
 
   BigInt operator%(const BigInt& a, const BigInt& b) {
     if (b.isZero()) throw RangeError("0 is an invalid divisor value.");
-    Limbs quotient, remainder;
-    divideMagnitude(a.magnitude_, b.magnitude_, quotient, remainder);
-    return BigIntAccess::make(a.negative_, std::move(remainder));
+    return BigInt(a.value() % b.value());
   }
 
-  BigInt operator&(const BigInt& a, const BigInt& b) {
-    return bitwise(a, b, [](std::uint32_t x, std::uint32_t y) { return x & y; });
-  }
-  BigInt operator|(const BigInt& a, const BigInt& b) {
-    return bitwise(a, b, [](std::uint32_t x, std::uint32_t y) { return x | y; });
-  }
-  BigInt operator^(const BigInt& a, const BigInt& b) {
-    return bitwise(a, b, [](std::uint32_t x, std::uint32_t y) { return x ^ y; });
-  }
-  BigInt operator<<(const BigInt& a, const BigInt& shift) { return shiftBy(a, shiftCount(shift)); }
-  BigInt operator>>(const BigInt& a, const BigInt& shift) { return shiftBy(a, -shiftCount(shift)); }
+  BigInt operator&(const BigInt& a, const BigInt& b) { return BigInt(a.value() & b.value()); }
+  BigInt operator|(const BigInt& a, const BigInt& b) { return BigInt(a.value() | b.value()); }
+  BigInt operator^(const BigInt& a, const BigInt& b) { return BigInt(a.value() ^ b.value()); }
+  BigInt operator<<(const BigInt& a, const BigInt& shift) { return BigInt(shiftBy(a.value(), shift.value(), true)); }
+  BigInt operator>>(const BigInt& a, const BigInt& shift) { return BigInt(shiftBy(a.value(), shift.value(), false)); }
 
-  BigInt BigInt::operator-() const { return BigIntAccess::make(!negative_, magnitude_); }
-  BigInt BigInt::operator~() const { return -*this - BigInt(1); }
+  BigInt BigInt::operator-() const { return BigInt(-value()); }
+  BigInt BigInt::operator~() const { return BigInt(~value()); }
 }
