@@ -337,7 +337,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/kv_conversion/convert.hpp`
 - [x] `include/uos/kv_conversion/cursors.hpp`
 - [x] `include/uos/kv_conversion/legacy_codec.hpp`
-- [ ] `include/uos/kv_conversion/native_schema.hpp`
+- [x] `include/uos/kv_conversion/native_schema.hpp`
 - [ ] `include/uos/kv_conversion/profile_json.hpp`
 - [ ] `include/uos/kv_conversion/proof.hpp`
 - [ ] `include/uos/kv_conversion/typed_value.hpp`
@@ -1897,6 +1897,12 @@ Reviewed file hashing, subprocess startup and facade method ownership.
 
 - L12, 13, 27, 30, 31, 32, 33, 36, 40, 41 **SAFE** · The codec methods copy shared State into their Tasks before returning. Conversion owns the codec through close or abort, and path arguments enter opening Tasks by value.
 
+### `include/uos/kv_conversion/native_schema.hpp`
+
+Reviewed synchronous SQLite interfaces, returned iterators and adapter lifetimes.
+
+- L28, 42, 51, 58, 64, 65, 66, 71, 76, 80, 94, 105 **SAFE** · Readers, prepared statements and iterators retain their underlying database or statement. Schema validation consumes its codec view synchronously.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2145,4 +2151,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-229/286 files reviewed. 404 sites: 382 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+230/286 files reviewed. 405 sites: 383 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

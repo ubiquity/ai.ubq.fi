@@ -9007,8 +9007,33 @@
       ]
     },
     "include/uos/kv_conversion/native_schema.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed synchronous SQLite interfaces, returned iterators and adapter lifetimes.",
+      "sites": [
+        {
+          "lines": [
+            28,
+            42,
+            51,
+            58,
+            64,
+            65,
+            66,
+            71,
+            76,
+            80,
+            94,
+            105
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Readers, prepared statements and iterators retain their underlying database or statement. Schema validation consumes its codec view synchronously."
+        }
+      ]
     },
     "include/uos/kv_conversion/profile_json.hpp": {
       "reviewed": false,
