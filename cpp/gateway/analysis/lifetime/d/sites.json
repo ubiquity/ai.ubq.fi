@@ -1024,8 +1024,28 @@
       ]
     },
     "src/admin/sentinel_incident.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed incident ID validation and the paged incident response.",
+      "sites": [
+        {
+          "lines": [
+            121,
+            137,
+            138,
+            145,
+            146,
+            156,
+            158
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Query strings and the URL are frame-local, the query callbacks are inline algorithms, and the handler keeps both the KV owner and its injected reader closure through the directly awaited list."
+        }
+      ]
     },
     "src/agent_messages.cpp": {
       "reviewed": false,

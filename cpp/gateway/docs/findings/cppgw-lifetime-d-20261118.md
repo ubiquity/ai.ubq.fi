@@ -35,7 +35,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/admin/error_log.cpp`
 - [x] `src/admin/index.cpp`
 - [x] `src/admin/kernel.cpp`
-- [ ] `src/admin/sentinel_incident.cpp`
+- [x] `src/admin/sentinel_incident.cpp`
 - [ ] `src/agent_messages.cpp`
 - [ ] `src/analytics.cpp`
 - [ ] `src/api_key_policy.cpp`
@@ -429,6 +429,12 @@ Rechecked the previously reported queue-list defect and both usage fan-outs agai
 - L379, 380, 384, 386, 389, 390, 397, 398, 399, 403, 406, 407, 408 **SAFE** · Diagnostics use by-value account and signal state, stable local body and request owners, and runtime combined signals whose dependents are weak.
 - L413, 414, 415, 416, 418, 421, 422, 426, 427, 430, 431, 432, 433, 435, 438, 439, 443, 444, 445 **SAFE** · Each row or identity Promise is built from owned copies before the join. The lookups capture by reference only during synchronous none_of calls, and PATCH views refer to the immutable local JSON.
 
+### `src/admin/sentinel_incident.cpp`
+
+Reviewed incident ID validation and the paged incident response.
+
+- L121, 137, 138, 145, 146, 156, 158 **SAFE** · Query strings and the URL are frame-local, the query callbacks are inline algorithms, and the handler keeps both the KV owner and its injected reader closure through the directly awaited list.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -437,4 +443,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-12/286 files reviewed. 56 sites: 51 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+13/286 files reviewed. 57 sites: 52 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
