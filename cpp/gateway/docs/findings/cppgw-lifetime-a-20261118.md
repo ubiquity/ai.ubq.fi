@@ -32,7 +32,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 
 ## Checklist (30 files)
 
-- [ ] `src/rt/abort.cpp`
+- [x] `src/rt/abort.cpp`
 - [ ] `include/uos/rt/abort.hpp`
 - [ ] `src/rt/clock.cpp`
 - [ ] `include/uos/rt/clock.hpp`
@@ -70,8 +70,42 @@ Pending dependency/tool checks and finder runs.
 
 ## Site verdicts
 
-Pending source review.
+### `src/rt/abort.cpp`
+
+Abort dispatch is synchronous, so callback reentrancy and ownership during dispatch are the relevant suspension-equivalent boundaries.
+
+- **SAFE** `30, 31, 34, 42, 46, 49, 51, 93, 94, 195, 205, 211, 220` (c/d), Dependent signal registration and pinning. The source temporarily owns interested dependents, the reverse links are weak, and abort moves pins and promoted dependents outside the registry before dispatch.
+- **SAFE** `55, 63, 64, 66, 67, 69, 74, 131, 139, 143, 147` (c/d), Listener snapshots and removal traversal. Dispatch owns a snapshot of unique entries plus the executing callback, and live-vector removal exits its traversal immediately.
+- **DEFECT (A-ABORT-OWNER)** `62, 69, 74, 81, 95, 228` (c/d), Abort dispatch borrows the controller's state slot. A synchronous listener may release or replace the controller that owns the shared pointer still used by the dispatch epilogue.
+- **SAFE** `154, 156, 158, 163, 166, 171, 178` (c), onabort setter and getter in current dispatch paths. The handler slot and listener entry own callback copies and dispatch pins the active callable while assignment or removal changes the slot.
+- **SAFE** `187, 189, 190, 191` (c), AbortSignal timeout callback. The unreferenced timer owns the signal by value, the signal has no timer backedge, and firing or loop teardown releases the callback.
+- **SAFE** `231, 232, 234, 237, 239, 240, 241` (c), Native cancellation bridge. The completion handler owns the cancellation slot and signal while the listener uses a weak signal link, and completion removes any surviving registration.
+- **SAFE** `247, 250, 252, 253, 257, 258, 259, 263, 264` (c), Abortable sleep timer and listener. The timer and listener intentionally retain each other while armed, and abort, timeout, or loop teardown clears an owning callback before releasing the active invocation.
 
 ## Ranked defects and counts
 
-Pending source review.
+Reviewed **1/30 files** and **7 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+
+| Hazard class | DEFECT | SAFE | UNCLEAR |
+| --- | ---: | ---: | ---: |
+| a. Capturing coroutine closure | 0 | 0 | 0 |
+| b. Borrowed coroutine parameter or receiver | 0 | 0 | 0 |
+| c. Callback ownership or cycle | 1 | 6 | 0 |
+| d. Container invalidation | 1 | 2 | 0 |
+| e. GCC 12 await-expression rule | 0 | 0 | 0 |
+| **Unique site groups** | 1 | 6 | 0 |
+
+### 1. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
+
+`src/rt/abort.cpp:62, 69, 74, 81, 95, 228`
+
+- AbortController::abort passes a reference to its own shared pointer and begins notifying listeners.
+- A listener drops the controller or replaces its signal. Dispatch then accesses the ended state or cleans up the replacement's listeners through that borrowed slot.
+
+```diff
+--- a/cpp/gateway/src/rt/abort.cpp
++++ b/cpp/gateway/src/rt/abort.cpp
+@@ -81,1 +81,1 @@
+-    void signalAbort(const std::shared_ptr<State>& signal, Reason reason) {
++    void signalAbort(std::shared_ptr<State> signal, Reason reason) {
+```

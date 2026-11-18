@@ -4,8 +4,150 @@
   "source_tree": "6abb54014cf79ba7c64b24be4d28dde250c40ccf",
   "files": {
     "src/rt/abort.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Abort dispatch is synchronous, so callback reentrancy and ownership during dispatch are the relevant suspension-equivalent boundaries.",
+      "sites": [
+        {
+          "lines": [
+            30,
+            31,
+            34,
+            42,
+            46,
+            49,
+            51,
+            93,
+            94,
+            195,
+            205,
+            211,
+            220
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Dependent signal registration and pinning",
+          "reason": "The source temporarily owns interested dependents, the reverse links are weak, and abort moves pins and promoted dependents outside the registry before dispatch."
+        },
+        {
+          "lines": [
+            55,
+            63,
+            64,
+            66,
+            67,
+            69,
+            74,
+            131,
+            139,
+            143,
+            147
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Listener snapshots and removal traversal",
+          "reason": "Dispatch owns a snapshot of unique entries plus the executing callback, and live-vector removal exits its traversal immediately."
+        },
+        {
+          "lines": [
+            62,
+            69,
+            74,
+            81,
+            95,
+            228
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "DEFECT",
+          "label": "Abort dispatch borrows the controller's state slot",
+          "reason": "A synchronous listener may release or replace the controller that owns the shared pointer still used by the dispatch epilogue.",
+          "defect": {
+            "id": "A-ABORT-OWNER",
+            "priority": 30,
+            "severity": "memory safety in the public runtime API",
+            "interleaving": [
+              "AbortController::abort passes a reference to its own shared pointer and begins notifying listeners.",
+              "A listener drops the controller or replaces its signal. Dispatch then accesses the ended state or cleans up the replacement's listeners through that borrowed slot."
+            ],
+            "diff": "--- a/cpp/gateway/src/rt/abort.cpp\n+++ b/cpp/gateway/src/rt/abort.cpp\n@@ -81,1 +81,1 @@\n-    void signalAbort(const std::shared_ptr<State>& signal, Reason reason) {\n+    void signalAbort(std::shared_ptr<State> signal, Reason reason) {"
+          }
+        },
+        {
+          "lines": [
+            154,
+            156,
+            158,
+            163,
+            166,
+            171,
+            178
+          ],
+          "classes": [
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "onabort setter and getter in current dispatch paths",
+          "reason": "The handler slot and listener entry own callback copies and dispatch pins the active callable while assignment or removal changes the slot."
+        },
+        {
+          "lines": [
+            187,
+            189,
+            190,
+            191
+          ],
+          "classes": [
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "AbortSignal timeout callback",
+          "reason": "The unreferenced timer owns the signal by value, the signal has no timer backedge, and firing or loop teardown releases the callback."
+        },
+        {
+          "lines": [
+            231,
+            232,
+            234,
+            237,
+            239,
+            240,
+            241
+          ],
+          "classes": [
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Native cancellation bridge",
+          "reason": "The completion handler owns the cancellation slot and signal while the listener uses a weak signal link, and completion removes any surviving registration."
+        },
+        {
+          "lines": [
+            247,
+            250,
+            252,
+            253,
+            257,
+            258,
+            259,
+            263,
+            264
+          ],
+          "classes": [
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Abortable sleep timer and listener",
+          "reason": "The timer and listener intentionally retain each other while armed, and abort, timeout, or loop teardown clears an owning callback before releasing the active invocation."
+        }
+      ]
     },
     "include/uos/rt/abort.hpp": {
       "status": "pending",
