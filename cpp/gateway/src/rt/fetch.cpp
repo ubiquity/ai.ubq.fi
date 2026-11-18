@@ -200,6 +200,9 @@ namespace uos::rt {
 
   Task<Response> MockTransport::send(Request request) {
     requests_.push_back(request);
-    return handler_(std::move(request));
+    auto handler = handler_;
+    auto input = std::make_shared<Request>(std::move(request));
+    auto task = (*handler)(std::move(*input));
+    return detail::keepAlive<Response>(std::pair{std::move(handler), std::move(input)}, std::move(task));
   }
 }

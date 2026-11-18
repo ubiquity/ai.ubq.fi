@@ -56,7 +56,7 @@ completes, or record the precise pending work and last passing tree.
 | A-FETCH-ABORT-TRANSPORT (`src/rt/fetch.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-FETCH-REENTRANT-FUNCTION (`src/rt/fetch.cpp`) | FIXED. Argument evaluation permitted callback invocation before the callable owner was copied. Snapshot the owner before invocation. | This commit | `rt/fetch_test`, a synchronous callback replaces the global function and reads its capture. The baseline depends on argument evaluation order. |
 | A-FETCH-CALLBACK-INPUT (`src/rt/fetch.cpp`) | FIXED. The old wrapper pinned only the function. The returned Task also retains the original request arguments through completion. | This commit | `rt/fetch_test`, same borrowed-input regression as the header site. |
-| A-MOCK-HANDLER-OWNER (`src/rt/fetch.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
+| A-MOCK-HANDLER-OWNER (`src/rt/fetch.cpp`) | FIXED. `send` recorded a request handle but returned the handler's bare Task. Neither its closure nor the actual argument slot had to survive. Preserve both in the returned Task. | This commit | `rt/fetch_test`, destroys the mock before awaiting a capturing, reference-taking handler. |
 | A-FETCH-UPLOAD-STRANDED (`src/rt/fetch_transport.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-FETCH-RESPONSE-STRANDED (`src/rt/fetch_transport.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-FETCH-NET-GCC-AWAIT (`src/rt/fetch_transport_net.cpp`) | LEFT. Current-tree re-verification pending. | — | — |

@@ -91,6 +91,20 @@ ASYNC_TEST("a global Fetch can replace itself during its eager invocation") {
   EXPECT_EQ(replacementText, "replacement");
 }
 
+ASYNC_TEST("a MockTransport Task keeps its handler and borrowed request after the mock is destroyed") {
+  auto mock = std::make_unique<MockTransport>([prefix = std::string(128, 'x')](const Request& request) -> Task<Response> {
+    co_await microtask();
+    co_return Response(BodyInit(prefix + request.url()));
+  });
+  auto task = mock->send(Request("http://example.test/"));
+  EXPECT_EQ(mock->requests().size(), 1u);
+  mock.reset();
+
+  auto response = co_await std::move(task);
+  const auto text = co_await response.text();
+  EXPECT_EQ(text, std::string(128, 'x') + "http://example.test/");
+}
+
 ASYNC_TEST("a replaced globalThis.fetch receives input and init unchanged") {
   auto seen = std::make_shared<std::vector<std::string>>();
   const Fetch mock([seen](RequestInfo input, RequestInit init) -> Task<Response> {

@@ -101,14 +101,14 @@ namespace uos::rt {
   // A transport for tests: records every request and answers through a handler.
   class MockTransport : public FetchTransport {
   public:
-    using Handler = std::function<Task<Response>(Request request)>;
-    explicit MockTransport(Handler handler) : handler_(std::move(handler)) {}
+    using Handler = std::function<Task<Response>(Request&& request)>;
+    explicit MockTransport(Handler handler) : handler_(std::make_shared<const Handler>(std::move(handler))) {}
     Task<Response> send(Request request) override;
     // The requests sent so far, in order.
     const std::vector<Request>& requests() const { return requests_; }
 
   private:
-    Handler handler_;
+    std::shared_ptr<const Handler> handler_;
     std::vector<Request> requests_;
   };
 }
