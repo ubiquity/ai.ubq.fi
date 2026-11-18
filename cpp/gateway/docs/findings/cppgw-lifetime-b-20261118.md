@@ -40,7 +40,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/runtime/permissions_linux.cpp`
 - [x] `src/runtime/websocket.cpp`
 - [x] `include/uos/rt/fs.hpp`
-- [ ] `include/uos/rt/kv.hpp`
+- [x] `include/uos/rt/kv.hpp`
 - [ ] `include/uos/rt/kv_js.hpp`
 - [ ] `include/uos/rt/kv_sqlite.hpp`
 - [ ] `include/uos/rt/process.hpp`
@@ -262,6 +262,16 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | --- | --- | --- | --- |
 | 103,204-244,262-284 | Filesystem views, FileHandle and path pack | **SAFE** | The fs/promises names wrap synchronous cores. FileHandle owns its descriptor and borrows the read buffer only for one syscall. The template view arrays are consumed by synchronous path helpers. |
 
+### `include/uos/rt/kv.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 77-80,94-99,193-199,335-336,380-419 | KV value and key views | **SAFE** | Input views are copied into owned variants; reference and find accessors borrow the containing value. The codecs and traced users consume them synchronously or copy before suspension. |
+| 659-661,680-702,805-817,824-837 | Atomic builder and forwarding receiver contract | **SAFE** | Application commits retain the named builder and parent KV owner while awaiting. The production commit functions are synchronous forwarding closures that pass an owned store into free coroutine frames. |
+| 707-723 | KV iterator ownership contract | **SAFE** | Call sites retain a unique iterator across next or return. kvListToArray borrows the caller-owned iterator and its named call sites await it through completion. |
+| 730-771 | Typed KV lookup coroutines | **SAFE** | Keys and options are copied into the frame. Current typed callers retain their store through the initial virtual call and await; result conversions read only the frame-local entry or vector. |
+| 847,860-882,899-917 | Memory KV clock and database owners | **SAFE** | The database owns the copied clock and version callbacks or their static defaults. The handle owns its database and the database tracks native handles weakly. |
+
 
 ## Ranked defects and counts
 
@@ -427,4 +437,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-17/97 files reviewed. **DEFECT 7, SAFE 45, UNCLEAR 2.**
+18/97 files reviewed. **DEFECT 7, SAFE 50, UNCLEAR 2.**
