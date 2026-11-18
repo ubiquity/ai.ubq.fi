@@ -745,8 +745,16 @@
       "sites": []
     },
     "include/uos/harmony/reliability/harness.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The harness retains its options and event observer.",
+      "sites": [
+        {
+          "lines": "100-101,123",
+          "kind": "callback and task interface",
+          "verdict": "SAFE",
+          "reason": "The harness frame owns options; the observer sees each event during a synchronous call with its source value live."
+        }
+      ]
     },
     "include/uos/harmony/reliability/hash.hpp": {
       "status": "pending",

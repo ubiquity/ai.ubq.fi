@@ -103,7 +103,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/reliability/context.hpp`
 - [x] `include/uos/harmony/reliability/failure.hpp`
 - [x] `include/uos/harmony/reliability/feedback.hpp`
-- [ ] `include/uos/harmony/reliability/harness.hpp`
+- [x] `include/uos/harmony/reliability/harness.hpp`
 - [ ] `include/uos/harmony/reliability/hash.hpp`
 - [ ] `include/uos/harmony/reliability/loops.hpp`
 - [ ] `include/uos/harmony/reliability/retry.hpp`
@@ -703,3 +703,9 @@ Synchronous failure mapping and record declarations.
 ### `include/uos/harmony/reliability/feedback.hpp`
 
 Synchronous feedback formatting declarations.
+
+### `include/uos/harmony/reliability/harness.hpp`
+
+The harness retains its options and event observer.
+
+- 100-101,123 · callback and task interface · **SAFE** · The harness frame owns options; the observer sees each event during a synchronous call with its source value live.
