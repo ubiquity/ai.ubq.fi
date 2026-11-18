@@ -135,7 +135,7 @@ def read_terminals(gateway, result):
     identifiers = result["headers"].get("x-uos-request-id", [])
     rows = gateway.terminals.get(identifiers[0], []) if len(identifiers) == 1 else []
     fields = ("status", "delivery_outcome", "stream_terminal_type", "input_tokens", "output_tokens",
-              "total_tokens", "provider", "api_key_usage_recorded", "paid_fallback_usage_recorded")
+              "total_tokens", "provider", "provider_request_id", "api_key_usage_recorded", "paid_fallback_usage_recorded")
     result["telemetry"] = [{name: row[name] for name in fields if name in row} for row in rows]
 
 
@@ -165,7 +165,8 @@ def run(args):
     network = verify_network(benchmark, args.parent_netns)
     identities = benchmark["identities_for"](args)
     credentials = {"primary": API_TOKEN, "admin": ADMIN_TOKEN, "other": "u_" + "c" * 64,
-                   "quota": "u_" + "d" * 64, "unknown": "u_" + "e" * 64, "reader": "uos-conformance-model-reader"}
+                   "quota": "u_" + "d" * 64, "unknown": "u_" + "e" * 64, "fanout": "u_" + "f" * 64,
+                   "reader": "uos-conformance-model-reader"}
     auth = synthetic_auth()
     codex_auth = base64.b64encode(json.dumps(auth, separators=(",", ":")).encode()).decode()
     provider_env = {"DENO_TIMELINE": "production", "DENO_DEPLOY_TOKEN": ADMIN_TOKEN, "UOS_AI_TOKEN": credentials["reader"],

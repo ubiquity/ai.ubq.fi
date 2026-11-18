@@ -15,6 +15,7 @@ from upstream import CATALOG_MODEL
 TOOL = {"id": "call_fixture", "type": "function", "function": {"name": "lookup", "arguments": '{"city":"Oslo"}'}}
 CODEX_MODEL = CATALOG_MODEL["slug"]
 CODEX_USAGE = {"input_tokens": 11, "output_tokens": 5, "total_tokens": 16}
+FIXTURE_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg=="
 
 
 def codex_events(mode):
@@ -23,7 +24,11 @@ def codex_events(mode):
     response = {"id": "resp_fixture", "object": "response", "created_at": 1780000001, "model": CODEX_MODEL,
                 "status": "completed", "output": [item], "usage": CODEX_USAGE}
     events = [{"type": "response.created", "response": {**response, "status": "in_progress", "output": [], "usage": None}}]
-    if mode == "codex-tool":
+    if mode == "codex-image":
+        image = {"id": "ig_fixture", "type": "image_generation_call"}
+        item = {**image, "status": "completed", "result": FIXTURE_PNG, "output_format": "png"}
+        events.append({"type": "response.output_item.added", "output_index": 0, "item": {**image, "status": "in_progress"}})
+    elif mode == "codex-tool":
         item = {"id": "fc_fixture", "call_id": TOOL["id"], "type": "function_call", "name": TOOL["function"]["name"],
                 "arguments": TOOL["function"]["arguments"], "status": "completed"}
         events.extend([
@@ -108,6 +113,11 @@ class Handler(BenchmarkHandler):
             self.respond(503, encode({"error": {"code": "server_error", "message": "Synthetic upstream unavailable."}}))
         elif mode == "rate-limit":
             self.respond(429, encode({"error": {"code": "rate_limit_exceeded", "message": "Synthetic upstream rate limit."}}))
+        elif mode == "redirect":
+            self.send_response(302)
+            self.send_header("Location", "/codex/models")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
         elif mode == "broken":
             self.stream_frames([SSE_TEXT[0], sse({"error": {"code": "server_error", "message": "Synthetic mid-stream fault."}})], gate_after=1)
         elif mode == "tool":
