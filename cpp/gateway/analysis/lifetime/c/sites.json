@@ -2824,7 +2824,8 @@
       "sites": []
     },
     "src/harmony/render.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Rendering runs synchronously over input turns and static option literals.",
       "sites": []
     },
     "src/harmony/tools/backend.cpp": {

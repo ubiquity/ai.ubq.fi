@@ -256,7 +256,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/reliability/state.cpp`
 - [x] `src/harmony/reliability/surfaces.cpp`
 - [x] `src/harmony/reliability/verify.cpp`
-- [ ] `src/harmony/render.cpp`
+- [x] `src/harmony/render.cpp`
 - [ ] `src/harmony/tools/backend.cpp`
 - [ ] `src/harmony/tools/fakes.cpp`
 - [ ] `src/harmony/tools/result.cpp`
@@ -1624,3 +1624,7 @@ Provider surface assertions and request descriptions are synchronous. The return
 ### `src/harmony/reliability/verify.cpp`
 
 Verification and final-answer checks evaluate synchronous snapshots. No callback or container reference crosses a wait.
+
+### `src/harmony/render.cpp`
+
+Rendering runs synchronously over input turns and static option literals.
