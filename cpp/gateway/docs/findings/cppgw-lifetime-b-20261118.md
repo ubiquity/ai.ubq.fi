@@ -102,7 +102,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/scope_experiment_targets.cpp`
 - [x] `src/cache/scope_targets.cpp`
 - [x] `src/cache/telemetry_gate.cpp`
-- [ ] `include/uos/kernel/attestation.hpp`
+- [x] `include/uos/kernel/attestation.hpp`
 - [ ] `include/uos/kernel/policy_queue.hpp`
 - [ ] `include/uos/kernel/quota_reservations.hpp`
 - [ ] `include/uos/kernel/quota_reserve.hpp`
@@ -706,6 +706,10 @@ This facade does not define a coroutine or register callbacks. Its exported impl
 | 267-298,300-354 | Resolve keys and record telemetry | **SAFE** | All async inputs and hash results are owned. Temporary key construction and mutation occur before awaiting a named atomic operation. |
 | 356-467 | Baseline read fan-out and aggregation | **SAFE** | Each named route child receives copied strings and a shared KV independently of early rejection. Aggregation walks a completed immutable vector after the wait. |
 
+### `include/uos/kernel/attestation.hpp`
+
+Verification/context take value-owned Request and options or token; the refresh entry takes no borrowed arguments. Implementation covers cache and cryptographic state.
+
 
 ## Ranked defects and counts
 
@@ -911,4 +915,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-79/97 files reviewed. **DEFECT 9, SAFE 190, UNCLEAR 3.**
+80/97 files reviewed. **DEFECT 9, SAFE 190, UNCLEAR 3.**

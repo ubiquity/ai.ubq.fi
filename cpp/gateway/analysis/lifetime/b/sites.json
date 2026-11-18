@@ -2469,8 +2469,9 @@
       ]
     },
     "include/uos/kernel/attestation.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "Verification/context take value-owned Request and options or token; the refresh entry takes no borrowed arguments. Implementation covers cache and cryptographic state."
     },
     "include/uos/kernel/policy_queue.hpp": {
       "reviewed": false,
