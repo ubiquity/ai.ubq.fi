@@ -85,3 +85,20 @@ within the output limit.
 | Scalars use `to_chars`, and numeric substitutions parse complete text with `from_chars` | `%d` with `"0x10"` gives `nan`, and `%d` with `1e21` gives `1e+21`                                                   | Negative zero, infinity, exponent spelling, and numeric text follow the standard functions. Arrays and objects use JSON instead of JavaScript coercion for `%s`.              |
 | Boost.JSON writes fractional values in standard exponent notation                       | `%j` with `1.5` gives `1.5E0`                                                                                        | JSON consumers read the same number.                                                                                                                                          |
 | Projection and output are bounded                                                       | A nested value beyond depth 16 or an array beyond its first 100 elements uses `"[truncated]"`                        | The projection also charges text and nodes against 32 KiB, and the complete formatted line is capped at 256 KiB. Malformed structured UTF-8 is replaced before serialization. |
+
+## Literal console arguments and shared JSON serialization
+
+The gateway joins arguments with spaces and appends a newline at the
+sink. All text is literal, including percent sequences and pre-serialized
+event payloads. Structured fields and error diagnostics use the gateway's
+compact JSON serializer. Nonfinite numbers become `null`, signed zero
+becomes `0`, and lone UTF-16 surrogates in structured strings and keys
+are escaped. The serializer replaces malformed UTF-8 and orders numeric
+object keys using its usual JSON ordering.
+
+Error diagnostics contain the name, message, known code and cause chain.
+OS errors carry the existing path, destination, descriptor, syscall and
+errno fields when present. Structured projection remains bounded to
+depth 16, 100 array elements and a 32 KiB budget for text and nodes, with
+the 256 KiB cap on the combined text. Captures retain independent text
+arguments and the original event prefix and payload.
