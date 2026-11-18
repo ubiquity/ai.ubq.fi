@@ -381,7 +381,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/sentinel/replay_limits.hpp`
 - [x] `include/uos/sentinel/replay_model.hpp`
 - [x] `include/uos/sentinel/replay_observation.hpp`
-- [ ] `include/uos/sentinel/replay_read.hpp`
+- [x] `include/uos/sentinel/replay_read.hpp`
 - [ ] `include/uos/sentinel/replay_retention.hpp`
 - [ ] `include/uos/sentinel/replay_retention_bootstrap.hpp`
 - [ ] `include/uos/sentinel/replay_retention_metadata.hpp`
@@ -2169,6 +2169,12 @@ Reviewed persistence dependencies, request capture APIs and the response inspect
 - L52, 54, 56, 57, 58, 67, 74, 77, 87, 91, 95 **SAFE** · Capture records carry shared candidate and body owners, while the body observer holds the candidate weakly. Persistence takes its own key and dependency data, and the option functions are synchronous.
 - L99, 102, 107, 108, 111, 113 **SAFE** · The buffered inspection Task owns its Response. SSE inspector callbacks retain shared parsing state and consume byte spans during synchronous calls.
 
+### `include/uos/sentinel/replay_read.hpp`
+
+Reviewed live replay listings and offline decryption declarations.
+
+- L42, 61, 72, 73, 84, 85, 89, 93 **SAFE** · Admin and replay caller frames keep the borrowed store while awaiting reads. Listings own their cursor and key values, and decryption takes its export and key bytes by value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2418,4 +2424,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-273/286 files reviewed. 461 sites: 436 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+274/286 files reviewed. 462 sites: 437 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
