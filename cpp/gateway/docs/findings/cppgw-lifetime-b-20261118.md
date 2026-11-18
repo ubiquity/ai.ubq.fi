@@ -113,7 +113,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/kernel/policy_queue.cpp`
 - [x] `src/kernel/quota_reservations.cpp`
 - [x] `src/kernel/quota_reserve.cpp`
-- [ ] `src/kernel/quota_v2.cpp`
+- [x] `src/kernel/quota_v2.cpp`
 - [ ] `src/kernel/quota_write.cpp`
 - [ ] `src/kernel/usage.cpp`
 - [ ] `include/uos/worker/entrypoint.hpp`
@@ -781,6 +781,14 @@ Usage read methods own identities and options, with a shared store or a resolved
 | 211-225,241-260 | Reservation attempts and capturing lock operation | **SAFE** | The lock frame owns the by-value closure through the direct await. Each attempt owns its options and moved target, and the retry alias is consumed synchronously. |
 | 270-314 | Public org and effective reservation entries | **SAFE** | Each coroutine retains the selected KV owner and copies or moves all strings and options into independently owned tasks. |
 
+### `src/kernel/quota_v2.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 56-77,170-183 | Snapshot and default policy fan-outs | **SAFE** | Child reads own their KV handles and keys across early rejection. Each aggregate tuple is a named local before any reference binding or move. |
+| 99-135 | Read projected policy rows | **SAFE** | The scan frame owns its iterator and moves each row into an owning child. Each key projection is copied into strings and sort runs synchronously on the completed vector. |
+| 213-247 | Public snapshot and list projections | **SAFE** | Child scope or identity arguments are owning values and all variant/vector projections are into local results after the last wait. |
+
 
 ## Ranked defects and counts
 
@@ -1052,4 +1060,4 @@ removes the registrations on frame destruction as well as on normal return.
 +  const auto bindingHash = co_await std::move(bindingHashing);
 ```
 
-90/97 files reviewed. **DEFECT 10, SAFE 213, UNCLEAR 4.**
+91/97 files reviewed. **DEFECT 10, SAFE 216, UNCLEAR 4.**

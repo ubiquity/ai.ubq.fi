@@ -2783,8 +2783,41 @@
       ]
     },
     "src/kernel/quota_v2.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "56-77,170-183",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Snapshot and default policy fan-outs",
+          "evidence": "Child reads own their KV handles and keys across early rejection. Each aggregate tuple is a named local before any reference binding or move."
+        },
+        {
+          "lines": "99-135",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Read projected policy rows",
+          "evidence": "The scan frame owns its iterator and moves each row into an owning child. Each key projection is copied into strings and sort runs synchronously on the completed vector."
+        },
+        {
+          "lines": "213-247",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Public snapshot and list projections",
+          "evidence": "Child scope or identity arguments are owning values and all variant/vector projections are into local results after the last wait."
+        }
+      ]
     },
     "src/kernel/quota_write.cpp": {
       "reviewed": false,
