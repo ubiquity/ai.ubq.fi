@@ -141,7 +141,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/capacity.hpp`
 - [x] `include/uos/provider/capacity_analytics.hpp`
 - [x] `include/uos/provider/capacity_contract.hpp`
-- [ ] `include/uos/provider/capacity_events.hpp`
+- [x] `include/uos/provider/capacity_events.hpp`
 - [ ] `include/uos/provider/capacity_history.hpp`
 - [ ] `include/uos/provider/capacity_parse.hpp`
 - [ ] `include/uos/provider/capacity_rollups.hpp`
@@ -905,3 +905,10 @@ One remote observation writer and one snapshot reader.
 Capacity observation and configuration types.
 
 - 291-300 · callback interface · **SAFE** · The snapshot options own their fetch, clock and lease owner callable objects; invocation lifetimes are traced in capacity.cpp.
+
+### `include/uos/provider/capacity_events.hpp`
+
+Event tasks and sample-trigger callback declarations.
+
+- 76-115 · owning task parameters · **SAFE** · Event records/options and any overridden store are owned across the reads/writes.
+- 120-124 · synchronous trigger · **SAFE** · The installed trigger consumes options on the call and dispatches a task constructed with its own values.

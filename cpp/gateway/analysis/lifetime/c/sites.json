@@ -1110,8 +1110,22 @@
       ]
     },
     "include/uos/provider/capacity_events.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Event tasks and sample-trigger callback declarations.",
+      "sites": [
+        {
+          "lines": "76-115",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Event records/options and any overridden store are owned across the reads/writes."
+        },
+        {
+          "lines": "120-124",
+          "kind": "synchronous trigger",
+          "verdict": "SAFE",
+          "reason": "The installed trigger consumes options on the call and dispatches a task constructed with its own values."
+        }
+      ]
     },
     "include/uos/provider/capacity_history.hpp": {
       "status": "pending",
