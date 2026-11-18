@@ -91,7 +91,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/kv_migration_base.cpp`
 - [x] `src/cache/kv_migration_paid_fallback.cpp`
 - [x] `src/cache/kv_migration_projection.cpp`
-- [ ] `src/cache/kv_migration_usage.cpp`
+- [x] `src/cache/kv_migration_usage.cpp`
 - [ ] `src/cache/kv_migration_validation.cpp`
 - [ ] `src/cache/prompt_analytics.cpp`
 - [ ] `src/cache/prompt_analytics_core.cpp`
@@ -598,6 +598,22 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 | 716-729 | Collect dedicated ledger references | **SAFE** | inspectPending retains errors and awaits this scan before starting the next; the iterator and result set are local. |
 | 732-760,776-793 | Collect pending legacy candidates and validate ledger | **SAFE** | Parent owns references, pairs and errors through sequential waits. A value reference spans a lookup only into the still-owned current entry, then is copied into the result vector. |
 
+### `src/cache/kv_migration_usage.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 111-149 | Seed bounded counter baseline | **SAFE** | The awaiting handoff frame owns policy, keys, entries and existing window. The named atomic builder copies each row/check before commit. |
+| 152-180 | Update bounded counter baseline | **SAFE** | The same handoff frame owns all references through the direct await. Result generation uses scalars and the atomic owner stays live. |
+| 189-231,799-802 | Counter handoff wrapper and parallel reads | **SAFE** | The ordinary wrapper copies policy before constructing the free task. Reads own their keys and stores if all rejects; the frame builds and awaits each borrowed writer sequentially. |
+| 280-291 | Kernel migration default reads | **SAFE** | Each read owns its key and store through the aggregate and any early rejection. The result vector is frame-local. |
+| 297-303,382-413 | Legacy kernel delete and migrated write | **SAFE** | The direct parent retains borrowed records, identity and named context through both waits. Child operations own checks and rows. |
+| 416-457,814-821 | Legacy kernel entry and scope scans | **SAFE** | The scope frame retains the iterator, current entry and defaults through its child's direct await. Parallel read children own their arguments; resulting rows and write context are local. |
+| 475-502 | API-key usage V3 window scan | **SAFE** | inspectApiKeyUsageV3 owns knownKeyIds and errors across the direct await. Each row and field alias remains local to one iteration. |
+| 521-555 | API-key usage V3 request scan | **SAFE** | The parent retains known ids and errors. Map lookups are dereferenced or overwritten synchronously between next calls. |
+| 591-625,654-688,843-875 | Parallel kernel quota audit scans | **SAFE** | Each scan owns KV, prefix, scope, iterator and shared scan state. Mutable map pointers are used between awaits and the parent iterates shared state only after all fulfilled. |
+| 691-708,716-747,877-885 | Strict API key hash and record inventory | **SAFE** | The parent owns errors and the completed hash index during the sequential awaited scans. Row references are resolved and copied before the next await. |
+| 804-812,823-841 | Count baselines and combine usage audits | **SAFE** | The count owns its iterator. Usage inventory owns the set and errors during its sequential scans; only copied scan results are traversed afterward. |
+
 
 ## Ranked defects and counts
 
@@ -803,4 +819,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-68/97 files reviewed. **DEFECT 8, SAFE 137, UNCLEAR 3.**
+69/97 files reviewed. **DEFECT 8, SAFE 148, UNCLEAR 3.**

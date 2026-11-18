@@ -1848,8 +1848,122 @@
       ]
     },
     "src/cache/kv_migration_usage.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "111-149",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Seed bounded counter baseline",
+          "evidence": "The awaiting handoff frame owns policy, keys, entries and existing window. The named atomic builder copies each row/check before commit."
+        },
+        {
+          "lines": "152-180",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Update bounded counter baseline",
+          "evidence": "The same handoff frame owns all references through the direct await. Result generation uses scalars and the atomic owner stays live."
+        },
+        {
+          "lines": "189-231,799-802",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Counter handoff wrapper and parallel reads",
+          "evidence": "The ordinary wrapper copies policy before constructing the free task. Reads own their keys and stores if all rejects; the frame builds and awaits each borrowed writer sequentially."
+        },
+        {
+          "lines": "280-291",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b"
+          ],
+          "symbol": "Kernel migration default reads",
+          "evidence": "Each read owns its key and store through the aggregate and any early rejection. The result vector is frame-local."
+        },
+        {
+          "lines": "297-303,382-413",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Legacy kernel delete and migrated write",
+          "evidence": "The direct parent retains borrowed records, identity and named context through both waits. Child operations own checks and rows."
+        },
+        {
+          "lines": "416-457,814-821",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Legacy kernel entry and scope scans",
+          "evidence": "The scope frame retains the iterator, current entry and defaults through its child's direct await. Parallel read children own their arguments; resulting rows and write context are local."
+        },
+        {
+          "lines": "475-502",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "API-key usage V3 window scan",
+          "evidence": "inspectApiKeyUsageV3 owns knownKeyIds and errors across the direct await. Each row and field alias remains local to one iteration."
+        },
+        {
+          "lines": "521-555",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "API-key usage V3 request scan",
+          "evidence": "The parent retains known ids and errors. Map lookups are dereferenced or overwritten synchronously between next calls."
+        },
+        {
+          "lines": "591-625,654-688,843-875",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Parallel kernel quota audit scans",
+          "evidence": "Each scan owns KV, prefix, scope, iterator and shared scan state. Mutable map pointers are used between awaits and the parent iterates shared state only after all fulfilled."
+        },
+        {
+          "lines": "691-708,716-747,877-885",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Strict API key hash and record inventory",
+          "evidence": "The parent owns errors and the completed hash index during the sequential awaited scans. Row references are resolved and copied before the next await."
+        },
+        {
+          "lines": "804-812,823-841",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Count baselines and combine usage audits",
+          "evidence": "The count owns its iterator. Usage inventory owns the set and errors during its sequential scans; only copied scan results are traversed afterward."
+        }
+      ]
     },
     "src/cache/kv_migration_validation.cpp": {
       "reviewed": false,
