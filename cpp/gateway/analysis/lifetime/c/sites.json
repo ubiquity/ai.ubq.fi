@@ -872,8 +872,16 @@
       "sites": []
     },
     "include/uos/live/sideband.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Live sideband handler and upgrade factory API.",
+      "sites": [
+        {
+          "lines": "10-11",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The preparation and handler frames retain request, call ID and principal by value; the upgrade callbacks manage their socket ownership separately."
+        }
+      ]
     },
     "include/uos/live/upstream.hpp": {
       "status": "pending",
