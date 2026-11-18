@@ -4732,8 +4732,31 @@
       ]
     },
     "src/models/codex_models_whitelist.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed whitelist selection, retention and KV writes.",
+      "sites": [
+        {
+          "lines": [
+            134
+          ],
+          "kinds": [
+            "e"
+          ],
+          "verdict": "DEFECT",
+          "detail": "The strong-read options aggregate is constructed in the await full-expression, which the GCC 12.2 porting rule forbids. Bind options and the get Task to named locals before awaiting."
+        },
+        {
+          "lines": [
+            140
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The frame owns KV and serialized input and waits for the storage-owning native put wrapper."
+        }
+      ]
     },
     "src/models/metadata.cpp": {
       "reviewed": false,

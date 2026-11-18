@@ -211,7 +211,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/models/codex_models.cpp`
 - [x] `src/models/codex_models_availability.cpp`
 - [x] `src/models/codex_models_fetch.cpp`
-- [ ] `src/models/codex_models_whitelist.cpp`
+- [x] `src/models/codex_models_whitelist.cpp`
 - [ ] `src/models/metadata.cpp`
 - [ ] `src/models/openrouter_models.cpp`
 - [ ] `src/openai.cpp`
@@ -1102,6 +1102,13 @@ Reviewed single and union account discovery, bounded response handling, snapshot
 - L544, 554, 555, 556, 582, 591, 592, 593, 617 **SAFE** · The KV owner and copied reads outlive their awaits. Promise reactions return copies and the two named rows remain live through the atomic transaction.
 - L712, 715, 730, 743, 756 **SAFE** · The validation frame retains copied auth, response and options, and starts separate named tasks for read and retry.
 
+### `src/models/codex_models_whitelist.cpp`
+
+Reviewed whitelist selection, retention and KV writes.
+
+- L134 **DEFECT** · The strong-read options aggregate is constructed in the await full-expression, which the GCC 12.2 porting rule forbids. Bind options and the get Task to named locals before awaiting.
+- L140 **SAFE** · The frame owns KV and serialized input and waits for the storage-owning native put wrapper.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1350,4 +1357,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-104/286 files reviewed. 218 sites: 202 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+105/286 files reviewed. 220 sites: 203 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
