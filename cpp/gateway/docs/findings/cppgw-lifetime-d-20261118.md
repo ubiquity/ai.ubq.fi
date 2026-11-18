@@ -136,7 +136,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/defaults.cpp`
 - [x] `src/handler/admission.cpp`
 - [x] `src/handler/http.cpp`
-- [ ] `src/handler/index.cpp`
+- [x] `src/handler/index.cpp`
 - [ ] `src/handler/serve_handler.cpp`
 - [ ] `src/handler/terminal_log.cpp`
 - [ ] `src/handler/terminal_route.cpp`
@@ -836,6 +836,13 @@ Reviewed background registrar invocation, idempotency principal, normalization, 
 - L29, 32 **SAFE** · The waitUntil registrar is copied and called synchronously with a Promise value. A registered operation has to own its own inputs through settlement.
 - L65, 83 **SAFE** · The coroutine retains its owning auth variant and the named principal lives through child construction. Hashing takes a string value.
 
+### `src/handler/index.cpp`
+
+Reviewed route tables, admin and auth adapters, inference dispatch and upgrade handoff.
+
+- L43, 54, 66, 73, 177, 211, 235 **SAFE** · Route matching borrows stable immutable static tables and produces an entry pointer into those tables. Normal lambdas start child Tasks with value arguments.
+- L135, 140, 153, 156, 163, 167, 174, 179, 184, 188, 199, 207, 213, 217, 224, 227, 231, 237, 259, 262, 265, 268, 271, 274, 281, 285 **SAFE** · Dispatcher frames own the request, path and contexts through their direct waits. Regex matches are local owned snapshots and the upgrade adapter passes its inputs by value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -941,4 +948,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-70/286 files reviewed. 153 sites: 144 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+71/286 files reviewed. 155 sites: 146 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

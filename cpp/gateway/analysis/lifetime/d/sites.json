@@ -3062,8 +3062,65 @@
       ]
     },
     "src/handler/index.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed route tables, admin and auth adapters, inference dispatch and upgrade handoff.",
+      "sites": [
+        {
+          "lines": [
+            43,
+            54,
+            66,
+            73,
+            177,
+            211,
+            235
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Route matching borrows stable immutable static tables and produces an entry pointer into those tables. Normal lambdas start child Tasks with value arguments."
+        },
+        {
+          "lines": [
+            135,
+            140,
+            153,
+            156,
+            163,
+            167,
+            174,
+            179,
+            184,
+            188,
+            199,
+            207,
+            213,
+            217,
+            224,
+            227,
+            231,
+            237,
+            259,
+            262,
+            265,
+            268,
+            271,
+            274,
+            281,
+            285
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Dispatcher frames own the request, path and contexts through their direct waits. Regex matches are local owned snapshots and the upgrade adapter passes its inputs by value."
+        }
+      ]
     },
     "src/handler/serve_handler.cpp": {
       "reviewed": false,
