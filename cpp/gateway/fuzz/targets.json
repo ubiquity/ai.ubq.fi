@@ -115,6 +115,12 @@
       "entry": "uos::rt::kvJscDeserialize",
       "max_len": 16384
     },
+    "bigint_library": {
+      "harness": "fuzz/bigint_library.cpp",
+      "entry": "uos::rt::BigInt parse / arithmetic / conversions",
+      "extra_sources": [],
+      "max_len": 4096
+    },
     "http_request": {
       "harness": "fuzz/http_request.cpp",
       "included_implementation": "src/runtime/http.cpp",

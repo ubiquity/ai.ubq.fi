@@ -29,6 +29,7 @@ tests/authority_durable_test.cpp: src/authority/contracts.cpp src/authority/auth
     src/authority/admission_state.cpp
 tests/authority_publication_test.cpp: src/authority/credential_publication.cpp src/authority/contracts.cpp src/authority/admission_state.cpp
 tests/authority_settlement_test.cpp: src/authority/contracts.cpp src/authority/delivery_outbox.cpp src/authority/admission_state.cpp
+tests/legacy/bigint_library_test.cpp: (none)
 tests/bounded_response_body_test.cpp: src/bounded_response_body.cpp
 tests/catalog_types_differential_test.cpp: src/catalog/types.cpp
 tests/cerebras_rate_limits_differential_test.cpp: src/provider/cerebras_rate_limits.cpp

@@ -249,3 +249,8 @@ The old SDK comparison limited IDNA to Latin-1. Ada now applies the same Unicode
 - An X.509 Name containing an empty relative distinguished name is rejected. Bun retains the empty set in `30 02 31 00`, while OpenSSL omits it from its name entries. The gateway rejects the original encoding before projecting fields or comparing the issuer and subject.
 - A non-2xx CRL response with an ASN.1 SEQUENCE header must also decode as a complete list. The gateway historically consulted a CRL body regardless of the response status. Appending a byte to a CRL served with an HTTP 404 now fails the check. A plain 404 `missing` response is still considered unavailable.
 - Standard extension payloads must match their OpenSSL DER encoding. For example, a constructed Authority Key Identifier field `a0 03 04 01 61` cannot be used as the cache key `61`. This prevents implicitly tagged BER strings from changing cache or CRL URL selection when OpenSSL flattens them.
+
+## BigInt
+
+- A decimal sign requires digits. Bun 1.4.0 parses `BigInt("+")` and `BigInt("-")` as zero. The gateway reports `SyntaxError` for those inputs so incomplete signed values cannot become numeric zero.
+- A binary, octal or hex prefix requires digits even when whitespace follows it. Bun 1.4.0 parses `BigInt("0x ")` as zero. The gateway reports `SyntaxError` and applies the same digit requirement to `'0x'`, `'0o'` and `'0b'` numeric tokens. Stored values and KV keys carry complete digits.
