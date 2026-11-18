@@ -323,7 +323,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/handler/index.hpp`
 - [x] `include/uos/handler/serve_handler.hpp`
 - [x] `include/uos/handler/terminal_log.hpp`
-- [ ] `include/uos/handler/terminal_route.hpp`
+- [x] `include/uos/handler/terminal_route.hpp`
 - [ ] `include/uos/health.hpp`
 - [ ] `include/uos/http.hpp`
 - [ ] `include/uos/images.hpp`
@@ -1811,6 +1811,12 @@ Reviewed terminal registration, delivery metadata and writer callback interfaces
 
 - L31, 33, 34, 35, 51, 55, 62, 65 **SAFE** · Callbacks, delivery handles and signal transfer by value into the terminal state. The quota finalizer retains it through the terminal await, and the release callback itself runs synchronously.
 
+### `include/uos/handler/terminal_route.hpp`
+
+Reviewed terminal route descriptions, handler inputs and the replay override declaration. The detached lifetime defect is recorded where persistInferenceExceptionReplay invokes the override.
+
+- L25, 26, 28, 36 **SAFE** · The shipped route views refer to static literals. The handler copies the request, path and delivery context into its main Task.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2059,4 +2065,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-215/286 files reviewed. 388 sites: 367 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+216/286 files reviewed. 389 sites: 368 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

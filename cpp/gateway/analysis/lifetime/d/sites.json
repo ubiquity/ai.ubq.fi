@@ -8664,8 +8664,25 @@
       ]
     },
     "include/uos/handler/terminal_route.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed terminal route descriptions, handler inputs and the replay override declaration. The detached lifetime defect is recorded where persistInferenceExceptionReplay invokes the override.",
+      "sites": [
+        {
+          "lines": [
+            25,
+            26,
+            28,
+            36
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The shipped route views refer to static literals. The handler copies the request, path and delivery context into its main Task."
+        }
+      ]
     },
     "include/uos/health.hpp": {
       "reviewed": false,
