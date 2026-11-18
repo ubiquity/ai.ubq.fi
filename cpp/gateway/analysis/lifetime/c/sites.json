@@ -1894,8 +1894,40 @@
       ]
     },
     "src/codex/capacity_routing.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Routing caches contain replaceable values. Each async read or transformation works on a local snapshot and refreshes the shared cache synchronously.",
+      "sites": [
+        {
+          "lines": "39-49,74-112,122-209,214-234",
+          "kind": "hash, KV transaction, and observation read",
+          "verdict": "SAFE",
+          "reason": "The owned pool and JSON snapshots back slot references. The write task or its caller retains AtomicOperation, and the synchronous transform reads a copied row."
+        },
+        {
+          "lines": "238-292,504-546",
+          "kind": "fail-fast identity and observation fan-outs",
+          "verdict": "SAFE",
+          "reason": "Each child receives its account or input by value and the private hash helpers own their text. Tuple extraction follows a named await result."
+        },
+        {
+          "lines": "303-343",
+          "kind": "routing cache normalization",
+          "verdict": "SAFE",
+          "reason": "Normalization receives a value copy and the caller re-reads the module cache after resuming without retaining a cache member pointer."
+        },
+        {
+          "lines": "352-436,479-496",
+          "kind": "joined borrowing transformations",
+          "verdict": "SAFE",
+          "reason": "All borrowed account, observation, model and change flags are in the waiting parent. updateRoutingState owns the callable and awaits each retry before returning."
+        },
+        {
+          "lines": "440-472",
+          "kind": "parallel KV reads",
+          "verdict": "SAFE",
+          "reason": "The legacy reader owns KV, and the concrete guarded production get copies native store, key and options into its task. A failed sibling cannot invalidate those owners."
+        }
+      ]
     },
     "src/codex/dispatch.cpp": {
       "status": "pending",

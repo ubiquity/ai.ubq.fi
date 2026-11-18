@@ -194,7 +194,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/banked_reset_pool.cpp`
 - [x] `src/codex/banked_reset_provider.cpp`
 - [x] `src/codex/banked_reset_submission.cpp`
-- [ ] `src/codex/capacity_routing.cpp`
+- [x] `src/codex/capacity_routing.cpp`
 - [ ] `src/codex/dispatch.cpp`
 - [ ] `src/codex/experiment.cpp`
 - [ ] `src/codex/external_auth.cpp`
@@ -1241,3 +1241,13 @@ Reset submission and verification keep the provider and its inputs alive from ad
 - 85-148,192-255,261-405 · provider method and preflight joins · **SAFE** · The joined tasks own their provider/dependency bundle and KV. Credit, response and record references point into local result snapshots.
 - 412-429,451-485,488-560,568-610 · submit, verify, and receipt awaits · **SAFE** · The provider owner stays in the submitting frame through the result wait. Intermediate observers are synchronous and swallow their own exceptions.
 - 614-622,666-825,828-837 · store selection and claim driver · **SAFE** · Dependency, callback and claimed variant values are owned in the awaited frames. No live cursor or borrow from the shared store is retained.
+
+### `src/codex/capacity_routing.cpp`
+
+Routing caches contain replaceable values. Each async read or transformation works on a local snapshot and refreshes the shared cache synchronously.
+
+- 39-49,74-112,122-209,214-234 · hash, KV transaction, and observation read · **SAFE** · The owned pool and JSON snapshots back slot references. The write task or its caller retains AtomicOperation, and the synchronous transform reads a copied row.
+- 238-292,504-546 · fail-fast identity and observation fan-outs · **SAFE** · Each child receives its account or input by value and the private hash helpers own their text. Tuple extraction follows a named await result.
+- 303-343 · routing cache normalization · **SAFE** · Normalization receives a value copy and the caller re-reads the module cache after resuming without retaining a cache member pointer.
+- 352-436,479-496 · joined borrowing transformations · **SAFE** · All borrowed account, observation, model and change flags are in the waiting parent. updateRoutingState owns the callable and awaits each retry before returning.
+- 440-472 · parallel KV reads · **SAFE** · The legacy reader owns KV, and the concrete guarded production get copies native store, key and options into its task. A failed sibling cannot invalidate those owners.
