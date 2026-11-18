@@ -287,7 +287,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_authority.hpp`
 - [x] `include/uos/authority/native_authority_api.hpp`
 - [x] `include/uos/authority/native_authority_codex.hpp`
-- [ ] `include/uos/authority/native_authority_contracts.hpp`
+- [x] `include/uos/authority/native_authority_contracts.hpp`
 - [ ] `include/uos/authority/native_authority_kernel.hpp`
 - [ ] `include/uos/authority/native_authority_paid.hpp`
 - [ ] `include/uos/authority/native_authority_principals.hpp`
@@ -1598,6 +1598,12 @@ Reviewed the Codex subcomponent's SQL, API and proof inputs.
 
 - L9, 10, 25, 29 **SAFE** · The enclosing native State owns both dependencies. The signal method consumes the optional classification pointer synchronously while its frame-owned value remains alive.
 
+### `include/uos/authority/native_authority_contracts.hpp`
+
+Reviewed the native records and synchronous SQL adapter template.
+
+- L512, 514, 515, 516, 518 **SAFE** · The adapter's transaction contract runs inline, so the reference to the template's local result remains valid. The SQL callback transfers its query, bindings and result rows by value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1846,4 +1852,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-179/286 files reviewed. 350 sites: 329 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+180/286 files reviewed. 351 sites: 330 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

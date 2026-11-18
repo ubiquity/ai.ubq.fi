@@ -7831,8 +7831,26 @@
       ]
     },
     "include/uos/authority/native_authority_contracts.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the native records and synchronous SQL adapter template.",
+      "sites": [
+        {
+          "lines": [
+            512,
+            514,
+            515,
+            516,
+            518
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The adapter's transaction contract runs inline, so the reference to the template's local result remains valid. The SQL callback transfers its query, bindings and result rows by value."
+        }
+      ]
     },
     "include/uos/authority/native_authority_kernel.hpp": {
       "reviewed": false,
