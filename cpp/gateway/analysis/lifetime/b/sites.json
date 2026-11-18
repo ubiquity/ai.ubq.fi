@@ -2547,8 +2547,9 @@
       "note": "Quota policy writes/delete take owned strings and option values, including the injected store. Implementation covers lock callbacks and atomic builders."
     },
     "include/uos/kernel/usage.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "Usage read methods own identities and options, with a shared store or a resolved environment handle. No inline coroutine or registration."
     },
     "src/kernel/attestation.cpp": {
       "reviewed": false,

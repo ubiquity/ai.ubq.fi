@@ -108,7 +108,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/kernel/quota_reserve.hpp`
 - [x] `include/uos/kernel/quota_v2.hpp`
 - [x] `include/uos/kernel/quota_write.hpp`
-- [ ] `include/uos/kernel/usage.hpp`
+- [x] `include/uos/kernel/usage.hpp`
 - [ ] `src/kernel/attestation.cpp`
 - [ ] `src/kernel/policy_queue.cpp`
 - [ ] `src/kernel/quota_reservations.cpp`
@@ -737,6 +737,10 @@ The reservation overloads own each input and injected KV option. The lock callba
 
 Quota policy writes/delete take owned strings and option values, including the injected store. Implementation covers lock callbacks and atomic builders.
 
+### `include/uos/kernel/usage.hpp`
+
+Usage read methods own identities and options, with a shared store or a resolved environment handle. No inline coroutine or registration.
+
 
 ## Ranked defects and counts
 
@@ -942,4 +946,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-85/97 files reviewed. **DEFECT 9, SAFE 194, UNCLEAR 4.**
+86/97 files reviewed. **DEFECT 9, SAFE 194, UNCLEAR 4.**
