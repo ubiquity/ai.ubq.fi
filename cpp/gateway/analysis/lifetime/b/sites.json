@@ -2542,8 +2542,9 @@
       ]
     },
     "include/uos/kernel/quota_write.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "Quota policy writes/delete take owned strings and option values, including the injected store. Implementation covers lock callbacks and atomic builders."
     },
     "include/uos/kernel/usage.hpp": {
       "reviewed": false,
