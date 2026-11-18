@@ -58,7 +58,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/rt/kv_sqlite.cpp`
 - [x] `src/rt/kv_value.cpp`
 - [x] `src/rt/process.cpp`
-- [ ] `src/rt/sqlite.cpp`
+- [x] `src/rt/sqlite.cpp`
 - [ ] `src/rt/sqlite_darwin.hpp`
 - [ ] `include/uos/storage/key_compatibility.hpp`
 - [ ] `include/uos/storage/kv.hpp`
@@ -391,6 +391,16 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | 54-68 | Process argv snapshot and override | **SAFE** | Process arguments are copied into process-lifetime vector storage. ScopedArgv owns the previous vector and restores it synchronously. |
 | 117-134 | Signal name mapping | **SAFE** | Returned names view static storage and argument names are compared synchronously. |
 
+### `src/rt/sqlite.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 142-207 | Native SQLite API callback table | **SAFE** | Either file-static linked symbols or process-lifetime dynamic library symbols back the copied API table. No callback retains a caller frame. |
+| 284-347,911-928,951-970 | SQLite connection, statement cache and close | **SAFE** | Statements own their Connection, which tracks them weakly. Query copies the owning statement before cache mutation, and close locks each tracked statement before finalization. |
+| 412-445,528-564,584-628 | SQLite binding and result storage | **SAFE** | SQLITE_TRANSIENT copies text/binary while their owners are live. Column names and values are copied before stepping or resetting the statement. |
+| 811-832,866-886 | SQLite lazy RowIterator | **SAFE** | The iterator owns a statement handle and a copy of positional or named bindings. next uses them synchronously and returns an owning Row. |
+| 1002-1031 | Synchronous database transaction dispatcher | **SAFE** | The database and controller are owned by Transaction during invocation; runTransaction calls body inline before commit or rollback. |
+
 
 ## Ranked defects and counts
 
@@ -556,4 +566,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-35/97 files reviewed. **DEFECT 8, SAFE 84, UNCLEAR 3.**
+36/97 files reviewed. **DEFECT 8, SAFE 89, UNCLEAR 3.**

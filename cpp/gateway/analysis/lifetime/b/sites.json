@@ -1139,8 +1139,59 @@
       ]
     },
     "src/rt/sqlite.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "142-207",
+          "verdict": "SAFE",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Native SQLite API callback table",
+          "evidence": "Either file-static linked symbols or process-lifetime dynamic library symbols back the copied API table. No callback retains a caller frame."
+        },
+        {
+          "lines": "284-347,911-928,951-970",
+          "verdict": "SAFE",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "SQLite connection, statement cache and close",
+          "evidence": "Statements own their Connection, which tracks them weakly. Query copies the owning statement before cache mutation, and close locks each tracked statement before finalization."
+        },
+        {
+          "lines": "412-445,528-564,584-628",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "SQLite binding and result storage",
+          "evidence": "SQLITE_TRANSIENT copies text/binary while their owners are live. Column names and values are copied before stepping or resetting the statement."
+        },
+        {
+          "lines": "811-832,866-886",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "SQLite lazy RowIterator",
+          "evidence": "The iterator owns a statement handle and a copy of positional or named bindings. next uses them synchronously and returns an owning Row."
+        },
+        {
+          "lines": "1002-1031",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Synchronous database transaction dispatcher",
+          "evidence": "The database and controller are owned by Transaction during invocation; runTransaction calls body inline before commit or rollback."
+        }
+      ]
     },
     "src/rt/sqlite_darwin.hpp": {
       "reviewed": false,
