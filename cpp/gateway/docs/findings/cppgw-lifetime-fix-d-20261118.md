@@ -46,7 +46,7 @@ column identifies a source commit by its unique subject so the report can travel
 | `src/sentinel/replay_retention_bootstrap.cpp:469` | FIXED · `settledWithin` resolves the private wait after clearing its timer and before delivering the original result. | Settle private race losers | `sentinel_replay_retention_test` repeats completed owner fills against fresh in-memory stores. |
 | `src/health.cpp:306` | FIXED · `probeUpstreamCoalesced` settles the private timeout promise when clearing the timer and the coalescing slot. | Settle private race losers | `health_test` checks one configured mock probe and measures the health timer across repeated unconfigured probes. |
 | `src/serve.cpp:123` | FIXED · Both launchers retain the migration. Normal shutdown and prepared startup failure await it before telemetry and KV close. | Drain startup migration before KV closure | `serve_test` delays the migration read and forces the loopback listener setup callback to fail, then checks close ordering and the original error. |
-| `src/models/openrouter_models.cpp:158` | LEFT · Pending re-verification. | | |
+| `src/models/openrouter_models.cpp:158` | FIXED · `buildMatchIndex` takes raw row pointers. Complete the index before replacing the cache or index, so the failed-refresh fallback keeps both old owners. | Publish catalog and index together | `openrouter_models_test` injects an allocation failure at the index build and checks the prior owner's lifetime, lookups and a successful retry. |
 | `src/admin/codex.cpp:207` | LEFT · Pending re-verification. | | |
 | `src/admin/codex.cpp:216` | LEFT · Pending re-verification. | | |
 | `src/admin/codex.cpp:238` | LEFT · Pending re-verification. | | |
@@ -79,3 +79,6 @@ memory. The checked behavior includes the first event, inactivity, timeout and a
 microtask traces. The six race changes affect 218 of 450 link closures. Strict Clang 21.1.8 syntax checks passed
 for the 12 changed or instantiating source and test translation units. Release and sanitizer link and run gates
 are pending.
+
+Startup and catalog changes passed strict syntax checks for their two source and two test translation units.
+Their link closures contain 3 and 129 binaries respectively. Their release and sanitizer runs are pending.
