@@ -138,7 +138,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/handler/http.cpp`
 - [x] `src/handler/index.cpp`
 - [x] `src/handler/serve_handler.cpp`
-- [ ] `src/handler/terminal_log.cpp`
+- [x] `src/handler/terminal_log.cpp`
 - [ ] `src/handler/terminal_route.cpp`
 - [ ] `src/health.cpp`
 - [ ] `src/http.cpp`
@@ -849,6 +849,16 @@ Reviewed request-to-delivery abort forwarding and handoff.
 
 - L12, 14, 16, 17, 18, 24, 28, 41, 42 **SAFE** · The request abort listener momentarily owns its signal and the downstream controller, with the scope guard removing it on handoff or exception. The transport owns completion and always delivers or rejects it on the normal serve paths. The serve Task copies its injected callable.
 
+### `src/handler/terminal_log.cpp`
+
+Reviewed body and delivery observation, streaming source ownership, coalesced quota terminal work and Sentinel persistence.
+
+- L40, 46, 82, 89, 94, 163, 175, 182, 186, 193, 195, 196, 200, 207, 215, 219, 227 **SAFE** · The log frame owns inputs and injected writers and observes the write promises together. The lexical scope guard runs against its own live input, and scratch JSON storage is used only by the inline formatter.
+- L272, 273, 278, 281, 287, 292, 294, 297, 311, 312, 328, 338, 351, 353, 357, 359, 360, 361 **SAFE** · Replay and logging tasks retain self. Each quota terminal operation stays alive through the registered finalizer, which clears the matching work slot and the temporary holder when it settles.
+- L384, 386, 389, 390, 393 **SAFE** · Buffered handling owns state through response handoff and any registered completion reaction owns state through terminal logging.
+- L417, 424, 426, 427, 436, 440, 446, 448, 451, 452, 458, 459, 460, 471, 474, 477, 480, 541, 542 **SAFE** · The stream runtime SourceAlgorithm::runAsync owns the pull callable and its state capture through the member task, including close or error clearing the stream's callbacks. Cancel is synchronous and the original reader remains owned.
+- L519, 521, 531, 532, 533, 538 **DEFECT** · SSE completion keeps a body-outcome latch alive through its logging reaction. If transport header preparation throws before reading, runtime can finish a fallback response without ever cancelling the SSE body. The body latch retains the log, process permit and request drain indefinitely. Cancel the unconsumed body when native response setup fails.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -954,4 +964,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-72/286 files reviewed. 156 sites: 147 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+73/286 files reviewed. 161 sites: 151 SAFE, 10 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
