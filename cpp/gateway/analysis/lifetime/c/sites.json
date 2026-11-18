@@ -556,8 +556,16 @@
       ]
     },
     "include/uos/deepseek/index.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The dispatcher passes projected request data and callback objects as owning values.",
+      "sites": [
+        {
+          "lines": "198-202,291-292",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "The options frame retains admission/timing/projection hooks; the projected JSON reference is used in a synchronous callback."
+        }
+      ]
     },
     "include/uos/deepseek/responses.hpp": {
       "status": "pending",

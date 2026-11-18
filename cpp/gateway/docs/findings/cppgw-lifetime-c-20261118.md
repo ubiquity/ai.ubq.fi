@@ -83,7 +83,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/deepseek/flash_aliases.hpp`
 - [x] `include/uos/deepseek/forwarded_payload_policy.hpp`
 - [x] `include/uos/deepseek/handlers.hpp`
-- [ ] `include/uos/deepseek/index.hpp`
+- [x] `include/uos/deepseek/index.hpp`
 - [ ] `include/uos/deepseek/responses.hpp`
 - [ ] `include/uos/deepseek/responses_payload.hpp`
 - [ ] `include/uos/deepseek/responses_stream.hpp`
@@ -599,3 +599,9 @@ Payload projection and validation are synchronous.
 The DeepSeek entry points retain their request payloads, with a borrowed telemetry context.
 
 - 23-38 · borrowed context · **SAFE** · The chat/Responses callers keep the context in the joined handler frame, and the streaming branch copies it into relay state before returning.
+
+### `include/uos/deepseek/index.hpp`
+
+The dispatcher passes projected request data and callback objects as owning values.
+
+- 198-202,291-292 · task and callback interface · **SAFE** · The options frame retains admission/timing/projection hooks; the projected JSON reference is used in a synchronous callback.
