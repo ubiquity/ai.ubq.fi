@@ -154,7 +154,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/claude_code.hpp`
 - [x] `include/uos/provider/claude_code_access.hpp`
 - [x] `include/uos/provider/claude_code_accounts.hpp`
-- [ ] `include/uos/provider/claude_code_credentials.hpp`
+- [x] `include/uos/provider/claude_code_credentials.hpp`
 - [ ] `include/uos/provider/claude_code_fwd.hpp`
 - [ ] `include/uos/provider/claude_code_models.hpp`
 - [ ] `include/uos/provider/claude_code_quota.hpp`
@@ -982,3 +982,9 @@ Stores borrow an existing KV while owning the policy payload.
 Claude account load and mutation APIs.
 
 - 60-108 · owning task parameters · **SAFE** · The account tasks retain store, identity, binding, environment lookup and mutation data by value.
+
+### `include/uos/provider/claude_code_credentials.hpp`
+
+Claude credential and workspace store/resolution API.
+
+- 105-140 · owning task parameters · **SAFE** · Async operations own store handles, state and the environment lookup callable used in their frames.

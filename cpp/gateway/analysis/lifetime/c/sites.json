@@ -1265,8 +1265,16 @@
       ]
     },
     "include/uos/provider/claude_code_credentials.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Claude credential and workspace store/resolution API.",
+      "sites": [
+        {
+          "lines": "105-140",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Async operations own store handles, state and the environment lookup callable used in their frames."
+        }
+      ]
     },
     "include/uos/provider/claude_code_fwd.hpp": {
       "status": "pending",
