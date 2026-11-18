@@ -82,3 +82,20 @@ exec env -i PATH=/usr/local/bin:/usr/bin:/bin:/home/runner/.bun/bin:/usr/lib/llv
   UOS_CI_CXXFLAGS="-isystem $scratch/boost_1_92_0" \
   UOS_CI_LDFLAGS="-L$scratch/boost_1_92_0/stage/lib -Wl,--disable-new-dtags,-rpath,$scratch/icu78/lib:$scratch/sqlite/lib" "$@"
 ```
+
+## Local Release baseline
+
+The driver ran on the report-only commit `4c74845ded3ba6f276d29312cf82ca9f4f2d0dee`, tree
+`a2cfdf75709b9fe815ca935549c803b8c02a2003`. The whole checkout diff from the supplied starting commit
+contained only this report. Driver input SHA-256 `97e66e6321b955b3a5e00ac9a6297b1520d045cd462186b977dc6d64c89790b6` also matches the
+incoming F1 report. The baseline passed all 450 binaries and all 5,104 cases with
+1758.108 s for the cold object build and 63.419 s for link and test.
+The outer timing reported `wall_s=1822.64 peak_process_kib=696344 exit=0`.
+
+```bash
+bash "$scratch/ci-gate.sh" /usr/bin/time -o "$scratch/baseline-release.time" -f 'wall_s=%e peak_process_kib=%M exit=%x' \
+  timeout -k 15s 90m bash cpp/gateway/tools/ci-build.sh --config release
+```
+
+Receipt `receipts/baseline-release.json` SHA-256 is
+`93eb27c9266bc14ac815522715644da5a0eec9aa0e8985ca7b08313dcbe8cac7`.
