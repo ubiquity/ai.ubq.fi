@@ -110,7 +110,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_authority_rpc.cpp`
 - [x] `src/authority/native_authority_runtime.cpp`
 - [x] `src/authority/native_authority_sql.cpp`
-- [ ] `src/authority/native_codex.cpp`
+- [x] `src/authority/native_codex.cpp`
 - [ ] `src/authority/native_codex_429.cpp`
 - [ ] `src/authority/native_codex_capacity.cpp`
 - [ ] `src/authority/native_codex_contracts.cpp`
@@ -710,6 +710,10 @@ Reviewed SQLite storage, initialization, pagination and row materialization.
 
 - L75, 127, 128, 133 **SAFE** · The storage calls transactionSync inline and the initializer invokes its borrowed callback inside that transaction. Reads return copied rows and no callback is retained.
 
+### `src/authority/native_codex.cpp`
+
+Reviewed synchronous active-account selection, proof classification and fallback checks. Each selector only borrows the current input containers during the algorithm, and returns a value snapshot. No suspension or escaping callback.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -815,4 +819,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-45/286 files reviewed. 135 sites: 126 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+46/286 files reviewed. 135 sites: 126 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

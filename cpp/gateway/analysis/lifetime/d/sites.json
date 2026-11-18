@@ -2486,7 +2486,8 @@
       ]
     },
     "src/authority/native_codex.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous active-account selection, proof classification and fallback checks. Each selector only borrows the current input containers during the algorithm, and returns a value snapshot. No suspension or escaping callback.",
       "sites": []
     },
     "src/authority/native_codex_429.cpp": {
