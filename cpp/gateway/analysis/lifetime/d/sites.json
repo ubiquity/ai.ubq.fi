@@ -2318,7 +2318,8 @@
       ]
     },
     "src/authority/native_authority_paid.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous paid admission, settlement, reconciliation and deletion. The visitor runs inline and SQL reads supply materialized owned rows. No suspension or escaping callback.",
       "sites": []
     },
     "src/authority/native_authority_principals.cpp": {
