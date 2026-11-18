@@ -92,7 +92,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/auth/passport_sessions.cpp`
 - [x] `src/auth/relay.cpp`
 - [x] `src/authority/admission_state.cpp`
-- [ ] `src/authority/authority_rpc.cpp`
+- [x] `src/authority/authority_rpc.cpp`
 - [ ] `src/authority/contracts.cpp`
 - [ ] `src/authority/credential_publication.cpp`
 - [ ] `src/authority/delivery_outbox.cpp`
@@ -608,6 +608,13 @@ Reviewed the portable authority CAS loop and every admission mutation. The opera
 - L198, 250, 251, 257, 276, 280, 305, 310, 315, 320, 326, 350 **SAFE** · These normal lambdas borrow member coroutine arguments that remain live in the direct awaiting caller. The nested selectors consume snapshot pointers synchronously before the next wait.
 - L355, 367, 371, 381, 387, 410, 415, 440, 444, 450, 455, 472, 476, 485, 490, 512, 517, 532, 534 **SAFE** · Mutations use references only inside synchronous actions held by the transaction frame. Outer arguments and receiver remain in the direct awaiting ownership chain, including cancel followed by settle.
 
+### `src/authority/authority_rpc.cpp`
+
+Reviewed the portable RPC command bridge, server receiver and client call chain. The delegate objects are retained by the shared-pointer owners or named direct callers.
+
+- L188, 216, 221, 226, 231, 236, 241, 246, 252, 259, 264, 271, 276, 281, 286 **SAFE** · The RpcServer retains its AuthorityOperations dependency. The private execute frame owns the command backing its arguments view, and the selected operation receives decoded values before each direct await.
+- L296, 304, 311, 317, 324, 340, 348, 354, 360, 366, 372, 381, 387, 394, 401 **SAFE** · The retained client owns the RPC transport while invoking. Inputs, argument arrays and replies are named frame values, and selection copies its reply views before returning.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -713,4 +720,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-27/286 files reviewed. 117 sites: 108 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+28/286 files reviewed. 119 sites: 110 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

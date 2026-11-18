@@ -2052,8 +2052,62 @@
       ]
     },
     "src/authority/authority_rpc.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the portable RPC command bridge, server receiver and client call chain. The delegate objects are retained by the shared-pointer owners or named direct callers.",
+      "sites": [
+        {
+          "lines": [
+            188,
+            216,
+            221,
+            226,
+            231,
+            236,
+            241,
+            246,
+            252,
+            259,
+            264,
+            271,
+            276,
+            281,
+            286
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The RpcServer retains its AuthorityOperations dependency. The private execute frame owns the command backing its arguments view, and the selected operation receives decoded values before each direct await."
+        },
+        {
+          "lines": [
+            296,
+            304,
+            311,
+            317,
+            324,
+            340,
+            348,
+            354,
+            360,
+            366,
+            372,
+            381,
+            387,
+            394,
+            401
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The retained client owns the RPC transport while invoking. Inputs, argument arrays and replies are named frame values, and selection copies its reply views before returning."
+        }
+      ]
     },
     "src/authority/contracts.cpp": {
       "reviewed": false,
