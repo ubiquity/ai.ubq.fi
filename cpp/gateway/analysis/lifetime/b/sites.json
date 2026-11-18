@@ -1297,8 +1297,42 @@
       ]
     },
     "src/storage/kv.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "20-29,53-66",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "Codec inspection and creation transaction",
+          "evidence": "The read callback copies the codec string before closing. The reference-capturing transaction runs immediately and synchronously while the named database remains owned."
+        },
+        {
+          "lines": "80-109,112-120",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Linked native KV opener and codec hooks",
+          "evidence": "The default opener is a free coroutine owning path/options. It uses references to members of its own frame, and the default decoder returns an owning value synchronously."
+        },
+        {
+          "lines": "124-143",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Open and retry coroutine closure",
+          "evidence": "retrySqliteBusy owns the capturing open closure by value and immediately awaits each invocation. Its copied target/NAPI and the child opener's moved options remain live through the waits."
+        }
+      ]
     },
     "src/storage/native_addon.cpp": {
       "reviewed": false,

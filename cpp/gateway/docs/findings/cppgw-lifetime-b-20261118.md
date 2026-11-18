@@ -67,7 +67,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/storage/sqlite_readonly.hpp`
 - [x] `include/uos/storage/value_compatibility.hpp`
 - [x] `src/storage/key_compatibility.cpp`
-- [ ] `src/storage/kv.cpp`
+- [x] `src/storage/kv.cpp`
 - [ ] `src/storage/native_addon.cpp`
 - [ ] `src/storage/native_kv.cpp`
 - [ ] `src/storage/sqlite_readonly.cpp`
@@ -445,6 +445,14 @@ A declaration alias to the synchronous KV value walk. No separate lifetime site.
 | --- | --- | --- | --- |
 | 17-52 | Portable key span | **SAFE** | The validator walks the caller's bytes synchronously and returns no borrow. |
 
+### `src/storage/kv.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 20-29,53-66 | Codec inspection and creation transaction | **SAFE** | The read callback copies the codec string before closing. The reference-capturing transaction runs immediately and synchronously while the named database remains owned. |
+| 80-109,112-120 | Linked native KV opener and codec hooks | **SAFE** | The default opener is a free coroutine owning path/options. It uses references to members of its own frame, and the default decoder returns an owning value synchronously. |
+| 124-143 | Open and retry coroutine closure | **SAFE** | retrySqliteBusy owns the capturing open closure by value and immediately awaits each invocation. Its copied target/NAPI and the child opener's moved options remain live through the waits. |
+
 
 ## Ranked defects and counts
 
@@ -650,4 +658,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-44/97 files reviewed. **DEFECT 8, SAFE 95, UNCLEAR 3.**
+45/97 files reviewed. **DEFECT 8, SAFE 98, UNCLEAR 3.**
