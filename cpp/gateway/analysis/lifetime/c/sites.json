@@ -762,7 +762,8 @@
       "sites": []
     },
     "include/uos/harmony/reliability/loops.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous loop detection state and method declarations.",
       "sites": []
     },
     "include/uos/harmony/reliability/retry.hpp": {

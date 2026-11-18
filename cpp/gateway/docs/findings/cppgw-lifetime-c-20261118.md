@@ -105,7 +105,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/reliability/feedback.hpp`
 - [x] `include/uos/harmony/reliability/harness.hpp`
 - [x] `include/uos/harmony/reliability/hash.hpp`
-- [ ] `include/uos/harmony/reliability/loops.hpp`
+- [x] `include/uos/harmony/reliability/loops.hpp`
 - [ ] `include/uos/harmony/reliability/retry.hpp`
 - [ ] `include/uos/harmony/reliability/state.hpp`
 - [ ] `include/uos/harmony/reliability/surfaces.hpp`
@@ -713,3 +713,7 @@ The harness retains its options and event observer.
 ### `include/uos/harmony/reliability/hash.hpp`
 
 Synchronous reliability hashing declarations.
+
+### `include/uos/harmony/reliability/loops.hpp`
+
+Synchronous loop detection state and method declarations.
