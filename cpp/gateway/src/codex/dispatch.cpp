@@ -25,6 +25,7 @@
 #include <array>
 #include <cstdint>
 #include <exception>
+#include <memory>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -617,24 +618,22 @@ namespace uos::codex::dispatch {
       co_await sleeping.wait();
       co_return;
     }
+    const rt::AbortSignal abortSignal = *signal;
     rt::EventListener onAbort;
-    rt::Reason failure;
-    try {
-      const rt::AbortSignal abortSignal = *signal;
-      rt::Promise<void> aborted = rt::newPromise<void>([&onAbort, abortSignal](auto, rt::Reject reject) {
-        onAbort = rt::EventListener([abortSignal, reject] { reject(auth_refresh::abortReasonAsError(retryAbortReason(&abortSignal))); });
-        abortSignal.addEventListener("abort", onAbort, rt::AddEventListenerOptions{.once = true});
-        if (abortSignal.aborted()) onAbort();
-      });
-      rt::Promise<void> sleeping(sleep(milliseconds));
-      std::vector<rt::Promise<void>> racers{sleeping, aborted};
-      rt::Promise<void> raced = rt::race(std::move(racers));
-      co_await raced.wait();
-    } catch (...) {
-      failure = std::current_exception();
-    }
-    signal->removeEventListener("abort", onAbort);
-    if (failure) std::rethrow_exception(failure);
+    const auto cleanup = rt::scopeExit([&] { abortSignal.removeEventListener("abort", onAbort); });
+    rt::Promise<void> aborted = rt::newPromise<void>([&onAbort, abortSignal](auto, rt::Reject reject) {
+      onAbort = rt::EventListener([abortSignal, reject] { reject(auth_refresh::abortReasonAsError(retryAbortReason(&abortSignal))); });
+      abortSignal.addEventListener("abort", onAbort, rt::AddEventListenerOptions{.once = true});
+      if (abortSignal.aborted()) onAbort();
+    });
+    // The sleeper can finish after the abort race rejects. Call it from the owner
+    // that will stay with the child even if the waiting frame is destroyed.
+    auto sleeper = std::make_shared<decltype(sleep)>(std::move(sleep));
+    auto sleepTask = (*sleeper)(milliseconds);
+    rt::Promise<void> sleeping(rt::detail::keepAlive(std::move(sleeper), std::move(sleepTask)));
+    std::vector<rt::Promise<void>> racers{sleeping, aborted};
+    rt::Promise<void> raced = rt::race(std::move(racers));
+    co_await raced.wait();
   }
 
   rt::Task<void> awaitPendingCodexProbeTransitions() {
