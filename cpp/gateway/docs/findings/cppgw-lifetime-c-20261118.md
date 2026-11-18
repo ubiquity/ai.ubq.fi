@@ -171,7 +171,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/metered.hpp`
 - [x] `include/uos/provider/openrouter.hpp`
 - [x] `include/uos/provider/openrouter_handlers.hpp`
-- [ ] `include/uos/provider/openrouter_request_controls.hpp`
+- [x] `include/uos/provider/openrouter_request_controls.hpp`
 - [ ] `include/uos/provider/openrouter_streams.hpp`
 - [ ] `include/uos/provider/openrouter_web_tools.hpp`
 - [ ] `include/uos/provider/presentation.hpp`
@@ -1081,3 +1081,9 @@ Ref-taking public funcs are synchronous wrappers for owning tasks.
 Handler injection and borrowed telemetry interfaces.
 
 - 6-15 · borrowed transport inputs · **SAFE** · Handler/dispatch frames retain the callback, body and init until the joined invocation finishes, and the relay copies the context.
+
+### `include/uos/provider/openrouter_request_controls.hpp`
+
+Prompt-cache control API uses a synchronous forwarding wrapper.
+
+- 13 · task factory · **SAFE** · The wrapper copies the JSON into the requestExtensions task before returning.

@@ -1461,8 +1461,16 @@
       ]
     },
     "include/uos/provider/openrouter_request_controls.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Prompt-cache control API uses a synchronous forwarding wrapper.",
+      "sites": [
+        {
+          "lines": "13",
+          "kind": "task factory",
+          "verdict": "SAFE",
+          "reason": "The wrapper copies the JSON into the requestExtensions task before returning."
+        }
+      ]
     },
     "include/uos/provider/openrouter_streams.hpp": {
       "status": "pending",
