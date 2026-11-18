@@ -9519,8 +9519,58 @@
       ]
     },
     "include/uos/openai_telemetry.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed usage-context callbacks, weak response association, wrapper Tasks and usage-recording boundaries.",
+      "sites": [
+        {
+          "lines": [
+            37,
+            38,
+            39,
+            75,
+            83,
+            213,
+            216,
+            218
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Telemetry owns its callback values and shared record. Response registration stores weak response identity without making the record retain its own response through that map."
+        },
+        {
+          "lines": [
+            271,
+            273,
+            369,
+            372,
+            376
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Usage entry points consume their context and input pointers synchronously or copy fields into independently queued work before returning."
+        },
+        {
+          "lines": [
+            291
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The wrapper holds its copied handler closure and context through the directly awaited Task, and hands streams a separate shared record."
+        }
+      ]
     },
     "include/uos/optional_telemetry_queue.hpp": {
       "reviewed": false,

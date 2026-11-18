@@ -359,7 +359,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/models/openrouter_models.hpp`
 - [x] `include/uos/openai.hpp`
 - [x] `include/uos/openai_schema.hpp`
-- [ ] `include/uos/openai_telemetry.hpp`
+- [x] `include/uos/openai_telemetry.hpp`
 - [ ] `include/uos/optional_telemetry_queue.hpp`
 - [ ] `include/uos/quota_projection.hpp`
 - [ ] `include/uos/recent_model_context.hpp`
@@ -2030,6 +2030,14 @@ Reviewed static OpenAI field lists.
 
 - L6, 8 **SAFE** · Both lists hold views of literal field names with static storage.
 
+### `include/uos/openai_telemetry.hpp`
+
+Reviewed usage-context callbacks, weak response association, wrapper Tasks and usage-recording boundaries.
+
+- L37, 38, 39, 75, 83, 213, 216, 218 **SAFE** · Telemetry owns its callback values and shared record. Response registration stores weak response identity without making the record retain its own response through that map.
+- L271, 273, 369, 372, 376 **SAFE** · Usage entry points consume their context and input pointers synchronously or copy fields into independently queued work before returning.
+- L291 **SAFE** · The wrapper holds its copied handler closure and context through the directly awaited Task, and hands streams a separate shared record.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2279,4 +2287,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-251/286 files reviewed. 428 sites: 405 SAFE, 23 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+252/286 files reviewed. 431 sites: 408 SAFE, 23 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
