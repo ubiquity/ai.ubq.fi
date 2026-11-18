@@ -101,8 +101,8 @@ type. Multipart parsing retains the existing boundary handling, extension table,
 and byte sniffing. URL-encoded parsing uses the shared UTF-8 decoder and
 `URLSearchParams`.
 
-The C++ body API has no generic Blob or File constructors, outbound FormData
-serialization, or asynchronous `Request::formData()` and
+The C++ body API retires generic Blob and File constructors, outbound FormData
+serialization, and asynchronous `Request::formData()` and
 `Response::formData()` methods. Fixtures with multipart or typed byte bodies
 supply the wire bytes and explicit Content-Type. Ordinary body readers and
 URLSearchParams content-type inference continue through the existing Body API.
