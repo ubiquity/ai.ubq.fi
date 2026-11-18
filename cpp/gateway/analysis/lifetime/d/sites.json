@@ -10283,8 +10283,26 @@
       ]
     },
     "include/uos/sentinel/replay_retention_bootstrap.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed legacy release, resumable sweep and bootstrap mutation interfaces. The abandoned wait timer is recorded in the implementation.",
+      "sites": [
+        {
+          "lines": [
+            39,
+            53,
+            57,
+            70,
+            72
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The foreground bootstrap path keeps the store through its direct await and gives each Task owning keys, ledger values or numeric options."
+        }
+      ]
     },
     "include/uos/sentinel/replay_retention_metadata.hpp": {
       "reviewed": false,

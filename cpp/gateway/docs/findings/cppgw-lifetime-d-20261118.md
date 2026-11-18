@@ -383,7 +383,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/sentinel/replay_observation.hpp`
 - [x] `include/uos/sentinel/replay_read.hpp`
 - [x] `include/uos/sentinel/replay_retention.hpp`
-- [ ] `include/uos/sentinel/replay_retention_bootstrap.hpp`
+- [x] `include/uos/sentinel/replay_retention_bootstrap.hpp`
 - [ ] `include/uos/sentinel/replay_retention_metadata.hpp`
 - [ ] `include/uos/sentinel/replay_retention_schema.hpp`
 - [ ] `include/uos/sentinel/replay_store.hpp`
@@ -2181,6 +2181,12 @@ Reviewed retention, status, publication, expiry and maintenance declarations.
 
 - L74, 78, 79, 105, 124, 150, 177, 198, 216, 225 **SAFE** · Wrappers copy row, key and option inputs before constructing a Task. Current directly awaiting callers retain the borrowed KV through each retention operation.
 
+### `include/uos/sentinel/replay_retention_bootstrap.hpp`
+
+Reviewed legacy release, resumable sweep and bootstrap mutation interfaces. The abandoned wait timer is recorded in the implementation.
+
+- L39, 53, 57, 70, 72 **SAFE** · The foreground bootstrap path keeps the store through its direct await and gives each Task owning keys, ledger values or numeric options.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2430,4 +2436,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-275/286 files reviewed. 463 sites: 438 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+276/286 files reviewed. 464 sites: 439 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
