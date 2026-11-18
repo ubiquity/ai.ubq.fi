@@ -160,3 +160,20 @@ The exact IDNA link closures in release and ASan/UBSan were relinked with ICU 78
 A subsequent full source build used `python3 -B "$scratch/link-production.py" "$PWD/cpp/gateway" "$scratch"`. It compiled all 369 production objects, archived `libuos_gateway.a` and linked `uos_gateway`, `uos_kv_convert` and `uos_kv_proof` using the strict release flags and the vendored archives. The startup and entrypoint units compiled for those links. The binaries are link evidence and were kept in scratch.
 
 The sanitizer sweep kept its completed entries and switched from two to four workers after release finished. The command is `python3 -B "$scratch/resume-closures.py" "$PWD/cpp/gateway" "$scratch" asan --jobs 4 --resume-after 5ab1a34de1cb47b31a990c0e3ca6ec3024440f2b` with the same environment and compiler flags. The helper verifies the scoped files against the tested revision before resuming. Its SHA-256 is `c99e0d83547a2307c66e741068c556b2a9392d7c24f8f259dd3e36450e7117b5`.
+
+## Fresh Linux ARM64 continuation
+
+The clean handoff at `4886bd900278fa88bb36769499af8e89c4a9d69e` (tree `fcad75012ddd37adccdb86c61b3668bb9c6a5c00`) differs from the v3 revision only in this report. The previous runner's scratch objects were unavailable. The full release, fuzz and benchmark receipts still apply to the inherited implementation. The remaining verification is the full sanitizer link closure. The Number vector remains a shared test outside the assigned write scope.
+
+The runner restored Clang 21.1.8, the verified Boost 1.92.0 source archive, SQLite 3.54.0 with `SQLITE_DQS=3`, and ICU 78.3. It rebuilt static Boost.JSON and Boost.Container with `./b2 -j2 --with-json --with-container toolset=gcc variant=release link=static threading=multi --stagedir="$scratch/boost" --build-dir="$scratch/boost-build" stage`. The focused inherited-tree build compiled `src/rt/number.cpp` and both test files with the strict port flags and `-O2`, then linked the tests against Boost.JSON. The BigInt regression passed 4/4 cases. The mixed Number binary passed 20/21, with the documented incomplete-token parser expectation failing. Both binaries ran inside the portable CI driver's fixture namespaces.
+
+```bash
+scratch=/tmp/cppgw-bigint-c1.WnJb02
+env -i PATH=/usr/bin:/bin LANG=C.UTF-8 \
+  bash "$scratch/focus-release.sh" "$scratch" "$PWD/cpp/gateway"
+env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/driver-home" TMPDIR="$scratch/driver-tmp" \
+  LANG=C.UTF-8 PKG_CONFIG_PATH="$scratch/icu-install/lib/pkgconfig:$scratch/sqlite/lib/pkgconfig" \
+  python3 -B "$scratch/sanitize-closures.py" "$PWD/cpp/gateway" "$scratch" 4
+```
+
+The sanitizer sweep builds each closure's objects with the fatal port warning set, `-O0 -gline-tables-only -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined`, and uses the repository's portable builder and namespace runner. Lower optimization and line tables shorten the cold build. The run prioritizes the BigInt, Number and IDNA binaries, then storage, authority and other users, before completing the 442 entry registry. The driver logs progress after each batch and writes a row to `asan/results.jsonl` as each binary finishes. It checks the source digest before and after the run and writes a terminal receipt. The edited surface for this continuation is this report, so the additional file gates are pinned Prettier and `git diff --check`.
