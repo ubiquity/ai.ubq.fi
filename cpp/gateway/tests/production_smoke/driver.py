@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 import traceback
@@ -24,6 +25,7 @@ def parser():
     result.add_argument("--fixture-flag", help="Exact startup flag agreed with the build/runtime owners; no default")
     result.add_argument("--runtime-template", type=Path, help="Reviewed runtime fixture document whose inputs stay task-scoped")
     result.add_argument("--bun", type=Path)
+    result.add_argument("--oracle", type=Path, help="Detached worktree prepared by conformance/oracle.sh")
     result.add_argument("--bun-binding", type=Path)
     result.add_argument("--bun-only", action="store_true", help="Prequalify only the actual Bun source fixture; never native acceptance")
     result.add_argument("--benchmark", action="store_true")
@@ -39,7 +41,7 @@ def inside(arguments):
               "harness_sha256": {str(path.relative_to(WORKTREE)): sha256(path)
                                  for path in sorted((WORKTREE / "cpp/gateway/tests/production_smoke").glob("*.py"))}}
     status = 0
-    before = source_inputs()
+    before = source_inputs(arguments.oracle)
     result["source_inputs_sha256"] = before
     if arguments.build_receipt:
         result["build_receipt"] = {"path": str(arguments.build_receipt), "sha256": sha256(arguments.build_receipt)}
@@ -82,7 +84,7 @@ def inside(arguments):
         status = 1
         result.update({"outcome": "failed", "error": str(error), "traceback": traceback.format_exc()})
     result["finished_ns"] = time.time_ns()
-    after = source_inputs()
+    after = source_inputs(arguments.oracle)
     changed = sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path))
     result["changed_source_inputs"] = changed
     if changed:
@@ -98,6 +100,11 @@ def main():
     arguments.output = require_task_path(arguments.output)
     if arguments.build_receipt:
         arguments.build_receipt = require_task_path(arguments.build_receipt).resolve(strict=True)
+    if arguments.bun and not arguments.json_benchmark:
+        if not arguments.oracle:
+            raise RuntimeError("Bun application comparisons require the pinned oracle worktree")
+        arguments.oracle = arguments.oracle.resolve(strict=True)
+        subprocess.run(["bash", WORKTREE / "cpp/gateway/conformance/oracle.sh", "--check", arguments.oracle], check=True)
     if not 5 <= arguments.timeout <= 600:
         raise RuntimeError("Harness timeout must be from 5 through 600 seconds")
     if arguments.inside:

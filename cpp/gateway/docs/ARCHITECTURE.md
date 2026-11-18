@@ -2,8 +2,8 @@
 
 The C++20 gateway ports the repository's TypeScript application. It uses native libraries for generic operations
 and keeps the gateway's wire formats, authentication, validation, accounting and storage contracts. The owner guide
-summarizes platform evidence and how to try it. [TypeScript modules](../../../src/) ·
-[TypeScript entry point](../../../serve.ts) · [Owner guide](../README.md)
+summarizes platform evidence and how to try it. [TypeScript modules](https://github.com/ubiquity/ai.ubq.fi/tree/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a/src) ·
+[TypeScript entry point](https://github.com/ubiquity/ai.ubq.fi/blob/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a/serve.ts) · [Owner guide](../README.md)
 
 ## Layers
 

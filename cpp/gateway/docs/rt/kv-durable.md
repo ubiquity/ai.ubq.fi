@@ -79,11 +79,11 @@ keys_if_undelivered = JSON of the packed keys)` (TEXT values, as rusqlite binds 
 
 ## Compatibility evidence
 
-The TypeScript side ran the repository's own `#kv` opener (`src/storage/kv.ts` with
+The TypeScript side ran the pinned legacy `#kv` opener (`src/storage/kv.ts` with
 `prepareNativeKvBackend`) over the pinned native-kv artifact (denokv 9fe65cc + both patches; its
-provenance matches `tools/native-kv/inputs.json`; a copy of the artifact built by
-`scripts/test-native-kv.ts`, loaded from a scratch directory) under bun 1.4.0, on throwaway
-databases in a scratch directory. The C++ side ran `storage::kv::openKv` (SqliteKv + guard).
+provenance matches the [moved inputs](../../packaging/native-kv/inputs.json)) under Bun 1.4.0,
+on throwaway databases in scratch. The rebuild and cross-reader script is `scripts/test-native-kv.ts`
+in the [pinned oracle worktree](../CONFORMANCE.md). The C++ side ran `storage::kv::openKv` (SqliteKv + guard).
 
 |                           | Proven by running                                                                                                                                                                                                                                                   | Hermetic test                                                                                                                                                                                                                                                                                              |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -20,15 +20,14 @@ Only 18 missing NAPI graph packages were resolved once. `lock-derivation.json` r
 
 `inputs.json` binds the source archive, both patches, lock, registry checksum inventory, license, and toolchain.
 
-Run the prepared-artifact builder from the checkout with its pinned Bun runtime:
+Run the artifact builder with pinned Bun 1.4.0 and explicit output and disk-backed scratch directories.
 
 ```sh
-bun --no-env-file --no-install scripts/build-native-kv.ts
+bun --no-env-file --no-install cpp/gateway/packaging/native-kv/build-native-kv.ts \
+  /absolute/artifacts /absolute/build-scratch /absolute/pinned-rust/bin
 ```
 
-The no-argument command writes `.tmp/native-kv/native-kv.node` and `.tmp/native-kv/native-kv.provenance.json`.
-
-Packaging calls `buildNativeKv(outputDirectory)` with the staged release's `.native/kv` directory.
+The builder writes `native-kv.node` and `native-kv.provenance.json` under the output directory. The portable package stages them under `native/kv`.
 
 The returned receipt includes artifact and provenance paths and SHA-256 hashes, plus the retained build-log path.
 
@@ -36,11 +35,11 @@ The build verifies pinned Rust/Cargo 1.98.1 binaries already installed under the
 
 It downloads only the checksum-bound source and locked Cargo dependencies during artifact preparation.
 
-Source, Cargo home, compiler target, and logs stay in a dedicated `.tmp/native-kv-builds/uos-native-kv-*` directory in the builder checkout.
+Source, Cargo home, compiler target, and logs stay in a dedicated `uos-native-kv-*` directory under the chosen scratch root.
 
 The scratch root is independent of the current directory, artifact output path, and inherited `TMPDIR`. Compiler subprocesses use its `tmp` subdirectory through `TMPDIR`. Build trees and logs remain retained on success or failure.
 
-Cargo uses `--locked --release --jobs 1` and a 30-minute process-group timeout. No compiler is installed.
+Cargo uses `--locked --release --jobs 1` and a 30-minute process-group timeout.
 
 The provenance copies every frozen input section and records successful exit status and the compiler-log SHA-256.
 

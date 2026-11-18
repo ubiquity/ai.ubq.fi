@@ -4,8 +4,8 @@ The native gateway runs compiled C++20. It ports the repository's TypeScript gat
 the same gateway APIs, including OpenAI Chat Completions and Responses. The port preserves wire formats, status
 codes, stored data, authentication, validation and accounting as application contracts. Generic operations use
 standard or mature open-source libraries where they meet those contracts, including the required security checks.
-Differences in diagnostic wording are expected. [TypeScript source](../../src/) ·
-[TypeScript entry point](../../serve.ts) · [Architecture](docs/ARCHITECTURE.md)
+Differences in diagnostic wording are expected. [TypeScript source](https://github.com/ubiquity/ai.ubq.fi/tree/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a/src) ·
+[TypeScript entry point](https://github.com/ubiquity/ai.ubq.fi/blob/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a/serve.ts) · [Architecture](docs/ARCHITECTURE.md)
 
 ## Where it stands
 
@@ -153,7 +153,7 @@ The table lists the release build pins and the shared libraries supplied by the 
 
 The package also carries and verifies the pinned `@deno/kv` 0.14.0 artifact for provenance. The linked C++ SQLite
 backend handles the actual database operations. [Architecture](docs/ARCHITECTURE.md) ·
-[Artifact pin](../../tools/native-kv/inputs.json)
+[Artifact pin](packaging/native-kv/inputs.json)
 
 ## Open items
 

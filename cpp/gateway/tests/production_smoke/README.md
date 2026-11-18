@@ -7,6 +7,15 @@ Run the independent OS-boundary check with `python3 -I cpp/gateway/tools/smoke.p
 After the build/runtime owners publish the exact primary package and receipts, run the full acceptance from the worktree root:
 
 ```sh
+scratch=$(mktemp -d)
+mkdir "$scratch/home" "$scratch/tmp"
+bash cpp/gateway/conformance/oracle.sh "$scratch/oracle"
+test -f "$scratch/oracle/bun.lock" && test -f "$scratch/oracle/tools/lint/bun.lock"
+(
+  cd "$scratch/oracle"
+  env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/home" TMPDIR="$scratch/tmp" \
+    /usr/local/bin/bun --no-env-file install --frozen-lockfile --ignore-scripts
+)
 python3 -I cpp/gateway/tools/smoke.py \
   --gateway /absolute/worktree/.data/package/bin/uos-gateway \
   --gateway-sha256 <accepted-primary-binary-sha256> \
@@ -14,6 +23,7 @@ python3 -I cpp/gateway/tools/smoke.py \
   --fixture-flag=--runtime-manifest \
   --runtime-template /tmp/claude-1002/prod/smoke_perf/verified-template.json \
   --bun /usr/local/bin/bun \
+  --oracle "$scratch/oracle" \
   --bun-binding /tmp/claude-1002/prod/smoke_perf/verified-bun-binding.json \
   --output /tmp/claude-1002/prod/smoke_perf/<new-run-directory> \
   --benchmark --timeout 180

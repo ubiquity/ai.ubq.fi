@@ -12,7 +12,7 @@ from collections import Counter
 from pathlib import Path
 
 from client import request, websocket
-from network import WORKTREE, require_task_path, sha256, write_json
+from network import require_task_path, sha256, write_json
 from process import GatewayProcess
 from upstream import CATALOG_MODEL, Upstream
 
@@ -186,8 +186,8 @@ def one_runtime(arguments, runtime, trial):
         else:
             if not arguments.bun_binding:
                 raise RuntimeError("Bun comparison requires a verified genuine native-KV binding")
-            command = [str(arguments.bun), "--no-env-file", "--no-install", "--config=" + str(WORKTREE / "ops/runtime-bunfig.toml"),
-                       str(WORKTREE / "cpp/gateway/tests/production_smoke/bun.ts"), str(startup), str(arguments.bun_binding)]
+            command = [str(arguments.bun), "--no-env-file", "--no-install", "--config=" + str(arguments.oracle / "ops/runtime-bunfig.toml"),
+                       str(arguments.oracle / "cpp/gateway/tests/production_smoke/bun.ts"), str(startup), str(arguments.bun_binding)]
         result["command"] = command
         result["manifest_sha256"] = sha256(startup)
         gateway = GatewayProcess(command, root, environment(auth))

@@ -12,9 +12,12 @@ Each component tree is SHA-256 of JSON entries `{path,sha256}`, sorted by path, 
 
 The compiler entry points are ARM64 Mach-O files. Matching these bytes does not prove Mac execution or acceptance.
 
-Run explicit preparation on an actual Darwin ARM64 host with pinned Bun 1.4.0:
+Run the historical Darwin producer on an actual Darwin ARM64 host with pinned Bun 1.4.0. Its script and dependencies are in the detached legacy checkout. [Oracle checkout instructions](../../docs/CONFORMANCE.md)
 
 ```sh
+scratch=$(mktemp -d)
+bash cpp/gateway/conformance/oracle.sh "$scratch/oracle"
+cd "$scratch/oracle"
 bun --no-env-file --no-install scripts/build-native-kv-darwin.ts
 ```
 
