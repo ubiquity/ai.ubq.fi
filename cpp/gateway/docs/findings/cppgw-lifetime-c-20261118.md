@@ -70,7 +70,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/routing_serial.hpp`
 - [x] `include/uos/codex/routing_state.hpp`
 - [x] `include/uos/codex/session.hpp`
-- [ ] `include/uos/codex/supervisor.hpp`
+- [x] `include/uos/codex/supervisor.hpp`
 - [ ] `include/uos/codex/supervisor_brief.hpp`
 - [ ] `include/uos/codex/supervisor_config.hpp`
 - [ ] `include/uos/codex/supervisor_follow.hpp`
@@ -527,3 +527,9 @@ Synchronous value records, comparison and evaluation declarations. No coroutine 
 KV session observation interface.
 
 - 41-42 · owning task parameters · **SAFE** · Both overloads copy or move key, client metadata and time into the receiving task.
+
+### `include/uos/codex/supervisor.hpp`
+
+Supervisor HTTP handlers take owned requests or no parameters.
+
+- 9,17 · owning task parameters · **SAFE** · The output handler retains its request handle and sessions needs no caller-owned data.

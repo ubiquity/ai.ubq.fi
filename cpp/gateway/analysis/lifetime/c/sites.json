@@ -416,8 +416,16 @@
       ]
     },
     "include/uos/codex/supervisor.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Supervisor HTTP handlers take owned requests or no parameters.",
+      "sites": [
+        {
+          "lines": "9,17",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The output handler retains its request handle and sessions needs no caller-owned data."
+        }
+      ]
     },
     "include/uos/codex/supervisor_brief.hpp": {
       "status": "pending",
