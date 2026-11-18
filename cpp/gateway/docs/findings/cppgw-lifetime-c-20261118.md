@@ -195,7 +195,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/banked_reset_provider.cpp`
 - [x] `src/codex/banked_reset_submission.cpp`
 - [x] `src/codex/capacity_routing.cpp`
-- [ ] `src/codex/dispatch.cpp`
+- [x] `src/codex/dispatch.cpp`
 - [ ] `src/codex/experiment.cpp`
 - [ ] `src/codex/external_auth.cpp`
 - [ ] `src/codex/index.cpp`
@@ -1251,3 +1251,15 @@ Routing caches contain replaceable values. Each async read or transformation wor
 - 303-343 · routing cache normalization · **SAFE** · Normalization receives a value copy and the caller re-reads the module cache after resuming without retaining a cache member pointer.
 - 352-436,479-496 · joined borrowing transformations · **SAFE** · All borrowed account, observation, model and change flags are in the waiting parent. updateRoutingState owns the callable and awaits each retry before returning.
 - 440-472 · parallel KV reads · **SAFE** · The legacy reader owns KV, and the concrete guarded production get copies native store, key and options into its task. A failed sibling cannot invalidate those owners.
+
+### `src/codex/dispatch.cpp`
+
+Codex transport and retry use the request's owned argument state. The injectable retry sleeper has a separate closure lifetime from the request.
+
+- 89-113,145-211,224-272 · transport, health, and deadline callbacks · **SAFE** · The timer callback owns its controller, ScopeExit clears the timer, and beforeTransport remains frame-owned through the join. Spawned storage or body cancellation takes owned values.
+- 338-371 · dispatch coordinator callback chain · **SAFE** · The noncoroutine coordinator callbacks own their state. The outer dispatch frames retain the coordinator while the claim runs, and the then reaction owns the individual generation.
+- 380-390,396-481,514-544 · request transform and digest · **SAFE** · The synchronous work stack stops using a frame reference after a push that may reallocate, and the digest coroutine owns the copied cache scope and key.
+- 623-635 · retry abort listener ownership cycle · **DEFECT** · While retry is suspended the signal owns its once listener and the listener owns that signal. Destroying the waiting frame before either branch settles skips explicit removal. Put removal in a scope guard so frame teardown also removes the listener.
+- 628-635 · retry sleeper closure after race · **DEFECT** · If the supplied retrySleep is a capturing coroutine and abort wins, the waiting frame destroys its copy of sleep. The losing sleeper can resume and use its dead closure. Wrap invocation in an owning rt::async child. The default function and current differential fixture use owning free tasks.
+- 639-645,712-791 · probe join and attributed response reads · **SAFE** · Probe promises are copied from the registry before allSettled. The auth loop retains its local pool snapshot through each joined identity hash.
+- 807-881 · serial driver and loop-state borrows · **SAFE** · The loop owns both driver and state values through the joined private helper tasks, and each dispatched response is passed by value.

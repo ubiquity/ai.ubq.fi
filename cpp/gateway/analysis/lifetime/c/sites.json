@@ -1930,8 +1930,52 @@
       ]
     },
     "src/codex/dispatch.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Codex transport and retry use the request's owned argument state. The injectable retry sleeper has a separate closure lifetime from the request.",
+      "sites": [
+        {
+          "lines": "89-113,145-211,224-272",
+          "kind": "transport, health, and deadline callbacks",
+          "verdict": "SAFE",
+          "reason": "The timer callback owns its controller, ScopeExit clears the timer, and beforeTransport remains frame-owned through the join. Spawned storage or body cancellation takes owned values."
+        },
+        {
+          "lines": "338-371",
+          "kind": "dispatch coordinator callback chain",
+          "verdict": "SAFE",
+          "reason": "The noncoroutine coordinator callbacks own their state. The outer dispatch frames retain the coordinator while the claim runs, and the then reaction owns the individual generation."
+        },
+        {
+          "lines": "380-390,396-481,514-544",
+          "kind": "request transform and digest",
+          "verdict": "SAFE",
+          "reason": "The synchronous work stack stops using a frame reference after a push that may reallocate, and the digest coroutine owns the copied cache scope and key."
+        },
+        {
+          "lines": "623-635",
+          "kind": "retry abort listener ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "While retry is suspended the signal owns its once listener and the listener owns that signal. Destroying the waiting frame before either branch settles skips explicit removal. Put removal in a scope guard so frame teardown also removes the listener."
+        },
+        {
+          "lines": "628-635",
+          "kind": "retry sleeper closure after race",
+          "verdict": "DEFECT",
+          "reason": "If the supplied retrySleep is a capturing coroutine and abort wins, the waiting frame destroys its copy of sleep. The losing sleeper can resume and use its dead closure. Wrap invocation in an owning rt::async child. The default function and current differential fixture use owning free tasks."
+        },
+        {
+          "lines": "639-645,712-791",
+          "kind": "probe join and attributed response reads",
+          "verdict": "SAFE",
+          "reason": "Probe promises are copied from the registry before allSettled. The auth loop retains its local pool snapshot through each joined identity hash."
+        },
+        {
+          "lines": "807-881",
+          "kind": "serial driver and loop-state borrows",
+          "verdict": "SAFE",
+          "reason": "The loop owns both driver and state values through the joined private helper tasks, and each dispatched response is passed by value."
+        }
+      ]
     },
     "src/codex/experiment.cpp": {
       "status": "pending",
