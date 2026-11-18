@@ -24,7 +24,7 @@ The local job checkout starts on `agent-job` at the same commit.
 of coroutine bodies are indexed by their definitions unless the declaration itself establishes a lifetime contract.
 
 - [x] `include/uos/runtime/http.hpp`
-- [ ] `include/uos/runtime/http_body.hpp`
+- [x] `include/uos/runtime/http_body.hpp`
 - [ ] `include/uos/runtime/http_early_sse.hpp`
 - [ ] `include/uos/runtime/http_tasks.hpp`
 - [ ] `include/uos/runtime/http_upgrade.hpp`
@@ -135,7 +135,14 @@ Initial checkpoint. Manual review and tool verification are pending.
 | 224-238,254-265 | ServerListener and RequestListener | **SAFE** | An event argument reference is only used in the synchronous wrapper, which copies the request, socket and head into the upgrade task. The server stores the callback by value. |
 | 338-368 | ServeHandler, ServeHttpOptions and HttpServer | **SAFE** | Handler arguments are owning values and the handler closure resides in ServeState, kept by request frames. Returned handle closures own ServeState. Listener and server back-edges are reviewed at their registration sites. |
 
+### `include/uos/runtime/http_body.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 27-38,47-51 | IncomingListener identity and invocation | **SAFE** | Listeners use shared callable identity and receive an event reference only for synchronous invocation. The concrete emitter's snapshot retains the active functor if a callback removes its registration. |
+| 58-77 | IncomingBody handles | **SAFE** | The wrapper owns both its stream and body state. The implementation weakens the controller edge after stream construction and registers weak listener targets. |
+
 
 ## Ranked defects and counts
 
-1/97 files reviewed. **DEFECT 0, SAFE 4, UNCLEAR 0.**
+2/97 files reviewed. **DEFECT 0, SAFE 6, UNCLEAR 0.**
