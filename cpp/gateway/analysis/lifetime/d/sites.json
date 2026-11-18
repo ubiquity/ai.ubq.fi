@@ -3546,8 +3546,84 @@
       "sites": []
     },
     "src/images.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed request-body and multipart parsing, image fan-out and cancellation coordination, response aggregation and public adapters.",
+      "sites": [
+        {
+          "lines": [
+            131,
+            227,
+            228,
+            236,
+            274,
+            285,
+            287,
+            293,
+            296,
+            302,
+            304,
+            312,
+            347,
+            354
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "File tasks and form parsing retain their byte and request owners. The file loop traverses a private unchanged vector, and the body cleanup guard's references remain in its own frame."
+        },
+        {
+          "lines": [
+            376,
+            380,
+            382,
+            385,
+            388,
+            390,
+            445,
+            450,
+            454,
+            457,
+            463,
+            464,
+            468,
+            470,
+            548,
+            549,
+            551
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Fan-out callbacks and child tasks each own their shared state. The child waits with its context and dispatch closure live, allSettled waits for every child, and response reordering uses fresh local iterators."
+        },
+        {
+          "lines": [
+            480,
+            499,
+            512,
+            515,
+            521,
+            522,
+            528,
+            563,
+            566
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The facade copies context before making the Task, and the frame owns parsed variants, response vectors and upstream receiver handles. No other child mutates the vectors during traversal."
+        }
+      ]
     },
     "src/inference_admission.cpp": {
       "reviewed": true,

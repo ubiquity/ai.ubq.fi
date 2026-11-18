@@ -166,7 +166,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/handler/terminal_route.cpp`
 - [x] `src/health.cpp`
 - [x] `src/http.cpp`
-- [ ] `src/images.cpp`
+- [x] `src/images.cpp`
 - [x] `src/inference_admission.cpp`
 - [x] `src/inference_deadline.cpp`
 - [x] `src/input_normalization.cpp`
@@ -923,6 +923,14 @@ Reviewed the three stream/paid timer factories and request-deadline signal compo
 
 Reviewed synchronous payload, tool, message and schema normalizers. Any reference-capturing algorithms run inline and normalization owns its output. No suspension or deferred callbacks.
 
+### `src/images.cpp`
+
+Reviewed request-body and multipart parsing, image fan-out and cancellation coordination, response aggregation and public adapters.
+
+- L131, 227, 228, 236, 274, 285, 287, 293, 296, 302, 304, 312, 347, 354 **SAFE** · File tasks and form parsing retain their byte and request owners. The file loop traverses a private unchanged vector, and the body cleanup guard's references remain in its own frame.
+- L376, 380, 382, 385, 388, 390, 445, 450, 454, 457, 463, 464, 468, 470, 548, 549, 551 **SAFE** · Fan-out callbacks and child tasks each own their shared state. The child waits with its context and dispatch closure live, allSettled waits for every child, and response reordering uses fresh local iterators.
+- L480, 499, 512, 515, 521, 522, 528, 563, 566 **SAFE** · The facade copies context before making the Task, and the frame owns parsed variants, response vectors and upstream receiver handles. No other child mutates the vectors during traversal.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1136,4 +1144,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-79/286 files reviewed. 173 sites: 160 SAFE, 13 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+80/286 files reviewed. 176 sites: 163 SAFE, 13 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
