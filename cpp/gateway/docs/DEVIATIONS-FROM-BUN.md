@@ -95,3 +95,13 @@ file in the working directory or home has no effect on the C++ view. An
 explicit empty value remains present, and scoped overrides affect only the
 view. Subprocesses without an explicit environment inherit the OS values.
 [Launch and offline tools](RUNTIME.md#launch-and-offline-tools)
+
+## Native lexical path adapters
+
+The gateway retains `join`, `resolve`, `relative`, `dirname` and `isAbsolute`.
+Single-segment `join` covers the former normalization helper. The filename and
+extension vectors exercise `std::filesystem::path` directly. Resolve restarts at
+the last absolute segment, drops terminal separators except at the root, and
+uses the current directory for relative inputs. Relative comparisons return an
+empty string for equal paths and reject a comparison without absolute endpoints.
+Percent-encoded and backslash bytes stay literal in these operations.
