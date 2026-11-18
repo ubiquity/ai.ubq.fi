@@ -19,6 +19,8 @@ The runner used Ubuntu 24.04.5 ARM64, Linux `7.0.0-1017-azure`, GCC 14.2.0 `-O2`
 
 The source-gate run took 3.209 s and recorded 340 HTTP or upgrade responses, 54 upstream dispatches, eight progressive delivery proofs across four cases, and twelve correlated terminal records. Each gateway exited cleanly before and after its restart. Both outbound route probes returned `ENETUNREACH`. The 1,048,576-byte Chat fixture completed. The 33,554,433-byte Chat upload returned 400, and the oversized passkey login and Realtime uploads returned 413. The one-request key stayed at one settled dispatch across the quota rejection and restart. The cached embeddings cases returned two ordered 256-dimensional vectors, exact little-endian float32 base64, replay and conflict results, and the expected job readback and cross-principal refusal.
 
+An independent depth-one checkout at `3ce48d8559c131e87c9cdcf203ffb2599eac3d04` fetched the pinned benchmark, installed frozen dependencies, built and verified the native artifacts, linked all three native executables and packaged 62 files. The documented command took 812.28 s end to end with 1,301,188 KiB maximum reported child RSS. The conformance phase took 3.262 s and produced a byte-identical table. Both gateways again returned all 340 case responses, with 54 mock dispatches and four clean process exits. The wrapper returned 1 for the two shared validation failures. The cold checkout remained clean.
+
 | Source-gate evidence       | SHA-256                                                            |
 | -------------------------- | ------------------------------------------------------------------ |
 | Native gateway             | `ff0fcab314cf695be70ace1af284cae4341d45dbc05adcbcdf9738e7c4f5cb07` |
@@ -26,6 +28,12 @@ The source-gate run took 3.209 s and recorded 340 HTTP or upgrade responses, 54 
 | Bun executable             | `086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9` |
 | `source-gate/results.json` | `493205ec4ba718bbf5638cb52139f4b0d3b5cd9fae31376b8da526dcd1f160e7` |
 | `source-gate/table.md`     | `58f3b039600461ae0dcba0c6757c29f5bdbf4d4d253565c4b341513717918c85` |
+
+| Cold-run evidence                            | SHA-256                                                            |
+| -------------------------------------------- | ------------------------------------------------------------------ |
+| Native gateway                               | `b716c36ebe0a42c5dfb29d1dcffe09a84152c49b68c8d3c64ee433e0a14bd3db` |
+| Native package manifest                      | `b2c5eeec046897d498624dc7e678da777dc14ca73b4f1c13533012e06de281e5` |
+| `cold-work/run.cdoRVjNB/output/results.json` | `515828ae6cbd242dd19e51045a1a95c19707df76062462f58945810679e4266d` |
 
 The changed paths consisted of the Python/shell harness, declarative JSON and NDJSON fixtures, guide and findings. Verification selected the paired suite, eight comparator controls, shell lint, scoped Prettier and whitespace checks. The portable CI inventory listed 442 native tests.
 
@@ -43,6 +51,9 @@ LIBRARY_PATH=/usr/local/lib CPLUS_INCLUDE_PATH="$scratch/icu/source/common:$scra
   timeout 2400 python3 -I "$bench/build.py" --source "$scratch/oracle" --out "$scratch/build" \
     --boost "$scratch/boost_1_92_0" --cxx /usr/bin/g++-14 --jobs 4
 
+mkdir -p "$scratch/isolation"
+cp "$bench/isolated.sh" "$scratch/isolation/isolated.sh"
+ln -s "$PWD/cpp/gateway/conformance/run.py" "$scratch/isolation/run.py"
 timeout -k 10s 180s bash "$scratch/isolation/isolated.sh" --bench "$bench" \
   --source "$scratch/oracle" --source-revision b54357a92c0f2669335d83f04047c3f7de32f925 \
   --suite-revision 3ce48d8559c131e87c9cdcf203ffb2599eac3d04 --suite-tree ed7b92dc129bb5d74b7cf98727cc2b1fcac2967d \
@@ -54,6 +65,25 @@ shellcheck cpp/gateway/conformance/run.sh
 bash -n cpp/gateway/conformance/run.sh
 bash cpp/gateway/tools/ci-build.sh --list
 git diff --check b54357a92c0f2669335d83f04047c3f7de32f925 HEAD
+```
+
+The cold checkout used the public benchmark fallback and the documented default application snapshot.
+
+```bash
+git clone --no-tags --depth=1 "file://$PWD" "$scratch/cold-checkout"
+(
+  cd "$scratch/cold-checkout"
+  CPP_CONFORMANCE_BOOST="$scratch/boost_1_92_0" \
+    /usr/bin/time -o "$scratch/cold-run.time" -f 'wall_s=%e peak_process_kib=%M exit=%x' \
+    bash cpp/gateway/conformance/run.sh "$scratch/cold-work"
+)
+```
+
+The three changed JSON and Markdown paths passed the repository formatter in an archived checkout with frozen root and lint dependencies.
+
+```sh
+bun --no-env-file run format:check cpp/gateway/conformance/cases.json cpp/gateway/docs/CONFORMANCE.md \
+  cpp/gateway/docs/findings/cppgw-conformance-e2e-20261118.md
 ```
 
 ### External findings and coverage limits

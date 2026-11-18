@@ -45,7 +45,7 @@ if [[ ! -d $bench ]]; then
   bench="$work/bench/$bench_path"
   if [[ ! -d $bench ]]; then
     archive_source=$root
-    if ! git -C "$root" cat-file -e "$bench_revision^{commit}"; then
+    if ! git -C "$root" cat-file -e "$bench_revision^{commit}" 2>/dev/null; then
       archive_source="$work/bench-git"
       "${prep[@]}" git init --bare -q "$archive_source"
       "${prep[@]}" GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 git -C "$archive_source" fetch --no-tags --depth=1 \
