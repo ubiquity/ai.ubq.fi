@@ -3123,8 +3123,30 @@
       ]
     },
     "src/handler/serve_handler.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed request-to-delivery abort forwarding and handoff.",
+      "sites": [
+        {
+          "lines": [
+            12,
+            14,
+            16,
+            17,
+            18,
+            24,
+            28,
+            41,
+            42
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The request abort listener momentarily owns its signal and the downstream controller, with the scope guard removing it on handoff or exception. The transport owns completion and always delivers or rejects it on the normal serve paths. The serve Task copies its injected callable."
+        }
+      ]
     },
     "src/handler/terminal_log.cpp": {
       "reviewed": false,

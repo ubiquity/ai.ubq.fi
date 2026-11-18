@@ -137,7 +137,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/handler/admission.cpp`
 - [x] `src/handler/http.cpp`
 - [x] `src/handler/index.cpp`
-- [ ] `src/handler/serve_handler.cpp`
+- [x] `src/handler/serve_handler.cpp`
 - [ ] `src/handler/terminal_log.cpp`
 - [ ] `src/handler/terminal_route.cpp`
 - [ ] `src/health.cpp`
@@ -843,6 +843,12 @@ Reviewed route tables, admin and auth adapters, inference dispatch and upgrade h
 - L43, 54, 66, 73, 177, 211, 235 **SAFE** · Route matching borrows stable immutable static tables and produces an entry pointer into those tables. Normal lambdas start child Tasks with value arguments.
 - L135, 140, 153, 156, 163, 167, 174, 179, 184, 188, 199, 207, 213, 217, 224, 227, 231, 237, 259, 262, 265, 268, 271, 274, 281, 285 **SAFE** · Dispatcher frames own the request, path and contexts through their direct waits. Regex matches are local owned snapshots and the upgrade adapter passes its inputs by value.
 
+### `src/handler/serve_handler.cpp`
+
+Reviewed request-to-delivery abort forwarding and handoff.
+
+- L12, 14, 16, 17, 18, 24, 28, 41, 42 **SAFE** · The request abort listener momentarily owns its signal and the downstream controller, with the scope guard removing it on handoff or exception. The transport owns completion and always delivers or rejects it on the normal serve paths. The serve Task copies its injected callable.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -948,4 +954,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-71/286 files reviewed. 155 sites: 146 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+72/286 files reviewed. 156 sites: 147 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
