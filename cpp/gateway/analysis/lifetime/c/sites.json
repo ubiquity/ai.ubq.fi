@@ -3397,8 +3397,16 @@
       ]
     },
     "src/provider/cerebras.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Cerebras Chat wire normalization is synchronous. Its request owns options through the preheader send.",
+      "sites": [
+        {
+          "lines": "655-733",
+          "kind": "fetch callback, admission and deadline",
+          "verdict": "SAFE",
+          "reason": "The options and fetcher stay live during awaited dispatch. The timer captures its controller and is cleared by ScopeExit."
+        }
+      ]
     },
     "src/provider/cerebras_handlers.cpp": {
       "status": "pending",

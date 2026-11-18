@@ -291,7 +291,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/capacity_history.cpp`
 - [x] `src/provider/capacity_parse.cpp`
 - [x] `src/provider/capacity_rollups.cpp`
-- [ ] `src/provider/cerebras.cpp`
+- [x] `src/provider/cerebras.cpp`
 - [ ] `src/provider/cerebras_handlers.cpp`
 - [ ] `src/provider/cerebras_rate_limits.cpp`
 - [ ] `src/provider/cerebras_responses.cpp`
@@ -1852,3 +1852,9 @@ Capacity schema consumers return owned rows. Only the final stored snapshot look
 Rollup transforms consume local snapshots synchronously and sorted listing owns its cursor.
 
 - 325-349 · rollup list iteration · **SAFE** · The store and unique iterator are frame values through next and sorting uses the collected copies.
+
+### `src/provider/cerebras.cpp`
+
+Cerebras Chat wire normalization is synchronous. Its request owns options through the preheader send.
+
+- 655-733 · fetch callback, admission and deadline · **SAFE** · The options and fetcher stay live during awaited dispatch. The timer captures its controller and is cleared by ScopeExit.
