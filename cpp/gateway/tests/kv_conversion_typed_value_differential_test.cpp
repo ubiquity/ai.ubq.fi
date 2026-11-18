@@ -336,3 +336,9 @@ TEST("an interchange Error cause can reference its own node") {
   ASSERT(error.cause);
   EXPECT_EQ(encodeTypedValue(*error.cause), graph);
 }
+
+TEST("coercing a cyclic array while allocating a RegExp throws Bun's RangeError") {
+  const auto graph = rt::jsonParse(
+      R"JSON({"root":{"type":"ref","ref":0},"nodes":[{"type":"RegExp","value":"a","items":[{"type":"ref","ref":1}]},{"type":"Array","length":1,"entries":[["0",{"type":"ref","ref":1}]]}]})JSON");
+  EXPECT_THROWS_MESSAGE(decodeTypedValue(graph), rt::RangeError, "Maximum call stack size exceeded.");
+}

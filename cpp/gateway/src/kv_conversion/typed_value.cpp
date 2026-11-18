@@ -279,8 +279,6 @@ namespace uos::kv_conversion::typed_value {
     }
 
     // `String(value)` for a decoded value (what `String(read(...))` builds RegExp flags from).
-    std::string jsString(const KvValue& value);
-
     std::string viewElementsText(rt::KvViewKind kind, const rt::KvBytes& buffer, std::uint64_t byteOffset, std::uint64_t byteLength) {
       const std::uint64_t size = bytesPerElement(kind);
       std::string out;
@@ -316,7 +314,8 @@ namespace uos::kv_conversion::typed_value {
       return out;
     }
 
-    std::string jsString(const KvValue& value) {
+    std::string jsString(const KvValue& value, std::size_t depth = 0) {
+      if (depth >= kMaxNesting) throw rt::RangeError("Maximum call stack size exceeded.");
       const KvValue::Variant& variant = value.variant();
       if (value.isUndefined() || value.is<rt::KvHole>()) return "undefined";
       if (value.isNull()) return "null";
@@ -341,7 +340,7 @@ namespace uos::kv_conversion::typed_value {
         for (std::size_t index = 0; index < array->size(); ++index) {
           if (index) out += ",";
           const KvValue& element = (*array)[index];
-          if (!element.isNullish() && !element.is<rt::KvHole>()) rt::append(out, jsString(element));
+          if (!element.isNullish() && !element.is<rt::KvHole>()) rt::append(out, jsString(element, depth + 1));
         }
         return out;
       }
