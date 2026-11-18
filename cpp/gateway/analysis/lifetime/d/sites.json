@@ -4829,7 +4829,8 @@
       ]
     },
     "src/openai_schema.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed static allowlists and synchronous schema accessors. Views refer to static literals and no callbacks are registered.",
       "sites": []
     },
     "src/openai_telemetry.cpp": {

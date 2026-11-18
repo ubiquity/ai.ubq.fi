@@ -215,7 +215,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/models/metadata.cpp`
 - [x] `src/models/openrouter_models.cpp`
 - [x] `src/openai.cpp`
-- [ ] `src/openai_schema.cpp`
+- [x] `src/openai_schema.cpp`
 - [ ] `src/openai_telemetry.cpp`
 - [ ] `src/optional_telemetry_queue.cpp`
 - [ ] `src/quota_projection.cpp`
@@ -1126,6 +1126,10 @@ Reviewed default model and reasoning waits and synchronous request signal and sc
 
 - L22, 27, 31, 46 **SAFE** · The defaults use named runtime snapshot values. Signal accessors copy the request/context signals synchronously before they return.
 
+### `src/openai_schema.cpp`
+
+Reviewed static allowlists and synchronous schema accessors. Views refer to static literals and no callbacks are registered.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1374,4 +1378,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-108/286 files reviewed. 223 sites: 206 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+109/286 files reviewed. 223 sites: 206 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
