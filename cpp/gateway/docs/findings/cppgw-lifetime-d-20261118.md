@@ -19,6 +19,50 @@ Acceptance uses a file-by-file commit of the checklist, Markdown verdicts and JS
 
 The initial unknowns are current ownership after the integration refactors, availability of the pinned dependencies on this runner, and the cost of the Clang pass. Bound setup at 20 minutes. Pilot tooling and retain per-unit logs, with at most four workers and per-unit cutoffs. Continue reading if a translation unit fails or exceeds its cutoff. Each committed file is a restart checkpoint. Stop when the inventory and ranked findings reconcile, or leave the precise pending files and measured limits in the committed report.
 
+## Runner and commands
+
+Ubuntu 24.04.5 LTS, Linux AArch64, four CPUs, 15 GiB RAM. The audit used Clang and clang-tidy 21.1.8 from apt.llvm.org. Dependency preparation completed under the 20-minute cap. The command flags below match the scratch runs. The root paths are temporary except the apt packages and selected SQLite prefix.
+
+```sh
+sudo -n apt-get -o Acquire::Retries=1 update
+sudo -n apt-get install -y libssl-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev ninja-build pkg-config python3-yaml
+curl -fsSLo llvm-key.asc --max-time 40 https://apt.llvm.org/llvm-snapshot.gpg.key
+gpg --batch --show-keys --with-colons llvm-key.asc
+sudo -n install -m 0644 llvm-key.asc /usr/share/keyrings/cppgw-lifetime-llvm.asc
+printf '%s\n' 'deb [signed-by=/usr/share/keyrings/cppgw-lifetime-llvm.asc] https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main' |
+  sudo -n tee /etc/apt/sources.list.d/cppgw-lifetime-llvm.list >/dev/null
+sudo -n apt-get -o Acquire::Retries=1 -o Acquire::https::Timeout=30 update
+sudo -n apt-get -o Acquire::Retries=1 -o Acquire::https::Timeout=30 install -y clang-21 clang-tidy-21
+```
+
+The signing-key fingerprint was `6084F3CF814B57C1CF12EFD515CF4D18AF4F7421`. OpenSSL 3.0.13, zlib 1.3, Brotli 1.1.0 and Zstd 1.5.5 came from Ubuntu. All three upstream archives passed SHA-256 checks before extraction.
+
+| Archive | SHA-256 | Command run in an external scratch directory |
+| --- | --- | --- |
+| [Boost 1.92.0](https://archives.boost.io/release/1.92.0/source/boost_1_92_0.tar.bz2) | `5c1d40cb8e19adbf740a4ec2da35b3e58f3f5804b1dce44deb53df72193cbc6c` | `./bootstrap.sh --with-libraries=json,container` then `./b2 -j2 --with-json --with-container variant=release link=static runtime-link=shared cxxstd=20 stage`. Produced 869,382-byte JSON and 163,406-byte Container archives. |
+| [SQLite 3.54.0](https://www.sqlite.org/2026/sqlite-autoconf-3540000.tar.gz) | `134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed` | `./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'`, `make -j1`, `sudo -n make install`, `sudo -n ldconfig`. `pkg-config --modversion sqlite3` returned 3.54.0. |
+| [ICU 78.3](https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz) | `3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0` | `../icu/source/configure --prefix="$icu/prefix" --disable-tests --disable-samples --disable-extras --disable-static`, then `make -j1`, `make install`. The staged pkg-config returned 78.3. |
+
+The repository's `tools/tidy.sh` verifies the entire routine configuration before running a selected check. LLVM 21 reported 11 unrelated check names from the earlier LLVM 24 snapshot as unknown during `--verify-config`. The area runner uses the original `.clang-tidy` options and header filter with an exact check override. Its `--list-checks` inventory showed all five requested checks. The first run used Ubuntu ICU 74.2 headers and completed 143/143 translation units in 209.645 seconds with zero failures or timeouts. It emitted 100 deduplicated diagnostics including transitive headers, 9 capturing-lambda and 91 reference-parameter. The pinned-ICU rerun is in progress. The audit scripts and exact bound are reproducible with the following commands.
+
+```sh
+python3 -B cpp/gateway/analysis/lifetime/d/audit.py pending
+python3 -B cpp/gateway/analysis/lifetime/d/audit.py scan src/admin
+rg -n -U 'co_await|co_return|rt::(spawn|all|allSettled|race|any)|addEventListener|setTimeout|setInterval' cpp/gateway/src
+clang-tidy-21 --config-file=cpp/gateway/.clang-tidy --verify-config
+clang-tidy-21 --config-file=cpp/gateway/.clang-tidy \
+  --checks='-*,cppcoreguidelines-avoid-capturing-lambda-coroutines,cppcoreguidelines-avoid-reference-coroutine-parameters,misc-coroutine-hostile-raii,bugprone-dangling-handle,bugprone-use-after-move' --list-checks
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$empty_home" TMPDIR="$fresh_tmp" \
+  python3 -B cpp/gateway/analysis/lifetime/d/tidy.py --boost "$boost/boost_1_92_0" --out "$scratch/tidy" --jobs 4 --timeout 90
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$empty_home" TMPDIR="$fresh_tmp" \
+  python3 -B cpp/gateway/analysis/lifetime/d/tidy.py --boost "$boost/boost_1_92_0" --icu "$icu/prefix/include" \
+  --out "$scratch/tidy-pinned" --jobs 4 --timeout 90
+python3 -B cpp/gateway/analysis/lifetime/d/audit.py verify
+git diff --check 6d28e858e7ab8b8b1036db4a4adfdade0465ed40
+```
+
+Each audit entry binds its source coordinates to the baseline Git blobs. `audit.py verify` reconciles the checklist, Markdown site entries and JSON, validates lines, and requires every lexical `co_await` line to have a verdict in a reviewed file. `audit.py pending` prints the restart order. Finish each file with `audit.py record`, which writes both ledgers and makes one Git commit per reviewed file.
+
 ## File checklist
 
 286 first-party files.
@@ -520,8 +564,105 @@ Reviewed stream framing, abort and timeout races, generator delegation, proxy li
 
 ## Out-of-area observations
 
-Pending caller and runtime-helper tracing.
+- `include/uos/rt/async.hpp:855-861` and `src/rt/async.cpp:410-425`. A pending race source owns its reaction, which owns both the source and the combined result. An abandoned synthetic loser therefore pins the winner until `Loop::Impl` clears pending reactions on teardown. The default loop is process-long (`src/rt/async.cpp:399-403`). Runtime owner should address pending-source reaction ownership or disarm race-only observers after settlement while still observing late rejections. The local diffs below settle only an abandoned private latch. Actual sibling work keeps the same semantics.
+- `src/rt/kv.cpp:73`. `GenericAtomicOperation::commit` returns an awaited aggregate directly. The port's named-result rule also applies there. Request callers in this audit generally keep the receiver in their awaiting frame. Runtime owner should bind the result to a named local before returning it.
 
 ## Ranked defects and counts
+
+### P1 · Request-stream memory retention
+
+`src/responses_stream.cpp:287-299` and `src/bounded_response_body.cpp:33-47`. A normal read wins. The reader then removes the only registration that can settle the synthetic deadline or abort loser. The pending source owns its own reaction and the combined Promise stores the winning chunk until loop teardown. This happens on each winning read, including EOF.
+
+Use the same small edit in each reader. In `readWithDeadline` the resolver replaces the optional `inactive` Promise and its executor. In `abortableRead` preserve the `if (signal.aborted()) onAbort();` check. The post-race flag avoids rejecting a private Promise that has no observer if race construction failed.
+
+```diff
+-      rt::Promise<ReadResult> aborted = rt::newPromise<ReadResult>([&onAbort, &signal](const rt::Resolve<ReadResult>&, const rt::Reject& reject) {
+-        onAbort = rt::EventListener([reject, signal] { reject(abortError(signal.reason())); });
+-        signal.addEventListener("abort", onAbort, {.once = true});
+-        if (signal.aborted()) onAbort();
+-      });
++      auto aborted = rt::withResolvers<ReadResult>();
++      onAbort = rt::EventListener([reject = aborted.reject, signal] { reject(abortError(signal.reason())); });
++      signal.addEventListener("abort", onAbort, {.once = true});
++      if (signal.aborted()) onAbort();
++      bool observed = false;
+@@
+-        std::vector<rt::Promise<ReadResult>> racers{reader.readPromise(), aborted};
++        std::vector<rt::Promise<ReadResult>> racers{reader.readPromise(), aborted.promise};
+         rt::Promise<ReadResult> race = rt::race(std::move(racers));
++        observed = true;
+         result = co_await race.wait();
+@@
+       signal.removeEventListener("abort", onAbort);
++      if (observed) aborted.reject();
+```
+
+```diff
+-      std::optional<rt::Promise<ReadResult>> inactive;
++      auto inactive = rt::withResolvers<ReadResult>();
++      bool observed = false;
+@@
+-        inactive = rt::newPromise<ReadResult>([&abortTimeout, &timeout](const rt::Resolve<ReadResult>&, const rt::Reject& reject) {
+-          abortTimeout = rt::EventListener([reject] {
+-            reject(rt::makeReason(ResponsesStreamError("Upstream Responses stream became inactive.", {.cause = nullptr, .kind = "inactivity_timeout"})));
+-          });
+-          timeout.addEventListener("abort", abortTimeout, {.once = true});
++        abortTimeout = rt::EventListener([reject = inactive.reject] {
++          reject(rt::makeReason(ResponsesStreamError("Upstream Responses stream became inactive.", {.cause = nullptr, .kind = "inactivity_timeout"})));
+         });
+-        std::vector<rt::Promise<ReadResult>> racers{read, *inactive};
++        timeout.addEventListener("abort", abortTimeout, {.once = true});
++        std::vector<rt::Promise<ReadResult>> racers{read, inactive.promise};
+         rt::Promise<ReadResult> race = rt::race(std::move(racers));
++        observed = true;
+         result = co_await race.wait();
+@@
+       timeout.removeEventListener("abort", abortTimeout);
++      if (observed) inactive.reject();
+```
+
+### P2 · Injected admin Tasks retain the parent callback address
+
+`src/admin/codex.cpp:208-209,216-221,239-240` and `src/admin/defaults.cpp:53-54`. Any failing sibling lets the join return while an injected capturing coroutine is suspended. The corresponding handler frame owns the callable and is destroyed during unwind, leaving the pending coroutine without its closure. Normal route dispatch constructs empty dependency overrides. Keep each injected callable in an owning child frame before starting it.
+
+```diff
+-    dependencies.buildCatalog ? dependencies.buildCatalog() : models::catalog::buildModelCatalogSnapshot()
++    dependencies.buildCatalog ? rt::async(dependencies.buildCatalog) : models::catalog::buildModelCatalogSnapshot()
+@@
+-    dependencies.refreshEnrichment ? dependencies.refreshEnrichment() : models::openrouter_models::fetchOpenRouterModels(eo)
++    dependencies.refreshEnrichment ? rt::async(dependencies.refreshEnrichment) : models::openrouter_models::fetchOpenRouterModels(eo)
+@@
+-    dependencies.refreshOpenlux ? dependencies.refreshOpenlux(mo) : provider::metered::fetchMeteredModels(mo)
++    dependencies.refreshOpenlux ? rt::async([refresh = dependencies.refreshOpenlux, mo] { return refresh(mo); }) : provider::metered::fetchMeteredModels(mo)
+@@
+-    dependencies.getMeteredQuotaDiagnostics ? dependencies.getMeteredQuotaDiagnostics() : metered_quota::getMeteredQuotaDiagnostics()
++    dependencies.getMeteredQuotaDiagnostics ? rt::async(dependencies.getMeteredQuotaDiagnostics) : metered_quota::getMeteredQuotaDiagnostics()
+```
+
+Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refreshClaude` with the corresponding copied options. Apply the `buildCatalog` form at both sites.
+
+### P3 · Local provisioning retains the losing abort source
+
+`src/auth/local_development_key.cpp:94-113`. Pricing finishes before abort and the listener is removed. The abort-only source still retains the combined Promise with copied local key material until loop teardown. The existing timer cleanup and late initializer observation stay in place.
+
+```diff
+       rt::Reason failure;
++      bool observed = false;
+@@
+         const rt::Promise<T> racing = rt::race(std::move(racers));
++        observed = true;
+@@
+       signal.removeEventListener("abort", onAbort);
++      if (observed) reject();
+```
+
+### P3 · Awaited temporary member access under GCC 12.2 rules
+
+`src/admin/defaults.cpp:99`. The commit result is immediately dereferenced in the await expression. This violates `PORTING.md`'s named-result requirement, even though no failure was observed with Clang 21.
+
+```diff
+-    bool committed = false; rt::Reason failure; try { committed = (co_await atomic->commit()).ok; } catch (...) { failure = std::current_exception(); }
++    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
+```
 
 22/286 files reviewed. 93 sites: 85 SAFE, 8 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
