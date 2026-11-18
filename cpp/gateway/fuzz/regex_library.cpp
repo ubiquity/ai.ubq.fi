@@ -23,15 +23,24 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 
   uos::fuzz::malformed([&] {
     uos::rt::Regex regex(pattern, flags);
-    regex.lastIndex = data[1] >> 4;
-    (void)regex.exec(subject);
-    regex.lastIndex = 0;
-    (void)regex.test(subject);
-    (void)uos::rt::search(subject, regex);
-    if (regex.global()) (void)uos::rt::matchAll(subject, regex);
-    (void)uos::rt::replace(subject, regex, replacement);
-    (void)uos::rt::replace(subject, regex, [](const uos::rt::RegexMatch& match) { return match.str(); });
-    (void)uos::rt::splitWithCaptures(subject, regex, 16);
+    // Exercise one public operation per input. Each operation has its own execution budget.
+    if (data[1] & 0x80) regex.lastIndex = data[0] & 0x0F;
+    switch ((data[1] >> 4) & 7) {
+      case 0: (void)regex.exec(subject); break;
+      case 1: (void)regex.test(subject); break;
+      case 2: (void)uos::rt::search(subject, regex); break;
+      case 3: (void)uos::rt::matchAll(subject, regex); break;
+      case 4: (void)uos::rt::replace(subject, regex, replacement); break;
+      case 5: (void)uos::rt::replace(subject, regex, [](const uos::rt::RegexMatch& match) { return match.str(); }); break;
+      case 6:
+        if (regex.captureCount() == 0) (void)uos::rt::split(subject, regex, 16);
+        else (void)uos::rt::splitWithCaptures(subject, regex, 16);
+        break;
+      case 7:
+        if (regex.global()) (void)uos::rt::matchGlobal(subject, regex);
+        else (void)uos::rt::match(subject, regex);
+        break;
+    }
   });
   return 0;
 }
