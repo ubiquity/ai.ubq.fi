@@ -93,6 +93,12 @@
       "extra_sources": [],
       "max_len": 16384
     },
+    "url_library": {
+      "harness": "fuzz/url_library.cpp",
+      "entry": "Ada-backed uos::rt::URL / URLSearchParams / file URL conversion",
+      "extra_sources": ["third_party/ada/ada.cpp"],
+      "max_len": 16384
+    },
     "regex": {
       "harness": "fuzz/regex.cpp",
       "entry": "uos::rt::Regex compile / exec / test",
