@@ -84,7 +84,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/deepseek/forwarded_payload_policy.hpp`
 - [x] `include/uos/deepseek/handlers.hpp`
 - [x] `include/uos/deepseek/index.hpp`
-- [ ] `include/uos/deepseek/responses.hpp`
+- [x] `include/uos/deepseek/responses.hpp`
 - [ ] `include/uos/deepseek/responses_payload.hpp`
 - [ ] `include/uos/deepseek/responses_stream.hpp`
 - [ ] `include/uos/deepseek/stream.hpp`
@@ -605,3 +605,7 @@ The DeepSeek entry points retain their request payloads, with a borrowed telemet
 The dispatcher passes projected request data and callback objects as owning values.
 
 - 198-202,291-292 · task and callback interface · **SAFE** · The options frame retains admission/timing/projection hooks; the projected JSON reference is used in a synchronous callback.
+
+### `include/uos/deepseek/responses.hpp`
+
+Synchronous Responses conversion declarations. The results own translated wire values.

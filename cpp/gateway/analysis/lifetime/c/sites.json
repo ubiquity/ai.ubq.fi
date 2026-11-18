@@ -568,7 +568,8 @@
       ]
     },
     "include/uos/deepseek/responses.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous Responses conversion declarations. The results own translated wire values.",
       "sites": []
     },
     "include/uos/deepseek/responses_payload.hpp": {
