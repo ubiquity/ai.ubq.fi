@@ -488,8 +488,16 @@
       ]
     },
     "include/uos/codex/supervisor_log.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Rollout tail reader interface.",
+      "sites": [
+        {
+          "lines": "58",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The task frame owns the input record and its path parameters."
+        }
+      ]
     },
     "include/uos/codex/supervisor_secret.hpp": {
       "status": "pending",
