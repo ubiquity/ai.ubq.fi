@@ -28,6 +28,14 @@ KINDS = {
 # Remove comments and literals without shifting source coordinates.
 NON_CODE = re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|R"([^ ()\\\t\n]{0,16})\([\s\S]*?\)\1"|"(?:[^"\\\n]|\\[\s\S])*"|\'(?:[^\'\\\n]|\\[\s\S])*\'')
 AWAIT = re.compile(r"\bco_await\b")
+REQUIRED_CANDIDATES = {
+    "co_await": AWAIT,
+    "join or escape": re.compile(r"\brt::(?:race|all|allSettled|any|spawn)\s*\(|\.co_spawn\("),
+    "callback registration": re.compile(
+        r"\b(?:addEventListener|setInterval|setTimeout|onDelivery|onFinish|queueMicrotask)\s*\("
+        r"|(?:\.|->)(?:on|once|subscribe|listen|async_wait)\s*\("
+    ),
+}
 LOOK = re.compile(
     r"\b(?:co_await|co_yield|Task|Promise|awaitable|spawn|allSettled|race|any|all|co_spawn|async|setTimeout|setInterval|"
     r"queueMicrotask|onAbort|onDelivery|onFinish|onEvent|addEventListener|register|subscribe|dispatch|"
@@ -98,9 +106,10 @@ def check_entry(path, entry):
         if site["verdict"] not in VERDICTS or not site["detail"]:
             raise ValueError(f"{path}: invalid verdict {site}")
         covered.update(anchors)
-    omitted = set(matches(path, AWAIT)) - covered
-    if omitted:
-        raise ValueError(f"{path}: unclassified co_await lines {sorted(omitted)}")
+    for label, pattern in REQUIRED_CANDIDATES.items():
+        omitted = [number for number, (_, code) in enumerate(lines, 1) if pattern.search(code) and number not in covered]
+        if omitted:
+            raise ValueError(f"{path}: unclassified {label} lines {omitted}")
 
 
 def parse_entry(path, note, rows):
@@ -153,7 +162,30 @@ def record(data):
         print(git("-c", "user.name=Codex", "-c", "user.email=codex@openai.com", "commit", "-m", f"audit(cpp): review {path} lifetimes").splitlines()[0])
 
 
-def verify(data, complete):
+def check_tidy_summary(data, path):
+    command = json.loads(path.with_name("command.json").read_text())
+    summary = json.loads(path.read_text())
+    if command["source_commit"] != data["source_commit"]:
+        raise ValueError("clang-tidy analyzed a different source commit")
+    expected = [source for source in data["files"] if source.endswith(".cpp")]
+    units = summary["translation_units"]
+    if [unit["source"] for unit in units] != expected or any(unit["status"] != "ok" for unit in units):
+        raise ValueError("clang-tidy summary has missing or failed translation units")
+    inside = collections.Counter()
+    outside = 0
+    for source, line, column, check, _ in summary["unique_diagnostics"]:
+        if source not in data["files"]:
+            outside += 1
+            continue
+        if not any(line in site["lines"] for site in data["files"][source]["sites"]):
+            raise ValueError(f"{source}:{line}:{column}: unclassified {check} diagnostic")
+        inside[check] += 1
+    print(f"{len(units)} successful clang-tidy units; {sum(inside.values())} anchored diagnostics in scope; {outside} transitive")
+    for check, count in sorted(inside.items()):
+        print(f"  {check}: {count}")
+
+
+def verify(data, complete, tidy_summary):
     paths = file_list(data["source_commit"])
     if paths != list(data["files"]) or git("rev-parse", data["source_commit"] + "^{tree}") != data["source_tree"]:
         raise ValueError("inventory differs from the audited tree")
@@ -175,6 +207,8 @@ def verify(data, complete):
     if statistic(data) + " " + COUNTS not in report:
         raise ValueError("Markdown count discrepancy")
     print(statistic(data))
+    if tidy_summary:
+        check_tidy_summary(data, tidy_summary)
 
 
 def main():
@@ -182,12 +216,13 @@ def main():
     parser.add_argument("command", choices=("pending", "scan", "record", "verify"))
     parser.add_argument("paths", nargs="*")
     parser.add_argument("--complete", action="store_true")
+    parser.add_argument("--tidy-summary", type=Path)
     args = parser.parse_args()
     data = json.loads(LEDGER.read_text())
     if args.command == "record":
         record(data)
     elif args.command == "verify":
-        verify(data, args.complete)
+        verify(data, args.complete, args.tidy_summary)
     else:
         for path, entry in data["files"].items():
             if args.paths and not any(path == selection or path.startswith(selection + "/") for selection in args.paths):
