@@ -8180,8 +8180,29 @@
       ]
     },
     "include/uos/authority/native_kernel_contracts.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed quota result alternatives and synchronous serialization declarations.",
+      "sites": [
+        {
+          "lines": [
+            144,
+            151,
+            159,
+            165,
+            174,
+            179,
+            190,
+            199,
+            204
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each kind label is a static literal and the results carry owned state."
+        }
+      ]
     },
     "include/uos/authority/native_paid.hpp": {
       "reviewed": false,
