@@ -122,7 +122,12 @@ def build(work, output, jobs):
         prefix = Path(capture("brew", "--prefix", formula, env=env)).resolve(strict=True)
         versions[formula] = prefix.name
         static_libraries.extend(prefix / "lib" / archive for archive in archives)
-        copy_license_files(prefix, licenses / formula)
+        if formula != "boost":
+            copy_license_files(prefix, licenses / formula)
+    for library in ("boost", "compiler-rt"):
+        destination = licenses / library
+        destination.mkdir(parents=True)
+        shutil.copyfile(GATEWAY / "packaging/macos" / f"{library}.LICENSE", destination / "LICENSE")
     for name in sorted(profile["vendor_archives"]):
         vendor = name.removeprefix("libuos_vendor_").removesuffix(".a")
         directory = GATEWAY / "third_party" / vendor

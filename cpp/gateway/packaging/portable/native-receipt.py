@@ -48,22 +48,36 @@ toolchain = licenses / "rust"
 toolchain.mkdir(parents=True)
 for name in ("COPYRIGHT", "LICENSE-APACHE", "LICENSE-MIT"):
     shutil.copyfile(rust / name, toolchain / name)
+shutil.copyfile(rust / "rustc/share/doc/rust/COPYRIGHT-library.html", toolchain / "COPYRIGHT-library.html")
 
 inventory = {}
 notice = re.compile(r"^(?:licen[cs]e|copying|copyright|notice|unlicense)(?:$|[-_.])", re.IGNORECASE)
+workspace_licenses = {
+    "https://github.com/denoland/deno_error": "deno-error.LICENSE",
+    "https://github.com/napi-rs/napi-rs": "napi-rs.LICENSE",
+}
 for manifest in sorted((log.parent / "cargo-home/registry/src").glob("*/*/Cargo.toml")):
     crate = manifest.parent
     package = tomllib.loads(manifest.read_text())["package"]
     files = {p for p in crate.rglob("*") if notice.match(p.name) and p.is_file()}
     if package.get("license-file"):
         files.add(crate / package["license-file"])
-    inventory[crate.name] = {"license": package.get("license"), "notices": []}
+    destination = licenses / "registry" / crate.name
+    copied = []
+    inventory[crate.name] = {"license": package.get("license"), "notices": copied}
+    if not files:
+        upstream = workspace_licenses.get(package.get("repository"))
+        if not upstream or package.get("license") != "MIT":
+            raise ValueError(f"No license notice for {crate.name}")
+        destination.mkdir(parents=True)
+        shutil.copyfile(Path("/usr/local/share/uos-crate-licenses") / upstream, destination / "LICENSE")
+        copied.append("LICENSE")
     for source in sorted(files):
         if not source.resolve(strict=True).is_relative_to(crate):
             raise ValueError(f"License file escapes registry package: {source}")
         relative = source.relative_to(crate)
-        target = licenses / "registry" / crate.name / relative
+        target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
-        inventory[crate.name]["notices"].append(relative.as_posix())
+        copied.append(relative.as_posix())
 (licenses / "registry.json").write_text(json.dumps(inventory, indent=2, sort_keys=True) + "\n")

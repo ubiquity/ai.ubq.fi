@@ -47,6 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libnode-dev pat
     && rm -rf /var/lib/apt/lists/*
 COPY cpp/gateway/packaging/portable/native.sh /usr/local/bin/portable-native
 COPY cpp/gateway/packaging/portable/native-receipt.py /usr/local/bin/portable-native-receipt
+COPY cpp/gateway/packaging/portable/licenses /usr/local/share/uos-crate-licenses
 COPY scripts/build-native-kv.ts /source/scripts/
 COPY tools/native-kv /source/tools/native-kv
 COPY src/runtime/permissions-native.c /source/src/runtime/

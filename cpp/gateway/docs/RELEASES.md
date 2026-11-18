@@ -36,7 +36,7 @@ version is `2.36`. Install the runtime and sealing prerequisites for your distri
 
 ```sh
 # Arch Linux ARM, on an up-to-date system
-sudo pacman -S --needed openssl zlib brotli zstd ca-certificates python binutils
+sudo pacman -S --needed openssl-3 zlib brotli zstd ca-certificates python binutils
 
 # Raspberry Pi OS based on Debian 12 (Bookworm)
 sudo apt-get install libssl3 zlib1g libbrotli1 libzstd1 ca-certificates python3 binutils
@@ -72,9 +72,10 @@ matching distribution package and retry. After upgrading shared libraries, use a
 to record their new paths and hashes.
 
 For a separately approved Linux launch, keep the sealed directory under deployment ownership or on a read-only mount.
-Prepare a separate, private state directory containing an existing `.data/kv-bun.sqlite3` with the Bun codec marker. Stop
-any other process using that database. Keep the legacy `.data/kv.sqlite3` intact. Use a private configuration file (mode
-`0600`) owned by the gateway user and fill in the three printed values and the canonical state path:
+Prepare a separate state directory containing an existing `.data/kv-bun.sqlite3` with the Bun codec marker. Both the
+state directory and its `.data` directory must be private (mode `0700`) and owned by the gateway user. Stop any other
+process using the database and keep the legacy `.data/kv.sqlite3` intact. Use a private configuration file (mode `0600`)
+owned by the gateway user and fill in the three printed values and the canonical state path:
 
 ```json
 {
