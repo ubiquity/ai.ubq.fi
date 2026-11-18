@@ -3446,8 +3446,99 @@
       ]
     },
     "src/health.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed passive fan-out, provider bindings and the active-probe timeout race.",
+      "sites": [
+        {
+          "lines": [
+            125,
+            134,
+            138,
+            140,
+            145,
+            154,
+            169,
+            202,
+            203,
+            210,
+            211,
+            213,
+            218,
+            220
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Auth hash children take a whole account or string copy, and independent health and quota operations own their arguments. Cache and endpoint bodies are named frame values."
+        },
+        {
+          "lines": [
+            229,
+            231,
+            243,
+            246,
+            249,
+            258,
+            270,
+            271,
+            275,
+            277,
+            283,
+            286,
+            288,
+            296
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Active probe tasks own account or credential, optional KV, signal and shared progress. Aggregation reads copies or uses shared progress on the same loop after child completion."
+        },
+        {
+          "lines": [
+            306,
+            311,
+            312,
+            313,
+            316,
+            317,
+            319
+          ],
+          "kinds": [
+            "c",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "The probe or its failure can win, then finalization clears the only timer that settles the private timeout Promise. That pending source retains the combined outcome and the active result until the process loop ends. Use withResolvers and settle the timeout loser after clearing its timer."
+        },
+        {
+          "lines": [
+            306,
+            324,
+            326,
+            329,
+            332,
+            343,
+            344,
+            350,
+            364,
+            373
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Coalescing copies the in-flight promise before waiting. Passive joins use independent tasks and subsequent views point into the named tuple or immutable frame snapshots."
+        }
+      ]
     },
     "src/http.cpp": {
       "reviewed": false,

@@ -140,7 +140,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/handler/serve_handler.cpp`
 - [x] `src/handler/terminal_log.cpp`
 - [x] `src/handler/terminal_route.cpp`
-- [ ] `src/health.cpp`
+- [x] `src/health.cpp`
 - [ ] `src/http.cpp`
 - [ ] `src/images.cpp`
 - [ ] `src/inference_admission.cpp`
@@ -869,6 +869,15 @@ Reviewed admission, quota gates, terminal accounting hooks, routes and backgroun
 - L523, 524, 526, 529 **DEFECT** · An injected Task-returning persistence callable can be stored in the Promise-returning std::function through implicit Task adoption. A successful background registrar lets the options frame die while that coroutine is pending. Invoke a shared copy of the callable and keep that same copy in the persistence settlement chain.
 - L536, 542, 547, 548, 551, 554, 558, 560, 562, 564, 567, 579, 587, 589, 591 **SAFE** · The owning route frame holds State, authentication, permit and quota context. Task factories pass values into children or run only while an owner in the awaiting chain remains live.
 
+### `src/health.cpp`
+
+Reviewed passive fan-out, provider bindings and the active-probe timeout race.
+
+- L125, 134, 138, 140, 145, 154, 169, 202, 203, 210, 211, 213, 218, 220 **SAFE** · Auth hash children take a whole account or string copy, and independent health and quota operations own their arguments. Cache and endpoint bodies are named frame values.
+- L229, 231, 243, 246, 249, 258, 270, 271, 275, 277, 283, 286, 288, 296 **SAFE** · Active probe tasks own account or credential, optional KV, signal and shared progress. Aggregation reads copies or uses shared progress on the same loop after child completion.
+- L306, 311, 312, 313, 316, 317, 319 **DEFECT** · The probe or its failure can win, then finalization clears the only timer that settles the private timeout Promise. That pending source retains the combined outcome and the active result until the process loop ends. Use withResolvers and settle the timeout loser after clearing its timer.
+- L306, 324, 326, 329, 332, 343, 344, 350, 364, 373 **SAFE** · Coalescing copies the in-flight promise before waiting. Passive joins use independent tasks and subsequent views point into the named tuple or immutable frame snapshots.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -974,4 +983,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-74/286 files reviewed. 166 sites: 155 SAFE, 11 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+75/286 files reviewed. 170 sites: 158 SAFE, 12 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
