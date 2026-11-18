@@ -1210,8 +1210,9 @@
       ]
     },
     "include/uos/storage/key_compatibility.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "The only API consumes a byte span synchronously. No coroutine or deferred callback."
     },
     "include/uos/storage/kv.hpp": {
       "reviewed": false,

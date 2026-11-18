@@ -60,7 +60,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/rt/process.cpp`
 - [x] `src/rt/sqlite.cpp`
 - [x] `src/rt/sqlite_darwin.hpp`
-- [ ] `include/uos/storage/key_compatibility.hpp`
+- [x] `include/uos/storage/key_compatibility.hpp`
 - [ ] `include/uos/storage/kv.hpp`
 - [ ] `include/uos/storage/native_addon.hpp`
 - [ ] `include/uos/storage/native_kv.hpp`
@@ -407,6 +407,10 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | --- | --- | --- | --- |
 | 32-56,59-84 | Darwin read-only VFS and URI parsing | **SAFE** | Registration copies the parent into static VFS storage and installs a captureless callback through the process-lifetime parent. The query view is consumed before path mutation. |
 
+### `include/uos/storage/key_compatibility.hpp`
+
+The only API consumes a byte span synchronously. No coroutine or deferred callback.
+
 
 ## Ranked defects and counts
 
@@ -612,4 +616,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-37/97 files reviewed. **DEFECT 8, SAFE 90, UNCLEAR 3.**
+38/97 files reviewed. **DEFECT 8, SAFE 90, UNCLEAR 3.**
