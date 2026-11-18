@@ -151,7 +151,7 @@ def build(work, output, jobs):
         target = stage / "bin" / name
         run(*flags, *entry, GATEWAY / "runtime/startup.cpp",
             "-Xlinker", "-force_load", "-Xlinker", build_root / "libuos_gateway.a", *static_libraries,
-            "-Wl,-no_uuid", "-Wl,-adhoc_codesign", "-o", target, env=env)
+            "-Wl,-reproducible", "-Wl,-adhoc_codesign", "-o", target, env=env)
         if capture("xcrun", "lipo", "-archs", target, env=env) != "arm64":
             raise ValueError(f"Unsupported Mach-O architecture for {name}")
         linked = capture("xcrun", "otool", "-L", target, env=env).splitlines()[1:]

@@ -28,3 +28,9 @@ in the object cache. First-party compiler flags and test expectations are retain
 The Mac archive exposes an offline version command backed by the packaged source commit. The Mac-only entrypoint
 passes all other arguments to the existing gateway entrypoint. The workflow now checks the installed executable's
 version from a fresh extraction under a network-denying Seatbelt profile.
+
+At commit `21c922c6d62fedee77556115c64386b3beb246f3`, the corrected build compiled all 369 production sources and
+passed 36 runtime binaries and 458 cases. It produced an archive, but the extracted version command failed with
+`dyld: missing LC_UUID load command`. The build block exited 1 after 1872.08 seconds. The linker had been told to omit
+the UUID. The packager now uses Apple's `-reproducible` flag and the default content-derived UUID. Two signed link
+probes with that flag had the same UUID, the same SHA-256 and exit status 0 when executed.
