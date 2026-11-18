@@ -65,12 +65,11 @@ def third_party():
     return flags, sources
 
 
-def compile_one(compiler, flags, source, objects):
+def compile_one(compiler, c_compiler, flags, source, objects):
     output = objects / (source.replace("/", "_") + ".o")
     if source.endswith(".c"):
-        # Vendored C libraries: the C driver, without the C++ language flag.
-        compiler = "clang" if compiler.endswith("clang++") else compiler.replace("g++", "gcc")
-        flags = [flag for flag in flags if not flag.startswith("-std=c++")]
+        compiler = c_compiler
+        flags = ["-std=c11"] + [flag for flag in flags if not flag.startswith("-std=c++")]
     done = subprocess.run([compiler, *flags, "-c", str(GATEWAY / source), "-o", str(output)],
                           capture_output=True, text=True)
     return source, output, done.returncode, done.stderr[-6000:]
@@ -106,7 +105,11 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 2)
     parser.add_argument("--compiler", default=os.environ.get("CXX", "clang++"))
+    parser.add_argument("--cc", default=os.environ.get("CC"), help="C compiler for vendor sources")
     args = parser.parse_args()
+    cxx = Path(args.compiler)
+    c_name = cxx.name.replace("clang++", "clang").replace("g++", "gcc")
+    c_compiler = args.cc or (str(cxx.with_name(c_name)) if c_name != cxx.name else "cc")
     policy = json.loads((GATEWAY / "fuzz/targets.json").read_text())
     if args.target not in policy["targets"] or args.seconds < 1 or args.jobs < 1:
         parser.error("known target, positive duration and positive job count are required")
@@ -129,7 +132,7 @@ def main():
     started = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         for source, output, code, stderr in pool.map(
-                lambda source: compile_one(args.compiler, flags, source, objects), sources):
+                lambda source: compile_one(args.compiler, c_compiler, flags, source, objects), sources):
             if code:
                 failed.append(source)
                 print("COMPILE FAILED " + source + "\n" + stderr, file=sys.stderr)

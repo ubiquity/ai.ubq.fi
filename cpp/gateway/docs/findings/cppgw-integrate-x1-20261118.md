@@ -67,3 +67,21 @@ preserves the Linux confinement section and the merged library sections,
 with the incoming-integration guidance at the end. The entrypoint, startup,
 Linux permissions implementation and header, and reduced-policy fixture
 are byte-identical to the fallback branch.
+
+## Initial Release shard and build path fixes
+
+On merge tree `f2c9123f8a30a7762451a4d56735a4cf13d6a20f`, Release shard
+1/4 compiled all 369 production sources. All 112 tests and 1,311 cases
+passed. This cold run took 939.506 seconds, with 920.005 seconds in the
+object phase and 18.888 seconds linking and running tests. No source or
+fixture repair was required by the shard.
+
+The build review found two llhttp integration gaps outside the portable
+test driver. The portable Docker CMake context needed the parser test file
+declared as a vendor consumer. The direct fuzz CI driver misclassified
+versioned `clang++` as a C compiler. The Docker path now includes the
+declared consumer and sets the ARMv8-A C toolchain flags. The fuzz driver
+compiles vendor C files in C11 mode with the matching Clang or explicit
+`CC`. The CMake extra-target registry provides the standalone library
+harnesses with explicit link closures. The Raspberry Pi guide now matches
+the fallback's opt-in configuration.

@@ -37,7 +37,7 @@ The package producer verifies successful native KV provenance against the frozen
 
 The package layout is `bin/{uos-gateway,uos-kv-convert,uos-kv-proof}`, `static/**`, `native/kv/{native-kv.node,native-kv.provenance.json,inputs.json}`, `native/permissions/{linux-arm64.node,manifest.json}`, `runtime/{launch-schema.json,offline-schema.json}`, `src/kv-conversion/{v8-helper.mjs,typed-value.ts}`, `licenses/<vendor>/{LICENSE,NOTICE}`, `build-profile.json`, `runtime-closure.json`, `operator-closure.json`, `package.json`, `manifest.sha256`, `README.md` and `ops/**`. The producer copies this document into `README.md`, so finalize it before packaging. `manifest.sha256` lists every other regular file once, sorted by its full relative POSIX path. Modes are fixed and timestamps are set to epoch zero. The earlier two-pass package under umasks `077` and `022` matched in bytes, modes and timestamps across all 59 regular files, including its manifest. Verify the same properties on fresh output for new artifacts. The draft launcher uses `/bin/sh` builtins and `/usr/bin/env`, with their host programs and dependencies recorded in `operator-closure.json`. The producer uses Python and `readelf` at package construction.
 
-The licenses directory carries the original simdjson and simdutf Apache 2.0 texts and their embedded attributions, including the PyTorch-derived BSD 3-clause terms, the MIT option used for fast_float, the Boost terms for Dragonbox and Boost, and the Fuchsia credit. `manifest.sha256` covers these files along with the binaries.
+The licenses directory carries the llhttp MIT license and the original simdjson and simdutf Apache 2.0 texts and their embedded attributions, including the PyTorch-derived BSD 3-clause terms, the MIT option used for fast_float, the Boost terms for Dragonbox and Boost, and the Fuchsia credit. `manifest.sha256` covers these files along with the binaries.
 
 ## Input limits
 
@@ -78,7 +78,7 @@ The default policy requires Linux ARM64 with Landlock ABI 8 or newer and applies
 UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1 /absolute/path/to/package/ops/launch-native.sh /absolute/path/to/launch.json
 ```
 
-For a systemd launch, set `Environment=UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1` in the gateway unit's `[Service]` section. The launcher reads the exact value `1` from its process environment during bootstrap. It queries the ABI from Landlock itself, so kernel backports and kernel configuration determine the available controls.
+For a systemd launch, set `Environment=UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1` in the gateway unit's `[Service]` section. If the unit uses `env -i` to construct the launcher environment, include the assignment there. The launcher reads the exact value `1` from its process environment during bootstrap. It queries the ABI from Landlock itself, so kernel backports and kernel configuration determine the available controls.
 
 | Landlock ABI | First Linux release | Protections with the opt-in                                                                                        |
 | -----------: | ------------------: | ------------------------------------------------------------------------------------------------------------------ |

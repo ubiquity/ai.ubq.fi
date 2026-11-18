@@ -1,6 +1,6 @@
 # Portable ARM64 gateway on Raspberry Pi OS
 
-The portable release targets 64-bit Raspberry Pi OS Bookworm and Trixie with an ARMv8-A CPU and a kernel that exposes Landlock ABI 8 or newer. Build on a Linux ARM64 machine with Docker and Buildx. Use a Bookworm userspace for the glibc 2.36 baseline. Trixie uses glibc 2.41.
+The portable release targets 64-bit Raspberry Pi OS Bookworm and Trixie with an ARMv8-A CPU. The default requires Landlock ABI 8 or newer. Operators on ABI 3–7 can explicitly select the reduced policy described below. Build on a Linux ARM64 machine with Docker and Buildx. Use a Bookworm userspace for the glibc 2.36 baseline. Trixie uses glibc 2.41.
 
 ## Build and verify
 
@@ -23,6 +23,7 @@ The compiler is Clang 21 on Debian 12, with Bookworm's libstdc++ and libgcc link
 | ------------------------------ | ------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Boost.JSON and Boost.Container | 1.74 for Bookworm's Boost suite | Static 1.92.0 from the verified upstream archive                                                  |
 | simdjson and simdutf           | Vendored in this source tree    | Static 5.2.0 and 9.4.0 from the CMake vendor registry                                             |
+| llhttp                        | Vendored in this source tree    | Static 9.4.4 from the CMake vendor registry                                                      |
 | SQLite                         | 3.40.1                          | Static 3.54.0 with `SQLITE_DQS=3`, matching the durable store's differential fixtures             |
 | ICU                            | 72.1                            | Static ICU 78.3, including data for case mapping, collation and URL IDNA                          |
 | OpenSSL                        | 3.0.x                           | Shared `libssl.so.3` and `libcrypto.so.3`. Trixie supplies the same SONAMEs through `libssl3t64`. |
@@ -54,7 +55,7 @@ Use `runtime/launch-schema.json` from the sealed package. Supply the three value
 
 Use a usr-merged system. The loader and libraries must resolve under `/usr/lib/`, including Debian's `/usr/lib/aarch64-linux-gnu` directory. The existing Arch package tool looks up libraries in flat directories and binds the building host's library hashes. The portable sealer accounts for Debian's multiarch layout while preserving the executable's closure verification. The existing runtime reads the selected package, standard OS trust and resolver data, and `/proc/self`. It gives write access to the private state `.data` directory and directs SQLite temporary files there.
 
-Linux 6.6 has Landlock ABI 3 and Linux 6.12 has ABI 6 upstream. Landlock ABI 8 introduces the `LANDLOCK_RESTRICT_SELF_TSYNC` used here and first appears in upstream Linux 7.0. Raspberry Pi OS on a 6.6-series kernel needs a kernel with ABI 8 backported or a newer kernel that exposes it. Enable Landlock in the kernel and the active LSM list and retain seccomp filter support with thread synchronization. The gateway refuses to start on an older or blocked Landlock ABI or unavailable seccomp, before opening the database or listening. It exits if installing either thread-synchronized policy fails. The Docker proofs use the runner kernel for these checks. [Landlock userspace API](https://docs.kernel.org/userspace-api/landlock.html)
+Linux 6.6 has Landlock ABI 3 and Linux 6.12 has ABI 6 upstream. Landlock ABI 8 introduces `LANDLOCK_RESTRICT_SELF_TSYNC` in upstream Linux 7.0. Enable Landlock in the kernel and the active LSM list, and retain seccomp filter support with thread synchronization. On ABI 3–7, set `UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1` in the native launcher's environment. The reduced policy applies the kernel's available rights before bootstrap starts other threads, which then inherit the restrictions. Verify the effective policy in the startup record. The Docker proofs use the runner kernel for these checks. [Linux confinement](RUNTIME.md#linux-confinement) · [Landlock userspace API](https://docs.kernel.org/userspace-api/landlock.html)
 
 On an ARM64 target, query the active ABI directly before sealing.
 
