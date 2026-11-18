@@ -112,7 +112,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/kernel/attestation.cpp`
 - [x] `src/kernel/policy_queue.cpp`
 - [x] `src/kernel/quota_reservations.cpp`
-- [ ] `src/kernel/quota_reserve.cpp`
+- [x] `src/kernel/quota_reserve.cpp`
 - [ ] `src/kernel/quota_v2.cpp`
 - [ ] `src/kernel/quota_write.cpp`
 - [ ] `src/kernel/usage.cpp`
@@ -772,6 +772,15 @@ Usage read methods own identities and options, with a shared store or a resolved
 | 406-445,448-483 | In-flight renewal and settlement reactions | **SAFE** | Each relay takes immutable copies or shared context. Promise completion moves reactions out of their source state, compares an owned identity token, and clears the matching slot. |
 | 550-603,606-666 | Default window scan and cutover guard | **SAFE** | The frame keeps each scan, task and optional guard. Releasing the guard copies its row and key, and iteration over the two static scopes carries no borrow of a mutable container. |
 
+### `src/kernel/quota_reserve.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 88-116 | Reservation read fan-out | **SAFE** | Each eager read owns its own key and KV receiver; the fail-fast aggregate retains its children, and the result tuple is named before decomposition or moving members. |
+| 123-167,169-208 | Eligibility, capacity reclaim and durable reservation | **SAFE** | Each frame owns the policy snapshots and atomic builder. The window and reservation references point into that frame's const plan and remain valid when commit resumes. |
+| 211-225,241-260 | Reservation attempts and capturing lock operation | **SAFE** | The lock frame owns the by-value closure through the direct await. Each attempt owns its options and moved target, and the retry alias is consumed synchronously. |
+| 270-314 | Public org and effective reservation entries | **SAFE** | Each coroutine retains the selected KV owner and copies or moves all strings and options into independently owned tasks. |
+
 
 ## Ranked defects and counts
 
@@ -1043,4 +1052,4 @@ removes the registrations on frame destruction as well as on normal return.
 +  const auto bindingHash = co_await std::move(bindingHashing);
 ```
 
-89/97 files reviewed. **DEFECT 10, SAFE 209, UNCLEAR 4.**
+90/97 files reviewed. **DEFECT 10, SAFE 213, UNCLEAR 4.**

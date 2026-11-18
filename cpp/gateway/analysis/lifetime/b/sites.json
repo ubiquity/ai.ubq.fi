@@ -2734,8 +2734,53 @@
       ]
     },
     "src/kernel/quota_reserve.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "88-116",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Reservation read fan-out",
+          "evidence": "Each eager read owns its own key and KV receiver; the fail-fast aggregate retains its children, and the result tuple is named before decomposition or moving members."
+        },
+        {
+          "lines": "123-167,169-208",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Eligibility, capacity reclaim and durable reservation",
+          "evidence": "Each frame owns the policy snapshots and atomic builder. The window and reservation references point into that frame's const plan and remain valid when commit resumes."
+        },
+        {
+          "lines": "211-225,241-260",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Reservation attempts and capturing lock operation",
+          "evidence": "The lock frame owns the by-value closure through the direct await. Each attempt owns its options and moved target, and the retry alias is consumed synchronously."
+        },
+        {
+          "lines": "270-314",
+          "verdict": "SAFE",
+          "kinds": [
+            "b"
+          ],
+          "symbol": "Public org and effective reservation entries",
+          "evidence": "Each coroutine retains the selected KV owner and copies or moves all strings and options into independently owned tasks."
+        }
+      ]
     },
     "src/kernel/quota_v2.cpp": {
       "reviewed": false,
