@@ -4859,7 +4859,8 @@
       ]
     },
     "src/optional_telemetry_queue.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous payload sizing and error translation. Temporary child pointers are read while the caller's JSON remains unchanged. The asynchronous queue is implemented in the corresponding header.",
       "sites": []
     },
     "src/quota_projection.cpp": {

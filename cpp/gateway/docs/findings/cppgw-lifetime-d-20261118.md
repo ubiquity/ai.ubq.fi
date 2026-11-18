@@ -217,7 +217,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/openai.cpp`
 - [x] `src/openai_schema.cpp`
 - [x] `src/openai_telemetry.cpp`
-- [ ] `src/optional_telemetry_queue.cpp`
+- [x] `src/optional_telemetry_queue.cpp`
 - [ ] `src/quota_projection.cpp`
 - [ ] `src/recent_model_context.cpp`
 - [ ] `src/release.cpp`
@@ -1136,6 +1136,10 @@ Reviewed response and request telemetry WeakMaps, aggregate state, callback disp
 
 - L100, 561, 562, 564, 565, 746, 759, 782 **SAFE** · The telemetry Task owns its handler callback, context copy and shared response state through the wait. The usage callbacks are invoked inline and the remaining telemetry helpers consume their pointers synchronously.
 
+### `src/optional_telemetry_queue.cpp`
+
+Reviewed synchronous payload sizing and error translation. Temporary child pointers are read while the caller's JSON remains unchanged. The asynchronous queue is implemented in the corresponding header.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1384,4 +1388,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-110/286 files reviewed. 224 sites: 207 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+111/286 files reviewed. 224 sites: 207 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
