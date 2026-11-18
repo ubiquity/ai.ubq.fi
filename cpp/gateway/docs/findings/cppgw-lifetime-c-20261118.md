@@ -102,7 +102,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/probes.hpp`
 - [x] `include/uos/harmony/reliability/context.hpp`
 - [x] `include/uos/harmony/reliability/failure.hpp`
-- [ ] `include/uos/harmony/reliability/feedback.hpp`
+- [x] `include/uos/harmony/reliability/feedback.hpp`
 - [ ] `include/uos/harmony/reliability/harness.hpp`
 - [ ] `include/uos/harmony/reliability/hash.hpp`
 - [ ] `include/uos/harmony/reliability/loops.hpp`
@@ -699,3 +699,7 @@ Synchronous reliability context records and projection declarations.
 ### `include/uos/harmony/reliability/failure.hpp`
 
 Synchronous failure mapping and record declarations.
+
+### `include/uos/harmony/reliability/feedback.hpp`
+
+Synchronous feedback formatting declarations.

@@ -740,7 +740,8 @@
       "sites": []
     },
     "include/uos/harmony/reliability/feedback.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous feedback formatting declarations.",
       "sites": []
     },
     "include/uos/harmony/reliability/harness.hpp": {
