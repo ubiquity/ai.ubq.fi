@@ -7913,8 +7913,58 @@
       ]
     },
     "include/uos/authority/native_authority_rpc.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed native RPC ports, callback-enabled transports and inline argument adapters.",
+      "sites": [
+        {
+          "lines": [
+            34,
+            35,
+            38,
+            40,
+            41,
+            46,
+            47,
+            52,
+            53,
+            56,
+            61,
+            64,
+            84,
+            88
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each issued server Task retains the bound port or copied callable through its wait, and the port itself owns its binding and native State."
+        },
+        {
+          "lines": [
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            76,
+            77,
+            97,
+            98,
+            99,
+            100
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The inline templates serialize arguments synchronously. The forwarded overload copies the object and transport into an owning Task before the temporary JSON leaves scope."
+        }
+      ]
     },
     "include/uos/authority/native_authority_runtime.hpp": {
       "reviewed": false,
