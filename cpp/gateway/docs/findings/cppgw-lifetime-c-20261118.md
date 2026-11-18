@@ -181,7 +181,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/stream_relay.hpp`
 - [x] `include/uos/provider/surplus.hpp`
 - [x] `include/uos/provider/surplus_claude_chat_request.hpp`
-- [ ] `include/uos/provider/surplus_claude_request.hpp`
+- [x] `include/uos/provider/surplus_claude_request.hpp`
 - [ ] `src/chat/completions.cpp`
 - [ ] `src/chat/envelope.cpp`
 - [ ] `src/chat/stream_translation.cpp`
@@ -1134,3 +1134,7 @@ Surplus catalog and Responses transport API.
 ### `include/uos/provider/surplus_claude_chat_request.hpp`
 
 Synchronous Chat projection and result type declarations.
+
+### `include/uos/provider/surplus_claude_request.hpp`
+
+Synchronous Anthropic request projection declarations with owned payload results.

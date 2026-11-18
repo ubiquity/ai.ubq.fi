@@ -1559,7 +1559,8 @@
       "sites": []
     },
     "include/uos/provider/surplus_claude_request.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous Anthropic request projection declarations with owned payload results.",
       "sites": []
     },
     "src/chat/completions.cpp": {
