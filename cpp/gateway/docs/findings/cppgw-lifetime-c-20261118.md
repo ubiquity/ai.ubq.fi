@@ -159,7 +159,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/claude_code_models.hpp`
 - [x] `include/uos/provider/claude_code_quota.hpp`
 - [x] `include/uos/provider/claude_code_usage.hpp`
-- [ ] `include/uos/provider/claude_code_usage_fwd.hpp`
+- [x] `include/uos/provider/claude_code_usage_fwd.hpp`
 - [ ] `include/uos/provider/claude_code_usage_refresh.hpp`
 - [ ] `include/uos/provider/claude_code_usage_schema.hpp`
 - [ ] `include/uos/provider/health.hpp`
@@ -1013,3 +1013,7 @@ Quota state and observation recording API.
 Usage fetch and its owning options.
 
 - 68,76-77 · owning task parameters · **SAFE** · The fetch frame owns credential and options, including the clock and fetch functions.
+
+### `include/uos/provider/claude_code_usage_fwd.hpp`
+
+Forward declarations for the Claude usage schema. No executable site.

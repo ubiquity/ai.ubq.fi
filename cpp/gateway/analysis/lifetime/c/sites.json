@@ -1331,7 +1331,8 @@
       ]
     },
     "include/uos/provider/claude_code_usage_fwd.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Forward declarations for the Claude usage schema. No executable site.",
       "sites": []
     },
     "include/uos/provider/claude_code_usage_refresh.hpp": {
