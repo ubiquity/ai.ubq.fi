@@ -3707,8 +3707,22 @@
       ]
     },
     "src/provider/lithos_models.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The catalog coalesces through a module-owned promise and publishes an owning snapshot.",
+      "sites": [
+        {
+          "lines": "32-52",
+          "kind": "catalog fetch and buffered decode",
+          "verdict": "SAFE",
+          "reason": "The task owns options, timeout/signal handles, fetch function, key and response while waiting. The data view is used synchronously against the named JSON."
+        },
+        {
+          "lines": "60-78",
+          "kind": "coalesced promise and publication guard",
+          "verdict": "SAFE",
+          "reason": "wait() copies the promise state before the registry can change, and the scope guard captures the exact promise identity rather than a reference into the optional."
+        }
+      ]
     },
     "src/provider/lithos_rate_limits.cpp": {
       "status": "pending",

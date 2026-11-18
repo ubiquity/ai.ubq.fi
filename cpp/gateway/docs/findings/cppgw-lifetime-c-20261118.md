@@ -309,7 +309,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/health.cpp`
 - [x] `src/provider/lithos.cpp`
 - [x] `src/provider/lithos_handlers.cpp`
-- [ ] `src/provider/lithos_models.cpp`
+- [x] `src/provider/lithos_models.cpp`
 - [ ] `src/provider/lithos_rate_limits.cpp`
 - [ ] `src/provider/lithos_streams.cpp`
 - [ ] `src/provider/metered.cpp`
@@ -1974,3 +1974,10 @@ Immediate dispatch joins the caller. A streamed retry copies telemetry and keeps
 - 58-110,123-151,184-222 · joined dispatch and diagnostics · **SAFE** · The caller retains telemetry while the local error, admission, wait and HTTP body tasks run. The elapsed time callback owns its shared result.
 - 224-250,255-269 · pending retry and cancellation · **SAFE** · resumeLithosDispatch takes an owned input with a copied UsageContext and controller. The stored raw context aliases that owned copy and the returned cancellation callback locks the controller weakly.
 - 280-315,337-350,357-399 · handler waits and deferred stream transfer · **SAFE** · The handlers and joined buffered reader retain their arguments. Stream construction copies telemetry and models, and the pending reaction and getter share ownership of the chosen model.
+
+### `src/provider/lithos_models.cpp`
+
+The catalog coalesces through a module-owned promise and publishes an owning snapshot.
+
+- 32-52 · catalog fetch and buffered decode · **SAFE** · The task owns options, timeout/signal handles, fetch function, key and response while waiting. The data view is used synchronously against the named JSON.
+- 60-78 · coalesced promise and publication guard · **SAFE** · wait() copies the promise state before the registry can change, and the scope guard captures the exact promise identity rather than a reference into the optional.
