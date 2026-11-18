@@ -3187,7 +3187,22 @@
             "s"
           ],
           "verdict": "SAFE",
-          "detail": "The request abort listener momentarily owns its signal and the downstream controller, with the scope guard removing it on handoff or exception. The transport owns completion and always delivers or rejects it on the normal serve paths. The serve Task copies its injected callable."
+          "detail": "The serve coroutine copies the injected callable, and its armed scope guard removes the temporary abort listener on handoff or unwind. Transport completion owns the downstream controller through its success or failure."
+        },
+        {
+          "lines": [
+            13,
+            14,
+            16,
+            17,
+            24,
+            25
+          ],
+          "kinds": [
+            "c"
+          ],
+          "verdict": "DEFECT",
+          "detail": "The abort listener owns the request signal that stores it. If lifecycle setup throws after registration and before returning the handoff guard, or a direct caller drops the handoff, the aborted-never signal and downstream controller retain each other through that listener. Capture a weak request signal so normal handoff and failure can release the cycle."
         }
       ]
     },

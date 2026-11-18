@@ -891,7 +891,8 @@ Reviewed route tables, admin and auth adapters, inference dispatch and upgrade h
 
 Reviewed request-to-delivery abort forwarding and handoff.
 
-- L12, 14, 16, 17, 18, 24, 28, 41, 42 **SAFE** · The request abort listener momentarily owns its signal and the downstream controller, with the scope guard removing it on handoff or exception. The transport owns completion and always delivers or rejects it on the normal serve paths. The serve Task copies its injected callable.
+- L12, 14, 16, 17, 18, 24, 28, 41, 42 **SAFE** · The serve coroutine copies the injected callable, and its armed scope guard removes the temporary abort listener on handoff or unwind. Transport completion owns the downstream controller through its success or failure.
+- L13, 14, 16, 17, 24, 25 **DEFECT** · The abort listener owns the request signal that stores it. If lifecycle setup throws after registration and before returning the handoff guard, or a direct caller drops the handoff, the aborted-never signal and downstream controller retain each other through that listener. Capture a weak request signal so normal handoff and failure can release the cycle.
 
 ### `src/handler/terminal_log.cpp`
 
@@ -2502,4 +2503,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-286/286 files reviewed. 480 sites: 452 SAFE, 28 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+286/286 files reviewed. 481 sites: 452 SAFE, 29 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
