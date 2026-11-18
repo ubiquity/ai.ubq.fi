@@ -74,4 +74,11 @@ done
 
 ## Local results
 
-The JSON harness completed on x86_64. The four-worker build and link took 469.825 seconds while the suite was compiling. The campaign took 309.935 seconds wall time and libFuzzer reported 309 seconds of fuzzing. The final corpus contained 997 files. There were zero findings, regex timeout artifacts or fork-parent exit leak artifacts, and the command exited 0.
+Both four-worker harness campaigns reached the 300-second budget and exited 0 on x86_64. The builds overlapped the sanitizer suite build.
+
+| Harness | Build and link | Campaign wall | libFuzzer duration | Last execution count | Seed / final corpus files | Expected slow inputs | Unexpected findings |
+| ------- | -------------: | ------------: | -----------------: | -------------------: | ------------------------: | -------------------: | ------------------: |
+| `json`  |      469.825 s |     309.935 s |              309 s |            4,390,783 |                   9 / 997 |                    0 |                   0 |
+| `regex` |      440.423 s |     317.481 s |              317 s |            2,742,951 |                 6 / 2,157 |                    7 |                   0 |
+
+The seven slow inputs were retained as artifacts. The runs reported zero fork-parent exit leaks. The ARM64 exception was exercised by synthetic classification controls. The workflow summary step rendered both real receipts and the artifact counts matched. The campaign receipts and logs are in `$scratch/fuzz-scoped-json` and `$scratch/fuzz-scoped-regex`.
