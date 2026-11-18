@@ -1246,8 +1246,20 @@
       ]
     },
     "include/uos/storage/native_kv.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "17-35",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "retrySqliteBusy callable ownership",
+          "evidence": "The retry coroutine owns run by value between attempts and awaits each child through result or error before invoking it again. Each call site supplies any pointee owner separately."
+        }
+      ]
     },
     "include/uos/storage/sqlite_readonly.hpp": {
       "reviewed": false,
