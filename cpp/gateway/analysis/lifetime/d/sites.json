@@ -10256,8 +10256,31 @@
       ]
     },
     "include/uos/sentinel/replay_retention.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed retention, status, publication, expiry and maintenance declarations.",
+      "sites": [
+        {
+          "lines": [
+            74,
+            78,
+            79,
+            105,
+            124,
+            150,
+            177,
+            198,
+            216,
+            225
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Wrappers copy row, key and option inputs before constructing a Task. Current directly awaiting callers retain the borrowed KV through each retention operation."
+        }
+      ]
     },
     "include/uos/sentinel/replay_retention_bootstrap.hpp": {
       "reviewed": false,
