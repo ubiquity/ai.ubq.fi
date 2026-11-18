@@ -2161,7 +2161,8 @@
       ]
     },
     "src/codex/responses_error.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "All error event projection is synchronous. Output item iteration and key/value pointers refer to live local or caller-owned JSON for the duration of the call.",
       "sites": []
     },
     "src/codex/responses_operations.cpp": {

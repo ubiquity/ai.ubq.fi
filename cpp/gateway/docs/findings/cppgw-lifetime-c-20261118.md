@@ -207,7 +207,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/quota.cpp`
 - [x] `src/codex/rate_limit_429.cpp`
 - [x] `src/codex/reset_settings.cpp`
-- [ ] `src/codex/responses_error.cpp`
+- [x] `src/codex/responses_error.cpp`
 - [ ] `src/codex/responses_operations.cpp`
 - [ ] `src/codex/responses_runners.cpp`
 - [ ] `src/codex/responses_state.cpp`
@@ -1335,3 +1335,7 @@ Native migration reads normally own their backing store. The public shared-KV ov
 
 - 59-67,108-112 · injectable KV reads in fail-fast all · **DEFECT** · The read promises run virtual get methods but the parent holds the only guaranteed KV owner. A rejecting sibling can unwind that owner while an injected coroutine get still uses its receiver. Wrap each parallel read in a coroutine with a shared KV parameter.
 - 68-98,113-145 · owned hashes and sequential migration writes · **SAFE** · Hash children receive owned strings. Account iteration, rows and the AtomicOperation are owned by the frame through the joined reads and commits.
+
+### `src/codex/responses_error.cpp`
+
+All error event projection is synchronous. Output item iteration and key/value pointers refer to live local or caller-owned JSON for the duration of the call.
