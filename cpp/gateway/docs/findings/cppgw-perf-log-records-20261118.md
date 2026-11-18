@@ -173,3 +173,24 @@ python3 -I "$work/measure_pair.py" "$before" "$after" --checkpoints \
 ```
 
 The SHA-256 of `checkpoint-alloc/results.json` is `b06b9db67fd1c8d9c1ac401f44f4e52e706137107a544d5ad6d16ee725ff0a6b`.
+
+## Release verification on the baseline ICU version
+
+Ubuntu ICU 74.2 passed 440 of 442 release binaries and 5,023 of 5,027 cases. All 50 linked binaries passed. The four failing cases were exhaustive Unicode case mapping, collation and IDNA vectors in `tests/rt/string_test.cpp` and `tests/rt/url_idna_test.cpp`. The starting branch's receipt uses ICU 78.3 for those same vectors. The ICU 74.2 receipt SHA-256 is `aa3e51d4a5b18c8fd649ce80899667a747dcc357a4e81f30fd446e084ae186dc`. The performance comparison used ICU 74.2 in both native packages.
+
+Requalifying with the baseline ICU 78.3 passed **442/442 release binaries and 5,027/5,027 cases** in 89.786 seconds of linking and test execution. The linked selection accounted for **50/50 binaries and 609/609 cases**. The two Unicode binaries passed all 21 of their original cases. The requalification rebuilt `src/rt/string.cpp` and `src/rt/url.cpp` against the verified ICU headers, reused the source-matched objects for the other translation units, and relinked and executed all 442 binaries with the portable driver's isolation and case reporting. The ICU header path is a system include, which keeps third-party sign-conversion diagnostics out of the fatal first-party warning set.
+
+```sh
+bash "$work/ci_env.sh" release full 4
+nice -n 8 bash "$work/ci_env.sh" asan linked 4
+# From the SHA-256 verified ICU 78.3 archive's source directory
+CC=clang-21 CXX=clang++-21 ./configure --prefix="$work/icu78" --disable-tests --disable-samples --disable-extras --disable-static
+make -j3
+make install
+# From the repository root
+bash "$work/install_icu78.sh"
+env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$qual_home" TMPDIR="$qual_tmp" LC_ALL=C.UTF-8 TZ=UTC \
+  python3 -B "$work/qualify_icu78.py" "$PWD" release
+```
+
+The ICU release archive SHA-256 is `3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0`. The release receipt `icu78-release/receipt.json` has SHA-256 `fa7814ca3c38e98812ffc2d1d0ce0bfd9b06888cc8b691e7111bdf0838d5ef01`. It binds commit `f4c37d68f95197b134ec08b975cb55926c568d5e`, tree `cea7d458b1baf39554aa22d9d8c6c899f87f6caf`, and portable build-input digest `d34339801085fa2b124ae7e6cdee153a82686a732d3bf5aea34a8964afab3124`. The source digest matches the initial release build and the end of the requalification. [Starting branch's ICU qualification](cppgw-std-icu-20261117.md)
