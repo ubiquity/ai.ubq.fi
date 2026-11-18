@@ -263,7 +263,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/tools/router.cpp`
 - [x] `src/harmony/tools/schemas.cpp`
 - [x] `src/harmony/types.cpp`
-- [ ] `src/live/calls.cpp`
+- [x] `src/live/calls.cpp`
 - [ ] `src/live/handler.cpp`
 - [ ] `src/live/routes.cpp`
 - [ ] `src/live/sideband.cpp`
@@ -1657,3 +1657,10 @@ Schema parsing and argument validation are synchronous and return owned data.
 ### `src/harmony/types.cpp`
 
 Harmony wire and tool type conversion is synchronous with static discriminator views.
+
+### `src/live/calls.cpp`
+
+Call creation buffers and validates local multipart data, then joins account selection, transport, and mapping persistence.
+
+- 35-89 · request and multipart awaits · **SAFE** · The Request, optional File and parsed form live in their frames. A nested read or cancellation copies its stream owner before suspending.
+- 93-128,133-148,150-181 · account, response and telemetry waits · **SAFE** · Account and response results are local value snapshots and the mapping write owns all its identifiers.

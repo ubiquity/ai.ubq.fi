@@ -2879,8 +2879,22 @@
       "sites": []
     },
     "src/live/calls.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Call creation buffers and validates local multipart data, then joins account selection, transport, and mapping persistence.",
+      "sites": [
+        {
+          "lines": "35-89",
+          "kind": "request and multipart awaits",
+          "verdict": "SAFE",
+          "reason": "The Request, optional File and parsed form live in their frames. A nested read or cancellation copies its stream owner before suspending."
+        },
+        {
+          "lines": "93-128,133-148,150-181",
+          "kind": "account, response and telemetry waits",
+          "verdict": "SAFE",
+          "reason": "Account and response results are local value snapshots and the mapping write owns all its identifiers."
+        }
+      ]
     },
     "src/live/handler.cpp": {
       "status": "pending",
