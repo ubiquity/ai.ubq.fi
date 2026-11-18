@@ -45,7 +45,7 @@ completes, or record the precise pending work and last passing tree.
 | A-PROMISE-REACTION-CYCLE (`include/uos/rt/async.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-GENERATOR-STEP-OWNER (`include/uos/rt/async.hpp`) | FIXED. `requestStep` eagerly enqueues the result, but the generator body deliberately keeps only a weak link. Keep the core in the returned Task so either step can still settle after the last generator handle is dropped. | This commit | `rt/async_test`, checks `next` and a queued `return_` before a timer. The baseline failure is liveness. |
 | A-GENERATOR-GCC-AWAIT (`include/uos/rt/async.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
-| A-PROCESS-SIGNAL-CONTEXT (`src/rt/process_loop.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
+| A-PROCESS-SIGNAL-CONTEXT (`src/rt/process_loop.cpp`) | FIXED. The static signal set could retain the first scoped Asio context past destruction. An Asio service for each loop now owns that loop's listeners and destroys its signal set at shutdown. | This commit | `rt/process_test`, leaves an armed registration at teardown, checks the default action, then removes the identity in a new loop. |
 | A-STREAM-GCC-AWAIT (`include/uos/rt/stream.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-PROMISE-REACTION-CYCLE (`include/uos/rt/stream.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-STREAM-CANCEL-OWNER (`include/uos/rt/stream.hpp`) | FIXED. `cancelStreamInto` read the reader's stream slot after the synchronous cancel algorithm could empty it through `releaseLock`. Take an owning copy before closing the stream or invoking the callback. | This commit | `rt/stream_test`, cancel releases the reader while a read is pending. |
