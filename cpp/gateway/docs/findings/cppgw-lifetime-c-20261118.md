@@ -230,7 +230,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/deepseek/forwarded_payload_policy.cpp`
 - [x] `src/deepseek/handlers.cpp`
 - [x] `src/deepseek/index.cpp`
-- [ ] `src/deepseek/responses.cpp`
+- [x] `src/deepseek/responses.cpp`
 - [ ] `src/deepseek/responses_payload.cpp`
 - [ ] `src/deepseek/responses_stream.cpp`
 - [ ] `src/deepseek/stream.cpp`
@@ -1480,3 +1480,7 @@ Chat and Responses handlers join upstream fetch and buffered projection. The str
 DeepSeek preparation, validation and envelope checks operate synchronously on the current payload. Fetch transfers argument copies across transport.
 
 - 620-696 · deadline, admission and fetch callbacks · **SAFE** · Options and fetcher own their callables across the joins. The deadline callback owns a controller copy and is cleared by ScopeExit, and projected body observation is synchronous.
+
+### `src/deepseek/responses.cpp`
+
+Responses request projection and model policy checks are synchronous. Reasoning and model views are consumed within the owning record or table's lifetime.

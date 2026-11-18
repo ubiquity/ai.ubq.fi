@@ -2509,7 +2509,8 @@
       ]
     },
     "src/deepseek/responses.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Responses request projection and model policy checks are synchronous. Reasoning and model views are consumed within the owning record or table's lifetime.",
       "sites": []
     },
     "src/deepseek/responses_payload.cpp": {
