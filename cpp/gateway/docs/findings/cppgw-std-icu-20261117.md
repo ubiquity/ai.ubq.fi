@@ -120,16 +120,18 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
   -artifact_prefix="$work/fuzz-final/artifacts/" "$work/fuzz-final/corpus"
 ```
 
-## Verification checkpoint
+## Verification
 
-Source and test identity `ef1128617bc38571dad784a2361a0b129e7e0cc9`, tree `cf5793e00c97a102756c51b34e081e2a6588d38d`. Both profiles have passed the two string suites and the first six application probes, including native KV schema, account capacity, Unicode tool search, HTTP/SSE headers, tool schemas and provider selection.
+Source and test identity `ef1128617bc38571dad784a2361a0b129e7e0cc9`, tree `cf5793e00c97a102756c51b34e081e2a6588d38d`. Both profiles compiled all 369 production translation units and passed all 405 application binaries and 4,571 application cases as part of the complete registry. Each receipt has input digest `cde5c54835e8431ccf1128f47e49cef3fea46700a1e0b4d5f3e0a93e9c35fc42` before and after execution. Subsequent commits update the findings and deviation notes.
 
 | Profile             | Passing binaries / selected | Passing cases / run | Failures |
 | ------------------- | --------------------------: | ------------------: | -------: |
 | Clang 21 release    |                   442 / 442 |       5,027 / 5,027 |        0 |
-| Clang 21 ASan/UBSan |                   312 / 442 |       3,142 / 3,142 |        0 |
+| Clang 21 ASan/UBSan |                   442 / 442 |       5,027 / 5,027 |        0 |
 
-At 2026-11-17 23:57 UTC, release had 0 binaries pending and ASan/UBSan had 130. The incremental receipts captured `sweep-release/rows-20261117T235745.jsonl` SHA-256 `5959fd61caf26d65480fc69a30ae79da47d58b285db2837d98d63cef49a369a5` and `sweep-asan/rows-20261117T235745.jsonl` SHA-256 `d1828d34f7c0f5d75657b829ce3038705f4739576b0f404442743a56ecf8d987`. The final libFuzzer run completed 3,036,331 inputs in 121 seconds, reached 154 instrumented edges and 622 features, and exited with zero findings or artifacts. Peak RSS was 445 MiB.
+`sweep-release/receipt.json` has SHA-256 `9b9ed9ede53f5ee932f6c9034309d2934a997e5ea9a089f5ffbf912da8cc47d2`. `sweep-asan/receipt.json` has SHA-256 `84e770ad3e67c759c8521af58c029e8266f56aa801d29eb36d476d6e587d22c6`, with 312 input-matched results retained from the two-job run and 130 completed in the four-job continuation. Both terminal commands exited 0.
+
+The final libFuzzer run completed 3,036,331 inputs in 121 seconds, reached 154 instrumented edges and 622 features, and exited with zero findings or artifacts. Peak RSS was 445 MiB. The SHA-256 of `fuzz-final/smoke.log` is `9d2bae7a493862a589f084bf6f02629ff03f1f78e6050afd5e3f756e4996c2b6`.
 
 The SDK CMake registration found ICU 78.3, generated a 442-test registry and built the string object using the runner's compiler. An independent GCC 14.2 strict compile of `src/rt/string.cpp` also passed. All three legacy string cases passed with `LANG` and `LC_ALL` set to `tr_TR.UTF-8`.
 
@@ -141,6 +143,8 @@ g++-14 "${strict[@]}" -c cpp/gateway/src/rt/string.cpp -o "$work/new-string-gcc1
 python3 -B cpp/gateway/tools/links.py --check
 git diff --check 093a9e05..HEAD
 ```
+
+The changed Markdown and fuzz registry passed `bun --no-env-file run format:check cpp/gateway/docs/findings/cppgw-std-icu-20261117.md cpp/gateway/docs/DEVIATIONS-FROM-BUN.md cpp/gateway/fuzz/targets.json` in scratch with frozen root and lint dependencies.
 
 The historical SDK sysroot and macOS were unavailable on this runner. The old `tools/unit.sh` SDK wrapper still lists only Boost and OpenSSL, and `docs/rt/text.md` still describes the old implicit order. Both are outside this lane's ownership.
 
