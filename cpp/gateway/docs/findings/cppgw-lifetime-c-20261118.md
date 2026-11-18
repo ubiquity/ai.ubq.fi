@@ -121,7 +121,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/live/handler.hpp`
 - [x] `include/uos/live/routes.hpp`
 - [x] `include/uos/live/sideband.hpp`
-- [ ] `include/uos/live/upstream.hpp`
+- [x] `include/uos/live/upstream.hpp`
 - [ ] `include/uos/paid_fallback/claude_code_route.hpp`
 - [ ] `include/uos/paid_fallback/health.hpp`
 - [ ] `include/uos/paid_fallback/index.hpp`
@@ -789,3 +789,9 @@ Synchronous route matcher. It uses method/path views within the call and returns
 Live sideband handler and upgrade factory API.
 
 - 10-11 · owning task parameters · **SAFE** · The preparation and handler frames retain request, call ID and principal by value; the upgrade callbacks manage their socket ownership separately.
+
+### `include/uos/live/upstream.hpp`
+
+Live upstream helpers and mapping API.
+
+- 36-38 · owning task parameters · **SAFE** · Mapping operations retain their IDs across KV awaits, including detached retirement.

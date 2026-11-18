@@ -884,8 +884,16 @@
       ]
     },
     "include/uos/live/upstream.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Live upstream helpers and mapping API.",
+      "sites": [
+        {
+          "lines": "36-38",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Mapping operations retain their IDs across KV awaits, including detached retirement."
+        }
+      ]
     },
     "include/uos/paid_fallback/claude_code_route.hpp": {
       "status": "pending",
