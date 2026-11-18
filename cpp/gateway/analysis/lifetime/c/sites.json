@@ -1028,8 +1028,16 @@
       ]
     },
     "include/uos/provider/anthropic_chat_responses.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Provider Chat normalization owns a response and its options.",
+      "sites": [
+        {
+          "lines": "27",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The normalizer retains the response handle and options in its coroutine frame."
+        }
+      ]
     },
     "include/uos/provider/anthropic_chat_stream.hpp": {
       "status": "pending",

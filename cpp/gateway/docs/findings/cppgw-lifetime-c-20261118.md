@@ -133,7 +133,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/paid_fallback/removed_provider.hpp`
 - [x] `include/uos/paid_fallback/rollups.hpp`
 - [x] `include/uos/paid_fallback/routing.hpp`
-- [ ] `include/uos/provider/anthropic_chat_responses.hpp`
+- [x] `include/uos/provider/anthropic_chat_responses.hpp`
 - [ ] `include/uos/provider/anthropic_chat_stream.hpp`
 - [ ] `include/uos/provider/anthropic_replay.hpp`
 - [ ] `include/uos/provider/anthropic_response_wire.hpp`
@@ -861,3 +861,9 @@ Terminal rollup write/read API.
 Paid waterfall API.
 
 - 17-18 · owning task parameters · **SAFE** · The routing frame owns its request body and options; the joined parent owns any referenced telemetry.
+
+### `include/uos/provider/anthropic_chat_responses.hpp`
+
+Provider Chat normalization owns a response and its options.
+
+- 27 · owning task parameters · **SAFE** · The normalizer retains the response handle and options in its coroutine frame.
