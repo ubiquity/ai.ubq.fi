@@ -308,7 +308,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/claude_code_usage_schema.cpp`
 - [x] `src/provider/health.cpp`
 - [x] `src/provider/lithos.cpp`
-- [ ] `src/provider/lithos_handlers.cpp`
+- [x] `src/provider/lithos_handlers.cpp`
 - [ ] `src/provider/lithos_models.cpp`
 - [ ] `src/provider/lithos_rate_limits.cpp`
 - [ ] `src/provider/lithos_streams.cpp`
@@ -1966,3 +1966,11 @@ Wire normalization uses synchronous views. The stream generator and transport ow
 - 636-666 · read/abort race callbacks · **SAFE** · The installed listener captures only a Promise rejector and a weak signal. The racing read uses reader-owned request state, and normal and error returns remove the listener.
 - 680-711,722-756,975-982 · generator session, pending read and detached finish · **SAFE** · The generator and each pending nextFrame own the stream session. The constructor callback forwards copies into the frame, and reader.cancel obtains its own stream state before the reader lock is released.
 - 809-876 · admission and fetch hooks, deadline callback · **SAFE** · The by-value options hold the hooks through their joined calls. Fetch retains its callable, and the deadline timer owns its controller until the frame guard clears it.
+
+### `src/provider/lithos_handlers.cpp`
+
+Immediate dispatch joins the caller. A streamed retry copies telemetry and keeps the cancellation controller in the pending task.
+
+- 58-110,123-151,184-222 · joined dispatch and diagnostics · **SAFE** · The caller retains telemetry while the local error, admission, wait and HTTP body tasks run. The elapsed time callback owns its shared result.
+- 224-250,255-269 · pending retry and cancellation · **SAFE** · resumeLithosDispatch takes an owned input with a copied UsageContext and controller. The stored raw context aliases that owned copy and the returned cancellation callback locks the controller weakly.
+- 280-315,337-350,357-399 · handler waits and deferred stream transfer · **SAFE** · The handlers and joined buffered reader retain their arguments. Stream construction copies telemetry and models, and the pending reaction and getter share ownership of the chosen model.

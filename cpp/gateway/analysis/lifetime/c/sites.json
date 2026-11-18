@@ -3683,8 +3683,28 @@
       ]
     },
     "src/provider/lithos_handlers.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Immediate dispatch joins the caller. A streamed retry copies telemetry and keeps the cancellation controller in the pending task.",
+      "sites": [
+        {
+          "lines": "58-110,123-151,184-222",
+          "kind": "joined dispatch and diagnostics",
+          "verdict": "SAFE",
+          "reason": "The caller retains telemetry while the local error, admission, wait and HTTP body tasks run. The elapsed time callback owns its shared result."
+        },
+        {
+          "lines": "224-250,255-269",
+          "kind": "pending retry and cancellation",
+          "verdict": "SAFE",
+          "reason": "resumeLithosDispatch takes an owned input with a copied UsageContext and controller. The stored raw context aliases that owned copy and the returned cancellation callback locks the controller weakly."
+        },
+        {
+          "lines": "280-315,337-350,357-399",
+          "kind": "handler waits and deferred stream transfer",
+          "verdict": "SAFE",
+          "reason": "The handlers and joined buffered reader retain their arguments. Stream construction copies telemetry and models, and the pending reaction and getter share ownership of the chosen model."
+        }
+      ]
     },
     "src/provider/lithos_models.cpp": {
       "status": "pending",
