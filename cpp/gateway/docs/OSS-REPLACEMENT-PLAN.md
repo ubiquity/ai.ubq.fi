@@ -31,7 +31,7 @@ The scope is `src/rt`, `include/uos/rt`, the HTTP adapters, the `#http` WebSocke
 The linked vendor registry drives CMake, the portable CI build, fuzz builds and release licenses. The source tree
 retains yyjson 0.13.0 for the historical comparison. The Bun fixtures use Bun 1.4.0 and the frozen runtime lock.
 [Vendor registry](../cmake/vendors.json) · [yyjson comparison provenance](../third_party/yyjson/PROVENANCE.md) ·
-[Bun lockfile](../../../bun.lock)
+[Historical runtime lockfile](https://github.com/ubiquity/ai.ubq.fi/blob/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a/bun.lock)
 
 ## Ranked component inventory
 
