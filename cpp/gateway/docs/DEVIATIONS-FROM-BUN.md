@@ -50,3 +50,21 @@ environment variables still take precedence when an explicit file is loaded.
 
 Sixty-eight of the original 124 inputs now reject the whole file. Nine
 retain valid assignments with changed quoted values.
+
+## Filesystem text and POSIX paths
+
+Text file reads and writes use the shared runtime UTF-8 codec. The tested
+BOM, malformed maximal subparts, split surrogate pair and raw-byte
+expectations held. Path functions use the C++ lexical model and preserve
+native POSIX path bytes. Resolve and join retain their existing
+interpretation of absolute components.
+
+| Changed lexical vectors | Example | Standard behavior |
+| ----------------------: | ------- | ----------------- |
+| 2 | `normalize("a/b/c/..")` gives `"a/b/"` | Lexical normalization may leave a final separator after removing a dot or parent element. Resolve still removes that separator. |
+| 11 | `dirname("/a/b/")` gives `"/a/b"` and `dirname("/a//b")` gives `"/a"` | A trailing separator denotes an empty final component, and repeated separators are collapsed in the result. |
+| 14 | `basename("a/")` and `extname("/a/b.c/")` give an empty string | A trailing separator has no filename or extension. The same rule applies to the suffix overload and root. |
+| 2 | `basename("/a/b.txt", "b.txt")` gives an empty string | A matching suffix is removed from the filename even when it spans the entire component. |
+
+Relative paths require resolvable absolute endpoints. A lookup failure
+cannot appear to a containment caller as an empty, equal relative path.

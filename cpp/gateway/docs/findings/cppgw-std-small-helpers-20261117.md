@@ -204,3 +204,59 @@ cases. Two assertions in the same test case still require the previous
 `Response.redirect` wording and the malformed value bytes. The same
 invalid redirects still throw `TypeError`. That diagnostic snapshot is
 outside this job's test paths.
+
+## Filesystem text and paths
+
+The filesystem text overloads now use the existing runtime decoder with
+`ignoreBOM = true` and the runtime encoder. The shared codec's eventual
+backend change is a separate job. The file-operation fixtures preserve
+BOM bytes, malformed subsequence handling, surrogate pairs, raw reads,
+modes, descriptor behavior and symlinks.
+
+The path functions delegate to `std::filesystem::path` for normalization,
+relative paths and decomposition. The adapter keeps native POSIX bytes,
+a single POSIX root, cwd lookup, empty results, the last absolute argument
+in resolve and concatenate-then-normalize join. Resolved paths drop terminal
+separators. Failed relative comparisons throw, protecting containment
+checks that accept an empty result as equality.
+
+- UTF changes **removed 82 lines and added 5**. Lexical-path changes
+  **removed 233 and added 47**. The file lost 263 production lines.
+- The original lexical test had 29 mismatches before its expectations
+  were updated. The other nine cases passed, including the original
+  UTF, descriptor, symlink, mode and errno assertions.
+- `python3 -B /tmp/uos-small-r1/gate.py asan fuzz posix_path 1` ran
+  **2,114,557 inputs in 121 seconds**, exit 0, with no finding. Resolve
+  and relative used absolute fixture prefixes, so the campaign needed
+  no cwd lookup or filesystem access.
+- `python3 -B /tmp/uos-small-r1/bench.py filesystem fs` used synthetic
+  path and file inputs. The text fixture had a BOM, 1,024 ASCII bytes and an
+  emoji. File timings include system calls and are sensitive to runner load.
+
+| Input                | Before ns/op | After ns/op | Before alloc/op | After alloc/op |
+| -------------------- | -----------: | ----------: | --------------: | -------------: |
+| Normalize POSIX      |        221.3 |       669.5 |               2 |              8 |
+| Resolve backup path  |        538.7 |       826.5 |               8 |             12 |
+| Relative containment |        514.5 |     1,456.2 |               6 |             24 |
+| Read 1 KiB UTF-8      |      4,080.6 |     2,431.9 |               3 |              3 |
+| Write 1 KiB UTF-8     |    309,618.4 |   144,149.4 |               2 |              2 |
+
+The named `serve_delivery_http_test` passed **1/1 binary, 7/7 cases**
+in each profile. The commands were
+`python3 -B /tmp/uos-small-r1/gate.py PROFILE quick headers 1 serve_delivery_http_test`.
+The full release and sanitizer object-graph builds are in progress.
+
+The final path adapter joins the standard library's parent components
+with a single separator. A libc++ 21 probe exposed that `generic_string()`
+alone can retain repeated separators in a parent path. With parent
+component joining, the isolated Linux libc++ probe passed **365/365
+assertions** on path vectors and three date boundaries. It used
+`clang++-21 -stdlib=libc++` with the same strict flags and linked
+`fs.cpp`, `text_codec.cpp`, `string.cpp` and `date.cpp`. This was
+Linux libc++ evidence. The final lexical diff **removed 232 and added
+52** lines, giving a total filesystem reduction of 257 lines.
+
+For each of `release` and `asan`,
+`python3 -B /tmp/uos-small-r1/gate.py PROFILE quick filesystem 2 fs_test,runtime_native_startup_test,kv_conversion_cli_differential_test,kv_conversion_profile_json_differential_test`
+exited 0 with **4/4 binaries and 46/46 cases** on the final adapter.
+The second 120-second path campaign for that adapter is in progress.

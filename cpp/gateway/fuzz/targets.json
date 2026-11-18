@@ -70,6 +70,12 @@
       "max_len": 16384,
       "extra_sources": ["src/rt/env.cpp"]
     },
+    "posix_path": {
+      "harness": "fuzz/posix_path.cpp",
+      "entry": "uos::rt::path lexical operations",
+      "max_len": 16384,
+      "extra_sources": ["src/rt/fs.cpp"]
+    },
     "url": {
       "harness": "fuzz/url.cpp",
       "entry": "uos::rt::URL / URLSearchParams",
