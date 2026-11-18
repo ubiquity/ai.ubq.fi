@@ -249,3 +249,27 @@ The plain brief and secret receipts have SHA-256
 `864911e8f66225471f73e1d49b03dcffc053a9f6f3e4fb0c467d177e638ae5c1` and
 `5714e841ce36c09cf85cb71186775008c64518e90dbd6adcf274efc8354e5f3d`, respectively. The source, input vectors, and fixtures
 are identical to those used in the earlier plain sweep.
+
+### Sanitizer profile checks
+
+Clang 21.1.8 compiled all 832 translation units in the cold ASan/UBSan
+run. Three binaries required the portable sanitizer profile's `-O1` setting.
+The `-O0` run missed two 2-second deadlines in the supervisor secret test
+and exhausted the stack in the JSON matcher and the typed-value test's
+recursive C++ copy of a 2,000-level inline array. The baseline typed-value
+binary passed 7/7 at `-O0` with the same runner and libraries. The deeper
+stack use in the new inline value copy is a limitation of the unoptimized
+sanitizer build. The normal builds pass the original fixture.
+
+```sh
+python3 -B /tmp/kv-graph/verify.py asan --optimize --jobs 3 codex_supervisor_secret_test.cpp
+python3 -B /tmp/kv-graph/verify.py asan --optimize --jobs 3 kv_conversion_typed_value_differential_test.cpp
+python3 -B /tmp/kv-graph/verify.py asan --optimize --jobs 3 rt/json_test.cpp
+(cd /tmp/kv-graph/baseline && python3 -B /tmp/kv-graph/verify-baseline.py asan --jobs 3 kv_conversion_typed_value_differential_test.cpp)
+```
+
+The `-O1` reruns passed 41/41 supervisor, 10/10 typed-value and 25/25 JSON
+cases. ASan, UBSan and leak detection were active for every run. The JSC
+corpus and sparse allocation guard also passed in the cold sanitizer run,
+with 9/9 cases combined. Production sources and test inputs remained
+identical across the continuation commits.
