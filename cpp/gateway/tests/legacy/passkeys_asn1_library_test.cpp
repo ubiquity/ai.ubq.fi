@@ -115,6 +115,29 @@ TEST("name projection rejects empty RDNs that OpenSSL drops from its entry list"
   EXPECT_THROWS(passkeys::parseName(emptyRdn.get()), rt::JsError);
 }
 
+TEST("revocation extensions reject constructed values with implicit string tags") {
+  passkeys::Certificate certificate{};
+  certificate.x509.reset(X509_new(), X509_free);
+  ASSERT(certificate.x509);
+  const auto addExtension = [&](int nid, std::string_view hex) {
+    const Bytes bytes = rt::fromHex(hex);
+    const passkeys::asn1::Ptr<ASN1_OCTET_STRING, ASN1_OCTET_STRING_free> data(ASN1_OCTET_STRING_new());
+    ASSERT(data);
+    ASSERT_EQ(ASN1_OCTET_STRING_set(data.get(), bytes.data(), static_cast<int>(bytes.size())), 1);
+    const passkeys::asn1::Ptr<X509_EXTENSION, X509_EXTENSION_free> extension(X509_EXTENSION_create_by_NID(nullptr, nid, 0, data.get()));
+    ASSERT(extension);
+    ASSERT_EQ(X509_add_ext(certificate.x509.get(), extension.get(), -1), 1);
+  };
+
+  addExtension(NID_authority_key_identifier, "3005a003040161");
+  EXPECT_THROWS((passkeys::certificateExtension<AUTHORITY_KEYID, AUTHORITY_KEYID_free>(
+                  certificate, NID_authority_key_identifier, "Authority Key Identifier")),
+                rt::JsError);
+
+  addExtension(NID_crl_distribution_points, "300b3009a007a005a603160161");
+  EXPECT_THROWS(passkeys::crlDistributionPointUrl(certificate), rt::JsError);
+}
+
 TEST("CRLs consume the complete DER and use unsigned serial magnitudes") {
   Bytes bytes = rt::fromBase64(androidCrl);
   const auto crl = passkeys::parseCrl(bytes);

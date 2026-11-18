@@ -13,6 +13,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
       case 1: (void)passkeys::parseOctetString(bytes); break;
       case 2: {
         const auto cert = passkeys::getCertificateInfo(bytes).parsedCertificate;
+        (void)passkeys::certificateExtension<AUTHORITY_KEYID, AUTHORITY_KEYID_free>(cert, NID_authority_key_identifier, "Authority Key Identifier");
         (void)passkeys::crlDistributionPointUrl(cert);
         (void)passkeys::validateExtFIDOGenCEAAGUID(cert, {});
         break;

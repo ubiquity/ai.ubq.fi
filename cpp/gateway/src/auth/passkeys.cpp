@@ -953,11 +953,14 @@ namespace uos::auth::passkeys {
       X509* x509 = certificate.x509.get();
       const int index = X509_get_ext_by_NID(x509, nid, -1);
       if (index < 0) return {};
-      // X509_get_ext_d2i decodes one item. Match it against the complete extension payload.
-      asn1::checkDer(extensionBytes(X509_get_ext(x509, index)), name);
+      const BytesView encoded = extensionBytes(X509_get_ext(x509, index));
+      asn1::checkDer(encoded, name);
       int critical = -1;
       asn1::Ptr<T, Free> value(static_cast<T*>(X509_get_ext_d2i(x509, nid, &critical, nullptr)));
       if (!value || critical < 0) asn1::invalid(name);
+      // Implicit string tags can hide constructed BER from the generic DER preflight.
+      const asn1::Ptr<X509_EXTENSION, X509_EXTENSION_free> canonical(X509V3_EXT_i2d(nid, critical, value.get()));
+      if (!canonical || !bytesEqual(encoded, extensionBytes(canonical.get()))) asn1::invalid(name);
       return value;
     }
 
