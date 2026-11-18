@@ -156,7 +156,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/claude_code_accounts.hpp`
 - [x] `include/uos/provider/claude_code_credentials.hpp`
 - [x] `include/uos/provider/claude_code_fwd.hpp`
-- [ ] `include/uos/provider/claude_code_models.hpp`
+- [x] `include/uos/provider/claude_code_models.hpp`
 - [ ] `include/uos/provider/claude_code_quota.hpp`
 - [ ] `include/uos/provider/claude_code_usage.hpp`
 - [ ] `include/uos/provider/claude_code_usage_fwd.hpp`
@@ -994,3 +994,9 @@ Claude credential and workspace store/resolution API.
 Transport and environment type aliases.
 
 - 16-25 · callback interface · **SAFE** · rt::Fetch supplies the transport callable owner, and the environment lookup is invoked synchronously with a live name.
+
+### `include/uos/provider/claude_code_models.hpp`
+
+Model discovery and store interfaces.
+
+- 51,83-100 · owning task parameters · **SAFE** · The coroutine owns the credential, workspace, options and any KV handle or prepared catalog it receives.

@@ -1289,8 +1289,16 @@
       ]
     },
     "include/uos/provider/claude_code_models.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Model discovery and store interfaces.",
+      "sites": [
+        {
+          "lines": "51,83-100",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The coroutine owns the credential, workspace, options and any KV handle or prepared catalog it receives."
+        }
+      ]
     },
     "include/uos/provider/claude_code_quota.hpp": {
       "status": "pending",
