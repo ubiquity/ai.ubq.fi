@@ -148,7 +148,8 @@ number and JSON sources into the standalone console fixture. The
 driver's namespace helper ran the binary and **11/11 cases passed**.
 The original cold release warm-up passed the serve fixture's five cases
 while the fixture inputs were being edited, so its receipt was invalidated.
-The named release calls on the committed tree all exited 0.
+The named release calls on the committed tree all exited 0. All five
+fixtures also passed in the complete sanitizer sweep.
 
 | Filter                                            | Binaries | Cases |
 | ------------------------------------------------- | -------: | ----: |
@@ -207,12 +208,57 @@ The three failures match the assigned baseline.
 | `rt/http_test`                          |          5/6 | Malformed redirects throw the same type with a normalized field name and the rejected value omitted from the diagnostic. |
 
 These are tracked in the [small-helpers report](cppgw-std-small-helpers-20261117.md#pinned-icu-sweep).
-The complete sanitizer sweep is compiling.
+
+## Complete sanitizer sweep
+
+`bash cpp/gateway/tools/ci-build.sh --config asan` selected all 441
+binaries under Clang 21.1.8 with ASan, UBSan and leak detection. All 369
+production objects compiled. The cold object phase took 3,989.702
+seconds, and linking and running the suite took 209.622 seconds.
+The driver reported **438/441 binaries, 5,025/5,028 cases**, exit 1.
+The three failing cases were the same baseline cases listed above.
+There were zero sanitizer findings, build failures or timeouts.
+Both receipts recorded the same immutable source digest, commit and
+tree. The sanitizer receipt SHA-256 was
+`c598f0fd01ac572dc5554c9724c0f9845fd3c8ef5262136cb6cfc4c1d497cf1c`.
+
+## Formatter timings
+
+`bash "$scratch/benchmark-build.sh"` compiled the baseline and current
+console implementations with GCC 14.2.0 at `-O2` against the same release
+runtime objects. `python3 -B "$scratch/wait-verification.py"` ran alternating
+baseline and candidate batches in the driver's network, mount and PID
+boundary after both sweeps. The table gives the median of seven batches
+of 150,000 `console::format` calls per input and build after one warm-up
+pair. The inputs were synthetic, preconstructed arguments. The timing
+covers formatting, excluding capture and fd writes.
+
+| Input                          | Before ns/op | After ns/op | Output bytes |
+| ------------------------------ | -----------: | ----------: | -----------: |
+| Listener message               |        26.16 |       24.20 |           36 |
+| Pre-serialized terminal record |        55.93 |       46.91 |          112 |
+| Redacted diagnostic fields     |       509.91 |      601.38 |          104 |
+| Filesystem error               |       899.00 |    1,331.10 |          200 |
+
+## Documentation follow-up
+
+The runtime platform reference still documents the retired
+`Value::error(exception, properties)` factory and older console
+formatting. It is outside this job's path ownership. The current
+rendering contract is in the [deviations appendix](../DEVIATIONS-FROM-BUN.md#literal-console-arguments-and-shared-json-serialization).
 
 ## Publication
 
-The GitHub write preflight for
-`refs/heads/agent-jobs/cppgw-slim-console-20261118` returned exit 128
-without a GitHub username. `gh auth status --hostname github.com`
-returned exit 1. This checkout currently supports local commits and
-read-only fetches.
+`GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false git push --dry-run origin HEAD:refs/heads/agent-jobs/cppgw-slim-console-20261118`
+returned exit 128 because GitHub write authentication was unavailable.
+`gh auth status --hostname github.com` returned exit 1. A read-only
+fetch confirmed the task tip is outside `origin/development`. The
+commits are on the assigned `agent-job` branch for coordinator pickup.
+
+## Summary
+
+- The console renders arguments as literal text or shared JSON. The Jev selector recovered its own terminal payload.
+- Production fell from 553 to 401 lines. The production and fixture reduction was 241 lines, 39 below the target.
+- The five requested fixtures passed all 33 cases in both profiles. Full ARM64 release and ASan/UBSan each passed 438 of 441 binaries and 5,025 of 5,028 cases. Both reproduced the three documented baseline failures, with no sanitizer findings.
+- Formatter-only timings improved for literal text. Structured fields rose from 510 to 601 ns per call, and OS errors rose from 899 to 1,331 ns.
+- Source commit `ea44347d`. GitHub write authentication blocked publication and integration.
