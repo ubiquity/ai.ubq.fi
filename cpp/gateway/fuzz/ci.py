@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -143,7 +144,8 @@ def main():
         return 3
     binary = out / ("uos_fuzz_" + args.target)
     # The host policy pins mold and its thread count; a CI runner uses its default linker.
-    link = [option for option in policy["link_options"] if "mold" not in option and "--threads" not in option]
+    link = shlex.split(os.environ.get("LDFLAGS", ""))
+    link += [option for option in policy["link_options"] if "mold" not in option and "--threads" not in option]
     linked = subprocess.run([args.compiler, *built, "-o", str(binary), "-pthread", *link,
                              *["-l" + library for library in policy["libraries"]]], capture_output=True, text=True)
     if linked.returncode:

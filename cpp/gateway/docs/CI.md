@@ -111,7 +111,7 @@ Both configurations split the stage 2a inventory into 111, 111, 111 and 110 test
 
 The robustness matrix uses all entries in `fuzz/targets.json`. The discovery job publishes the selected targets. Each harness job has a 120-minute limit and runs libFuzzer with four workers in a private Linux network namespace, using a fresh home and temporary directory and a credential-free environment. The `fuzz-<target>` artifact contains its build and campaign logs, summary, and any finding inputs. Slow `regex` inputs and the empty crash artifact from the known ARM64 libFuzzer fork-parent exit leak stay in the evidence and are counted separately. Genuine findings and incomplete campaigns fail the job.
 
-The same command runs the five-minute JSON harness on a disposable Linux host with passwordless sudo.
+The same command runs the five-minute JSON harness on a disposable Linux host with passwordless sudo. With staged dependencies, set `CPLUS_INCLUDE_PATH` for the headers and pass the matching library directories through `LDFLAGS` inside the clean environment. Include an RPATH or set `LD_LIBRARY_PATH` for staged shared libraries.
 
 ```sh
 fuzz_out=$(mktemp -d)
