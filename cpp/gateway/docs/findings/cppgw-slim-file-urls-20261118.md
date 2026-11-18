@@ -130,3 +130,11 @@ env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 TZ=UTC HOME="$job/early/ho
 ```
 
 Strict Clang syntax checks passed for all six changed production units and eight changed test units. The resolved test link lists reach `url.cpp` in all 441 tests, `static.cpp` in 45, `native_addon.cpp` in 237, `legacy_codec.cpp` in six, `native_kv_bootstrap.cpp` in eight, and `permissions_linux.cpp` in one. Both complete driver profiles cover the union.
+
+## Full suite receipts
+
+| Tree and profile         | Passing binaries | Passing cases | Object phase | Link and test phase |       Total |
+| ------------------------ | ---------------: | ------------: | -----------: | ------------------: | ----------: |
+| Starting commit, release |          441/441 |   5,025/5,025 |  3,285.848 s |            98.021 s | 3,384.424 s |
+
+The release baseline compiled 369 of 369 production units and exited zero. Its input digest is `4bd325660dc76265ad6be1aacdc394632848f6173771523e04e9bec41fb2e6a2`. The receipt at `$job/receipts/baseline-release.json` has SHA-256 `857715ec74a32e2ba1ed2e10eeec27489a1966dd2b44b7feda5355f4bd2648b5`. The cold sanitizer baseline and both final profiles are pending.
