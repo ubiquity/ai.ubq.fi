@@ -375,6 +375,7 @@ ASYNC_TEST("admin provider picker reports the roster, catalog counts, and the sa
   json::array rows{
     json::object{{"id", "codex"}, {"model_count", 1}, {"status", "available"}, {"configured", true}, {"subscriptions", json::array{}}},
     json::object{{"id", "claude_code"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false}},
+    json::object{{"id", "gemini"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false}},
     json::object{{"id", "surplus"}, {"model_count", 2}, {"status", "available"}, {"configured", true}},
     json::object{{"id", "openlux"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false}},
     json::object{{"id", "deepseek"}, {"model_count", 1}, {"status", "available"}, {"configured", true}},
