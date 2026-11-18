@@ -39,3 +39,14 @@ pkg-config --modversion sqlite3
 The disposable local preparation used `/tmp/cppgw-ci-workflow-20261118.DENd3y` in place of `$RUNNER_TEMP`. The archive hash matched, `pkg-config` found SQLite 3.54.0, and `/usr/local/bin/sqlite3 :memory: 'select sqlite_version(), "double quoted string";'` returned `3.54.0|double quoted string`. The compiler is Ubuntu Clang 21.1.8.
 
 The cold object build started on commit `4210939634d6748ca55816ea6a71e68bc2b5ebc5` at 00:14 UTC. Its initial receipt will record the later summary-related driver edits as changed inputs. The final local run will reuse unchanged Ninja objects and repeat shard 1 against the frozen driver. Terminal results are pending.
+
+## Production compile blocker
+
+The first run reached the gateway objects and found this diagnostic in `cpp/gateway/src/rt/crypto.cpp`:
+
+```text
+crypto.cpp:839:14: error: use of undeclared identifier 'HEX'
+crypto.cpp:840:14: error: use of undeclared identifier 'HEX'
+```
+
+The starting commit removed the lowercase hex alphabet alongside the old `toHex` function. The unguarded `randomUUID()` implementation still indexes that alphabet. Every standalone test links all runtime objects, so this one compilation failure blocks all binary links on x86_64 and ARM64. A source change requires maintainer authorization beyond the CI paths. The CI driver preserves the build failure in the final receipt and the per-object compiler log.
