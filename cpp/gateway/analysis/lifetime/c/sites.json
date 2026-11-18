@@ -816,7 +816,8 @@
       ]
     },
     "include/uos/harmony/tools/result.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous tool result types and construction helpers.",
       "sites": []
     },
     "include/uos/harmony/tools/router.hpp": {

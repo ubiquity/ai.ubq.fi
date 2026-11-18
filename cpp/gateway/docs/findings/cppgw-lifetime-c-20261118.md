@@ -113,7 +113,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/render.hpp`
 - [x] `include/uos/harmony/tools/backend.hpp`
 - [x] `include/uos/harmony/tools/fakes.hpp`
-- [ ] `include/uos/harmony/tools/result.hpp`
+- [x] `include/uos/harmony/tools/result.hpp`
 - [ ] `include/uos/harmony/tools/router.hpp`
 - [ ] `include/uos/harmony/tools/schemas.hpp`
 - [ ] `include/uos/harmony/types.hpp`
@@ -749,3 +749,7 @@ Backend interfaces include a member task for shell work.
 The local fake implements the shell backend interface.
 
 - 105 · member task · **SAFE** · The router retains the backend through the await, and the fake's shell inputs are values.
+
+### `include/uos/harmony/tools/result.hpp`
+
+Synchronous tool result types and construction helpers.
