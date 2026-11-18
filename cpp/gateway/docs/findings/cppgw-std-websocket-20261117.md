@@ -62,3 +62,116 @@ Run the portable release registry and the focused sanitizer transport closure wi
 The new Linux ARM64 runner started at `aac3fca985701a41f3ad99b8970c847b40087337`, tree `2f89890f542b20b0b04fdf290e84103a210784e1`. Its build cache was empty. The strict Clang 21.1.8 release build passed the four inherited WebSocket binaries and all 27 cases. The repository's Linux namespace helper proved loopback access and external-route denial before each binary ran. The v1 caller matrix and v3 adoption boundary still apply. The HTTP lane owns client response-head parsing. This unit owns the WebSocket runtime paths, its legacy fixture and fuzz target, and this report. The port integration branch owns aggregation of the parallel components.
 
 Add a wire regression in the owned legacy fixture for a fragmented over-limit message whose peer sends the continuation header alone. The gateway must deliver zero messages and write the route's chosen code and reason before reading any further frame bytes. Recheck the pinned Beast stream's result and its configurable read surfaces. Run the full release registry and the changed transport closures under ASan/UBSan first, then extend to the full sanitizer registry. All test links include the changed runtime. Run the registered libFuzzer target for 120 seconds with ASan and UBSan. Measure the v1 baseline and candidate on identical send, receive and handshake inputs. Release and sanitizer builds may each take tens of minutes on this runner. Follow their object and test receipts, replay isolated failures, and report any remaining evidence gaps. Stop with committed wire, timing, fuzz and verification receipts and the exact integration status.
+
+## Qualified production boundary
+
+Boost.Beast 1.92 supplies outbound frame headers, masking and unmasking, masking-key and client-nonce generation, opening-handshake accept tokens, UTF-8 validation, and close-code and close-payload decoding. Beast's HTTP token iterator and Base64 decoder handle subprotocol tokens and nonce syntax. The adapter still checks duplicate and empty subprotocol offers, nonce length and padding, and the upper close-code bound of 4999. The dependency is already part of the pinned Boost headers. The patch deletes 203 production lines and adds 113 across five files relative to `093a9e0511e9d0deae5495dc324e53ff4dccd719`.
+
+The new wire regression feeds a masked 512-byte binary fragment, followed by a continuation header declaring another 513 bytes under a 1,024-byte limit. The gateway sends `88 0f 03 f3` followed by `fixture limit` and delivers zero messages while the peer withholds the mask and payload. The Beast 1.92 stream waits for the mask. After those four bytes arrive, it sends `88 02 03 f1` and finishes with `message_too_big`, zero control callbacks and 512 bytes copied from the preceding fragment. A single frame declaring 1,025 bytes produced the same Beast close with zero payload bytes copied. The read-size hint reports an estimate based on read state. The control callback runs for received control frames. Neither exposes a data-frame header policy or can supply the route's close frame before Beast writes its own. The gateway retains receive framing and socket lifecycle to enforce its limit and dispatch the route-specific close. [Beast read implementation](https://github.com/boostorg/beast/blob/boost-1.92.0/include/boost/beast/websocket/impl/read.hpp)
+
+The retained adapter assembles HTTP headers and upgrade responses, transfers bytes read past the HTTP head, owns TCP/TLS and Unix connection lifetimes, and dispatches socket events and writes. The existing HTTP layer authenticates upgrades and owns refusal status and custom response headers. Beast's complete stream also owns automatic pong dispatch. Compression is disabled on the live relay, HTTP Upgrade, and both Codex Unix paths. The pinned branch has no active permessage-deflate implementation to replace. Bun 1.4.0 with the lockfile's `ws@8.18.3` reproduced both invalid UTF-8 examples in the deviations ledger. Every original WebSocket test kept its expectation. [Bun deviations](../DEVIATIONS-FROM-BUN.md)
+
+## ARM64 microbenchmark
+
+Ubuntu 24.04.5 on Neoverse N2, Clang 21.1.8, libstdc++ 14 and `-O2`. The baseline uses the pre-adoption WebSocket objects at `093a9e0511e9d0deae5495dc324e53ff4dccd719`. The candidate uses the objects linked for `018eb54982fe352bf88846345233c4e99e68479a`. Both used the same inputs, compiler flags, native dependencies, and non-WebSocket runtime objects. Seven pairs alternated variant order on CPU 3. Each process warmed each operation for 4,096 calls. Time is median thread CPU nanoseconds per operation. A separate build counted glibc `malloc`, `calloc`, and nonzero `realloc` calls, including C++ allocations and OpenSSL calls. Receive tests reused one receiver and a prebuilt complete frame per workload. The accept-token row measures token computation only.
+
+| Operation                            | Baseline ns/op | Beast ns/op | Baseline allocations/op | Beast allocations/op |
+| ------------------------------------ | -------------: | ----------: | ----------------------: | -------------------: |
+| Encode 64 B unmasked text            |          21.19 |       33.12 |                       1 |                    1 |
+| Receive 64 B unmasked text           |         111.00 |       94.86 |                       3 |                    3 |
+| Encode 64 B masked text              |          58.62 |       47.45 |                       1 |                    1 |
+| Receive 64 B masked text             |         145.99 |      103.02 |                       3 |                    3 |
+| Encode 2,048 B masked UTF-8 text     |       1,112.32 |      196.55 |                       1 |                    1 |
+| Receive 2,048 B masked UTF-8 text    |       5,088.13 |    1,210.56 |                       3 |                    3 |
+| Encode 65,536 B masked binary        |      34,698.12 |    4,799.95 |                       1 |                    1 |
+| Receive 65,536 B masked binary       |      32,378.64 |    5,952.41 |                       3 |                    3 |
+| Compute RFC 6455 sample accept token |         649.74 |      229.97 |                       7 |                    1 |
+
+The 64-byte unmasked send adds 11.93 ns per frame. Masked encoding and all measured receive workloads improve. Each 64 B row ran 300,000 operations per sample, each 2,048 B row ran 70,000, each 65,536 B row ran 10,000, and each token sample ran 150,000. The benchmark source SHA-256 is `95f9aca5b82f79c68ae53c044a30afc71b3dec982a6f8491c809f369f577ebad`. The raw timing and allocation output SHA-256 is `4da0f319a86f8973a69324d135a75a6536ef1ea58087d869ffb66b7489939eef`.
+
+## Local evidence checkpoint
+
+The source and test tree built for the continued qualification is `018eb54982fe352bf88846345233c4e99e68479a`, tree `0df6ecb12599f5a72281540a8f2a82a1a7fd212f`. The six selected binaries were `websocket_library_test`, `websocket_lifetime_test`, `websocket_test`, `runtime_websocket_test`, `runtime_http_test`, and `runtime_http_lifetime_test`.
+
+| Gate                         | Passing binaries | Passing cases | Failed or skipped | Wall seconds | Receipt SHA-256                                                    |
+| ---------------------------- | ---------------: | ------------: | ----------------: | -----------: | ------------------------------------------------------------------ |
+| Strict `-O2` release         |                6 |            49 |                 0 |       84.972 | `5b81a5422d28e196096691aaa499f1384bbc26a04fdaeccbc6bb6b16ec7a89fe` |
+| Strict `-O1` ASan/UBSan/LSan |                6 |            49 |                 0 |      303.578 | `9e0b5832ff80118d4cc4c89c856782c93025efe8993648467b3beb37bb1fd60c` |
+
+The public-entry fuzz run exited 0 after 122 seconds and 215,742 executions with zero crashes, timeouts, out-of-memory events or sanitizer findings. It started with nine committed seeds and ended with 215 files in the corpus. A separate `-fsyntax-only` check compiled the fuzz harness with the port warning flags and sanitizer defines. The full release registry and wider ASan/UBSan closure are building in separate temporary output trees.
+
+## Commands from this runner
+
+The `work` prefix was `/tmp/boost-websocket.9AztjaOZ`. Clang 21.1.8, its sanitizer runtimes and LLD came from the apt.llvm.org Noble 21 repository. OpenSSL 3.0.13, ICU 74.2, zlib 1.3, Brotli 1.1.0 and Zstd 1.5.5 were installed Ubuntu packages. The official Boost 1.92.0 archive matched `5c1d40cb8e19adbf740a4ec2da35b3e58f3f5804b1dce44deb53df72193cbc6c`. Its static dependency archives used Clang 18 and the runner's libstdc++. The official SQLite 3.54.0 archive matched `134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed`. The runner used the following setup and build invocations.
+
+```sh
+work=/tmp/boost-websocket.9AztjaOZ
+boost="$work/boost_1_92_0"
+sqlite="$work/sqlite-autoconf-3540000"
+(cd "$boost" && CXX=clang++-21 CC=clang-21 ./bootstrap.sh --with-libraries=json,container &&
+  ./b2 -j2 --with-json --with-container toolset=clang cxxstd=20 variant=release link=static threading=multi stage)
+(cd "$sqlite" && ./configure --prefix="$work/sqlite" --disable-shared --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3' &&
+  make -j2 libsqlite3.a)
+
+export CXX=clang++-21
+export UOS_CI_CXXFLAGS="-isystem $boost -isystem $sqlite --system-header-prefix=third_party/"
+export UOS_CI_LDFLAGS="-L$boost/stage/lib -L$sqlite -fuse-ld=lld-21 -Wl,--threads=1"
+export UOS_CI_BUILD_DIR="$work/qualify"
+export WS_CHECKOUT="$PWD"
+focused="websocket_test websocket_lifetime_test websocket_library_test runtime_websocket_test runtime_http_test runtime_http_lifetime_test"
+transport="$focused live_sideband_http_test codex_supervisor_test codex_native_auth_test codex_external_native_auth_test"
+UOS_CI_JOBS=1 python3 -B "$work/qualify_selection.py" release $focused
+UOS_CI_JOBS=2 python3 -B "$work/qualify_selection.py" asan $focused
+UOS_CI_JOBS=2 python3 -B "$work/qualify_selection.py" release $transport
+UOS_CI_JOBS=2 python3 -B "$work/qualify_selection.py" asan $transport
+UOS_CI_JOBS=3 bash cpp/gateway/tools/ci-build.sh --config release
+python3 -B cpp/gateway/tools/links.py --check
+git diff --check 093a9e0511e9d0deae5495dc324e53ff4dccd719..HEAD
+```
+
+The temporary selection launcher imports the repository CI driver and selects the named test closures. The driver resolves test links and vendors, retains `-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror` and the prescribed runtime defines, and runs the tests with its Linux namespace helper. Each binary starts with a fresh tmpfs, empty `HOME` and credential-free environment. The scratch launcher used this code.
+
+```python
+import os
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(os.environ["WS_CHECKOUT"]) / "cpp/gateway/cmake/ci"))
+import driver
+
+list_tests = driver.links.all_tests
+inventory = driver.cpp_inventory
+names = set(sys.argv[2:])
+driver.links.all_tests = lambda: [t for t in list_tests() if Path(t).stem in names]
+driver.cpp_inventory = lambda directory, *, recursive=False: (
+    inventory("src/rt") if directory == "src" else inventory(directory, recursive=recursive)
+)
+sys.argv = ["ci-build.sh", "--config", sys.argv[1]]
+raise SystemExit(driver.main())
+```
+
+```sh
+mkdir -p "$work/fuzz-home" "$work/fuzz-tmp"
+sudo -n unshare --net --fork --kill-child=SIGKILL -- \
+  setpriv --reuid "$(id -u)" --regid "$(id -g)" --init-groups --no-new-privs \
+  env -i PATH=/usr/bin:/bin HOME="$work/fuzz-home" TMPDIR="$work/fuzz-tmp" LC_ALL=C.UTF-8 TZ=UTC \
+  CPLUS_INCLUDE_PATH="$boost:$sqlite" LIBRARY_PATH="$boost/stage/lib:$sqlite" \
+  python3 -B "$PWD/cpp/gateway/fuzz/ci.py" websocket_library --seconds 120 --out "$work/fuzz" --compiler clang++-21 --jobs 1
+```
+
+The Beast spike compiled with `clang++-21 -std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion -Werror -DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING -isystem "$boost" "$work/beast_limit.cpp" -pthread -o "$work/beast_limit"`. It used `websocket::stream<beast::test::stream>`, `read_message_max(1024)` and `async_read` over an in-memory stream pair. The spike source SHA-256 is `7352a5f9cde9522b1132e05dbf1139caa109dfd048c928e4b72e84eeb22e2dcf`.
+
+The benchmark extracted the v1 WebSocket files with `git archive 093a9e0511e9d0deae5495dc324e53ff4dccd719` into scratch. It compiled the four baseline WebSocket objects with the release warnings, runtime defines and `-O2`. It linked each set of WebSocket objects against the other 40 runtime objects, the two selected vendor archives and the same native libraries. The timing builds call `Sender::frame`, `Receiver::write`, and the original SHA-1/Base64 expression or `detail::handshakeAccept`. The allocation builds add `-DCOUNT_ALLOCATIONS` to interpose the three glibc allocators during measurement. Each executable ran as `taskset -c 3 env -i PATH=/usr/bin:/bin HOME="$work/bench-home" TMPDIR="$work/bench-tmp" LC_ALL=C.UTF-8 TZ=UTC "$work/benchmark-$variant-$mode"` for `old` and `new` variants and `time` and `alloc` modes.
+
+The portable CI script is checked in with mode `100644` in this branch. The first direct invocation exited 126. Invoking it through `bash` starts the real driver and fixture probes.
+
+## Contract v8 and qualification replay
+
+Resumed with `018eb54982fe352bf88846345233c4e99e68479a` and the working report above. The adoption boundary and caller matrix are those in v1 and v3. The six-binary strict release replay passed 49/49 cases on this source. The ten transport binaries cover the WebSocket runtime, HTTP upgrade and lifetime, live relay, and both Codex Unix clients. Their results bind the same source and test tree.
+
+| Gate                         | Passing binaries | Passing cases | Failed or skipped | Wall seconds | Receipt SHA-256                                                    |
+| ---------------------------- | ---------------: | ------------: | ----------------: | -----------: | ------------------------------------------------------------------ |
+| Strict `-O2` release         |               10 |           123 |                 0 |      349.224 | `c44237bf1ae4ee3f214c103bfa769ce32e9c9ffd2d7f13b5b6dc94a8fd12808c` |
+| Strict `-O1` ASan/UBSan/LSan |               10 |           123 |                 0 |       48.117 | `c83376121b1192e3c020bef747e88fb611fa25f89f3f1d2244abd98bc1c18774` |
+
+The sanitizer replay reused the existing object cache and compiled the remaining live relay test object. Strict release and sanitizer registries each selected 442 binaries because every test links the affected runtime. The remaining release build resumed 232 object actions. The remaining sanitizer build resumed 517. Both drivers use two workers with fresh fixture environments. The expected runtimes are about 20 minutes for release and 45–55 minutes for sanitizers. Preserve their terminal counts and reproduce any failures against the smallest pre-adoption closure. The component, strict warning, wire, fuzz and benchmark receipts above carry forward when only this report changes.
