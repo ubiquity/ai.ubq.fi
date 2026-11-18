@@ -2080,8 +2080,94 @@
       ]
     },
     "include/uos/rt/fetch.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "The statically erased Fetch and MockTransport callback signatures are the ownership boundary. Current callers mostly use by-value callback inputs. The generic Fetch constructor also accepts reference-taking coroutine callables.",
+      "sites": [
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "lines": [
+            27,
+            29,
+            38,
+            39,
+            40,
+            41,
+            43,
+            44,
+            45,
+            48,
+            49,
+            50,
+            54,
+            56,
+            58,
+            64,
+            65,
+            70,
+            89,
+            90,
+            100
+          ],
+          "label": "Ordinary Fetch wrapping and scoped global overrides",
+          "reason": "The synchronous Response wrapper captures its callable by shared owner and returns a value-owning Task, and an override owns its copied predecessor."
+        },
+        {
+          "verdict": "DEFECT",
+          "classes": [
+            "a",
+            "b"
+          ],
+          "lines": [
+            20,
+            27,
+            28,
+            29,
+            33,
+            38,
+            40,
+            41,
+            49
+          ],
+          "label": "Fetch erasure can discard input storage before a borrowing coroutine starts",
+          "reason": "The invocability constraint accepts reference-taking callables, but the by-value erased invocation can destroy its RequestInfo and RequestInit before their borrowed uses.",
+          "defect": {
+            "id": "A-FETCH-CALLBACK-INPUT",
+            "priority": 22,
+            "severity": "memory safety in the injectable Fetch API",
+            "interleaving": [
+              "Construct Fetch with a coroutine callable taking const RequestInfo& or const RequestInit&. Fetch invokes the by-value std::function and returns a lazy Task.",
+              "The full expression in Fetch::operator() ends and destroys the erased argument. The child resumes with a dangling reference even though keepAlive retains the callable."
+            ],
+            "diff": "diff --git a/cpp/gateway/include/uos/rt/fetch.hpp b/cpp/gateway/include/uos/rt/fetch.hpp\n--- a/cpp/gateway/include/uos/rt/fetch.hpp\n+++ b/cpp/gateway/include/uos/rt/fetch.hpp\n@@ -20 +20 @@\n-    using Function = std::function<Task<Response>(RequestInfo input, RequestInit init)>;\n+    using Function = std::function<Task<Response>(RequestInfo&& input, RequestInit&& init)>;\n@@ -49 +49,2 @@\n-    static Task<Response> keepAlive(std::shared_ptr<const Function> function, Task<Response> task);\n+    using Inputs = std::pair<RequestInfo, RequestInit>;\n+    static Task<Response> keepAlive(std::shared_ptr<const Function> function, std::shared_ptr<Inputs> inputs, Task<Response> task);\ndiff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp\n--- a/cpp/gateway/src/rt/fetch.cpp\n+++ b/cpp/gateway/src/rt/fetch.cpp\n@@ -176,4 +176,7 @@\n   Task<Response> Fetch::operator()(RequestInfo input, RequestInit init) const {\n-    if (!function_) throw std::logic_error(\"rt::Fetch: called an empty fetch value\");\n-    return keepAlive(function_, (*function_)(std::move(input), std::move(init)));\n+    auto function = function_;\n+    if (!function) throw std::logic_error(\"rt::Fetch: called an empty fetch value\");\n+    auto inputs = std::make_shared<Inputs>(std::move(input), std::move(init));\n+    auto task = (*function)(std::move(inputs->first), std::move(inputs->second));\n+    return keepAlive(std::move(function), std::move(inputs), std::move(task));\n   }\n@@ -181,3 +184,4 @@\n-  Task<Response> Fetch::keepAlive(std::shared_ptr<const Function> function, Task<Response> task) {\n+  Task<Response> Fetch::keepAlive(std::shared_ptr<const Function> function, std::shared_ptr<Inputs> inputs, Task<Response> task) {\n     (void)function;\n+    (void)inputs;\n     Response response = co_await std::move(task);"
+          }
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "d"
+          ],
+          "lines": [
+            81,
+            83,
+            84,
+            102,
+            105,
+            106,
+            107,
+            109,
+            112,
+            113
+          ],
+          "label": "Transport input and recorded request views",
+          "reason": "The virtual request parameter owns a handle and the recorded vector view is consumed while the MockTransport is held. The lifetime of the virtual receiver and callback is assessed at their implementations."
+        }
+      ]
     },
     "include/uos/rt/fetch_transport.hpp": {
       "status": "pending",

@@ -44,7 +44,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `include/uos/rt/stream.hpp`
 - [x] `src/rt/http.cpp`
 - [x] `include/uos/rt/http.hpp`
-- [ ] `include/uos/rt/fetch.hpp`
+- [x] `include/uos/rt/fetch.hpp`
 - [ ] `include/uos/rt/fetch_transport.hpp`
 - [ ] `include/uos/rt/gzip.hpp`
 - [ ] `include/uos/rt/websocket.hpp`
@@ -209,18 +209,26 @@ Reviewed the Blob, File, FormData, Request and Response API. The public Task met
 - **SAFE** `177, 180, 184, 189, 192, 193, 201, 205, 209, 210, 211, 216, 219, 224, 229, 230, 231, 235, 236` (b/c), Response handle and body methods. Response owns shared state, reference getters are synchronous in the checked callers, and the body adapters return tasks with independently owned inputs.
 - **SAFE** `249, 261, 262, 263, 265, 268, 269, 279, 287, 288, 290, 292, 293, 294, 296, 298, 299, 300, 301, 302, 303, 307, 308, 312, 313, 314, 323` (b/c), Request construction, body APIs and transfer. The constructors consume URL and init borrows synchronously, property access borrows a live handle, and each deferred body reader takes owned state from the ordinary wrapper.
 
+### `include/uos/rt/fetch.hpp`
+
+The statically erased Fetch and MockTransport callback signatures are the ownership boundary. Current callers mostly use by-value callback inputs. The generic Fetch constructor also accepts reference-taking coroutine callables.
+
+- **SAFE** `27, 29, 38, 39, 40, 41, 43, 44, 45, 48, 49, 50, 54, 56, 58, 64, 65, 70, 89, 90, 100` (a/b/c), Ordinary Fetch wrapping and scoped global overrides. The synchronous Response wrapper captures its callable by shared owner and returns a value-owning Task, and an override owns its copied predecessor.
+- **DEFECT (A-FETCH-CALLBACK-INPUT)** `20, 27, 28, 29, 33, 38, 40, 41, 49` (a/b), Fetch erasure can discard input storage before a borrowing coroutine starts. The invocability constraint accepts reference-taking callables, but the by-value erased invocation can destroy its RequestInfo and RequestInit before their borrowed uses.
+- **SAFE** `81, 83, 84, 102, 105, 106, 107, 109, 112, 113` (b/d), Transport input and recorded request views. The virtual request parameter owns a handle and the recorded vector view is consumed while the MockTransport is held. The lifetime of the virtual receiver and callback is assessed at their implementations.
+
 ## Ranked defects and counts
 
-Reviewed **12/30 files** and **79 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **13/30 files** and **82 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
-| a. Capturing coroutine closure | 1 | 14 | 0 |
-| b. Borrowed coroutine parameter or receiver | 4 | 42 | 3 |
-| c. Callback ownership or cycle | 10 | 52 | 3 |
-| d. Container invalidation | 3 | 22 | 0 |
+| a. Capturing coroutine closure | 2 | 15 | 0 |
+| b. Borrowed coroutine parameter or receiver | 5 | 44 | 3 |
+| c. Callback ownership or cycle | 10 | 53 | 3 |
+| d. Container invalidation | 3 | 23 | 0 |
 | e. GCC 12 await-expression rule | 4 | 7 | 1 |
-| **Unique site groups** | 14 | 61 | 4 |
+| **Unique site groups** | 15 | 63 | 4 |
 
 ### 1. A-STREAM-CANCEL-OWNER (memory safety in stream cancellation) — Stream cancel borrows the owner slot through callback invocation
 
@@ -237,7 +245,46 @@ Reviewed **12/30 files** and **79 site groups**. A site group can have multiple 
 +    template <class T> void cancelStreamInto(std::shared_ptr<StreamState<T>> stream, Reason reason, const std::shared_ptr<PromiseState<void>>& out) {
 ```
 
-### 2. A-PROMISE-CALLBACK-INPUT (memory safety in the public runtime API) — Task-returning Promise callbacks can borrow a destroyed outcome
+### 2. A-FETCH-CALLBACK-INPUT (memory safety in the injectable Fetch API) — Fetch erasure can discard input storage before a borrowing coroutine starts
+
+`include/uos/rt/fetch.hpp:20, 27, 28, 29, 33, 38, 40, 41, 49`
+
+- Construct Fetch with a coroutine callable taking const RequestInfo& or const RequestInit&. Fetch invokes the by-value std::function and returns a lazy Task.
+- The full expression in Fetch::operator() ends and destroys the erased argument. The child resumes with a dangling reference even though keepAlive retains the callable.
+
+```diff
+diff --git a/cpp/gateway/include/uos/rt/fetch.hpp b/cpp/gateway/include/uos/rt/fetch.hpp
+--- a/cpp/gateway/include/uos/rt/fetch.hpp
++++ b/cpp/gateway/include/uos/rt/fetch.hpp
+@@ -20 +20 @@
+-    using Function = std::function<Task<Response>(RequestInfo input, RequestInit init)>;
++    using Function = std::function<Task<Response>(RequestInfo&& input, RequestInit&& init)>;
+@@ -49 +49,2 @@
+-    static Task<Response> keepAlive(std::shared_ptr<const Function> function, Task<Response> task);
++    using Inputs = std::pair<RequestInfo, RequestInit>;
++    static Task<Response> keepAlive(std::shared_ptr<const Function> function, std::shared_ptr<Inputs> inputs, Task<Response> task);
+diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
+--- a/cpp/gateway/src/rt/fetch.cpp
++++ b/cpp/gateway/src/rt/fetch.cpp
+@@ -176,4 +176,7 @@
+   Task<Response> Fetch::operator()(RequestInfo input, RequestInit init) const {
+-    if (!function_) throw std::logic_error("rt::Fetch: called an empty fetch value");
+-    return keepAlive(function_, (*function_)(std::move(input), std::move(init)));
++    auto function = function_;
++    if (!function) throw std::logic_error("rt::Fetch: called an empty fetch value");
++    auto inputs = std::make_shared<Inputs>(std::move(input), std::move(init));
++    auto task = (*function)(std::move(inputs->first), std::move(inputs->second));
++    return keepAlive(std::move(function), std::move(inputs), std::move(task));
+   }
+@@ -181,3 +184,4 @@
+-  Task<Response> Fetch::keepAlive(std::shared_ptr<const Function> function, Task<Response> task) {
++  Task<Response> Fetch::keepAlive(std::shared_ptr<const Function> function, std::shared_ptr<Inputs> inputs, Task<Response> task) {
+     (void)function;
++    (void)inputs;
+     Response response = co_await std::move(task);
+```
+
+### 3. A-PROMISE-CALLBACK-INPUT (memory safety in the public runtime API) — Task-returning Promise callbacks can borrow a destroyed outcome
 
 `include/uos/rt/async.hpp:692, 701, 704, 713, 715, 726, 731, 744, 745, 746, 758, 760`
 
@@ -268,7 +315,7 @@ Reviewed **12/30 files** and **79 site groups**. A site group can have multiple 
 +        detail::settleWith(target, callback, source, [&] { return (*callback)(source->error); });
 ```
 
-### 3. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
+### 4. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
 
 `src/rt/abort.cpp:62, 69, 74, 81, 95, 228`
 
@@ -283,7 +330,7 @@ Reviewed **12/30 files** and **79 site groups**. A site group can have multiple 
 +    void signalAbort(std::shared_ptr<State> signal, Reason reason) {
 ```
 
-### 4. A-PROCESS-SIGNAL-CONTEXT (memory safety with scoped runtime loops) — Static process signal registry retains a scoped Asio context
+### 5. A-PROCESS-SIGNAL-CONTEXT (memory safety with scoped runtime loops) — Static process signal registry retains a scoped Asio context
 
 `src/rt/process_loop.cpp:100, 102, 107, 108, 119, 124, 125, 134, 136, 142, 148`
 
@@ -311,7 +358,7 @@ Reviewed **12/30 files** and **79 site groups**. A site group can have multiple 
      }
 ```
 
-### 5. A-STREAM-TEE-READ-CYCLE (retention on cloned streaming bodies) — In-flight tee read keeps abandoned branches' source alive
+### 6. A-STREAM-TEE-READ-CYCLE (retention on cloned streaming bodies) — In-flight tee read keeps abandoned branches' source alive
 
 `include/uos/rt/stream.hpp:444, 445, 446, 453, 454, 458, 460, 464, 469, 475, 479, 485, 486, 493, 496, 502, 554, 557, 558, 559, 561, 562, 567, 568`
 
@@ -344,7 +391,7 @@ Reviewed **12/30 files** and **79 site groups**. A site group can have multiple 
 +      start(currentLoop(), teeRead<T>(std::weak_ptr<TeeState<T>>(tee)));
 ```
 
-### 6. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
+### 7. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
 
 `src/rt/async.cpp:485, 490, 491, 492, 494, 497`
 
@@ -370,7 +417,7 @@ Reviewed **12/30 files** and **79 site groups**. A site group can have multiple 
 +      source->react([source = source.get(), out, remaining] {
 ```
 
-### 7. A-GENERATOR-STEP-OWNER (public runtime liveness) — Pending generator step does not keep its generator alive
+### 8. A-GENERATOR-STEP-OWNER (public runtime liveness) — Pending generator step does not keep its generator alive
 
 `include/uos/rt/async.hpp:1041, 1058, 1061, 1062, 1063, 1064, 1099, 1101`
 
@@ -391,7 +438,7 @@ Reviewed **12/30 files** and **79 site groups**. A site group can have multiple 
      }
 ```
 
-### 8. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
+### 9. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
 
 `src/rt/async.cpp:252, 257, 258, 261, 263, 266, 268, 367, 368, 396, 397, 400, 401, 443, 445`
 
@@ -406,7 +453,7 @@ Reviewed **12/30 files** and **79 site groups**. A site group can have multiple 
 +    LoopScope scope(owner);
 ```
 
-### 9. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
+### 10. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
 
 `include/uos/rt/async.hpp:219, 375`
 
@@ -426,7 +473,7 @@ Reviewed **12/30 files** and **79 site groups**. A site group can have multiple 
 +      co_await std::move(ready);
 ```
 
-### 10. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
+### 11. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
 
 `include/uos/rt/async.hpp:1073, 1123, 1124`
 
@@ -448,7 +495,7 @@ Reviewed **12/30 files** and **79 site groups**. A site group can have multiple 
 +        else co_await std::move(handling);
 ```
 
-### 11. A-STREAM-GCC-AWAIT (GCC 12 portability rule) — Stream callback and yield arguments materialized inside awaits
+### 12. A-STREAM-GCC-AWAIT (GCC 12 portability rule) — Stream callback and yield arguments materialized inside awaits
 
 `include/uos/rt/stream.hpp:72, 540`
 
