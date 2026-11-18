@@ -217,8 +217,16 @@
       "sites": []
     },
     "include/uos/codex/index.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Codex Responses entry point overloads.",
+      "sites": [
+        {
+          "lines": "15-16",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The forwarded request value and dispatch options become frame-owned inputs."
+        }
+      ]
     },
     "include/uos/codex/manual_reset.hpp": {
       "status": "pending",

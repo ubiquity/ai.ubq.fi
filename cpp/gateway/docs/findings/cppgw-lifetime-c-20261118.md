@@ -52,7 +52,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/dispatch.hpp`
 - [x] `include/uos/codex/experiment.hpp`
 - [x] `include/uos/codex/external_auth.hpp`
-- [ ] `include/uos/codex/index.hpp`
+- [x] `include/uos/codex/index.hpp`
 - [ ] `include/uos/codex/manual_reset.hpp`
 - [ ] `include/uos/codex/manual_reset_state.hpp`
 - [ ] `include/uos/codex/native_auth.hpp`
@@ -426,3 +426,9 @@ Cache-scope experiment API and owned input records.
 ### `include/uos/codex/external_auth.hpp`
 
 Synchronous external-auth decision and text/JSON declarations. No suspendable definition or asynchronous registration.
+
+### `include/uos/codex/index.hpp`
+
+Codex Responses entry point overloads.
+
+- 15-16 · owning task parameters · **SAFE** · The forwarded request value and dispatch options become frame-owned inputs.
