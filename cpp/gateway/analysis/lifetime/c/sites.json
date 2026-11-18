@@ -2754,7 +2754,8 @@
       "sites": []
     },
     "src/harmony/reliability/failure.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Reliability classification is synchronous and returns owning results.",
       "sites": []
     },
     "src/harmony/reliability/feedback.cpp": {
