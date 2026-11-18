@@ -1559,8 +1559,9 @@
       ]
     },
     "include/uos/cache/scope_experiment_targets.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "Target resolution, cycle and lease tasks own their KV plus state and target parameters. Implementations cover the await sites."
     },
     "include/uos/cache/scope_targets.hpp": {
       "reviewed": false,

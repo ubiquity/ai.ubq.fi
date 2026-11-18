@@ -84,7 +84,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/cache/prompt_analytics_read.hpp`
 - [x] `include/uos/cache/scope_experiment.hpp`
 - [x] `include/uos/cache/scope_experiment_model.hpp`
-- [ ] `include/uos/cache/scope_experiment_targets.hpp`
+- [x] `include/uos/cache/scope_experiment_targets.hpp`
 - [ ] `include/uos/cache/scope_targets.hpp`
 - [ ] `include/uos/cache/telemetry_gate.hpp`
 - [ ] `src/cache/kv_migration.cpp`
@@ -540,6 +540,10 @@ The experiment takes an owning telemetry baseline value. No inline coroutine or 
 | --- | --- | --- | --- |
 | 44,158-187 | Experiment options and response read contract | **SAFE** | ReadSample takes Response and expected model by value. State and evidence parsing reads JSON views synchronously and returns owned records. |
 
+### `include/uos/cache/scope_experiment_targets.hpp`
+
+Target resolution, cycle and lease tasks own their KV plus state and target parameters. Implementations cover the await sites.
+
 
 ## Ranked defects and counts
 
@@ -745,4 +749,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-61/97 files reviewed. **DEFECT 8, SAFE 112, UNCLEAR 3.**
+62/97 files reviewed. **DEFECT 8, SAFE 112, UNCLEAR 3.**
