@@ -5576,7 +5576,8 @@
       ]
     },
     "src/sentinel/replay_limits.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous replay capacity arithmetic. No deferred operation or retained view.",
       "sites": []
     },
     "src/sentinel/replay_model.cpp": {
