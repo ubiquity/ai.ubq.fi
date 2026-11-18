@@ -3528,8 +3528,16 @@
       ]
     },
     "src/provider/claude_code_credentials.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Credential and workspace lookup accepts owned store and environment callables.",
+      "sites": [
+        {
+          "lines": "160-216,222-248,279-319",
+          "kind": "credential and workspace KV joins",
+          "verdict": "SAFE",
+          "reason": "The frames retain KV and local roster, state and environment owners. The recursive reload copies the KV handle and no pointer into the prior result crosses the recursion."
+        }
+      ]
     },
     "src/provider/claude_code_models.cpp": {
       "status": "pending",

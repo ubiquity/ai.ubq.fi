@@ -300,7 +300,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/claude_code.cpp`
 - [x] `src/provider/claude_code_access.cpp`
 - [x] `src/provider/claude_code_accounts.cpp`
-- [ ] `src/provider/claude_code_credentials.cpp`
+- [x] `src/provider/claude_code_credentials.cpp`
 - [ ] `src/provider/claude_code_models.cpp`
 - [ ] `src/provider/claude_code_quota.cpp`
 - [ ] `src/provider/claude_code_usage.cpp`
@@ -1909,3 +1909,9 @@ Account roster state is snapshotted at each read and mutation.
 
 - 62-71,111-131,173-214 · credential hash and account update snapshots · **SAFE** · The reference-taking fingerprint is a synchronous task factory that creates owned digest input. The roster and account update frames retain their copied records.
 - 263-372,375-441 · KV read, account generation, and CAS waits · **SAFE** · Frames retain KV, typed rows and transaction owners. Borrowed account data is consumed synchronously or copied into each child operation.
+
+### `src/provider/claude_code_credentials.cpp`
+
+Credential and workspace lookup accepts owned store and environment callables.
+
+- 160-216,222-248,279-319 · credential and workspace KV joins · **SAFE** · The frames retain KV and local roster, state and environment owners. The recursive reload copies the KV handle and no pointer into the prior result crosses the recursion.
