@@ -101,7 +101,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_api_key_audit.cpp`
 - [x] `src/authority/native_api_key_policy.cpp`
 - [x] `src/authority/native_authority.cpp`
-- [ ] `src/authority/native_authority_api.cpp`
+- [x] `src/authority/native_authority_api.cpp`
 - [ ] `src/authority/native_authority_codex.cpp`
 - [ ] `src/authority/native_authority_contracts.cpp`
 - [ ] `src/authority/native_authority_kernel.cpp`
@@ -657,6 +657,12 @@ Reviewed native State ownership, control/runtime execution, routing, and synchro
 - L115, 116, 118, 119, 214, 215, 219, 221, 231, 234 **SAFE** · The bound port captures State into the rt::async frame before entering a member coroutine. Routing and classification use named copied inputs, and SQL runs every capture synchronously after or between waits.
 - L298, 299, 304, 305, 315, 321, 322, 323 **SAFE** · Every port or runner closure owns the shared State or a by-value facade. Task-factory callbacks put their own State owner in the child, and State does not own the port callbacks.
 
+### `src/authority/native_authority_api.cpp`
+
+Reviewed synchronous API admission, dispatch and status transactions. The snapshot lambda and row borrows are used within the method and the returned receipts own their values.
+
+- L92 **SAFE** · The invoked snapshot lambda is a local read factory with access to this and the active frame. It is called inline and never escapes.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -762,4 +768,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-36/286 files reviewed. 125 sites: 116 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+37/286 files reviewed. 126 sites: 117 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

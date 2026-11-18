@@ -2260,8 +2260,22 @@
       ]
     },
     "src/authority/native_authority_api.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed synchronous API admission, dispatch and status transactions. The snapshot lambda and row borrows are used within the method and the returned receipts own their values.",
+      "sites": [
+        {
+          "lines": [
+            92
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The invoked snapshot lambda is a local read factory with access to this and the active frame. It is called inline and never escapes."
+        }
+      ]
     },
     "src/authority/native_authority_codex.cpp": {
       "reviewed": false,
