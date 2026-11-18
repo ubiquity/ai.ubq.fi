@@ -143,31 +143,55 @@ env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
   bash cpp/gateway/tools/ci-build.sh --config "$config"
 ```
 
-## Verification in progress
+## Verification
 
-The fresh release baseline passed all 448 binaries and 5,095 cases on
-`9acb016ae9900ffac255b7f3cec02c735f6ddeda`. The driver compiled all 369
-production translation units. Compile, link/test and total wall times
-were 3,168.300 s, 108.059 s and 3,276.885 s. The recorded input SHA-256 is
+The driver compiled all 369 production translation units under both profiles.
+Links resolved all 448 binaries. The candidate release and quiet sanitizer
+rerun agree with the fresh baseline fixture by fixture, with one added case each
+in the string and Responses conformance binaries. Release and the quiet rerun
+had zero build failures, test failures or timeouts. Both sanitizer runs reported
+zero ASan, UBSan and LeakSanitizer diagnostics.
+
+| Gate                   | Passing binaries | Passing cases | Compile s | Link/test s |   Total s |
+| ---------------------- | ---------------: | ------------: | --------: | ----------: | --------: |
+| Baseline release       |          448/448 |   5,095/5,095 | 3,168.300 |     108.059 | 3,276.885 |
+| Candidate release      |          448/448 |   5,097/5,097 | 2,656.524 |      66.633 | 2,724.224 |
+| Initial ASan+UBSan     |          446/448 |   5,095/5,097 | 4,798.071 |     361.741 | 5,161.250 |
+| Quiet ASan+UBSan rerun |          448/448 |   5,097/5,097 |     0.011 |     328.185 |   328.740 |
+
+The candidate release and initial sanitizer gates tested commit
+`8a34ff90d8b5e2dc0850954644de7e5f107d4428`, tree
+`983e7fa2ad873d4f090e44c008dba5d8e3f23616`. The quiet sanitizer rerun tested
+`b7e903c7ac2e713f80685e7137c59938fbee80b2`, tree
+`6568b13b51b96d22c19d7b6db90b75960511b8e0`. The difference is confined to this
+report. The candidate gates all consumed input SHA-256
+`e21ee4fd36763cf5ef27656f8a5ed32de7e75a031ae793a9db41e0b0acc25b1e`. The fresh baseline consumed
 `364b32a62c071736e67560aff226a28d2a6ff4d5f3a24fd57fd677eb19c73580`.
-The JSON receipt SHA-256 is
-`830c88fe8a2c7800dddf87e18fff2644e8e74c6f31972542c251a017312cc048`.
 
-The strict Clang syntax gate passed for the three changed translation units
-and both changed tests. Links resolved all 448 binaries. The scratch
-old/new differential matched digest `6057dda90c227365` across 120,000 cases
-covering searches, trimming, replacements and slices. Both versions also
-passed prefix, suffix and substring checks across all 65,536 two-byte inputs
-around `input_`. The candidate release and sanitizer receipts are pending.
+| Receipt under `$scratch/receipts` | SHA-256                                                            |
+| --------------------------------- | ------------------------------------------------------------------ |
+| `baseline/receipt.json`           | `830c88fe8a2c7800dddf87e18fff2644e8e74c6f31972542c251a017312cc048` |
+| `release/receipt.json`            | `1d68d7b9b0c249b63fadef17767fed8abc978b5cbb42957bff3fea09dfff1ee2` |
+| `asan/receipt.json`               | `7fa1a96b2f1a9f94fc01e1c10da47dd6588ff5eef4d5e49bab2996e9f97ca2de` |
+| `asan-quiet/receipt.json`         | `1abb2541ad43c8b506f4a38ceb452468c2f48dca5c11acdb8ff7bcfbd2860530` |
 
-The first ASan+UBSan run completed all 369 production objects and ran the
-448 binaries and 5,097 cases. With the release rebuild active, 446 binaries
-and 5,095 cases passed. The object phase took 4,798.071 s and the link/test
-phase took 361.741 s. The receipt SHA-256 is
-`7fa1a96b2f1a9f94fc01e1c10da47dd6588ff5eef4d5e49bab2996e9f97ca2de`.
-The run logs contained zero ASan, UBSan or LeakSanitizer diagnostics.
+| Fixture                                             | Baseline release | Candidate release | Quiet ASan+UBSan |
+| --------------------------------------------------- | ---------------: | ----------------: | ---------------: |
+| `tests/rt/string_test.cpp`                          |            19/19 |             20/20 |            20/20 |
+| `tests/rt/text_codec_test.cpp`                      |              6/6 |               6/6 |              6/6 |
+| `tests/rt/regex_test.cpp`                           |            20/20 |             20/20 |            20/20 |
+| `tests/codex_quota_differential_test.cpp`           |              3/3 |               3/3 |              3/3 |
+| `tests/responses_conformance_http_test.cpp`         |              8/8 |               9/9 |              9/9 |
+| `tests/anthropic_chat_stream_differential_test.cpp` |              4/4 |               4/4 |              4/4 |
 
-Two timing-sensitive fixtures failed on that run.
+The strict Clang syntax gate passed for all three changed translation units
+and both changed tests. The scratch old/new differential matched digest
+`6057dda90c227365` across 120,000 cases covering searches, trimming,
+replacements and slices. Both versions also passed prefix, suffix and
+substring checks across all 65,536 two-byte inputs around `input_`.
+
+Two timing-sensitive fixtures failed in the first sanitizer run while the
+release rebuild was active.
 
 - `codex_supervisor_secret_test.cpp` passed 40 of 41 cases. Its
   repeated fat-comma case passed redaction and missed the two-second assertion.
@@ -178,8 +202,8 @@ Dedicated-CPU controls used each test's existing Links closure and ASan
 objects, then relinked with the starting or candidate string implementation.
 There were no other changed application objects in either closure. Both
 string implementations passed all 41 redaction cases and all 23 compaction
-cases on CPU 3 at nice −15. The full sanitizer rerun uses the driver after
-the release build and timing measurement finish.
+cases on CPU 3 at nice −15. The full sanitizer rerun used two jobs and the same
+cached objects after the release build and timing measurement finished.
 
 ```bash
 python3 -B "$scratch/timing/control.py" "$PWD"
@@ -190,9 +214,17 @@ for variant in baseline candidate; do
 done
 ```
 
-The focused release preview passed the 20-case string binary and all nine
-Responses conformance cases, including the new prefix fixture. The isolated
-string benchmark pinned the process to CPU 3 and alternated five runs per
+```bash
+bash "$scratch/run-gate.sh" asan-quiet asan "$PWD" 2
+python3 -B "$scratch/reconcile.py"
+bun --no-env-file --no-install run format:check \
+  cpp/gateway/docs/DEVIATIONS-FROM-BUN.md cpp/gateway/docs/findings/cppgw-slim-strings-20261118.md
+git diff --check 9acb016a HEAD
+```
+
+## ARM64 timings
+
+The isolated string benchmark pinned the process to CPU 3 and alternated five runs per
 revision. Each number is median nanoseconds per call, followed by the range.
 
 | Operation                                    |              Before |               After |
@@ -207,8 +239,9 @@ containing alternating two-byte and supplementary characters. The direct
 UTF-16 reference assumes valid UTF-8 and a bounded integer position. The
 retained UTF-8 search and slice had overlapping before-and-after ranges.
 The simplified trim loop added about 3.8 ns per call on its short ASCII mix.
-The string object's `.text` section shrank from 32,256 to 31,560 bytes
-under Clang 21 at `-O2`.
+Clang 21 release objects confirm that the string object's `.text`
+section shrank from 32,256 to 31,560 bytes. Across the three changed
+translation units, `.text` fell from 68,864 to 68,640 bytes.
 
 ```bash
 bash "$scratch/measure/run-isolated-priority.sh" before-strings
@@ -216,34 +249,67 @@ bash "$scratch/measure/run-isolated-priority.sh" after-strings
 llvm-size-21 -A "$scratch/measure/before-string.o" "$scratch/measure/after-string.o"
 ```
 
-Five interleaved request-path preview pairs ran the actual header filter and
-Responses normalizer, then sent 960 timed authenticated requests per run through
-the loopback conformance gateway. The request used a 1,031-byte `input_` type.
-Each of 40 fresh fixture batches warmed up with six requests, timed 24 delivered
-HTTP 400 responses, checked the error field and drained before reopening its
-SQLite state. There were zero upstream calls. The benchmark reused unchanged
-release objects and compiled the changed objects for each revision. It ran
-pinned to CPU 3 at nice −15 while the suites compiled. Values are medians with
-the full sample ranges.
+Seven interleaved request-path pairs used the actual header filter and
+Responses normalizer from the two release builds. After 4,096 warm-up calls per
+operation, each run timed 400,000 quota filters and 350,000 normalizations per
+type. The loopback conformance gateway received 960 timed authenticated
+requests per run using a 1,031-byte `input_` type. Each run used 40 fresh
+fixture batches with six warm-up requests and 24 timed requests per batch.
+All 13,440 timed requests returned HTTP 400. Each batch verified the error
+field, observed zero upstream calls and reopened its SQLite state after drain.
+Processes ran pinned to CPU 3 at nice −15 with no concurrent build. Values
+are medians with the full sample ranges.
 
 | Operation                             |              Before |               After |
 | ------------------------------------- | ------------------: | ------------------: |
-| Quota filter, eight headers (µs/call) | 2.359 [2.349–2.394] | 1.588 [1.586–1.594] |
-| Responses short ASCII type (µs/call)  | 1.423 [1.417–1.436] | 1.419 [1.410–1.423] |
-| Responses long UTF-8 type (µs/call)   | 3.416 [3.411–3.430] | 1.417 [1.409–1.422] |
-| Loopback Responses 400 (ms/request)   | 2.034 [2.025–2.054] | 2.028 [1.980–2.088] |
+| Quota filter, eight headers (µs/call) | 2.349 [2.342–2.353] | 1.592 [1.591–1.616] |
+| Responses short ASCII type (µs/call)  | 1.423 [1.415–1.444] | 1.409 [1.407–1.412] |
+| Responses long UTF-8 type (µs/call)   | 3.415 [3.406–3.430] | 1.409 [1.405–1.414] |
+| Loopback Responses 400 (ms/request)   | 2.012 [1.990–2.060] | 2.001 [1.959–2.088] |
 
-The quota and long-type reductions were visible within the affected functions.
-The loopback samples overlap within measurement variation.
+Quota filtering took 32% less time and long-type normalization took 59% less
+time in this workload. The loopback latency ranges overlap.
 
 ```bash
-python3 -B "$scratch/measure/early-baseline.py" "$scratch/baseline"
-python3 -B "$scratch/measure/early.py" "$PWD"
-bash "$scratch/measure/run-isolated-priority.sh" preview-baseline-request
-bash "$scratch/measure/run-isolated-priority.sh" preview-request
+python3 -B "$scratch/measure/link-request.py" before baseline
+python3 -B "$scratch/measure/link-request.py" after release
+bash "$scratch/measure/run-comparison.sh"
 ```
+
+## Handoff
+
+The GitHub HTTPS push preflight exited 128 because write authentication was
+unavailable. The fetched `origin/development` tip is
+`a3a96bc5fe96ba383936746fae23e64daa69562f` and predates the C++ gateway.
+Publication and integration into `development` are pending. The verified
+commits are on the clean local `agent-job` branch. The handoff bundle is
+`/var/tmp/cppgw-slim-strings.75hrNmNR/cppgw-slim-strings-20261118.bundle`.
+
+```bash
+env -u GIT_TRACE -u GIT_TRACE_CURL -u GIT_CURL_VERBOSE \
+  GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false \
+  git push --porcelain origin HEAD:refs/heads/agent-jobs/cppgw-slim-strings-20261118
+git fetch --no-tags origin '+refs/heads/development:refs/remotes/origin/development'
+git bundle create "$scratch/cppgw-slim-strings-20261118.bundle" agent-job ^9acb016a
+git bundle verify "$scratch/cppgw-slim-strings-20261118.bundle"
+```
+
+## Existing guide and packaged validation
 
 The runtime's general text guide still lists the retired APIs. The two
 packaged-validation defects in the starting receipt remain outside this
 lane. Both `chat-invalid-role` and `responses-invalid-tool-type` returned 200
 in that separate packaged probe. [Starting findings](cppgw-integrate-s3b-20261118.md#open-findings-and-handoff)
+
+## Summary
+
+The C++20 string refactor removed **50 first-party production lines**,
+from **180,460 to 180,410**. Linux ARM64 release and ASan+UBSan each passed
+**448 binaries and 5,097 cases**. The sanitizer rerun cleared the two
+timing-sensitive failures from the concurrent run.
+
+The quota filter and long Responses type check took 32% and 59% less time
+in the focused benchmark. End-to-end loopback latency was within measurement
+variation. Short ASCII trim took about 4 ns longer per call. GitHub write
+authentication blocked publication, so the verified commits remain on the
+clean local `agent-job` branch.
