@@ -334,8 +334,16 @@
       ]
     },
     "include/uos/codex/responses_runners.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Synchronous installer for request runners.",
+      "sites": [
+        {
+          "lines": "9-11",
+          "kind": "callback ownership",
+          "verdict": "SAFE",
+          "reason": "The installer receives an owning handle during registration; index.cpp holds the request context while the registered runners are joined."
+        }
+      ]
     },
     "include/uos/codex/responses_state.hpp": {
       "status": "pending",
