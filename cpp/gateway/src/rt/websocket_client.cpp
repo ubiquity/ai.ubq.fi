@@ -138,16 +138,19 @@ namespace uos::rt::ws::detail {
       if (data.size() >= MAX_HEADER_SIZE) rethrow(parseError("Header overflow", "HPE_HEADER_OVERFLOW"));
       return std::nullopt;
     }
-    const auto asLatin1 = [](std::string_view value) {
-      return latin1(BytesView(reinterpret_cast<const std::uint8_t*>(value.data()), value.size()));
+    const auto asLatin1 = [](std::string value) {
+      if (std::any_of(value.begin(), value.end(), [](unsigned char byte) { return byte >= 0x80; })) {
+        return latin1(BytesView(reinterpret_cast<const std::uint8_t*>(value.data()), value.size()));
+      }
+      return value;
     };
     ParsedResponse parsed;
     parsed.length = parsedHead.length;
     parsed.response.httpVersion = "1." + std::to_string(parsedHead.head.minorVersion);
     parsed.response.statusCode = parsedHead.head.status;
-    parsed.response.statusMessage = asLatin1(parsedHead.head.reason);
+    parsed.response.statusMessage = asLatin1(std::move(parsedHead.head.reason));
     parsed.response.rawHeaders = std::move(parsedHead.head.fields);
-    for (auto& field : parsed.response.rawHeaders) field.second = asLatin1(field.second);
+    for (auto& field : parsed.response.rawHeaders) field.second = asLatin1(std::move(field.second));
     return parsed;
   }
 
