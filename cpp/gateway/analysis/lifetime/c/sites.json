@@ -1353,8 +1353,16 @@
       "sites": []
     },
     "include/uos/provider/health.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Health API returns shared recorder promises and owns clock callables for reads.",
+      "sites": [
+        {
+          "lines": "75-96,101-123",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "Each health operation uses owned provider/clock data and returns a copied promise or a task with owning inputs."
+        }
+      ]
     },
     "include/uos/provider/lithos.hpp": {
       "status": "pending",
