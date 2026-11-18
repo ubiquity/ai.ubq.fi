@@ -172,7 +172,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/openrouter.hpp`
 - [x] `include/uos/provider/openrouter_handlers.hpp`
 - [x] `include/uos/provider/openrouter_request_controls.hpp`
-- [ ] `include/uos/provider/openrouter_streams.hpp`
+- [x] `include/uos/provider/openrouter_streams.hpp`
 - [ ] `include/uos/provider/openrouter_web_tools.hpp`
 - [ ] `include/uos/provider/presentation.hpp`
 - [ ] `include/uos/provider/removed_provider_circuit.hpp`
@@ -1087,3 +1087,7 @@ Handler injection and borrowed telemetry interfaces.
 Prompt-cache control API uses a synchronous forwarding wrapper.
 
 - 13 · task factory · **SAFE** · The wrapper copies the JSON into the requestExtensions task before returning.
+
+### `include/uos/provider/openrouter_streams.hpp`
+
+The public stream iterator factory is synchronous. Its generator owns response and stream options.

@@ -1473,7 +1473,8 @@
       ]
     },
     "include/uos/provider/openrouter_streams.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "The public stream iterator factory is synchronous. Its generator owns response and stream options.",
       "sites": []
     },
     "include/uos/provider/openrouter_web_tools.hpp": {
