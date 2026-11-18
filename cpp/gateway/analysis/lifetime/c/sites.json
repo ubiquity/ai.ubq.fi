@@ -532,8 +532,16 @@
       "sites": []
     },
     "include/uos/deepseek/forwarded_payload_policy.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Payload projection and validation are synchronous.",
+      "sites": [
+        {
+          "lines": "77-78",
+          "kind": "projection callback",
+          "verdict": "SAFE",
+          "reason": "The caller retains the callback and the input object throughout the inline admission projection."
+        }
+      ]
     },
     "include/uos/deepseek/handlers.hpp": {
       "status": "pending",

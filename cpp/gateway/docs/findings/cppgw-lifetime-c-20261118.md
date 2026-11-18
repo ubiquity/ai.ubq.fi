@@ -81,7 +81,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/deepseek/chat_projection.hpp`
 - [x] `include/uos/deepseek/context_admission_failure.hpp`
 - [x] `include/uos/deepseek/flash_aliases.hpp`
-- [ ] `include/uos/deepseek/forwarded_payload_policy.hpp`
+- [x] `include/uos/deepseek/forwarded_payload_policy.hpp`
 - [ ] `include/uos/deepseek/handlers.hpp`
 - [ ] `include/uos/deepseek/index.hpp`
 - [ ] `include/uos/deepseek/responses.hpp`
@@ -587,3 +587,9 @@ Synchronous construction of context-admission failures. No suspendable body or r
 ### `include/uos/deepseek/flash_aliases.hpp`
 
 Catalog aliases expose owned snapshot values. Background publication is reviewed in flash_aliases.cpp.
+
+### `include/uos/deepseek/forwarded_payload_policy.hpp`
+
+Payload projection and validation are synchronous.
+
+- 77-78 · projection callback · **SAFE** · The caller retains the callback and the input object throughout the inline admission projection.
