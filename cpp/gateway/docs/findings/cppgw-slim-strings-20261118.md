@@ -160,6 +160,36 @@ covering searches, trimming, replacements and slices. Both versions also
 passed prefix, suffix and substring checks across all 65,536 two-byte inputs
 around `input_`. The candidate release and sanitizer receipts are pending.
 
+The first ASan+UBSan run completed all 369 production objects and ran the
+448 binaries and 5,097 cases. With the release rebuild active, 446 binaries
+and 5,095 cases passed. The object phase took 4,798.071 s and the link/test
+phase took 361.741 s. The receipt SHA-256 is
+`7fa1a96b2f1a9f94fc01e1c10da47dd6588ff5eef4d5e49bab2996e9f97ca2de`.
+The run logs contained zero ASan, UBSan or LeakSanitizer diagnostics.
+
+Two timing-sensitive fixtures failed on that run.
+
+- `codex_supervisor_secret_test.cpp` passed 40 of 41 cases. Its
+  repeated fat-comma case passed redaction and missed the two-second assertion.
+- `jev_compaction_test.cpp` passed 22 of 23 cases. Its floor-bound summary case
+  reported `regular expression execution limit exceeded`.
+
+Dedicated-CPU controls used each test's existing Links closure and ASan
+objects, then relinked with the starting or candidate string implementation.
+There were no other changed application objects in either closure. Both
+string implementations passed all 41 redaction cases and all 23 compaction
+cases on CPU 3 at nice −15. The full sanitizer rerun uses the driver after
+the release build and timing measurement finish.
+
+```bash
+python3 -B "$scratch/timing/control.py" "$PWD"
+python3 -B "$scratch/timing/jev-control.py" "$PWD"
+for variant in baseline candidate; do
+  bash "$scratch/measure/run-isolated-sanitized.sh" "timing-$variant"
+  bash "$scratch/measure/run-isolated-sanitized.sh" "jev-$variant"
+done
+```
+
 The focused release preview passed the 20-case string binary and all nine
 Responses conformance cases, including the new prefix fixture. The isolated
 string benchmark pinned the process to CPU 3 and alternated five runs per
