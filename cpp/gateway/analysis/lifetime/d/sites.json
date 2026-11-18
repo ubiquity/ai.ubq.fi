@@ -5548,7 +5548,8 @@
       ]
     },
     "src/sentinel/replay_capture.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed the small translation unit used to link replay capture. No suspension or callback registration.",
       "sites": []
     },
     "src/sentinel/replay_envelope.cpp": {

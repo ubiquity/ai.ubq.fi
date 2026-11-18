@@ -233,7 +233,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/runtime_config.cpp`
 - [x] `src/sentinel/incident_outbox.cpp`
 - [x] `src/sentinel/replay_admin.cpp`
-- [ ] `src/sentinel/replay_capture.cpp`
+- [x] `src/sentinel/replay_capture.cpp`
 - [ ] `src/sentinel/replay_envelope.cpp`
 - [ ] `src/sentinel/replay_limits.cpp`
 - [ ] `src/sentinel/replay_model.cpp`
@@ -1228,6 +1228,10 @@ Reviewed authenticated replay listing, direct and paged read variants and output
 
 - L131, 140, 155, 162 **SAFE** · The admin frame owns request, options, keys and shared KV while directly awaiting the borrowed-store listing and copying each result.
 
+### `src/sentinel/replay_capture.cpp`
+
+Reviewed the small translation unit used to link replay capture. No suspension or callback registration.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1476,4 +1480,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-125/286 files reviewed. 245 sites: 227 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+126/286 files reviewed. 245 sites: 227 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
