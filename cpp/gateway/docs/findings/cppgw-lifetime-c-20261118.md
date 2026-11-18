@@ -290,7 +290,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/capacity_events.cpp`
 - [x] `src/provider/capacity_history.cpp`
 - [x] `src/provider/capacity_parse.cpp`
-- [ ] `src/provider/capacity_rollups.cpp`
+- [x] `src/provider/capacity_rollups.cpp`
 - [ ] `src/provider/cerebras.cpp`
 - [ ] `src/provider/cerebras_handlers.cpp`
 - [ ] `src/provider/cerebras_rate_limits.cpp`
@@ -1846,3 +1846,9 @@ History scan and recovery use copied snapshots.
 Capacity schema consumers return owned rows. Only the final stored snapshot lookup suspends.
 
 - 424-435 · snapshot read · **SAFE** · The frame owns KV and the received row, with field views consumed synchronously by the local parser.
+
+### `src/provider/capacity_rollups.cpp`
+
+Rollup transforms consume local snapshots synchronously and sorted listing owns its cursor.
+
+- 325-349 · rollup list iteration · **SAFE** · The store and unique iterator are frame values through next and sorting uses the collected copies.

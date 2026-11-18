@@ -3385,8 +3385,16 @@
       ]
     },
     "src/provider/capacity_rollups.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Rollup transforms consume local snapshots synchronously and sorted listing owns its cursor.",
+      "sites": [
+        {
+          "lines": "325-349",
+          "kind": "rollup list iteration",
+          "verdict": "SAFE",
+          "reason": "The store and unique iterator are frame values through next and sorting uses the collected copies."
+        }
+      ]
     },
     "src/provider/cerebras.cpp": {
       "status": "pending",
