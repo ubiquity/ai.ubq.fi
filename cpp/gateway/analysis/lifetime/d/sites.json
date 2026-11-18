@@ -8980,8 +8980,31 @@
       ]
     },
     "include/uos/kv_conversion/legacy_codec.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed file hashing, subprocess startup and facade method ownership.",
+      "sites": [
+        {
+          "lines": [
+            12,
+            13,
+            27,
+            30,
+            31,
+            32,
+            33,
+            36,
+            40,
+            41
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The codec methods copy shared State into their Tasks before returning. Conversion owns the codec through close or abort, and path arguments enter opening Tasks by value."
+        }
+      ]
     },
     "include/uos/kv_conversion/native_schema.hpp": {
       "reviewed": false,

@@ -336,7 +336,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/kv_conversion/cli.hpp`
 - [x] `include/uos/kv_conversion/convert.hpp`
 - [x] `include/uos/kv_conversion/cursors.hpp`
-- [ ] `include/uos/kv_conversion/legacy_codec.hpp`
+- [x] `include/uos/kv_conversion/legacy_codec.hpp`
 - [ ] `include/uos/kv_conversion/native_schema.hpp`
 - [ ] `include/uos/kv_conversion/profile_json.hpp`
 - [ ] `include/uos/kv_conversion/proof.hpp`
@@ -1891,6 +1891,12 @@ Reviewed the cursor transcoder span and return record.
 
 - L27 **SAFE** · Cursor transcoding consumes the key span synchronously and returns owning converted data.
 
+### `include/uos/kv_conversion/legacy_codec.hpp`
+
+Reviewed file hashing, subprocess startup and facade method ownership.
+
+- L12, 13, 27, 30, 31, 32, 33, 36, 40, 41 **SAFE** · The codec methods copy shared State into their Tasks before returning. Conversion owns the codec through close or abort, and path arguments enter opening Tasks by value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2139,4 +2145,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-228/286 files reviewed. 403 sites: 381 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+229/286 files reviewed. 404 sites: 382 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
