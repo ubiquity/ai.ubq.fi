@@ -144,6 +144,8 @@ Use these destinations in the following consumers.
 
 Packaged serving reads files via the sealed root after changing cwd to private state. The approved linked C++ SQLite codec and C++ Landlock/seccomp implementation still verify both addon files as package artifacts. A future change to eliminate the bytes requires a separately versioned release and startup contract. Startup continues to refuse missing or modified bindings.
 
+In the moved Pi baseline Markdown, resolve the relative `cpp-pi-standby-baseline-2026-11-13/` receipt and reproduction links through `https://github.com/ubiquity/ai.ubq.fi/blob/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a/docs/research/`. The named evidence and its materializer remain together in the pin. This preserves the references without putting the old fixture tooling on the native branch.
+
 ### 2. Replace source-text test dependencies and docs tooling
 
 1. In `openapi_runtime_contract_test.cpp`, point `SOURCE_FILES` and `sourceText` at C++ files under `src/`, `include/`, `runtime/` and `entrypoints/` within `cpp/gateway/`. Keep `static/openapi.json` and `static/docs/llms-agents.md` rooted in the checkout. Preserve exact OpenAPI and agent-doc equality against `handler::index::UOS_ROUTES` and `handler::terminal_route::UOS_TERMINAL_ROUTES`. Port the literal-dispatch matcher to the C++ method/path and prefix expressions and retain the double-quoted `/uos/` scan with reasoned file-scoped exceptions. Require both `src/handler/index.cpp` and `src/handler/terminal_route.cpp` in the inventory. Keep the unregistered-route, joined-prefix, path-scope and stale-exception assertions. Verify the matcher rejects a temporary out-of-table dispatch and unpublished literal. The existing historical test still runs in `$legacy` with its original 316-file scope.
@@ -191,24 +193,34 @@ git diff --cached --stat
 
 ### 4. Verify the exact final tree
 
-Use a committed archive in scratch with the versioned data, tools and two gateway workflows this plan retains. Verify selection lists and counts before and after. Start every process from a fresh home and temporary directory with `env -i`, and keep the fixture's OS boundary. A run that silently substitutes an unavailable tool, disables a test, falls back to production traffic or has stale input hashes does not qualify.
+Use a detached candidate worktree under `/var/tmp` to preserve the committed identity, versioned data and workflows. Verify selection lists and counts before and after. Start every process from a fresh home and temporary directory with `env -i` and retain the fixture's OS boundary. Reject receipts with a mismatched commit or tree, changed inputs, skipped tests or production traffic.
 
 ```bash
-# In the scratch candidate checkout, with the staged library paths from CI.md.
+candidate=$(git rev-parse HEAD)
+candidate_tree=$(git rev-parse 'HEAD^{tree}')
+git worktree add --detach "$scratch/candidate" "$candidate"
+cd "$scratch/candidate"
+test "$(git rev-parse 'HEAD^{tree}')" = "$candidate_tree"
+test -z "$(git status --porcelain)"
+# With the isolated Linux environment and staged library paths from CI.md.
 python3 -B cpp/gateway/tools/links.py --check
 python3 -B cpp/gateway/tools/vendor_sources.py cmake
 python3 -B cpp/gateway/tools/cmake-sources.py "$scratch/sources.cmake"
-bash cpp/gateway/tools/ci-build.sh --list
-for shard in 1 2 3 4; do
-  bash cpp/gateway/tools/ci-build.sh --config release --shard "$shard/4"
+test "$(bash cpp/gateway/tools/ci-build.sh --list | wc -l)" -eq 450
+for config in release asan; do
+  for shard in 1 2 3 4; do
+    bash cpp/gateway/tools/ci-build.sh --config "$config" --shard "$shard/4"
+  done
 done
 bash cpp/gateway/packaging/portable/build.sh "$scratch/uos-gateway-linux-arm64.tar.gz"
 bash cpp/gateway/packaging/portable/verify.sh "$scratch/uos-gateway-linux-arm64.tar.gz" "$scratch/debian-proof"
 git diff --check "$legacy" HEAD
-bun --no-env-file --no-install run format:check README.md AGENTS.md cpp/gateway/docs/CLEANUP-PLAN.md
+bun --no-env-file install --frozen-lockfile --ignore-scripts
+mapfile -d '' -t changed < <(git diff --name-only --diff-filter=ACMR -z "$legacy" HEAD)
+if ((${#changed[@]})); then bun --no-env-file --no-install run format:check -- "${changed[@]}"; fi
 ```
 
-- Expect the same 450 registered binaries and at least the original 5,104 harness cases over the four Release shards. Record explicit focused runtime, static, KV, permissions, production startup/refusal, admin catalog, official schema, Sentinel historical framing and source-literal receipts. Run the sanitizer shards and the configured libFuzzer matrix with the existing corpus and budgets on the matching Linux host. Retain the checked-in negative cases and candidate receipt counts.
+- Expect the same 450 registered binaries and at least the original 5,104 harness cases over the four Release shards. Record the runtime, static, KV, permissions, admin catalog, official schema, Sentinel historical framing and source-literal receipts. For the 24 fuzz targets, read the names with `jq -r '.targets | keys[]' cpp/gateway/fuzz/targets.json` and run `python3 -B cpp/gateway/fuzz/ci.py "$target" --seconds 300 --jobs 4 --out "$scratch/fuzz/$target"` through the workflow's `sudo -n unshare --net` and unprivileged `setpriv` wrapper. Use the configured extended budget where that workflow requires it. Retain the checked-in negative cases and candidate receipt counts.
 - Verify the Linux sealed package on Debian 12 and 13 with genuine bound artifacts and its normal `/health`, authenticated mock inference, static/favicons, confinement, KV restart and tamper/refusal checks. Bind the package archive, installed manifest and check outcome to the exact candidate SHA and tree. Preserve offline forward/reverse KV proof on stopped synthetic state using the pinned Deno helper. The supported macOS ARM64 workflow still needs its own build, runtime suite and offline version check.
 - Run all paired cases through the independently pinned worktree. Require a fully executed matrix, record shared failures and any differential differences separately, and require clean cases to remain clean. The known shared validation defects prevent an unqualified all-green claim until fixed. Keep local controls and existing independent expectations.
 - Check the new format-only frozen install and changed-document formatting, plus shell/JSON/YAML validation for files edited by the removal. Inspect `git ls-tree -r HEAD` to verify the removed root paths and moved helper/fixture hashes. Run no extra hosted workflow merely to test a branch. Bind any authorized CI receipt to the exact commit and keep hosted deployment disabled.
@@ -231,7 +243,7 @@ The 16 relocations preserve 4,677 baseline lines before edits. The root rewrites
 ## Production and ownership risks
 
 - **Production TypeScript deploy and rollback.** Merging the cleanup into the live source branch would remove its launch entry point, runtime graph, strict checks, systemd and Mac launchers, rollback/cutover scripts and `.github/workflows/deno-deploy.yml`. Current immutable releases can keep running while the next deployment or rollback becomes impossible. Keep the production branch and deploy checkout on the approved TypeScript line until separately authorized cutover. Record the live SHA/identity and the rollback target before any later migration.
-- **Storage and request settlement.** Preserve repository-root credential custody under the approved current launcher, verified artifacts, marker and codec compatibility, request drain, one settlement, and separate stopped state. Reusing a production SQLite path for a package test risks concurrent writes or unrecoverable rollback. Retain original `.data/kv.sqlite3`, the latest stopped `.data/kv-bun.sqlite3`, consistent backups and codec/revision/expiry/value proofs as applicable. A stale backup loses intervening writes.
+- **Storage and request settlement.** Preserve repository-root credential custody under the approved current launcher, verified artifacts, marker and codec compatibility, request drain, one settlement, and separate stopped state. Reusing a production SQLite path for a package test risks concurrent writes or unrecoverable rollback. Retain original `.data/kv.sqlite3`, the latest stopped `.data/kv-bun.sqlite3`, consistent backups and codec/revision/expiry/value proofs as applicable. A stale backup loses intervening writes. The sparse-array and cyclic-value cases in `docs/RUNTIME.md` and `docs/OPEN-STAGES.md` are separate cutover gates.
 - **Confinement and package compatibility.** Removing either bound addon or the offline V8 pair breaks startup/package verification. Bypassing those checks would also remove the integrity contract. Older kernels still require the existing explicitly authorized reduced-confinement policy. Package with a genuine Linux ARM64 toolchain and preserve the Debian/Apple Silicon platform splits.
 - **Ingress and operations.** Keep the proxied `ai.ubq.fi` A record and hostname-specific Worker exclusion. The wildcard Worker can otherwise send traffic to retired Deno hosting. Do not replace the active Worker, touch DNS/Caddy/systemd/launchd, or reuse production config and credentials in a scratch run. Owner approval, direct authenticated Mac-to-VPS inference, and the exact full SHA plus `vps-<full SHA>` in `/health` and identity headers are separate from branch acceptance.
 - **External readers and operator tooling.** Sentinel's frozen-source reader binds the historical source SHA and qualified runtime/dependency artifacts. The standalone owner must accept the relevant reader before any live cutover and must be able to fetch older captures' source. Keep codec tools, auth upload, provider selection, release attestations and credential mutation authority with their current owners. Gateway CI alone cannot prove those external contracts.
