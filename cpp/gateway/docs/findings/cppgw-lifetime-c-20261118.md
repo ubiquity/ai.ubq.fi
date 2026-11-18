@@ -50,7 +50,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/banked_reset_submission.hpp`
 - [x] `include/uos/codex/capacity_routing.hpp`
 - [x] `include/uos/codex/dispatch.hpp`
-- [ ] `include/uos/codex/experiment.hpp`
+- [x] `include/uos/codex/experiment.hpp`
 - [ ] `include/uos/codex/external_auth.hpp`
 - [ ] `include/uos/codex/index.hpp`
 - [ ] `include/uos/codex/manual_reset.hpp`
@@ -416,3 +416,9 @@ Dispatch interfaces transfer request and callback objects by value; async invoca
 
 - 36-54,74-80,103-121,137-146,155-157,174 · task parameters and callback interfaces · **SAFE** · Dispatch tasks retain their response/auth/request data and owned callback objects; actual callback referents are reviewed at the installation sites.
 - 216-220,245-258,278-295 · retry and admission interfaces · **SAFE** · The serial driver owns its callbacks and the model classifiers own response handles; the retry race's branch lifetimes are reviewed in dispatch.cpp.
+
+### `include/uos/codex/experiment.hpp`
+
+Cache-scope experiment API and owned input records.
+
+- 34,65,72-74,91 · owning task parameters · **SAFE** · The experiment frames own session, slot, request and options data across auth/routing work.

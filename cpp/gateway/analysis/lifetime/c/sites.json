@@ -200,8 +200,16 @@
       ]
     },
     "include/uos/codex/experiment.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Cache-scope experiment API and owned input records.",
+      "sites": [
+        {
+          "lines": "34,65,72-74,91",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The experiment frames own session, slot, request and options data across auth/routing work."
+        }
+      ]
     },
     "include/uos/codex/external_auth.hpp": {
       "status": "pending",
