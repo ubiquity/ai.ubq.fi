@@ -5553,8 +5553,27 @@
       "sites": []
     },
     "src/sentinel/replay_envelope.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed digest, compression, key import and synchronous replay envelope helpers.",
+      "sites": [
+        {
+          "lines": [
+            300,
+            434,
+            446,
+            452,
+            466,
+            474
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each crypto or compression frame owns byte vectors and key material. The synchronous decompressor callback copies each temporary span before returning, and the frame owns the assembled parts across its microtask."
+        }
+      ]
     },
     "src/sentinel/replay_limits.cpp": {
       "reviewed": false,
