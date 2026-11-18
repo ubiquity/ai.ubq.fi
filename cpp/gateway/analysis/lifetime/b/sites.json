@@ -1569,8 +1569,18 @@
       "note": "Inputs, configured bindings and an injected store are supplied by value to the inventory task entries."
     },
     "include/uos/cache/telemetry_gate.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "42-49,129-147",
+          "verdict": "SAFE",
+          "kinds": [
+            "b"
+          ],
+          "symbol": "Telemetry option and request values",
+          "evidence": "Entries own targets/events/options before the first suspension; an injected KV is a shared owner and result counter strings are owned."
+        }
+      ]
     },
     "src/cache/kv_migration.cpp": {
       "reviewed": false,

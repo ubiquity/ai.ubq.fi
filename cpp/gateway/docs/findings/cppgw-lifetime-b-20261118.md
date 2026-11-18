@@ -86,7 +86,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/cache/scope_experiment_model.hpp`
 - [x] `include/uos/cache/scope_experiment_targets.hpp`
 - [x] `include/uos/cache/scope_targets.hpp`
-- [ ] `include/uos/cache/telemetry_gate.hpp`
+- [x] `include/uos/cache/telemetry_gate.hpp`
 - [ ] `src/cache/kv_migration.cpp`
 - [ ] `src/cache/kv_migration_base.cpp`
 - [ ] `src/cache/kv_migration_paid_fallback.cpp`
@@ -548,6 +548,12 @@ Target resolution, cycle and lease tasks own their KV plus state and target para
 
 Inputs, configured bindings and an injected store are supplied by value to the inventory task entries.
 
+### `include/uos/cache/telemetry_gate.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 42-49,129-147 | Telemetry option and request values | **SAFE** | Entries own targets/events/options before the first suspension; an injected KV is a shared owner and result counter strings are owned. |
+
 
 ## Ranked defects and counts
 
@@ -753,4 +759,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-63/97 files reviewed. **DEFECT 8, SAFE 112, UNCLEAR 3.**
+64/97 files reviewed. **DEFECT 8, SAFE 113, UNCLEAR 3.**
