@@ -37,7 +37,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/admin/kernel.cpp`
 - [x] `src/admin/sentinel_incident.cpp`
 - [x] `src/agent_messages.cpp`
-- [ ] `src/analytics.cpp`
+- [x] `src/analytics.cpp`
 - [ ] `src/api_key_policy.cpp`
 - [ ] `src/api_keys.cpp`
 - [ ] `src/auth/index.cpp`
@@ -442,6 +442,13 @@ Reviewed both GitHub-authenticated handlers and their shared synchronous normali
 - L169, 177, 183, 195, 199, 223, 224, 241 **SAFE** · The post frame owns dependency callbacks and the authentication variant that supplies the GitHub reference. The clock and ID functions are synchronous and the request and atomic inputs are values.
 - L250, 256, 268, 288, 294 **SAFE** · The list frame owns authentication, request, query, store and iterator and awaits each step with the iterator still in scope.
 
+### `src/analytics.cpp`
+
+Reviewed log mutation and history listing, plus synchronous record codecs.
+
+- L120, 127, 129, 141, 274, 284, 289, 294, 301, 307 **SAFE** · The mutation frame owns the callable and copied JSON. It consumes each prior record synchronously and retains the atomic operation until commit finishes.
+- L312, 322, 333 **SAFE** · History holds the shared KV, iterator and output vector for the traversal, and each fetched entry is an owned value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -450,4 +457,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-14/286 files reviewed. 59 sites: 54 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+15/286 files reviewed. 61 sites: 56 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

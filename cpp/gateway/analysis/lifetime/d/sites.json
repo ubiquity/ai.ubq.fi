@@ -1089,8 +1089,46 @@
       ]
     },
     "src/analytics.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed log mutation and history listing, plus synchronous record codecs.",
+      "sites": [
+        {
+          "lines": [
+            120,
+            127,
+            129,
+            141,
+            274,
+            284,
+            289,
+            294,
+            301,
+            307
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The mutation frame owns the callable and copied JSON. It consumes each prior record synchronously and retains the atomic operation until commit finishes."
+        },
+        {
+          "lines": [
+            312,
+            322,
+            333
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "History holds the shared KV, iterator and output vector for the traversal, and each fetched entry is an owned value."
+        }
+      ]
     },
     "src/api_key_policy.cpp": {
       "reviewed": false,
