@@ -23,7 +23,7 @@ The local job checkout starts on `agent-job` at the same commit.
 97 tracked files selected from the assigned source and header paths. Header declarations
 of coroutine bodies are indexed by their definitions unless the declaration itself establishes a lifetime contract.
 
-- [ ] `include/uos/runtime/http.hpp`
+- [x] `include/uos/runtime/http.hpp`
 - [ ] `include/uos/runtime/http_body.hpp`
 - [ ] `include/uos/runtime/http_early_sse.hpp`
 - [ ] `include/uos/runtime/http_tasks.hpp`
@@ -126,7 +126,16 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 Initial checkpoint. Manual review and tool verification are pending.
 
 ## File verdicts
+### `include/uos/runtime/http.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 57-71,94-106,138-152,198-211 | Event registration and dispatch interfaces | **SAFE** | Registration copies the listener handle and emitter dispatch snapshots its registrations. Receiver keep-alive and listeners' capture lifetimes are classified in the implementation. |
+| 101-106,127-129,145-152,204-211,282-287 | Borrowed node-http member accessors | **SAFE** | In-scope callers use these member references synchronously while an owning Socket, IncomingMessage, ServerResponse or Server remains live. The WebSocket handoff moves the stream synchronously on the supplied production options. |
+| 224-238,254-265 | ServerListener and RequestListener | **SAFE** | An event argument reference is only used in the synchronous wrapper, which copies the request, socket and head into the upgrade task. The server stores the callback by value. |
+| 338-368 | ServeHandler, ServeHttpOptions and HttpServer | **SAFE** | Handler arguments are owning values and the handler closure resides in ServeState, kept by request frames. Returned handle closures own ServeState. Listener and server back-edges are reviewed at their registration sites. |
+
 
 ## Ranked defects and counts
 
-0/97 files reviewed. **DEFECT 0, SAFE 0, UNCLEAR 0.**
+1/97 files reviewed. **DEFECT 0, SAFE 4, UNCLEAR 0.**
