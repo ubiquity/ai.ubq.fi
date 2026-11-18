@@ -57,7 +57,9 @@ Per request the gateway attempts each enabled provider in order and advances onl
 
 ## Capabilities and metadata
 
-- Context window 1,048,576 tokens on every candidate; tools supported on every candidate.
+- The candidate context window is 1,048,576 tokens, but the gateway advertises 800,000 to Codex. The single global
+  90% compaction rule then triggers at 720,000, below the calibrated aggregate-admission rejection observed near 792k.
+  Tools are supported on every candidate.
 - Advertised reasoning tiers are the intersection the candidates all accept verbatim: `low`, `high`, `max`. The
   waterfall boundary rejects any other value for this id with a 400 instead of letting a provider refuse it later.
   (DeepSeek official also accepts `none`; Surplus/OpenRouter advertise only low/high/max, so `none` is not advertised.)

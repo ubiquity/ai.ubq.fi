@@ -555,7 +555,7 @@ test("openai: model capabilities are exposed outside /v1 model objects", async (
   assert.equal(model.context_window_tokens, 272000);
   assert.equal(model.max_context_window_tokens, 1000000);
   // The uploaded record carries no auto-compaction limit, so it is derived from
-  // the window it published (85% or a 50k reserve, whichever is earlier).
+  // the window it published (90% or a 50k reserve, whichever is earlier).
   assert.equal(model.auto_compact_token_limit_tokens, 222000);
   assert.ok(model.supported_endpoints?.includes("/v1/chat/completions"));
   assert.ok(model.supported_endpoints?.includes("/v1/responses"));
@@ -785,7 +785,7 @@ test("openai: configured DeepSeek official models are discoverable and replace a
         reasoning_effort_wire_map: { ultra: "max" },
         context_window_tokens: 1_000_000,
         max_context_window_tokens: 1_000_000,
-        auto_compact_token_limit_tokens: 850_000,
+        auto_compact_token_limit_tokens: 900_000,
         effective_context_window_percent: 95,
         context_source: "provider_discovery",
       });

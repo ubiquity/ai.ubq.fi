@@ -11,15 +11,14 @@
  * window, the auto-compaction trigger is arithmetic, and it stays in one place so
  * every surface computes the same boundary.
  */
-export const CONTEXT_COMPACTION_TRIGGER_RATIO = 0.85;
+export const CONTEXT_COMPACTION_TRIGGER_RATIO = 0.9;
 export const CONTEXT_COMPACTION_RESERVED_TOKENS = 50_000;
 export const CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95;
 
 /**
- * Trigger before either 85% of the model window is consumed or fewer than
- * 50,000 tokens remain, whichever happens first. This mirrors Kimi Code's
- * conservative long-running-agent defaults and stays below Codex's 90%
- * derived ceiling.
+ * Trigger before either 90% of the model window is consumed or fewer than
+ * 50,000 tokens remain, whichever happens first. This is the single global
+ * rule; a model's window is the only per-model capability input.
  */
 export const deriveAutoCompactTokenLimit = (contextWindowTokens: number): number => {
   if (!Number.isSafeInteger(contextWindowTokens) || contextWindowTokens <= CONTEXT_COMPACTION_RESERVED_TOKENS) {
@@ -33,11 +32,12 @@ const positiveSafeInteger = (value: number | null | undefined): number | null =>
 
 export const resolvedAutoCompactTokenLimit = (contextWindowTokens: number, configuredLimit: number | null | undefined): number => {
   const configured = positiveSafeInteger(configuredLimit);
-  if (configured !== null && configured <= contextWindowTokens) return configured;
-  if (contextWindowTokens > CONTEXT_COMPACTION_RESERVED_TOKENS) {
-    return deriveAutoCompactTokenLimit(contextWindowTokens);
-  }
-  return Math.max(1, Math.min(contextWindowTokens - 1, Math.floor(contextWindowTokens * 0.85)));
+  const derived =
+    contextWindowTokens > CONTEXT_COMPACTION_RESERVED_TOKENS
+      ? deriveAutoCompactTokenLimit(contextWindowTokens)
+      : Math.max(1, Math.min(contextWindowTokens - 1, Math.floor(contextWindowTokens * CONTEXT_COMPACTION_TRIGGER_RATIO)));
+  // A source may declare an earlier limit, but never one above the global rule.
+  return configured !== null && configured <= contextWindowTokens ? Math.min(configured, derived) : derived;
 };
 
 // ---------------------------------------------------------------------------
