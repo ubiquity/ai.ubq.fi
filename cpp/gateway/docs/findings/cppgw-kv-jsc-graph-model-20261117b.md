@@ -317,3 +317,10 @@ this lane's owned paths.
 The local task branch is `agent-job`. The refreshed
 `origin/development` at `6bd78fc5e3b0783809691c6bd45d25ac45e9696e` lacks the
 task commits. Publishing and integration require authenticated GitHub write access.
+
+```sh
+GIT_TERMINAL_PROMPT=0 git push origin HEAD:refs/heads/agent-jobs/cppgw-kv-jsc-graph-model-r3-44202164351-1
+```
+
+The push exited 128 because Git could not obtain a GitHub HTTPS username.
+The checkout is clean and retains the task commits on `agent-job`.
