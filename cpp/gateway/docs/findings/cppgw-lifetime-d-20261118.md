@@ -345,7 +345,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/lib/jev_compaction/codex_items.hpp`
 - [x] `include/uos/lib/jev_compaction/compact.hpp`
 - [x] `include/uos/lib/jev_compaction/jev_codex_smoke.hpp`
-- [ ] `include/uos/lib/jev_compaction/jev_compaction_smoke.hpp`
+- [x] `include/uos/lib/jev_compaction/jev_compaction_smoke.hpp`
 - [ ] `include/uos/lib/jev_compaction/request.hpp`
 - [ ] `include/uos/lib/jev_compaction/state.hpp`
 - [ ] `include/uos/lib/jev_compaction/types.hpp`
@@ -1943,6 +1943,12 @@ Reviewed the offline Codex smoke command's entry point. The fake upstream owners
 
 - L8 **SAFE** · The command Task takes no borrowed arguments and constructs its fixture objects in its own frame.
 
+### `include/uos/lib/jev_compaction/jev_compaction_smoke.hpp`
+
+Reviewed the local gateway smoke command declaration.
+
+- L8 **SAFE** · The command Task takes no borrowed arguments and owns the local smoke-run options.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2191,4 +2197,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-237/286 files reviewed. 411 sites: 389 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+238/286 files reviewed. 412 sites: 390 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

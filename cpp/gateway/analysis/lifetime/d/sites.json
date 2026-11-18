@@ -9158,8 +9158,20 @@
       ]
     },
     "include/uos/lib/jev_compaction/jev_compaction_smoke.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the local gateway smoke command declaration.",
+      "sites": [
+        {
+          "lines": [
+            8
+          ],
+          "kinds": [
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The command Task takes no borrowed arguments and owns the local smoke-run options."
+        }
+      ]
     },
     "include/uos/lib/jev_compaction/request.hpp": {
       "reviewed": false,
