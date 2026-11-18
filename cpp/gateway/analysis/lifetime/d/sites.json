@@ -4410,7 +4410,8 @@
       "sites": []
     },
     "src/lib/jev_compaction/state.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous token estimation, tool-call matching, history reduction and rendering. Predicate and mutation callables execute within the input owner's scope and output state owns its data.",
       "sites": []
     },
     "src/lib/jev_compaction/types.cpp": {
