@@ -2829,7 +2829,8 @@
       "sites": []
     },
     "src/harmony/tools/backend.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Backend path normalization operates synchronously on the supplied text.",
       "sites": []
     },
     "src/harmony/tools/fakes.cpp": {
