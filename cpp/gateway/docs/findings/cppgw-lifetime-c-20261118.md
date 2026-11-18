@@ -192,7 +192,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/banked_reset.cpp`
 - [x] `src/codex/banked_reset_claim.cpp`
 - [x] `src/codex/banked_reset_pool.cpp`
-- [ ] `src/codex/banked_reset_provider.cpp`
+- [x] `src/codex/banked_reset_provider.cpp`
 - [ ] `src/codex/banked_reset_submission.cpp`
 - [ ] `src/codex/capacity_routing.cpp`
 - [ ] `src/codex/dispatch.cpp`
@@ -1225,3 +1225,11 @@ Pool evaluation snapshots inputs before concurrent work and keeps single-reader 
 - 297-313,377-408,490-512 · fail-fast all and provider interface · **SAFE** · Each child owns its candidate and hash, KV, or provider handle. None references the fan-out vector after a sibling can reject.
 - 332-357,440-465,565-603 · hash, duplicate, and credit scan awaits · **SAFE** · The fence and inventory slices refer to immutable frame-owned inputs. Inventory and selection values remain alive through the awaited hash.
 - 528-551,634-645,667-737 · pool orchestration awaits · **SAFE** · Each frame owns its candidate, provider dependency and variant results and joins each nested operation before releasing them.
+
+### `src/codex/banked_reset_provider.cpp`
+
+The default provider is a thin synchronous factory around coroutine tasks using an immutable binding.
+
+- 95 · body cancel spawn · **SAFE** · ByteStream::cancel starts from a shared stream handle and transfers operation state to its returned task before the local optional body disappears.
+- 150-233,238-245 · bound member calls, fetch, and JSON reads · **SAFE** · The virtual wrapper copies Bound into the free coroutine. Bound retains the Fetch callable, and the request, response and JSON owners survive their awaits.
+- 441-494 · inventory diagnostic awaits · **SAFE** · Each display frame keeps its resolved fetcher, signal, response, and parsed result, and the credit loop runs over a local value after the read.

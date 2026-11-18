@@ -1846,8 +1846,28 @@
       ]
     },
     "src/codex/banked_reset_provider.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The default provider is a thin synchronous factory around coroutine tasks using an immutable binding.",
+      "sites": [
+        {
+          "lines": "95",
+          "kind": "body cancel spawn",
+          "verdict": "SAFE",
+          "reason": "ByteStream::cancel starts from a shared stream handle and transfers operation state to its returned task before the local optional body disappears."
+        },
+        {
+          "lines": "150-233,238-245",
+          "kind": "bound member calls, fetch, and JSON reads",
+          "verdict": "SAFE",
+          "reason": "The virtual wrapper copies Bound into the free coroutine. Bound retains the Fetch callable, and the request, response and JSON owners survive their awaits."
+        },
+        {
+          "lines": "441-494",
+          "kind": "inventory diagnostic awaits",
+          "verdict": "SAFE",
+          "reason": "Each display frame keeps its resolved fetcher, signal, response, and parsed result, and the credit loop runs over a local value after the read."
+        }
+      ]
     },
     "src/codex/banked_reset_submission.cpp": {
       "status": "pending",
