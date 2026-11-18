@@ -26,7 +26,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/admin/api_key_audit.cpp`
 - [x] `src/admin/api_key_mutations.cpp`
 - [x] `src/admin/api_keys.cpp`
-- [ ] `src/admin/capacity_observation_sync.cpp`
+- [x] `src/admin/capacity_observation_sync.cpp`
 - [ ] `src/admin/chart_source_proxy.cpp`
 - [ ] `src/admin/claude_code.cpp`
 - [ ] `src/admin/codex.cpp`
@@ -347,6 +347,13 @@ Reviewed paid-fallback fan-out, request-owned mutation records, detached reconci
 - L297, 303, 304, 322 **SAFE** · The listing frame owns the store, iterator and record vector. The vector is sorted before usage awaits and stays immutable while element references are in use.
 - L327, 330, 333, 334 **SAFE** · Each paid-field child copies its row and shared KV before it starts. The parent keeps independent output and ordering state.
 
+### `src/admin/capacity_observation_sync.cpp`
+
+Reviewed the capped body reader and ingest options handoff.
+
+- L35, 40, 41 **SAFE** · The request, stream handle, reader and chunk vector are frame-local owners. Cancellation waits with the same reader and the rejection callback is captureless.
+- L56, 61, 81, 87, 100, 103 **SAFE** · The plain wrapper copies KV and clock callback into the ingest frame. Storage receives a named task with copied host and moved points; the borrowed JSON field is converted to an owning string first.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -355,4 +362,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-3/286 files reviewed. 18 sites: 18 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+4/286 files reviewed. 20 sites: 20 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

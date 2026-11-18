@@ -311,8 +311,42 @@
       ]
     },
     "src/admin/capacity_observation_sync.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the capped body reader and ingest options handoff.",
+      "sites": [
+        {
+          "lines": [
+            35,
+            40,
+            41
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The request, stream handle, reader and chunk vector are frame-local owners. Cancellation waits with the same reader and the rejection callback is captureless."
+        },
+        {
+          "lines": [
+            56,
+            61,
+            81,
+            87,
+            100,
+            103
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The plain wrapper copies KV and clock callback into the ingest frame. Storage receives a named task with copied host and moved points; the borrowed JSON field is converted to an owning string first."
+        }
+      ]
     },
     "src/admin/chart_source_proxy.cpp": {
       "reviewed": false,
