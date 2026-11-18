@@ -3195,8 +3195,28 @@
       ]
     },
     "src/provider/anthropic_chat_responses.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Claude Chat projection hands owned frame and stream state to the generator and to its buffered reader.",
+      "sites": [
+        {
+          "lines": "353-445",
+          "kind": "generator inputs, iterator and event vectors",
+          "verdict": "SAFE",
+          "reason": "The generator body owns response/options, and the inner iterator and emitted byte buffers stay live through yield. The reference-capturing projections are synchronous, local helpers."
+        },
+        {
+          "lines": "446-518",
+          "kind": "translated stream callbacks and cancellation",
+          "verdict": "SAFE",
+          "reason": "Pull and cancel tasks take shared state by value and the source algorithms retain their closures across a join. Controller is weak and reader buffers are owned."
+        },
+        {
+          "lines": "519",
+          "kind": "direct await of aggregate body-read options",
+          "verdict": "DEFECT",
+          "reason": "The bounded-reader helper is a coroutine taking an owning aggregate by value. Passing the aggregate in the awaited expression violates PORTING.md's GCC 12.2 rule. Construct a named task before awaiting it."
+        }
+      ]
     },
     "src/provider/anthropic_chat_stream.cpp": {
       "status": "pending",

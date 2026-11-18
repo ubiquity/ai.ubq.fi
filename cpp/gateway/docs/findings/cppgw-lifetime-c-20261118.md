@@ -279,7 +279,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/paid_fallback/removed_provider.cpp`
 - [x] `src/paid_fallback/rollups.cpp`
 - [x] `src/paid_fallback/routing.cpp`
-- [ ] `src/provider/anthropic_chat_responses.cpp`
+- [x] `src/provider/anthropic_chat_responses.cpp`
 - [ ] `src/provider/anthropic_chat_stream.cpp`
 - [ ] `src/provider/anthropic_replay.cpp`
 - [ ] `src/provider/anthropic_response_wire.cpp`
@@ -1772,3 +1772,11 @@ The waterfall keeps one borrowed telemetry referent through serial provider atte
 - 38-88,90-118 · primary hooks, telemetry and cancellation · **SAFE** · The request's waiting frame retains context and the owned fetch options retain both hooks, which are used during joined dispatch. Bookkeeping owns reservation records.
 - 120-200 · paid attempts, deadline, and provider iteration · **SAFE** · The provider reference refers to a private immutable vector and the task inputs are copied. The deadline callback is guarded and the provider fetch is joined before returning.
 - 214-278 · delivery and admission handler joins · **SAFE** · The response recorder owns its reservation and response copies. Synchronous rejectAdmission ends with the frame that owns the other routing snapshots and borrows the live caller context.
+
+### `src/provider/anthropic_chat_responses.cpp`
+
+Claude Chat projection hands owned frame and stream state to the generator and to its buffered reader.
+
+- 353-445 · generator inputs, iterator and event vectors · **SAFE** · The generator body owns response/options, and the inner iterator and emitted byte buffers stay live through yield. The reference-capturing projections are synchronous, local helpers.
+- 446-518 · translated stream callbacks and cancellation · **SAFE** · Pull and cancel tasks take shared state by value and the source algorithms retain their closures across a join. Controller is weak and reader buffers are owned.
+- 519 · direct await of aggregate body-read options · **DEFECT** · The bounded-reader helper is a coroutine taking an owning aggregate by value. Passing the aggregate in the awaited expression violates PORTING.md's GCC 12.2 rule. Construct a named task before awaiting it.
