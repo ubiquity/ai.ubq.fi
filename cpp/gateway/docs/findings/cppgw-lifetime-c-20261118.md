@@ -272,7 +272,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/paid_fallback/health.cpp`
 - [x] `src/paid_fallback/index.cpp`
 - [x] `src/paid_fallback/ledger_admission.cpp`
-- [ ] `src/paid_fallback/ledger_backfill.cpp`
+- [x] `src/paid_fallback/ledger_backfill.cpp`
 - [ ] `src/paid_fallback/ledger_settlement.cpp`
 - [ ] `src/paid_fallback/ledger_state.cpp`
 - [ ] `src/paid_fallback/ledger_stats.cpp`
@@ -1721,3 +1721,13 @@ Admission and release use CAS snapshots and module-owned KV; explicit override d
 
 - 91-142,144-197,201-266 · iterator, read batches, and commit ownership · **SAFE** · Admission and release read the globally retained production KV, whose guarded get also retains native storage independently. Transaction and tuple/value owners remain live across their waits.
 - 271-320,324-386 · deletion, retry, and request update ownership · **SAFE** · The override store, row and transaction handles remain in the joined frames. The deletion scans retain individual iterator owners through next.
+
+### `src/paid_fallback/ledger_backfill.cpp`
+
+Backfill and reconciliation use serialized leases and owned scan state. One read batch accepts an externally owned store.
+
+- 119-450 · cursor, scan, and transaction ownership · **SAFE** · Frames retain the shared KV and local list/transaction handles. Progress is shared by value and row and cursor references point into private snapshots.
+- 451-457 · backfill predicate KV fan-out receiver · **DEFECT** · A rejecting state or cursor get can unwind the backfill while a sibling using an injected KV receiver is still pending. A caller that transferred the last shared KV owner leaves that sibling with a dead receiver. Wrap each of the three virtual reads in an owning child.
+- 458-527,530-594,597-648 · predicate, lease, and reconciliation awaits · **SAFE** · Scans and settlement join frame-owned candidates, stores and log maps. deferAll itself starts a child with a KV owner for each entry. Nested virtual read fan-outs are reviewed in ledger_settlement.cpp.
+- 652-792,794-806 · backfill driver and single-flight callbacks · **SAFE** · The worker owns KV and progress through its leases. The scheduled reactions have no captures and pass the resolved KV by value to the worker.
+- 808-1074 · public reconciliation and queue awaits · **SAFE** · Keys, leases, override handles, and row lists remain in the frame or become child values. Iteration uses live local snapshots and each queue/commit call is joined.

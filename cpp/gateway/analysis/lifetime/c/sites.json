@@ -3052,8 +3052,40 @@
       ]
     },
     "src/paid_fallback/ledger_backfill.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Backfill and reconciliation use serialized leases and owned scan state. One read batch accepts an externally owned store.",
+      "sites": [
+        {
+          "lines": "119-450",
+          "kind": "cursor, scan, and transaction ownership",
+          "verdict": "SAFE",
+          "reason": "Frames retain the shared KV and local list/transaction handles. Progress is shared by value and row and cursor references point into private snapshots."
+        },
+        {
+          "lines": "451-457",
+          "kind": "backfill predicate KV fan-out receiver",
+          "verdict": "DEFECT",
+          "reason": "A rejecting state or cursor get can unwind the backfill while a sibling using an injected KV receiver is still pending. A caller that transferred the last shared KV owner leaves that sibling with a dead receiver. Wrap each of the three virtual reads in an owning child."
+        },
+        {
+          "lines": "458-527,530-594,597-648",
+          "kind": "predicate, lease, and reconciliation awaits",
+          "verdict": "SAFE",
+          "reason": "Scans and settlement join frame-owned candidates, stores and log maps. deferAll itself starts a child with a KV owner for each entry. Nested virtual read fan-outs are reviewed in ledger_settlement.cpp."
+        },
+        {
+          "lines": "652-792,794-806",
+          "kind": "backfill driver and single-flight callbacks",
+          "verdict": "SAFE",
+          "reason": "The worker owns KV and progress through its leases. The scheduled reactions have no captures and pass the resolved KV by value to the worker."
+        },
+        {
+          "lines": "808-1074",
+          "kind": "public reconciliation and queue awaits",
+          "verdict": "SAFE",
+          "reason": "Keys, leases, override handles, and row lists remain in the frame or become child values. Iteration uses live local snapshots and each queue/commit call is joined."
+        }
+      ]
     },
     "src/paid_fallback/ledger_settlement.cpp": {
       "status": "pending",
