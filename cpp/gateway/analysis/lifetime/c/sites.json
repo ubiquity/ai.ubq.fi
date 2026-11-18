@@ -2938,8 +2938,22 @@
       ]
     },
     "src/live/upstream.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Mapping operations own identifiers and retain KV through each joined operation.",
+      "sites": [
+        {
+          "lines": "65-91",
+          "kind": "mapping reads and writes",
+          "verdict": "SAFE",
+          "reason": "The returned store and entry are local values. Retiring state is looked up anew after an await instead of retaining a set iterator."
+        },
+        {
+          "lines": "93-109",
+          "kind": "retirement guard and retries",
+          "verdict": "SAFE",
+          "reason": "ScopeExit borrows the same frame's callId, whose parameter storage outlives the guard. Each delete retains its KV owner through completion."
+        }
+      ]
     },
     "src/paid_fallback/claude_code_route.cpp": {
       "status": "pending",

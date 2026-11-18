@@ -267,7 +267,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/live/handler.cpp`
 - [x] `src/live/routes.cpp`
 - [x] `src/live/sideband.cpp`
-- [ ] `src/live/upstream.cpp`
+- [x] `src/live/upstream.cpp`
 - [ ] `src/paid_fallback/claude_code_route.cpp`
 - [ ] `src/paid_fallback/health.cpp`
 - [ ] `src/paid_fallback/index.cpp`
@@ -1682,3 +1682,10 @@ Sideband ownership spans both WebSockets and the delayed mapping retirement befo
 - 28-33,88-120 · constructor await and downstream handlers · **SAFE** · The bridge frame owns State through installation and the downstream registrations retain it afterwards. A close while the constructor is pending sets settled before the frame resumes.
 - 59-87,121-142 · socket callbacks and deferred close · **SAFE** · State is retained while either socket can deliver a callback. Both concrete sockets clear listener edges at close or WebSocketRegistry teardown. The retirement task owns its call ID and the then callbacks own the state.
 - 147-165,168-193 · account and upgrade transfer · **SAFE** · Lookups operate on frame-local data. The synchronous accept callable copies socket and routing strings into the detached bridge task.
+
+### `src/live/upstream.cpp`
+
+Mapping operations own identifiers and retain KV through each joined operation.
+
+- 65-91 · mapping reads and writes · **SAFE** · The returned store and entry are local values. Retiring state is looked up anew after an await instead of retaining a set iterator.
+- 93-109 · retirement guard and retries · **SAFE** · ScopeExit borrows the same frame's callId, whose parameter storage outlives the guard. Each delete retains its KV owner through completion.
