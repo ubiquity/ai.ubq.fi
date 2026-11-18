@@ -154,7 +154,7 @@ namespace uos::rt {
         record(identity);
       }
 
-      void value(const KvValue& input) {
+      void value(const KvValue& input, std::size_t depth = 0) {
         const void* identity = input.identity();
         if (identity) {
           if (!objectIndices_) objectIndices_.emplace();
@@ -168,6 +168,9 @@ namespace uos::rt {
         std::visit(
           [&](const auto& item) {
             using T = std::decay_t<decltype(item)>;
+            if constexpr (std::is_same_v<T, KvU64> || std::is_same_v<T, KvArray> || std::is_same_v<T, KvObject> ||
+                          std::is_same_v<T, KvMap> || std::is_same_v<T, KvSet>)
+              kv_detail::checkContainerDepth(depth);
             if constexpr (std::is_same_v<T, KvUndefined> || std::is_same_v<T, KvHole>) u8(UndefinedTag);
             else if constexpr (std::is_same_v<T, std::nullptr_t>) u8(NullTag);
             else if constexpr (std::is_same_v<T, bool>) u8(item ? TrueTag : FalseTag);
@@ -218,14 +221,14 @@ namespace uos::rt {
               std::size_t index = item.nextPresent(0);
               for (; index < item.size() && index != NonIndexPropertiesTag; index = item.nextPresent(index + 1)) {
                 u32(static_cast<std::uint32_t>(index));
-                value(item[index]);
+                value(item[index], depth + 1);
               }
               if (index < item.size()) {
                 // This valid index collides with the marker when written as a raw u32.
                 u32(NonIndexPropertiesTag);
                 for (; index < item.size(); index = item.nextPresent(index + 1)) {
                   identifier(std::to_string(index));
-                  value(item[index]);
+                  value(item[index], depth + 1);
                 }
               }
               u32(TerminatorTag);
@@ -234,22 +237,22 @@ namespace uos::rt {
               u8(ObjectTag);
               for (const auto& [key, member] : item) {
                 identifier(key);
-                value(member);
+                value(member, depth + 1);
               }
               u32(TerminatorTag);
             } else if constexpr (std::is_same_v<T, KvMap>) {
               record(identity);
               u8(MapObjectTag);
               for (const auto& [key, member] : item) {
-                value(key);
-                value(member);
+                value(key, depth + 1);
+                value(member, depth + 1);
               }
               u8(NonMapPropertiesTag);
               u32(TerminatorTag);
             } else if constexpr (std::is_same_v<T, KvSet>) {
               record(identity);
               u8(SetObjectTag);
-              for (const KvValue& member : item) value(member);
+              for (const KvValue& member : item) value(member, depth + 1);
               u8(NonSetPropertiesTag);
               u32(TerminatorTag);
             } else std::terminate();

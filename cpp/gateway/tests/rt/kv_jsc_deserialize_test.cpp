@@ -282,6 +282,11 @@ TEST("nesting is refused past 2000 containers, also through references") {
   std::size_t depth = 0;
   for (const KvValue* level = &deepest; level->isArray(); level = &level->asArray()[0]) ++depth;
   EXPECT_EQ(depth, MaxNesting);
+  EXPECT_EQ(kvJscSerialize(deepest), nestedArrays(MaxNesting));
+  EXPECT_THROWS_MESSAGE(kvJscSerialize(KvValue::array({deepest})), RangeError, "Maximum call stack size exceeded.");
+  const KvValue wrapped = KvValue::array({deepest});
+  const KvValue other = KvValue::array({kvJscDeserialize(nestedArrays(MaxNesting))});
+  EXPECT_THROWS_MESSAGE(wrapped == other, RangeError, "Maximum call stack size exceeded.");
   EXPECT_THROWS_MESSAGE(kvJscDeserialize(nestedArrays(MaxNesting + 1)), RangeError, "Maximum call stack size exceeded.");
   // [deep, [ref deep]]: the copy sits one level deeper than the referenced value.
   KvBytes referenced{0x0e, 0, 0, 0, 0x01};
@@ -297,6 +302,13 @@ TEST("nesting is refused past 2000 containers, also through references") {
   appendU32(referenced, 0xFFFFFFFF);
   appendU32(referenced, 0xFFFFFFFF);
   EXPECT_THROWS_MESSAGE(kvJscDeserialize(referenced), RangeError, "Maximum call stack size exceeded.");
+}
+
+TEST("stored arrays respect the JSON projection depth limit") {
+  const KvValue deepestJson = kvJscDeserialize(nestedArrays(kJsonMaxDepth));
+  EXPECT(deepestJson.toJson().is_array());
+  const KvValue deeper = kvJscDeserialize(nestedArrays(kJsonMaxDepth + 1));
+  EXPECT_THROWS_MESSAGE(deeper.toJson(), RangeError, "Maximum call stack size exceeded.");
 }
 
 TEST("a Date reads back time-clipped, as the Date constructor stores it") {

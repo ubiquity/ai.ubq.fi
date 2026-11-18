@@ -37,3 +37,13 @@ the first-party line-count comparison and any observed limitations.
 Ubuntu 24.04.5, AArch64, four CPUs. The starting checkout matched the specified
 stage 1 tip and all eight requested refs were fetched. Bun 1.4.0 is present.
 Compiler and library preparation is in progress.
+
+## Work contract v2
+
+The depth audit found `kJsonMaxDepth` set to 10,000 in the stage 1 tree.
+Apply the requested 128-container limit to JSON parsing and recursive helpers.
+Retain the stored-value codec's independent 2,000-container limit and enforce
+it when a stored graph is serialized or traversed recursively from another
+node. Graph references and cycles remain valid. The replay's measured differences
+are the evidence for its fixture changes. This increment requires fresh release,
+sanitizer and conformance receipts after the depth changes.

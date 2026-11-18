@@ -61,10 +61,7 @@ namespace uos::kv_conversion::typed_value {
       return false;
     }
 
-    // Nesting beyond this depth throws RangeError, as JavaScriptCore does at its stack limit (Bun:
-    // between 4000 and 10000 levels). rt::KvValue copies and destroys recursively and overflows
-    // an 8 MiB stack (unoptimised) beyond about 3000 levels, so the codec stops well before.
-    constexpr std::size_t kMaxNesting = 2000;
+    constexpr std::size_t kMaxNesting = rt::kv_detail::MaxContainerDepth;
 
     const json::value& required(const json::value* value) {
       if (!value) throw rt::TypeError("Incomplete typed-value interchange");

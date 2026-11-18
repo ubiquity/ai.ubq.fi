@@ -8,6 +8,12 @@
 #include <string_view>
 
 namespace uos::rt::kv_detail {
+  inline constexpr std::size_t MaxContainerDepth = 2000;
+
+  inline void checkContainerDepth(std::size_t depth) {
+    if (depth >= MaxContainerDepth) throw RangeError("Maximum call stack size exceeded.");
+  }
+
   struct GraphNode {
     KvValue value;
     std::unique_ptr<KvValue> backing;

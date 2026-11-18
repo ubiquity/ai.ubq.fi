@@ -2120,6 +2120,7 @@ namespace {
 }
 
 TEST("depth: kJsonMaxDepth levels parse, copy and destroy; one more is a RangeError") {
+  static_assert(rt::kJsonMaxDepth == 128);
   const std::string deepest = nestedArrays(rt::kJsonMaxDepth);
   {
     const json::value value = rt::jsonParse(deepest);

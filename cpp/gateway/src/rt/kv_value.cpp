@@ -1,6 +1,7 @@
 // The stored value model: KvU64, objects/maps/sets, JSON interop, structured
 // clone as a KV round trip performs it, and assertPortableKvValue.
 #include "kv_internal.hpp"
+#include "uos/rt/json.hpp"
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -102,7 +103,13 @@ namespace uos::rt {
       bool repeated;
     };
 
-    json::value toJsonValue(const KvValue& value, std::unordered_set<const void*>& active) {
+    struct TraversalDepth {
+      explicit TraversalDepth(std::size_t& depth) : level(depth) { ++level; }
+      ~TraversalDepth() { --level; }
+      std::size_t& level;
+    };
+
+    json::value toJsonValue(const KvValue& value, std::unordered_set<const void*>& active, std::size_t depth) {
       const Ancestors ancestors(active, value.identity());
       if (ancestors.repeated) throw TypeError("JSON.stringify cannot serialize cyclic structures.");
       return std::visit(
@@ -113,14 +120,16 @@ namespace uos::rt {
           else if constexpr (std::is_same_v<T, double>) return numberToJson(item);
           else if constexpr (std::is_same_v<T, std::string>) return json::string(item);
           else if constexpr (std::is_same_v<T, KvArray>) {
+            if (depth >= kJsonMaxDepth) throw RangeError("Maximum call stack size exceeded.");
             json::array out;
             out.reserve(item.size());
-            for (const KvValue& element : item) out.push_back(toJsonValue(element, active));
+            for (const KvValue& element : item) out.push_back(toJsonValue(element, active, depth + 1));
             return out;
           } else if constexpr (std::is_same_v<T, KvObject>) {
+            if (depth >= kJsonMaxDepth) throw RangeError("Maximum call stack size exceeded.");
             json::object out;
             for (const auto& [key, member] : item)
-              if (!member.isUndefined() && !member.template is<KvHole>()) out[key] = toJsonValue(member, active);
+              if (!member.isUndefined() && !member.template is<KvHole>()) out[key] = toJsonValue(member, active, depth + 1);
             return out;
           } else {
             throw TypeError("KV value is " + std::string(value.kind()) + ", not JSON");
@@ -566,7 +575,7 @@ namespace uos::rt {
 
   json::value KvValue::toJson() const {
     std::unordered_set<const void*> active;
-    return toJsonValue(*this, active);
+    return toJsonValue(*this, active, 0);
   }
 
   bool operator==(const KvValue& left, const KvValue& right) {
@@ -581,6 +590,7 @@ namespace uos::rt {
     };
     using Pairs = std::unordered_set<Pair, PairHash>;
     static thread_local Pairs active;
+    static thread_local std::size_t depth = 0;
     const Pair pair{left.identity(), right.identity()};
     if (pair.first && pair.first == pair.second) return true;
     const bool track = pair.first && pair.second;
@@ -591,6 +601,8 @@ namespace uos::rt {
       bool track;
       ~RemovePair() { if (track) active.erase(pair); }
     } cleanup{active, pair, track};
+    if (depth > kv_detail::MaxContainerDepth) throw RangeError("Maximum call stack size exceeded.");
+    const TraversalDepth nesting(depth);
     return std::visit(
       [&](const auto& item) -> bool {
         using T = std::decay_t<decltype(item)>;
@@ -604,8 +616,11 @@ namespace uos::rt {
 
   std::string show(const KvValue& value) {
     static thread_local std::unordered_set<const void*> active;
+    static thread_local std::size_t depth = 0;
     const Ancestors ancestors(active, value.identity());
     if (ancestors.repeated) return "<cycle>";
+    if (depth > kv_detail::MaxContainerDepth) return "<truncated>";
+    const TraversalDepth nesting(depth);
     return std::visit(
       [&](const auto& item) -> std::string {
         using T = std::decay_t<decltype(item)>;

@@ -254,3 +254,10 @@ The old SDK comparison limited IDNA to Latin-1. Ada now applies the same Unicode
 
 - A decimal sign requires digits. Bun 1.4.0 parses `BigInt("+")` and `BigInt("-")` as zero. The gateway reports `SyntaxError` for those inputs so incomplete signed values cannot become numeric zero.
 - A binary, octal or hex prefix requires digits even when whitespace follows it. Bun 1.4.0 parses `BigInt("0x ")` as zero. The gateway reports `SyntaxError` and applies the same digit requirement to `'0x'`, `'0o'` and `'0b'` numeric tokens. Stored values and KV keys carry complete digits.
+
+## JSON nesting
+
+The native JSON parser, serializer and recursive helpers accept up to 128 nested
+containers. Deeper documents raise `RangeError`, including when projecting a stored
+value to JSON. The JSC codec and typed-value interchange retain their independent
+2,000-container limit for stored graphs.

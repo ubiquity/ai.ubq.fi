@@ -185,7 +185,7 @@ Maintained by the orchestrator from chunk reports. Read before porting.
   `constexpr` and compare sizes with `static_cast<double>(size)`. `rt::Math::trunc/floor/ceil/abs/max/min`
   are constexpr.
 - Recursive TS scanners over untrusted nesting run on an explicit stack in C++ and throw
-  `RangeError` past `rt::kJsonMaxDepth` (10000).
+  `RangeError` past `rt::kJsonMaxDepth` (128).
 - TOOLING HAZARD: writing a file whose content contains backslash-u escapes (`\uXXXX`) through
   the agent's Write tool or a heredoc can silently decode them. Emit such literals with a
   python script using `chr(92)` and grep the file afterwards to confirm.

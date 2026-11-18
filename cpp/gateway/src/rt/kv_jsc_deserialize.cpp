@@ -57,9 +57,6 @@ namespace uos::rt {
     constexpr std::uint32_t MaxBigIntWords = 1u << 14;
     // Bun wraps a graph that holds Buffers as `[value, buffers]` behind this prefix.
     constexpr std::array<std::uint8_t, 5> BufferEnvelope = {0xFF, 0x42, 0x55, 0x4E, 0x01};
-    // Keep the existing runtime nesting bound for callers that traverse values recursively.
-    constexpr std::size_t MaxDepth = 2000;
-
     [[noreturn]] void malformed() { throw TypeError("Unable to deserialize data."); }
     [[noreturn]] void tooDeep() { throw RangeError("Maximum call stack size exceeded."); }
     [[noreturn]] void unrepresentable(const std::string& what) { throw TypeError("Serialized value " + what + " has no KvValue representation"); }
@@ -275,7 +272,7 @@ namespace uos::rt {
           // An already closed subtree still counts toward the depth limit. An
           // open node is a back-reference and needs no additional traversal.
           const std::size_t height = target->height;
-          if (frames_.size() + height > MaxDepth) tooDeep();
+          if (frames_.size() + height > kv_detail::MaxContainerDepth) tooDeep();
           frames_.back().childHeight = std::max(frames_.back().childHeight, height);
         }
         return graph_->link(*target);
@@ -304,7 +301,7 @@ namespace uos::rt {
       }
 
       KvValue container(Kind kind, KvValue containerValue) {
-        if (frames_.size() >= MaxDepth) tooDeep();
+        kv_detail::checkContainerDepth(frames_.size());
         KvValue link = record(std::move(containerValue));
         frames_.push_back(Frame{&ValueGraph::node(link), kind, kind == Kind::object});
         return link;
