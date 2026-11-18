@@ -10443,8 +10443,22 @@
       ]
     },
     "include/uos/static.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the static resource and root route declarations.",
+      "sites": [
+        {
+          "lines": [
+            16,
+            20
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Asset paths and requests enter their coroutine by value, and asset lookup acquires its shared asset owner before awaiting."
+        }
+      ]
     },
     "include/uos/systemone/handlers.hpp": {
       "reviewed": false,

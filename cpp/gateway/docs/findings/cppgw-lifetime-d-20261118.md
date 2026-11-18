@@ -389,7 +389,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/sentinel/replay_store.hpp`
 - [x] `include/uos/sentinel/upstream_capture.hpp`
 - [x] `include/uos/serve.hpp`
-- [ ] `include/uos/static.hpp`
+- [x] `include/uos/static.hpp`
 - [ ] `include/uos/systemone/handlers.hpp`
 - [ ] `include/uos/types.hpp`
 - [ ] `include/uos/upstream_wire.hpp`
@@ -2218,6 +2218,12 @@ Reviewed maintenance stop, request dispatch, initialization and startup interfac
 
 - L13, 15, 17, 23, 24, 25, 27, 40, 43 **SAFE** · The stop closure owns shared maintenance state. Requests and connection information enter as values, and the startup wrapper copies host and port before returning its Task.
 
+### `include/uos/static.hpp`
+
+Reviewed the static resource and root route declarations.
+
+- L16, 20 **SAFE** · Asset paths and requests enter their coroutine by value, and asset lookup acquires its shared asset owner before awaiting.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2467,4 +2473,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-281/286 files reviewed. 470 sites: 445 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+282/286 files reviewed. 471 sites: 446 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
