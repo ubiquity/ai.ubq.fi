@@ -95,7 +95,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/kv_migration_validation.cpp`
 - [x] `src/cache/prompt_analytics.cpp`
 - [x] `src/cache/prompt_analytics_core.cpp`
-- [ ] `src/cache/prompt_analytics_queue.cpp`
+- [x] `src/cache/prompt_analytics_queue.cpp`
 - [ ] `src/cache/prompt_analytics_read.cpp`
 - [ ] `src/cache/scope_experiment.cpp`
 - [ ] `src/cache/scope_experiment_model.cpp`
@@ -644,6 +644,15 @@ This facade does not define a coroutine or register callbacks. Its exported impl
 | 599-616 | Detached prune and fail-fast delete batch | **SAFE** | Prune owns options with a KV handle and a clock holding a copied scalar. Each guarded delete starts and builds its own atomic owner before all can reject. |
 | 626-692 | Prune stored ranges and batches | **SAFE** | The frame owns its scan array, iterators, and batch. It moves the entire batch into the deletion task and uses no aliases into it after starting that task. |
 
+### `src/cache/prompt_analytics_queue.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 122-143 | Queued analytics sink | **SAFE** | A by-value entry keeps all fields and any injected KV live. The child commit receives independent cohort/usage values and a shared store. |
+| 151-170 | Lazy queue writer and measurement registration | **SAFE** | Queue state owns a captureless noncoroutine writer that moves an entry into an owning task. The measurement callback is synchronous. |
+| 173-220 | Enqueue after cohort resolution | **SAFE** | The local target, event and options remain owned through the hash wait. Queue and entry values are copied before enqueue, and closure state is not borrowed from the request. |
+| 222-245 | Optional queue flush, close, and reset | **SAFE** | A close task receives a copied queue state before awaiting its promise. The static optional is only read synchronously, so the test reset can drop its handle without invalidating the active task. |
+
 
 ## Ranked defects and counts
 
@@ -849,4 +858,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-72/97 files reviewed. **DEFECT 8, SAFE 164, UNCLEAR 3.**
+73/97 files reviewed. **DEFECT 8, SAFE 168, UNCLEAR 3.**
