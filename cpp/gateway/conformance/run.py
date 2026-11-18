@@ -154,7 +154,8 @@ def verify_network(benchmark, parent):
 def run(args):
     benchmark = runpy.run_path(str(args.bench / "run.py"))
     sys.path.insert(0, str(HERE))
-    sys.path.insert(2, str(args.source / "cpp/gateway/tests/production_smoke"))
+    smoke = args.source / "cpp/gateway/tests/production_smoke"
+    sys.path.insert(2, str(smoke))
     from cases import synthetic_auth
     from compare import compare, expectations, markdown, redact
     from fixtures import ADMIN_TOKEN, API_TOKEN, PROVIDER_TOKEN
@@ -174,10 +175,11 @@ def run(args):
     secrets = (*credentials.values(), PROVIDER_TOKEN, VOYAGE_CACHE_TOKEN, codex_auth,
                *[auth["tokens"][name] for name in ("access_token", "refresh_token")])
     gateways = {name: Gateway(args, benchmark, name, identities, credentials, provider_env) for name in ("bun", "native")}
-    receipt = {"schema": 1, "source_revision": args.source_revision, "suite_revision": args.suite_revision,
+    receipt = {"schema": 1, "source_revision": args.source_revision, "source_tree": args.source_tree, "suite_revision": args.suite_revision,
                "suite_tree": args.suite_tree, "binaries_sha256": identities, "network": network,
                "benchmark_revision": args.benchmark_revision,
                "benchmark_sha256": {path.name: benchmark["digest"](path) for path in sorted(args.bench.iterdir()) if path.is_file()},
+               "oracle_smoke_sha256": {path.name: benchmark["digest"](path) for path in sorted(smoke.iterdir()) if path.is_file()},
                "fixture_sha256": {path.name: benchmark["digest"](path) for path in sorted(HERE.iterdir()) if path.is_file()},
                "launches": {name: gateway.launches for name, gateway in gateways.items()}, "cases": []}
     started = time.monotonic()
@@ -230,7 +232,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("bench", "source", "package", "binding", "bun", "out"):
         parser.add_argument("--" + name, type=Path, required=True)
-    for name in ("parent-netns", "source-revision", "suite-revision", "suite-tree", "benchmark-revision"):
+    for name in ("parent-netns", "source-revision", "source-tree", "suite-revision", "suite-tree", "benchmark-revision"):
         parser.add_argument("--" + name, required=True)
     args = parser.parse_args()
     for name in ("bench", "source", "package", "binding", "bun"):
