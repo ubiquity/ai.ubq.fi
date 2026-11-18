@@ -182,8 +182,22 @@
       ]
     },
     "include/uos/codex/dispatch.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Dispatch interfaces transfer request and callback objects by value; async invocations are traced in the implementation.",
+      "sites": [
+        {
+          "lines": "36-54,74-80,103-121,137-146,155-157,174",
+          "kind": "task parameters and callback interfaces",
+          "verdict": "SAFE",
+          "reason": "Dispatch tasks retain their response/auth/request data and owned callback objects; actual callback referents are reviewed at the installation sites."
+        },
+        {
+          "lines": "216-220,245-258,278-295",
+          "kind": "retry and admission interfaces",
+          "verdict": "SAFE",
+          "reason": "The serial driver owns its callbacks and the model classifiers own response handles; the retry race's branch lifetimes are reviewed in dispatch.cpp."
+        }
+      ]
     },
     "include/uos/codex/experiment.hpp": {
       "status": "pending",
