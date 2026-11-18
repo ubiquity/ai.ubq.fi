@@ -140,3 +140,21 @@ env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$empty_home" TMPDIR="$private_tmp
 ```
 
 The same three owned translation units cross-compiled again with the strict macOS command above and the verified macOS 15.5 SDK. `file` identified all three outputs as Mach-O arm64 objects. The runner cannot execute Darwin binaries.
+
+The Boost link control was repeated with a minimal `boost::process::v2::process` launcher for `/usr/bin/true`. The Linux linker failed on unresolved Boost.Process symbols without the compiled library, then linked with the staged `libboost_process.a` and `libboost_filesystem.a`. The resulting ELF executed successfully through `cpp/gateway/cmake/ci/isolate.py`. The Darwin control compiled `detail/last_error.cpp`, `detail/throw_error.cpp`, `posix/close_handles.cpp` and `error.cpp` from the same Boost archive for arm64 with the SDK and libc++. `ld64.lld-21 -arch arm64 -platform_version macos 15.5 15.5 -syslibroot "$work/MacOSX15.5.sdk"` with `-lSystem -lc++` reported unresolved Boost.Process symbols without the archive and produced a Mach-O arm64 executable with it.
+
+## ICU include classification and resumed gates
+
+The initial release build diagnosed fatal `-Wsign-conversion` warnings in ICU 78.3's installed `unicode/uset.h` and `unicode/unistr.h` through `src/rt/string.cpp`. The portable driver added the installed ICU headers as a regular `-I` include. Marking `$work/icu78/include` as a system directory fixed the strict compile of that source with all first-party warnings enabled. Both initial drivers were interrupted through their own lock-holder PIDs and exited 143. Ninja had reported 381 of 836 commands in release and 225 of 836 in ASan/UBSan. The logs are retained in scratch with SHA-256 `c79ef348b9c3e89f3da904f79b63d891d14aeee0e52ffb24a8a6db8db31ddc29` and `f9cda561b22f456ccaafd7e6ead5fd3971bc64fc5640d79b7b56044b5a312a72`, respectively. The ICU include classification belongs to the shared driver surface.
+
+The focused release check linked the 44 runtime objects, the vendor archives and `process_test.cpp` with the corrected ICU compilation. The portable driver's namespace runner passed 15 of 15 cases in 0.767 seconds. The focused `release-process-control/receipt.json` SHA-256 is `06d0d035ea322438c9369859e22ba5c3c237ef18b6714fbead8f7cd45c3f2af6`.
+
+The full profiles restart from a fresh build cache and run sequentially with four jobs each. The commands above use these updated settings. The driver still selects all tests with no shard filter.
+
+```sh
+flags="-isystem $boost --system-header-prefix=third_party/simdutf/ -isystem $work/icu78/include"
+if [ "$config" = asan ]; then flags="$flags -gline-tables-only"; fi
+# Supply these in the env -i invocation above.
+UOS_CI_JOBS=4
+UOS_CI_BUILD_DIR="$work/ci-system-icu"
+```
