@@ -3830,8 +3830,25 @@
       ]
     },
     "src/kv_conversion/cli.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed argument parsing, conversion dispatch and CLI error translation.",
+      "sites": [
+        {
+          "lines": [
+            21,
+            31,
+            51,
+            52,
+            67
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The CLI frame owns input flags and the local validator runs synchronously. Conversion receives named options by value and the top-level wrapper directly awaits the CLI task."
+        }
+      ]
     },
     "src/kv_conversion/convert.cpp": {
       "reviewed": false,

@@ -173,7 +173,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/jev_compaction/compaction.cpp`
 - [x] `src/jev_compaction/hybrid.cpp`
 - [x] `src/kv.cpp`
-- [ ] `src/kv_conversion/cli.cpp`
+- [x] `src/kv_conversion/cli.cpp`
 - [ ] `src/kv_conversion/convert.cpp`
 - [ ] `src/kv_conversion/cursors.cpp`
 - [ ] `src/kv_conversion/legacy_codec.cpp`
@@ -952,6 +952,12 @@ Reviewed coalesced KV open and mutable test opener configuration.
 - L56, 57, 85, 86, 97, 98 **DEFECT** · An injected capturing Task opener suspends after being invoked directly out of the mutable global opener. setKvForTest can replace that function before the suspended open resumes. Copy the selected opener into the awaiting frame before invocation.
 - L61, 72, 80, 82, 86 **SAFE** · Production uses the stable free-function opener and Promise settlement retains the store. The finalizer refers to process-local state, and the default/test resolved-value adapter owns its KV.
 
+### `src/kv_conversion/cli.cpp`
+
+Reviewed argument parsing, conversion dispatch and CLI error translation.
+
+- L21, 31, 51, 52, 67 **SAFE** · The CLI frame owns input flags and the local validator runs synchronously. Conversion receives named options by value and the top-level wrapper directly awaits the CLI task.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1165,4 +1171,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-83/286 files reviewed. 182 sites: 167 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+84/286 files reviewed. 183 sites: 168 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
