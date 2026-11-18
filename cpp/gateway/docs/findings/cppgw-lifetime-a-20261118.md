@@ -48,7 +48,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `include/uos/rt/fetch_transport.hpp`
 - [x] `include/uos/rt/gzip.hpp`
 - [x] `include/uos/rt/websocket.hpp`
-- [ ] `src/rt/fetch.cpp`
+- [x] `src/rt/fetch.cpp`
 - [ ] `src/rt/fetch_transport.cpp`
 - [ ] `src/rt/fetch_transport_codec.cpp`
 - [ ] `src/rt/fetch_transport_http.cpp`
@@ -240,20 +240,50 @@ Reviewed the listener and callback shapes, client and server ownership contracts
 - **UNCLEAR** `326, 330, 331, 332, 333` (c), Self-replacement of injected buffered-amount getter. The production getter is fixed. Supporting a configured getter that overwrites its own callable requires testing that invocation with an independently pinned callable.
 - **SAFE** `368, 372, 399, 403, 407, 409, 414, 415, 427, 429, 435, 437, 439, 442, 444, 447` (b/c/d), Upgrade API borrows and cross-loop ownership. Protocol and upgrade callbacks run synchronously against the caller's request, the socket is moved into native state, and client list access returns an owning vector snapshot.
 
+### `src/rt/fetch.cpp`
+
+Reviewed both request-init paths, both abort windows, the transport seam and the replaceable global Fetch slot. The installed HTTP client has an owning send wrapper. The polymorphic transport API also permits coroutine member implementations.
+
+- **SAFE** `23, 28, 35, 43, 44, 49, 50, 55, 59, 61, 64, 65, 155, 160, 161, 164, 165, 168, 170, 187, 199, 200` (b/d), Request preparation and forwarding into owned tasks. The validation wrappers are synchronous, variant references end before dispatch, and rejected or sending tasks take owned reasons or Request handles.
+- **SAFE** `77, 80, 84, 87, 88, 90, 91, 94, 95, 97, 100, 103, 104, 105, 106, 113, 115, 116, 118, 119, 121, 125, 126, 140, 145, 146` (a/b/c/d), Response abort and cancel delivery while active. The callback promotes a weak body for the whole invocation, pull and cancel frames own their parameters, and detached reader cancellation has an owned result independent of its caller.
+- **DEFECT (A-FETCH-ABORT-BODY-CYCLE)** `70, 72, 73, 74, 77, 112, 114, 115, 120, 123, 124, 125, 126, 127, 128` (c), Dropped abortable response body is kept by its own controller. The wrapper's algorithms own AbortableBody and AbortableBody owns the controller of that same stream. Normal completion clears the algorithms but an unread HWM-zero response may be abandoned without a terminal callback.
+- **DEFECT (A-FETCH-ABORT-TRANSPORT)** `131, 132, 134, 135, 136, 137, 138, 195` (b/c), Abort can outlive the owning virtual transport frame. The default HTTP client copies ClientState before suspension. A transport whose member coroutine uses its receiver can survive the front-end await without owning the virtual object.
+- **SAFE** `134, 139, 140, 141, 142, 143, 144, 146, 149, 152` (b/c/e), Abort-window result and owned error callback. The send frame owns the signal and response and schedules a source with its own Reason. The wrapper uses synchronous factories and the awaited abortable Task is named.
+- **DEFECT (A-FETCH-REENTRANT-FUNCTION)** `176, 177, 178, 181, 183, 189, 191, 193` (a/b/c), Fetch calls a replaceable slot before reliably taking ownership. Argument evaluation may invoke the old callable before copying its owner. A synchronous injected function can replace the active slot and drop its own closure during that invocation.
+- **DEFECT (A-FETCH-CALLBACK-INPUT)** `176, 178, 181, 183` (a/b), Injected async Fetch arguments cross the erasure lifetime boundary. The wrapper retains the callable but the by-value std::function invocation owns its arguments only within that call expression.
+- **DEFECT (A-MOCK-HANDLER-OWNER)** `204, 205, 206` (a/b/c), Mock transport returns a callback task without its handler owner. The ordinary send method records a copy but passes a separate erased Request to its handler and returns the child task directly.
+
 ## Ranked defects and counts
 
-Reviewed **16/30 files** and **90 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **17/30 files** and **98 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
-| a. Capturing coroutine closure | 2 | 16 | 0 |
-| b. Borrowed coroutine parameter or receiver | 5 | 50 | 3 |
-| c. Callback ownership or cycle | 10 | 58 | 4 |
-| d. Container invalidation | 3 | 27 | 0 |
-| e. GCC 12 await-expression rule | 4 | 7 | 1 |
-| **Unique site groups** | 15 | 70 | 5 |
+| a. Capturing coroutine closure | 5 | 17 | 0 |
+| b. Borrowed coroutine parameter or receiver | 9 | 53 | 3 |
+| c. Callback ownership or cycle | 14 | 60 | 4 |
+| d. Container invalidation | 3 | 29 | 0 |
+| e. GCC 12 await-expression rule | 4 | 8 | 1 |
+| **Unique site groups** | 20 | 73 | 5 |
 
-### 1. A-STREAM-CANCEL-OWNER (memory safety in stream cancellation) — Stream cancel borrows the owner slot through callback invocation
+### 1. A-FETCH-ABORT-TRANSPORT (memory safety in the injectable transport path) — Abort can outlive the owning virtual transport frame
+
+`src/rt/fetch.cpp:131, 132, 134, 135, 136, 137, 138, 195`
+
+- An installed transport's member send coroutine suspends on an rt Promise. Replace the global transport so sendThrough is its remaining owner, then abort the signal.
+- abortable rejects sendThrough immediately but cannot interrupt the rt Promise. sendThrough releases the transport while the child's member frame remains pending.
+
+```diff
+--- a/cpp/gateway/src/rt/fetch.cpp
++++ b/cpp/gateway/src/rt/fetch.cpp
+@@ -136,2 +136,3 @@
+       Task<Response> sending = transport->send(std::move(request));
+-      Task<Response> guarded = abortable(signal, std::move(sending));
++      auto ownedSend = detail::keepAlive<Response>(std::move(transport), std::move(sending));
++      Task<Response> guarded = abortable(signal, std::move(ownedSend));
+```
+
+### 2. A-STREAM-CANCEL-OWNER (memory safety in stream cancellation) — Stream cancel borrows the owner slot through callback invocation
 
 `include/uos/rt/stream.hpp:238, 249, 251, 252, 253, 262, 264, 336, 338, 352, 355, 396, 398, 401, 404`
 
@@ -268,7 +298,7 @@ Reviewed **16/30 files** and **90 site groups**. A site group can have multiple 
 +    template <class T> void cancelStreamInto(std::shared_ptr<StreamState<T>> stream, Reason reason, const std::shared_ptr<PromiseState<void>>& out) {
 ```
 
-### 2. A-FETCH-CALLBACK-INPUT (memory safety in the injectable Fetch API) — Fetch erasure can discard input storage before a borrowing coroutine starts
+### 3. A-FETCH-CALLBACK-INPUT (memory safety in the injectable Fetch API) — Fetch erasure can discard input storage before a borrowing coroutine starts
 
 `include/uos/rt/fetch.hpp:20, 27, 28, 29, 33, 38, 40, 41, 49`
 
@@ -307,7 +337,54 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
      Response response = co_await std::move(task);
 ```
 
-### 3. A-PROMISE-CALLBACK-INPUT (memory safety in the public runtime API) — Task-returning Promise callbacks can borrow a destroyed outcome
+### 4. A-FETCH-REENTRANT-FUNCTION (memory safety during a reentrant Fetch callback) — Fetch calls a replaceable slot before reliably taking ownership
+
+`src/rt/fetch.cpp:176, 177, 178, 181, 183, 189, 191, 193`
+
+- fetch invokes a synchronous Fetch callback through the global slot. The callable argument to keepAlive is evaluated first and the callback replaces globalThis.fetch.
+- Replacement drops the callback's only owner. Its remaining code or returned child can borrow the destroyed closure, and keepAlive can pick up the replacement.
+
+```diff
+--- a/cpp/gateway/src/rt/fetch.cpp
++++ b/cpp/gateway/src/rt/fetch.cpp
+@@ -177,2 +177,4 @@
+-    if (!function_) throw std::logic_error("rt::Fetch: called an empty fetch value");
+-    return keepAlive(function_, (*function_)(std::move(input), std::move(init)));
++    auto function = function_;
++    if (!function) throw std::logic_error("rt::Fetch: called an empty fetch value");
++    auto task = (*function)(std::move(input), std::move(init));
++    return keepAlive(std::move(function), std::move(task));
+```
+
+### 5. A-MOCK-HANDLER-OWNER (memory safety in local transport injection) — Mock transport returns a callback task without its handler owner
+
+`src/rt/fetch.cpp:204, 205, 206`
+
+- Call MockTransport::send with a capturing coroutine handler and release the mock while retaining the returned task.
+- The lazy handler then runs with a dangling closure. A handler borrowing the erased Request also loses that argument at the end of send's call expression.
+
+```diff
+--- a/cpp/gateway/include/uos/rt/fetch.hpp
++++ b/cpp/gateway/include/uos/rt/fetch.hpp
+@@ -105,2 +105,2 @@
+-    using Handler = std::function<Task<Response>(Request request)>;
+-    explicit MockTransport(Handler handler) : handler_(std::move(handler)) {}
++    using Handler = std::function<Task<Response>(Request&& request)>;
++    explicit MockTransport(Handler handler) : handler_(std::make_shared<const Handler>(std::move(handler))) {}
+@@ -112 +112 @@
+-    Handler handler_;
++    std::shared_ptr<const Handler> handler_;
+--- a/cpp/gateway/src/rt/fetch.cpp
++++ b/cpp/gateway/src/rt/fetch.cpp
+@@ -205,2 +205,4 @@
+     requests_.push_back(request);
+-    return handler_(std::move(request));
++    auto invocation = std::make_shared<std::pair<std::shared_ptr<const Handler>, Request>>(handler_, std::move(request));
++    auto task = (*invocation->first)(std::move(invocation->second));
++    return detail::keepAlive<Response>(std::move(invocation), std::move(task));
+```
+
+### 6. A-PROMISE-CALLBACK-INPUT (memory safety in the public runtime API) — Task-returning Promise callbacks can borrow a destroyed outcome
 
 `include/uos/rt/async.hpp:692, 701, 704, 713, 715, 726, 731, 744, 745, 746, 758, 760`
 
@@ -338,7 +415,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +        detail::settleWith(target, callback, source, [&] { return (*callback)(source->error); });
 ```
 
-### 4. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
+### 7. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
 
 `src/rt/abort.cpp:62, 69, 74, 81, 95, 228`
 
@@ -353,7 +430,39 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +    void signalAbort(std::shared_ptr<State> signal, Reason reason) {
 ```
 
-### 5. A-PROCESS-SIGNAL-CONTEXT (memory safety with scoped runtime loops) — Static process signal registry retains a scoped Asio context
+### 8. A-FETCH-ABORT-BODY-CYCLE (request-path leak) — Dropped abortable response body is kept by its own controller
+
+`src/rt/fetch.cpp:70, 72, 73, 74, 77, 112, 114, 115, 120, 123, 124, 125, 126, 127, 128`
+
+- A request with an explicit signal receives a streaming response. The front end caches the wrapper's controller in the owner retained by its pull and cancel callbacks.
+- The caller drops the response without reading it or aborting. No pull occurs, and the controller, stream algorithms, source reader and signal remain retained.
+
+```diff
+--- a/cpp/gateway/src/rt/fetch.cpp
++++ b/cpp/gateway/src/rt/fetch.cpp
+@@ -72 +72 @@
+-      std::optional<ReadableStreamDefaultController<ByteChunk>> controller;
++      std::weak_ptr<detail::StreamState<ByteChunk>> wrapper;
+@@ -76,2 +76,3 @@
+       explicit AbortableBody(AbortSignal signal_) : signal(std::move(signal_)) {}
++      ~AbortableBody() { finish(); }
+       void finish() {
+@@ -120,2 +121,2 @@
+-        if (held->controller) held->controller->error(reason);
++        if (auto wrapper = held->wrapper.lock()) wrapper->error(reason);
+         spawn(held->reader->cancel(reason), [](Reason) {});
+@@ -124,5 +125,6 @@
+-      wrapper.start = [body](ReadableStreamDefaultController<ByteChunk> controller) { body->controller = controller; };
+       wrapper.pull = [body](ReadableStreamDefaultController<ByteChunk> controller) { return pullAbortable(body, controller); };
+       wrapper.cancel = [body](Reason reason) { return cancelAbortable(body, std::move(reason)); };
++      ByteStream stream(std::move(wrapper), QueuingStrategy{0});
++      body->wrapper = stream.state();
+       signal.addEventListener("abort", body->onAbort, AddEventListenerOptions{.once = true});
+-      response.setBodyStream(ByteStream(std::move(wrapper), QueuingStrategy{0}));
++      response.setBodyStream(std::move(stream));
+```
+
+### 9. A-PROCESS-SIGNAL-CONTEXT (memory safety with scoped runtime loops) — Static process signal registry retains a scoped Asio context
 
 `src/rt/process_loop.cpp:100, 102, 107, 108, 119, 124, 125, 134, 136, 142, 148`
 
@@ -381,7 +490,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
      }
 ```
 
-### 6. A-STREAM-TEE-READ-CYCLE (retention on cloned streaming bodies) — In-flight tee read keeps abandoned branches' source alive
+### 10. A-STREAM-TEE-READ-CYCLE (retention on cloned streaming bodies) — In-flight tee read keeps abandoned branches' source alive
 
 `include/uos/rt/stream.hpp:444, 445, 446, 453, 454, 458, 460, 464, 469, 475, 479, 485, 486, 493, 496, 502, 554, 557, 558, 559, 561, 562, 567, 568`
 
@@ -414,7 +523,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +      start(currentLoop(), teeRead<T>(std::weak_ptr<TeeState<T>>(tee)));
 ```
 
-### 7. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
+### 11. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
 
 `src/rt/async.cpp:485, 490, 491, 492, 494, 497`
 
@@ -440,7 +549,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +      source->react([source = source.get(), out, remaining] {
 ```
 
-### 8. A-GENERATOR-STEP-OWNER (public runtime liveness) — Pending generator step does not keep its generator alive
+### 12. A-GENERATOR-STEP-OWNER (public runtime liveness) — Pending generator step does not keep its generator alive
 
 `include/uos/rt/async.hpp:1041, 1058, 1061, 1062, 1063, 1064, 1099, 1101`
 
@@ -461,7 +570,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
      }
 ```
 
-### 9. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
+### 13. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
 
 `src/rt/async.cpp:252, 257, 258, 261, 263, 266, 268, 367, 368, 396, 397, 400, 401, 443, 445`
 
@@ -476,7 +585,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +    LoopScope scope(owner);
 ```
 
-### 10. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
+### 14. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
 
 `include/uos/rt/async.hpp:219, 375`
 
@@ -496,7 +605,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +      co_await std::move(ready);
 ```
 
-### 11. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
+### 15. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
 
 `include/uos/rt/async.hpp:1073, 1123, 1124`
 
@@ -518,7 +627,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +        else co_await std::move(handling);
 ```
 
-### 12. A-STREAM-GCC-AWAIT (GCC 12 portability rule) — Stream callback and yield arguments materialized inside awaits
+### 16. A-STREAM-GCC-AWAIT (GCC 12 portability rule) — Stream callback and yield arguments materialized inside awaits
 
 `include/uos/rt/stream.hpp:72, 540`
 

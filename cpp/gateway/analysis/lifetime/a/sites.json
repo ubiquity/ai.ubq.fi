@@ -2395,8 +2395,239 @@
       ]
     },
     "src/rt/fetch.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed both request-init paths, both abort windows, the transport seam and the replaceable global Fetch slot. The installed HTTP client has an owning send wrapper. The polymorphic transport API also permits coroutine member implementations.",
+      "sites": [
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "d"
+          ],
+          "lines": [
+            23,
+            28,
+            35,
+            43,
+            44,
+            49,
+            50,
+            55,
+            59,
+            61,
+            64,
+            65,
+            155,
+            160,
+            161,
+            164,
+            165,
+            168,
+            170,
+            187,
+            199,
+            200
+          ],
+          "label": "Request preparation and forwarding into owned tasks",
+          "reason": "The validation wrappers are synchronous, variant references end before dispatch, and rejected or sending tasks take owned reasons or Request handles."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "lines": [
+            77,
+            80,
+            84,
+            87,
+            88,
+            90,
+            91,
+            94,
+            95,
+            97,
+            100,
+            103,
+            104,
+            105,
+            106,
+            113,
+            115,
+            116,
+            118,
+            119,
+            121,
+            125,
+            126,
+            140,
+            145,
+            146
+          ],
+          "label": "Response abort and cancel delivery while active",
+          "reason": "The callback promotes a weak body for the whole invocation, pull and cancel frames own their parameters, and detached reader cancellation has an owned result independent of its caller."
+        },
+        {
+          "verdict": "DEFECT",
+          "classes": [
+            "c"
+          ],
+          "lines": [
+            70,
+            72,
+            73,
+            74,
+            77,
+            112,
+            114,
+            115,
+            120,
+            123,
+            124,
+            125,
+            126,
+            127,
+            128
+          ],
+          "label": "Dropped abortable response body is kept by its own controller",
+          "reason": "The wrapper's algorithms own AbortableBody and AbortableBody owns the controller of that same stream. Normal completion clears the algorithms but an unread HWM-zero response may be abandoned without a terminal callback.",
+          "defect": {
+            "id": "A-FETCH-ABORT-BODY-CYCLE",
+            "priority": 31,
+            "severity": "request-path leak",
+            "interleaving": [
+              "A request with an explicit signal receives a streaming response. The front end caches the wrapper's controller in the owner retained by its pull and cancel callbacks.",
+              "The caller drops the response without reading it or aborting. No pull occurs, and the controller, stream algorithms, source reader and signal remain retained."
+            ],
+            "diff": "--- a/cpp/gateway/src/rt/fetch.cpp\n+++ b/cpp/gateway/src/rt/fetch.cpp\n@@ -72 +72 @@\n-      std::optional<ReadableStreamDefaultController<ByteChunk>> controller;\n+      std::weak_ptr<detail::StreamState<ByteChunk>> wrapper;\n@@ -76,2 +76,3 @@\n       explicit AbortableBody(AbortSignal signal_) : signal(std::move(signal_)) {}\n+      ~AbortableBody() { finish(); }\n       void finish() {\n@@ -120,2 +121,2 @@\n-        if (held->controller) held->controller->error(reason);\n+        if (auto wrapper = held->wrapper.lock()) wrapper->error(reason);\n         spawn(held->reader->cancel(reason), [](Reason) {});\n@@ -124,5 +125,6 @@\n-      wrapper.start = [body](ReadableStreamDefaultController<ByteChunk> controller) { body->controller = controller; };\n       wrapper.pull = [body](ReadableStreamDefaultController<ByteChunk> controller) { return pullAbortable(body, controller); };\n       wrapper.cancel = [body](Reason reason) { return cancelAbortable(body, std::move(reason)); };\n+      ByteStream stream(std::move(wrapper), QueuingStrategy{0});\n+      body->wrapper = stream.state();\n       signal.addEventListener(\"abort\", body->onAbort, AddEventListenerOptions{.once = true});\n-      response.setBodyStream(ByteStream(std::move(wrapper), QueuingStrategy{0}));\n+      response.setBodyStream(std::move(stream));"
+          }
+        },
+        {
+          "verdict": "DEFECT",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            131,
+            132,
+            134,
+            135,
+            136,
+            137,
+            138,
+            195
+          ],
+          "label": "Abort can outlive the owning virtual transport frame",
+          "reason": "The default HTTP client copies ClientState before suspension. A transport whose member coroutine uses its receiver can survive the front-end await without owning the virtual object.",
+          "defect": {
+            "id": "A-FETCH-ABORT-TRANSPORT",
+            "priority": 16,
+            "severity": "memory safety in the injectable transport path",
+            "interleaving": [
+              "An installed transport's member send coroutine suspends on an rt Promise. Replace the global transport so sendThrough is its remaining owner, then abort the signal.",
+              "abortable rejects sendThrough immediately but cannot interrupt the rt Promise. sendThrough releases the transport while the child's member frame remains pending."
+            ],
+            "diff": "--- a/cpp/gateway/src/rt/fetch.cpp\n+++ b/cpp/gateway/src/rt/fetch.cpp\n@@ -136,2 +136,3 @@\n       Task<Response> sending = transport->send(std::move(request));\n-      Task<Response> guarded = abortable(signal, std::move(sending));\n+      auto ownedSend = detail::keepAlive<Response>(std::move(transport), std::move(sending));\n+      Task<Response> guarded = abortable(signal, std::move(ownedSend));"
+          }
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c",
+            "e"
+          ],
+          "lines": [
+            134,
+            139,
+            140,
+            141,
+            142,
+            143,
+            144,
+            146,
+            149,
+            152
+          ],
+          "label": "Abort-window result and owned error callback",
+          "reason": "The send frame owns the signal and response and schedules a source with its own Reason. The wrapper uses synchronous factories and the awaited abortable Task is named."
+        },
+        {
+          "verdict": "DEFECT",
+          "classes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "lines": [
+            176,
+            177,
+            178,
+            181,
+            183,
+            189,
+            191,
+            193
+          ],
+          "label": "Fetch calls a replaceable slot before reliably taking ownership",
+          "reason": "Argument evaluation may invoke the old callable before copying its owner. A synchronous injected function can replace the active slot and drop its own closure during that invocation.",
+          "defect": {
+            "id": "A-FETCH-REENTRANT-FUNCTION",
+            "priority": 23,
+            "severity": "memory safety during a reentrant Fetch callback",
+            "interleaving": [
+              "fetch invokes a synchronous Fetch callback through the global slot. The callable argument to keepAlive is evaluated first and the callback replaces globalThis.fetch.",
+              "Replacement drops the callback's only owner. Its remaining code or returned child can borrow the destroyed closure, and keepAlive can pick up the replacement."
+            ],
+            "diff": "--- a/cpp/gateway/src/rt/fetch.cpp\n+++ b/cpp/gateway/src/rt/fetch.cpp\n@@ -177,2 +177,4 @@\n-    if (!function_) throw std::logic_error(\"rt::Fetch: called an empty fetch value\");\n-    return keepAlive(function_, (*function_)(std::move(input), std::move(init)));\n+    auto function = function_;\n+    if (!function) throw std::logic_error(\"rt::Fetch: called an empty fetch value\");\n+    auto task = (*function)(std::move(input), std::move(init));\n+    return keepAlive(std::move(function), std::move(task));"
+          }
+        },
+        {
+          "verdict": "DEFECT",
+          "classes": [
+            "a",
+            "b"
+          ],
+          "lines": [
+            176,
+            178,
+            181,
+            183
+          ],
+          "label": "Injected async Fetch arguments cross the erasure lifetime boundary",
+          "reason": "The wrapper retains the callable but the by-value std::function invocation owns its arguments only within that call expression.",
+          "related_defect": "A-FETCH-CALLBACK-INPUT"
+        },
+        {
+          "verdict": "DEFECT",
+          "classes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "lines": [
+            204,
+            205,
+            206
+          ],
+          "label": "Mock transport returns a callback task without its handler owner",
+          "reason": "The ordinary send method records a copy but passes a separate erased Request to its handler and returns the child task directly.",
+          "defect": {
+            "id": "A-MOCK-HANDLER-OWNER",
+            "priority": 24,
+            "severity": "memory safety in local transport injection",
+            "interleaving": [
+              "Call MockTransport::send with a capturing coroutine handler and release the mock while retaining the returned task.",
+              "The lazy handler then runs with a dangling closure. A handler borrowing the erased Request also loses that argument at the end of send's call expression."
+            ],
+            "diff": "--- a/cpp/gateway/include/uos/rt/fetch.hpp\n+++ b/cpp/gateway/include/uos/rt/fetch.hpp\n@@ -105,2 +105,2 @@\n-    using Handler = std::function<Task<Response>(Request request)>;\n-    explicit MockTransport(Handler handler) : handler_(std::move(handler)) {}\n+    using Handler = std::function<Task<Response>(Request&& request)>;\n+    explicit MockTransport(Handler handler) : handler_(std::make_shared<const Handler>(std::move(handler))) {}\n@@ -112 +112 @@\n-    Handler handler_;\n+    std::shared_ptr<const Handler> handler_;\n--- a/cpp/gateway/src/rt/fetch.cpp\n+++ b/cpp/gateway/src/rt/fetch.cpp\n@@ -205,2 +205,4 @@\n     requests_.push_back(request);\n-    return handler_(std::move(request));\n+    auto invocation = std::make_shared<std::pair<std::shared_ptr<const Handler>, Request>>(handler_, std::move(request));\n+    auto task = (*invocation->first)(std::move(invocation->second));\n+    return detail::keepAlive<Response>(std::move(invocation), std::move(task));"
+          }
+        }
+      ]
     },
     "src/rt/fetch_transport.cpp": {
       "status": "pending",
