@@ -855,8 +855,16 @@
       ]
     },
     "include/uos/live/handler.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Live route and upgrade handler APIs.",
+      "sites": [
+        {
+          "lines": "11-12",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Both tasks retain the request and the routing or upgrade inputs by value."
+        }
+      ]
     },
     "include/uos/live/routes.hpp": {
       "status": "pending",
