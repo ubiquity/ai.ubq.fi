@@ -147,7 +147,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/capacity_rollups.hpp`
 - [x] `include/uos/provider/cerebras.hpp`
 - [x] `include/uos/provider/cerebras_handlers.hpp`
-- [ ] `include/uos/provider/cerebras_rate_limits.hpp`
+- [x] `include/uos/provider/cerebras_rate_limits.hpp`
 - [ ] `include/uos/provider/cerebras_responses.hpp`
 - [ ] `include/uos/provider/claude_capacity_history.hpp`
 - [ ] `include/uos/provider/claude_capacity_rollups.hpp`
@@ -942,3 +942,7 @@ Cerebras transport copies arguments and owns the provider option objects.
 Buffered Cerebras Chat APIs use the route telemetry context while joined.
 
 - 10-24 · borrowed context · **SAFE** · The awaiting route or adapter keeps the UsageContext live through all joined status and completion helpers.
+
+### `include/uos/provider/cerebras_rate_limits.hpp`
+
+Synchronous rate-limit reading and parsing API. No task or registration.

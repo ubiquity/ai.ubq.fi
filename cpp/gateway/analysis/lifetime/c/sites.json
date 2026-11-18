@@ -1188,7 +1188,8 @@
       ]
     },
     "include/uos/provider/cerebras_rate_limits.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous rate-limit reading and parsing API. No task or registration.",
       "sites": []
     },
     "include/uos/provider/cerebras_responses.hpp": {
