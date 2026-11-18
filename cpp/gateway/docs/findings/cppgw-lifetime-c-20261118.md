@@ -209,7 +209,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/reset_settings.cpp`
 - [x] `src/codex/responses_error.cpp`
 - [x] `src/codex/responses_operations.cpp`
-- [ ] `src/codex/responses_runners.cpp`
+- [x] `src/codex/responses_runners.cpp`
 - [ ] `src/codex/responses_state.cpp`
 - [ ] `src/codex/routing_evaluation.cpp`
 - [ ] `src/codex/routing_mutations.cpp`
@@ -1349,3 +1349,12 @@ Per-request callbacks lock a weak context before returning an owning coroutine. 
 - 511-594,600-714,718-763 · cohort, inventory, and overage awaits · **SAFE** · Loops borrow from local candidate, observation and selection snapshots. Options, provider handles, fences and context stay owned through their joins.
 - 767-853,867-907,944-988 · transport callbacks, spawn, and auth refresh · **SAFE** · Installed preTransport/onDispatch callbacks travel by value in the awaited transport. Health children receive their own response and error data. The auth race's refreshing child takes auth by value.
 - 993-1055 · weak context dispatch table · **SAFE** · Context owns the callbacks without owning itself through them. Each noncoroutine wrapper locks before handing a strong context value to the async implementation.
+
+### `src/codex/responses_runners.cpp`
+
+Runner coroutines carry a strong context while request-local state is driven serially.
+
+- 86-250,253-413 · reset, fence, and inference attempt awaits · **SAFE** · All attempt parameters are values, including shared credential attempts. The external pre-dispatch fence owns its context and candidate across its joined invocation.
+- 416-463,465-503 · account entries, terminal outcome, and retry · **SAFE** · The account iteration uses a vector copy. Retry receives a copied sleeper and its own signal. The losing sleeper lifetime is reviewed in dispatch.cpp.
+- 505-625,627-682,713-771 · retry, response authorization, and reselection awaits · **SAFE** · Retry and read results are local snapshots, and the forwarding failure helper immediately constructs a task that owns ctx. The selected variant is only borrowed for synchronous tests or copying scalars into an awaited call.
+- 774-811 · weak context runner table · **SAFE** · Stored forwarders lock weak state synchronously and transfer a strong context value to each returned task.

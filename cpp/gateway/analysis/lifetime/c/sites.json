@@ -2202,8 +2202,34 @@
       ]
     },
     "src/codex/responses_runners.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Runner coroutines carry a strong context while request-local state is driven serially.",
+      "sites": [
+        {
+          "lines": "86-250,253-413",
+          "kind": "reset, fence, and inference attempt awaits",
+          "verdict": "SAFE",
+          "reason": "All attempt parameters are values, including shared credential attempts. The external pre-dispatch fence owns its context and candidate across its joined invocation."
+        },
+        {
+          "lines": "416-463,465-503",
+          "kind": "account entries, terminal outcome, and retry",
+          "verdict": "SAFE",
+          "reason": "The account iteration uses a vector copy. Retry receives a copied sleeper and its own signal. The losing sleeper lifetime is reviewed in dispatch.cpp."
+        },
+        {
+          "lines": "505-625,627-682,713-771",
+          "kind": "retry, response authorization, and reselection awaits",
+          "verdict": "SAFE",
+          "reason": "Retry and read results are local snapshots, and the forwarding failure helper immediately constructs a task that owns ctx. The selected variant is only borrowed for synchronous tests or copying scalars into an awaited call."
+        },
+        {
+          "lines": "774-811",
+          "kind": "weak context runner table",
+          "verdict": "SAFE",
+          "reason": "Stored forwarders lock weak state synchronously and transfer a strong context value to each returned task."
+        }
+      ]
     },
     "src/codex/responses_state.cpp": {
       "status": "pending",
