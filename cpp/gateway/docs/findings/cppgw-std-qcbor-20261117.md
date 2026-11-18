@@ -4,12 +4,12 @@
 
 Replace the translated tiny-cbor value model and codec with QCBOR 1.6.1. Keep WebAuthn verification decisions, credential storage and the original signed authenticator bytes at their existing boundaries. This change owns the CBOR region and necessary model call sites in `src/auth/passkeys.cpp`, the QCBOR vendor directory and its build registration, and the scoped CBOR tests, fuzz target and findings. ASN.1, X.509, TypeScript, other gateway modules, workflows and deployment are outside the change.
 
-| Input | Required behavior |
-| --- | --- |
-| Attestation object and stored COSE key | Decode exactly one canonical item and reject trailing data. |
-| COSE key and extensions embedded in authenticator data | Decode the first canonical item, advance by consumed wire bytes, and enforce the existing final boundary. |
-| Untrusted CBOR | Enforce minimal widths, definite lengths, CTAP2 key order, unique integer or text keys, valid UTF-8, the supported WebAuthn types, eight container levels and one MiB. |
-| Existing Firefox 117 EdDSA attestation | Retain the exact known map-count correction before decoding and preserve the signed input bytes. |
+| Input                                                  | Required behavior                                                                                                                                                      |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Attestation object and stored COSE key                 | Decode exactly one canonical item and reject trailing data.                                                                                                            |
+| COSE key and extensions embedded in authenticator data | Decode the first canonical item, advance by consumed wire bytes, and enforce the existing final boundary.                                                              |
+| Untrusted CBOR                                         | Enforce minimal widths, definite lengths, CTAP2 key order, unique integer or text keys, valid UTF-8, the supported WebAuthn types, eight container levels and one MiB. |
+| Existing Firefox 117 EdDSA attestation                 | Retain the exact known map-count correction before decoding and preserve the signed input bytes.                                                                       |
 
 WebAuthn Level 3 requires its CBOR encoders to emit CTAP2 canonical encoding. CTAP2's ordering for integer and text keys is equivalent to ordering their canonical wire bytes lexicographically. Discovery found TPM differential fixtures with unsorted statement maps and malformed-input expectations that reflect the old codec. The existing fixture paths are outside the owned test directory. [WebAuthn Level 3](https://www.w3.org/TR/webauthn-3/#sctn-conforming-all-classes) [FIDO CTAP 2.2](https://fidoalliance.org/specs/fido-v2.2-ps-20250714/fido-client-to-authenticator-protocol-v2.2-ps-20250714.html#ctap2-canonical-cbor-encoding-form)
 
