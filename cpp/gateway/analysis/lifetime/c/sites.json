@@ -718,8 +718,16 @@
       ]
     },
     "include/uos/harmony/probes.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Probe context callbacks forward to task factories.",
+      "sites": [
+        {
+          "lines": "120-131",
+          "kind": "callback bundle",
+          "verdict": "SAFE",
+          "reason": "RunRaw invokes synchronously and the underlying probe tasks own their body, conversation and transport."
+        }
+      ]
     },
     "include/uos/harmony/reliability/context.hpp": {
       "status": "pending",
