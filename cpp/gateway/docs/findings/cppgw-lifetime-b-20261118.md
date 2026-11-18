@@ -54,7 +54,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/rt/kv_key.cpp`
 - [x] `src/rt/kv_memory.cpp`
 - [x] `src/rt/kv_sdk.cpp`
-- [ ] `src/rt/kv_sdk.hpp`
+- [x] `src/rt/kv_sdk.hpp`
 - [ ] `src/rt/kv_sqlite.cpp`
 - [ ] `src/rt/kv_value.cpp`
 - [ ] `src/rt/process.cpp`
@@ -361,6 +361,13 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | 200-231 | KV SDK commit | **SAFE** | StorePtr owns the native target and checks, mutations and enqueues are owning vectors. All view use ends before the await of the native write. |
 | 236-288,290-317,319-333 | ListStream and GenericListIterator next/fetch/return | **SAFE** | Callers own and await named iterators sequentially. ListStream owns StorePtr; fetch starts from copied range bounds, and entry references are taken after fetch and copied before returning. |
 
+### `src/rt/kv_sdk.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 95,105-124,133-143 | Native request and codec interfaces | **SAFE** | Native ranges/messages are owning value parameters. Store owns codecs and the native target, and callback input views are for synchronous use only. |
+| 157-191 | List stream owner contract | **SAFE** | GenericListIterator owns its stream, which in turn owns StorePtr and batch storage. The traced callers retain the iterator through every next/return task. |
+
 
 ## Ranked defects and counts
 
@@ -526,4 +533,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-31/97 files reviewed. **DEFECT 8, SAFE 75, UNCLEAR 2.**
+32/97 files reviewed. **DEFECT 8, SAFE 77, UNCLEAR 2.**

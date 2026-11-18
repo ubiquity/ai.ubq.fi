@@ -1018,8 +1018,29 @@
       ]
     },
     "src/rt/kv_sdk.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "95,105-124,133-143",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "Native request and codec interfaces",
+          "evidence": "Native ranges/messages are owning value parameters. Store owns codecs and the native target, and callback input views are for synchronous use only."
+        },
+        {
+          "lines": "157-191",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "List stream owner contract",
+          "evidence": "GenericListIterator owns its stream, which in turn owns StorePtr and batch storage. The traced callers retain the iterator through every next/return task."
+        }
+      ]
     },
     "src/rt/kv_sqlite.cpp": {
       "reviewed": false,
