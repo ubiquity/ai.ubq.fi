@@ -220,3 +220,13 @@ env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/driver-home" TMPDIR="$sc
 ```
 
 The optimized build reused its compiled objects as closures were added. The redaction run began after the full sweep released the runner CPUs. The receipt retains the original JSON stack overflow and the passing optimized rerun.
+
+### Terminal verification and handoff
+
+The optimized Sentinel retention metadata closure passed 10/10 cases in 64.988 seconds. Reconciling the loader and optimization controls with `python3 -B "$scratch/summarize-sanitizer.py" "$scratch"` yields **441/442 passing binaries and 5,027/5,028 passing cases**. Every one of the **405 application binaries and 4,571 application cases** passed. The only sanitizer diagnostic across the runs was the recorded `-O0` JSON stack overflow. The reconciled receipt SHA-256 is `ed4af61e07391f429def798ca5744215d465dc6264b2fee9bdd5588b4d72abb4`. The inherited release sweep also yields **441/442 binaries and 5,027/5,028 cases** when its ICU 78.3 control replaces the two ICU 74.2 IDNA failures. Both profiles passed all four dedicated BigInt cases.
+
+The remaining failure in both profiles is the shared Number test's three stale expectations at `tests/rt/number_test.cpp:2083–2086`. The assigned write paths exclude that file. The prior scratch control passed all 21 cases with just those three values updated to expect rejection. The replacement's digit requirement and the two classes of parser deviation are documented. [BigInt deviations](../DEVIATIONS-FROM-BUN.md#bigint)
+
+Boost now owns the integer operations and core conversions. The adapter keeps whole-token validation, allocation bounds, error translation, fixed-width wrapping and radix output compatibility. The production diff removes 448 lines and adds 199. The v3 fuzz smoke ran 753,947 inputs in 121 seconds with no findings. The paired 4,096-bit decimal parse fell from 70,018.23 to 4,104.77 ns/op and from 20 to 4 allocations/op. Wide decimal formatting improved in CPU time and increased from 9 to 70 allocations/op.
+
+The task commits are on the clean `agent-job` branch. `GIT_TERMINAL_PROMPT=0 git push --dry-run --porcelain origin HEAD:refs/heads/agent-jobs/cppgw-std-bigint-r1-44202080331-1` failed because GitHub write authentication was unavailable. The refreshed `origin/development` at `6bd78fc5e3b0783809691c6bd45d25ac45e9696e` has no C++ gateway tree and lacks the BigInt implementation tip in its ancestry. The port branch at `45118332b287b7ba9534bb66ab1518f1990a9d9e` has the previously recorded add/add conflict in `DEVIATIONS-FROM-BUN.md`. The shared Number fixture and repository integration remain open.
