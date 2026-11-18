@@ -11,6 +11,7 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/url.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include <utility>
 
 #if defined(__linux__) && defined(__aarch64__)
+#include <filesystem>
 #include <fcntl.h>
 #include <linux/audit.h>
 #include <linux/filter.h>
@@ -33,6 +35,18 @@
 
 namespace uos::runtime::permissions_linux {
   namespace {
+    constexpr int minimumLandlockAbi = 3;
+    constexpr int threadSyncAbi = 8;
+    // Landlock UAPI values, including fields absent from older distribution headers.
+    constexpr std::uint64_t baseFilesystemAccess = 0x7fffULL;
+    constexpr std::uint64_t deviceIoctl = 1ULL << 15;
+    constexpr std::uint64_t resolveUnixSocket = 1ULL << 16;
+    constexpr std::uint64_t bindTcp = 1ULL << 0;
+    constexpr std::uint64_t connectTcp = 1ULL << 1;
+    constexpr std::uint64_t scopeAbstractUnixSocket = 1ULL << 0;
+    constexpr std::uint64_t scopeSignal = 1ULL << 1;
+    constexpr std::uint32_t restrictThreadSync = 1U << 3;
+
     // The Node-API error the addon throws: an Error whose `code` is LINUX_CONFINEMENT_UNAVAILABLE.
     struct NativeConfinementError : rt::JsError {
       std::string code;
@@ -40,7 +54,7 @@ namespace uos::runtime::permissions_linux {
     };
 
     struct NativeSupport {
-      double landlockAbi = 0;
+      int landlockAbi = 0;
       bool seccomp = false;
     };
     struct NativeGrant {
@@ -50,15 +64,12 @@ namespace uos::runtime::permissions_linux {
     struct NativePermissions {
       std::function<NativeSupport()> support;
       std::function<bool(const std::string& path)> readonlyMount;
-      std::function<bool(const std::vector<NativeGrant>& grants)> enforce;
+      std::function<bool(const std::vector<NativeGrant>&, const detail::LandlockPolicy&, const std::optional<LinuxPermissionsTcpPorts>&)> enforce;
     };
 
 #if defined(__linux__) && defined(__aarch64__)
     // src/runtime/permissions-native.c, without its Node-API glue.
     // Primary ABI: docs.kernel.org/userspace-api/{landlock,seccomp_filter}.html.
-#ifndef LANDLOCK_RESTRICT_SELF_TSYNC
-#define LANDLOCK_RESTRICT_SELF_TSYNC (1U << 3)
-#endif
     // The asm-generic numbers the release artifact compiles in from current kernel headers.
 #ifndef __NR_fchmodat2
 #define __NR_fchmodat2 452
@@ -91,7 +102,7 @@ namespace uos::runtime::permissions_linux {
       if (abi < 0) failure("Landlock ABI query");
       std::uint32_t action = SECCOMP_RET_ERRNO;
       const bool available = syscall(__NR_seccomp, SECCOMP_GET_ACTION_AVAIL, 0, &action) == 0;
-      return NativeSupport{static_cast<double>(abi), available};
+      return NativeSupport{abi, available};
     }
 
     bool nativeReadonlyMount(const std::string& path) {
@@ -149,21 +160,38 @@ namespace uos::runtime::permissions_linux {
       return static_cast<int>(syscall(__NR_seccomp, SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, &program));
     }
 
-    bool nativeEnforce(const std::vector<NativeGrant>& grants) {
-      if (grants.size() > 1024) throw rt::TypeError("Confinement requires a bounded grant array");
-      const int abi = landlockAbi();
-      if (abi < 8) {
-        errno = ENOTSUP;
-        failure("Supported Landlock ABI8+");
+    void requireSingleThread() {
+      const pid_t pid = getpid();
+      auto thread = std::filesystem::directory_iterator("/proc/self/task");
+      const auto end = std::filesystem::directory_iterator();
+      if (syscall(__NR_gettid) != pid || thread == end || thread->path().filename().native() != std::to_string(pid) || ++thread != end)
+        throw rt::JsError("Reduced Landlock confinement requires exactly one thread during bootstrap");
+    }
+
+    void addTcpPortRule(int ruleset, std::uint64_t access, std::uint16_t port) {
+      constexpr int netPortRule = 2; // LANDLOCK_RULE_NET_PORT
+      const struct {
+        std::uint64_t allowedAccess;
+        std::uint64_t port;
+      } rule{access, port};
+      if (syscall(__NR_landlock_add_rule, ruleset, netPortRule, &rule, 0) != 0) {
+        const int savedErrno = errno;
+        close(ruleset);
+        errno = savedErrno;
+        failure("Landlock TCP port grant");
       }
-      struct landlock_ruleset_attr attributes {};
-      attributes.handled_access_fs = 0x7fffULL | (abi >= 9 ? (1ULL << 16) : 0);
-      const int ruleset = static_cast<int>(syscall(__NR_landlock_create_ruleset, &attributes, sizeof(std::uint64_t), 0));
+    }
+
+    bool nativeEnforce(const std::vector<NativeGrant>& grants, const detail::LandlockPolicy& policy, const std::optional<LinuxPermissionsTcpPorts>& ports) {
+      if (grants.size() > 1024) throw rt::TypeError("Confinement requires a bounded grant array");
+      // All remaining operations up to restriction are synchronous and create no threads.
+      if (policy.restrictFlags == 0) requireSingleThread();
+      const int ruleset = static_cast<int>(syscall(__NR_landlock_create_ruleset, &policy.ruleset, policy.rulesetSize, 0));
       if (ruleset < 0) failure("Landlock ruleset creation");
       for (const NativeGrant& grant : grants) {
         // napi_get_value_uint32: the access number as a 32-bit unsigned integer.
         const std::uint32_t access = rt::toUint32(grant.access);
-        if ((access & 1) || (access & ~attributes.handled_access_fs)) {
+        if ((access & 1) || (access & ~policy.ruleset.handledAccessFs)) {
           close(ruleset);
           throw rt::TypeError("Invalid non-executable filesystem grant");
         }
@@ -188,13 +216,17 @@ namespace uos::runtime::permissions_linux {
           failure("Landlock path grant");
         }
       }
+      if (ports && policy.ruleset.handledAccessNet != 0) {
+        addTcpPortRule(ruleset, bindTcp, ports->bindPort);
+        for (const std::uint16_t port : ports->connectPorts) addTcpPortRule(ruleset, connectTcp, port);
+      }
       if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
         close(ruleset);
         failure("No-new-privileges enforcement");
       }
       /* After this irreversible transition any failure terminates this dedicated child. */
-      if (syscall(__NR_landlock_restrict_self, ruleset, LANDLOCK_RESTRICT_SELF_TSYNC) != 0) {
-        dprintf(STDERR_FILENO, "Landlock thread synchronization failed: errno %d\n", errno);
+      if (syscall(__NR_landlock_restrict_self, ruleset, policy.restrictFlags) != 0) {
+        dprintf(STDERR_FILENO, "%s failed: errno %d\n", policy.restrictFlags != 0 ? "Landlock thread synchronization" : "Landlock enforcement", errno);
         _exit(78);
       }
       close(ruleset);
@@ -258,22 +290,38 @@ namespace uos::runtime::permissions_linux {
       return path.empty() || (path != ".." && !rt::startsWith(path, "../") && !rt::path::isAbsolute(path));
     }
 
-    void requireConfinementSupport(const LinuxPermissionsSupport& support) {
-      if (!support.landlockThreadSync || !support.seccomp) {
-        throw rt::JsError("Linux confinement requires Landlock ABI8+ and seccomp thread synchronization");
-      }
+    LinuxPermissionsSupport reportedSupport(const NativeSupport& support) {
+      return {std::string(rt::process::arch), rt::os::release(), static_cast<double>(support.landlockAbi), support.landlockAbi >= threadSyncAbi, support.seccomp};
     }
   }
 
-  LinuxPermissionsSupport getLinuxPermissionsSupport(const std::optional<LinuxPermissionsArtifact>& artifact) {
-    const NativeSupport support = nativeLibrary(artifact).support();
-    return LinuxPermissionsSupport{std::string(rt::process::arch), rt::os::release(), support.landlockAbi, support.landlockAbi >= 8, support.seccomp};
+  detail::LandlockPolicy detail::landlockPolicy(int abi, bool seccomp, bool allowReduced) {
+    if (!seccomp || abi < (allowReduced ? minimumLandlockAbi : threadSyncAbi))
+      throw rt::JsError(allowReduced ? "Reduced Linux confinement requires Landlock ABI3+ and seccomp thread synchronization"
+                                     : "Linux confinement requires Landlock ABI8+ and seccomp thread synchronization");
+    LandlockPolicy policy{{baseFilesystemAccess, 0, 0}, sizeof(std::uint64_t), abi >= threadSyncAbi ? restrictThreadSync : 0};
+    if (abi >= 9) policy.ruleset.handledAccessFs |= resolveUnixSocket;
+    if (allowReduced && abi >= 4) {
+      policy.ruleset.handledAccessNet = bindTcp | connectTcp;
+      policy.rulesetSize = offsetof(LandlockRuleset, scoped);
+    }
+    if (allowReduced && abi >= 5) policy.ruleset.handledAccessFs |= deviceIoctl;
+    if (allowReduced && abi >= 6) {
+      policy.ruleset.scoped = scopeAbstractUnixSocket | scopeSignal;
+      policy.rulesetSize = sizeof(LandlockRuleset);
+    }
+    return policy;
   }
 
-  LinuxPermissionsReceipt applyLinuxPermissions(const LinuxPermissions& permissions, const std::optional<LinuxPermissionsArtifact>& artifact) {
+  LinuxPermissionsSupport getLinuxPermissionsSupport(const std::optional<LinuxPermissionsArtifact>& artifact) {
+    return reportedSupport(nativeLibrary(artifact).support());
+  }
+
+  static LinuxPermissionsReceipt apply(const LinuxPermissions& permissions, const std::optional<LinuxPermissionsArtifact>& artifact, std::optional<int> abiCap) {
     const NativePermissions native = nativeLibrary(artifact);
-    const LinuxPermissionsSupport support = getLinuxPermissionsSupport(artifact);
-    requireConfinementSupport(support);
+    const NativeSupport support = native.support();
+    const int abi = abiCap ? std::min(*abiCap, support.landlockAbi) : support.landlockAbi;
+    const auto policy = detail::landlockPolicy(abi, support.seccomp, permissions.allowReducedConfinement.has_value());
     const auto canonicalize = [](const std::string& path) -> std::string {
       if (!rt::path::isAbsolute(path)) throw rt::JsError("Linux confinement paths must be absolute");
       return rt::fs::realpathSync(path);
@@ -295,7 +343,7 @@ namespace uos::runtime::permissions_linux {
     rt::OrderedMap<std::string, double> grants;
     for (const std::string& path : readPaths) {
       double directoryAccess = 0;
-      if (rt::fs::statSync(path).isDirectory()) directoryAccess = rt::bitOr(8, support.landlockAbi >= 9 ? 0x10000 : 0);
+      if (rt::fs::statSync(path).isDirectory()) directoryAccess = rt::bitOr(8, (policy.ruleset.handledAccessFs & resolveUnixSocket) != 0 ? 0x10000 : 0);
       const double readable = rt::bitOr(4, directoryAccess);
       const double* granted = grants.get(path);
       grants.set(path, rt::bitOr(granted != nullptr ? *granted : 0, readable));
@@ -307,12 +355,29 @@ namespace uos::runtime::permissions_linux {
     }
     std::vector<NativeGrant> list;
     for (const auto& [path, access] : grants) list.push_back(NativeGrant{path, access});
-    if (!native.enforce(list)) throw rt::JsError("Native confinement did not produce an enforcement receipt");
     LinuxPermissionsReceipt receipt;
-    static_cast<LinuxPermissionsSupport&>(receipt) = support;
-    receipt.filesystemThreadSync = true;
+    static_cast<LinuxPermissionsSupport&>(receipt) = reportedSupport(support);
+    receipt.filesystemThreadSync = policy.restrictFlags != 0;
     receipt.processThreadSync = true;
     receipt.immutableMounts = std::move(immutableMounts);
+    receipt.activeProtections = {"landlock-filesystem", "seccomp-tsync"};
+    if (!receipt.filesystemThreadSync) receipt.activeProtections.emplace_back("landlock-thread-inheritance");
+    const auto report = [&](bool active, const char* name) { (active ? receipt.activeProtections : receipt.missingProtections).emplace_back(name); };
+    report(receipt.filesystemThreadSync, "landlock-tsync");
+    report(policy.ruleset.handledAccessNet != 0, "tcp-ports");
+    report((policy.ruleset.handledAccessFs & deviceIoctl) != 0, "device-ioctl");
+    report((policy.ruleset.scoped & scopeAbstractUnixSocket) != 0, "abstract-unix-sockets");
+    report((policy.ruleset.scoped & scopeSignal) != 0, "signal-scope");
+    report((policy.ruleset.handledAccessFs & resolveUnixSocket) != 0, "pathname-unix-sockets");
+    if (!native.enforce(list, policy, permissions.allowReducedConfinement)) throw rt::JsError("Native confinement did not produce an enforcement receipt");
     return receipt;
+  }
+
+  LinuxPermissionsReceipt applyLinuxPermissions(const LinuxPermissions& permissions, const std::optional<LinuxPermissionsArtifact>& artifact) {
+    return apply(permissions, artifact, std::nullopt);
+  }
+
+  LinuxPermissionsReceipt detail::applyLinuxPermissionsWithAbiCap(const LinuxPermissions& permissions, const LinuxPermissionsArtifact& artifact, int abiCap) {
+    return apply(permissions, artifact, abiCap);
   }
 }

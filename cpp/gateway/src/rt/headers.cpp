@@ -1,13 +1,10 @@
 #include "uos/rt/headers.hpp"
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
-
-using namespace std::string_view_literals;
 
 namespace uos::rt {
   namespace {
@@ -16,9 +13,8 @@ namespace uos::rt {
       return std::string_view("!#$%&'*+-.^_`|~").find(c) != std::string_view::npos;
     }
 
-    // Validates a name and returns it lowercased.
     std::string normalizedName(std::string_view name, bool forHas = false) {
-      if (name.empty() || !std::all_of(name.begin(), name.end(), isTokenCharacter))
+      if (name.empty() || !std::ranges::all_of(name, isTokenCharacter))
         throw TypeError("Invalid header name: '" + std::string(name) + (forHas ? "\"" : "'"));
       std::string lower(name);
       for (char& c : lower)
@@ -26,50 +22,12 @@ namespace uos::rt {
       return lower;
     }
 
-    // WebKit's HTTPHeaderNames table, sorted by lowercased name. append()
-    // reports an invalid value under the table's spelling of the name.
-    constexpr std::array kCommonHeaderNames = {
-      "Accept"sv, "Accept-Charset"sv, "Accept-Encoding"sv, "Accept-Language"sv, "Accept-Ranges"sv, "Access-Control-Allow-Credentials"sv,
-      "Access-Control-Allow-Headers"sv, "Access-Control-Allow-Methods"sv, "Access-Control-Allow-Origin"sv, "Access-Control-Expose-Headers"sv,
-      "Access-Control-Max-Age"sv, "Access-Control-Request-Headers"sv, "Access-Control-Request-Method"sv, "Age"sv, "Authorization"sv,
-      "Cache-Control"sv, "Connection"sv, "Content-Disposition"sv, "Content-Encoding"sv, "Content-Language"sv, "Content-Length"sv,
-      "Content-Location"sv, "Content-Range"sv, "Content-Security-Policy"sv, "Content-Security-Policy-Report-Only"sv, "Content-Type"sv, "Cookie"sv,
-      "Cookie2"sv, "Cross-Origin-Embedder-Policy"sv, "Cross-Origin-Embedder-Policy-Report-Only"sv, "Cross-Origin-Opener-Policy"sv,
-      "Cross-Origin-Opener-Policy-Report-Only"sv, "Cross-Origin-Resource-Policy"sv, "Date"sv, "Default-Style"sv, "DNT"sv, "ETag"sv, "Expect"sv,
-      "Expires"sv, "Host"sv, "Icy-Metadata"sv, "Icy-MetaInt"sv, "If-Match"sv, "If-Modified-Since"sv, "If-None-Match"sv, "If-Range"sv,
-      "If-Unmodified-Since"sv, "Keep-Alive"sv, "Last-Event-ID"sv, "Last-Modified"sv, "Link"sv, "Location"sv, "Origin"sv, "Ping-From"sv, "Ping-To"sv,
-      "Pragma"sv, "Proxy-Authorization"sv, "Proxy-Connection"sv, "Purpose"sv, "Range"sv, "Referer"sv, "Referrer-Policy"sv, "Refresh"sv,
-      "Report-To"sv, "Sec-Fetch-Dest"sv, "Sec-Fetch-Mode"sv, "Sec-WebSocket-Accept"sv, "Sec-WebSocket-Extensions"sv, "Sec-WebSocket-Key"sv,
-      "Sec-WebSocket-Protocol"sv, "Sec-WebSocket-Version"sv, "Server-Timing"sv, "Service-Worker"sv, "Service-Worker-Allowed"sv,
-      "Service-Worker-Navigation-Preload"sv, "Set-Cookie"sv, "Set-Cookie2"sv, "SourceMap"sv, "Strict-Transport-Security"sv, "TE"sv,
-      "Timing-Allow-Origin"sv, "Trailer"sv, "Transfer-Encoding"sv, "Upgrade"sv, "Upgrade-Insecure-Requests"sv, "User-Agent"sv, "Vary"sv, "Via"sv,
-      "X-Content-Type-Options"sv, "X-DNS-Prefetch-Control"sv, "X-Frame-Options"sv, "X-SourceMap"sv, "X-Temp-Tablet"sv, "X-XSS-Protection"sv};
-
-    std::string_view commonSpelling(std::string_view lowercase) {
-      auto position = std::lower_bound(kCommonHeaderNames.begin(), kCommonHeaderNames.end(), lowercase, [](std::string_view entry, std::string_view target) {
-        for (std::size_t index = 0; index < entry.size() && index < target.size(); ++index) {
-          const char left = entry[index] >= 'A' && entry[index] <= 'Z' ? static_cast<char>(entry[index] + 32) : entry[index];
-          if (left != target[index]) return left < target[index];
-        }
-        return entry.size() < target.size();
-      });
-      if (position == kCommonHeaderNames.end() || position->size() != lowercase.size()) return {};
-      for (std::size_t index = 0; index < lowercase.size(); ++index) {
-        const char c = (*position)[index];
-        if ((c >= 'A' && c <= 'Z' ? static_cast<char>(c + 32) : c) != lowercase[index]) return {};
-      }
-      return *position;
-    }
-
-    bool isHttpWhitespace(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
-
-    // Strips HTTP whitespace and validates the value: no NUL, LF or CR, and no
-    // code point above U+00FF (a WTF-8 lead byte past 0xC3).
+    // Strip HTTP whitespace, then check that the value is a ByteString without NUL, LF or CR.
     std::string normalizedValue(std::string_view name, std::string_view value) {
-      std::size_t start = 0, end = value.size();
-      while (start < end && isHttpWhitespace(value[start])) ++start;
-      while (end > start && isHttpWhitespace(value[end - 1])) --end;
-      const std::string_view stripped = value.substr(start, end - start);
+      constexpr std::string_view whitespace = " \t\r\n";
+      const auto start = value.find_first_not_of(whitespace);
+      if (start == std::string_view::npos) return {};
+      const auto stripped = value.substr(start, value.find_last_not_of(whitespace) - start + 1);
       for (std::size_t index = 0; index < stripped.size(); ++index) {
         const auto byte = static_cast<unsigned char>(stripped[index]);
         bool valid = byte != 0x00 && byte != 0x0A && byte != 0x0D;
@@ -77,7 +35,7 @@ namespace uos::rt {
           valid = (byte == 0xC2 || byte == 0xC3) && index + 1 < stripped.size() && (static_cast<unsigned char>(stripped[index + 1]) & 0xC0) == 0x80;
           ++index;
         }
-        if (!valid) throw TypeError("Header '" + std::string(name) + "' has invalid value: '" + std::string(stripped) + "'");
+        if (!valid) throw TypeError("Header '" + std::string(name.substr(0, 64)) + "' has invalid value");
       }
       return std::string(stripped);
     }
@@ -103,26 +61,32 @@ namespace uos::rt {
     return headers;
   }
 
-  void Headers::append(std::string_view name, std::string_view value) {
+  auto Headers::findField(auto& fields, std::string_view key) {
+    const auto position = std::ranges::lower_bound(fields, key, {}, &Field::name);
+    return std::pair{position, position != fields.end() && position->name == key};
+  }
+
+  void Headers::write(std::string_view name, std::string_view value, bool append) {
     std::string key = normalizedName(name);
-    const std::string_view spelling = commonSpelling(key);
-    std::string normalized = normalizedValue(spelling.empty() ? name : spelling, value);
+    std::string normalized = normalizedValue(key, value);
     if (key == kSetCookie) {
+      if (!append) cookies_.clear();
       cookies_.push_back(std::move(normalized));
       return;
     }
-    auto position = std::lower_bound(fields_.begin(), fields_.end(), key, [](const Entry& entry, const std::string& target) { return entry.first < target; });
-    const auto index = static_cast<std::size_t>(position - fields_.begin());
-    if (position != fields_.end() && position->first == key) {
-      if (key == kCookie) cookieWire_ += "; " + normalized;
-      position->second += key == kCookie ? "; " : ", ";
-      position->second += normalized;
+    const auto [position, found] = findField(fields_, key);
+    if (!found) {
+      fields_.insert(position, Field{std::move(key), std::string(name), std::move(normalized)});
+    } else if (append) {
+      position->value += key == kCookie ? "; " : ", ";
+      position->value += normalized;
     } else {
-      if (key == kCookie) cookieWire_ = normalized;
-      fields_.insert(position, Entry(std::move(key), std::move(normalized)));
-      spellings_.insert(spellings_.begin() + static_cast<std::ptrdiff_t>(index), std::string(name));
+      position->value = std::move(normalized);
     }
   }
+
+  void Headers::append(std::string_view name, std::string_view value) { write(name, value, true); }
+  void Headers::set(std::string_view name, std::string_view value) { write(name, value, false); }
 
   void Headers::delete_(std::string_view name) {
     const std::string key = normalizedName(name);
@@ -130,12 +94,8 @@ namespace uos::rt {
       cookies_.clear();
       return;
     }
-    auto position = std::lower_bound(fields_.begin(), fields_.end(), key, [](const Entry& entry, const std::string& target) { return entry.first < target; });
-    if (position != fields_.end() && position->first == key) {
-      spellings_.erase(spellings_.begin() + (position - fields_.begin()));
-      fields_.erase(position);
-      if (key == kCookie) cookieWire_.clear();
-    }
+    const auto [position, found] = findField(fields_, key);
+    if (found) fields_.erase(position);
   }
 
   std::optional<std::string> Headers::get(std::string_view name) const {
@@ -149,8 +109,8 @@ namespace uos::rt {
       }
       return joined;
     }
-    auto position = std::lower_bound(fields_.begin(), fields_.end(), key, [](const Entry& entry, const std::string& target) { return entry.first < target; });
-    if (position != fields_.end() && position->first == key) return position->second;
+    const auto [position, found] = findField(fields_, key);
+    if (found) return position->value;
     return std::nullopt;
   }
 
@@ -158,30 +118,11 @@ namespace uos::rt {
 
   bool Headers::has(std::string_view name) const {
     const std::string key = normalizedName(name, true);
-    if (key == kSetCookie) return !cookies_.empty();
-    return std::binary_search(fields_.begin(), fields_.end(), Entry(key, std::string()), [](const Entry& a, const Entry& b) { return a.first < b.first; });
-  }
-
-  void Headers::set(std::string_view name, std::string_view value) {
-    std::string key = normalizedName(name);
-    std::string normalized = normalizedValue(name, value);
-    if (key == kSetCookie) {
-      cookies_.assign(1, std::move(normalized));
-      return;
-    }
-    auto position = std::lower_bound(fields_.begin(), fields_.end(), key, [](const Entry& entry, const std::string& target) { return entry.first < target; });
-    if (key == kCookie) cookieWire_ = normalized;
-    if (position != fields_.end() && position->first == key) {
-      position->second = std::move(normalized);
-    } else {
-      const auto index = position - fields_.begin();
-      fields_.insert(position, Entry(std::move(key), std::move(normalized)));
-      spellings_.insert(spellings_.begin() + index, std::string(name));
-    }
+    return key == kSetCookie ? !cookies_.empty() : findField(fields_, key).second;
   }
 
   Headers::Entry Headers::entryAt(std::size_t index) const {
-    if (index < fields_.size()) return fields_[index];
+    if (index < fields_.size()) return {fields_[index].name, fields_[index].value};
     return Entry(std::string(kSetCookie), cookies_[index - fields_.size()]);
   }
 
@@ -195,7 +136,7 @@ namespace uos::rt {
   std::vector<std::string> Headers::keys() const {
     std::vector<std::string> out;
     out.reserve(count());
-    for (const auto& field : fields_) out.push_back(field.first);
+    for (const auto& field : fields_) out.push_back(field.name);
     out.insert(out.end(), cookies_.size(), std::string(kSetCookie));
     return out;
   }
@@ -203,7 +144,7 @@ namespace uos::rt {
   std::vector<std::string> Headers::values() const {
     std::vector<std::string> out;
     out.reserve(count());
-    for (const auto& field : fields_) out.push_back(field.second);
+    for (const auto& field : fields_) out.push_back(field.value);
     out.insert(out.end(), cookies_.begin(), cookies_.end());
     return out;
   }
@@ -212,18 +153,12 @@ namespace uos::rt {
     std::vector<std::pair<std::string, std::string>> headerWireFields(const Headers& headers) {
       std::vector<std::pair<std::string, std::string>> out;
       out.reserve(headers.fields_.size());
-      for (std::size_t index = 0; index < headers.fields_.size(); ++index) {
-        const Headers::Entry& field = headers.fields_[index];
-        out.emplace_back(headers.spellings_[index], field.first == kCookie ? headers.cookieWire_ : field.second);
-      }
+      for (const auto& field : headers.fields_) out.emplace_back(field.spelling, field.value);
       return out;
     }
   }
 
   void Headers::forEach(const std::function<void(const std::string& value, const std::string& name)>& callback) const {
-    for (std::size_t index = 0; index < count(); ++index) {
-      const Entry entry = entryAt(index);
-      callback(entry.second, entry.first);
-    }
+    for (const auto& [name, value] : *this) callback(value, name);
   }
 }

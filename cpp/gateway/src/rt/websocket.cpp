@@ -3,14 +3,17 @@
 // inherit, and the helpers the other websocket_*.cpp files share.
 #include "websocket_internal.hpp"
 
-#include "uos/rt/crypto.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 
 #include <boost/asio/io_context.hpp>
+#include <boost/beast/core/detail/base64.hpp>
+#include <boost/beast/http/rfc7230.hpp>
+#include <boost/beast/websocket/detail/hybi13.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cmath>
 #include <string>
@@ -70,6 +73,12 @@ namespace uos::rt::ws {
     void nextTick(std::function<void()> function) { rt::queueMicrotask(std::move(function)); }
 
     Reason codedError(std::string message, std::string code, std::string name) { return std::make_exception_ptr(CodedError(std::move(message), std::move(code), std::move(name))); }
+
+    std::string handshakeAccept(std::string_view key) {
+      boost::beast::websocket::detail::sec_ws_accept_type accept;
+      boost::beast::websocket::detail::make_sec_ws_accept(accept, key);
+      return {accept.data(), accept.size()};
+    }
 
     std::string errnoName(int errorNumber) {
       switch (errorNumber) {
@@ -627,79 +636,34 @@ namespace uos::rt::ws {
   // ---- WebSocketServer -------------------------------------------------------------------
 
   namespace {
-    constexpr const char* GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     constexpr int RUNNING = 0;
     constexpr int CLOSING_STATE = 1;
     constexpr int CLOSED_STATE = 2;
 
-    // `/^[+/0-9A-Za-z]{22}==$/`
-    bool validKey(const std::string& key) {
-      if (key.size() != 24 || key[22] != '=' || key[23] != '=') return false;
-      for (std::size_t index = 0; index < 22; ++index) {
-        const char c = key[index];
-        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '+' || c == '/')) return false;
-      }
-      return true;
+    bool validKey(std::string_view key) {
+      namespace base64 = boost::beast::detail::base64;
+      if (key.size() != 24 || !key.ends_with("==")) return false;
+      std::array<std::uint8_t, base64::decoded_size(24)> nonce;
+      const auto [size, consumed] = base64::decode(nonce.data(), key.data(), key.size());
+      return size == 16 && consumed == 22;
     }
 
-    // validation.js `tokenChars`.
-    bool tokenChar(char16_t code) {
-      if (code < 33 || code > 126) return false;
-      switch (code) {
-        case '"':
-        case '(':
-        case ')':
-        case ',':
-        case '/':
-        case ':':
-        case ';':
-        case '<':
-        case '=':
-        case '>':
-        case '?':
-        case '@':
-        case '[':
-        case '\\':
-        case ']':
-        case '{':
-        case '}':
-          return false;
-        default:
-          return true;
+    std::optional<std::vector<std::string>> parseSubprotocols(std::string_view header) {
+      constexpr std::string_view whitespace = " \t";
+      if (header.empty() || whitespace.find(header.front()) != whitespace.npos || whitespace.find(header.back()) != whitespace.npos) return std::nullopt;
+      const boost::beast::http::opt_token_list offered(header);
+      std::vector<std::string> protocols;
+      const auto end = offered.end();
+      auto it = offered.begin();
+      for (; !it.error() && it != end; ++it) {
+        const auto token = *it;
+        const std::string_view protocol(token.data(), token.size());
+        if (std::ranges::find(protocols, protocol) != protocols.end()) return std::nullopt;
+        protocols.emplace_back(protocol);
       }
-    }
-
-    // subprotocol.js `parse(header)`: the names in order, SyntaxError when malformed.
-    std::vector<std::string> parseSubprotocols(const std::string& header) {
-      const std::u16string units = toUtf16(header);
-      std::vector<std::u16string> protocols;
-      std::ptrdiff_t start = -1;
-      std::ptrdiff_t end = -1;
-      std::size_t index = 0;
-      const auto add = [&](std::u16string protocol) {
-        if (std::find(protocols.begin(), protocols.end(), protocol) != protocols.end()) throw SyntaxError("The \"" + fromUtf16(protocol) + "\" subprotocol is duplicated");
-        protocols.push_back(std::move(protocol));
-      };
-      for (; index < units.size(); ++index) {
-        const char16_t code = units[index];
-        if (end == -1 && tokenChar(code)) {
-          if (start == -1) start = static_cast<std::ptrdiff_t>(index);
-        } else if (index != 0 && (code == 0x20 || code == 0x09)) {
-          if (end == -1 && start != -1) end = static_cast<std::ptrdiff_t>(index);
-        } else if (code == 0x2c) {
-          if (start == -1) throw SyntaxError("Unexpected character at index " + std::to_string(index));
-          if (end == -1) end = static_cast<std::ptrdiff_t>(index);
-          add(units.substr(static_cast<std::size_t>(start), static_cast<std::size_t>(end - start)));
-          start = end = -1;
-        } else {
-          throw SyntaxError("Unexpected character at index " + std::to_string(index));
-        }
-      }
-      if (start == -1 || end != -1) throw SyntaxError("Unexpected end of input");
-      add(units.substr(static_cast<std::size_t>(start), index - static_cast<std::size_t>(start)));
-      std::vector<std::string> out;
-      for (const auto& protocol : protocols) out.push_back(fromUtf16(protocol));
-      return out;
+      // HTTP token lists permit empty entries, which are invalid subprotocol offers.
+      if (it.error() || protocols.empty() || std::ranges::count(header, ',') != static_cast<std::ptrdiff_t>(protocols.size() - 1)) return std::nullopt;
+      return protocols;
     }
 
     std::string statusText(int code) {
@@ -767,11 +731,9 @@ namespace uos::rt::ws {
     if (!shouldHandle(request)) return abortHandshake(socket, 400);
     std::vector<std::string> protocols;
     if (const auto secWebSocketProtocol = request.header("sec-websocket-protocol")) {
-      try {
-        protocols = parseSubprotocols(*secWebSocketProtocol);
-      } catch (const SyntaxError&) {
-        return abortHandshake(socket, 400, "Invalid Sec-WebSocket-Protocol header");
-      }
+      auto offered = parseSubprotocols(*secWebSocketProtocol);
+      if (!offered) return abortHandshake(socket, 400, "Invalid Sec-WebSocket-Protocol header");
+      protocols = std::move(*offered);
     }
     completeUpgrade(*key, protocols, request, socket, std::move(head), std::move(cb));
   }
@@ -783,7 +745,7 @@ namespace uos::rt::ws {
       return;
     }
     if (state_ > RUNNING) return abortHandshake(socket, 503);
-    const std::string digest = rt::crypto::createHash("sha1").update(key + GUID).digest("base64");
+    const std::string digest = detail::handshakeAccept(key);
     std::vector<std::string> headers{"HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade", "Sec-WebSocket-Accept: " + digest};
     std::shared_ptr<ws::WebSocket> websocket = options_.WebSocket(options_);
     if (!protocols.empty()) {

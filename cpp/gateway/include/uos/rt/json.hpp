@@ -2,6 +2,7 @@
 // JavaScript value semantics over boost::json (oracle: Bun 1.4 / JavaScriptCore).
 // docs/rt/values.md has the porting table, the canonical number rule and the
 // undefined/null conventions. Strings are canonical WTF-8 (docs/rt/text.md).
+#include "uos/rt/limits.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/prelude.hpp"
 #include "uos/rt/string.hpp"
@@ -209,12 +210,8 @@ namespace uos::rt {
   json::object objectFromEntries(const std::vector<std::pair<std::string, json::value>>& entries);
 
   // ---- JSON ---------------------------------------------------------------------------------
-  // Values nested deeper than this are refused (RangeError "Maximum call stack size
-  // exceeded.") by jsonParse, jsonStringify and every recursive helper here, so no input can
-  // exhaust the C++ stack (parse and stringify are iterative; the rest, and boost's own
-  // copy/destroy, fit in 2 MiB at this depth even unoptimised). JavaScriptCore parses deeper
-  // documents; it overflows at about 40000 levels in JSON.stringify and structuredClone.
-  inline constexpr std::size_t kJsonMaxDepth = 10000;
+  // Use the parser's container bound for recursive operations on JSON values.
+  inline constexpr std::size_t kJsonMaxDepth = limits::kJsonDepth;
 
   // JSON.stringify(value): byte-identical to JavaScriptCore (shortest round-trip numbers,
   // non-finite numbers and -0 as null and 0, lowercase \u00XX escapes for control

@@ -31,7 +31,7 @@ namespace {
     return out;
   }
 
-  // Generated with Bun 1.4.0: {input, base, getters}.
+  // Recorded with Bun 1.4.0. Ada differences are listed in docs/DEVIATIONS-FROM-BUN.md.
   const UrlVector kUrlVectors[] = {
   {"http://1.2.3.4.5"sv, std::nullopt, std::nullopt},
   {"http://foo.09"sv, std::nullopt, std::nullopt},
@@ -104,8 +104,8 @@ namespace {
   {"sc:a  b ?x"sv, std::nullopt, "sc:a  b%20?x\001null\001sc:\001\001\001\001\001\001a  b%20\001?x\001"sv},
   {"sc:a  ?x"sv, std::nullopt, "sc:a %20?x\001null\001sc:\001\001\001\001\001\001a %20\001?x\001"sv},
   {"blob:http://a:8/b"sv, std::nullopt, "blob:http://a:8/b\001http://a:8\001blob:\001\001\001\001\001\001http://a:8/b\001\001"sv},
-  {"blob:file:///x"sv, std::nullopt, "blob:file:///x\001file://\001blob:\001\001\001\001\001\001file:///x\001\001"sv},
-  {"blob:ws://a/"sv, std::nullopt, "blob:ws://a/\001ws://a\001blob:\001\001\001\001\001\001ws://a/\001\001"sv},
+  {"blob:file:///x"sv, std::nullopt, "blob:file:///x\001null\001blob:\001\001\001\001\001\001file:///x\001\001"sv},
+  {"blob:ws://a/"sv, std::nullopt, "blob:ws://a/\001null\001blob:\001\001\001\001\001\001ws://a/\001\001"sv},
   {"blob:blob:http://a/"sv, std::nullopt, "blob:blob:http://a/\001null\001blob:\001\001\001\001\001\001blob:http://a/\001\001"sv},
   {"blob:garbage"sv, std::nullopt, "blob:garbage\001null\001blob:\001\001\001\001\001\001garbage\001\001"sv},
   {"blob:https://a/?q#x"sv, std::nullopt, "blob:https://a/?q#x\001https://a\001blob:\001\001\001\001\001\001https://a/\001?q\001#x"sv},
@@ -134,12 +134,12 @@ namespace {
   {"blob:sc://a/"sv, std::nullopt, "blob:sc://a/\001null\001blob:\001\001\001\001\001\001sc://a/\001\001"sv},
   {"blob:data:x"sv, std::nullopt, "blob:data:x\001null\001blob:\001\001\001\001\001\001data:x\001\001"sv},
   {"blob:about:blank"sv, std::nullopt, "blob:about:blank\001null\001blob:\001\001\001\001\001\001about:blank\001\001"sv},
-  {"blob:ftp://a"sv, std::nullopt, "blob:ftp://a\001ftp://a\001blob:\001\001\001\001\001\001ftp://a\001\001"sv},
+  {"blob:ftp://a"sv, std::nullopt, "blob:ftp://a\001null\001blob:\001\001\001\001\001\001ftp://a\001\001"sv},
   {"blob:HTTP://A:80/"sv, std::nullopt, "blob:HTTP://A:80/\001http://a\001blob:\001\001\001\001\001\001HTTP://A:80/\001\001"sv},
   {"blob:"sv, std::nullopt, "blob:\001null\001blob:\001\001\001\001\001\001\001\001"sv},
   {"blob:http://[::1]:81/x"sv, std::nullopt, "blob:http://[::1]:81/x\001http://[::1]:81\001blob:\001\001\001\001\001\001http://[::1]:81/x\001\001"sv},
-  {"blob:wss://a:443/"sv, std::nullopt, "blob:wss://a:443/\001wss://a\001blob:\001\001\001\001\001\001wss://a:443/\001\001"sv},
-  {"blob:file://h/x"sv, std::nullopt, "blob:file://h/x\001file://h\001blob:\001\001\001\001\001\001file://h/x\001\001"sv},
+  {"blob:wss://a:443/"sv, std::nullopt, "blob:wss://a:443/\001null\001blob:\001\001\001\001\001\001wss://a:443/\001\001"sv},
+  {"blob:file://h/x"sv, std::nullopt, "blob:file://h/x\001null\001blob:\001\001\001\001\001\001file://h/x\001\001"sv},
   {"blob:http://a%41/"sv, std::nullopt, "blob:http://a%41/\001http://aa\001blob:\001\001\001\001\001\001http://a%41/\001\001"sv},
   {"blob:https:x"sv, std::nullopt, "blob:https:x\001https://x\001blob:\001\001\001\001\001\001https:x\001\001"sv},
   {"about:blank"sv, std::nullopt, "about:blank\001null\001about:\001\001\001\001\001\001blank\001\001"sv},
@@ -300,7 +300,7 @@ namespace {
   {"https:/example.com/"sv, std::nullopt, "https://example.com/\001https://example.com\001https:\001\001\001example.com\001example.com\001\001/\001\001"sv},
   {"madeupscheme:/example.com/"sv, std::nullopt, "madeupscheme:/example.com/\001null\001madeupscheme:\001\001\001\001\001\001/example.com/\001\001"sv},
   {"file:/example.com/"sv, std::nullopt, "file:///example.com/\001null\001file:\001\001\001\001\001\001/example.com/\001\001"sv},
-  {"ftps:/example.com/"sv, std::nullopt, "ftps:/example.com/\001ftps:\001ftps:\001\001\001\001\001\001/example.com/\001\001"sv},
+  {"ftps:/example.com/"sv, std::nullopt, "ftps:/example.com/\001null\001ftps:\001\001\001\001\001\001/example.com/\001\001"sv},
   {"gopher:/example.com/"sv, std::nullopt, "gopher:/example.com/\001null\001gopher:\001\001\001\001\001\001/example.com/\001\001"sv},
   {"ws:/example.com/"sv, std::nullopt, "ws://example.com/\001ws://example.com\001ws:\001\001\001example.com\001example.com\001\001/\001\001"sv},
   {"wss:/example.com/"sv, std::nullopt, "wss://example.com/\001wss://example.com\001wss:\001\001\001example.com\001example.com\001\001/\001\001"sv},
@@ -311,7 +311,7 @@ namespace {
   {"ftp:example.com/"sv, std::nullopt, "ftp://example.com/\001ftp://example.com\001ftp:\001\001\001example.com\001example.com\001\001/\001\001"sv},
   {"https:example.com/"sv, std::nullopt, "https://example.com/\001https://example.com\001https:\001\001\001example.com\001example.com\001\001/\001\001"sv},
   {"madeupscheme:example.com/"sv, std::nullopt, "madeupscheme:example.com/\001null\001madeupscheme:\001\001\001\001\001\001example.com/\001\001"sv},
-  {"ftps:example.com/"sv, std::nullopt, "ftps:example.com/\001ftps:\001ftps:\001\001\001\001\001\001example.com/\001\001"sv},
+  {"ftps:example.com/"sv, std::nullopt, "ftps:example.com/\001null\001ftps:\001\001\001\001\001\001example.com/\001\001"sv},
   {"gopher:example.com/"sv, std::nullopt, "gopher:example.com/\001null\001gopher:\001\001\001\001\001\001example.com/\001\001"sv},
   {"ws:example.com/"sv, std::nullopt, "ws://example.com/\001ws://example.com\001ws:\001\001\001example.com\001example.com\001\001/\001\001"sv},
   {"wss:example.com/"sv, std::nullopt, "wss://example.com/\001wss://example.com\001wss:\001\001\001example.com\001example.com\001\001/\001\001"sv},
@@ -2113,8 +2113,7 @@ namespace {
 }
 
 namespace {
-  // Hosts beyond the Latin-1 subset of UTS #46 (docs/rt/web.md, Limits): Bun's
-  // result is kept here for reference; the port throws InvalidURLError.
+  // These UTS #46 mappings previously required the native ICU profile.
   const UrlVector kIdnaLimitVectors[] = {
   {"http://GOO\342\200\213\342\201\240\357\273\277goo.com"sv, std::nullopt, "http://googoo.com/\001http://googoo.com\001http:\001\001\001googoo.com\001googoo.com\001\001/\001\001"sv},
   {"http://www.foo\343\200\202bar.com"sv, std::nullopt, "http://www.foo.bar.com/\001http://www.foo.bar.com\001http:\001\001\001www.foo.bar.com\001www.foo.bar.com\001\001/\001\001"sv},
@@ -2124,29 +2123,14 @@ namespace {
   };
 }
 
-#ifdef UOS_GATEWAY_NATIVE_LIBRARIES
-TEST("full ICU IDNA accepts the original documented-limit Bun vectors") {
+TEST("Ada IDNA maps hosts beyond Latin-1 in both build profiles") {
   for (const auto& vector : kIdnaLimitVectors) {
     EXPECT(vector.expected.has_value());
     EXPECT_EQ(describe(URL(std::string(vector.input))), std::string(*vector.expected));
   }
 }
-#else
-TEST("hosts beyond Latin-1 IDNA are rejected (documented limit)") {
-  for (const auto& vector : kIdnaLimitVectors) {
-    bool threw = false;
-    try {
-      (void)URL(std::string(vector.input));
-    } catch (const InvalidURLError&) {
-      threw = true;
-    }
-    EXPECT(threw);
-    EXPECT(vector.expected.has_value());
-  }
-}
-#endif
 
-TEST("new URL(input, base) matches Bun on the differential corpus") {
+TEST("new URL(input, base) uses Ada for the recorded differential corpus") {
   int mismatches = 0;
   for (const auto& vector : kUrlVectors) {
     std::optional<std::string> actual;
@@ -2192,16 +2176,16 @@ namespace {
     else if (setter == "href") url.href(value);
   }
 
-  // Generated with Bun 1.4.0: {base, setter, value, result}.
+  // Recorded with Bun 1.4.0. Ada setter differences are listed in docs/DEVIATIONS-FROM-BUN.md.
   const SetterVector kSetterVectors[] = {
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, ""sv, "http://u:p@a.com:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:80"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:80"sv, "http://u:p@x/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:99"sv, "http://u:p@x:99/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, ":99"sv, "http://u:p@a.com:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:99abc"sv, "http://u:p@x:99/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:99999"sv, "http://u:p@x/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:99999"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "[::1]:9"sv, "http://u:p@[::1]:9/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "[::1]"sv, "http://u:p@[::1]:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x/y"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
@@ -2215,23 +2199,23 @@ namespace {
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "X.COM"sv, "http://u:p@x.com:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:9/zz"sv, "http://u:p@x:9/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:0"sv, "http://u:p@x:0/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:65536"sv, "http://u:p@x/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:65536"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:abc"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:80abc"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:99999abc"sv, "http://u:p@x/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:80abc"sv, "http://u:p@x/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:99999abc"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:-1"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:1:2"sv, "http://u:p@a.com:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "[::1]:80"sv, "http://u:p@[::1]:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "[::1]:99999"sv, "http://u:p@[::1]/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:1:2"sv, "http://u:p@x:1/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "[::1]:80"sv, "http://u:p@[::1]/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "[::1]:99999"sv, "http://u:p@[::1]:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:443"sv, "http://u:p@x:443/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:080"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:080"sv, "http://u:p@x/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:00081"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:8080"sv, "http://u:p@x:8080/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "localhost"sv, "http://u:p@localhost:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "localhost:5"sv, "http://u:p@localhost:5/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:80/"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:99999/"sv, "http://u:p@x/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x::9"sv, "http://u:p@a.com:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:80/"sv, "http://u:p@x/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:99999/"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x::9"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, ":"sv, "http://u:p@a.com:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:0x10"sv, "http://u:p@x:0/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:1e3"sv, "http://u:p@x:1/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
@@ -2249,10 +2233,10 @@ namespace {
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "\303\251.com"sv, "http://u:p@xn--9ca.com:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "\303\251.com:7"sv, "http://u:p@xn--9ca.com:7/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "0x7f.1:5"sv, "http://u:p@127.0.0.1:5/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:\0119"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x:\0119"sv, "http://u:p@x:9/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "[x]:9"sv, "http://u:p@a.com:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "x?y:9"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
-  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "\303\204:65536"sv, "http://u:p@xn--4ca/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
+  {"http://u:p@a.com:81/p/q?x=1#f"sv, "host"sv, "\303\204:65536"sv, "http://u:p@xn--4ca:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "hostname"sv, ""sv, "http://u:p@a.com:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "hostname"sv, "x"sv, "http://u:p@x:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
   {"http://u:p@a.com:81/p/q?x=1#f"sv, "hostname"sv, "x:80"sv, "http://u:p@a.com:81/p/q?x=1#f\001[[\"x\",\"1\"]]"sv},
@@ -2385,7 +2369,7 @@ namespace {
   {"http://a.com/"sv, "host"sv, "x:80abc"sv, "http://x/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "x:99999abc"sv, "http://x/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "x:-1"sv, "http://x/\001[]"sv},
-  {"http://a.com/"sv, "host"sv, "x:1:2"sv, "http://a.com/\001[]"sv},
+  {"http://a.com/"sv, "host"sv, "x:1:2"sv, "http://x:1/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "[::1]:80"sv, "http://[::1]/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "[::1]:99999"sv, "http://[::1]/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "x:443"sv, "http://x:443/\001[]"sv},
@@ -2396,7 +2380,7 @@ namespace {
   {"http://a.com/"sv, "host"sv, "localhost:5"sv, "http://localhost:5/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "x:80/"sv, "http://x/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "x:99999/"sv, "http://x/\001[]"sv},
-  {"http://a.com/"sv, "host"sv, "x::9"sv, "http://a.com/\001[]"sv},
+  {"http://a.com/"sv, "host"sv, "x::9"sv, "http://x/\001[]"sv},
   {"http://a.com/"sv, "host"sv, ":"sv, "http://a.com/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "x:0x10"sv, "http://x:0/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "x:1e3"sv, "http://x:1/\001[]"sv},
@@ -2414,7 +2398,7 @@ namespace {
   {"http://a.com/"sv, "host"sv, "\303\251.com"sv, "http://xn--9ca.com/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "\303\251.com:7"sv, "http://xn--9ca.com:7/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "0x7f.1:5"sv, "http://127.0.0.1:5/\001[]"sv},
-  {"http://a.com/"sv, "host"sv, "x:\0119"sv, "http://x/\001[]"sv},
+  {"http://a.com/"sv, "host"sv, "x:\0119"sv, "http://x:9/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "[x]:9"sv, "http://a.com/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "x?y:9"sv, "http://x/\001[]"sv},
   {"http://a.com/"sv, "host"sv, "\303\204:65536"sv, "http://xn--4ca/\001[]"sv},
@@ -2433,7 +2417,7 @@ namespace {
   {"http://a.com/"sv, "hostname"sv, "localhost"sv, "http://localhost/\001[]"sv},
   {"http://a.com/"sv, "hostname"sv, "x\011y"sv, "http://xy/\001[]"sv},
   {"http://a.com/"sv, "hostname"sv, "\303\251"sv, "http://xn--9ca/\001[]"sv},
-  {"http://a.com/"sv, "hostname"sv, "[::1]:9"sv, "http://[::1]:9/\001[]"sv},
+  {"http://a.com/"sv, "hostname"sv, "[::1]:9"sv, "http://a.com/\001[]"sv},
   {"http://a.com/"sv, "hostname"sv, "0x7f.1"sv, "http://127.0.0.1/\001[]"sv},
   {"http://a.com/"sv, "port"sv, ""sv, "http://a.com/\001[]"sv},
   {"http://a.com/"sv, "port"sv, "0"sv, "http://a.com:0/\001[]"sv},
@@ -2531,7 +2515,7 @@ namespace {
   {"https://a.com:8443/p"sv, "host"sv, "x:"sv, "https://x:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, ":99"sv, "https://a.com:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x:99abc"sv, "https://x:99/p\001[]"sv},
-  {"https://a.com:8443/p"sv, "host"sv, "x:99999"sv, "https://x/p\001[]"sv},
+  {"https://a.com:8443/p"sv, "host"sv, "x:99999"sv, "https://x:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "[::1]:9"sv, "https://[::1]:9/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "[::1]"sv, "https://[::1]:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x/y"sv, "https://x:8443/p\001[]"sv},
@@ -2545,23 +2529,23 @@ namespace {
   {"https://a.com:8443/p"sv, "host"sv, "X.COM"sv, "https://x.com:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x:9/zz"sv, "https://x:9/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x:0"sv, "https://x:0/p\001[]"sv},
-  {"https://a.com:8443/p"sv, "host"sv, "x:65536"sv, "https://x/p\001[]"sv},
+  {"https://a.com:8443/p"sv, "host"sv, "x:65536"sv, "https://x:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x:abc"sv, "https://x:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x:80abc"sv, "https://x:80/p\001[]"sv},
-  {"https://a.com:8443/p"sv, "host"sv, "x:99999abc"sv, "https://x/p\001[]"sv},
+  {"https://a.com:8443/p"sv, "host"sv, "x:99999abc"sv, "https://x:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x:-1"sv, "https://x:8443/p\001[]"sv},
-  {"https://a.com:8443/p"sv, "host"sv, "x:1:2"sv, "https://a.com:8443/p\001[]"sv},
+  {"https://a.com:8443/p"sv, "host"sv, "x:1:2"sv, "https://x:1/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "[::1]:80"sv, "https://[::1]:80/p\001[]"sv},
-  {"https://a.com:8443/p"sv, "host"sv, "[::1]:99999"sv, "https://[::1]/p\001[]"sv},
-  {"https://a.com:8443/p"sv, "host"sv, "x:443"sv, "https://x:8443/p\001[]"sv},
+  {"https://a.com:8443/p"sv, "host"sv, "[::1]:99999"sv, "https://[::1]:8443/p\001[]"sv},
+  {"https://a.com:8443/p"sv, "host"sv, "x:443"sv, "https://x/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x:080"sv, "https://x:80/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x:00081"sv, "https://x:81/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x:8080"sv, "https://x:8080/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "localhost"sv, "https://localhost:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "localhost:5"sv, "https://localhost:5/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x:80/"sv, "https://x:80/p\001[]"sv},
-  {"https://a.com:8443/p"sv, "host"sv, "x:99999/"sv, "https://x/p\001[]"sv},
-  {"https://a.com:8443/p"sv, "host"sv, "x::9"sv, "https://a.com:8443/p\001[]"sv},
+  {"https://a.com:8443/p"sv, "host"sv, "x:99999/"sv, "https://x:8443/p\001[]"sv},
+  {"https://a.com:8443/p"sv, "host"sv, "x::9"sv, "https://x:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, ":"sv, "https://a.com:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x:0x10"sv, "https://x:0/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x:1e3"sv, "https://x:1/p\001[]"sv},
@@ -2579,10 +2563,10 @@ namespace {
   {"https://a.com:8443/p"sv, "host"sv, "\303\251.com"sv, "https://xn--9ca.com:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "\303\251.com:7"sv, "https://xn--9ca.com:7/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "0x7f.1:5"sv, "https://127.0.0.1:5/p\001[]"sv},
-  {"https://a.com:8443/p"sv, "host"sv, "x:\0119"sv, "https://x:8443/p\001[]"sv},
+  {"https://a.com:8443/p"sv, "host"sv, "x:\0119"sv, "https://x:9/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "[x]:9"sv, "https://a.com:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "host"sv, "x?y:9"sv, "https://x:8443/p\001[]"sv},
-  {"https://a.com:8443/p"sv, "host"sv, "\303\204:65536"sv, "https://xn--4ca/p\001[]"sv},
+  {"https://a.com:8443/p"sv, "host"sv, "\303\204:65536"sv, "https://xn--4ca:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "hostname"sv, ""sv, "https://a.com:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "hostname"sv, "x"sv, "https://x:8443/p\001[]"sv},
   {"https://a.com:8443/p"sv, "hostname"sv, "x:80"sv, "https://a.com:8443/p\001[]"sv},
@@ -2696,7 +2680,7 @@ namespace {
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:"sv, "sc://u@x:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, ":99"sv, "sc://u@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:99abc"sv, "sc://u@x:99/p?q#f\001[[\"q\",\"\"]]"sv},
-  {"sc://u@h:5/p?q#f"sv, "host"sv, "x:99999"sv, "sc://u@x/p?q#f\001[[\"q\",\"\"]]"sv},
+  {"sc://u@h:5/p?q#f"sv, "host"sv, "x:99999"sv, "sc://u@x:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "[::1]:9"sv, "sc://u@[::1]:9/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "[::1]"sv, "sc://u@[::1]:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x/y"sv, "sc://u@x:5/p?q#f\001[[\"q\",\"\"]]"sv},
@@ -2710,14 +2694,14 @@ namespace {
   {"sc://u@h:5/p?q#f"sv, "host"sv, "X.COM"sv, "sc://u@X.COM:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:9/zz"sv, "sc://u@x:9/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:0"sv, "sc://u@x:0/p?q#f\001[[\"q\",\"\"]]"sv},
-  {"sc://u@h:5/p?q#f"sv, "host"sv, "x:65536"sv, "sc://u@x/p?q#f\001[[\"q\",\"\"]]"sv},
+  {"sc://u@h:5/p?q#f"sv, "host"sv, "x:65536"sv, "sc://u@x:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:abc"sv, "sc://u@x:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:80abc"sv, "sc://u@x:80/p?q#f\001[[\"q\",\"\"]]"sv},
-  {"sc://u@h:5/p?q#f"sv, "host"sv, "x:99999abc"sv, "sc://u@x/p?q#f\001[[\"q\",\"\"]]"sv},
+  {"sc://u@h:5/p?q#f"sv, "host"sv, "x:99999abc"sv, "sc://u@x:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:-1"sv, "sc://u@x:5/p?q#f\001[[\"q\",\"\"]]"sv},
-  {"sc://u@h:5/p?q#f"sv, "host"sv, "x:1:2"sv, "sc://u@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
+  {"sc://u@h:5/p?q#f"sv, "host"sv, "x:1:2"sv, "sc://u@x:1/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "[::1]:80"sv, "sc://u@[::1]:80/p?q#f\001[[\"q\",\"\"]]"sv},
-  {"sc://u@h:5/p?q#f"sv, "host"sv, "[::1]:99999"sv, "sc://u@[::1]/p?q#f\001[[\"q\",\"\"]]"sv},
+  {"sc://u@h:5/p?q#f"sv, "host"sv, "[::1]:99999"sv, "sc://u@[::1]:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:443"sv, "sc://u@x:443/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:080"sv, "sc://u@x:80/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:00081"sv, "sc://u@x:81/p?q#f\001[[\"q\",\"\"]]"sv},
@@ -2725,8 +2709,8 @@ namespace {
   {"sc://u@h:5/p?q#f"sv, "host"sv, "localhost"sv, "sc://u@localhost:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "localhost:5"sv, "sc://u@localhost:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:80/"sv, "sc://u@x:80/p?q#f\001[[\"q\",\"\"]]"sv},
-  {"sc://u@h:5/p?q#f"sv, "host"sv, "x:99999/"sv, "sc://u@x/p?q#f\001[[\"q\",\"\"]]"sv},
-  {"sc://u@h:5/p?q#f"sv, "host"sv, "x::9"sv, "sc://u@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
+  {"sc://u@h:5/p?q#f"sv, "host"sv, "x:99999/"sv, "sc://u@x:5/p?q#f\001[[\"q\",\"\"]]"sv},
+  {"sc://u@h:5/p?q#f"sv, "host"sv, "x::9"sv, "sc://u@x:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, ":"sv, "sc://u@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:0x10"sv, "sc://u@x:0/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:1e3"sv, "sc://u@x:1/p?q#f\001[[\"q\",\"\"]]"sv},
@@ -2735,7 +2719,7 @@ namespace {
   {"sc://u@h:5/p?q#f"sv, "host"sv, "[::1]x"sv, "sc://u@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "[::1]:x"sv, "sc://u@[::1]:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x:81"sv, "sc://u@x:81/p?q#f\001[[\"q\",\"\"]]"sv},
-  {"sc://u@h:5/p?q#f"sv, "host"sv, "%5B::1%5D:8"sv, "sc://u@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
+  {"sc://u@h:5/p?q#f"sv, "host"sv, "%5B::1%5D:8"sv, "sc://u@%5B:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x/y:9"sv, "sc://u@x:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "a b:9"sv, "sc://u@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "a b:99999"sv, "sc://u@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
@@ -2744,10 +2728,10 @@ namespace {
   {"sc://u@h:5/p?q#f"sv, "host"sv, "\303\251.com"sv, "sc://u@%C3%A9.com:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "\303\251.com:7"sv, "sc://u@%C3%A9.com:7/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "0x7f.1:5"sv, "sc://u@0x7f.1:5/p?q#f\001[[\"q\",\"\"]]"sv},
-  {"sc://u@h:5/p?q#f"sv, "host"sv, "x:\0119"sv, "sc://u@x:5/p?q#f\001[[\"q\",\"\"]]"sv},
+  {"sc://u@h:5/p?q#f"sv, "host"sv, "x:\0119"sv, "sc://u@x:9/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "[x]:9"sv, "sc://u@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "host"sv, "x?y:9"sv, "sc://u@x:5/p?q#f\001[[\"q\",\"\"]]"sv},
-  {"sc://u@h:5/p?q#f"sv, "host"sv, "\303\204:65536"sv, "sc://u@%C3%84/p?q#f\001[[\"q\",\"\"]]"sv},
+  {"sc://u@h:5/p?q#f"sv, "host"sv, "\303\204:65536"sv, "sc://u@%C3%84:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "hostname"sv, ""sv, "sc://u@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "hostname"sv, "x"sv, "sc://u@x:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "hostname"sv, "x:80"sv, "sc://u@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
@@ -2812,7 +2796,7 @@ namespace {
   {"sc://u@h:5/p?q#f"sv, "password"sv, "x"sv, "sc://u:x@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "password"sv, "a b:c@/"sv, "sc://u:a%20b%3Ac%40%2F@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "password"sv, "\012"sv, "sc://u:%0A@h:5/p?q#f\001[[\"q\",\"\"]]"sv},
-  {"sc://u@h:5/p?q#f"sv, "pathname"sv, ""sv, "sc://u@h:5/?q#f\001[[\"q\",\"\"]]"sv},
+  {"sc://u@h:5/p?q#f"sv, "pathname"sv, ""sv, "sc://u@h:5?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "pathname"sv, "/"sv, "sc://u@h:5/?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "pathname"sv, "x"sv, "sc://u@h:5/x?q#f\001[[\"q\",\"\"]]"sv},
   {"sc://u@h:5/p?q#f"sv, "pathname"sv, "/a/../b"sv, "sc://u@h:5/b?q#f\001[[\"q\",\"\"]]"sv},
@@ -3023,10 +3007,10 @@ namespace {
   {"file:///C:/x"sv, "host"sv, "x"sv, "file://x/C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:80"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:99"sv, "file:///C:/x\001[]"sv},
-  {"file:///C:/x"sv, "host"sv, "x:"sv, "file://x/C:/x\001[]"sv},
+  {"file:///C:/x"sv, "host"sv, "x:"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, ":99"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:99abc"sv, "file:///C:/x\001[]"sv},
-  {"file:///C:/x"sv, "host"sv, "x:99999"sv, "file://x/C:/x\001[]"sv},
+  {"file:///C:/x"sv, "host"sv, "x:99999"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "[::1]:9"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "[::1]"sv, "file://[::1]/C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x/y"sv, "file://x/C:/x\001[]"sv},
@@ -3040,14 +3024,14 @@ namespace {
   {"file:///C:/x"sv, "host"sv, "X.COM"sv, "file://x.com/C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:9/zz"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:0"sv, "file:///C:/x\001[]"sv},
-  {"file:///C:/x"sv, "host"sv, "x:65536"sv, "file://x/C:/x\001[]"sv},
-  {"file:///C:/x"sv, "host"sv, "x:abc"sv, "file://x/C:/x\001[]"sv},
+  {"file:///C:/x"sv, "host"sv, "x:65536"sv, "file:///C:/x\001[]"sv},
+  {"file:///C:/x"sv, "host"sv, "x:abc"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:80abc"sv, "file:///C:/x\001[]"sv},
-  {"file:///C:/x"sv, "host"sv, "x:99999abc"sv, "file://x/C:/x\001[]"sv},
-  {"file:///C:/x"sv, "host"sv, "x:-1"sv, "file://x/C:/x\001[]"sv},
+  {"file:///C:/x"sv, "host"sv, "x:99999abc"sv, "file:///C:/x\001[]"sv},
+  {"file:///C:/x"sv, "host"sv, "x:-1"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:1:2"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "[::1]:80"sv, "file:///C:/x\001[]"sv},
-  {"file:///C:/x"sv, "host"sv, "[::1]:99999"sv, "file://[::1]/C:/x\001[]"sv},
+  {"file:///C:/x"sv, "host"sv, "[::1]:99999"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:443"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:080"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:00081"sv, "file:///C:/x\001[]"sv},
@@ -3055,15 +3039,15 @@ namespace {
   {"file:///C:/x"sv, "host"sv, "localhost"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "localhost:5"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:80/"sv, "file:///C:/x\001[]"sv},
-  {"file:///C:/x"sv, "host"sv, "x:99999/"sv, "file://x/C:/x\001[]"sv},
+  {"file:///C:/x"sv, "host"sv, "x:99999/"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x::9"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, ":"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:0x10"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:1e3"sv, "file:///C:/x\001[]"sv},
-  {"file:///C:/x"sv, "host"sv, "x: 9"sv, "file://x/C:/x\001[]"sv},
-  {"file:///C:/x"sv, "host"sv, "[::1]:"sv, "file://[::1]/C:/x\001[]"sv},
+  {"file:///C:/x"sv, "host"sv, "x: 9"sv, "file:///C:/x\001[]"sv},
+  {"file:///C:/x"sv, "host"sv, "[::1]:"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "[::1]x"sv, "file:///C:/x\001[]"sv},
-  {"file:///C:/x"sv, "host"sv, "[::1]:x"sv, "file://[::1]/C:/x\001[]"sv},
+  {"file:///C:/x"sv, "host"sv, "[::1]:x"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x:81"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "%5B::1%5D:8"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x/y:9"sv, "file://x/C:/x\001[]"sv},
@@ -3074,10 +3058,10 @@ namespace {
   {"file:///C:/x"sv, "host"sv, "\303\251.com"sv, "file://xn--9ca.com/C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "\303\251.com:7"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "0x7f.1:5"sv, "file:///C:/x\001[]"sv},
-  {"file:///C:/x"sv, "host"sv, "x:\0119"sv, "file://x/C:/x\001[]"sv},
+  {"file:///C:/x"sv, "host"sv, "x:\0119"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "[x]:9"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "host"sv, "x?y:9"sv, "file://x/C:/x\001[]"sv},
-  {"file:///C:/x"sv, "host"sv, "\303\204:65536"sv, "file://xn--4ca/C:/x\001[]"sv},
+  {"file:///C:/x"sv, "host"sv, "\303\204:65536"sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "hostname"sv, ""sv, "file:///C:/x\001[]"sv},
   {"file:///C:/x"sv, "hostname"sv, "x"sv, "file://x/C:/x\001[]"sv},
   {"file:///C:/x"sv, "hostname"sv, "x:80"sv, "file:///C:/x\001[]"sv},
@@ -3188,10 +3172,10 @@ namespace {
   {"file://h/x"sv, "host"sv, "x"sv, "file://x/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:80"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:99"sv, "file://h/x\001[]"sv},
-  {"file://h/x"sv, "host"sv, "x:"sv, "file://x/x\001[]"sv},
+  {"file://h/x"sv, "host"sv, "x:"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, ":99"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:99abc"sv, "file://h/x\001[]"sv},
-  {"file://h/x"sv, "host"sv, "x:99999"sv, "file://x/x\001[]"sv},
+  {"file://h/x"sv, "host"sv, "x:99999"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "[::1]:9"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "[::1]"sv, "file://[::1]/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x/y"sv, "file://x/x\001[]"sv},
@@ -3205,14 +3189,14 @@ namespace {
   {"file://h/x"sv, "host"sv, "X.COM"sv, "file://x.com/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:9/zz"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:0"sv, "file://h/x\001[]"sv},
-  {"file://h/x"sv, "host"sv, "x:65536"sv, "file://x/x\001[]"sv},
-  {"file://h/x"sv, "host"sv, "x:abc"sv, "file://x/x\001[]"sv},
+  {"file://h/x"sv, "host"sv, "x:65536"sv, "file://h/x\001[]"sv},
+  {"file://h/x"sv, "host"sv, "x:abc"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:80abc"sv, "file://h/x\001[]"sv},
-  {"file://h/x"sv, "host"sv, "x:99999abc"sv, "file://x/x\001[]"sv},
-  {"file://h/x"sv, "host"sv, "x:-1"sv, "file://x/x\001[]"sv},
+  {"file://h/x"sv, "host"sv, "x:99999abc"sv, "file://h/x\001[]"sv},
+  {"file://h/x"sv, "host"sv, "x:-1"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:1:2"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "[::1]:80"sv, "file://h/x\001[]"sv},
-  {"file://h/x"sv, "host"sv, "[::1]:99999"sv, "file://[::1]/x\001[]"sv},
+  {"file://h/x"sv, "host"sv, "[::1]:99999"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:443"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:080"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:00081"sv, "file://h/x\001[]"sv},
@@ -3220,15 +3204,15 @@ namespace {
   {"file://h/x"sv, "host"sv, "localhost"sv, "file:///x\001[]"sv},
   {"file://h/x"sv, "host"sv, "localhost:5"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:80/"sv, "file://h/x\001[]"sv},
-  {"file://h/x"sv, "host"sv, "x:99999/"sv, "file://x/x\001[]"sv},
+  {"file://h/x"sv, "host"sv, "x:99999/"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x::9"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, ":"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:0x10"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:1e3"sv, "file://h/x\001[]"sv},
-  {"file://h/x"sv, "host"sv, "x: 9"sv, "file://x/x\001[]"sv},
-  {"file://h/x"sv, "host"sv, "[::1]:"sv, "file://[::1]/x\001[]"sv},
+  {"file://h/x"sv, "host"sv, "x: 9"sv, "file://h/x\001[]"sv},
+  {"file://h/x"sv, "host"sv, "[::1]:"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "[::1]x"sv, "file://h/x\001[]"sv},
-  {"file://h/x"sv, "host"sv, "[::1]:x"sv, "file://[::1]/x\001[]"sv},
+  {"file://h/x"sv, "host"sv, "[::1]:x"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x:81"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "%5B::1%5D:8"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x/y:9"sv, "file://x/x\001[]"sv},
@@ -3239,10 +3223,10 @@ namespace {
   {"file://h/x"sv, "host"sv, "\303\251.com"sv, "file://xn--9ca.com/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "\303\251.com:7"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "0x7f.1:5"sv, "file://h/x\001[]"sv},
-  {"file://h/x"sv, "host"sv, "x:\0119"sv, "file://x/x\001[]"sv},
+  {"file://h/x"sv, "host"sv, "x:\0119"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "[x]:9"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "host"sv, "x?y:9"sv, "file://x/x\001[]"sv},
-  {"file://h/x"sv, "host"sv, "\303\204:65536"sv, "file://xn--4ca/x\001[]"sv},
+  {"file://h/x"sv, "host"sv, "\303\204:65536"sv, "file://h/x\001[]"sv},
   {"file://h/x"sv, "hostname"sv, ""sv, "file:///x\001[]"sv},
   {"file://h/x"sv, "hostname"sv, "x"sv, "file://x/x\001[]"sv},
   {"file://h/x"sv, "hostname"sv, "x:80"sv, "file://h/x\001[]"sv},
@@ -3320,7 +3304,7 @@ namespace {
   {"file://h/x"sv, "pathname"sv, "/\303\251"sv, "file://h/%C3%A9\001[]"sv},
   {"file://h/x"sv, "pathname"sv, "a\011b"sv, "file://h/ab\001[]"sv},
   {"file://h/x"sv, "pathname"sv, "/C:/x"sv, "file://h/C:/x\001[]"sv},
-  {"file://h/x"sv, "pathname"sv, "C|"sv, "file://h/C|\001[]"sv},
+  {"file://h/x"sv, "pathname"sv, "C|"sv, "file://h/C:\001[]"sv},
   {"file://h/x"sv, "pathname"sv, "/.."sv, "file://h/\001[]"sv},
   {"file://h/x"sv, "pathname"sv, "/./x/."sv, "file://h/x/\001[]"sv},
   {"file://h/x"sv, "pathname"sv, "%2e%2e"sv, "file://h/\001[]"sv},
@@ -3375,7 +3359,7 @@ namespace {
   {"sc:/p"sv, "host"sv, "x:80abc"sv, "sc://x:80/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "x:99999abc"sv, "sc://x/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "x:-1"sv, "sc://x/p\001[]"sv},
-  {"sc:/p"sv, "host"sv, "x:1:2"sv, "sc:/p\001[]"sv},
+  {"sc:/p"sv, "host"sv, "x:1:2"sv, "sc://x:1/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "[::1]:80"sv, "sc://[::1]:80/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "[::1]:99999"sv, "sc://[::1]/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "x:443"sv, "sc://x:443/p\001[]"sv},
@@ -3386,7 +3370,7 @@ namespace {
   {"sc:/p"sv, "host"sv, "localhost:5"sv, "sc://localhost:5/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "x:80/"sv, "sc://x:80/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "x:99999/"sv, "sc://x/p\001[]"sv},
-  {"sc:/p"sv, "host"sv, "x::9"sv, "sc:/p\001[]"sv},
+  {"sc:/p"sv, "host"sv, "x::9"sv, "sc://x/p\001[]"sv},
   {"sc:/p"sv, "host"sv, ":"sv, "sc:/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "x:0x10"sv, "sc://x:0/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "x:1e3"sv, "sc://x:1/p\001[]"sv},
@@ -3395,7 +3379,7 @@ namespace {
   {"sc:/p"sv, "host"sv, "[::1]x"sv, "sc:/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "[::1]:x"sv, "sc://[::1]/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "x:81"sv, "sc://x:81/p\001[]"sv},
-  {"sc:/p"sv, "host"sv, "%5B::1%5D:8"sv, "sc:/p\001[]"sv},
+  {"sc:/p"sv, "host"sv, "%5B::1%5D:8"sv, "sc://%5B/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "x/y:9"sv, "sc://x/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "a b:9"sv, "sc:/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "a b:99999"sv, "sc:/p\001[]"sv},
@@ -3404,7 +3388,7 @@ namespace {
   {"sc:/p"sv, "host"sv, "\303\251.com"sv, "sc://%C3%A9.com/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "\303\251.com:7"sv, "sc://%C3%A9.com:7/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "0x7f.1:5"sv, "sc://0x7f.1:5/p\001[]"sv},
-  {"sc:/p"sv, "host"sv, "x:\0119"sv, "sc://x/p\001[]"sv},
+  {"sc:/p"sv, "host"sv, "x:\0119"sv, "sc://x:9/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "[x]:9"sv, "sc:/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "x?y:9"sv, "sc://x/p\001[]"sv},
   {"sc:/p"sv, "host"sv, "\303\204:65536"sv, "sc://%C3%84/p\001[]"sv},
@@ -3423,7 +3407,7 @@ namespace {
   {"sc:/p"sv, "hostname"sv, "localhost"sv, "sc://localhost/p\001[]"sv},
   {"sc:/p"sv, "hostname"sv, "x\011y"sv, "sc://xy/p\001[]"sv},
   {"sc:/p"sv, "hostname"sv, "\303\251"sv, "sc://%C3%A9/p\001[]"sv},
-  {"sc:/p"sv, "hostname"sv, "[::1]:9"sv, "sc://[::1]:9/p\001[]"sv},
+  {"sc:/p"sv, "hostname"sv, "[::1]:9"sv, "sc:/p\001[]"sv},
   {"sc:/p"sv, "hostname"sv, "0x7f.1"sv, "sc://0x7f.1/p\001[]"sv},
   {"sc:/p"sv, "port"sv, ""sv, "sc:/p\001[]"sv},
   {"sc:/p"sv, "port"sv, "0"sv, "sc:/p\001[]"sv},
@@ -3540,7 +3524,7 @@ namespace {
   {"sc://h"sv, "host"sv, "x:80abc"sv, "sc://x:80\001[]"sv},
   {"sc://h"sv, "host"sv, "x:99999abc"sv, "sc://x\001[]"sv},
   {"sc://h"sv, "host"sv, "x:-1"sv, "sc://x\001[]"sv},
-  {"sc://h"sv, "host"sv, "x:1:2"sv, "sc://h\001[]"sv},
+  {"sc://h"sv, "host"sv, "x:1:2"sv, "sc://x:1\001[]"sv},
   {"sc://h"sv, "host"sv, "[::1]:80"sv, "sc://[::1]:80\001[]"sv},
   {"sc://h"sv, "host"sv, "[::1]:99999"sv, "sc://[::1]\001[]"sv},
   {"sc://h"sv, "host"sv, "x:443"sv, "sc://x:443\001[]"sv},
@@ -3551,7 +3535,7 @@ namespace {
   {"sc://h"sv, "host"sv, "localhost:5"sv, "sc://localhost:5\001[]"sv},
   {"sc://h"sv, "host"sv, "x:80/"sv, "sc://x:80\001[]"sv},
   {"sc://h"sv, "host"sv, "x:99999/"sv, "sc://x\001[]"sv},
-  {"sc://h"sv, "host"sv, "x::9"sv, "sc://h\001[]"sv},
+  {"sc://h"sv, "host"sv, "x::9"sv, "sc://x\001[]"sv},
   {"sc://h"sv, "host"sv, ":"sv, "sc://h\001[]"sv},
   {"sc://h"sv, "host"sv, "x:0x10"sv, "sc://x:0\001[]"sv},
   {"sc://h"sv, "host"sv, "x:1e3"sv, "sc://x:1\001[]"sv},
@@ -3560,7 +3544,7 @@ namespace {
   {"sc://h"sv, "host"sv, "[::1]x"sv, "sc://h\001[]"sv},
   {"sc://h"sv, "host"sv, "[::1]:x"sv, "sc://[::1]\001[]"sv},
   {"sc://h"sv, "host"sv, "x:81"sv, "sc://x:81\001[]"sv},
-  {"sc://h"sv, "host"sv, "%5B::1%5D:8"sv, "sc://h\001[]"sv},
+  {"sc://h"sv, "host"sv, "%5B::1%5D:8"sv, "sc://%5B\001[]"sv},
   {"sc://h"sv, "host"sv, "x/y:9"sv, "sc://x\001[]"sv},
   {"sc://h"sv, "host"sv, "a b:9"sv, "sc://h\001[]"sv},
   {"sc://h"sv, "host"sv, "a b:99999"sv, "sc://h\001[]"sv},
@@ -3569,7 +3553,7 @@ namespace {
   {"sc://h"sv, "host"sv, "\303\251.com"sv, "sc://%C3%A9.com\001[]"sv},
   {"sc://h"sv, "host"sv, "\303\251.com:7"sv, "sc://%C3%A9.com:7\001[]"sv},
   {"sc://h"sv, "host"sv, "0x7f.1:5"sv, "sc://0x7f.1:5\001[]"sv},
-  {"sc://h"sv, "host"sv, "x:\0119"sv, "sc://x\001[]"sv},
+  {"sc://h"sv, "host"sv, "x:\0119"sv, "sc://x:9\001[]"sv},
   {"sc://h"sv, "host"sv, "[x]:9"sv, "sc://h\001[]"sv},
   {"sc://h"sv, "host"sv, "x?y:9"sv, "sc://x\001[]"sv},
   {"sc://h"sv, "host"sv, "\303\204:65536"sv, "sc://%C3%84\001[]"sv},
@@ -3588,7 +3572,7 @@ namespace {
   {"sc://h"sv, "hostname"sv, "localhost"sv, "sc://localhost\001[]"sv},
   {"sc://h"sv, "hostname"sv, "x\011y"sv, "sc://xy\001[]"sv},
   {"sc://h"sv, "hostname"sv, "\303\251"sv, "sc://%C3%A9\001[]"sv},
-  {"sc://h"sv, "hostname"sv, "[::1]:9"sv, "sc://[::1]:9\001[]"sv},
+  {"sc://h"sv, "hostname"sv, "[::1]:9"sv, "sc://h\001[]"sv},
   {"sc://h"sv, "hostname"sv, "0x7f.1"sv, "sc://0x7f.1\001[]"sv},
   {"sc://h"sv, "port"sv, ""sv, "sc://h\001[]"sv},
   {"sc://h"sv, "port"sv, "0"sv, "sc://h:0\001[]"sv},
@@ -3681,12 +3665,12 @@ namespace {
   {"sc://h"sv, "href"sv, "  http://C/  "sv, "http://c/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, ""sv, "ws://a:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x"sv, "ws://x:81/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "x:80"sv, "ws://x:81/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "x:80"sv, "ws://x/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x:99"sv, "ws://x:99/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x:"sv, "ws://x:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, ":99"sv, "ws://a:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x:99abc"sv, "ws://x:99/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "x:99999"sv, "ws://x/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "x:99999"sv, "ws://x:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "[::1]:9"sv, "ws://[::1]:9/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "[::1]"sv, "ws://[::1]:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x/y"sv, "ws://x:81/\001[]"sv},
@@ -3700,23 +3684,23 @@ namespace {
   {"ws://a:81/"sv, "host"sv, "X.COM"sv, "ws://x.com:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x:9/zz"sv, "ws://x:9/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x:0"sv, "ws://x:0/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "x:65536"sv, "ws://x/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "x:65536"sv, "ws://x:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x:abc"sv, "ws://x:81/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "x:80abc"sv, "ws://x:81/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "x:99999abc"sv, "ws://x/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "x:80abc"sv, "ws://x/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "x:99999abc"sv, "ws://x:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x:-1"sv, "ws://x:81/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "x:1:2"sv, "ws://a:81/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "[::1]:80"sv, "ws://[::1]:81/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "[::1]:99999"sv, "ws://[::1]/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "x:1:2"sv, "ws://x:1/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "[::1]:80"sv, "ws://[::1]/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "[::1]:99999"sv, "ws://[::1]:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x:443"sv, "ws://x:443/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "x:080"sv, "ws://x:81/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "x:080"sv, "ws://x/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x:00081"sv, "ws://x:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x:8080"sv, "ws://x:8080/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "localhost"sv, "ws://localhost:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "localhost:5"sv, "ws://localhost:5/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "x:80/"sv, "ws://x:81/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "x:99999/"sv, "ws://x/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "x::9"sv, "ws://a:81/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "x:80/"sv, "ws://x/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "x:99999/"sv, "ws://x:81/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "x::9"sv, "ws://x:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, ":"sv, "ws://a:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x:0x10"sv, "ws://x:0/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x:1e3"sv, "ws://x:1/\001[]"sv},
@@ -3734,10 +3718,10 @@ namespace {
   {"ws://a:81/"sv, "host"sv, "\303\251.com"sv, "ws://xn--9ca.com:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "\303\251.com:7"sv, "ws://xn--9ca.com:7/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "0x7f.1:5"sv, "ws://127.0.0.1:5/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "x:\0119"sv, "ws://x:81/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "x:\0119"sv, "ws://x:9/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "[x]:9"sv, "ws://a:81/\001[]"sv},
   {"ws://a:81/"sv, "host"sv, "x?y:9"sv, "ws://x:81/\001[]"sv},
-  {"ws://a:81/"sv, "host"sv, "\303\204:65536"sv, "ws://xn--4ca/\001[]"sv},
+  {"ws://a:81/"sv, "host"sv, "\303\204:65536"sv, "ws://xn--4ca:81/\001[]"sv},
   {"ws://a:81/"sv, "hostname"sv, ""sv, "ws://a:81/\001[]"sv},
   {"ws://a:81/"sv, "hostname"sv, "x"sv, "ws://x:81/\001[]"sv},
   {"ws://a:81/"sv, "hostname"sv, "x:80"sv, "ws://a:81/\001[]"sv},
@@ -3870,7 +3854,7 @@ namespace {
   {"sc://h/p"sv, "host"sv, "x:80abc"sv, "sc://x:80/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "x:99999abc"sv, "sc://x/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "x:-1"sv, "sc://x/p\001[]"sv},
-  {"sc://h/p"sv, "host"sv, "x:1:2"sv, "sc://h/p\001[]"sv},
+  {"sc://h/p"sv, "host"sv, "x:1:2"sv, "sc://x:1/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "[::1]:80"sv, "sc://[::1]:80/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "[::1]:99999"sv, "sc://[::1]/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "x:443"sv, "sc://x:443/p\001[]"sv},
@@ -3881,7 +3865,7 @@ namespace {
   {"sc://h/p"sv, "host"sv, "localhost:5"sv, "sc://localhost:5/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "x:80/"sv, "sc://x:80/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "x:99999/"sv, "sc://x/p\001[]"sv},
-  {"sc://h/p"sv, "host"sv, "x::9"sv, "sc://h/p\001[]"sv},
+  {"sc://h/p"sv, "host"sv, "x::9"sv, "sc://x/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, ":"sv, "sc://h/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "x:0x10"sv, "sc://x:0/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "x:1e3"sv, "sc://x:1/p\001[]"sv},
@@ -3890,7 +3874,7 @@ namespace {
   {"sc://h/p"sv, "host"sv, "[::1]x"sv, "sc://h/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "[::1]:x"sv, "sc://[::1]/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "x:81"sv, "sc://x:81/p\001[]"sv},
-  {"sc://h/p"sv, "host"sv, "%5B::1%5D:8"sv, "sc://h/p\001[]"sv},
+  {"sc://h/p"sv, "host"sv, "%5B::1%5D:8"sv, "sc://%5B/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "x/y:9"sv, "sc://x/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "a b:9"sv, "sc://h/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "a b:99999"sv, "sc://h/p\001[]"sv},
@@ -3899,7 +3883,7 @@ namespace {
   {"sc://h/p"sv, "host"sv, "\303\251.com"sv, "sc://%C3%A9.com/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "\303\251.com:7"sv, "sc://%C3%A9.com:7/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "0x7f.1:5"sv, "sc://0x7f.1:5/p\001[]"sv},
-  {"sc://h/p"sv, "host"sv, "x:\0119"sv, "sc://x/p\001[]"sv},
+  {"sc://h/p"sv, "host"sv, "x:\0119"sv, "sc://x:9/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "[x]:9"sv, "sc://h/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "x?y:9"sv, "sc://x/p\001[]"sv},
   {"sc://h/p"sv, "host"sv, "\303\204:65536"sv, "sc://%C3%84/p\001[]"sv},
@@ -3918,7 +3902,7 @@ namespace {
   {"sc://h/p"sv, "hostname"sv, "localhost"sv, "sc://localhost/p\001[]"sv},
   {"sc://h/p"sv, "hostname"sv, "x\011y"sv, "sc://xy/p\001[]"sv},
   {"sc://h/p"sv, "hostname"sv, "\303\251"sv, "sc://%C3%A9/p\001[]"sv},
-  {"sc://h/p"sv, "hostname"sv, "[::1]:9"sv, "sc://[::1]:9/p\001[]"sv},
+  {"sc://h/p"sv, "hostname"sv, "[::1]:9"sv, "sc://h/p\001[]"sv},
   {"sc://h/p"sv, "hostname"sv, "0x7f.1"sv, "sc://0x7f.1/p\001[]"sv},
   {"sc://h/p"sv, "port"sv, ""sv, "sc://h/p\001[]"sv},
   {"sc://h/p"sv, "port"sv, "0"sv, "sc://h:0/p\001[]"sv},
@@ -4013,10 +3997,10 @@ namespace {
   {"file:///x"sv, "host"sv, "x"sv, "file://x/x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:80"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:99"sv, "file:///x\001[]"sv},
-  {"file:///x"sv, "host"sv, "x:"sv, "file://x/x\001[]"sv},
+  {"file:///x"sv, "host"sv, "x:"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, ":99"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:99abc"sv, "file:///x\001[]"sv},
-  {"file:///x"sv, "host"sv, "x:99999"sv, "file://x/x\001[]"sv},
+  {"file:///x"sv, "host"sv, "x:99999"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "[::1]:9"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "[::1]"sv, "file://[::1]/x\001[]"sv},
   {"file:///x"sv, "host"sv, "x/y"sv, "file://x/x\001[]"sv},
@@ -4030,14 +4014,14 @@ namespace {
   {"file:///x"sv, "host"sv, "X.COM"sv, "file://x.com/x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:9/zz"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:0"sv, "file:///x\001[]"sv},
-  {"file:///x"sv, "host"sv, "x:65536"sv, "file://x/x\001[]"sv},
-  {"file:///x"sv, "host"sv, "x:abc"sv, "file://x/x\001[]"sv},
+  {"file:///x"sv, "host"sv, "x:65536"sv, "file:///x\001[]"sv},
+  {"file:///x"sv, "host"sv, "x:abc"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:80abc"sv, "file:///x\001[]"sv},
-  {"file:///x"sv, "host"sv, "x:99999abc"sv, "file://x/x\001[]"sv},
-  {"file:///x"sv, "host"sv, "x:-1"sv, "file://x/x\001[]"sv},
+  {"file:///x"sv, "host"sv, "x:99999abc"sv, "file:///x\001[]"sv},
+  {"file:///x"sv, "host"sv, "x:-1"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:1:2"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "[::1]:80"sv, "file:///x\001[]"sv},
-  {"file:///x"sv, "host"sv, "[::1]:99999"sv, "file://[::1]/x\001[]"sv},
+  {"file:///x"sv, "host"sv, "[::1]:99999"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:443"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:080"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:00081"sv, "file:///x\001[]"sv},
@@ -4045,15 +4029,15 @@ namespace {
   {"file:///x"sv, "host"sv, "localhost"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "localhost:5"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:80/"sv, "file:///x\001[]"sv},
-  {"file:///x"sv, "host"sv, "x:99999/"sv, "file://x/x\001[]"sv},
+  {"file:///x"sv, "host"sv, "x:99999/"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x::9"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, ":"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:0x10"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:1e3"sv, "file:///x\001[]"sv},
-  {"file:///x"sv, "host"sv, "x: 9"sv, "file://x/x\001[]"sv},
-  {"file:///x"sv, "host"sv, "[::1]:"sv, "file://[::1]/x\001[]"sv},
+  {"file:///x"sv, "host"sv, "x: 9"sv, "file:///x\001[]"sv},
+  {"file:///x"sv, "host"sv, "[::1]:"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "[::1]x"sv, "file:///x\001[]"sv},
-  {"file:///x"sv, "host"sv, "[::1]:x"sv, "file://[::1]/x\001[]"sv},
+  {"file:///x"sv, "host"sv, "[::1]:x"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x:81"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "%5B::1%5D:8"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x/y:9"sv, "file://x/x\001[]"sv},
@@ -4064,10 +4048,10 @@ namespace {
   {"file:///x"sv, "host"sv, "\303\251.com"sv, "file://xn--9ca.com/x\001[]"sv},
   {"file:///x"sv, "host"sv, "\303\251.com:7"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "0x7f.1:5"sv, "file:///x\001[]"sv},
-  {"file:///x"sv, "host"sv, "x:\0119"sv, "file://x/x\001[]"sv},
+  {"file:///x"sv, "host"sv, "x:\0119"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "[x]:9"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "host"sv, "x?y:9"sv, "file://x/x\001[]"sv},
-  {"file:///x"sv, "host"sv, "\303\204:65536"sv, "file://xn--4ca/x\001[]"sv},
+  {"file:///x"sv, "host"sv, "\303\204:65536"sv, "file:///x\001[]"sv},
   {"file:///x"sv, "hostname"sv, ""sv, "file:///x\001[]"sv},
   {"file:///x"sv, "hostname"sv, "x"sv, "file://x/x\001[]"sv},
   {"file:///x"sv, "hostname"sv, "x:80"sv, "file:///x\001[]"sv},
@@ -4672,7 +4656,7 @@ namespace {
   };
 }
 
-TEST("URL setters match Bun, including WebKit's host-setter port rules") {
+TEST("URL setters follow Ada on the recorded setter vectors") {
   int mismatches = 0;
   for (const auto& vector : kSetterVectors) {
     std::string actual;
@@ -4703,13 +4687,13 @@ namespace {
     std::string_view expected;
   };
 
-  // Generated by Bun 1.4.0 (gen_url_extra.ts): {scenario, label, op, arg, expected}.
+  // Recorded with Bun 1.4.0 (gen_url_extra.ts). Ada preserves the percent-decoded byte 0xFF.
   const UrlStep kUrlSteps[] = {
     {0, "constructor string with leading ?"sv, "params"sv, "?a=1&??b=2"sv, ""sv},
     {0, "constructor string with leading ?"sv, "entries"sv, ""sv, "a\0011\002??b\0012"sv},
     {0, "constructor string with leading ?"sv, "size"sv, ""sv, "2"sv},
     {1, "constructor string decoding"sv, "params"sv, "a=1&b=+x+y&c=%zz&=e&f&&g=%C3%A9&h=%FF&%41=%42"sv, ""sv},
-    {1, "constructor string decoding"sv, "entries"sv, ""sv, "a\0011\002b\001 x y\002c\001%zz\002\001e\002f\001\002g\001\303\251\002h\001\357\277\275\002A\001B"sv},
+    {1, "constructor string decoding"sv, "entries"sv, ""sv, "a\0011\002b\001 x y\002c\001%zz\002\001e\002f\001\002g\001\303\251\002h\001\377\002A\001B"sv},
     {2, "sequence with non-pairs"sv, "paramsSeq"sv, "a\0011\002b"sv, "THROW TypeError: Type error"sv},
     {2, "sequence with non-pairs"sv, "entries"sv, ""sv, "SKIP"sv},
     {3, "sequence with three strings"sv, "paramsSeq"sv, "a\001b\001c"sv, "THROW TypeError: Type error"sv},
@@ -4997,7 +4981,7 @@ namespace {
   }
 }
 
-TEST("URLSearchParams, URL linkage and node:url match Bun") {
+TEST("URLSearchParams, URL linkage and POSIX file conversion") {
   UrlMachine machine;
   int scenario = -1, mismatches = 0;
   for (const auto& step : kUrlSteps) {
@@ -5018,7 +5002,7 @@ TEST("URLSearchParams, URL linkage and node:url match Bun") {
 }
 
 namespace {
-  // Generated by Bun 1.4.0 (gen_url_grids.ts): grid inputs and FNV-1a 32 hashes of Bun's results per block of 1000 vectors.
+  // Grid inputs from gen_url_grids.ts. Changed blocks use Ada results, with the same FNV-1a encoding.
   constexpr std::string_view kGridSchemes[] = {"sc://"sv, "http://"sv, "file://"sv, "ws://"sv, "ftps://"sv};
   constexpr std::string_view kGridUsers[] = {""sv, "u@"sv, "@"sv, ":@"sv, "u:p@"sv, "u:@"sv, ":p@"sv, "u@v@"sv, "%40@"sv, "u:p:q@"sv};
   constexpr std::string_view kGridHosts[] = {"h"sv, ""sv, "[::1]"sv, "H"sv, "1.2.3.4"sv, "x%41"sv, "localhost"sv, "C|"sv, "c:"sv};
@@ -5041,8 +5025,8 @@ namespace {
     std::size_t count;
   };
   constexpr SetterGrid kSetterGrids[] = {{"host"sv, kSetterValues_host, 91}, {"hostname"sv, kSetterValues_hostname, 40}, {"port"sv, kSetterValues_port, 23}, {"protocol"sv, kSetterValues_protocol, 24}, {"username"sv, kSetterValues_username, 10}, {"password"sv, kSetterValues_password, 7}, {"pathname"sv, kSetterValues_pathname, 31}, {"search"sv, kSetterValues_search, 16}, {"hash"sv, kSetterValues_hash, 13}, {"href"sv, kSetterValues_href, 7}};
-  constexpr std::uint32_t kAuthorityGridHashes[] = {2546813322u, 598108399u, 785224674u, 3428216546u, 1456756164u, 2845923433u, 3484754691u, 568679629u, 424995228u, 2107575826u, 279170317u, 3047390436u, 979425374u, 2756572896u, 1224855942u, 3957150812u, 884234216u, 3147838260u, 1490087355u, 3047246196u, 2029854269u, 600461619u, 1762642424u, 1625238851u, 2390841878u, 2568508778u, 4264207120u, 3169658646u, 233557973u, 40036759u, 3345264766u, 4219531916u, 1719743125u, 437467488u, 1282248340u, 2527994242u, 3770984594u, 385878655u, 196560003u, 3883125034u, 1435729515u, 4203653102u, 2384631986u, 1267270454u, 3379198495u, 198627948u, 2893364467u, 1304726472u, 3217703690u, 1771293261u, 1786429724u, 1556803779u, 379018949u, 718690525u, 1521129183u, 2758592760u, 1116951299u, 3558636973u, 2526029174u, 4036005302u};
-  constexpr std::uint32_t kSetterGridHashes[] = {1714584099u, 1445572136u, 3028533760u, 2527430973u, 2423240358u, 111891955u, 1307561318u, 2267524843u, 1337323552u, 3752510538u};
+  constexpr std::uint32_t kAuthorityGridHashes[] = {2546813322u, 3118570189u, 1264533116u, 1725985296u, 2469257358u, 520444747u, 2416357937u, 3684952451u, 3154011298u, 3659317184u, 3531229725u, 3559175720u, 979425374u, 2756572896u, 1224855942u, 3957150812u, 884234216u, 3147838260u, 1490087355u, 3047246196u, 2029854269u, 600461619u, 1762642424u, 3490725125u, 3876833182u, 2394932812u, 4264207120u, 3169658646u, 233557973u, 40036759u, 3345264766u, 4219531916u, 1719743125u, 437467488u, 1282248340u, 2527994242u, 3770984594u, 385878655u, 196560003u, 3883125034u, 1435729515u, 4203653102u, 2384631986u, 1267270454u, 3379198495u, 198627948u, 2893364467u, 4153854613u, 1149705934u, 3961242495u, 2492962827u, 2570820708u, 683251333u, 704885038u, 2488054675u, 3774339158u, 3599848936u, 3935397078u, 3256959386u, 4127469280u};
+  constexpr std::uint32_t kSetterGridHashes[] = {2691864355u, 26526919u, 3952027162u, 2639261503u, 109862875u, 3412129273u, 3039145858u, 2903127530u, 4198449287u, 2907635376u};
 
   // FNV-1a 32 over the records of each block of 1000 vectors.
   struct BlockHasher {
@@ -5088,12 +5072,12 @@ namespace {
     EXPECT_EQ(hasher.hashes.size(), N);
     for (std::size_t block = 0; block < N && block < hasher.hashes.size(); ++block)
       if (hasher.hashes[block] != expected[block]) {
-        ::uos::rt::test::report(__FILE__, __LINE__, std::string(grid) + ": vectors " + std::to_string(block * 1000) + ".." + std::to_string(block * 1000 + 999) + " differ from Bun", false);
+        ::uos::rt::test::report(__FILE__, __LINE__, std::string(grid) + ": vectors " + std::to_string(block * 1000) + ".." + std::to_string(block * 1000 + 999) + " differ from the recorded results", false);
       }
   }
 }
 
-TEST("the authority grid (59850 inputs) matches Bun") {
+TEST("the authority grid covers 59850 inputs") {
   BlockHasher hasher;
   for (auto scheme : kGridSchemes)
     for (auto user : kGridUsers)
@@ -5113,7 +5097,7 @@ TEST("the authority grid (59850 inputs) matches Bun") {
   expectBlocks(hasher, kAuthorityGridHashes, "authority grid");
 }
 
-TEST("the setter grid (36 bases x every setter) matches Bun") {
+TEST("the setter grid covers 36 bases and every setter") {
   BlockHasher hasher;
   for (auto base : kSetterBases)
     for (const auto& grid : kSetterGrids)

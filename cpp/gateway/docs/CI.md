@@ -1,15 +1,14 @@
 # Portable gateway CI build
 
-`tools/ci-build.sh` builds the C++20 port on a disposable Linux runner without the production SDK, its absolute paths, `tools/build.py`, or the production CMake presets. It compiles every canonical `src/**/*.cpp` once and uses `tools/links.py` for each test's exact object list. Every `src/rt/*.cpp` object is linked into every test. Dot-prefixed staging files are excluded. This checkout has 325 module sources, 44 runtime sources and 437 standalone tests; older notes count 436 tests.
+`tools/ci-build.sh` builds the C++20 port on a disposable Linux runner independently of the production SDK and CMake profiles. It compiles every canonical `src/**/*.cpp` once and uses `tools/links.py` for each test's exact object list. Every `src/rt/*.cpp` object is linked into every test. Dot-prefixed staging files are excluded. Use `bash cpp/gateway/tools/ci-build.sh --list` for the current test inventory.
 
 ## Ubuntu prerequisites
 
-On Ubuntu 24.04 or newer:
+On Ubuntu 24.04, prepare Clang 21 or newer from apt.llvm.org or use GCC 14 or newer. Build Boost 1.92.0 JSON and Container and ICU 78.3 from their upstream sources. The distribution's Boost and ICU are older than those used by the ARM64 fixtures. For the other dependencies:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y g++-14 clang ninja-build pkg-config libboost-json-dev libboost-container-dev \
-  libssl-dev libsqlite3-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev util-linux
+sudo apt-get install -y ninja-build pkg-config libssl-dev zlib1g-dev libbrotli-dev libzstd-dev util-linux
 # Optional faster linker, detected automatically on Linux:
 sudo apt-get install -y mold
 ```
@@ -31,9 +30,11 @@ sudo ldconfig
 pkg-config --modversion sqlite3
 ```
 
-Library preparation is a separate prerequisite. The CI driver never installs dependencies at application startup or changes an expected value to accommodate an older system library. Ubuntu CI images need the same library prerequisite before the proposed build step below.
+Library preparation is a separate prerequisite. The GitHub suite workflow prepares the same release and configure flags with `make -j4`. The driver takes `sqlite3.h` and `libsqlite3.so` from `UOS_CI_SQLITE_PREFIX` (default `/usr/local`) and adds that library directory to the test binaries' ELF RPATH. Use a prefix outside `/tmp`, which the test mount namespace hides. A probe built with the same flags checks the headers, prints `sqlite3_libversion()` from inside the fixture boundary and rejects a version mismatch before running the suite.
 
-Use GCC 14 or newer, or a recent Clang, with Boost >= 1.83. GCC 12 is refused because of its known coroutine miscompile. Dependencies are linked through their installed headers and libraries with `UOS_GATEWAY_NATIVE_LIBRARIES=1`; SQLite, zlib, Brotli, Zstd and ICU use the current direct-library path. OpenSSL, Boost.JSON, Boost.Container and pthread are also required. `pkg-config` resolves the native C library include/link flags. No package is installed or downloaded by the driver.
+Use GCC 14 or newer or Clang 21 or newer, with Boost 1.86 or newer (1.92 recommended) and ICU 78.3 for the Unicode fixtures. GCC 12 is refused because of its known coroutine miscompile. Dependencies are linked through their installed headers and libraries with `UOS_GATEWAY_NATIVE_LIBRARIES=1`. SQLite uses the explicit prefix above, and `pkg-config` resolves flags for OpenSSL, zlib, Brotli, Zstd and ICU. Boost.JSON, Boost.Container and pthread are also required. For a staged ICU install, point `PKG_CONFIG_PATH` at its metadata and set its library RPATH through `UOS_CI_LDFLAGS`. This lets fixture subprocesses resolve the same library with a clean environment.
+
+The driver validates the vendored simdjson, simdutf and llhttp sources using `cmake/vendors.json` and `tools/vendor_sources.py`. It compiles the three llhttp sources with the C compiler in C11 mode, builds a static archive for each vendor and links each archive into the test closures that need it. Vendor compilation uses the selected optimization and sanitizer profile and omits the first-party warning set. With Clang, `--system-header-prefix=third_party/` covers tree-relative vendor includes while Ninja tracks those headers as explicit inputs.
 
 Tests require real Linux network, mount and PID namespaces. The driver first tries unprivileged user namespaces. If those are restricted, it tries passwordless `sudo -n` for namespace setup and drops back to the invoking uid/gid before running the test. Each test gets its own loopback-only network namespace, private 512 MiB tmpfs at `/tmp`, empty `HOME=/tmp/h`, `TMPDIR=/tmp/t` and working directory `/tmp/w`. The helper proves loopback communication and an outside-route denial before executing the binary. A credential-free environment allowlist also excludes provider settings, `CODEX_HOME`, synchronized authentication locations and unknown future credential variables. Registry entries cannot override the home/temp/path isolation or introduce credential/provider variables. The tmpfs fixture preserves the full Linux timestamp range used by the Bun-recorded filesystem tests; an ext4-backed runner directory clamps those times. Unsupported isolation fails closed.
 
@@ -44,15 +45,15 @@ The current runtime and fixtures still contain ARM64-only application contracts.
 Run from any working directory; paths below assume the repository root:
 
 ```sh
-CXX=g++-14 UOS_CI_JOBS=4 cpp/gateway/tools/ci-build.sh --config debug
-CXX=g++-14 UOS_CI_JOBS=4 cpp/gateway/tools/ci-build.sh --config release
-CXX=clang++ UOS_CI_JOBS=4 cpp/gateway/tools/ci-build.sh --config asan
-cpp/gateway/tools/ci-build.sh --list
-cpp/gateway/tools/ci-build.sh --config debug rt/process
-cpp/gateway/tools/ci-build.sh --config release --shard 1/4
+CC=gcc-14 CXX=g++-14 UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config debug
+CC=gcc-14 CXX=g++-14 UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config release
+CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config asan --shard 1/4
+bash cpp/gateway/tools/ci-build.sh --list
+bash cpp/gateway/tools/ci-build.sh --config debug rt/process
+bash cpp/gateway/tools/ci-build.sh --config release --shard 1/4
 ```
 
-`CXX` defaults to `g++`. `UOS_CI_JOBS` defaults to the available CPU count (`nproc` equivalent). `UOS_CI_BUILD_DIR` defaults to `/tmp/uos-gateway-build` and must be outside the repository. The driver separates compiler/flag identities and configurations, locks each output tree, and lets Ninja track transitive header dependencies. A filter is a substring of the test path. `--shard i/n` takes every nth element of the sorted filtered list, starting with one-based index i. Empty selections and invalid arguments fail.
+`CC` defaults to `cc` and `CXX` to `g++`. Select compilers from the same toolchain for sanitizer runs. `UOS_CI_JOBS` defaults to the available CPU count (`nproc` equivalent). `UOS_CI_BUILD_DIR` defaults to `/tmp/uos-gateway-build` and must be outside the repository. The driver separates compiler/flag identities and configurations, locks each output tree, and lets Ninja track transitive header dependencies. A filter is a substring of the test path. `--shard i/n` takes every nth element of the sorted filtered list, starting with one-based index i. Empty selections and invalid arguments fail.
 
 | Configuration | Additional compiler flags                                     |
 | ------------- | ------------------------------------------------------------- |
@@ -60,11 +61,11 @@ cpp/gateway/tools/ci-build.sh --config release --shard 1/4
 | release       | `-O2`                                                         |
 | asan          | `-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer` |
 
-All configurations retain `-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror` and the Boost JSON/Container/System no-autolink definitions. Release and sanitizer configurations additionally define `BOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING` to use standard coroutine frame allocation. This avoids GCC 15/Boost.Asio 1.90 optimized allocator diagnostics without disabling any warning. Debug exercises Asio's recycling mode. Sanitizers also apply during linkage; runtime sanitizer errors are fatal. `UOS_CI_CXXFLAGS` and `UOS_CI_LDFLAGS` can supply additional dependency include/library paths. `UOS_CI_TIMEOUT` sets the per-binary run timeout in seconds (default 300); links are bounded at 900 seconds. Timeouts and interruption kill the owned process group, including namespace descendants. At most `UOS_CI_JOBS` test binaries exist at once; binaries and scratch directories are deleted after execution while objects and logs remain reusable.
+All configurations retain `-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror` and the Boost JSON/Container/System no-autolink definitions. Release and sanitizer configurations additionally define `BOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING` to use standard coroutine frame allocation. This avoids GCC 15/Boost.Asio 1.90 optimized allocator diagnostics without disabling any warning. Debug exercises Asio's recycling mode. The `asan` configuration instruments compilation and linkage with AddressSanitizer and UndefinedBehaviorSanitizer, enables LeakSanitizer with `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1`, and halts on UBSan errors. `UOS_CI_CFLAGS` and `UOS_CI_CXXFLAGS` add language-specific compile flags. `UOS_CI_LDFLAGS` can add library paths. `UOS_CI_TIMEOUT` defaults to 300 seconds per binary. Links are bounded at 900 seconds. Timeouts and interruption kill the owned process group, including namespace descendants. At most `UOS_CI_JOBS` test binaries exist at once. The driver deletes binaries and scratch directories after execution and retains reusable objects and logs.
 
 The final table lists every selected test, `PASS`, `FAIL`, `BUILD_FAIL` or `TIMEOUT`, and the harness's run/passed/failed case counts. A crash or missing summary cannot pass. Compilation continues after individual failures to collect complete diagnostics; any failed production compilation, test build, run or timeout makes the command exit nonzero. A crashed binary without a flushed harness summary has zero reported cases, not an invented count.
 
-Each output tree contains `compile.log`, per-object compiler logs, `logs/<test>/{build,run}.log`, incremental `results.tsv` and a final machine-readable `receipt.json` with the Git commit/tree, compiler/flags/input identity, counts and wall times. Input hashes are checked again at the end; an edited input invalidates acceptance and makes the command fail while preserving the observed counts. Previous logs and receipts move to `history/` on a rerun. Original failures remain available.
+Each `$UOS_CI_BUILD_DIR/<compiler>-<identity>/<config>/` output tree contains `compile.log`, per-object compiler logs, `logs/<test>/{build,run}.log`, incremental `results.tsv` and a final machine-readable `receipt.json` with the Git commit/tree, compiler/flags/input identity, counts and wall times. The receipt records which tests linked successfully, including ones that later failed or timed out. Input hashes are checked again at the end; an edited input invalidates acceptance and makes the command fail while preserving the observed counts. Previous logs and receipts move to `history/` on a rerun. Original failures remain available.
 
 Driver control tests use the actual selected compiler and actual namespaces:
 
@@ -94,86 +95,30 @@ GCC 15 optimized compilation also reports unresolved libstdc++ variant-copy and 
 
 Exact commands, original failures, source changes, limitations and terminal counts are maintained in [the runner findings](findings/cppgw-ci-build-x86-20261117.md). An incremental build must not be described as a cold-build measurement.
 
-## Proposed workflow
+## GitHub Actions
 
-This is a maintainer proposal, not an installed workflow. It is manual-only to respect the repository's Actions budget. It includes the requested platform/configuration/shard matrix; Darwin remains a qualification job that will fail until its actual OS boundary and remaining runtime/fixture portability are implemented. Do not turn unsupported jobs into successful skips or make this proposal an automatic PR/push/scheduled workflow.
+The C++ gateway workflow runs on pushes to `claude/cpp-gateway-port`, `pool-merge/**` and `agent-jobs/**`, on pull requests targeting `claude/cpp-gateway-port`, and on manual dispatch. A newer run for the same ref cancels the older run. All jobs run on `ubuntu-26.04-arm` with read-only repository access and checkout credential persistence disabled. [Workflow](../../../.github/workflows/cpp-gateway-ci.yml)
 
-```yaml
-name: Portable C++ gateway qualification
-on:
-  workflow_dispatch:
-permissions:
-  contents: read
-jobs:
-  gateway:
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        platform: [ubuntu-x86_64, ubuntu-arm64, macos-arm64]
-        config: [debug, release, asan]
-        shard: [1, 2]
-        include:
-          - platform: ubuntu-x86_64
-            runner: ubuntu-24.04
-            compiler: g++-14
-          - platform: ubuntu-arm64
-            runner: ubuntu-24.04-arm
-            compiler: g++-14
-          - platform: macos-arm64
-            runner: macos-15
-            compiler: clang++
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    env:
-      CXX: ${{ matrix.compiler }}
-      UOS_CI_JOBS: "4"
-      UOS_CI_BUILD_DIR: ${{ runner.temp }}/uos-gateway-build
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Install Linux prerequisites
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y g++-14 clang ninja-build pkg-config mold \
-            libboost-json-dev libboost-container-dev libssl-dev libsqlite3-dev \
-            zlib1g-dev libicu-dev libbrotli-dev libzstd-dev util-linux
-      - name: Prepare the native SQLite prerequisite
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/sqlite"
-          curl --fail --location https://www.sqlite.org/2026/sqlite-autoconf-3540000.tar.gz \
-            -o "$RUNNER_TEMP/sqlite/source.tar.gz"
-          printf '%s  %s\n' 134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed \
-            "$RUNNER_TEMP/sqlite/source.tar.gz" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/sqlite/source.tar.gz" -C "$RUNNER_TEMP/sqlite"
-          cd "$RUNNER_TEMP/sqlite/sqlite-autoconf-3540000"
-          ./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'
-          make -j2
-          sudo make install
-          sudo ldconfig
-      - name: Install macOS prerequisites
-        if: runner.os == 'macOS'
-        run: brew install ninja pkgconf boost openssl@3 sqlite zlib icu4c brotli zstd
-      - name: Build and run selected shard
-        shell: bash
-        run: |
-          if [[ "$RUNNER_OS" == macOS ]]; then
-            export PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix sqlite)/lib/pkgconfig:$(brew --prefix zlib)/lib/pkgconfig:$(brew --prefix icu4c)/lib/pkgconfig"
-            export UOS_CI_CXXFLAGS="-I$(brew --prefix boost)/include"
-            export UOS_CI_LDFLAGS="-L$(brew --prefix boost)/lib"
-          fi
-          cpp/gateway/tools/ci-build.sh --config '${{ matrix.config }}' --shard '${{ matrix.shard }}/2'
-      - name: Preserve exact diagnostics and results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cpp-${{ matrix.platform }}-${{ matrix.config }}-${{ matrix.shard }}
-          path: |
-            ${{ runner.temp }}/uos-gateway-build/**/receipt.json
-            ${{ runner.temp }}/uos-gateway-build/**/results.tsv
-            ${{ runner.temp }}/uos-gateway-build/**/*.log
+| Check              | Jobs                           | Coverage                                                             |
+| ------------------ | ------------------------------ | -------------------------------------------------------------------- |
+| Release suite      | Four round-robin shards        | Every registered test with Clang `--config release`                  |
+| Sanitizer suite    | Four round-robin shards        | The same tests with Clang `--config asan` and ASan, UBSan and LSan   |
+| Library robustness | One job per registered harness | Five minutes per harness, or 40 minutes on pushes to the port branch |
+
+Each suite shard has a 240-minute job limit and four workers. It builds the production objects and vendors, then links and runs its share of the sorted test inventory. The `ci-<config>-shard-<i>` artifact contains the job summary and any `receipt.json`, `results.tsv`, and driver, compiler, namespace, link and run logs. The summary counts successful links, passed and failed targets, and reported cases. It lists unsuccessful targets, including build failures and timeouts.
+
+Both configurations split the stage 2a inventory into 111, 111, 111 and 110 tests. All four Release shards and a focused sanitizer selection passed on Linux ARM64. An earlier ASan shard built and ran 111 binaries on four x86_64 cores. The two build segments and the test run accounted for about 62 minutes, with 107 passes and four fixture failures before suite repair. [Stage 2a results](findings/cppgw-integrate-s2a-20261118.md) · [Earlier sanitizer receipt](findings/cppgw-ci-sanitizers-20261118.md#asan-shard-1-receipt)
+
+The robustness matrix uses all entries in `fuzz/targets.json`. The discovery job publishes the selected targets. Each harness job has a 120-minute limit and runs libFuzzer with four workers in a private Linux network namespace, using a fresh home and temporary directory and a credential-free environment. The `fuzz-<target>` artifact contains its build and campaign logs, summary, and any finding inputs. Slow `regex` inputs and the empty crash artifact from the known ARM64 libFuzzer fork-parent exit leak stay in the evidence and are counted separately. Genuine findings and incomplete campaigns fail the job.
+
+The same command runs the five-minute JSON harness on a disposable Linux host with passwordless sudo. With staged dependencies, set `CPLUS_INCLUDE_PATH` for the headers and pass the matching library directories through `LDFLAGS` inside the clean environment. Include an RPATH or set `LD_LIBRARY_PATH` for staged shared libraries.
+
+```sh
+fuzz_out=$(mktemp -d)
+mkdir -p "$fuzz_out/home" "$fuzz_out/tmp"
+sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --no-new-privs \
+  env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$fuzz_out/home" TMPDIR="$fuzz_out/tmp" \
+  python3 -B cpp/gateway/fuzz/ci.py json --seconds 300 --jobs 4 --out "$fuzz_out"
 ```
 
-Each shard independently compiles the production objects once, then only its selected test/helper objects. Choose the shard count deliberately: more shards reduce elapsed time but repeat production compilation and spend additional Actions minutes. No hosted workflow was dispatched for this task.
+The x86_64 qualification records local counts and diagnostics. Matching ARM64 results come from the workflow runs. [Release qualification](findings/cppgw-ci-workflow-20261118.md) · [Sanitizer and robustness qualification](findings/cppgw-ci-sanitizers-20261118.md)

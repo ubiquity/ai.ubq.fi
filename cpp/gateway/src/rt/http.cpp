@@ -1,5 +1,4 @@
 #include "uos/rt/http.hpp"
-#include "uos/rt/clock.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
@@ -8,7 +7,6 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <random>
 #include <span>
 #include <string>
 #include <string_view>
@@ -31,7 +29,7 @@ namespace uos::rt {
       bool used = false;
       // The stream of a stream body, or the stream `.body` made from the buffer.
       std::optional<ByteStream> stream;
-      // The content type extracting the body produced (URLSearchParams, FormData, Blob).
+      // The content type for a body from URLSearchParams.
       std::string contentType;
     };
 
@@ -58,13 +56,6 @@ namespace uos::rt {
       std::string cache = "default";
       BodyState body;
       explicit RequestState(AbortSignal signal_) : signal(std::move(signal_)) {}
-    };
-
-    struct FormDataAccess {
-      static File file(std::shared_ptr<const Bytes> bytes, std::string type, std::optional<std::string> name, double lastModified) {
-        return File(Blob::Internal{}, std::move(bytes), std::move(type), std::move(name), lastModified);
-      }
-      static File fileOf(const Blob& blob, std::optional<std::string> name) { return File(Blob::Internal{}, blob.bytes_, blob.type_, std::move(name), dateNow()); }
     };
   }
 
@@ -105,43 +96,7 @@ namespace uos::rt {
 
     std::shared_ptr<const Bytes> bytesOfText(std::string_view text) { return std::make_shared<const Bytes>(encodeUtf8(text)); }
 
-    Task<std::string> blobText(std::shared_ptr<const Bytes> bytes) {
-      co_await microtask();
-      co_return decodeUtf8(std::span<const std::uint8_t>(*bytes));
-    }
-
-    Task<Bytes> blobBytes(std::shared_ptr<const Bytes> bytes) {
-      co_await microtask();
-      co_return *bytes;
-    }
-
-    // ---- Blob -----------------------------------------------------------------
-
-    // A Blob type spelled exactly like one of Bun's compact MIME types becomes
-    // that type's canonical value; any other type is lowercased, and one holding
-    // a character outside U+0020..U+007E becomes "".
-    std::string normalizedBlobType(std::string_view type) {
-      static constexpr std::pair<std::string_view, std::string_view> kCanonical[] = {
-          {"application/javascript", "text/javascript;charset=utf-8"},
-          {"application/json", "application/json;charset=utf-8"},
-          {"application/x-www-form-urlencoded", "application/x-www-form-urlencoded;charset=UTF-8"},
-          {"text/css", "text/css;charset=utf-8"},
-          {"text/html", "text/html;charset=utf-8"},
-          {"text/javascript", "text/javascript;charset=utf-8"},
-          {"text/jsx", "text/javascript;charset=utf-8"},
-          {"text/plain", "text/plain;charset=utf-8"},
-      };
-      for (const auto& [spelling, canonical] : kCanonical)
-        if (type == spelling) return std::string(canonical);
-      for (char c : type) {
-        const auto byte = static_cast<unsigned char>(c);
-        if (byte < 0x20 || byte > 0x7E) return "";
-      }
-      return asciiLowercase(type);
-    }
-
-    // The stream Bun makes from a buffered body or a Blob: a first chunk of up
-    // to 16 KiB, then chunks of up to 2 MiB, then close.
+    // Buffered bodies yield up to 16 KiB first, then up to 2 MiB at a time.
     ByteStream bufferStream(std::shared_ptr<const Bytes> bytes) {
       auto offset = std::make_shared<std::size_t>(0);
       UnderlyingSource<ByteChunk> source;
@@ -159,75 +114,6 @@ namespace uos::rt {
       };
       return ByteStream(std::move(source));
     }
-
-    // ---- FormData serialization (multipart/form-data) -------------------------
-
-    std::string randomBoundary() {
-      static std::mt19937_64 engine{std::random_device{}()};
-      static constexpr char kHex[] = "0123456789abcdef";
-      std::string out = "----WebKitFormBoundary";
-      for (int index = 0; index < 32; ++index) out.push_back(kHex[engine() & 0x0F]);
-      return out;
-    }
-
-    // Converts every CR, LF and CRLF to CRLF.
-    std::string normalizeNewlines(std::string_view text) {
-      std::string out;
-      out.reserve(text.size());
-      for (std::size_t index = 0; index < text.size(); ++index) {
-        if (text[index] == '\r') {
-          out += "\r\n";
-          if (index + 1 < text.size() && text[index + 1] == '\n') ++index;
-        } else if (text[index] == '\n') {
-          out += "\r\n";
-        } else {
-          out.push_back(text[index]);
-        }
-      }
-      return out;
-    }
-
-    std::string escapeMultipartName(std::string_view text) {
-      std::string out;
-      for (char c : text) {
-        if (c == '"') out += "%22";
-        else if (c == '\r') out += "%0D";
-        else if (c == '\n') out += "%0A";
-        else out.push_back(c);
-      }
-      return out;
-    }
-
-    void appendText(Bytes& out, std::string_view text) { out.insert(out.end(), text.begin(), text.end()); }
-
-    Bytes serializeFormData(const FormData& form, std::string_view boundary) {
-      Bytes out;
-      for (const auto& [name, value] : form.entries()) {
-        appendText(out, "--");
-        appendText(out, boundary);
-        appendText(out, "\r\nContent-Disposition: form-data; name=\"");
-        appendText(out, escapeMultipartName(normalizeNewlines(name)));
-        appendText(out, "\"");
-        if (const auto* file = std::get_if<File>(&value)) {
-          appendText(out, "; filename=\"");
-          appendText(out, escapeMultipartName(file->name().value_or("")));
-          appendText(out, "\"\r\nContent-Type: ");
-          appendText(out, file->type().empty() ? std::string_view("application/octet-stream") : std::string_view(file->type()));
-          appendText(out, "\r\n\r\n");
-          out.insert(out.end(), file->data().begin(), file->data().end());
-        } else {
-          appendText(out, "\r\n\r\n");
-          appendText(out, normalizeNewlines(std::get<std::string>(value)));
-        }
-        appendText(out, "\r\n");
-      }
-      appendText(out, "--");
-      appendText(out, boundary);
-      appendText(out, "--\r\n");
-      return out;
-    }
-
-    // ---- FormData parsing (Bun's multipart parser) -----------------------------
 
     // Bun's MimeType table as its multipart parser applies it (filename extension,
     // lowercased, to type), extracted from Bun 1.4.0: 1124 extensions.
@@ -582,39 +468,28 @@ namespace uos::rt {
       return text.substr(start, end - start + 1);
     }
 
-    std::vector<std::string_view> splitOn(std::string_view text, std::string_view separator) {
-      std::vector<std::string_view> out;
-      std::size_t start = 0;
-      for (;;) {
-        const std::size_t next = text.find(separator, start);
-        if (next == std::string_view::npos) {
-          out.push_back(text.substr(start));
-          return out;
-        }
-        out.push_back(text.substr(start, next - start));
-        start = next + separator.size();
-      }
-    }
-
     std::string decodeUtf8KeepingBom(std::string_view bytes) { return decodeUtf8(bytes, TextDecoderOptions{.fatal = false, .ignoreBOM = true}); }
 
-    FormData parseMultipart(std::string_view input, std::string_view boundary) {
+    FormParts parseMultipart(std::string_view input, std::string_view boundary) {
       if (boundary.size() + 4 > 76) throw formDataError("FormData parse error boundary is too long");
       const std::string finalBoundary = "--" + std::string(boundary) + "--";
       const std::size_t finalIndex = input.rfind(finalBoundary);
       if (finalIndex == std::string_view::npos) throw formDataError("FormData parse error missing final boundary");
       const std::string separator = "--" + std::string(boundary) + "\r\n";
-      const auto chunks = splitOn(input.substr(0, finalIndex), separator);
-      FormData form;
-      for (std::size_t chunkIndex = 1; chunkIndex < chunks.size(); ++chunkIndex) {
-        std::string_view remain = chunks[chunkIndex];
-        const std::size_t headerEnd = remain.find("\r\n\r\n");
+      input = input.substr(0, finalIndex);
+      FormParts parts;
+      for (auto next = input.find(separator); next != std::string_view::npos;) {
+        input.remove_prefix(next + separator.size());
+        next = input.find(separator);
+        const auto part = input.substr(0, next);
+        const std::size_t headerEnd = part.find("\r\n\r\n");
         if (headerEnd == std::string_view::npos) throw formDataError("FormData parse error is missing header end");
-        const std::string_view header = remain.substr(0, headerEnd + 2);
-        remain = remain.substr(headerEnd + 4);
         std::string_view name, filename;
         bool isFile = false;
-        for (std::string_view line : splitOn(header, "\r\n")) {
+        for (auto header = part.substr(0, headerEnd + 2); !header.empty();) {
+          const auto end = header.find("\r\n");
+          const auto line = header.substr(0, end);
+          header.remove_prefix(end + 2);
           if (line.empty()) continue;
           const std::size_t colon = line.find(':');
           if (colon == std::string_view::npos) throw formDataError("FormData parse error is missing header colon separator");
@@ -650,20 +525,19 @@ namespace uos::rt {
           }
         }
         if (name.empty()) continue;
-        std::string_view body = remain;
+        auto body = part.substr(headerEnd + 4);
         if (body.size() >= 2 && body.substr(body.size() - 2) == "\r\n") body.remove_suffix(2);
         if (isFile) {
           std::string_view type = typeForExtension(filenameExtension(filename));
           if (type.empty()) type = sniffedType(body);
           std::optional<std::string> fileName;
           if (!filename.empty() && !body.empty()) fileName = decodeUtf8KeepingBom(filename);
-          form.append(decodeUtf8KeepingBom(name),
-                      detail::FormDataAccess::file(std::make_shared<const Bytes>(body.begin(), body.end()), std::string(type), std::move(fileName), dateNow()));
+          parts.emplace_back(decodeUtf8KeepingBom(name), FormFile{std::move(fileName), std::string(type), Bytes(body.begin(), body.end())});
         } else {
-          form.append(decodeUtf8KeepingBom(name), decodeUtf8(body));
+          parts.emplace_back(decodeUtf8KeepingBom(name), decodeUtf8(body));
         }
       }
-      return form;
+      return parts;
     }
 
     // The boundary parameter of a multipart content type.
@@ -714,19 +588,7 @@ namespace uos::rt {
                        body.kind = BodyState::Kind::buffer;
                        body.bytes = bytesOfText(params.toString());
                        body.contentType = "application/x-www-form-urlencoded;charset=UTF-8";
-                     },
-                     [&](FormData& form) {
-                       const std::string boundary = randomBoundary();
-                       body.kind = BodyState::Kind::buffer;
-                       body.bytes = std::make_shared<const Bytes>(serializeFormData(form, boundary));
-                       body.contentType = "multipart/form-data; boundary=" + boundary;
-                     },
-                     [&](Blob& blob) {
-                       body.kind = BodyState::Kind::buffer;
-                       body.bytes = blob.shared();
-                       body.contentType = blob.type();
-                     },
-                 },
+                     }},
                  init);
     }
 
@@ -852,37 +714,6 @@ namespace uos::rt {
       co_return jsonParseBody(consumedText(consumed), emptyBody);
     }
 
-    enum class FormEncoding : std::uint8_t { urlencoded, multipart };
-
-    Task<FormData> readFormData(ConsumeStart start, FormEncoding encoding, std::string boundary) {
-      Task<Consumed> consuming = finishConsume(std::move(start));
-      const Consumed consumed = co_await std::move(consuming);
-      if (encoding == FormEncoding::urlencoded) {
-        FormData form;
-        for (const auto& [name, value] : URLSearchParams(consumedText(consumed)).entries()) form.append(name, value);
-        co_return form;
-      }
-      if (consumed.text) {
-        const Bytes bytes = encodeUtf8(*consumed.text);
-        co_return parseMultipart(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), boundary);
-      }
-      co_return parseMultipart(std::string_view(reinterpret_cast<const char*>(consumed.bytes->data()), consumed.bytes->size()), boundary);
-    }
-
-    Task<FormData> rejectedFormData(Reason reason) {
-      rethrow(reason);
-      co_return FormData();
-    }
-
-    // `body.formData()`: the content type is checked before the body is read.
-    Task<FormData> formDataOf(BodyState& body, const std::string& contentType) {
-      if (containsIgnoringAsciiCase(contentType, "application/x-www-form-urlencoded")) return readFormData(startConsume(body), FormEncoding::urlencoded, "");
-      std::optional<std::string> boundary;
-      if (containsIgnoringAsciiCase(contentType, "multipart/form-data")) boundary = multipartBoundary(contentType);
-      if (!boundary) return rejectedFormData(makeReason(formDataError("Can't decode form data from body because of incorrect MIME type/boundary")));
-      return readFormData(startConsume(body), FormEncoding::multipart, std::move(*boundary));
-    }
-
     // How a body is cloned: by clone() (already checked usable), by `new
     // Request(input)` / a Request used as init, or by `new Request(input, init)`.
     enum class CloneMode : std::uint8_t { clone, input, inputWithInit };
@@ -917,15 +748,6 @@ namespace uos::rt {
 
     void addContentType(Headers& headers, const BodyState& body) {
       if (!body.contentType.empty() && !headers.has("content-type")) headers.set("content-type", body.contentType);
-    }
-
-    // The content type body.formData() decodes by, as Bun reads it without
-    // creating the Headers object: the header if present, else the type of a
-    // still untouched buffered body.
-    template <class State> std::string formContentType(const State& state) {
-      if (auto header = state.headers.get("content-type")) return *header;
-      if (state.body.kind == BodyState::Kind::buffer && !state.body.used && !state.body.stream) return state.body.contentType;
-      return "";
     }
 
     template <class State> Headers& materializedHeaders(State& state) {
@@ -984,107 +806,25 @@ namespace uos::rt {
     }
   }
 
-  // ---- Blob / File ----------------------------------------------------------------
-
-  BlobPart::BlobPart(std::string text) : bytes(bytesOfText(text)) {}
-  BlobPart::BlobPart(Bytes bytes_) : bytes(std::make_shared<const Bytes>(std::move(bytes_))) {}
-  BlobPart::BlobPart(const Blob& blob) : bytes(blob.shared()) {}
-
-  Blob::Blob() : bytes_(emptyBytes()) {}
-
-  Blob::Blob(const std::vector<BlobPart>& parts, std::string_view type) : type_(normalizedBlobType(type)) {
-    if (parts.size() == 1) {
-      bytes_ = parts.front().bytes;
-      return;
-    }
-    auto joined = std::make_shared<Bytes>();
-    for (const auto& part : parts) joined->insert(joined->end(), part.bytes->begin(), part.bytes->end());
-    bytes_ = std::move(joined);
+  const FormValue* findFormPart(const FormParts& parts, std::string_view name) {
+    const auto found = std::ranges::find(parts, name, &FormParts::value_type::first);
+    return found == parts.end() ? nullptr : &found->second;
   }
 
-  // The reads take the bytes when called (the Task may outlive the Blob).
-  Task<std::string> Blob::text() const { return blobText(bytes_); }
-
-  Task<Bytes> Blob::arrayBuffer() const { return blobBytes(bytes_); }
-
-  Task<Bytes> Blob::bytes() const { return arrayBuffer(); }
-
-  ByteStream Blob::stream() const { return bufferStream(bytes_); }
-
-  File::File(const std::vector<BlobPart>& parts, std::string name, std::string_view type, std::optional<double> lastModified)
-    : Blob(parts, type), name_(std::move(name)), lastModified_(lastModified ? std::trunc(*lastModified) : dateNow()) {}
-
-  File::File(Internal, std::shared_ptr<const Bytes> bytes, std::string type, std::optional<std::string> name, double lastModified)
-    : Blob(Internal{}, std::move(bytes), std::move(type)), name_(std::move(name)), lastModified_(lastModified) {}
-
-  // ---- FormData -----------------------------------------------------------------
-
-  void FormData::append(std::string_view name, std::string_view value) { entries_.emplace_back(toWellFormed(name), toWellFormed(value)); }
-
-  void FormData::append(std::string_view name, const Blob& value, std::optional<std::string_view> filename) {
-    std::optional<std::string> fileName;
-    if (filename) fileName = toWellFormed(*filename);
-    entries_.emplace_back(toWellFormed(name), Value(detail::FormDataAccess::fileOf(value, std::move(fileName))));
+  InboundFormDecoder::InboundFormDecoder(std::string_view contentType) {
+    if (containsIgnoringAsciiCase(contentType, "application/x-www-form-urlencoded")) return;
+    if (containsIgnoringAsciiCase(contentType, "multipart/form-data")) boundary_ = multipartBoundary(contentType);
+    if (!boundary_) throw formDataError("Can't decode form data from body because of incorrect MIME type/boundary");
   }
 
-  void FormData::append(std::string_view name, const File& value, std::optional<std::string_view>) { entries_.emplace_back(toWellFormed(name), Value(value)); }
-
-  void FormData::delete_(std::string_view name) {
-    const std::string key = toWellFormed(name);
-    entries_.erase(std::remove_if(entries_.begin(), entries_.end(), [&](const Entry& entry) { return entry.first == key; }), entries_.end());
-  }
-
-  std::optional<FormData::Value> FormData::get(std::string_view name) const {
-    const std::string key = toWellFormed(name);
-    for (const auto& entry : entries_)
-      if (entry.first == key) return entry.second;
-    return std::nullopt;
-  }
-
-  std::vector<FormData::Value> FormData::getAll(std::string_view name) const {
-    const std::string key = toWellFormed(name);
-    std::vector<Value> out;
-    for (const auto& entry : entries_)
-      if (entry.first == key) out.push_back(entry.second);
-    return out;
-  }
-
-  bool FormData::has(std::string_view name) const {
-    const std::string key = toWellFormed(name);
-    return std::any_of(entries_.begin(), entries_.end(), [&](const Entry& entry) { return entry.first == key; });
-  }
-
-  void FormData::setValue(std::string_view name, Value value) {
-    const std::string key = toWellFormed(name);
-    auto first = std::find_if(entries_.begin(), entries_.end(), [&](const Entry& entry) { return entry.first == key; });
-    if (first == entries_.end()) {
-      entries_.emplace_back(key, std::move(value));
-      return;
-    }
-    first->second = std::move(value);
-    entries_.erase(std::remove_if(std::next(first), entries_.end(), [&](const Entry& entry) { return entry.first == key; }), entries_.end());
-  }
-
-  void FormData::set(std::string_view name, std::string_view value) { setValue(name, Value(toWellFormed(value))); }
-
-  void FormData::set(std::string_view name, const Blob& value, std::optional<std::string_view> filename) {
-    std::optional<std::string> fileName;
-    if (filename) fileName = toWellFormed(*filename);
-    setValue(name, Value(detail::FormDataAccess::fileOf(value, std::move(fileName))));
-  }
-
-  void FormData::set(std::string_view name, const File& value, std::optional<std::string_view>) { setValue(name, Value(value)); }
-
-  std::vector<std::string> FormData::keys() const {
-    std::vector<std::string> out;
-    for (const auto& entry : entries_) out.push_back(entry.first);
-    return out;
-  }
-
-  std::vector<FormData::Value> FormData::values() const {
-    std::vector<Value> out;
-    for (const auto& entry : entries_) out.push_back(entry.second);
-    return out;
+  FormParts InboundFormDecoder::decode(std::span<const std::uint8_t> body) const {
+    const auto bytes = body.empty() ? std::string_view() : std::string_view(reinterpret_cast<const char*>(body.data()), body.size());
+    if (boundary_) return parseMultipart(bytes, *boundary_);
+    const URLSearchParams params{decodeUtf8(bytes)};
+    FormParts parts;
+    parts.reserve(params.size());
+    for (auto [name, value] : params) parts.emplace_back(std::move(name), std::move(value));
+    return parts;
   }
 
   // ---- Response -------------------------------------------------------------------
@@ -1142,7 +882,6 @@ namespace uos::rt {
   Task<json::value> Response::json() const { return readJson(startConsume(state_->body)); }
   Task<Bytes> Response::arrayBuffer() const { return readBytes(startConsume(state_->body)); }
   Task<Bytes> Response::bytes() const { return readBytes(startConsume(state_->body)); }
-  Task<FormData> Response::formData() const { return formDataOf(state_->body, formContentType(*state_)); }
 
   Response Response::clone() const {
     const BodyState& body = state_->body;
@@ -1235,7 +974,6 @@ namespace uos::rt {
   Task<json::value> Request::json() const { return readJson(startConsume(state_->body)); }
   Task<Bytes> Request::arrayBuffer() const { return readBytes(startConsume(state_->body)); }
   Task<Bytes> Request::bytes() const { return readBytes(startConsume(state_->body)); }
-  Task<FormData> Request::formData() const { return formDataOf(state_->body, formContentType(*state_)); }
 
   void detail::transferBody(const Request& input, const Request& outgoing) {
     BodyState& source = input.state()->body;

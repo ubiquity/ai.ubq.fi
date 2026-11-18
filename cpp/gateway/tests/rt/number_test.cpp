@@ -2080,10 +2080,10 @@ namespace {
     {"-8180442645495346254632581877082407360322443673600", 0xca16639ef0920e1aULL, "-598e7bc248386799dda7da7cfbe16808000000000", "-4ndnl888b58igayx7smql6354b9fmmtc", "-1011001100011100111101111000010010010000011100001100111100110011101110110100111110110100111110011111011111000010110100000001000000000000000000000000000000000000000", "4749467469771440128", "4749467469771440128", "0", "0", "170064847206912020059225325568", "170064847206912020059225325568"},
   };
   const BigParseCase kBigParse[] = {
-    {std::string_view("-", 1), "0"},
-    {std::string_view("+", 1), "0"},
+    {std::string_view("-", 1), nullptr},
+    {std::string_view("+", 1), nullptr},
     {std::string_view("0x", 2), nullptr},
-    {std::string_view("0x ", 3), "0"},
+    {std::string_view("0x ", 3), nullptr},
     {std::string_view("0x 1", 4), nullptr},
     {std::string_view("0b", 2), nullptr},
     {std::string_view("0o", 2), nullptr},

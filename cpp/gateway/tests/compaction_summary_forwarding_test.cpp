@@ -30,7 +30,8 @@
 #include "helpers/deepseek_port_replay.hpp"
 namespace {
 #include "compaction_summary_forwarding_vectors.inc"
-  const bool recorded = uos::tests::helpers::deepseek_port_replay::registerReplay(recordedVectors);
+  // The checked-in bundle combines 15 forwarding traces, expanding to about 68 MiB.
+  const bool recorded = uos::tests::helpers::deepseek_port_replay::registerReplay(recordedVectors, 72 * 1024 * 1024);
 }
 
 #include "uos/rt/console.hpp"

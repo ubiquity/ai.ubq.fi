@@ -4,6 +4,7 @@
 #include "uos/bounded_response_body.hpp"
 #include "uos/rt/date.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
@@ -70,12 +71,8 @@ namespace uos::authority::native_codex_429 {
      */
     // The TS closures share `source` and `index`; here they are the members of one scan. Positions count
     // UTF-16 code units, as `source.length`, `source[index]` and `charCodeAt` do. In the TS, parseValue,
-    // parseArray and parseObject recurse once per nesting level; this scan keeps the open levels on an
-    // explicit stack instead (a 64 KiB body nests up to 32,768 levels, too deep to recurse on a C++ stack),
-    // running each level's loop exactly as written. A level returns every result other than "valid"
-    // unchanged to its parent, so such a result ends the whole scan at once. JavaScriptCore throws
-    // RangeError when that recursion exhausts its stack (past about 20,000 levels in Bun); this scan throws
-    // it past rt::kJsonMaxDepth levels, the nesting rt::jsonParse refuses anyway.
+    // parseArray and parseObject recurse once per nesting level. This scan uses an explicit stack
+    // and stops at the same maximum depth as the parser that checks the complete body.
     class DuplicateJsonObjectKeyScan {
     public:
       explicit DuplicateJsonObjectKeyScan(std::string_view text) : source(rt::toUtf16(text)) {}
@@ -89,7 +86,7 @@ namespace uos::authority::native_codex_429 {
           if (unit == u'{' || unit == u'[') {
             // parseObject / parseArray up to their loops.
             const bool isObject = unit == u'{';
-            if (levels.size() >= rt::kJsonMaxDepth) throw rt::RangeError("Maximum call stack size exceeded.");
+            if (levels.size() >= rt::limits::kJsonDepth) throw rt::SyntaxError("Invalid JSON");
             index += 1;
             skipWhitespace();
             if (unitAt(index) == (isObject ? u'}' : u']')) {

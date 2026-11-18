@@ -13,7 +13,12 @@
 #include "uos/sentinel/incident_outbox.hpp"
 #include "uos/sentinel/replay_store.hpp"
 
+#include <boost/json/monotonic_resource.hpp>
+
+#include <cstddef>
 #include <memory>
+#include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -21,20 +26,26 @@ namespace uos::handler::terminal_log {
   namespace {
     namespace replay = sentinel::replay_observation;
     namespace model = sentinel::replay_model;
+    using openai_telemetry::ResponseTelemetry;
     using BodyObservation = std::optional<model::SentinelClientBodyObservation>;
     using Controller = rt::ReadableStreamDefaultController<rt::ByteChunk>;
 
+    bool skipsAdminError(const WithTerminalRequestLogInput& input, int status, std::string_view provider) {
+      // The default admin writer deliberately omits gateway authentication failures.
+      return !input.recordAdminError && status == 401 && provider == "gateway";
+    }
+
     // rt::allSettled has a homogeneous result type; this batch discards heterogeneous values.
     template <class... T> rt::Promise<void> settleWrites(const rt::Promise<T>&... writes) {
-      auto result = rt::Promise<void>();
-      auto output = result.state();
-      auto remaining = std::make_shared<std::size_t>(sizeof...(T));
-      const auto add = [output, remaining](const auto& write) {
-        auto source = write.state();
-        source->react([source, output, remaining] { if (--*remaining == 0) output->fulfill(); });
+      struct Batch {
+        rt::Promise<void> result;
+        std::size_t remaining;
       };
-      (add(writes), ...);
-      return result;
+      auto batch = std::make_shared<Batch>(Batch{rt::Promise<void>(), sizeof...(T)});
+      const auto settled = [batch] { if (--batch->remaining == 0) batch->result.state()->fulfill(); };
+      // The logging frame already holds the input promises until the batch completes.
+      (writes.state()->react(settled), ...);
+      return batch->result;
     }
 
     struct LogInput {
@@ -44,13 +55,14 @@ namespace uos::handler::terminal_log {
       http::DeliveryOutcome deliveryOutcome;
       bool streamReadFailure;
       bool suppressSentinelReplay;
-      std::function<rt::Promise<BodyObservation>()> resolveClientBodyObservation;
+      std::function<rt::Task<BodyObservation>()> resolveClientBodyObservation;
     };
 
     rt::Task<void> logTerminalRequest(LogInput data) {
       auto& input = data.input;
-      const auto telemetry = openai_telemetry::getResponseTelemetry(input.telemetryResponse.value_or(data.response));
-      const auto accountCohortId = openai_telemetry::getResponseAccountCohortId(input.telemetryResponse.value_or(data.response));
+      const auto& telemetryResponse = input.telemetryResponse ? *input.telemetryResponse : data.response;
+      const auto telemetry = openai_telemetry::getResponseTelemetry(telemetryResponse);
+      const auto accountCohortId = openai_telemetry::getResponseAccountCohortId(telemetryResponse);
       const auto nativeHttpFailure = responses_native_headers::originalNativeHttpFailure(input.request);
       const double latencyMs = rt::Math::max(0.0, rt::Math::round(rt::performanceNow() - input.startedAtMonotonicMs));
       std::optional<double> downstreamDrainMs;
@@ -67,66 +79,81 @@ namespace uos::handler::terminal_log {
       const std::optional<std::string> failureKind = data.streamReadFailure
         ? std::optional<std::string>(telemetry ? telemetry->failureKind.value_or("gateway_stream_read_error") : "gateway_stream_read_error")
         : telemetry ? telemetry->failureKind : std::nullopt;
-      json::object terminal;
-      terminal["request_id"] = input.requestId;
-      if (nativeHttpFailure) terminal["native_http_failure"] = json::value_from(*nativeHttpFailure);
-      terminal["route"] = input.route;
-      terminal["status"] = data.response.status();
-      terminal["provider"] = provider;
-      terminal["latency_ms"] = rt::makeNumber(latencyMs);
-      rt::objectSet(terminal, "admission_wait_ms", rt::orNull(input.admissionWaitMs));
-      rt::objectSet(terminal, "admission_stage", rt::orNull(input.admissionStage));
-#define TERMINAL_OPTIONAL(key, member) rt::objectSet(terminal, key, rt::orNull(telemetry ? telemetry->member : std::nullopt))
-      TERMINAL_OPTIONAL("first_provider_dispatch_ms", firstProviderDispatchMs);
-      TERMINAL_OPTIONAL("first_provider_headers_ms", firstProviderHeadersMs);
-      TERMINAL_OPTIONAL("first_codex_dispatch_ms", firstCodexDispatchMs);
-      TERMINAL_OPTIONAL("first_codex_headers_ms", firstCodexHeadersMs);
-      TERMINAL_OPTIONAL("first_upstream_sse_event_ms", firstUpstreamSseEventMs);
-      TERMINAL_OPTIONAL("first_semantic_commitment_ms", firstSemanticCommitmentMs);
-      TERMINAL_OPTIONAL("stream_terminal_ms", streamTerminalMs);
-      rt::objectSet(terminal, "downstream_drain_ms", rt::orNull(downstreamDrainMs));
-      terminal["delivery_outcome"] = data.deliveryOutcome;
-      TERMINAL_OPTIONAL("model", model);
-      TERMINAL_OPTIONAL("reasoning", reasoning);
-      TERMINAL_OPTIONAL("output_token_allowance", outputTokenAllowance);
-      TERMINAL_OPTIONAL("rate_limit_wait_ms", rateLimitWaitMs);
-      TERMINAL_OPTIONAL("rate_limit_failover_model", rateLimitFailoverModel);
-      TERMINAL_OPTIONAL("provider_request_id", providerRequestId);
-      TERMINAL_OPTIONAL("input_tokens", inputTokens);
-      TERMINAL_OPTIONAL("cached_input_tokens", cachedInputTokens);
-      TERMINAL_OPTIONAL("cache_write_input_tokens", cacheWriteInputTokens);
-      TERMINAL_OPTIONAL("output_tokens", outputTokens);
-      TERMINAL_OPTIONAL("total_tokens", totalTokens);
-      terminal["usage_observed"] = telemetry ? telemetry->usageObserved : false;
-      terminal["usage_telemetry_status"] = telemetry ? telemetry->usageTelemetryStatus : "missing";
-      terminal["prompt_cache_key_present"] = telemetry ? telemetry->promptCacheKeyPresent : false;
-      terminal["prompt_cache_mode"] = telemetry ? telemetry->promptCacheMode : "unspecified";
-      terminal["explicit_breakpoint_count"] = rt::makeNumber(telemetry ? telemetry->explicitBreakpointCount : 0);
-      TERMINAL_OPTIONAL("account_slot", accountSlot);
-      rt::objectSet(terminal, "account_cohort_id", rt::orNull(accountCohortId));
-      TERMINAL_OPTIONAL("active_generation", activeGeneration);
-      TERMINAL_OPTIONAL("active_transition_reason", activeTransitionReason);
-      TERMINAL_OPTIONAL("fallback_reason", fallbackReason);
-      TERMINAL_OPTIONAL("semantic_output_observed", semanticOutputObserved);
-      terminal["upstream_event_kinds"] = json::value_from(telemetry ? telemetry->upstreamEventKinds : std::vector<std::string>());
-      rt::objectSet(terminal, "stream", rt::orNull(stream));
-      rt::objectSet(terminal, "stream_terminal_type", rt::orNull(terminalType));
-      rt::objectSet(terminal, "failure_kind", rt::orNull(failureKind));
-      terminal["response_created_observed"] = telemetry ? telemetry->responseCreatedObserved : false;
-      TERMINAL_OPTIONAL("synthetic_terminal_type", syntheticTerminalType);
-      terminal["attempted_providers"] = json::value_from(telemetry ? telemetry->attemptedProviders : std::vector<std::string>());
-      TERMINAL_OPTIONAL("removed_provider_trigger_class", removedProviderTriggerClass);
-      TERMINAL_OPTIONAL("removed_provider_circuit_transition", removedProviderCircuitTransition);
-      TERMINAL_OPTIONAL("removed_provider_selected_model", removedProviderSelectedModel);
-      TERMINAL_OPTIONAL("removed_provider_task_type", removedProviderTaskType);
-      TERMINAL_OPTIONAL("removed_provider_latency_ms", removedProviderLatencyMs);
-      TERMINAL_OPTIONAL("removed_provider_terminal_status", removedProviderTerminalStatus);
-      TERMINAL_OPTIONAL("removed_provider_semantic_commitment", removedProviderSemanticCommitment);
-#undef TERMINAL_OPTIONAL
-      terminal["git_sha"] = config::runtimeGitSha();
-      terminal["deno_revision"] = config::runtimeDeploymentId();
-      rt::objectSet(terminal, "router_revision", rt::orNull(data.response.headers().get("x-uos-router-revision")));
-      rt::console::info("[ai.ubq.fi] request_terminal", rt::jsonStringify(terminal));
+      auto recordText = [&] {
+        // The keys and ordinary string values fit in the scratch buffer. Larger fields can allocate upstream.
+        alignas(std::max_align_t) unsigned char buffer[4096];
+        json::monotonic_resource storage(buffer);
+        json::value record(json::object_kind, &storage);
+        auto& terminal = record.get_object();
+        terminal.reserve(56);
+        const auto putOptional = [&terminal](std::string_view key, const auto& field) {
+          if (!field) terminal.emplace(key, nullptr);
+          else if constexpr (std::is_same_v<std::remove_cvref_t<decltype(*field)>, double>) terminal.emplace(key, rt::makeNumber(*field));
+          else terminal.emplace(key, *field);
+        };
+        const auto putTelemetry = [&](std::string_view key, auto member) {
+          if (telemetry) putOptional(key, (*telemetry).*member);
+          else terminal.emplace(key, nullptr);
+        };
+        terminal.emplace("request_id", input.requestId);
+        if (nativeHttpFailure) terminal.emplace("native_http_failure", json::value_from(*nativeHttpFailure, &storage));
+        terminal.emplace("route", input.route);
+        terminal.emplace("status", data.response.status());
+        terminal.emplace("provider", provider);
+        terminal.emplace("latency_ms", rt::makeNumber(latencyMs));
+        putOptional("admission_wait_ms", input.admissionWaitMs);
+        putOptional("admission_stage", input.admissionStage);
+        putTelemetry("first_provider_dispatch_ms", &ResponseTelemetry::firstProviderDispatchMs);
+        putTelemetry("first_provider_headers_ms", &ResponseTelemetry::firstProviderHeadersMs);
+        putTelemetry("first_codex_dispatch_ms", &ResponseTelemetry::firstCodexDispatchMs);
+        putTelemetry("first_codex_headers_ms", &ResponseTelemetry::firstCodexHeadersMs);
+        putTelemetry("first_upstream_sse_event_ms", &ResponseTelemetry::firstUpstreamSseEventMs);
+        putTelemetry("first_semantic_commitment_ms", &ResponseTelemetry::firstSemanticCommitmentMs);
+        putTelemetry("stream_terminal_ms", &ResponseTelemetry::streamTerminalMs);
+        putOptional("downstream_drain_ms", downstreamDrainMs);
+        terminal.emplace("delivery_outcome", data.deliveryOutcome);
+        putTelemetry("model", &ResponseTelemetry::model);
+        putTelemetry("reasoning", &ResponseTelemetry::reasoning);
+        putTelemetry("output_token_allowance", &ResponseTelemetry::outputTokenAllowance);
+        putTelemetry("rate_limit_wait_ms", &ResponseTelemetry::rateLimitWaitMs);
+        putTelemetry("rate_limit_failover_model", &ResponseTelemetry::rateLimitFailoverModel);
+        putTelemetry("provider_request_id", &ResponseTelemetry::providerRequestId);
+        putTelemetry("input_tokens", &ResponseTelemetry::inputTokens);
+        putTelemetry("cached_input_tokens", &ResponseTelemetry::cachedInputTokens);
+        putTelemetry("cache_write_input_tokens", &ResponseTelemetry::cacheWriteInputTokens);
+        putTelemetry("output_tokens", &ResponseTelemetry::outputTokens);
+        putTelemetry("total_tokens", &ResponseTelemetry::totalTokens);
+        terminal.emplace("usage_observed", telemetry ? telemetry->usageObserved : false);
+        terminal.emplace("usage_telemetry_status", telemetry ? std::string_view(telemetry->usageTelemetryStatus) : "missing");
+        terminal.emplace("prompt_cache_key_present", telemetry ? telemetry->promptCacheKeyPresent : false);
+        terminal.emplace("prompt_cache_mode", telemetry ? std::string_view(telemetry->promptCacheMode) : "unspecified");
+        terminal.emplace("explicit_breakpoint_count", rt::makeNumber(telemetry ? telemetry->explicitBreakpointCount : 0));
+        putTelemetry("account_slot", &ResponseTelemetry::accountSlot);
+        putOptional("account_cohort_id", accountCohortId);
+        putTelemetry("active_generation", &ResponseTelemetry::activeGeneration);
+        putTelemetry("active_transition_reason", &ResponseTelemetry::activeTransitionReason);
+        putTelemetry("fallback_reason", &ResponseTelemetry::fallbackReason);
+        putTelemetry("semantic_output_observed", &ResponseTelemetry::semanticOutputObserved);
+        terminal.emplace("upstream_event_kinds", telemetry ? json::value_from(telemetry->upstreamEventKinds, &storage) : json::value(json::array_kind, &storage));
+        putOptional("stream", stream);
+        putOptional("stream_terminal_type", terminalType);
+        putOptional("failure_kind", failureKind);
+        terminal.emplace("response_created_observed", telemetry ? telemetry->responseCreatedObserved : false);
+        putTelemetry("synthetic_terminal_type", &ResponseTelemetry::syntheticTerminalType);
+        terminal.emplace("attempted_providers", telemetry ? json::value_from(telemetry->attemptedProviders, &storage) : json::value(json::array_kind, &storage));
+        putTelemetry("removed_provider_trigger_class", &ResponseTelemetry::removedProviderTriggerClass);
+        putTelemetry("removed_provider_circuit_transition", &ResponseTelemetry::removedProviderCircuitTransition);
+        putTelemetry("removed_provider_selected_model", &ResponseTelemetry::removedProviderSelectedModel);
+        putTelemetry("removed_provider_task_type", &ResponseTelemetry::removedProviderTaskType);
+        putTelemetry("removed_provider_latency_ms", &ResponseTelemetry::removedProviderLatencyMs);
+        putTelemetry("removed_provider_terminal_status", &ResponseTelemetry::removedProviderTerminalStatus);
+        putTelemetry("removed_provider_semantic_commitment", &ResponseTelemetry::removedProviderSemanticCommitment);
+        terminal.emplace("git_sha", config::runtimeGitSha());
+        terminal.emplace("deno_revision", config::runtimeDeploymentId());
+        putOptional("router_revision", data.response.headers().get("x-uos-router-revision"));
+        return rt::jsonStringify(record);
+      }();
+      rt::console::info("[ai.ubq.fi] request_terminal", std::move(recordText));
       const bool completed = !data.streamReadFailure && telemetry && telemetry->completed;
       cache::telemetry_gate::PromptCacheTelemetryEvent telemetryEvent{
         .provider = provider, .model = telemetry ? telemetry->model : std::nullopt, .route = input.route, .status = static_cast<double>(data.response.status()),
@@ -154,12 +181,19 @@ namespace uos::handler::terminal_log {
       };
       const auto usageRollupWrite = (input.recordUsageRollup ? input.recordUsageRollup(rollupInput)
         : rt::Promise(paid_fallback::rollups::recordTerminalUsageRollup(rollupInput))).catch_([](rt::Reason) { return false; });
+      if (!input.sentinelReplayInput && skipsAdminError(input, data.response.status(), provider)) {
+        const auto writes = settleWrites(telemetryWrite, cacheAnalyticsWrite, usageRollupWrite);
+        co_await writes.wait();
+        co_return;
+      }
       const model::SentinelFailureObservation replayObservation{
         .status = static_cast<double>(data.response.status()), .stream = stream, .completed = completed, .terminal_type = terminalType,
         .failure_kind = failureKind, .synthetic_terminal_type = telemetry ? telemetry->syntheticTerminalType : std::nullopt, .provider_route = provider,
       };
       const auto zero = rt::scopeExit([&input] { replay::zeroSentinelReplayInput(input.sentinelReplayInput); });
-      const auto clientBodyObservation = co_await data.resolveClientBodyObservation().wait();
+      auto resolvingBody = data.resolveClientBodyObservation();
+      const auto clientBodyObservation = co_await std::move(resolvingBody);
+      co_await rt::microtask();
       const auto clientObservation = replay::resolveSentinelClientFailureObservation(replayObservation, clientBodyObservation);
       std::optional<rt::Promise<replay::SentinelReplayPersistResult>> replayWrite;
       if (input.sentinelReplayInput && !data.suppressSentinelReplay && replay::shouldPersistSentinelReplay(replayObservation, clientObservation)) {
@@ -216,8 +250,10 @@ namespace uos::handler::terminal_log {
 
       TerminalState(rt::Response response_, WithTerminalRequestLogInput input_) : response(std::move(response_)), input(std::move(input_)) {}
 
+      const rt::Response& telemetryResponse() const { return input.telemetryResponse ? *input.telemetryResponse : response; }
+
       model::SentinelFailureObservation replayObservationFor(bool streamReadFailure) {
-        const auto telemetry = openai_telemetry::getResponseTelemetry(input.telemetryResponse.value_or(response));
+        const auto telemetry = openai_telemetry::getResponseTelemetry(telemetryResponse());
         return {
           .status = static_cast<double>(response.status()),
           .stream = streamReadFailure ? std::optional<bool>(telemetry ? telemetry->stream.value_or(true) : true) : telemetry ? telemetry->stream : std::nullopt,
@@ -263,6 +299,10 @@ namespace uos::handler::terminal_log {
 
       rt::Promise<void> persistReplayAtApplicationTerminal(bool streamReadFailure = false) {
         if (replayFinalization) return *replayFinalization;
+        if (!input.sentinelReplayInput && !input.sentinelReplayOmission) {
+          replayFinalization = rt::Promise<void>::resolve();
+          return *replayFinalization;
+        }
         const auto originalReplayInput = input.sentinelReplayInput;
         const auto backgroundReplayInput = originalReplayInput ? std::optional(replay::snapshotSentinelReplayInput(*originalReplayInput)) : std::nullopt;
         // Release request-owned bytes before inspection or persistence can suspend.
@@ -282,11 +322,10 @@ namespace uos::handler::terminal_log {
         try { if (input.onSettled) input.onSettled(); } catch (...) {}
         auto logInput = input;
         if (replayFinalization) logInput.sentinelReplayInput.reset();
-        auto self = shared_from_this();
         LogInput data{.input = std::move(logInput), .response = response, .downstreamDrainedAtMonotonicMs = drained,
           .deliveryOutcome = std::move(outcome), .streamReadFailure = streamReadFailure,
           .suppressSentinelReplay = suppressSentinelReplay || replayFinalization.has_value(),
-          .resolveClientBodyObservation = [self] { return rt::Promise<BodyObservation>(self->resolveBody()); }};
+          .resolveClientBodyObservation = [self = shared_from_this()] { return self->resolveBody(); }};
         terminalLog = rt::Promise<void>(logTerminalRequest(std::move(data))).catch_(rt::ignoreRejection);
         return *terminalLog;
       }
@@ -328,33 +367,33 @@ namespace uos::handler::terminal_log {
 
       rt::Promise<void> finalizeObservedCompletion() {
         if (!response.ok()) return rt::Promise<void>::resolve();
-        const auto telemetry = openai_telemetry::getResponseTelemetry(input.telemetryResponse.value_or(response));
+        const auto telemetry = openai_telemetry::getResponseTelemetry(telemetryResponse());
         return telemetry && telemetry->completed ? finalizeTerminal("completed") : rt::Promise<void>::resolve();
       }
 
       rt::Promise<void> finalizeFromTelemetry(std::string reason) {
-        const auto telemetry = openai_telemetry::getResponseTelemetry(input.telemetryResponse.value_or(response));
+        if (!input.onTerminal) return rt::Promise<void>::resolve();
+        const auto telemetry = openai_telemetry::getResponseTelemetry(telemetryResponse());
         return response.ok() && telemetry && telemetry->completed ? finalizeTerminal("completed") : finalizeTerminal("incomplete", std::move(reason));
       }
 
-      rt::Task<rt::Response> bufferedResponse() {
+      static rt::Task<rt::Response> bufferedResponse(std::shared_ptr<TerminalState> state) {
         rt::Reason failure;
         try {
-          const auto terminal = finalizeFromTelemetry(response.ok() ? "response_incomplete" : "response_error");
+          const auto terminal = state->finalizeFromTelemetry(state->response.ok() ? "response_incomplete" : "response_error");
           co_await terminal.wait();
-          const auto replayTask = persistReplayAtApplicationTerminal();
-          if (!http::scheduleSentinelBackgroundTask(replayTask, input.waitUntil)) co_await replayTask.wait();
+          const auto replayTask = state->persistReplayAtApplicationTerminal();
+          if (!http::scheduleSentinelBackgroundTask(replayTask, state->input.waitUntil)) co_await replayTask.wait();
         } catch (...) { failure = std::current_exception(); }
-        if (deliveryOutcome) {
-          auto self = shared_from_this();
-          auto task = deliveryOutcome->then([self](const std::string& outcome) { return self->log(std::nullopt, outcome, false, true); });
-          runtime::http_tasks::trackRequestTask(input.deliveryCompleted, task);
+        if (state->deliveryOutcome) {
+          auto task = state->deliveryOutcome->then([state](const std::string& outcome) { return state->log(std::nullopt, outcome, false, true); });
+          runtime::http_tasks::trackRequestTask(state->input.deliveryCompleted, task);
         } else {
-          const auto task = log(std::nullopt, "unobserved", false, true);
+          const auto task = state->log(std::nullopt, "unobserved", false, true);
           co_await task.wait();
         }
         if (failure) std::rethrow_exception(failure);
-        co_return response;
+        co_return state->response;
       }
 
       void inspectSseChunk(const rt::ByteChunk& value) {
@@ -462,12 +501,18 @@ namespace uos::handler::terminal_log {
     } catch (...) {}
   }
 
-  rt::Promise<rt::Response> withTerminalRequestLog(rt::Response response, WithTerminalRequestLogInput input) {
+  rt::Promise<rt::Response> withTerminalRequestLog(rt::Response originalResponse, WithTerminalRequestLogInput input) {
+    auto state = std::make_shared<TerminalState>(std::move(originalResponse), std::move(input));
+    const auto& response = state->response;
     const std::string contentType = rt::toLowerCase(response.headers().get("Content-Type").value_or(""));
     const bool isSse = rt::includes(contentType, "text/event-stream");
-    const auto initialTelemetry = openai_telemetry::getResponseTelemetry(input.telemetryResponse.value_or(response));
-    auto state = std::make_shared<TerminalState>(response, std::move(input));
-    if (!isSse && response.body() && (response.status() >= 400 || response.status() == 202 || rt::startsWith(state->input.route, "embeddings.jobs.") ||
+    const auto initialTelemetry = openai_telemetry::getResponseTelemetry(state->telemetryResponse());
+    // Pre-admission auth refusals without diagnostic consumers need no cloned body.
+    const auto& options = state->input;
+    const bool skipAuthBody = options.admissionStage == "pre_admission" && !options.onSettled && !initialTelemetry &&
+      !response.headers().has("x-uos-upstream") && !options.sentinelReplayInput && !options.sentinelReplayOmission &&
+      skipsAdminError(options, response.status(), "gateway");
+    if (!isSse && response.body() && ((response.status() >= 400 && !skipAuthBody) || response.status() == 202 || rt::startsWith(state->input.route, "embeddings.jobs.") ||
         (initialTelemetry && !initialTelemetry->completed && (initialTelemetry->streamTerminalType || initialTelemetry->failureKind || initialTelemetry->syntheticTerminalType)))) {
       state->bufferedObservation = rt::Promise(replay::inspectSentinelBufferedResponseBody(response));
     }
@@ -478,8 +523,7 @@ namespace uos::handler::terminal_log {
         [](rt::Reason) { return std::string("interrupted"); });
     }
     if (!response.body() || !isSse) {
-      auto owner = [state]() -> rt::Task<rt::Response> { auto value = co_await state->bufferedResponse(); co_return value; };
-      return rt::Promise<rt::Response>(rt::async(owner));
+      return rt::Promise<rt::Response>(TerminalState::bufferedResponse(std::move(state)));
     }
     state->reader = response.body()->getReader();
     state->sseInspector = replay::createSentinelSseInspector();
@@ -504,13 +548,13 @@ namespace uos::handler::terminal_log {
   rt::Promise<rt::Response> withRejectionTerminalLog(rt::Response response, std::optional<std::string> route, RejectionTerminalLogInput input) {
     if (!route || route->empty()) {
       if (input.onSettled) input.onSettled();
-      return rt::Promise<rt::Response>::resolve(response);
+      return rt::Promise<rt::Response>::resolve(std::move(response));
     }
-    WithTerminalRequestLogInput options{.route = *route, .startedAtMonotonicMs = input.startedAtMonotonicMs, .requestId = input.requestId};
-    options.admissionStage = input.admissionStage;
-    if (input.delivery) { options.deliveryCompleted = input.delivery->completed; options.deliverySignal = input.delivery->downstreamSignal; }
-    options.onSettled = input.onSettled;
+    WithTerminalRequestLogInput options{.route = std::move(*route), .startedAtMonotonicMs = input.startedAtMonotonicMs, .requestId = std::move(input.requestId)};
+    options.admissionStage = std::move(input.admissionStage);
+    if (input.delivery) { options.deliveryCompleted = std::move(input.delivery->completed); options.deliverySignal = std::move(input.delivery->downstreamSignal); }
+    options.onSettled = std::move(input.onSettled);
     options.admissionWaitMs = input.admissionWaitMs;
-    return withTerminalRequestLog(response, std::move(options));
+    return withTerminalRequestLog(std::move(response), std::move(options));
   }
 }

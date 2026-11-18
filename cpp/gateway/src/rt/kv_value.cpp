@@ -1,10 +1,13 @@
 // The stored value model: KvU64, objects/maps/sets, JSON interop, structured
 // clone as a KV round trip performs it, and assertPortableKvValue.
 #include "kv_internal.hpp"
+#include "uos/rt/json.hpp"
 #include <algorithm>
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <map>
+#include <unordered_set>
 
 namespace uos::rt {
   namespace {
@@ -32,6 +35,7 @@ namespace uos::rt {
     }
 
     bool sameValueZero(const KvValue& left, const KvValue& right) {
+      if (!isPrimitive(left) || !isPrimitive(right)) return left.identity() && left.identity() == right.identity();
       if (left.variant().index() != right.variant().index()) return false;
       if (left.isNumber()) {
         const double a = left.asNumber(), b = right.asNumber();
@@ -90,14 +94,24 @@ namespace uos::rt {
       return json::value(number);
     }
 
-    json::value toJsonValue(const KvValue& value);
+    struct Ancestors {
+      explicit Ancestors(std::unordered_set<const void*>& path, const void* id)
+          : active(path), identity(id), repeated(id && !path.insert(id).second) {}
+      ~Ancestors() { if (identity && !repeated) active.erase(identity); }
+      std::unordered_set<const void*>& active;
+      const void* identity;
+      bool repeated;
+    };
 
-    json::value toJsonMember(const KvValue& value) {
-      if (value.isUndefined() || value.is<KvHole>()) return nullptr;
-      return toJsonValue(value);
-    }
+    struct TraversalDepth {
+      explicit TraversalDepth(std::size_t& depth) : level(depth) { ++level; }
+      ~TraversalDepth() { --level; }
+      std::size_t& level;
+    };
 
-    json::value toJsonValue(const KvValue& value) {
+    json::value toJsonValue(const KvValue& value, std::unordered_set<const void*>& active, std::size_t depth) {
+      const Ancestors ancestors(active, value.identity());
+      if (ancestors.repeated) throw TypeError("JSON.stringify cannot serialize cyclic structures.");
       return std::visit(
         [&](const auto& item) -> json::value {
           using T = std::decay_t<decltype(item)>;
@@ -106,14 +120,16 @@ namespace uos::rt {
           else if constexpr (std::is_same_v<T, double>) return numberToJson(item);
           else if constexpr (std::is_same_v<T, std::string>) return json::string(item);
           else if constexpr (std::is_same_v<T, KvArray>) {
+            if (depth >= kJsonMaxDepth) throw RangeError("Maximum call stack size exceeded.");
             json::array out;
             out.reserve(item.size());
-            for (const KvValue& element : item) out.push_back(toJsonMember(element));
+            for (const KvValue& element : item) out.push_back(toJsonValue(element, active, depth + 1));
             return out;
           } else if constexpr (std::is_same_v<T, KvObject>) {
+            if (depth >= kJsonMaxDepth) throw RangeError("Maximum call stack size exceeded.");
             json::object out;
             for (const auto& [key, member] : item)
-              if (!member.isUndefined() && !member.template is<KvHole>()) out[key] = toJsonValue(member);
+              if (!member.isUndefined() && !member.template is<KvHole>()) out[key] = toJsonValue(member, active, depth + 1);
             return out;
           } else {
             throw TypeError("KV value is " + std::string(value.kind()) + ", not JSON");
@@ -122,7 +138,7 @@ namespace uos::rt {
         value.variant());
     }
 
-    std::string quoted(std::string_view text) { return json::serialize(json::value(json::string(text))); }
+    std::string quoteJsonString(std::string_view text) { return json::serialize(json::value(json::string(text))); }
 
     std::string showNumber(double number) { return number == 0 && std::signbit(number) ? "-0" : numberToString(number); }
 
@@ -135,6 +151,7 @@ namespace uos::rt {
   }
 
   KvValue kvStructuredClone(const KvValue& value) {
+    if (value.identity()) return kvJscDeserialize(kvJscSerialize(value));
     return std::visit(
       [&](const auto& item) -> KvValue {
         using T = std::decay_t<decltype(item)>;
@@ -150,9 +167,9 @@ namespace uos::rt {
         } else if constexpr (std::is_same_v<T, KvRegExp>) return KvRegExp{item.source, canonicalRegExpFlags(item.flags)};
         else if constexpr (std::is_same_v<T, double>) return std::isnan(item) ? std::numeric_limits<double>::quiet_NaN() : item;
         else if constexpr (std::is_same_v<T, KvArray>) {
-          KvArray out;
-          out.reserve(item.size());
-          for (const KvValue& element : item) out.push_back(kvStructuredClone(element));
+          KvArray out(item.size(), KvHole{});
+          for (std::size_t index = item.nextPresent(0); index < item.size(); index = item.nextPresent(index + 1))
+            out.set(index, kvStructuredClone(item[index]));
           return out;
         } else if constexpr (std::is_same_v<T, KvObject>) {
           KvObject out;
@@ -166,9 +183,8 @@ namespace uos::rt {
           KvSet out;
           for (const KvValue& member : item) out.add(kvStructuredClone(member));
           return out;
-        } else {
-          return item;
-        }
+        } else if constexpr (std::is_constructible_v<KvValue, T>) return item;
+        else std::terminate();
       },
       value.variant());
   }
@@ -182,6 +198,119 @@ namespace uos::rt {
   }
 
   BigInt KvU64::toBigInt() const { return BigInt::fromUint64(value); }
+
+  // ---- KvArray ----------------------------------------------------------------------------
+
+  struct KvArray::Sparse {
+    std::size_t length;
+    std::map<std::size_t, KvValue> entries;
+  };
+
+  namespace {
+    constexpr std::size_t SmallArrayLength = 32;
+
+    const KvValue& holeValue() {
+      static const KvValue hole = KvHole{};
+      return hole;
+    }
+  }
+
+  KvArray::KvArray() = default;
+  KvArray::KvArray(std::initializer_list<KvValue> values) : dense_(values) {}
+  KvArray::KvArray(std::size_t count, const KvValue& value) {
+    if (count > SmallArrayLength && value.is<KvHole>()) sparse_ = std::make_unique<Sparse>(Sparse{count, {}});
+    else dense_.assign(count, value);
+  }
+  KvArray::KvArray(const_iterator first, const_iterator last)
+      : KvArray(static_cast<std::size_t>(last - first), holeValue()) {
+    if (first == last) return;
+    const auto start = static_cast<std::size_t>(first.index_);
+    const auto end = static_cast<std::size_t>(last.index_);
+    const KvArray& source = *first.array_;
+    for (std::size_t index = source.nextPresent(start); index < end; index = source.nextPresent(index + 1)) set(index - start, source[index]);
+  }
+  KvArray::KvArray(const KvArray& other) : dense_(other.dense_) {
+    if (other.sparse_) sparse_ = std::make_unique<Sparse>(*other.sparse_);
+  }
+  KvArray::KvArray(KvArray&&) noexcept = default;
+  KvArray& KvArray::operator=(const KvArray& other) {
+    if (this != &other) *this = KvArray(other);
+    return *this;
+  }
+  KvArray& KvArray::operator=(KvArray&&) noexcept = default;
+  KvArray::~KvArray() = default;
+
+  std::size_t KvArray::sparseSize() const noexcept { return sparse_->length; }
+  void KvArray::reserve(std::size_t count) { if (!sparse_) dense_.reserve(count); }
+  void KvArray::push_back(KvValue value) {
+    if (sparse_) set(size(), std::move(value));
+    else dense_.push_back(std::move(value));
+  }
+
+  KvArray::iterator KvArray::insert(const_iterator position, const_iterator first, const_iterator last) {
+    const auto at = static_cast<std::size_t>(position.index_);
+    KvArray inserted(first, last);
+    if (inserted.empty()) return iterator(this, at);
+    KvArray result(size() + inserted.size(), holeValue());
+    for (std::size_t index = nextPresent(0); index < size(); index = nextPresent(index + 1))
+      result.set(index < at ? index : index + inserted.size(), std::move((*this)[index]));
+    for (std::size_t index = inserted.nextPresent(0); index < inserted.size(); index = inserted.nextPresent(index + 1))
+      result.set(at + index, std::move(inserted[index]));
+    *this = std::move(result);
+    return iterator(this, at);
+  }
+
+  const KvValue& KvArray::sparseElement(std::size_t index) const noexcept {
+    if (sparse_) {
+      const auto found = sparse_->entries.find(index);
+      if (found != sparse_->entries.end()) return found->second;
+    }
+    return holeValue();
+  }
+
+  KvValue& KvArray::operator[](std::size_t index) {
+    if (!sparse_ || index < dense_.size()) return dense_[index];
+    return sparse_->entries.try_emplace(index, KvHole{}).first->second;
+  }
+
+  void KvArray::set(std::size_t index, KvValue value) {
+    if (!sparse_ && index > dense_.size() && index - dense_.size() > SmallArrayLength)
+      sparse_ = std::make_unique<Sparse>(Sparse{dense_.size(), {}});
+    if (index < dense_.size()) {
+      dense_[index] = std::move(value);
+    } else if (!sparse_) {
+      dense_.resize(index, holeValue());
+      dense_.push_back(std::move(value));
+    } else {
+      sparse_->length = std::max(sparse_->length, index + 1);
+      if (index == dense_.size() && !sparse_->entries.contains(index) && !value.is<KvHole>()) {
+        dense_.push_back(std::move(value));
+        if (dense_.size() == sparse_->length) sparse_.reset();
+      } else if (value.is<KvHole>()) {
+        sparse_->entries.erase(index);
+      } else {
+        sparse_->entries.insert_or_assign(index, std::move(value));
+      }
+    }
+  }
+
+  std::size_t KvArray::nextSparsePresent(std::size_t from) const noexcept {
+    auto next = sparse_->entries.lower_bound(from);
+    while (next != sparse_->entries.end() && next->second.is<KvHole>()) ++next;
+    return next == sparse_->entries.end() ? sparse_->length : next->first;
+  }
+
+  bool operator==(const KvArray& left, const KvArray& right) {
+    if (left.size() != right.size()) return false;
+    std::size_t index = left.nextPresent(0);
+    std::size_t other = right.nextPresent(0);
+    while (index == other && index < left.size()) {
+      if (!(left[index] == right[index])) return false;
+      index = left.nextPresent(index + 1);
+      other = right.nextPresent(other + 1);
+    }
+    return index == other;
+  }
 
   // ---- KvObject / KvMap / KvSet -------------------------------------------------------------
 
@@ -253,7 +382,7 @@ namespace uos::rt {
 
   void KvMap::set(KvValue key, KvValue value) {
     key = normalizedKey(std::move(key));
-    if (isPrimitive(key))
+    if (isPrimitive(key) || key.identity())
       for (Entry& entry : entries_)
         if (sameValueZero(entry.first, key)) {
           entry.second = std::move(value);
@@ -277,7 +406,7 @@ namespace uos::rt {
 
   void KvSet::add(KvValue value) {
     value = normalizedKey(std::move(value));
-    if (isPrimitive(value))
+    if (isPrimitive(value) || value.identity())
       for (const KvValue& member : values_)
         if (sameValueZero(member, value)) return;
     values_.push_back(std::move(value));
@@ -294,6 +423,14 @@ namespace uos::rt {
 
   bool operator==(const KvDate& left, const KvDate& right) noexcept { return sameNumber(left.time, right.time); }
 
+  kv_detail::ErrorCause::ErrorCause(const ErrorCause& other)
+      : value_(other && other->identity() ? std::make_shared<const KvValue>(*other) : other.value_) {}
+
+  kv_detail::ErrorCause& kv_detail::ErrorCause::operator=(const ErrorCause& other) {
+    if (this != &other) *this = ErrorCause(other);
+    return *this;
+  }
+
   bool operator==(const KvError& left, const KvError& right) {
     if (left.name != right.name || left.message != right.message || left.line != right.line || left.column != right.column || left.sourceURL != right.sourceURL ||
         left.stack != right.stack)
@@ -309,6 +446,56 @@ namespace uos::rt {
   }
 
   // ---- KvValue ------------------------------------------------------------------------------
+
+  KvValue kv_detail::ValueGraph::add(KvValue value) {
+    return link(nodes_.emplace_back(GraphNode{std::move(value), nullptr, 0}));
+  }
+
+  KvValue kv_detail::ValueGraph::link(GraphNode& node) const {
+    return KvValue(KvValue::GraphReference{this, &node, nullptr});
+  }
+
+  KvValue kv_detail::ValueGraph::borrow(const KvValue& value) {
+    if (const auto* reference = std::get_if<KvValue::GraphReference>(&value.value_))
+      return KvValue(KvValue::GraphReference{reference->graph, reference->node, nullptr});
+    return value;
+  }
+
+  kv_detail::GraphNode& kv_detail::ValueGraph::node(const KvValue& link) {
+    return *std::get<KvValue::GraphReference>(link.value_).node;
+  }
+
+  KvValue kv_detail::ValueGraph::finish(KvValue value) {
+    value.retainGraph();
+    return value;
+  }
+
+  KvValue::KvValue(const KvValue& other) : value_(other.value_) { retainGraph(); }
+
+  KvValue& KvValue::operator=(const KvValue& other) {
+    if (this != &other) *this = KvValue(other);
+    return *this;
+  }
+
+  void KvValue::retainGraph() {
+    if (auto* reference = std::get_if<GraphReference>(&value_); reference && !reference->owner)
+      reference->owner = reference->graph->shared_from_this();
+  }
+
+  const KvValue::Variant& KvValue::graphValue(const GraphReference& reference) noexcept { return reference.node->value.value_; }
+
+  KvValue::Variant& KvValue::variant() {
+    if (const auto* reference = std::get_if<GraphReference>(&value_)) {
+      Variant snapshot = graphValue(*reference);
+      value_ = std::move(snapshot);
+    }
+    return value_;
+  }
+
+  const KvValue* KvValue::backingBuffer() const noexcept {
+    const auto* reference = std::get_if<GraphReference>(&value_);
+    return reference ? reference->node->backing.get() : nullptr;
+  }
 
   KvValue::KvValue(const json::value& value) {
     switch (value.kind()) {
@@ -345,13 +532,20 @@ namespace uos::rt {
   }
 
   const KvValue& KvValue::operator[](std::string_view key) const noexcept {
-    if (const auto* object = std::get_if<KvObject>(&value_)) return object->at(key);
+    if (const auto* object = std::get_if<KvObject>(&variant())) {
+      const KvValue& member = object->at(key);
+      if (const void* id = identity(); id && member.identity() == id) return *this;
+      return member;
+    }
     return undefinedValue();
   }
 
   const KvValue& KvValue::operator[](std::size_t index) const noexcept {
-    if (const auto* array = std::get_if<KvArray>(&value_))
-      if (index < array->size() && !(*array)[index].is<KvHole>()) return (*array)[index];
+    if (const auto* array = std::get_if<KvArray>(&variant()); array && index < array->size()) {
+      const KvValue& element = (*array)[index];
+      if (const void* id = identity(); id && element.identity() == id) return *this;
+      if (!element.is<KvHole>()) return element;
+    }
     return undefinedValue();
   }
 
@@ -366,7 +560,7 @@ namespace uos::rt {
         else if constexpr (std::is_same_v<T, BigInt>) return !item.isZero();
         else return true;
       },
-      value_);
+      variant());
   }
 
   std::string_view KvValue::kind() const noexcept {
@@ -376,24 +570,57 @@ namespace uos::rt {
         if constexpr (std::is_same_v<T, KvArrayBufferView>) return kvViewKindName(item.kind);
         else return kindName<T>();
       },
-      value_);
+      variant());
   }
 
-  json::value KvValue::toJson() const { return toJsonValue(*this); }
+  json::value KvValue::toJson() const {
+    std::unordered_set<const void*> active;
+    return toJsonValue(*this, active, 0);
+  }
 
   bool operator==(const KvValue& left, const KvValue& right) {
-    if (left.value_.index() != right.value_.index()) return false;
+    const KvValue::Variant& lhs = left.variant();
+    const KvValue::Variant& rhs = right.variant();
+    if (lhs.index() != rhs.index()) return false;
+    using Pair = std::pair<const void*, const void*>;
+    struct PairHash {
+      std::size_t operator()(const Pair& pair) const noexcept {
+        return std::hash<const void*>{}(pair.first) ^ (std::hash<const void*>{}(pair.second) << 1);
+      }
+    };
+    using Pairs = std::unordered_set<Pair, PairHash>;
+    static thread_local Pairs active;
+    static thread_local std::size_t depth = 0;
+    const Pair pair{left.identity(), right.identity()};
+    if (pair.first && pair.first == pair.second) return true;
+    const bool track = pair.first && pair.second;
+    if (track && !active.insert(pair).second) return true;
+    struct RemovePair {
+      Pairs& active;
+      Pair pair;
+      bool track;
+      ~RemovePair() { if (track) active.erase(pair); }
+    } cleanup{active, pair, track};
+    if (depth > kv_detail::MaxContainerDepth) throw RangeError("Maximum call stack size exceeded.");
+    const TraversalDepth nesting(depth);
     return std::visit(
       [&](const auto& item) -> bool {
         using T = std::decay_t<decltype(item)>;
-        const T& other = std::get<T>(right.value_);
+        const T& other = std::get<T>(rhs);
         if constexpr (std::is_same_v<T, double>) return sameNumber(item, other);
+        else if constexpr (std::is_same_v<T, KvValue::GraphReference>) std::terminate();
         else return item == other;
       },
-      left.value_);
+      lhs);
   }
 
   std::string show(const KvValue& value) {
+    static thread_local std::unordered_set<const void*> active;
+    static thread_local std::size_t depth = 0;
+    const Ancestors ancestors(active, value.identity());
+    if (ancestors.repeated) return "<cycle>";
+    if (depth > kv_detail::MaxContainerDepth) return "<truncated>";
+    const TraversalDepth nesting(depth);
     return std::visit(
       [&](const auto& item) -> std::string {
         using T = std::decay_t<decltype(item)>;
@@ -402,7 +629,7 @@ namespace uos::rt {
         else if constexpr (std::is_same_v<T, KvHole>) return "<hole>";
         else if constexpr (std::is_same_v<T, bool>) return item ? "true" : "false";
         else if constexpr (std::is_same_v<T, double>) return showNumber(item);
-        else if constexpr (std::is_same_v<T, std::string>) return quoted(item);
+        else if constexpr (std::is_same_v<T, std::string>) return quoteJsonString(item);
         else if constexpr (std::is_same_v<T, BigInt>) return item.toString() + "n";
         else if constexpr (std::is_same_v<T, KvU64>) return show(item);
         else if constexpr (std::is_same_v<T, KvBytes>) return "Uint8Array(" + std::to_string(item.size()) + ") " + showBytes(item);
@@ -413,17 +640,25 @@ namespace uos::rt {
         else if constexpr (std::is_same_v<T, KvDate>) return "Date(" + showNumber(item.time) + ")";
         else if constexpr (std::is_same_v<T, KvRegExp>) return "/" + item.source + "/" + item.flags;
         else if constexpr (std::is_same_v<T, KvError>)
-          return item.name + "(" + (item.message ? quoted(*item.message) : std::string("undefined")) + (item.cause ? ", { cause: " + show(*item.cause) + " }" : "") + ")";
+          return item.name + "(" + (item.message ? quoteJsonString(*item.message) : std::string("undefined")) + (item.cause ? ", { cause: " + show(*item.cause) + " }" : "") + ")";
         else if constexpr (std::is_same_v<T, KvArray>) {
           std::string out = "[";
-          for (std::size_t index = 0; index < item.size(); ++index) out += (index ? ", " : "") + show(item[index]);
+          for (std::size_t index = 0; index < item.size();) {
+            const std::size_t present = item.nextPresent(index);
+            if (index != 0) out += ", ";
+            if (present == index) out += show(item[index++]);
+            else {
+              out += present == index + 1 ? "<hole>" : "<" + std::to_string(present - index) + " holes>";
+              index = present;
+            }
+          }
           return out + "]";
         } else if constexpr (std::is_same_v<T, KvObject>) {
           if (item.empty()) return "{}";
           std::string out = "{ ";
           bool first = true;
           for (const auto& [key, member] : item) {
-            out += (first ? "" : ", ") + quoted(key) + ": " + show(member);
+            out += (first ? "" : ", ") + quoteJsonString(key) + ": " + show(member);
             first = false;
           }
           return out + " }";
@@ -435,7 +670,7 @@ namespace uos::rt {
             first = false;
           }
           return out + (item.empty() ? "}" : " }");
-        } else {
+        } else if constexpr (std::is_same_v<T, KvSet>) {
           std::string out = "Set(" + std::to_string(item.size()) + ") {";
           bool first = true;
           for (const KvValue& member : item) {
@@ -443,7 +678,7 @@ namespace uos::rt {
             first = false;
           }
           return out + (item.empty() ? "}" : " }");
-        }
+        } else std::terminate();
       },
       value.variant());
   }
@@ -451,7 +686,7 @@ namespace uos::rt {
   std::string show(const KvKeyPart& part) {
     switch (part.value.index()) {
       case 0: return "Uint8Array " + showBytes(part.bytes());
-      case 1: return quoted(part.string());
+      case 1: return quoteJsonString(part.string());
       case 2: return showNumber(part.number());
       case 3: return part.bigint().toString() + "n";
       default: return part.boolean() ? "true" : "false";
@@ -467,7 +702,7 @@ namespace uos::rt {
   std::string show(KvU64 value) { return "KvU64(" + std::to_string(value.value) + "n)"; }
 
   std::string show(const KvCommitResult& result) {
-    return result.ok ? "{ ok: true, versionstamp: " + quoted(result.versionstamp) + " }" : (result.versionstamp.empty() ? "{ ok: false }" : "{ ok: false, versionstamp: " + quoted(result.versionstamp) + " }");
+    return result.ok ? "{ ok: true, versionstamp: " + quoteJsonString(result.versionstamp) + " }" : (result.versionstamp.empty() ? "{ ok: false }" : "{ ok: false, versionstamp: " + quoteJsonString(result.versionstamp) + " }");
   }
 
   std::string_view toString(KvMutationType type) noexcept {
@@ -482,9 +717,11 @@ namespace uos::rt {
 
   void assertPortableKvValue(const KvValue& value) {
     std::vector<const KvValue*> pending{&value};
+    std::unordered_set<const void*> seen;
     while (!pending.empty()) {
       const KvValue* current = pending.back();
       pending.pop_back();
+      if (const void* id = current->identity(); id && !seen.insert(id).second) continue;
       if (const auto* error = std::get_if<KvError>(&current->variant())) {
         if (error->cause) throw TypeError("Bun KV cannot preserve Error.cause; persist an explicit error record instead");
       } else if (const auto* map = std::get_if<KvMap>(&current->variant())) {
@@ -495,7 +732,8 @@ namespace uos::rt {
       } else if (const auto* set = std::get_if<KvSet>(&current->variant())) {
         for (const KvValue& member : *set) pending.push_back(&member);
       } else if (const auto* array = std::get_if<KvArray>(&current->variant())) {
-        for (const KvValue& element : *array) pending.push_back(&element);
+        for (std::size_t index = array->nextPresent(0); index < array->size(); index = array->nextPresent(index + 1))
+          pending.push_back(&(*array)[index]);
       } else if (const auto* object = std::get_if<KvObject>(&current->variant())) {
         for (const auto& [key, member] : *object) pending.push_back(&member);
       }

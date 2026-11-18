@@ -94,12 +94,14 @@ def copy_file(source, destination, executable=False):
 def copy_vendor_licenses(stage):
     production_sources = (path.relative_to(GATEWAY).as_posix() for path in (GATEWAY / "src").rglob("*.cpp")
                           if not path.name.startswith("."))
-    for library in vendor_sources.required(vendor_sources.selected(GATEWAY), production_sources):
+    libraries = vendor_sources.required(vendor_sources.selected(GATEWAY), production_sources)
+    for library in libraries:
         destination = stage / "licenses" / library.name
         copy_file(GATEWAY / "third_party" / library.name / "LICENSE", destination / "LICENSE")
         notice = GATEWAY / "docs/licenses" / library.name / "NOTICE"
         if library.name in ("simdjson", "simdutf") or notice.exists():
             copy_file(notice, destination / "NOTICE")
+    return {library.name: library.version for library in libraries}
 
 
 def write_json(path, value):

@@ -1,38 +1,42 @@
 # Native macOS Apple Silicon build
 
-The 2026-11-17 Apple Silicon job built all **369 production
-translation units** (325 modules and 44 runtime sources) with Apple Clang and libc++, with every port
-warning fatal, and archives them as `libuos_gateway.a`. The complete suite passed **441/441 binaries
-and 5,029/5,029 cases**: 36 runtime binaries / 457 cases, then 405 application binaries / 4,572 cases.
-All 463 test/support translation units compiled with zero failed, skipped or timed-out test targets.
+The November 18, 2026 requalification compiles the native gateway with Apple Clang and libc++.
+It builds simdjson 5.2.0 and simdutf 9.4.0 from the vendored sources and uses Homebrew ICU 78.3 for
+IDNA, case mapping and collation.
 
-This is an offline development qualification. Production packaging, the Mac service, live database
-conversion, credentials, upstream inference and deployment are separate acceptance surfaces.
-See [the exact job findings](findings/cppgw-macos-native-20261117.md) for source changes and failures.
+The existing `-O0 -g0` profile compiled all **373 production translation units** and linked
+the gateway and two offline KV utilities as arm64 Mach-O executables. The complete test run
+passed **442/442 binaries and 5,034/5,034 cases**.
 
-Assignment 3 JSON and UTF receipts currently cover Linux ARM64. A new Darwin receipt must identify its source/tree and vendored inputs, native compiler and library versions, affected cases and any Darwin-specific boundary behavior. The QCBOR and v40 input-limit integrations also need evidence on their own inputs. [Build checkpoints](BUILD.md#assignment-3-library-checkpoints) [Runtime limits](RUNTIME.md#input-limits)
+See [the current findings](findings/cppgw-macos-requal-20261118.md) for exact commands, receipt
+identities and diagnostics. The [previous qualification](findings/cppgw-macos-native-20261117.md)
+covers the earlier platform port and the Darwin fallback loaders.
+
+The November 17 job passed 441/441 binaries and 5,029/5,029 cases using zlib 1.3.2. Its libc++ probe covered floating-point `from_chars` and `to_chars`. The November 18 receipts bind the requalification tree and dependencies below. The combined stage 2a tree and later QCBOR and v40 input-limit integrations need receipts on their own inputs. [Build checkpoints](BUILD.md#assignment-3-library-checkpoints) [Runtime limits](RUNTIME.md#input-limits)
 
 ## Verified host and dependency selection
 
-| Component         | Native job                                                                 |
-| ----------------- | -------------------------------------------------------------------------- |
-| Host              | macOS 26.7.2, build 25G332, arm64; Darwin 25.6.0                           |
-| Compiler          | Apple Clang 21.0.0, clang-2100.1.1.101, Xcode 26.6                         |
-| C++ library       | Apple SDK libc++, C++20; floating `from_chars` and `to_chars` probe passes |
-| Boost             | Homebrew 1.92.0_1, JSON and Container, libc++ ABI                          |
-| OpenSSL           | Homebrew openssl@3 3.5.9                                                   |
-| SQLite            | Separate official 3.54.0 dylib, matching the versioned native fixture      |
-| Other C libraries | zlib 1.3.2, ICU 78.3, Brotli 1.2.1, Zstd 1.5.7                             |
-| Tools             | Homebrew 7.0.11, CMake 4.4.5, Ninja 1.13.2, Python 3.15.2                  |
-| Fixture reference | Bun 1.4.0, revision 34cbb9a40b4bd1bd767d134a7065e66c2432a676               |
+| Component         | Native job                                                            |
+| ----------------- | --------------------------------------------------------------------- |
+| Host              | macOS 26.7.2, build 25G332, arm64; Darwin 25.6.0                      |
+| Compiler          | Apple Clang 21.0.0, clang-2100.1.1.101, Xcode 26.6                    |
+| C++ library       | Apple macOS 26.5 SDK, libc++, C++20                                   |
+| Boost             | Homebrew 1.92.0_1, JSON and Container, libc++ ABI                     |
+| OpenSSL           | Homebrew openssl@3 3.5.9                                              |
+| SQLite            | Separate official 3.54.0 dylib, matching the versioned native fixture |
+| Other C libraries | zlib 1.4, ICU 78.3, Brotli 1.2.1, Zstd 1.5.7                          |
+| Tools             | Homebrew 7.0.11, CMake 4.4.5, Ninja 1.13.2, Python 3.15.2             |
+| Oracle            | Bun 1.4.0, revision 34cbb9a40b4bd1bd767d134a7065e66c2432a676          |
 
 Homebrew SQLite 3.54.1 is installed but the qualified fixture run selects the separate **3.54.0**
 header and dylib explicitly. The system SQLite is not selected. Bun 1.4.0 on this Mac reports
 SQLite 3.51.0; the C++ native-library fixture already has separate native-version
 expectations. Do not change its recorded 3.54.0 expectation to make another dependency pass.
 
-ICU 79.1 failed the exhaustive IDNA data gate; Bun on this Mac matches all 1088 original scalar
-blocks. The driver selects Homebrew `icu4c@78` explicitly, retaining every Unicode expectation.
+The driver explicitly selects Homebrew `icu4c@78` (formula revision 78.3_1 on this runner). ICU 79.1
+was already installed and failed the exhaustive IDNA data gate in the previous qualification.
+The shared Unicode casing, collation and IDNA fixtures passed with the same results as
+Linux ICU 78.3. [Linux ICU verification](findings/cppgw-std-icu-20261117.md#verification)
 
 No Homebrew LLVM was required. Older Apple compilers/SDKs, Intel Macs and older deployment targets
 are unqualified. Keep the existing Linux GCC coroutine rules even when Apple Clang compiles them.
@@ -82,34 +86,37 @@ PYTHON
 
 ## Reproduce the build and tests
 
-Run from the repository root with a clean committed checkout:
+Run the commands from the repository root with a clean committed checkout.
 
 ```sh
-cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
+bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
   --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite rt --require-clean
-cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
+bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
   --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite all --require-clean
 ```
 
-The script compiles every production source once, creates the complete archive, then compiles,
-links and executes runtime tests before the other tests. Tests link all 44 runtime objects directly
-and the exact ordered `Links` source list resolved by `tools/links.py`, preserving local stand-ins
-and static registrars. Production and test objects are shared across binaries. A successful cache
-entry requires matching compiler argv and SHA-256s of its first-party dependency closure.
+The script compiles the production sources once and builds the module archive. The three
+production executables share that archive and the startup object. Darwin's whole-archive
+link keeps the module registrars. Runtime tests execute before the other tests. Each test links
+all 44 runtime objects and the ordered `Links` source list from `tools/links.py`, which keeps
+the local stand-ins. A cached object requires matching compiler arguments and SHA-256s of its
+tracked dependency closure.
 
-The compiler flags are:
+The port's compiler flags include the following options.
 
 ```text
 -std=c++20 -stdlib=libc++ -O0 -g0 -Wall -Wextra -Wshadow -Wconversion -Werror
 -DBOOST_JSON_NO_LIB -DBOOST_CONTAINER_NO_LIB -DBOOST_SYSTEM_NO_LIB
 -DUOS_GATEWAY_NATIVE_LIBRARIES -pthread
--I cpp/gateway/include -I cpp/gateway
+-I cpp/gateway/include -I cpp/gateway --system-header-prefix=third_party/
 ```
 
-Homebrew include/link flags come from `brew --prefix` and `pkg-config`; SQLite's selected absolute
-dylib is explicit. Links include Boost.JSON, Boost.Container, OpenSSL, SQLite, zlib, Brotli, Zstd and
-ICU. Darwin uses no `-ldl`. Exact expanded compiler/link argv and failures are retained in logs.
-The driver bypasses host-specific Linux wrappers/presets only for an authorized disposable host.
+The driver resolves the prepared Homebrew dependencies with `brew --prefix` and `pkg-config`.
+Installed library headers are system includes, so the port keeps fatal warnings when Apple Clang
+parses ICU's headers. SQLite links directly to the prepared dylib. The vendored implementations
+compile separately without the port warning flags. The driver checks their registry hashes, records
+both archives and links them after the objects that use them. The JSON consumer enables
+`UOS_GATEWAY_SIMDJSON`. The external logs contain the expanded compiler and linker arguments.
 
 Every binary gets empty private HOME, fresh TMPDIR/cwd, an environment allowlist with no provider
 or credential variables, a new process group and a 180-second timeout. Unix paths use short `/tmp`
@@ -120,23 +127,24 @@ groups are killed after execution or timeout. No fixture reads a live database o
 The driver sets `DYLD_LIBRARY_PATH` through `env` after `sandbox-exec`, because macOS strips it
 when launching the platform boundary binary.
 
-Artifacts and receipts are under the external build root:
+The external build root contains the following artifacts and receipts.
 
-- `libuos_gateway.a`, `obj/`, per-object compiler logs and consumed-input hash receipts;
-- `runs/<id>/provenance.json`, compiler, SDK, dependencies/dylib hashes, commit/tree and input hashes;
-- `runs/<id>/{production,runtime,gateway}-compile.json`, exact build outcomes;
-- `runs/<id>/results.json` and per-binary logs, with actual case counts and failure/timeout statuses.
+- `libuos_gateway.a`, the two vendor archives, and `obj/` with per-object compiler logs and input hashes.
+- `runs/<id>/{uos-gateway,uos-kv-convert,uos-kv-proof}` and their link logs.
+- `runs/<id>/provenance.json` with toolchain, dependency, input and executable identities.
+- `runs/<id>/{production,runtime,gateway}-compile.json` with per-source build outcomes.
+- `runs/<id>/results.json` and per-binary logs with harness counts and failures.
 
 Dirty development runs have null acceptance commit/tree, with HEAD retained separately. A final
 receipt must have a clean committed tree, unchanged identity and unchanged source inputs. Build
 failures, missing harness summaries, empty selections and timeouts are failures, never passes.
-Use `--suite none` for the production archive only, `--filter substring[,substring]` for a focused
+Use `--suite none` for the production build alone, `--filter substring[,substring]` for a focused
 rerun and `--case substring` for a single harness group; those are subset receipts.
 
 The fallback bindings can be checked separately, using the same prepared dependencies:
 
 ```sh
-cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
+bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
   --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --suite rt \
   --jobs 3 --filter gzip,sqlite,fetch_transport --legacy-loaders --require-clean
 ```
@@ -147,25 +155,27 @@ define, while keeping the native-version test fixtures and ICU path. It exercise
 normal invocation restores the three native objects before creating the primary archive:
 
 ```sh
-cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
+bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
   --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite none --require-clean
 ```
 
 ## Native results
 
-| Gate                    | Result                              |
-| ----------------------- | ----------------------------------- |
-| Full production compile | 369/369 passed                      |
-| Static archive          | 369 members, built                  |
-| Test/support compile    | 463/463 passed                      |
-| Runtime tests           | 36/36 binaries, 457/457 cases       |
-| Application tests       | 405/405 binaries, 4,572/4,572 cases |
-| Whole suite             | 441/441 binaries, 5,029/5,029 cases |
-| Darwin fallback loaders | 4/4 binaries, 91/91 cases           |
+| Gate                       | Result                                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------- |
+| Production compile         | 373/373 passed (369 runtime/module sources, shared startup and three entry points) |
+| Vendor compile             | simdjson and simdutf both built and archived                                       |
+| Static application archive | 369 members                                                                        |
+| Mach-O executable links    | 3/3 passed                                                                         |
+| Test and support compile   | 464/464 passed                                                                     |
+| Runtime phase              | 36/36 binaries, 458/458 cases                                                      |
+| Application phase          | 406/406 binaries, 4,576/4,576 cases                                                |
+| Whole suite                | 442/442 binaries, 5,034/5,034 cases                                                |
 
-The complete primary receipt binds clean commit `c6cd29f9e9743e37c4eca1a0313194fd3279ba9e` and
-tree `8599a3a0bc292a66a664832f01ca1404d2192e3d`, with unchanged identity and every input hash.
-The findings file records the exact run, artifact/receipt hashes and subsequent documentation changes.
+The cold standalone runtime command took 652.31 s. The full suite took 1,206.90 s after
+reusing verified production and runtime test objects. The clean receipt binds commit
+`b05ecda8d3727b56b791a363ec344ba2f1093230` and tree
+`c1c4aa854fb7488c05aa80d7b589bc776fc717f1`. The findings record the output hashes.
 
 ## Proven Darwin behavior and remaining boundaries
 
@@ -191,7 +201,9 @@ The findings file records the exact run, artifact/receipt hashes and subsequent 
 - `permissions_linux` correctly refuses Darwin with `Linux confinement requires Linux ARM64`, exactly
   as the TypeScript does. Do not replace real confinement with a permissive emulation.
 - Existing CMake presets/tools remain Linux-host-specific. `cmake -S cpp/gateway -B <external> -G Ninja`
-  refuses direct configuration. `runtime/startup.cpp` still requires Linux ARM64 ELF, Linux native
-  artifacts and Linux confinement; a Mach-O/Seatbelt production launcher remains outside this task.
+  refuses direct configuration. The production launcher still requires a Linux ARM64 runtime
+  closure, ELF native artifacts and Linux confinement. The linked gateway reached the runtime closure
+  check with a private synthetic manifest and exited 1 with `runtime closure platform is unsupported`.
+  Idle gateway RSS remains unmeasured.
 - Packaging, production same-binary acceptance, Mac service activation, Linux/Pi regression execution,
   and other sanitizer/fuzz/performance profiles remain separate work.

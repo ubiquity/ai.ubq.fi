@@ -10,6 +10,8 @@
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/url.hpp"
 
+#include "third_party/llhttp/llhttp.h"
+
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/v6_only.hpp>
 #include <boost/asio/post.hpp>
@@ -21,7 +23,6 @@
 #include <cstring>
 #include <deque>
 #include <exception>
-#include <unordered_set>
 #include <utility>
 
 namespace uos::runtime::http {
@@ -148,6 +149,10 @@ namespace uos::runtime::http {
       // Bun's parser limits (a head of at most 16408 bytes, at most 198 fields).
       constexpr std::size_t MAX_HEAD_BYTES = 16408;
       constexpr std::size_t MAX_HEADER_FIELDS = 198;
+      constexpr std::size_t MAX_CHUNK_LINE_BYTES = 4096;
+      constexpr std::size_t MAX_LENGTH_DIGITS = 15;
+      constexpr std::string_view BAD_REQUEST = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
+      constexpr std::string_view HEADER_OVERFLOW = "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n";
       // ServerResponse.writableHighWaterMark in Bun.
       constexpr std::size_t HIGH_WATER_MARK = 65536;
       // Bytes of a following request buffered while a response is in progress.
@@ -156,13 +161,6 @@ namespace uos::runtime::http {
       // How long a closing connection keeps reading (and discarding) after its last
       // response, so unread request bytes do not turn the close into a reset.
       constexpr double LINGER_MS = 2000;
-
-      const std::unordered_set<std::string_view> METHODS{
-        "GET",         "HEAD",        "POST",     "PUT",        "DELETE",     "OPTIONS",   "TRACE",     "PATCH",    "PROPFIND", "PROPPATCH", "MKCOL",
-        "COPY",        "MOVE",        "LOCK",     "UNLOCK",     "BIND",       "REBIND",    "UNBIND",    "ACL",      "REPORT",   "MKACTIVITY", "CHECKOUT",
-        "MERGE",       "M-SEARCH",    "NOTIFY",   "SUBSCRIBE",  "UNSUBSCRIBE", "PURGE",    "MKCALENDAR", "LINK",    "UNLINK",   "SOURCE",    "QUERY",
-        "SEARCH",
-      };
 
       bool isTokenChar(unsigned char character) {
         if (character >= '0' && character <= '9') return true;
@@ -300,14 +298,166 @@ namespace uos::runtime::http {
       void adopt(asio::ip::tcp::socket socket);
     };
 
+    struct RequestParser {
+      enum class Head { incomplete, complete, invalid, overflow };
+      enum class ChunkPart { size, data, trailers, done };
+
+      // The connection retains the head across reads, which may relocate its buffer.
+      struct Span {
+        std::uint16_t offset = 0;
+        std::uint16_t size = 0;
+
+        void append(const char* base, const char* at, std::size_t length) {
+          if (size == 0) offset = static_cast<std::uint16_t>(at - base);
+          size = static_cast<std::uint16_t>(size + length);
+        }
+
+        std::string_view view(std::string_view text) const { return text.substr(offset, size); }
+      };
+
+      struct Field {
+        Span name;
+        Span value;
+      };
+
+      RequestParser() {
+        static const llhttp_settings_t settings = [] {
+          llhttp_settings_t callbacks{};
+          callbacks.on_url = [](llhttp_t* parser, const char* at, std::size_t length) {
+            auto& self = from(parser);
+            self.target.append(self.headBase, at, length);
+            return 0;
+          };
+          callbacks.on_header_field = [](llhttp_t* parser, const char* at, std::size_t length) -> int {
+            if (parser->flags & F_TRAILING) return 0;
+            auto& self = from(parser);
+            if (self.fieldCount == self.fields.size()) return HPE_USER;
+            self.fields[self.fieldCount].name.append(self.headBase, at, length);
+            return 0;
+          };
+          callbacks.on_header_value = [](llhttp_t* parser, const char* at, std::size_t length) {
+            if (!(parser->flags & F_TRAILING)) {
+              auto& self = from(parser);
+              self.fields[self.fieldCount].value.append(self.headBase, at, length);
+            }
+            return 0;
+          };
+          callbacks.on_header_value_complete = [](llhttp_t* parser) {
+            if (!(parser->flags & F_TRAILING)) {
+              auto& self = from(parser);
+              ++self.fieldCount;
+              if (self.fieldCount < self.fields.size()) self.fields[self.fieldCount] = {};
+            }
+            return 0;
+          };
+          callbacks.on_headers_complete = [](llhttp_t*) -> int { return HPE_PAUSED; };
+          callbacks.on_chunk_header = [](llhttp_t* parser) -> int {
+            from(parser).chunkPart = parser->content_length == 0 ? ChunkPart::trailers : ChunkPart::data;
+            return HPE_PAUSED;
+          };
+          callbacks.on_body = [](llhttp_t* parser, const char* at, std::size_t length) {
+            from(parser).payload = {at, length};
+            return 0;
+          };
+          callbacks.on_chunk_complete = [](llhttp_t* parser) -> int {
+            auto& self = from(parser);
+            if (self.chunkPart == ChunkPart::trailers) return 0;
+            self.chunkPart = ChunkPart::size;
+            return HPE_PAUSED;
+          };
+          callbacks.on_message_complete = [](llhttp_t* parser) -> int {
+            from(parser).chunkPart = ChunkPart::done;
+            return HPE_PAUSED;
+          };
+          return callbacks;
+        }();
+        llhttp_init(&wire, HTTP_REQUEST, &settings);
+        wire.data = this;
+      }
+
+      RequestParser(const RequestParser&) = delete;
+      RequestParser& operator=(const RequestParser&) = delete;
+
+      Head parseHead(std::string_view text, std::size_t& consumed) {
+        if (text.size() == buffered) return Head::incomplete;
+        if (buffered == 0) {
+          llhttp_reset(&wire);
+          target = {};
+          fields[0] = {};
+          fieldCount = 0;
+          chunkPart = ChunkPart::size;
+        }
+        const std::size_t end = std::min(text.size(), MAX_HEAD_BYTES);
+        headBase = text.data();
+        const llhttp_errno_t result = llhttp_execute(&wire, headBase + buffered, end - buffered);
+        headBase = nullptr;
+        if (result == HPE_OK) {
+          buffered = end;
+          return end == MAX_HEAD_BYTES ? Head::overflow : Head::incomplete;
+        }
+        if (result == HPE_USER) return Head::overflow;
+        if (result != HPE_PAUSED) return Head::invalid;
+        consumed = static_cast<std::size_t>(llhttp_get_error_pos(&wire) - text.data());
+        buffered = 0;
+        return Head::complete;
+      }
+
+      // Return one payload fragment per step. The caller copies it before erasing
+      // consumed input, then dispatches the data event outside the C callbacks.
+      std::optional<std::size_t> decodeChunked(std::string_view text, std::string_view& chunk) {
+        const ChunkPart part = chunkPart;
+        const std::size_t limit = part == ChunkPart::size ? MAX_CHUNK_LINE_BYTES : MAX_HEAD_BYTES;
+        const bool metadata = part == ChunkPart::size || part == ChunkPart::trailers;
+        std::size_t end = metadata ? std::min(text.size(), limit) : text.size();
+        // Deliver payload before validating its delimiter, regardless of how the
+        // socket split the input. llhttp tracks the bytes left in this chunk.
+        if (part == ChunkPart::data && wire.content_length != 0)
+          end = static_cast<std::size_t>(std::min<std::uint64_t>(end, wire.content_length));
+        if (end == buffered || part == ChunkPart::done) return 0;
+
+        llhttp_resume(&wire);
+        error = llhttp_execute(&wire, text.data() + buffered, end - buffered);
+        chunk = std::exchange(payload, {});
+        if (error != HPE_OK && error != HPE_PAUSED) return std::nullopt;
+        if (metadata && error == HPE_OK) {
+          if (end == limit) {
+            error = HPE_USER;
+            llhttp_set_error_reason(&wire, "Chunk metadata exceeds limit");
+            return std::nullopt;
+          }
+          buffered = end;
+          return 0;
+        }
+        const std::size_t consumed = error == HPE_PAUSED ? static_cast<std::size_t>(llhttp_get_error_pos(&wire) - text.data()) : end;
+        if (part == ChunkPart::size && text.substr(0, consumed).find_first_not_of("0123456789abcdefABCDEF") > MAX_LENGTH_DIGITS) {
+          error = HPE_INVALID_CHUNK_SIZE;
+          llhttp_set_error_reason(&wire, "Chunk size exceeds digit limit");
+          return std::nullopt;
+        }
+        buffered = 0;
+        return consumed;
+      }
+
+      llhttp_t wire;
+      Span target;
+      std::array<Field, MAX_HEADER_FIELDS> fields;
+      std::size_t fieldCount = 0;
+      ChunkPart chunkPart = ChunkPart::size;
+      llhttp_errno_t error = HPE_OK;
+
+    private:
+      static RequestParser& from(llhttp_t* parser) { return *static_cast<RequestParser*>(parser->data); }
+      static_assert(MAX_HEAD_BYTES <= UINT16_MAX);
+      const char* headBase = nullptr;
+      std::size_t buffered = 0;
+      std::string_view payload;
+    };
+
     // ---- the connection ---------------------------------------------------------------
 
     struct ConnectionState : std::enable_shared_from_this<ConnectionState> {
       enum class Phase { head, body, waiting, lingering, upgrade, closed };
-      // `invalid`: a Transfer-Encoding whose last coding is not chunked (Bun dispatches the
-      // request and fails its body).
-      enum class Framing { none, length, chunked, invalid };
-      enum class ChunkStep { size, data, dataEnd, trailer, done };
+      enum class Framing { none, length, chunked };
 
       std::shared_ptr<Server> server;
       ws::UpgradeSocket upgrade;
@@ -338,7 +488,7 @@ namespace uos::runtime::http {
       std::shared_ptr<ServerResponse> response;
       Framing framing = Framing::none;
       std::uint64_t remaining = 0;
-      ChunkStep chunkStep = ChunkStep::size;
+      RequestParser parser;
       bool bodyComplete = false;
       bool flowing = false;
       bool endScheduled = false;
@@ -469,148 +619,80 @@ namespace uos::runtime::http {
       // Parses one request head from `input`; true when a request was dispatched and the
       // remaining input should be processed in the new phase.
       bool parseHead() {
-        // An empty line before a request line is ignored.
-        std::size_t start = 0;
-        while (input.size() >= start + 2 && input[start] == '\r' && input[start + 1] == '\n') start += 2;
-        if (start > 0) input.erase(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(start));
-        if (input.empty()) return false;
         const std::string_view text(reinterpret_cast<const char*>(input.data()), input.size());
-        const std::size_t end = text.find("\r\n\r\n");
-        // A line ending that is not CRLF ends the request at once.
-        const std::string_view scanned = text.substr(0, end == std::string_view::npos ? text.size() : end + 2);
-        for (std::size_t position = scanned.find('\n'); position != std::string_view::npos; position = scanned.find('\n', position + 1)) {
-          if (position == 0 || scanned[position - 1] != '\r') {
-            refuse("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
-            return false;
-          }
-        }
-        if (end == std::string_view::npos) {
-          if (input.size() > MAX_HEAD_BYTES) refuse("HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n");
+        std::size_t consumed = 0;
+        const RequestParser::Head parsed = parser.parseHead(text, consumed);
+        if (parsed == RequestParser::Head::incomplete) return false;
+        if (parsed != RequestParser::Head::complete) {
+          refuse(parsed == RequestParser::Head::overflow ? HEADER_OVERFLOW : BAD_REQUEST);
           return false;
         }
-        if (end + 4 > MAX_HEAD_BYTES) {
-          refuse("HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n");
-          return false;
-        }
-        const std::string head(text.substr(0, end));
-        input.erase(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(end + 4));
-        std::vector<std::string> lines;
-        for (std::size_t position = 0;;) {
-          const std::size_t lineEnd = head.find("\r\n", position);
-          lines.push_back(head.substr(position, lineEnd == std::string::npos ? std::string::npos : lineEnd - position));
-          if (lineEnd == std::string::npos) break;
-          position = lineEnd + 2;
-        }
-        for (const std::string& line : lines) {
-          if (line.find('\n') != std::string::npos || line.find('\r') != std::string::npos) {
-            refuse("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
-            return false;
-          }
-        }
-        // Request line: METHOD SP request-target SP HTTP-version.
-        const std::string& requestLine = lines[0];
-        const std::size_t firstSpace = requestLine.find(' ');
-        const std::size_t secondSpace = firstSpace == std::string::npos ? std::string::npos : requestLine.find(' ', firstSpace + 1);
-        if (firstSpace == std::string::npos || secondSpace == std::string::npos || requestLine.find(' ', secondSpace + 1) != std::string::npos) {
-          refuse("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
-          return false;
-        }
-        const std::string method = requestLine.substr(0, firstSpace);
-        const std::string target = requestLine.substr(firstSpace + 1, secondSpace - firstSpace - 1);
-        const std::string version = requestLine.substr(secondSpace + 1);
-        if (method == "CONNECT") {
+
+        const auto methodCode = static_cast<llhttp_method_t>(llhttp_get_method(&parser.wire));
+        if (methodCode == HTTP_CONNECT) {
           destroy(nullptr);
           return false;
         }
-        static const rt::Regex ABSOLUTE_FORM("^[A-Za-z][A-Za-z0-9+.-]*://", "");
-        if (!METHODS.contains(method) || target.empty() || (target[0] != '/' && !ABSOLUTE_FORM.test(target)) || (version != "HTTP/1.1" && version != "HTTP/1.0")) {
-          refuse("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+        const std::string_view method = llhttp_method_name(methodCode);
+        const std::string_view target = parser.target.view(text);
+        const bool http11 = llhttp_get_http_minor(&parser.wire) == 1;
+        const auto suffix = http11 ? " HTTP/1.1\r\n" : " HTTP/1.0\r\n";
+        // Require single spaces and CRLF in the request line. The gateway routes
+        // origin and absolute targets and has no server-wide OPTIONS target.
+        auto requestLine = text;
+        while (requestLine.starts_with("\r\n")) requestLine.remove_prefix(2);
+        const std::size_t targetStart = text.size() - requestLine.size() + method.size() + 1;
+        if (target.empty() || target == "*" || parser.target.offset != targetStart || text[targetStart - 1] != ' ' ||
+            !text.substr(parser.target.offset + target.size()).starts_with(suffix)) {
+          refuse(BAD_REQUEST);
           return false;
         }
-        std::vector<std::pair<std::string, std::string>> fields;
-        for (std::size_t index = 1; index < lines.size(); ++index) {
-          const std::string& line = lines[index];
-          const std::size_t colon = line.find(':');
-          if (colon == std::string::npos || !isToken(std::string_view(line).substr(0, colon))) {
-            refuse("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
-            return false;
-          }
-          const std::string value = trimOws(std::string_view(line).substr(colon + 1));
-          for (const char byte : value) {
-            const auto code = static_cast<unsigned char>(byte);
-            if ((code < 0x20 && code != '\t')) {
-              refuse("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
-              return false;
-            }
-          }
-          fields.emplace_back(line.substr(0, colon), value);
-        }
-        if (fields.size() > MAX_HEADER_FIELDS) {
-          refuse("HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n");
+
+        // llhttp checks conflicting lengths before pausing at the head. A
+        // non-final or absent chunked coding cannot delimit a request body.
+        const bool chunked = (parser.wire.flags & F_CHUNKED) != 0;
+        if ((parser.wire.flags & F_TRANSFER_ENCODING) && !chunked) {
+          refuse(BAD_REQUEST);
           return false;
         }
-        const bool http11 = version == "HTTP/1.1";
-        std::optional<std::string> contentLength;
-        std::optional<std::string> transferEncoding;
-        std::optional<std::string> connection;
         bool hasHost = false;
-        bool hasUpgrade = false;
+        bool isUpgrade = false;
         bool expectContinue = false;
-        for (const auto& [name, value] : fields) {
+        std::vector<std::string> rawHeaders;
+        rawHeaders.reserve(parser.fieldCount * 2);
+        for (std::size_t i = 0; i < parser.fieldCount; ++i) {
+          const auto name = parser.fields[i].name.view(text);
+          auto value = parser.fields[i].value.view(text);
+          const auto last = value.find_last_not_of(" \t");
+          value = last == std::string_view::npos ? std::string_view{} : value.substr(0, last + 1);
           const std::string lower = lowerAscii(name);
-          if (lower == "content-length") {
-            if (contentLength && *contentLength != value) {
-              refuse("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
-              return false;
-            }
-            contentLength = value;
-          } else if (lower == "transfer-encoding") {
-            transferEncoding = transferEncoding ? *transferEncoding + ", " + value : value;
-          } else if (lower == "connection") {
-            connection = connection ? *connection + ", " + value : value;
-          } else if (lower == "host") {
-            hasHost = true;
-          } else if (lower == "upgrade") {
-            hasUpgrade = true;
-          } else if (lower == "expect") {
-            expectContinue = expectContinue || lowerAscii(value) == "100-continue";
-          }
-        }
-        framing = Framing::none;
-        remaining = 0;
-        if (transferEncoding) {
-          if (contentLength) {
-            refuse("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+          if (lower == "content-length" && value.size() > MAX_LENGTH_DIGITS) {
+            refuse(BAD_REQUEST);
             return false;
           }
-          const std::size_t comma = transferEncoding->rfind(',');
-          const std::string last = lowerAscii(trimOws(comma == std::string::npos ? std::string_view(*transferEncoding) : std::string_view(*transferEncoding).substr(comma + 1)));
-          framing = last == "chunked" ? Framing::chunked : Framing::invalid;
-          chunkStep = ChunkStep::size;
-        } else if (contentLength) {
-          if (contentLength->empty() || !std::all_of(contentLength->begin(), contentLength->end(), [](char digit) { return digit >= '0' && digit <= '9'; }) || contentLength->size() > 15) {
-            refuse("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
-            return false;
-          }
-          remaining = std::stoull(*contentLength);
-          framing = remaining > 0 ? Framing::length : Framing::none;
+          hasHost = hasHost || lower == "host";
+          expectContinue = expectContinue || (lower == "expect" && lowerAscii(value) == "100-continue");
+          // Proxy-Connection can set llhttp's upgrade flag. Only Connection
+          // has authority to switch away from HTTP on this server.
+          isUpgrade = isUpgrade || (lower == "connection" && llhttp_get_upgrade(&parser.wire) && listsToken(value, "upgrade"));
+          rawHeaders.emplace_back(name);
+          rawHeaders.push_back(rt::isAscii(value) ? std::string(value) : latin1(value));
         }
         if (http11 && !hasHost) {
           refuse("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nDate: " + utcDate() + "\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n");
           return false;
         }
-        keepAlive = http11 && !(connection && listsToken(*connection, "close"));
+        keepAlive = http11 && llhttp_should_keep_alive(&parser.wire);
+        remaining = parser.wire.content_length;
+        framing = chunked ? Framing::chunked : remaining > 0 ? Framing::length : Framing::none;
 
         auto self = shared_from_this();
         auto incoming = std::make_shared<IncomingMessage>(self, socket);
         incoming->method = method;
         incoming->url = rt::decodeUtf8(target, {.ignoreBOM = true});
         incoming->httpVersion = http11 ? "1.1" : "1.0";
-        for (const auto& [name, value] : fields) {
-          incoming->rawHeaders.push_back(name);
-          incoming->rawHeaders.push_back(latin1(value));
-        }
-        const bool isUpgrade = hasUpgrade && connection && listsToken(*connection, "upgrade");
+        incoming->rawHeaders = std::move(rawHeaders);
+        input.erase(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(consumed));
         if (isUpgrade && server && server->impl().listenerCount("upgrade") > 0) {
           phase = Phase::upgrade;
           request = incoming;
@@ -655,10 +737,6 @@ namespace uos::runtime::http {
       // Decodes and delivers buffered body bytes while the message flows (or is being
       // discarded after its response).
       void decodeBody() {
-        if (framing == Framing::invalid && phase == Phase::body && (dumping || flowing)) {
-          bodyError();
-          return;
-        }
         while (!destroyed && phase == Phase::body && !bodyComplete && (dumping || flowing) && !input.empty()) {
           rt::ByteChunk chunk;
           if (framing == Framing::length) {
@@ -683,65 +761,25 @@ namespace uos::runtime::http {
         if (!destroyed && phase == Phase::body && bodyComplete) onBodyComplete();
       }
 
-      // One step of the chunked decoder over `input`: std::nullopt for a framing error,
-      // false when more bytes are needed.
+      // One step of the chunked decoder over the existing connection buffer.
       std::optional<bool> decodeChunked(rt::ByteChunk& chunk) {
         const std::string_view text(reinterpret_cast<const char*>(input.data()), input.size());
-        switch (chunkStep) {
-          case ChunkStep::size: {
-            const std::size_t lineEnd = text.find("\r\n");
-            if (lineEnd == std::string_view::npos) return text.size() > 4096 ? std::optional<bool>() : std::optional<bool>(false);
-            std::string_view sizeText = text.substr(0, lineEnd);
-            const std::size_t extension = sizeText.find_first_of("; \t");
-            if (extension != std::string_view::npos) sizeText = sizeText.substr(0, extension);
-            if (sizeText.empty() || sizeText.size() > 15) return std::nullopt;
-            std::uint64_t size = 0;
-            for (const char digit : sizeText) {
-              const int value = digit >= '0' && digit <= '9' ? digit - '0' : (digit | 0x20) >= 'a' && (digit | 0x20) <= 'f' ? (digit | 0x20) - 'a' + 10 : -1;
-              if (value < 0) return std::nullopt;
-              size = size * 16 + static_cast<std::uint64_t>(value);
-            }
-            input.erase(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(lineEnd + 2));
-            remaining = size;
-            chunkStep = size == 0 ? ChunkStep::trailer : ChunkStep::data;
-            return true;
-          }
-          case ChunkStep::data: {
-            const std::size_t take = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, input.size()));
-            chunk.assign(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(take));
-            input.erase(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(take));
-            remaining -= take;
-            if (remaining == 0) chunkStep = ChunkStep::dataEnd;
-            return true;
-          }
-          case ChunkStep::dataEnd: {
-            if (text.size() < 2) return false;
-            if (text.substr(0, 2) != "\r\n") return std::nullopt;
-            input.erase(input.begin(), input.begin() + 2);
-            chunkStep = ChunkStep::size;
-            return true;
-          }
-          case ChunkStep::trailer: {
-            const std::size_t lineEnd = text.find("\r\n");
-            if (lineEnd == std::string_view::npos) return text.size() > MAX_HEAD_BYTES ? std::optional<bool>() : std::optional<bool>(false);
-            input.erase(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(lineEnd + 2));
-            if (lineEnd == 0) {
-              chunkStep = ChunkStep::done;
-              bodyComplete = true;
-            }
-            return true;
-          }
-          case ChunkStep::done:
-            return false;
-        }
-        return false;
+        std::string_view payload;
+        const auto consumed = parser.decodeChunked(text, payload);
+        if (!consumed) return std::nullopt;
+        if (!payload.empty()) chunk.assign(payload.begin(), payload.end());
+        input.erase(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(*consumed));
+        bodyComplete = parser.chunkPart == RequestParser::ChunkPart::done;
+        return *consumed > 0 || bodyComplete;
       }
 
       // A request body that cannot be decoded. The request still being read is aborted
       // (its body errors); the connection then answers 400 and closes, after a response
       // already written in full (as Bun does), or is destroyed mid-response.
       void bodyError() {
-        const rt::Reason error = codedError("Parse Error: Invalid character in chunk size", "HPE_INVALID_CHUNK_SIZE");
+        const char* code = llhttp_errno_name(parser.error);
+        const char* reason = llhttp_get_error_reason(&parser.wire);
+        const rt::Reason error = codedError("Parse Error: " + std::string(reason ? reason : code), code);
         if (request && !dumping) {
           auto incoming = request;
           incoming->events().emit("aborted");
@@ -752,7 +790,7 @@ namespace uos::runtime::http {
           destroy(error);
           return;
         }
-        destroyAfter("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+        destroyAfter(BAD_REQUEST);
       }
 
       void onBodyComplete() {
