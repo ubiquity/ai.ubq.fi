@@ -3179,7 +3179,27 @@
             "s"
           ],
           "verdict": "SAFE",
-          "detail": "The log frame owns inputs and injected writers and observes the write promises together. The lexical scope guard runs against its own live input, and scratch JSON storage is used only by the inline formatter."
+          "detail": "Once write registration succeeds, the frame owns the inputs and observes the writes to settlement. The lexical scope guard uses its own live input and scratch JSON storage stays in the inline formatter."
+        },
+        {
+          "lines": [
+            61,
+            162,
+            174,
+            181,
+            193,
+            200,
+            207,
+            215,
+            219
+          ],
+          "kinds": [
+            "a",
+            "c",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "A coroutine-valued injected writer can suspend before the join is installed. If a later writer throws synchronously, logTerminalRequest drops the exact invoked callable from its copied input, and the first writer can resume through its dead closure. Keep a shared owner of the invoked callback with each immediately registered writer completion."
         },
         {
           "lines": [

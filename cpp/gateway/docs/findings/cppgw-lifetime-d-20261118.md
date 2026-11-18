@@ -894,7 +894,8 @@ Reviewed request-to-delivery abort forwarding and handoff.
 
 Reviewed body and delivery observation, streaming source ownership, coalesced quota terminal work and Sentinel persistence.
 
-- L40, 46, 82, 89, 94, 163, 175, 182, 186, 193, 195, 196, 200, 207, 215, 219, 227 **SAFE** · The log frame owns inputs and injected writers and observes the write promises together. The lexical scope guard runs against its own live input, and scratch JSON storage is used only by the inline formatter.
+- L40, 46, 82, 89, 94, 163, 175, 182, 186, 193, 195, 196, 200, 207, 215, 219, 227 **SAFE** · Once write registration succeeds, the frame owns the inputs and observes the writes to settlement. The lexical scope guard uses its own live input and scratch JSON storage stays in the inline formatter.
+- L61, 162, 174, 181, 193, 200, 207, 215, 219 **DEFECT** · A coroutine-valued injected writer can suspend before the join is installed. If a later writer throws synchronously, logTerminalRequest drops the exact invoked callable from its copied input, and the first writer can resume through its dead closure. Keep a shared owner of the invoked callback with each immediately registered writer completion.
 - L272, 273, 278, 281, 287, 292, 294, 297, 311, 312, 328, 338, 351, 353, 357, 359, 360, 361 **SAFE** · Replay and logging tasks retain self. Each quota terminal operation stays alive through the registered finalizer, which clears the matching work slot and the temporary holder when it settles.
 - L384, 386, 389, 390, 393 **SAFE** · Buffered handling owns state through response handoff and any registered completion reaction owns state through terminal logging.
 - L417, 424, 426, 427, 436, 440, 446, 448, 451, 452, 458, 459, 460, 471, 474, 477, 480, 541, 542 **SAFE** · The stream runtime SourceAlgorithm::runAsync owns the pull callable and its state capture through the member task, including close or error clearing the stream's callbacks. Cancel is synchronous and the original reader remains owned.
@@ -2065,4 +2066,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-216/286 files reviewed. 389 sites: 368 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+216/286 files reviewed. 390 sites: 368 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
