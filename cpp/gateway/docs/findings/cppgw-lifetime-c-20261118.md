@@ -203,7 +203,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/manual_reset_state.cpp`
 - [x] `src/codex/native_auth.cpp`
 - [x] `src/codex/native_auth_transport.cpp`
-- [ ] `src/codex/overage_settings.cpp`
+- [x] `src/codex/overage_settings.cpp`
 - [ ] `src/codex/quota.cpp`
 - [ ] `src/codex/rate_limit_429.cpp`
 - [ ] `src/codex/reset_settings.cpp`
@@ -1311,3 +1311,10 @@ The registered native WebSocket outlives its RPC callbacks through the connectio
 - 63-76,144-193 · socket open, file, and RPC awaits · **SAFE** · The coroutine owns RefreshState and its strings. Open/error callbacks own the promise resolvers. Pointers into initialized and account payloads have frame-owned optional storage.
 - 85-139 · pending-call iteration and timer · **SAFE** · Resolve and reject enqueue reactions, so the synchronous pending scan cannot be invalidated by a resumed caller. Timers are cleared on reply, send failure, socket failure or Loop teardown.
 - 196-222 · socket listener cycle · **SAFE** · The concrete socket clears persistent callbacks in emitClose, and WebSocketRegistry clears the same callbacks at loop shutdown when no close is emitted. Refresh normally terminates the socket after success or error.
+
+### `src/codex/overage_settings.cpp`
+
+The refresh builds fresh overage rows before replacing shared state.
+
+- 42-56 · KV read and write · **SAFE** · Each task retains KV and its key/value arguments until the operation finishes.
+- 64-95 · capturing coroutine and nested fail-fast joins · **SAFE** · rt::async owns the captured account and KV independently of the parent. Both nested hash tasks take owning inputs and the final map mutation uses copied output rows.

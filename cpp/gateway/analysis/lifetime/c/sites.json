@@ -2108,8 +2108,22 @@
       ]
     },
     "src/codex/overage_settings.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The refresh builds fresh overage rows before replacing shared state.",
+      "sites": [
+        {
+          "lines": "42-56",
+          "kind": "KV read and write",
+          "verdict": "SAFE",
+          "reason": "Each task retains KV and its key/value arguments until the operation finishes."
+        },
+        {
+          "lines": "64-95",
+          "kind": "capturing coroutine and nested fail-fast joins",
+          "verdict": "SAFE",
+          "reason": "rt::async owns the captured account and KV independently of the parent. Both nested hash tasks take owning inputs and the final map mutation uses copied output rows."
+        }
+      ]
     },
     "src/codex/quota.cpp": {
       "status": "pending",
