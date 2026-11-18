@@ -1229,8 +1229,16 @@
       ]
     },
     "include/uos/provider/claude_code.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Claude Code transport and workspace interfaces own their option records.",
+      "sites": [
+        {
+          "lines": "205-206,296,300-301",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "Each dispatch or discovery task retains its option values, including its transport and dispatch callbacks."
+        }
+      ]
     },
     "include/uos/provider/claude_code_access.hpp": {
       "status": "pending",

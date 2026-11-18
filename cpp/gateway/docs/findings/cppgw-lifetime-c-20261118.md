@@ -151,7 +151,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/cerebras_responses.hpp`
 - [x] `include/uos/provider/claude_capacity_history.hpp`
 - [x] `include/uos/provider/claude_capacity_rollups.hpp`
-- [ ] `include/uos/provider/claude_code.hpp`
+- [x] `include/uos/provider/claude_code.hpp`
 - [ ] `include/uos/provider/claude_code_access.hpp`
 - [ ] `include/uos/provider/claude_code_accounts.hpp`
 - [ ] `include/uos/provider/claude_code_credentials.hpp`
@@ -964,3 +964,9 @@ Claude capacity recording and reading.
 Claude capacity rollup and usage scan API.
 
 - 77,104,121 · owning task parameters · **SAFE** · The read/key tasks own store and query/key inputs.
+
+### `include/uos/provider/claude_code.hpp`
+
+Claude Code transport and workspace interfaces own their option records.
+
+- 205-206,296,300-301 · task and callback interface · **SAFE** · Each dispatch or discovery task retains its option values, including its transport and dispatch callbacks.
