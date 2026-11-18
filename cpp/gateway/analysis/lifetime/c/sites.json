@@ -517,7 +517,8 @@
       ]
     },
     "include/uos/deepseek/chat_projection.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous message projection declarations with call-local JSON borrows.",
       "sites": []
     },
     "include/uos/deepseek/context_admission_failure.hpp": {
