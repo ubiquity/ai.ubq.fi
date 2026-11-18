@@ -317,7 +317,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/config.hpp`
 - [x] `include/uos/debug_routing.hpp`
 - [x] `include/uos/decisions/handlers.hpp`
-- [ ] `include/uos/defaults.hpp`
+- [x] `include/uos/defaults.hpp`
 - [ ] `include/uos/handler/admission.hpp`
 - [ ] `include/uos/handler/http.hpp`
 - [ ] `include/uos/handler/index.hpp`
@@ -1775,6 +1775,10 @@ Reviewed the optional usage-context pointer and provider test dependencies.
 
 - L14, 15, 18, 19 **SAFE** · The public functions copy the context and dependency object synchronously. The owned implementation holds the selected fetcher through its direct wait and calls the API key supplier inline.
 
+### `include/uos/defaults.hpp`
+
+Reviewed defaults keys and normalization declarations. Keys have static storage and synchronous normalization returns an owning string.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2023,4 +2027,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-209/286 files reviewed. 381 sites: 360 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+210/286 files reviewed. 381 sites: 360 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

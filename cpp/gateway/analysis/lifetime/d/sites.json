@@ -8510,7 +8510,8 @@
       ]
     },
     "include/uos/defaults.hpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed defaults keys and normalization declarations. Keys have static storage and synchronous normalization returns an owning string.",
       "sites": []
     },
     "include/uos/handler/admission.hpp": {
