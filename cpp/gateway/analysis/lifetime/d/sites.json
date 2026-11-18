@@ -10393,8 +10393,28 @@
       ]
     },
     "include/uos/sentinel/upstream_capture.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed safe header labels, request-owned recorders and attempt callbacks.",
+      "sites": [
+        {
+          "lines": [
+            53,
+            122,
+            123,
+            128,
+            129,
+            130,
+            174
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Header views refer to static literals. Recorder and attempt closures share their state, and body wrappers own their reader without a reverse ownership edge from recorded attempts."
+        }
+      ]
     },
     "include/uos/serve.hpp": {
       "reviewed": false,
