@@ -92,7 +92,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/kv_migration_paid_fallback.cpp`
 - [x] `src/cache/kv_migration_projection.cpp`
 - [x] `src/cache/kv_migration_usage.cpp`
-- [ ] `src/cache/kv_migration_validation.cpp`
+- [x] `src/cache/kv_migration_validation.cpp`
 - [ ] `src/cache/prompt_analytics.cpp`
 - [ ] `src/cache/prompt_analytics_core.cpp`
 - [ ] `src/cache/prompt_analytics_queue.cpp`
@@ -614,6 +614,20 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 | 691-708,716-747,877-885 | Strict API key hash and record inventory | **SAFE** | The parent owns errors and the completed hash index during the sequential awaited scans. Row references are resolved and copied before the next await. |
 | 804-812,823-841 | Count baselines and combine usage audits | **SAFE** | The count owns its iterator. Usage inventory owns the set and errors during its sequential scans; only copied scan results are traversed afterward. |
 
+### `src/cache/kv_migration_validation.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 87-134 | Migration prefix count fan-out | **SAFE** | Every child owns its prefix, iterator and shared KV. Early all rejection cannot release other scans' dependencies. |
+| 137-148 | Pending ledger validation scan | **SAFE** | The iterator remains named through each await and early return_ cleanup. The match is an owning string compared before cleanup. |
+| 151-166 | Audit bounded API-key aggregates | **SAFE** | The awaiting policy audit owns the policy/record and retains its validation parent's errors. Both named lookup results are owned. |
+| 169-191 | Audit one API-key policy | **SAFE** | validateTarget retains the pair snapshot and error vector until the structured await returns; nested tasks take copied ids or directly awaited references. |
+| 194-219 | Validate Codex model snapshot | **SAFE** | Validation owns errors through direct await, and model views refer to frame-owned read results. The inline key lists invoke the supported KvKey variadic constructor. |
+| 234-249 | Check reset-usage rows | **SAFE** | The caller keeps errors through the direct await; the iterator is local and only a static prefix and copied rows are used. |
+| 252-265 | Settings read fan-out | **SAFE** | Children own their key/store snapshots independently of the fail-fast aggregate. No lambda or vector element is borrowed by a child. |
+| 267-355 | End-to-end migration validation | **SAFE** | The parent owns scan state, pair inventory and errors, awaits every borrowed audit sequentially and combines owning scan results afterward. |
+| 358-373,375-390 | Redemption and manual intent scans | **SAFE** | The validation frame retains errors; a named iterator and owned entry cover each scan step. No sibling uses these references. |
+
 
 ## Ranked defects and counts
 
@@ -819,4 +833,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-69/97 files reviewed. **DEFECT 8, SAFE 148, UNCLEAR 3.**
+70/97 files reviewed. **DEFECT 8, SAFE 157, UNCLEAR 3.**

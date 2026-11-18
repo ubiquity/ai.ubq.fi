@@ -1966,8 +1966,101 @@
       ]
     },
     "src/cache/kv_migration_validation.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "87-134",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Migration prefix count fan-out",
+          "evidence": "Every child owns its prefix, iterator and shared KV. Early all rejection cannot release other scans' dependencies."
+        },
+        {
+          "lines": "137-148",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Pending ledger validation scan",
+          "evidence": "The iterator remains named through each await and early return_ cleanup. The match is an owning string compared before cleanup."
+        },
+        {
+          "lines": "151-166",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Audit bounded API-key aggregates",
+          "evidence": "The awaiting policy audit owns the policy/record and retains its validation parent's errors. Both named lookup results are owned."
+        },
+        {
+          "lines": "169-191",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Audit one API-key policy",
+          "evidence": "validateTarget retains the pair snapshot and error vector until the structured await returns; nested tasks take copied ids or directly awaited references."
+        },
+        {
+          "lines": "194-219",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Validate Codex model snapshot",
+          "evidence": "Validation owns errors through direct await, and model views refer to frame-owned read results. The inline key lists invoke the supported KvKey variadic constructor."
+        },
+        {
+          "lines": "234-249",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Check reset-usage rows",
+          "evidence": "The caller keeps errors through the direct await; the iterator is local and only a static prefix and copied rows are used."
+        },
+        {
+          "lines": "252-265",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b"
+          ],
+          "symbol": "Settings read fan-out",
+          "evidence": "Children own their key/store snapshots independently of the fail-fast aggregate. No lambda or vector element is borrowed by a child."
+        },
+        {
+          "lines": "267-355",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "End-to-end migration validation",
+          "evidence": "The parent owns scan state, pair inventory and errors, awaits every borrowed audit sequentially and combines owning scan results afterward."
+        },
+        {
+          "lines": "358-373,375-390",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Redemption and manual intent scans",
+          "evidence": "The validation frame retains errors; a named iterator and owned entry cover each scan step. No sibling uses these references."
+        }
+      ]
     },
     "src/cache/prompt_analytics.cpp": {
       "reviewed": false,
