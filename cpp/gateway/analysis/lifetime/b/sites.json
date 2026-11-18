@@ -2934,8 +2934,93 @@
       ]
     },
     "src/worker/entrypoint.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "39-43,56-88",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Digest and bounded JSON result",
+          "evidence": "The coroutine owns the input, reader and chunks. It decodes bytes synchronously, records exceptions by value, and copies the reason into its cancellation task."
+        },
+        {
+          "lines": "49-55,60-80",
+          "verdict": "DEFECT",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Bounded body-read abort listener",
+          "evidence": "The request signal owns a listener holding that same signal and a reader. If the body read is abandoned before abort, the normal removal is skipped and the cycle retains the reader.",
+          "defect": "D10"
+        },
+        {
+          "lines": "115-123,231-257,260-268",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Delivery, refusal and dispatch persistence calls",
+          "evidence": "The synchronous finish calls an owning outbox task; its finalizer retains only the request and listener until settlement. Each other frame holds its authority/dependency owner and its own handle."
+        },
+        {
+          "lines": "132-178,205-210",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Stream source tasks and per-chunk delivery",
+          "evidence": "Both source callbacks synchronously forward shared Delivery plus copied controller or reason. The stream-read and cancellation tasks hold their own state, and no iterator or slot reference crosses their waits."
+        },
+        {
+          "lines": "196-198",
+          "verdict": "DEFECT",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Host receipt owns full response state",
+          "evidence": "Delivery keeps the receipt whose pending reaction captures Delivery. A late or abandoned host receipt retains the body and upstream state even after the client discards the response.",
+          "defect": "D13"
+        },
+        {
+          "lines": "125-130,132-135,199-217",
+          "verdict": "DEFECT",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Delivery's abort listener owns itself",
+          "evidence": "The callback stored in Delivery captures Delivery. Dropping an unused response bypasses EOF and cancellation; when the signal was already aborted at registration, even the explicit cancellation cannot dispatch the cleanup listener.",
+          "defect": "D12"
+        },
+        {
+          "lines": "277-292,335-340",
+          "verdict": "DEFECT",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Worker request-to-dispatch abort bridge",
+          "evidence": "The signal owns a callback owning its own Request. Abandoning a suspended dependency before refusal or delivery handoff skips every unregister path.",
+          "defect": "D11"
+        },
+        {
+          "lines": "271-276,285-324,325-335,345-356",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Boundary fetch ownership and upstream terminal observation",
+          "evidence": "A free frame owns the request and dependencies; dispatch and terminal callbacks are synchronous bridges into tasks with copied values. Upstream receiver and validation callback stay owned through their respective waits."
+        }
+      ]
     },
     "src/worker/transport.cpp": {
       "reviewed": false,

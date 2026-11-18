@@ -118,7 +118,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/kernel/usage.cpp`
 - [x] `include/uos/worker/entrypoint.hpp`
 - [x] `include/uos/worker/transport.hpp`
-- [ ] `src/worker/entrypoint.cpp`
+- [x] `src/worker/entrypoint.cpp`
 - [ ] `src/worker/transport.cpp`
 
 ## Tooling and verification
@@ -818,6 +818,19 @@ Usage read methods own identities and options, with a shared store or a resolved
 | 19-42 | Worker transport task arguments | **SAFE** | Input, attempt, abort signal and dispatch callback are passed by value. The worker task holds the shared interface receiver while directly awaiting each virtual operation. |
 | 44-65 | Fixed capability callbacks | **SAFE** | The transport stores an immutable owning capability containing its callables. The actual worker and direct fixture call sites retain that receiver across the child's waits. |
 
+### `src/worker/entrypoint.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 39-43,56-88 | Digest and bounded JSON result | **SAFE** | The coroutine owns the input, reader and chunks. It decodes bytes synchronously, records exceptions by value, and copies the reason into its cancellation task. |
+| 49-55,60-80 | Bounded body-read abort listener | **DEFECT** ([D10](#d10)) | The request signal owns a listener holding that same signal and a reader. If the body read is abandoned before abort, the normal removal is skipped and the cycle retains the reader. |
+| 115-123,231-257,260-268 | Delivery, refusal and dispatch persistence calls | **SAFE** | The synchronous finish calls an owning outbox task; its finalizer retains only the request and listener until settlement. Each other frame holds its authority/dependency owner and its own handle. |
+| 132-178,205-210 | Stream source tasks and per-chunk delivery | **SAFE** | Both source callbacks synchronously forward shared Delivery plus copied controller or reason. The stream-read and cancellation tasks hold their own state, and no iterator or slot reference crosses their waits. |
+| 196-198 | Host receipt owns full response state | **DEFECT** ([D13](#d13)) | Delivery keeps the receipt whose pending reaction captures Delivery. A late or abandoned host receipt retains the body and upstream state even after the client discards the response. |
+| 125-130,132-135,199-217 | Delivery's abort listener owns itself | **DEFECT** ([D12](#d12)) | The callback stored in Delivery captures Delivery. Dropping an unused response bypasses EOF and cancellation; when the signal was already aborted at registration, even the explicit cancellation cannot dispatch the cleanup listener. |
+| 277-292,335-340 | Worker request-to-dispatch abort bridge | **DEFECT** ([D11](#d11)) | The signal owns a callback owning its own Request. Abandoning a suspended dependency before refusal or delivery handoff skips every unregister path. |
+| 271-276,285-324,325-335,345-356 | Boundary fetch ownership and upstream terminal observation | **SAFE** | A free frame owns the request and dependencies; dispatch and terminal callbacks are synchronous bridges into tasks with copied values. Upstream receiver and validation callback stay owned through their respective waits. |
+
 
 ## Ranked defects and counts
 
@@ -1040,6 +1053,172 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
+<a id="d12"></a>
+
+### D12. Worker response abort registration owns its delivery, P2 worker request retention
+
+- A streaming response stores an abort callback that owns the delivery state. If the client drops
+  the returned body without reading or cancelling, no terminal body callback breaks that edge.
+- If dispatch returns a body after abort, addEventListener ignores the already-aborted signal.
+  The explicit cancellation path still leaves the stored callback owning its own state.
+
+```diff
+--- a/cpp/gateway/src/worker/entrypoint.cpp
++++ b/cpp/gateway/src/worker/entrypoint.cpp
+@@ cancelDelivery
+       state->bodyDone = true;
++      releaseCancellation(state);
+       state->abort.abort(reason);
+@@ deliverResponse
+-      state->signalCancellation = rt::EventListener([state] {
+-        state->lifetime.waitUntil(rt::Promise<void>(cancelDelivery(state, state->abort.signal().reason())));
+-        state->signalCancellation = rt::EventListener();
++      const std::weak_ptr<Delivery> weak = state;
++      state->signalCancellation = rt::EventListener([weak] {
++        if (auto live = weak.lock()) {
++          live->lifetime.waitUntil(rt::Promise<void>(cancelDelivery(live, live->abort.signal().reason())));
++        }
+       });
+```
+
+<a id="d11"></a>
+
+### D11. Worker request abort bridge retains its own request, P2 abandoned request retention
+
+- The request signal owns a bridge callback that owns the Request and thus the same signal.
+- The worker frame can be destroyed while authentication or another dependency remains pending.
+  Neither refusal nor delivery cleanup runs, so the registration keeps the request alive.
+
+```diff
+--- a/cpp/gateway/src/worker/entrypoint.cpp
++++ b/cpp/gateway/src/worker/entrypoint.cpp
+@@ Delivery, after signalCancellation
++      ~Delivery() {
++        request.signal().removeEventListener("abort", abortFromRequest);
++      }
+@@ boundaryFetch, before registering the abort bridge
+-      const rt::EventListener abortFromRequest([abort, request] { abort.abort(request.signal().reason()); });
++      const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = request.signal().state();
++      const rt::EventListener abortFromRequest([abort, weakSignal] {
++        if (auto live = weakSignal.lock()) abort.abort(rt::AbortSignal(std::move(live)).reason());
++      });
++      auto removeAbortBridge = rt::scopeExit([&] { request.signal().removeEventListener("abort", abortFromRequest); });
+@@ boundaryFetch, response handoff
+-        co_return deliverResponse(upstream, requestId, request, abort, abortFromRequest, outbox, lifetime, delivery);
++        auto response = deliverResponse(upstream, requestId, request, abort, abortFromRequest, outbox, lifetime, delivery);
++        removeAbortBridge.release();
++        co_return response;
+```
+
+In that proposal, construct Delivery directly in make_shared before assigning its fields or
+give it a constructor. A destructor on the current temporary aggregate passed to make_shared
+would unregister the live bridge as soon as the temporary is destroyed. D13 shows the
+direct-in-place construction using the smaller owner.
+
+<a id="d10"></a>
+
+### D10. Worker body-read abort listener pins its signal and reader, P2 abandoned request retention
+
+- The bounded body reader waits on an unfinished stream. Its abort registration owns both the
+  reader and the signal that stores the registration.
+- Destroying the suspended frame before an abort skips normal listener removal and leaves that
+  cycle alive even after the caller discards the Request.
+
+```diff
+--- a/cpp/gateway/src/worker/entrypoint.cpp
++++ b/cpp/gateway/src/worker/entrypoint.cpp
+@@ readBoundedJson
+-      const rt::EventListener cancel([reader, signal] { rt::spawn(reader.cancel(signal.reason()), rt::ignoreRejection); });
++      const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = signal.state();
++      const rt::EventListener cancel([reader, weakSignal] {
++        if (auto live = weakSignal.lock()) {
++          rt::spawn(reader.cancel(rt::AbortSignal(std::move(live)).reason()), rt::ignoreRejection);
++        }
++      });
++      auto removeCancel = rt::scopeExit([&] { signal.removeEventListener("abort", cancel); });
+@@ after the read or its exception
+       request.signal().removeEventListener("abort", cancel);
++      removeCancel.release();
+       reader.releaseLock();
+```
+
+<a id="d13"></a>
+
+### D13. Pending worker delivery receipts retain the entire stream, P2 abandoned response retention
+
+- The receipt's reaction owns Delivery, which also owns that pending receipt.
+- Even after the returned body is dropped or closed, a late or abandoned host receipt
+  retains the upstream response, reader, cancellation state and host lifetime callable.
+  The pending reaction is eventually cleared at explicit Loop teardown.
+
+Have the receipt own only the shared settlement latch and its cleanup, preserving the
+actual receipt outcome and one settlement. This diff includes the in-place abort
+registration owner used together with D11.
+
+```diff
+--- a/cpp/gateway/src/worker/entrypoint.cpp
++++ b/cpp/gateway/src/worker/entrypoint.cpp
+@@ delivery state definitions
++    struct DeliverySettlement {
++      rt::Request request;
++      rt::EventListener abortFromRequest;
++      std::shared_ptr<DeliveryOutbox> outbox;
++      std::optional<rt::Promise<void>> completed;
++      ~DeliverySettlement() { request.signal().removeEventListener("abort", abortFromRequest); }
++    };
+     struct Delivery {
+       UpstreamResult upstream;
+-      rt::Request request;
+       rt::AbortController abort;
+-      rt::EventListener abortFromRequest;
+-      std::shared_ptr<DeliveryOutbox> outbox;
++      std::shared_ptr<DeliverySettlement> settlement;
+       BoundaryLifetime lifetime;
+-      std::optional<BoundaryDelivery> delivery;
++      bool externalReceipt = false;
+       bool bodyDone = false;
+-      std::optional<rt::Promise<void>> completed;
+@@ finish
+-    rt::Promise<void> finish(const std::shared_ptr<Delivery>& state, DeliveryOutcome outcome) {
++    rt::Promise<void> finish(const std::shared_ptr<DeliverySettlement>& state, DeliveryOutcome outcome) {
+@@ cancelDelivery and pullBody
+-      rt::Promise<void> finishing = finish(state, "interrupted");
++      rt::Promise<void> finishing = finish(state->settlement, "interrupted");
+@@ pullBody, when the reader is done
+-          if (!state->delivery) {
+-            rt::Promise<void> finishing = finish(state, state->abort.signal().aborted() ? "interrupted" : "unobserved");
++          if (!state->externalReceipt) {
++            rt::Promise<void> finishing = finish(state->settlement, state->abort.signal().aborted() ? "interrupted" : "unobserved");
+@@ pullBody, when the reader failed
+-        rt::Promise<void> finishing = finish(state, "interrupted");
++        rt::Promise<void> finishing = finish(state->settlement, "interrupted");
+@@ deliverResponse, creation and external receipt
++      auto settlement = std::make_shared<DeliverySettlement>(
++        std::move(request), std::move(abortFromRequest), std::move(outbox), std::nullopt);
+       auto state = std::make_shared<Delivery>(Delivery{
+         .upstream = std::move(upstream),
+-        .request = std::move(request),
+         .abort = std::move(abort),
+-        .abortFromRequest = std::move(abortFromRequest),
+-        .outbox = std::move(outbox),
++        .settlement = settlement,
+         .lifetime = std::move(lifetime),
+-        .delivery = std::move(delivery),
++        .externalReceipt = delivery.has_value(),
+         .bodyDone = false,
+-        .completed = std::nullopt,
+@@
+-      if (state->delivery) {
+-        state->lifetime.waitUntil(state->delivery->completed.then([state](DeliveryOutcome outcome) { return finish(state, std::move(outcome)); }));
++      if (delivery) {
++        state->lifetime.waitUntil(delivery->completed.then([settlement](DeliveryOutcome outcome) {
++          return finish(settlement, std::move(outcome));
++        }));
+@@ deliverResponse, when the upstream has no body
+-        if (!state->delivery) state->lifetime.waitUntil(finish(state, "unobserved"));
++        if (!state->externalReceipt) state->lifetime.waitUntil(finish(settlement, "unobserved"));
+```
+
 <a id="d07"></a>
 
 ### D07. Memory KV delete directly accesses an awaited temporary, P3 comparison-profile rule
@@ -1089,4 +1268,4 @@ removes the registrations on frame destruction as well as on normal return.
 +  const auto bindingHash = co_await std::move(bindingHashing);
 ```
 
-95/97 files reviewed. **DEFECT 10, SAFE 225, UNCLEAR 4.**
+96/97 files reviewed. **DEFECT 14, SAFE 229, UNCLEAR 4.**
