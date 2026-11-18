@@ -269,7 +269,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/api_key_policy.hpp`
 - [x] `include/uos/api_keys.hpp`
 - [x] `include/uos/auth/index.hpp`
-- [ ] `include/uos/auth/local_admin.hpp`
+- [x] `include/uos/auth/local_admin.hpp`
 - [ ] `include/uos/auth/local_development_key.hpp`
 - [ ] `include/uos/auth/passkeys.hpp`
 - [ ] `include/uos/auth/passport.hpp`
@@ -1491,6 +1491,12 @@ Reviewed method variants, kind labels and authentication entry points.
 - L23, 27, 35, 39, 45, 49, 53, 98, 99 **SAFE** · Authentication kind accessors return views of static literals, independent of how long the variant instance lives.
 - L101, 103, 106, 108 **SAFE** · Each asynchronous authentication or route entry receives an owning request handle.
 
+### `include/uos/auth/local_admin.hpp`
+
+Reviewed loopback parsing and request-peer binding interfaces.
+
+- L28, 30, 33, 35, 44, 45, 48, 59 **SAFE** · The borrowed arguments are consumed synchronously. Request-specific state retains only a weak request identity and owns the copied peer.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1739,4 +1745,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-161/286 files reviewed. 332 sites: 311 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+162/286 files reviewed. 333 sites: 312 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

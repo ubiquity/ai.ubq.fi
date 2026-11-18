@@ -7392,8 +7392,28 @@
       ]
     },
     "include/uos/auth/local_admin.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed loopback parsing and request-peer binding interfaces.",
+      "sites": [
+        {
+          "lines": [
+            28,
+            30,
+            33,
+            35,
+            44,
+            45,
+            48,
+            59
+          ],
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "detail": "The borrowed arguments are consumed synchronously. Request-specific state retains only a weak request identity and owns the copied peer."
+        }
+      ]
     },
     "include/uos/auth/local_development_key.hpp": {
       "reviewed": false,
