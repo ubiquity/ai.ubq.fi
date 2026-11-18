@@ -8121,8 +8121,22 @@
       "sites": []
     },
     "include/uos/authority/native_codex_mutations.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed state and mutation plans from the synchronous proof and dispatch APIs.",
+      "sites": [
+        {
+          "lines": [
+            102,
+            105
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Plan kind views point to static literals. The mutations take snapshots and produce owning values synchronously."
+        }
+      ]
     },
     "include/uos/authority/native_contracts.hpp": {
       "reviewed": false,
