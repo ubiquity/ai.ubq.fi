@@ -1153,8 +1153,10 @@ const renderGeminiQuotaBucket = ([id, bucket], snapshot) => {
 const renderGeminiQuota = (snapshot) => {
   const observed = snapshot?.status === "observed";
   const buckets = observed ? Object.entries(snapshot.quota) : [];
+  const refreshSupported = snapshot?.refresh_supported === true;
   const age = typeof snapshot?.age_ms === "number" ? ` · Observed ${formatGeminiQuotaAge(snapshot.age_ms)}` : "";
-  geminiQuotaCard.hidden = buckets.length === 0;
+  geminiQuotaCard.hidden = buckets.length === 0 && !refreshSupported;
+  geminiQuotaRefresh.hidden = !refreshSupported;
   geminiQuotaStatus.hidden = !geminiQuotaCard.hidden || snapshot === null;
   geminiQuotaStatus.textContent = "";
   geminiQuotaDetails.textContent = "";
@@ -1167,7 +1169,12 @@ const renderGeminiQuota = (snapshot) => {
         invalid_event: "Latest Antigravity CLI event was invalid",
         observed: "Antigravity CLI reported no quota buckets",
       }[snapshot?.status] ?? "Local Antigravity CLI snapshot unavailable";
-    if (snapshot !== null) geminiQuotaStatus.textContent = `Gemini subscription · ${message}${age}`;
+    if (geminiQuotaCard.hidden) {
+      if (snapshot !== null) geminiQuotaStatus.textContent = `Gemini subscription · ${message}${age}`;
+    } else {
+      setBadge(geminiQuotaBadge, "unknown", message);
+      geminiQuotaDetails.textContent = `Antigravity CLI · ${message}${age}`;
+    }
     return;
   }
   const stale = snapshot.age_ms >= 300_000;

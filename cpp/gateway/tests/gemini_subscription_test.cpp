@@ -168,6 +168,8 @@ ASYNC_TEST("Gemini explicit quota refresh bypasses a fresh snapshot but normal r
   AWAIT(forced, quota::refreshSnapshot(data, options, now + 2000));
   EXPECT_EQ(calls, 2);
   EXPECT_EQ(forced.observed_at_ms, now + 2000);
+  const auto publicSnapshot = quota::snapshotJson(forced, now + 2000);
+  EXPECT_EQ(rt::getBool(publicSnapshot, "refresh_supported"), std::optional<bool>(true));
   co_return;
 }
 

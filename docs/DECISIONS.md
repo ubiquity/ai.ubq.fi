@@ -8,7 +8,7 @@ Provider routing decisions are maintained separately in `docs/provider-decision-
 
 ## Antigravity subscription serves Gemini through the documented CLI headless contract - 2026-11-18
 
-The owner authorized the project-specific use of the existing `ubiquitydao@gmail.com` Antigravity Starter subscription. The C++ gateway now exposes a `gemini` subscription provider with the installed Gemini 3.8 Flash `high`, `medium`, and `low` model IDs. Each inference starts the owner-private `agy` together with its signed-in CLI state is separate from the gateway, and the gateway never reads or forwards the OAuth token itself.
+The owner authorized the project-specific use of the existing `ubiquitydao@gmail.com` Antigravity Starter subscription. The C++ gateway now exposes a `gemini` subscription provider with the installed Gemini 3.8 Flash `high`, `medium`, and `low` model IDs. Each inference runs the owner-private official `agy` headless command with the CLI's signed-in state. That state remains owned by the CLI, and the gateway never reads or forwards the OAuth token itself.
 
 Reason: the official headless stream-json interface is the programmatic surface installed in this environment. A live probe returned the requested marked response with 8,699 measured tokens, and a separate documented `/usage` command showed the Gemini weekly bucket fall from 98.9199996% to 98.6355186% remaining. The owner explicitly required this normal subscription path rather than a paid Gemini API key or developer credits.
 
@@ -21,6 +21,14 @@ Admin Analytics reads `.data/antigravity-quota.json` and can explicitly refresh 
 Reason: the earlier status-line-only snapshot was display-only and could remain stale. The CLI `/usage` command returned the exact Gemini and third-party weekly buckets with zero token usage, providing a direct meter source that does not probe inference capacity.
 
 Reversal risk: removing the explicit refresh returns the panel to stale CLI status-line observations. Treating the meter as a routing cooldown would couple independent quota presentations to inference denial; this decision grants no such authority. Credential renewal, account switching, overage settings and model routing beyond the provider/model allowlists remain CLI- or admin-owned surfaces and are not invented by this meter.
+
+## Rust verification is manual-only - 2026-11-18
+
+The owner removed the Rust CI gate. Gateway CI no longer defines `rust-native` or `rust-wasm`, `scope` no longer emits Rust selection outputs, `validate` requires only the portable gate, and the native job no longer depends on Rust success. Manual Rust validation remains available through `bun --no-env-file --no-install scripts/rust-verify.ts --stage native|wasm` and `bun run rust:quality`; the Rust source, workspace, and rules are unchanged.
+
+Reason: the base repair exposed stale Rust quality/Clippy baselines and macOS-only Rust preflight failures that were blocking unrelated TypeScript gateway work. The owner directed that the Rust port not gate the TypeScript service.
+
+Reversal risk: Rust changes can now merge without hosted compilation or tests. Re-enabling Rust delivery requires restoring the two jobs and their `validate`/`native` dependencies, or running the manual commands on the exact candidate. This removes no Rust source and grants no deployment or production authority.
 
 ## Direct Claude Messages omits the unsupported hosted web_search - 2026-11-05
 
@@ -126,7 +134,7 @@ Reversal risk: removing the arming and audit gate allows an external spend on th
 
 ## Merged-only CI gates expensive jobs behind portable validation - 2026-10-21
 
-This supersedes the merge-group, queue-canary, Sentinel-authored PR, and development-push trigger requirements in "Real CI checks for Sentinel and merge groups" for the current GitHub Actions quota policy. `pull_request: closed` and `workflow_dispatch` are the only triggers, and every job requires a merged pull request or explicit manual dispatch. After `scope`, the portable x64 `portable` gate must pass before `rust-native`; `rust-wasm` follows `rust-native`; `native` and macOS/Darwin work start only after their selected earlier gates pass. The `validate` job remains the required check name and fails closed when a selected portable or Rust gate is missing, skipped, cancelled, or failed. Each job has an explicit timeout, and the workflow never deploys.
+This supersedes the merge-group, queue-canary, Sentinel-authored PR, and development-push trigger requirements in "Real CI checks for Sentinel and merge groups" for the current GitHub Actions quota policy. `pull_request: closed` and `workflow_dispatch` are the only triggers, and every job requires a merged pull request or explicit manual dispatch. After `scope`, the portable x64 `portable` gate must pass before `rust-native`; `rust-wasm` follows `rust-native`; `native` and macOS/Darwin work start only after their selected earlier gates pass. The `validate` job remains the required check name and fails closed when a selected portable or Rust gate is missing, skipped, cancelled, or failed. Each job has an explicit timeout, and the workflow never deploys. The Rust dependency and gate portions of this entry are superseded by "Rust verification is manual-only - 2026-11-18"; the merged-only triggers, portable gate, and non-deploying workflow remain.
 
 Reason: recent failed runs spent 70-90 job-minutes because `native`, `rust-wasm`, and macOS work started even after `rust-native` failed, while `validate` waited for both Rust jobs before running portable checks. The dependency chain preserves every selected check but skips work that cannot be accepted once an earlier selected gate fails.
 
@@ -2696,3 +2704,7 @@ The requested GPT Pro recommendation selects the existing clang-tidy/Clang Stati
 Representative known defects must produce their exact marked diagnostics, and clean ownership/cancellation-pattern controls must pass separately. Existing ASan/UBSan/leak and six real CTests remain required where relevant. Static heap checks do not prove descriptor lifetime, shared-owner cycles or coroutine/cancellation safety. Extra analyzers, alpha checks, annotation rollout and SDK changes are deferred; this tooling changes no runtime/provider behavior or production authority. See `cpp/docs/static-analysis.md` for commands, measured development evidence and pending canonical acceptance.
 
 The first complete scan's four pinned Beast `bugprone-use-after-move` findings remain preserved as a failed receipt. Source inspection and a real reduced static probe proved the Asio stackless yield/reentry path-sensitivity limitation, with equivalent explicit-return code clean and genuine same-invocation misuse fatal. A finite checked-in baseline may classify only those four exact Session-TU SDK fingerprints and move/loop notes under matching tool/frontend/header/policy identities, preserving raw exit1 and explicit classified/new counts. New, changed, missing or first-party findings and identity drift remain fatal; no checker, SDK directory or runtime source is suppressed or changed.
+
+## DeepSeek compacts at 75% before gateway admission - 2026-11-18
+
+The synthetic `ubiquity/deepseek-flash` catalog row now advertises `auto_compact_token_limit=747110`, 75% of its 996,147-token usable window. DeepSeek's calibrated aggregate-admission estimate can reject a request while the client's last reported input usage is still near 792k, so the generic 85% derived limit is too late. The lower trigger is model-specific: GPT and other models keep their existing 85% derived limit and the host's turn-end threshold returns to 90%. The earlier global 75% setting was `model_post_turn_compact_threshold_percent`, which only runs after a turn ends and never protected a long mid-turn tool loop. Compaction itself remains fail-closed: when even the summary request exceeds admission, the client trims old history until the summary fits and records the actual compaction lifecycle; a normal inference request is never silently split or rewritten.

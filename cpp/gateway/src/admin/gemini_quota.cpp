@@ -201,7 +201,8 @@ namespace uos::admin::gemini_quota {
   }
 
   json::value snapshotJson(const Snapshot& snapshot, double nowMs) {
-    json::object result{{"version", rt::makeNumber(1.0)}, {"observed_at_ms", rt::makeNumber(snapshot.observed_at_ms)}, {"status", snapshot.status}};
+    json::object result{{"version", rt::makeNumber(1.0)}, {"observed_at_ms", rt::makeNumber(snapshot.observed_at_ms)}, {"status", snapshot.status},
+      {"refresh_supported", true}};
     if (snapshot.status == "observed") {
       result["plan_tier"] = snapshot.plan_tier ? json::value(*snapshot.plan_tier) : json::value(nullptr);
       json::object quota;
