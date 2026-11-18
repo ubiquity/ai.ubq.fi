@@ -246,8 +246,22 @@
       "sites": []
     },
     "include/uos/codex/native_auth.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Native credential inputs are owned; installed hooks need an invocation-time owner.",
+      "sites": [
+        {
+          "lines": "22-26,31",
+          "kind": "hook storage",
+          "verdict": "SAFE",
+          "reason": "The hook bundle stores callable values. The native-auth implementation copies the bundle for asynchronous use."
+        },
+        {
+          "lines": "38-50",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Credential, pool, JSON and path arguments are frame-owned, with owned values returned to the caller."
+        }
+      ]
     },
     "include/uos/codex/native_auth_transport.hpp": {
       "status": "pending",

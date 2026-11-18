@@ -55,7 +55,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/index.hpp`
 - [x] `include/uos/codex/manual_reset.hpp`
 - [x] `include/uos/codex/manual_reset_state.hpp`
-- [ ] `include/uos/codex/native_auth.hpp`
+- [x] `include/uos/codex/native_auth.hpp`
 - [ ] `include/uos/codex/native_auth_transport.hpp`
 - [ ] `include/uos/codex/overage_settings.hpp`
 - [ ] `include/uos/codex/quota.hpp`
@@ -442,3 +442,10 @@ Manual reset owns its dependency bundle through the operation.
 ### `include/uos/codex/manual_reset_state.hpp`
 
 Synchronous manual reset state and serialization declarations. No suspendable body or registration.
+
+### `include/uos/codex/native_auth.hpp`
+
+Native credential inputs are owned; installed hooks need an invocation-time owner.
+
+- 22-26,31 · hook storage · **SAFE** · The hook bundle stores callable values. The native-auth implementation copies the bundle for asynchronous use.
+- 38-50 · owning task parameters · **SAFE** · Credential, pool, JSON and path arguments are frame-owned, with owned values returned to the caller.
