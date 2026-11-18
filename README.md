@@ -13,14 +13,14 @@ The live service and its deployment configuration use the separately maintained 
 
 `max_completion_tokens` is the OpenAI Chat Completions cap. `max_output_tokens` is the OpenAI Responses cap. Both are positive-integer output caps. Do not swap these fields between endpoints.
 
-| Request and provider | Gateway behavior |
-| --- | --- |
-| Chat Completions to Codex | `max_completion_tokens` is translated to the Codex Responses field `max_output_tokens`. |
-| Responses to Codex | `max_output_tokens` is forwarded as `max_output_tokens`. |
+| Request and provider                          | Gateway behavior                                                                                                            |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Chat Completions to Codex                     | `max_completion_tokens` is translated to the Codex Responses field `max_output_tokens`.                                     |
+| Responses to Codex                            | `max_output_tokens` is forwarded as `max_output_tokens`.                                                                    |
 | Chat Completions to Cerebras (`gpt-oss-120b`) | `max_completion_tokens` is forwarded unchanged. The gateway buffers the upstream completion before replaying requested SSE. |
-| Chat Completions to DeepSeek official | `max_completion_tokens` is translated to DeepSeek's documented `max_tokens`. |
-| Responses to DeepSeek official | `max_output_tokens` is translated to DeepSeek's documented `max_tokens`. |
-| Paid fallback (Metered or Surplus) | Chat `max_completion_tokens` arrives as `max_output_tokens`. Responses forwards its own cap. |
+| Chat Completions to DeepSeek official         | `max_completion_tokens` is translated to DeepSeek's documented `max_tokens`.                                                |
+| Responses to DeepSeek official                | `max_output_tokens` is translated to DeepSeek's documented `max_tokens`.                                                    |
+| Paid fallback (Metered or Surplus)            | Chat `max_completion_tokens` arrives as `max_output_tokens`. Responses forwards its own cap.                                |
 
 DeepSeek official uses `https://api.deepseek.com/chat/completions` and returns `deepseek_api_key_missing` when its key is absent. When translating Responses API tool history to Chat Completions, a function call and its output become an assistant turn with `tool_calls` followed by the tool result.
 
