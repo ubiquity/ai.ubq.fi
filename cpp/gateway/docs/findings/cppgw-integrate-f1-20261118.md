@@ -62,12 +62,26 @@ The stringify, comparison and coercion tests continue to require `RangeError` wh
 The stage 2b depth-related Codex 429, BigInt, fetch and WebAuthn fixture changes are recorded in its
 [findings](cppgw-integrate-s2b-20261118.md#fixture-decisions).
 
-The original stage 2b merge compiled 369 production objects after two portability corrections for
-Boost.JSON array construction and `std::min` argument types. The stage 2b replay on the prior parser
-promoted integer-index keys in two generic console vectors. The merged simdjson and console path
+The initial merge attempt `38019ea1` failed in `src/kv_conversion/proof.cpp` and `src/rt/kv_value.cpp`. Boost's
+transitive `<iomanip>` include let argument-dependent lookup select `std::quoted` over both local `quoted`
+helpers for `std::string` arguments. The accepted merge uses distinct local names and compiled all 369 production
+objects. The stage 2b replay on the prior parser promoted integer-index keys in two generic console vectors. The merged simdjson and console path
 prints both full objects in insertion order. The vectors now expect `4294967294` last (formerly first)
 and `1` between `valid_id` and `with space` (formerly first). Both inputs and all fields are retained.
 Pre-serialized gateway log records and terminal accounting fields use their existing paths.
+
+| Automatically merged fixture                       | Combined coverage and expected results                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/images_test.cpp`                            | Keep the cross-line oversized-body rejection and the successful inline edit above the default JSON cap, plus stage 2b's raw multipart upload coverage.                                                                                                                                                                                                      |
+| `tests/native_codex_429_differential_vectors.inc`  | Keep stage 2b's 40 header-only expectations for over-depth documents and the cross-line exact raw response and classification checks.                                                                                                                                                                                                                       |
+| `tests/passkeys_webauthn_differential_vectors.inc` | Keep stage 2b's strict CBOR/DER regressions and the cross-line warning for `client data with base64 plus`. The previous `JSON Parse error: Unterminated string` becomes `Invalid JSON`. HTTP 400, the body, state and upstream observations still match.                                                                                                    |
+| `tests/rt/http_test.cpp`                           | Keep all 346 generated HTTP scenarios and the stage 2b wire-level replacements for the retired Blob/File and FormData helpers. The cross-line `1e400` fixture changes from `null` to `SyntaxError: Failed to parse JSON`. Stream vectors 107–113 and 116 keep their inputs and change their specific JSCore syntax messages to `SyntaxError: Invalid JSON`. |
+
+The JSON fixture retains the cross-line numeric, insertion-order, UTF-8 and malformed-document expectations and
+stage 2b's depth and copy cases. The release inventory contains every standalone test from either parent. The
+other inherited fixture changes for slimmer helpers and the selected libraries are documented in the input reports.
+[Stage 1b fixture migration](cppgw-integrate-s1b-20261118.md) · [Stage 2a](cppgw-integrate-s2a-20261118.md) ·
+[Stage 2b](cppgw-integrate-s2b-20261118.md#fixture-decisions)
 
 ## WebSocket close code 1014
 
@@ -78,6 +92,31 @@ invalid close code for a 1014 frame. The gateway now handles 1014 in its shared 
 uses Boost.Endian to read the code, and uses Beast to validate the reason's UTF-8. The original assertion
 still requires the client to enter CLOSING without throwing and send exactly one masked 1014 frame.
 Two new received-frame examples check a valid 1014 reason and rejection of a malformed UTF-8 reason.
+
+The ARM64 container reproduced the hosted failure on the original `websocket_frame.cpp` from `6d28e858`, linked
+against the `7b602c71` WebSocket test and runtime closure. Both profiles reported the expected `[["close-ok",2]]`
+versus the actual `[["close-threw","TypeError","First argument must be a valid error code number",2],
+["second-close-ok",2]]` and zero frames. The newly added receive vectors also failed as a single harness case.
+Replacing only the frame object with the current source passed all 17 cases in both Release and ASan/UBSan/LSan.
+Boost 1.91's upstream header also places 1014 in its reserved branch. [Boost 1.91 validation](https://github.com/boostorg/beast/blob/boost-1.91.0/include/boost/beast/websocket/detail/frame.hpp)
+
+The isolated container run reused the portable driver's Ninja flags, source closures and fixture boundary. It supplied
+the staged SQLite to that boundary. The first container attempt hit AppArmor's nested-mount restriction. The
+following launch enabled the required capabilities only inside the disposable networkless container. Its nested
+test namespaces still verified loopback and outbound denial.
+
+```bash
+scratch=/var/tmp/cppgw-integrate-f1.WpF47zpW
+proof="$scratch/ubuntu26-websocket"
+docker run --rm --platform linux/arm64 --network=none --cap-add=SYS_ADMIN --cap-add=NET_ADMIN \
+  --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+  --mount "type=bind,src=$proof,dst=/proof" --mount "type=bind,src=$scratch/sqlite,dst=/sqlite,readonly" cppgw-f1-ubuntu26 \
+  env -i PATH=/usr/bin:/bin LANG=C.UTF-8 HOME=/proof/home TMPDIR=/proof/tmp python3 -B /proof/check.py
+```
+
+The Release and sanitizer hexadecimal SHA-256 receipt hashes are
+`bf54583c7fd0e8d6b045b90ac9deca9758581e9078013146a5cbda278cac6cd3` and
+`bd47764e0f9260174f9ed42df6f5f5190a503482e628b1d261c17aedd763937d`.
 
 ## Stage 2b release gate
 
@@ -107,3 +146,92 @@ committed snapshot.
 | Git conflict | Resolution                                                                                                                                                                                        |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | None         | Update the incoming guides with the integrated release inventory, selected libraries, sparse and cyclic KV support, default and opt-in confinement, and the macOS package's `--version` boundary. |
+
+## Source identity and size
+
+Each merge is an ordinary two-parent commit. `7b602c71` records the console fixture correction between the first
+and second merge.
+
+| Order | Merge commit                               | Integrated tree                            |
+| ----- | ------------------------------------------ | ------------------------------------------ |
+| 1     | `5a8c3ec1bf32d5710f4c372f416f32b283921983` | `6a70c8d2e9ae19a53ea20c84493b60f9e29d9b7e` |
+| 2     | `483a8684a2f615ddf267393e26be2864765fbe0c` | `778f3d439bd4bf44542eb7d4714737b1a88d30c8` |
+| 3     | `0c9dfda6d2abfcf3d9c9eb733585fe8db0488b28` | `1c2303aa2df265ca4560d14c2935fc1a7925c7cd` |
+
+Count physical newlines in tracked Git blobs using `git ls-tree -r --name-only <ref> -- <path>` and
+`git show <ref>:<file> | wc -l`. Tests, samples, build tooling and vendors are excluded. The macOS launcher
+is reported separately because it is compiled into the package.
+
+| First-party path                      |  Cross-line |  Integrated |              Change |
+| ------------------------------------- | ----------: | ----------: | ------------------: |
+| `src`                                 |     148,128 |     145,097 |              −3,031 |
+| `include`                             |      39,575 |      39,480 |                 −95 |
+| `runtime`                             |         554 |         554 |                   0 |
+| `entrypoints`                         |          69 |          69 |                   0 |
+| `packaging/macos/gateway-version.cpp` |           0 |          11 |                 +11 |
+| **Total**                             | **188,326** | **185,211** | **−3,115 (−1.65%)** |
+
+Within `src`, `src/rt` fell from 28,174 to 26,101 lines. `src/auth/passkeys.cpp` fell from 5,072 to 4,197.
+The `src/runtime` implementation stays at 3,069 lines. The `llhttp`, `simdjson`, `simdutf` and retained `yyjson`
+trees byte-compare with cross-line. Ada and QCBOR byte-compare with stage 2b. The registry verifies the source
+and license hashes for all five linked vendors.
+
+## Integrated Linux ARM64 release
+
+All release shards on `0c9dfda6` recorded driver input SHA-256
+`97e66e6321b955b3a5e00ac9a6297b1520d045cd462186b977dc6d64c89790b6` before and after each run.
+The four selections are disjoint and cover the entire sorted 450-test Links inventory. The counts use the fixture
+harness summaries. These measurements reuse 369 validated production objects, including 44 runtime units.
+
+| Release shard |    Binaries |           Cases | Object phase (s) | Link and test (s) |    Wall (s) |
+| ------------- | ----------: | --------------: | ---------------: | ----------------: | ----------: |
+| 1/4           |     113/113 |     1,332/1,332 |            0.010 |            51.813 |      52.790 |
+| 2/4           |     113/113 |     1,233/1,233 |            0.034 |            40.645 |      42.190 |
+| 3/4           |     112/112 |     1,439/1,439 |            0.017 |            37.644 |      39.261 |
+| 4/4           |     112/112 |     1,100/1,100 |            0.016 |            45.945 |      47.126 |
+| **Total**     | **450/450** | **5,104/5,104** |                  |                   | **181.367** |
+
+```bash
+scratch=/var/tmp/cppgw-integrate-f1.WpF47zpW
+for shard in 1 2 3 4; do
+  bash "$scratch/ci-gate.sh" bash cpp/gateway/tools/ci-build.sh --config release --shard "$shard/4"
+done
+bash "$scratch/ci-gate.sh" bash cpp/gateway/tools/ci-build.sh --config release rt/websocket
+python3 cpp/gateway/tools/links.py --check
+python3 -B cpp/gateway/tools/vendor_sources.py cmake
+git diff --check 6d28e858..HEAD -- . ':(exclude)cpp/gateway/third_party/**'
+```
+
+The wrapper uses `env -i` with a fresh home and temp directory. It sets `CC=clang-21`, `CXX=clang++-21`,
+`UOS_CI_JOBS=4`, `UOS_CI_BUILD_DIR=$scratch/ci`, `UOS_CI_SQLITE_PREFIX=$scratch/sqlite`,
+`PKG_CONFIG_PATH=$scratch/icu78/lib/pkgconfig:$scratch/sqlite/lib/pkgconfig`,
+`UOS_CI_CXXFLAGS=-isystem $scratch/boost_1_92_0` and
+`UOS_CI_LDFLAGS=-L$scratch/boost_1_92_0/stage/lib -Wl,--disable-new-dtags,-rpath,$scratch/icu78/lib:$scratch/sqlite/lib`.
+The locally staged Boost 1.92.0 static archives, ICU 78.3 and SQLite 3.54.0 with `SQLITE_DQS=3` came from the
+pinned upstream source archives. The underlying Ubuntu 24.04.5 runner supplied Clang 21.1.8, OpenSSL 3.0.13,
+zlib 1.3, Brotli 1.1.0 and Zstd 1.5.5. The driver independently verified real namespace isolation and SQLite's
+runtime version.
+
+| Receipt under `receipts/final/` | SHA-256                                                            |
+| ------------------------------- | ------------------------------------------------------------------ |
+| `release-1.json`                | `bb786db1983a80480aced736748d04f818825458b0700cb8fd1ad190c2fc5343` |
+| `release-2.json`                | `22ae715ab024a186de1a0e47239dc0fe35a74869a42a8b68db083fe47f8f13ef` |
+| `release-3.json`                | `f94362e465da0ab1d2afbb5930cfbbd47553694ade93e059db6529e7ccab5ffd` |
+| `release-4.json`                | `fbcaf55ac8352bd5b7516a979620ea170e8c76129baf7d173bbcffe93eb0d49c` |
+
+## KV robustness
+
+The Ubuntu 26.04 ARM64 campaign on `5a8c3ec1` used the workflow's standalone target, four workers and the
+following command inside its credential-free network namespace. The reader, harness and campaign selection are
+identical in the integrated release.
+
+```bash
+python3 -B cpp/gateway/fuzz/ci.py kv_jsc --seconds 600 --jobs 4 --out /output
+```
+
+The build took 182.883 s. The campaign ran for 608.301 s (608 fuzzed seconds), reached 2,009 corpus entries
+and recorded no OOM or other genuine finding. libFuzzer reported 403 MiB peak RSS in its fork parent, which exited
+77 with the already classified empty-input ARM64 fork-exit leak. The workflow harness classified the complete run as
+passed and retained the artifact. The receipt and campaign log are under `kv-workflow.XzdtO6dU/`, with SHA-256
+`bb4292544eb3f7cf8de596d9b7e8ebcb144c6b3fa07ecff565ef2b2f9534bd10` and
+`7e558729f1cc954a6b4e89058b4d215891cf06e2a8d62b423bd4b9df7798b1db`.
