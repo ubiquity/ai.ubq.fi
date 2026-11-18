@@ -9771,8 +9771,32 @@
       ]
     },
     "include/uos/responses_attempts.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed prepared/primary attempt handles, usage pointers and provider options.",
+      "sites": [
+        {
+          "lines": [
+            18,
+            19,
+            27,
+            41,
+            43,
+            61,
+            70,
+            78,
+            81,
+            83
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The route keeps the borrowed usage context during direct attempts. Attempt work owns response, body, controls and generator; the detached circuit seam's constraints are recorded at its implementation."
+        }
+      ]
     },
     "include/uos/responses_buffered.hpp": {
       "reviewed": false,

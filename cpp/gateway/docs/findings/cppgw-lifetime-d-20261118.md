@@ -366,7 +366,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/release.hpp`
 - [x] `include/uos/request.hpp`
 - [x] `include/uos/request_policy.hpp`
-- [ ] `include/uos/responses_attempts.hpp`
+- [x] `include/uos/responses_attempts.hpp`
 - [ ] `include/uos/responses_buffered.hpp`
 - [ ] `include/uos/responses_failover_stream.hpp`
 - [ ] `include/uos/responses_handler.hpp`
@@ -2075,6 +2075,12 @@ Reviewed model defaults, metadata lookup and synchronous policy helpers.
 
 - L45, 56, 81, 103 **SAFE** · The asynchronous metadata lookup takes model and route strings by value. The static labels refer to literals.
 
+### `include/uos/responses_attempts.hpp`
+
+Reviewed prepared/primary attempt handles, usage pointers and provider options.
+
+- L18, 19, 27, 41, 43, 61, 70, 78, 81, 83 **SAFE** · The route keeps the borrowed usage context during direct attempts. Attempt work owns response, body, controls and generator; the detached circuit seam's constraints are recorded at its implementation.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2324,4 +2330,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-258/286 files reviewed. 440 sites: 416 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+259/286 files reviewed. 441 sites: 417 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
