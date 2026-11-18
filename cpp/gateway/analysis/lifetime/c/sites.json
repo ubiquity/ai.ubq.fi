@@ -3761,8 +3761,34 @@
       ]
     },
     "src/provider/metered.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Metered transport and metadata use owning fetch and body tasks. Its abort race retains the registered signal, and the coalescing cell can survive its abandoned loop.",
+      "sites": [
+        {
+          "lines": "193-230",
+          "kind": "abort race listener ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "A pending catalog or billing request registers a listener whose own signal and finish captures keep the registering signal alive. Loop teardown can discard both operation reactions and the timeout before either branch removes the listener. Use weak signal ownership inside the listener and its finish helper."
+        },
+        {
+          "lines": "243-274,334-365,462-487,611-661,777-884",
+          "kind": "provider fetch, admission and body waits",
+          "verdict": "SAFE",
+          "reason": "Frames own the request data, hooks, body and response handles. rt::Fetch and Response::json retain the underlying operations if their abort race settles first. The header timer is scoped to dispatch."
+        },
+        {
+          "lines": "684-707,712-717",
+          "kind": "coalescing cell after an abandoned wait",
+          "verdict": "DEFECT",
+          "reason": "Destroying a fixture Loop with an unresolved coalesced discovery destroys its waiting frame before the explicit global clear. A later Loop in the same process can join that old Promise with no producer. Use an identity-checked scope guard as in lithos_models.cpp."
+        },
+        {
+          "lines": "731-771",
+          "kind": "pricing fail-fast fan-out",
+          "verdict": "SAFE",
+          "reason": "Each fetchMetadataJson child owns its fetcher, URL, signal and error strings, and settled envelope references are to the local result vector."
+        }
+      ]
     },
     "src/provider/openrouter.cpp": {
       "status": "pending",

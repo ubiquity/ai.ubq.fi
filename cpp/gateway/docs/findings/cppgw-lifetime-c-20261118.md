@@ -312,7 +312,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/lithos_models.cpp`
 - [x] `src/provider/lithos_rate_limits.cpp`
 - [x] `src/provider/lithos_streams.cpp`
-- [ ] `src/provider/metered.cpp`
+- [x] `src/provider/metered.cpp`
 - [ ] `src/provider/openrouter.cpp`
 - [ ] `src/provider/openrouter_handlers.cpp`
 - [ ] `src/provider/openrouter_request_controls.cpp`
@@ -1995,3 +1995,12 @@ The adapter forwards owned frames through the shared relay and SSE keepalive wra
 
 - 20-33 · generator body and frame forwarding · **SAFE** · The generator closure forwards its copied inputs into an owning task. forAwait retains the iterable and callback, and the callback returns an owned provider frame.
 - 44-78,110-125 · provider adapter and deferred model callback · **SAFE** · The framing adapter owns the model getter, uses it synchronously and returns a generator owning the resolved model. The relay copies telemetry and pending source state before returning.
+
+### `src/provider/metered.cpp`
+
+Metered transport and metadata use owning fetch and body tasks. Its abort race retains the registered signal, and the coalescing cell can survive its abandoned loop.
+
+- 193-230 · abort race listener ownership cycle · **DEFECT** · A pending catalog or billing request registers a listener whose own signal and finish captures keep the registering signal alive. Loop teardown can discard both operation reactions and the timeout before either branch removes the listener. Use weak signal ownership inside the listener and its finish helper.
+- 243-274,334-365,462-487,611-661,777-884 · provider fetch, admission and body waits · **SAFE** · Frames own the request data, hooks, body and response handles. rt::Fetch and Response::json retain the underlying operations if their abort race settles first. The header timer is scoped to dispatch.
+- 684-707,712-717 · coalescing cell after an abandoned wait · **DEFECT** · Destroying a fixture Loop with an unresolved coalesced discovery destroys its waiting frame before the explicit global clear. A later Loop in the same process can join that old Promise with no producer. Use an identity-checked scope guard as in lithos_models.cpp.
+- 731-771 · pricing fail-fast fan-out · **SAFE** · Each fetchMetadataJson child owns its fetcher, URL, signal and error strings, and settled envelope references are to the local result vector.
