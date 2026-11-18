@@ -1412,8 +1412,26 @@
       ]
     },
     "src/rt/stream.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "This translation unit contains synchronous reason/value construction and explicit ByteChunk template instantiations. The instantiated suspension sites are recorded in stream.hpp.",
+      "sites": [
+        {
+          "lines": [
+            7,
+            10,
+            11,
+            13,
+            16,
+            19
+          ],
+          "classes": [
+            "b"
+          ],
+          "verdict": "SAFE",
+          "label": "Tee cancellation reason construction",
+          "reason": "The helpers consume the borrowed exception handles synchronously and the resulting exception owns both reasons and its JSON representation."
+        }
+      ]
     },
     "include/uos/rt/stream.hpp": {
       "status": "pending",

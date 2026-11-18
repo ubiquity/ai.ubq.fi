@@ -40,7 +40,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `include/uos/rt/async.hpp`
 - [x] `src/rt/process_loop.cpp`
 - [x] `include/uos/rt/process.hpp`
-- [ ] `src/rt/stream.cpp`
+- [x] `src/rt/stream.cpp`
 - [ ] `include/uos/rt/stream.hpp`
 - [ ] `src/rt/http.cpp`
 - [ ] `include/uos/rt/http.hpp`
@@ -166,18 +166,24 @@ The ProcessLoop public interface is split from its implementation in process_loo
 - **SAFE** `137, 141, 143, 144, 146, 148, 151, 155, 158, 162, 164, 165, 168, 178, 181, 190` (b/c), FileSink and Subprocess handle APIs. Writes and kill consume their views synchronously, and deferred work gets shared state from the handle or returns an owning stream or Promise copy.
 - **SAFE** `212, 214, 216, 220, 223, 225` (b/c), BunFile path and stream declaration. The object owns its path and stream copies that path into the source before returning, allowing the BunFile wrapper to be a temporary.
 
+### `src/rt/stream.cpp`
+
+This translation unit contains synchronous reason/value construction and explicit ByteChunk template instantiations. The instantiated suspension sites are recorded in stream.hpp.
+
+- **SAFE** `7, 10, 11, 13, 16, 19` (b), Tee cancellation reason construction. The helpers consume the borrowed exception handles synchronously and the resulting exception owns both reasons and its JSON representation.
+
 ## Ranked defects and counts
 
-Reviewed **8/30 files** and **56 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **9/30 files** and **57 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 1 | 12 | 0 |
-| b. Borrowed coroutine parameter or receiver | 3 | 29 | 1 |
+| b. Borrowed coroutine parameter or receiver | 3 | 30 | 1 |
 | c. Callback ownership or cycle | 7 | 41 | 2 |
 | d. Container invalidation | 2 | 15 | 0 |
 | e. GCC 12 await-expression rule | 2 | 6 | 1 |
-| **Unique site groups** | 9 | 45 | 2 |
+| **Unique site groups** | 9 | 46 | 2 |
 
 ### 1. A-PROMISE-CALLBACK-INPUT (memory safety in the public runtime API) — Task-returning Promise callbacks can borrow a destroyed outcome
 
