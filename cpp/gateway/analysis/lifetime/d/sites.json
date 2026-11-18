@@ -3939,8 +3939,58 @@
       "sites": []
     },
     "src/kv_conversion/legacy_codec.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the offline codec subprocess, stdout/stderr streams, callback lifetime, transfer and close paths.",
+      "sites": [
+        {
+          "lines": [
+            75,
+            78,
+            80,
+            82,
+            84,
+            101,
+            111,
+            191,
+            200,
+            201
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The public facade transfers its shared codec State to the exchange tasks. Buffer scans happen synchronously after owned reads, with the process reader and file reader retained in their awaiting frames."
+        },
+        {
+          "lines": [
+            120,
+            123,
+            137,
+            144,
+            155,
+            158,
+            159,
+            160,
+            162,
+            174,
+            175,
+            176,
+            179,
+            202,
+            203
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The abort callback owns only the subprocess and is unregistered by close or abort. The subprocess read tasks capture stream state before being joined, and conversion serializes codec calls while retaining the codec owner."
+        }
+      ]
     },
     "src/kv_conversion/native_schema.cpp": {
       "reviewed": false,
