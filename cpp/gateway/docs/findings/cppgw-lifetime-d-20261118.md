@@ -390,7 +390,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/sentinel/upstream_capture.hpp`
 - [x] `include/uos/serve.hpp`
 - [x] `include/uos/static.hpp`
-- [ ] `include/uos/systemone/handlers.hpp`
+- [x] `include/uos/systemone/handlers.hpp`
 - [ ] `include/uos/types.hpp`
 - [ ] `include/uos/upstream_wire.hpp`
 - [ ] `include/uos/utils.hpp`
@@ -2224,6 +2224,12 @@ Reviewed the static resource and root route declarations.
 
 - L16, 20 **SAFE** · Asset paths and requests enter their coroutine by value, and asset lookup acquires its shared asset owner before awaiting.
 
+### `include/uos/systemone/handlers.hpp`
+
+Reviewed the model literal and injected provider interface.
+
+- L13, 19, 20, 24, 25 **SAFE** · The model view refers to a literal. The wrapper copies options and context values, the provider invocation retains its fetch callable, and the key supplier runs inline.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2473,4 +2479,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-282/286 files reviewed. 471 sites: 446 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+283/286 files reviewed. 472 sites: 447 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

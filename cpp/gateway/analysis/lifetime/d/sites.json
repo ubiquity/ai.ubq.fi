@@ -10461,8 +10461,27 @@
       ]
     },
     "include/uos/systemone/handlers.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the model literal and injected provider interface.",
+      "sites": [
+        {
+          "lines": [
+            13,
+            19,
+            20,
+            24,
+            25
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The model view refers to a literal. The wrapper copies options and context values, the provider invocation retains its fetch callable, and the key supplier runs inline."
+        }
+      ]
     },
     "include/uos/types.hpp": {
       "reviewed": false,
