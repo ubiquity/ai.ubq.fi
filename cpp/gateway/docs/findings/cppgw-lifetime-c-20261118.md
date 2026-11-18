@@ -311,7 +311,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/lithos_handlers.cpp`
 - [x] `src/provider/lithos_models.cpp`
 - [x] `src/provider/lithos_rate_limits.cpp`
-- [ ] `src/provider/lithos_streams.cpp`
+- [x] `src/provider/lithos_streams.cpp`
 - [ ] `src/provider/metered.cpp`
 - [ ] `src/provider/openrouter.cpp`
 - [ ] `src/provider/openrouter_handlers.cpp`
@@ -1988,3 +1988,10 @@ Rate-limit parsing and failover-window lookups finish synchronously. The retry p
 
 - 197-227 · failover-window map references · **SAFE** · Lookups and writes consume map entries synchronously without an intervening suspension or callback.
 - 255-292 · rate-limit retry timer, listener, and executor · **SAFE** · newPromise runs the borrowing executor inline. The timer owns the wait state and signal, and the once listener keeps weak back-references and its own elapsed callback and rejector.
+
+### `src/provider/lithos_streams.cpp`
+
+The adapter forwards owned frames through the shared relay and SSE keepalive wrappers.
+
+- 20-33 · generator body and frame forwarding · **SAFE** · The generator closure forwards its copied inputs into an owning task. forAwait retains the iterable and callback, and the callback returns an owned provider frame.
+- 44-78,110-125 · provider adapter and deferred model callback · **SAFE** · The framing adapter owns the model getter, uses it synchronously and returns a generator owning the resolved model. The relay copies telemetry and pending source state before returning.

@@ -3743,8 +3743,22 @@
       ]
     },
     "src/provider/lithos_streams.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The adapter forwards owned frames through the shared relay and SSE keepalive wrappers.",
+      "sites": [
+        {
+          "lines": "20-33",
+          "kind": "generator body and frame forwarding",
+          "verdict": "SAFE",
+          "reason": "The generator closure forwards its copied inputs into an owning task. forAwait retains the iterable and callback, and the callback returns an owned provider frame."
+        },
+        {
+          "lines": "44-78,110-125",
+          "kind": "provider adapter and deferred model callback",
+          "verdict": "SAFE",
+          "reason": "The framing adapter owns the model getter, uses it synchronously and returns a generator owning the resolved model. The relay copies telemetry and pending source state before returning."
+        }
+      ]
     },
     "src/provider/metered.cpp": {
       "status": "pending",
