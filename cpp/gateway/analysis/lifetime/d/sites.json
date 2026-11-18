@@ -7532,8 +7532,53 @@
       ]
     },
     "include/uos/authority/admission_state.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed admission operation arguments, the portable receiver, and private CAS delegation.",
+      "sites": [
+        {
+          "lines": [
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            60,
+            61,
+            67,
+            69,
+            70,
+            71,
+            72,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            86,
+            89
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "RPC and delivery adapters retain the shared authority; current direct callers retain it through the await. Inputs are values, and the owned store remains live for transaction retries."
+        }
+      ]
     },
     "include/uos/authority/authority_rpc.hpp": {
       "reviewed": false,

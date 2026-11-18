@@ -275,7 +275,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/auth/passport.hpp`
 - [x] `include/uos/auth/passport_sessions.hpp`
 - [x] `include/uos/auth/relay.hpp`
-- [ ] `include/uos/authority/admission_state.hpp`
+- [x] `include/uos/authority/admission_state.hpp`
 - [ ] `include/uos/authority/authority_rpc.hpp`
 - [ ] `include/uos/authority/contracts.hpp`
 - [ ] `include/uos/authority/credential_publication.hpp`
@@ -1527,6 +1527,12 @@ Reviewed the relay origin parser interface.
 
 - L13 **SAFE** · The parser consumes an optional string synchronously and returns an owning origin string.
 
+### `include/uos/authority/admission_state.hpp`
+
+Reviewed admission operation arguments, the portable receiver, and private CAS delegation.
+
+- L46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 60, 61, 67, 69, 70, 71, 72, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 86, 89 **SAFE** · RPC and delivery adapters retain the shared authority; current direct callers retain it through the await. Inputs are values, and the owned store remains live for transaction retries.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1775,4 +1781,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-167/286 files reviewed. 338 sites: 317 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+168/286 files reviewed. 339 sites: 318 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
