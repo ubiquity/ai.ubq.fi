@@ -287,3 +287,99 @@ clang++-21 --ld-path=/usr/bin/ld.lld-21 -Wl,--threads=1 \
   -lssl -lcrypto -lz -lm -lbrotlidec -lzstd -licuuc -licui18n -ldl -pthread -o "$stage/uos_gateway"
 sha256sum "$stage/uos_gateway"
 ```
+
+## Final Linux ARM64 results
+
+The complete portable runs selected all 441 link closures and compiled all 369 production translation units in
+both profiles. The receipts bind commit `d3d18d70a775746101100ff8f2fa761fb36add8b`, tree
+`c6464250aaeb798dd47251be428b6e59077ad680`, and unchanged build-input digest
+`99b8f47a13ac2c566aee96123a3d826e2af0d5eb706ccd942241379aa460ca74`.
+
+| Run                     | Passing binaries | Failed binaries | Timeouts | Passing cases | Failed cases | Cases run |
+| ----------------------- | ---------------: | --------------: | -------: | ------------: | -----------: | --------: |
+| Release `-O2`           |              441 |               0 |        0 |         5,025 |            0 |     5,025 |
+| ASan/UBSan initial      |              438 |               2 |        1 |         4,988 |            2 |     4,990 |
+| ASan/UBSan with retries |              441 |               0 |        0 |         5,025 |            0 |     5,025 |
+
+- `codex_supervisor_secret_test` missed two performance thresholds at `-O0`. A control linked without the URL object
+  reproduced the same two failures. The retry kept ASan/UBSan and used `-O2` for `supervisor_secret.cpp`,
+  `regex.cpp`, `regex_compile.cpp`, `regex_match.cpp`, `regex_tables.cpp` and `string.cpp`. All 41 cases passed.
+- `rt/json_test` exhausted its stack in the pre-existing recursive `matchesAt` at `-O0`. A control linked without
+  the URL object reproduced the ASan stack-overflow report. Rebuilding only `src/rt/json.cpp` with `-O2` and the
+  same sanitizers passed all 25 cases.
+- `sentinel_replay_retention_metadata_test` exceeded the 300-second limit. Relinking the same sanitized objects
+  and allowing 720 seconds passed all 10 cases in 363.469 seconds.
+
+The initial and repeated results are retained separately. The three passing retries reported zero sanitizer
+findings. The simdutf include warnings, JSON stack exhaustion, supervisor timing assertions, and production-host
+fuzz runner's handling of `extra_sources` are outside this lane.
+
+### Final build registration and focused gate
+
+Direct Clang builds emitted eight signedness diagnostics in Ada's unmodified header with the requested strict flags.
+The previously CMake-only exemption is now specific to `-Wsign-conversion` while including that header. CMake still
+registers the Ada archive through `cmake/vendors.json`. The focused CMake build and both direct `url.cpp` compiles
+passed, using the recorded profile flags with the Ada header-prefix option removed.
+
+The final code commit is `9de4930c5ec3e341111d22786a464ee7046f6ce2`, tree
+`f6eea7d39e48225664903376b821bb0cf3a3b5e7`. The release URL object is byte-identical to the object in the
+full passing run and in the gateway link above. Its SHA-256 is
+`80fc0479f1901d7a00b8c257f3eb55b3f9f0d7bca8e6e735becffa52e49424e8`.
+The ASan/UBSan disassembly and relocations match after resolving stack descriptor strings whose source locations
+advanced by nine lines. Both URL binaries were relinked with the rebuilt objects and passed 9 of 9 cases in each
+profile. The focused receipt has source digest
+`4bd325660dc76265ad6be1aacdc394632848f6173771523e04e9bec41fb2e6a2`.
+The full-suite counts above come from the earlier objects and the three retries. The benchmark and two-minute fuzz
+results above also predate the diagnostic-only change.
+
+The final first-party URL diff deletes **1,686 lines** and adds **332 lines**, a net reduction of **1,354**.
+The public adapter retains WTF-8 input conversion, typed errors, fail-closed host checks, live query ownership,
+JS record enumeration, and POSIX file conversion. Ada owns parsing, serialization, IDNA mapping, and form encoding.
+
+### Reproduction and handoff
+
+The portable driver and first-run flags are recorded above. These commands reuse the external scratch build objects.
+The retry helper reads the saved Ninja flags, appends `-O2` only to the listed source recompiles, links the selected
+closure, and runs it through the same isolated fixture boundary. The focused helper reads the original receipt flags
+and substitutes only the rebuilt URL object before linking the two URL tests in each profile.
+
+```bash
+work=/tmp/cppgw-std-ada-20261117
+root="$PWD/cpp/gateway"
+release="$work/ci/clang++-21-fb9b4f614549/release"
+asan="$work/ci/clang++-21-2782f4c79dd1/asan"
+proof="$work/registration-proof"
+
+retry() {
+  env -i PATH=/usr/bin:/bin LANG=C.UTF-8 TZ=UTC PKG_CONFIG_PATH="$work/pkgconfig" \
+    python3 -B "$work/$1" "$root" "$asan" "${@:2}"
+}
+retry test-retry.py "$work/retry/codex-supervisor-secret" tests/codex_supervisor_secret_test.cpp \
+  src/codex/supervisor_secret.cpp src/rt/{regex,regex_compile,regex_match,regex_tables,string}.cpp
+retry test-retry.py "$work/retry/json" tests/rt/json_test.cpp src/rt/json.cpp
+sed 's/flags, libraries, env, 300,/flags, libraries, env, 720,/' \
+  "$work/test-retry.py" > "$work/test-retry-720.py"
+retry test-retry-720.py "$work/retry/sentinel-metadata-720" tests/sentinel_replay_retention_metadata_test.cpp
+
+UOS_GATEWAY_BUILD_EVIDENCE=1 UOS_GATEWAY_TOOL_ROOT="$work/native" \
+  ninja -C "$work/cmake" -j1 uos_vendor_ada uos_obj_67539c0929b9a07a
+for build in "$release" "$asan"; do
+  mapfile -t flags < <(python3 -B -c \
+    'import json, sys; print(*[f for f in json.load(open(sys.argv[1]))["flags"] if f != "--system-header-prefix=third_party/ada/"], sep="\n")' \
+    "$build/receipt.json")
+  env -i PATH=/usr/bin:/bin LANG=C.UTF-8 TZ=UTC \
+    clang++-21 "${flags[@]}" -c "$root/src/rt/url.cpp" -o "$proof/${build##*/}-url.o"
+done
+cmp "$release/obj/src/rt/url.cpp.o" "$proof/release-url.o"
+env -i PATH=/usr/bin:/bin LANG=C.UTF-8 TZ=UTC \
+  python3 -B "$work/final-url-tests.py" "$root" "$work"
+git diff --check 093a9e05 HEAD
+```
+
+The full release and ASan/UBSan receipts are `receipt.json` in their respective build directories above.
+The focused receipt is `$proof/receipt.json`. Restored Git read access confirmed that `origin/development` still
+has no `cpp/gateway` and that `origin/claude/cpp-gateway-port` shares the recorded baseline with this lane.
+`GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false git push --dry-run origin HEAD:refs/heads/agent-jobs/cppgw-std-ada-r1-44201961949-1`
+exited 128 because GitHub requires write credentials. The existing remote task branch carries the implementation
+through `51ca7448`. The final Clang fix and verification report remain committed on the clean local job branch for
+port integration.
