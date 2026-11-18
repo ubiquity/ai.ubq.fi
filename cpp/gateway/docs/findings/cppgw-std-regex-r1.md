@@ -75,3 +75,72 @@ cases out of 16 against the original Bun vectors. The 171 production-pattern row
 the semantic battery, syntax, random syntax, Unicode properties, constructor limits and
 backtracking memory. The checkout's vendor manifest and the bytes extracted from the
 pinned archive both verified.
+
+## Continuation on Linux ARM64
+
+The next incoming commit, `90d2076041ddb8610c8d4d2f438acddbb5c34974` (tree
+`ddf39d01820a4d420781cc8f251384d73f9f694b`), adds the QuickJS expectation overlay
+and resource, Unicode-set and embedded-NUL cases. A fresh strict Clang 21.1.8
+release build of the incoming CMake Links closure passed 19/19 cases. All
+171 production-pattern rows and 570 test-pattern rows still pass their original
+Bun expectations, covering 63,131 and 6,421 checks respectively. The battery,
+syntax and random groups passed 19,242, 1,735 and 27,513 checks with the
+classified changes. Unicode property tests passed 602/602 and case folding
+passed all 83 blocks. The overlay binds exceptions to the original fixture
+hashes and preserves all source vector documents.
+
+The caller audit found 101 application source files using `rt::Regex`.
+Request, authentication and configuration validators use fixed syntax.
+The Harmony glob builder escapes caller-provided literal text and adds its
+own wildcard syntax. KV conversion compiles stored expressions and projects
+their source and flags. It does not use those expressions to authorize access.
+The changed syntax outcomes and resource limits are listed in
+[Deviations from Bun](../DEVIATIONS-FROM-BUN.md).
+
+CMake builds both vendor C sources for the gateway and its Links targets.
+For the local sweep, a scratch controller runs those binaries against the
+generated Links registry using the repository's `cmake/ci/isolate.py` Linux
+network, mount and PID boundary. The checkout's portable Ninja driver assumes
+one C++ source per vendor. The older `tools/ci_sanitize.py` discovers C
+translation units but drops them while assembling the Links inputs. Both are
+outside this assignment's owned paths.
+
+## Continuation work contract v3
+
+Qualify the inherited QuickJS adapter on the existing Linux ARM64 runner. The
+application behavior matrix above still applies. In particular, large inline images
+must retain the documented size allowance and compaction must finish its existing
+large-transcript fixture. Captures, offsets, flags and the public API stay compatible.
+The earlier engine stays out of production. The owned paths remain those listed in
+the assignment, with any additional path requiring explicit authorization.
+
+The pre-fix release Links sweep covered 441 binaries and reported 437 passing and
+4 failing, with 5,019 of 5,027 cases passing. The ASan/UBSan sweep covered the same
+441 binaries and reported 435 passing and 6 failing, with 5,017 of 5,027 cases
+passing. Both runs found the large-image failures, two KV suites asserting retired
+regex diagnostics or missing `v` flag support, and URL IDNA failures. ASan/UBSan
+also found a one-second execution deadline in the large compaction fixture and a
+different parser limit reached by nested captures with larger instrumented frames.
+The current fuzz harness passed 711,754 inputs in 121 seconds with ASan/UBSan after
+switching the private network namespace to the runner's `sudo` fallback.
+
+Run the changed regex test and affected application controls first, then link the
+final runtime into both full CMake Links inventories. Use the pre-swap engine as an
+independent control for the failures and compare the same optimized operations and
+allocation counters. Retain a final two-minute smoke result for the updated runtime.
+The handoff ends with committed source and a report that names any failing gates and
+the scope or technical blocker for each one.
+
+### Resource-limit follow-up
+
+The execution deadline is 2.5 seconds per operation. The previous one-second limit
+interrupted the large compaction fixture under ASan/UBSan. The poll and allocation
+ceilings still apply. The nested-capture test requires an ordinary JS-style error
+and checks the diagnostic for the limit reached, since instrumented frames use
+more stack than optimized frames.
+
+The optimized pre-swap control passed all 37 image cases and all 12 cases across
+the two KV differential binaries. It reproduced both URL IDNA failures on the
+runner's ICU 74.2. The image failure is a VM memory regression on the existing
+whole-payload character-class repeat. The KV differences are support for the
+recorded `v` expression and new syntax diagnostics.

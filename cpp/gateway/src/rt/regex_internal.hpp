@@ -48,7 +48,7 @@ namespace uos::rt::regex_detail {
 
   struct Limits {
     using Clock = std::chrono::steady_clock;
-    Clock::time_point deadline = Clock::now() + std::chrono::seconds(1);
+    Clock::time_point deadline = Clock::now() + std::chrono::milliseconds(2500);
     std::uintptr_t stackFloor = 0;
     // libregexp calls the hook once per 10,000 backtracking/loop polls.
     unsigned pollsRemaining = 4096;
