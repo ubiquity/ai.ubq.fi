@@ -7,11 +7,11 @@ closure, parameter, callback, iterator and await-expression lifetime through nor
 cancellation and late completion. Report defects with failing interleavings and proposed diffs.
 Production files, tests, dependencies, workflows and deployments are outside the change scope.
 
-| Surface | Behavior to preserve |
-| --- | --- |
+| Surface                                     | Behavior to preserve                                                                        |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | Provider, Codex, DeepSeek and paid fallback | Provider order, quota/accounting settlement, delivery receipts, fail-fast sibling semantics |
-| Chat, Harmony and embeddings | Stream iteration and cancellation, handler/job ownership through completion |
-| Live and supervisor | Callback registration and removal, socket/stream shutdown, delivery and abort ownership |
+| Chat, Harmony and embeddings                | Stream iteration and cancellation, handler/job ownership through completion                 |
+| Live and supervisor                         | Callback registration and removal, socket/stream shutdown, delivery and abort ownership     |
 
 Owned paths are this report and `analysis/lifetime/c/` under `cpp/gateway`. Runtime evidence is
 limited to credential-free Linux ARM64 local mocks. Each execution uses an empty home and fresh
@@ -400,7 +400,8 @@ mkdir "$launch/home" "$launch/tmp"
 mapfile -t files < <(cd cpp/gateway && rg --files src/{provider,codex,deepseek,paid_fallback,harmony,chat,embeddings,live} -g '*.cpp' | sort)
 arguments=()
 for path in "${files[@]}"; do arguments+=(--source "$path"); done
-env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC   HOME="$launch/home" TMPDIR="$launch/tmp" \
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
+    HOME="$launch/home" TMPDIR="$launch/tmp" \
     bash cpp/gateway/tools/tidy.sh --compiler /usr/bin/clang++-21 \
     --clang-tidy "$evidence/bin/clang-tidy-21" --config "$evidence/area-c.clang-tidy" \
     --jobs 3 --timeout 90 --build-dir "$launch/tidy-c" "${arguments[@]}"
@@ -416,13 +417,13 @@ using three workers. Maximum TU RSS was 761,036 KiB. Sixteen TUs emitted finding
 The wrapper marks whole-gateway completion false because its database also contains
 the unselected modules and tests.
 
-| Check | Unique diagnostics |
-| --- | ---: |
-| `cppcoreguidelines-avoid-capturing-lambda-coroutines` | 9 |
-| `cppcoreguidelines-avoid-reference-coroutine-parameters` | 34 |
-| `misc-coroutine-hostile-raii` | 0 |
-| `bugprone-dangling-handle` | 0 |
-| `bugprone-use-after-move` | 0 |
+| Check                                                    | Unique diagnostics |
+| -------------------------------------------------------- | -----------------: |
+| `cppcoreguidelines-avoid-capturing-lambda-coroutines`    |                  9 |
+| `cppcoreguidelines-avoid-reference-coroutine-parameters` |                 34 |
+| `misc-coroutine-hostile-raii`                            |                  0 |
+| `bugprone-dangling-handle`                               |                  0 |
+| `bugprone-use-after-move`                                |                  0 |
 
 Every unique diagnostic is covered by a ledger row. The nine visible capturing coroutine
 lambdas have owners in their current call chains. The reference warning on the Voyage
@@ -438,12 +439,12 @@ proved loopback and outside route denial, created per-run empty HOME and fresh T
 passed an allowlisted environment. The four prior-run receipts are incremental builds and
 have unchanged native input digests. Cold and interrupted runs did not yield test receipts.
 
-| Driver filter | Build s | Test wall s | Elapsed s | Passed cases |
-| --- | ---: | ---: | ---: | ---: |
-| `live_sideband_http_test` | 52.826 | 4.852 | 58.127 | 21/21 |
-| `codex_dispatch_differential` | 28.149 | 0.980 | 29.579 | 13/13 |
-| `codex_supervisor_test` | 13.642 | 2.365 | 16.459 | 15/15 |
-| `paid_fallback_test` | 38.778 | 2.888 | 42.113 | 25/25 |
+| Driver filter                 | Build s | Test wall s | Elapsed s | Passed cases |
+| ----------------------------- | ------: | ----------: | --------: | -----------: |
+| `live_sideband_http_test`     |  52.826 |       4.852 |    58.127 |        21/21 |
+| `codex_dispatch_differential` |  28.149 |       0.980 |    29.579 |        13/13 |
+| `codex_supervisor_test`       |  13.642 |       2.365 |    16.459 |        15/15 |
+| `paid_fallback_test`          |  38.778 |       2.888 |    42.113 |        25/25 |
 
 The live receipt is from commit `4a308e48d62f24f6a1b99598e79279a4f5f5816a`
 and tree `cc835dd1e8394cec6aa60cb41e992fb80f019192`. The other three are from commit
@@ -473,13 +474,13 @@ test names plus `.cpp`, add `UOS_CI_TIMEOUT=120` to the environment, and prefix
 `bash cpp/gateway/tools/ci-build.sh` with `timeout -k 5s 240s`. Each receipt has the
 same native input digest and 369/369 production objects accounted for.
 
-| Driver filter | Build s | Test wall s | Elapsed s | Passed cases |
-| --- | ---: | ---: | ---: | ---: |
-| `oss_stream_lifecycle_test.cpp` | 35.274 | 2.352 | 38.080 | 20/20 |
-| `provider_selection_health_differential_test.cpp` | 18.287 | 0.623 | 19.360 | 10/10 |
-| `embeddings_ledger_differential_test.cpp` | 20.286 | 3.607 | 24.396 | 7/7 |
-| `surplus_test.cpp` | 11.052 | 0.619 | 12.120 | 6/6 |
-| `metered_test.cpp` | 15.144 | 0.622 | 16.215 | 8/8 |
+| Driver filter                                     | Build s | Test wall s | Elapsed s | Passed cases |
+| ------------------------------------------------- | ------: | ----------: | --------: | -----------: |
+| `oss_stream_lifecycle_test.cpp`                   |  35.274 |       2.352 |    38.080 |        20/20 |
+| `provider_selection_health_differential_test.cpp` |  18.287 |       0.623 |    19.360 |        10/10 |
+| `embeddings_ledger_differential_test.cpp`         |  20.286 |       3.607 |    24.396 |          7/7 |
+| `surplus_test.cpp`                                |  11.052 |       0.619 |    12.120 |          6/6 |
+| `metered_test.cpp`                                |  15.144 |       0.622 |    16.215 |          8/8 |
 
 Across the nine driver filters, 125 of 125 cases passed with zero sanitizer failures,
 build failures or timeouts. The focused suite results apply to those cases. The
@@ -2283,3 +2284,601 @@ Native Chat projection, replay lookups and cache policy transforms are synchrono
 Native Messages projection copies JSON and names. Its reference and view parameters are synchronous.
 
 - 452-505,632-672 · cache block and token bounds borrows · **SAFE** · Cache pointers refer to frame-local inputs while the synchronous call runs, and the local catalog token value stays in scope until its numeric value is copied.
+
+## Outside Area C
+
+- `src/kv.cpp:53-58,94-98`. In the injected opener seam, a capturing coroutine may
+  remain suspended when `setKvForTest` replaces the function it came from. The next
+  use of its captures uses a destroyed closure. Retain a copy of the selected opener
+  beside the joined task. The production opener is a free function.
+- The prior admin-kernel fan-out UAF and HTTP transport, WebSocket and relay cleanup
+  findings are historical context. The assigned source contains the admin-kernel and
+  relay ownership changes. This audit's relay test covers the late-abort contract.
+  [Prior clang-tidy finding](cppgw-clang-tidy-audit-20261117.md) ·
+  [Runtime sanitizer report](cppgw-asan-rt-20261117.md) ·
+  [Provider sanitizer report](cppgw-asan-providers-20261117.md)
+
+## Verification and handoff
+
+Changed paths are this report, `analysis/lifetime/c/sites.json` and
+`analysis/lifetime/c/checkpoint.py`. The checker reconciles the on-disk inventory with
+the audited Git tree, the checked file list, valid source anchors, and byte-identical
+verdict rows in the two artifacts. Proposed diffs were checked with `git apply --check`
+against the audited source. The Voyage signature proposal indicates the required
+unchanged-assertion fixture migrations. Each proposal is for maintainer application
+and follow-up verification.
+
+```sh
+python3 -B cpp/gateway/analysis/lifetime/c/checkpoint.py verify --complete
+python3 -B -c 'from pathlib import Path; p = Path("cpp/gateway/analysis/lifetime/c/checkpoint.py"); compile(p.read_text(), str(p), "exec")'
+git diff --check 6d28e858e7ab8b8b1036db4a4adfdade0465ed40 HEAD
+```
+
+The report and JSON use the locked Prettier 3.9.6 under Bun 1.4.0. The
+`tools/lint/package.json` and its frozen `bun.lock` were copied to staging under the
+evidence root, where dependencies were installed with
+`bun --no-env-file install --frozen-lockfile --ignore-scripts`. The formatter used the
+checkout's `.prettierrc` and `.prettierignore` with only the two changed formatted paths.
+All formatter, checkout and audit artifacts stay confined to their specified paths.
+
+Fetching `origin/development` succeeded. The task branch started from the assigned
+port ref, with 220 base commits outside the fetched development history. GitHub
+write authentication was unavailable for
+`GIT_TERMINAL_PROMPT=0 git push --dry-run origin HEAD:refs/heads/audit/cppgw-lifetime-c-20261118`.
+The audit commits are on `agent-job` for integration by the job owner. Development
+ancestry verification and remote integration are pending.
+
+## Ranked defects and counts
+
+| Verdict   |    Rows |
+| --------- | ------: |
+| SAFE      |     368 |
+| DEFECT    |      23 |
+| UNCLEAR   |       0 |
+| **Total** | **391** |
+
+| Defect class                                            | Rows |
+| ------------------------------------------------------- | ---: |
+| Memory safety at injected coroutine, KV or clock seams  |   10 |
+| Retained callback cycles at teardown                    |    7 |
+| Abandoned shared-work cells surviving loop teardown     |    3 |
+| GCC 12.2 comparison-profile await-expression violations |    3 |
+
+The rank starts with request-path memory safety. The 23 rows are grouped below by
+required repair, with separate anchors in the file ledger. The ownership and leak
+witnesses identify two Codex rows. Other proposed repairs follow from the source and
+caller ownership paths.
+
+### 1. Retry task loses its callable on abort
+
+`src/codex/dispatch.cpp:628-635`. The Responses retry helper accepts an injected sleep callable.
+The abort branch rejects while a sleep coroutine returned by that callable remains suspended.
+The waiter destroys its callable, so a later use of a capture in the sleep coroutine can access freed state.
+
+The default sleep and the current differential fixture use owning free tasks. The isolated
+weak-owner witness confirms early release with a capturing sleeper. The proposed change keeps
+the original race and transfers the callable into its independently retained child.
+
+```diff
+--- a/cpp/gateway/src/codex/dispatch.cpp
++++ b/cpp/gateway/src/codex/dispatch.cpp
+@@ -626,5 +626,6 @@
+         if (abortSignal.aborted()) onAbort();
+       });
+-      rt::Promise<void> sleeping(sleep(milliseconds));
++      auto sleepTask = rt::async([sleep = std::move(sleep), milliseconds] { return sleep(milliseconds); });
++      rt::Promise<void> sleeping(std::move(sleepTask));
+       std::vector<rt::Promise<void>> racers{sleeping, aborted};
+       rt::Promise<void> raced = rt::race(std::move(racers));
+```
+
+### 2. Fail-fast KV children borrow their receivers
+
+Eight rows cover concurrent reads in embeddings request cache, idempotency replay and eviction,
+Codex manual reset and reset settings, paid-ledger backfill and settlement, and provider health.
+One virtual read rejects while a sibling is still suspended. The caller can release the last
+owner or replace the injected global store, leaving a pending virtual coroutine with a dead receiver.
+
+The production GuardedKv and SQLite/MemoryKv implementations retain their own underlying state.
+The exposed injection and override interfaces accept coroutine implementations. The proposals
+give each started read an owner, preserving propagation of the first rejection and leaving
+other reads free to settle. Voyage's writer signature transfers an owner on the same calls.
+The direct cache writer fixture callers would also pass real shared owners when that API changes.
+
+```diff
+--- a/cpp/gateway/src/embeddings/handlers.cpp
++++ b/cpp/gateway/src/embeddings/handlers.cpp
+@@ -137,5 +137,8 @@
+         const auto unique = rt::arrayFrom(buckets.values());
+         std::vector<rt::Promise<rt::KvEntryMaybe<>>> pending;
+-        for (const auto& item : unique) pending.emplace_back(kv->get(embeddingsCacheKey(parsed.profile.cache_profile_key, item.hash)));
++        for (const auto& item : unique) {
++          const auto key = embeddingsCacheKey(parsed.profile.cache_profile_key, item.hash);
++          pending.emplace_back(rt::async([store = kv, key] { return store->get(key); }));
++        }
+         const auto entries = co_await rt::all(std::move(pending)).wait();
+         for (std::size_t i = 0; i < unique.size(); ++i) {
+@@ -261,5 +264,5 @@
+           for (auto idx : items[i].indices) vectorsByIndex[idx] = vectors[i];
+           if (kv) {
+-            auto task = writeEmbeddingsCacheEntryBestEffort(*kv, parsed.profile.cache_profile_key, items[i].hash, vectors[i], rt::dateNow(), deadlineMs);
++            auto task = writeEmbeddingsCacheEntryBestEffort(kv, parsed.profile.cache_profile_key, items[i].hash, vectors[i], rt::dateNow(), deadlineMs);
+             const auto ignored = co_await jsAwait(std::move(task));
+             (void)ignored;
+--- a/cpp/gateway/src/embeddings/ledger.cpp
++++ b/cpp/gateway/src/embeddings/ledger.cpp
+@@ -164,5 +164,5 @@
+       for (double index = 0; index < *record.response_chunk_count; index += 1) {
+         rt::KvKey chunkKey{lease.responseKeyPrefix, responseGeneration, index};
+-        reads.push_back(rt::Promise<rt::KvEntryMaybe<>>(lease.kv->get(std::move(chunkKey))));
++        reads.emplace_back(rt::async([store = lease.kv, key = std::move(chunkKey)] { return store->get(key); }));
+       }
+       const std::vector<rt::KvEntryMaybe<>> chunks = co_await rt::all(std::move(reads)).wait();
+--- a/cpp/gateway/include/uos/embeddings/voyage.hpp
++++ b/cpp/gateway/include/uos/embeddings/voyage.hpp
+@@ -6,9 +6,10 @@
+ #include "uos/rt/json.hpp"
+ #include "uos/upstream_wire.hpp"
++#include <memory>
+ #include <utility>
+
+ namespace uos::embeddings::voyage {
+   struct EmbeddingsCacheWriteResult { bool isNew; };
+-  rt::Task<EmbeddingsCacheWriteResult> writeEmbeddingsCacheEntryBestEffort(rt::Kv& kv, std::string cacheProfileKey, std::string hash,
++  rt::Task<EmbeddingsCacheWriteResult> writeEmbeddingsCacheEntryBestEffort(std::shared_ptr<rt::Kv> kv, std::string cacheProfileKey, std::string hash,
+                                                                        std::vector<double> embedding, double createdAtMs, double deadlineMs);
+   std::string resolveEmbeddingsJobTokenSeed(const std::string& jobId, const std::optional<std::string>& authToken,
+--- a/cpp/gateway/src/embeddings/jobs.cpp
++++ b/cpp/gateway/src/embeddings/jobs.cpp
+@@ -295,5 +295,5 @@
+         }
+         for (std::size_t i = 0; i < chunk.size(); ++i) {
+-          auto task = writeEmbeddingsCacheEntryBestEffort(*params.kv, currentJob.cache_profile_key, chunk[i].hash, upstream.vectors[i], rt::dateNow(), params.deadlineMs);
++          auto task = writeEmbeddingsCacheEntryBestEffort(params.kv, currentJob.cache_profile_key, chunk[i].hash, upstream.vectors[i], rt::dateNow(), params.deadlineMs);
+           const auto ignored = co_await jsAwait(std::move(task));
+           (void)ignored;
+--- a/cpp/gateway/src/embeddings/voyage.cpp
++++ b/cpp/gateway/src/embeddings/voyage.cpp
+@@ -124,14 +124,17 @@
+       co_return CacheEvictionOutcome{commit.ok, false};
+     }
+-    rt::Task<EmbeddingsCacheEvictResult> evictOldestEmbeddingsCacheEntries(rt::Kv& kv, double count) {
+-      const auto candidates = co_await jsAwait(listEmbeddingsCacheEvictionCandidates(kv, count));
++    rt::Task<EmbeddingsCacheEvictResult> evictOldestEmbeddingsCacheEntries(std::shared_ptr<rt::Kv> kv, double count) {
++      const auto candidates = co_await jsAwait(listEmbeddingsCacheEvictionCandidates(*kv, count));
+       if (candidates.empty()) co_return EmbeddingsCacheEvictResult{0, 0};
+       std::vector<rt::Promise<rt::KvEntryMaybe<>>> pending;
+-      for (const auto& candidate : candidates) pending.emplace_back(kv.get(embeddingsCacheIndexByHashKey(candidate.cacheProfileKey, candidate.hash)));
++      for (const auto& candidate : candidates) {
++        const auto key = embeddingsCacheIndexByHashKey(candidate.cacheProfileKey, candidate.hash);
++        pending.emplace_back(rt::async([kv, key] { return kv->get(key); }));
++      }
+       const auto byHashEntries = co_await rt::all(std::move(pending)).wait();
+       double evictedEmbeddings = 0;
+       double deletedStaleIndexKeys = 0;
+       for (std::size_t i = 0; i < candidates.size(); ++i) {
+-        auto task = evictEmbeddingsCacheCandidate(kv, candidates[i], byHashEntries[i]);
++        auto task = evictEmbeddingsCacheCandidate(*kv, candidates[i], byHashEntries[i]);
+         const auto outcome = co_await jsAwait(std::move(task));
+         if (outcome.evicted) ++evictedEmbeddings;
+@@ -142,5 +145,5 @@
+   }
+
+-  rt::Task<EmbeddingsCacheWriteResult> writeEmbeddingsCacheEntryBestEffort(rt::Kv& kv, std::string cacheProfileKey, std::string hash,
++  rt::Task<EmbeddingsCacheWriteResult> writeEmbeddingsCacheEntryBestEffort(std::shared_ptr<rt::Kv> kv, std::string cacheProfileKey, std::string hash,
+                                                                        std::vector<double> embedding, double createdAtMs, double deadlineMs) {
+     double evictBatch = ledger::EMBEDDINGS_CACHE_EVICT_BATCH;
+@@ -149,5 +152,5 @@
+       rt::Reason error;
+       try {
+-        const auto result = co_await jsAwait(writeEmbeddingsCacheEntry(kv, cacheProfileKey, hash, embedding, createdAtMs));
++        const auto result = co_await jsAwait(writeEmbeddingsCacheEntry(*kv, cacheProfileKey, hash, embedding, createdAtMs));
+         co_return result;
+       } catch (...) { error = std::current_exception(); }
+--- a/cpp/gateway/src/codex/manual_reset.cpp
++++ b/cpp/gateway/src/codex/manual_reset.cpp
+@@ -86,5 +86,10 @@
+       return rt::Math::max(exhausted.empty() ? std::span<const double>(deadlines) : std::span<const double>(exhausted));
+     }
+-    rt::Task<rt::KvEntryMaybe<>> readEntry(std::shared_ptr<rt::Kv> kv, rt::KvKey key) { return kv->get(std::move(key), {.consistency = rt::KvConsistencyLevel::strong}); }
++    rt::Task<rt::KvEntryMaybe<>> readEntry(std::shared_ptr<rt::Kv> kv, rt::KvKey key) {
++      const rt::KvGetOptions strong{.consistency = rt::KvConsistencyLevel::strong};
++      auto task = kv->get(std::move(key), strong);
++      auto entry = co_await std::move(task);
++      co_return entry;
++    }
+     rt::Task<rt::KvEntryMaybe<>> readManualDailyBudget(std::shared_ptr<rt::Kv> kv, std::string hash, double now) {
+       rt::Promise reading(readEntry(kv, banked_reset::codexResetAccountDailyKey(hash, day(now)))); const auto budget = co_await reading.wait();
+--- a/cpp/gateway/src/codex/reset_settings.cpp
++++ b/cpp/gateway/src/codex/reset_settings.cpp
+@@ -15,4 +15,10 @@
+   namespace {
+     rt::KvGetOptions strongRead() { return rt::KvGetOptions{.consistency = rt::KvConsistencyLevel::strong}; }
++
++    rt::Task<rt::KvEntryMaybe<>> readWithStore(std::shared_ptr<rt::Kv> kv, rt::KvKey key) {
++      auto task = kv->get(std::move(key), strongRead());
++      auto entry = co_await std::move(task);
++      co_return entry;
++    }
+
+     // A stored row as the TS reads it (`unknown`): JSON-shaped parts as they are, an undefined member
+@@ -62,6 +68,6 @@
+     if (!marker.value.isNull()) co_return std::string("done");
+
+-    rt::Promise<rt::KvEntryMaybe<>> legacyRead(kv->get(CODEX_BANKED_RESET_USAGE_LEGACY_KEY, strongRead()));
+-    rt::Promise<rt::KvEntryMaybe<>> poolRead(kv->get(auth::CODEX_AUTH_POOL_KV_KEY, strongRead()));
++    rt::Promise<rt::KvEntryMaybe<>> legacyRead(readWithStore(kv, CODEX_BANKED_RESET_USAGE_LEGACY_KEY));
++    rt::Promise<rt::KvEntryMaybe<>> poolRead(readWithStore(kv, auth::CODEX_AUTH_POOL_KV_KEY));
+     auto reads = rt::all(std::move(legacyRead), std::move(poolRead));
+     const std::tuple<rt::KvEntryMaybe<>, rt::KvEntryMaybe<>> both = co_await reads.wait();
+@@ -107,6 +113,6 @@
+      */
+     rt::Task<void> ensureLegacyGlobalOptOutMigratedForAccount(std::shared_ptr<rt::Kv> kv, std::string accountIdHash) {
+-      rt::Promise<rt::KvEntryMaybe<>> markerRead(kv->get(CODEX_RESET_USAGE_MIGRATION_KEY, strongRead()));
+-      rt::Promise<rt::KvEntryMaybe<>> legacyRead(kv->get(CODEX_BANKED_RESET_USAGE_LEGACY_KEY, strongRead()));
++      rt::Promise<rt::KvEntryMaybe<>> markerRead(readWithStore(kv, CODEX_RESET_USAGE_MIGRATION_KEY));
++      rt::Promise<rt::KvEntryMaybe<>> legacyRead(readWithStore(kv, CODEX_BANKED_RESET_USAGE_LEGACY_KEY));
+       auto reads = rt::all(std::move(markerRead), std::move(legacyRead));
+       const std::tuple<rt::KvEntryMaybe<>, rt::KvEntryMaybe<>> both = co_await reads.wait();
+--- a/cpp/gateway/src/paid_fallback/ledger_backfill.cpp
++++ b/cpp/gateway/src/paid_fallback/ledger_backfill.cpp
+@@ -451,7 +451,10 @@
+     rt::Task<bool> paidFallbackBackfillNeedsRun(std::shared_ptr<rt::Kv> kv) {
+       const rt::KvGetOptions strong = strongRead();
+-      const rt::Promise<rt::KvEntryMaybe<>> stateRead(kv->get(native_paid::paidFallbackBackfillStateV3Key(), strong));
+-      const rt::Promise<rt::KvEntryMaybe<>> requestCursorRead(kv->get(native_paid::paidFallbackBackfillCursorV3Key(), strong));
+-      const rt::Promise<rt::KvEntryMaybe<>> windowCursorRead(kv->get(native_paid::paidFallbackBackfillWindowCursorV3Key(), strong));
++      const auto read = [kv, strong](rt::KvKey key) {
++        return rt::async([kv, strong, key = std::move(key)] { return kv->get(key, strong); });
++      };
++      const rt::Promise<rt::KvEntryMaybe<>> stateRead(read(native_paid::paidFallbackBackfillStateV3Key()));
++      const rt::Promise<rt::KvEntryMaybe<>> requestCursorRead(read(native_paid::paidFallbackBackfillCursorV3Key()));
++      const rt::Promise<rt::KvEntryMaybe<>> windowCursorRead(read(native_paid::paidFallbackBackfillWindowCursorV3Key()));
+       auto reads = rt::all(stateRead, requestCursorRead, windowCursorRead);
+       auto readEntries = co_await reads.wait();
+--- a/cpp/gateway/src/paid_fallback/ledger_settlement.cpp
++++ b/cpp/gateway/src/paid_fallback/ledger_settlement.cpp
+@@ -33,4 +33,10 @@
+     using rt::record::Reader;
+     using rt::record::Writer;
++
++    rt::Task<rt::KvEntryMaybe<>> readWithStore(std::shared_ptr<rt::Kv> kv, rt::KvKey key, rt::KvGetOptions options) {
++      auto task = kv->get(std::move(key), options);
++      auto entry = co_await std::move(task);
++      co_return entry;
++    }
+     namespace contracts = authority::native_paid_contracts;
+     namespace native_paid = authority::native_paid;
+@@ -266,6 +272,6 @@
+     const rt::KvGetOptions strong = strongRead();
+     for (double attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+-      const rt::Promise<rt::KvEntryMaybe<>> requestRead(kv->get(requestKey, strong));
+-      const rt::Promise<rt::KvEntryMaybe<>> pendingRead(kv->get(pendingKey, strong));
++      const rt::Promise<rt::KvEntryMaybe<>> requestRead(readWithStore(kv, requestKey, strong));
++      const rt::Promise<rt::KvEntryMaybe<>> pendingRead(readWithStore(kv, pendingKey, strong));
+       auto reads = rt::all(requestRead, pendingRead);
+       auto readEntries = co_await reads.wait();
+@@ -321,7 +327,7 @@
+     const rt::KvGetOptions strong = strongRead();
+     for (double attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+-      const rt::Promise<rt::KvEntryMaybe<>> requestRead(kv->get(requestKey, strong));
+-      const rt::Promise<rt::KvEntryMaybe<>> pendingRead(kv->get(pendingKey, strong));
+-      const rt::Promise<rt::KvEntryMaybe<>> gateRead(kv->get(gateKey, strong));
++      const rt::Promise<rt::KvEntryMaybe<>> requestRead(readWithStore(kv, requestKey, strong));
++      const rt::Promise<rt::KvEntryMaybe<>> pendingRead(readWithStore(kv, pendingKey, strong));
++      const rt::Promise<rt::KvEntryMaybe<>> gateRead(readWithStore(kv, gateKey, strong));
+       auto reads = rt::all(requestRead, pendingRead, gateRead);
+       auto readEntries = co_await reads.wait();
+--- a/cpp/gateway/src/provider/health.cpp
++++ b/cpp/gateway/src/provider/health.cpp
+@@ -257,5 +257,8 @@
+       if (!kv) co_return unknownView();
+       std::vector<rt::Promise<rt::KvEntryMaybe<>>> reads;
+-      for (const std::string_view record : PROVIDER_RECORDS) reads.push_back(rt::Promise<rt::KvEntryMaybe<>>(kv->get(providerHealthKey(provider, identity, record))));
++      for (const std::string_view record : PROVIDER_RECORDS) {
++        const auto key = providerHealthKey(provider, identity, record);
++        reads.emplace_back(rt::async([kv, key] { return kv->get(key); }));
++      }
+       auto everything = rt::all(std::move(reads));
+       const std::vector<rt::KvEntryMaybe<>> entries = co_await everything.wait();
+```
+
+### 3. Reentrant clock invalidates a provider transition
+
+`src/provider/health.cpp:158-172`. A distinct transition is queued with an injected clock.
+The clock calls the test reset while the new transition holds its old map-node pointer.
+The enqueue path then reads `current->tail` from the erased node. The production clock is
+`rt::dateNow`. Re-find the current tail after the externally callable clock returns.
+
+```diff
+--- a/cpp/gateway/src/provider/health.cpp
++++ b/cpp/gateway/src/provider/health.cpp
+@@ -170,5 +170,6 @@
+       // Identical cold-burst observations share this promise, while a different
+       // event or the first available correlation ID is appended in arrival order.
+-      const rt::Promise<void> previous = current ? current->tail : rt::Promise<void>::resolve();
++      const auto latest = providerTransitionQueues().find(queueKey);
++      const rt::Promise<void> previous = latest != providerTransitionQueues().end() ? latest->second.tail : rt::Promise<void>::resolve();
+       const rt::Promise<void> tail = previous.catch_([](const rt::Reason&) {}).then([provider, identity, event, status, observedAtMs, normalizedRequestId, binding]() {
+         return persistProviderHealth(provider, identity, event, status, observedAtMs, normalizedRequestId, binding);
+```
+
+### 4. Seven callback ownership cycles survive abandoned work
+
+| Site                                     | Interleaving                                                                                                                                                                                  |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `codex/auth_refresh.cpp:535-548`         | A shared refresh remains pending and the loop drops its completion reactions. The registered listener still owns the abort signal that owns it. LSan measured 776 bytes in seven allocations. |
+| `codex/dispatch.cpp:623-635`             | Retry waiting ends by frame destruction before the sleeper or abort promise settles. The explicit removal is skipped and the listener retains its own registering signal.                     |
+| `codex/supervisor_transport.cpp:134-140` | Teardown drops socket and timer callbacks while a call is pending. ConnectionState's pending cleanup retains a listener which retains that same ConnectionState.                              |
+| `embeddings/voyage.cpp:198-207`          | Loop teardown drops a pending retry timer. The once listener still forms a strong cycle with its signal until an abort which may never run.                                                   |
+| `provider/claude_code.cpp:100-119`       | The frame is destroyed while both transport and abort are pending. The dispose function is discarded before it can break the listener's strong signal cycle.                                  |
+| `provider/metered.cpp:193-230`           | A catalog or billing read and its abort branch remain pending at teardown. The installed listener and its finish closure both retain the signal that owns the listener.                       |
+| `provider/surplus.cpp:318-354`           | The preheader transport and its abort branch remain pending while the loop destroys the timer and reactions. The listener's two strong paths to the registering signal remain.                |
+
+Keep late callbacks intact while their owners are live. Weak back-references or a frame cleanup
+break the cycles without cancelling shared work or changing the first settlement.
+
+```diff
+--- a/cpp/gateway/src/codex/auth_refresh.cpp
++++ b/cpp/gateway/src/codex/auth_refresh.cpp
+@@ -537,7 +537,11 @@
+     const std::weak_ptr<rt::EventListener> listenerHandle = listenerSlot;
+     rt::Promise<T> abortion = rt::newPromise<T>([&](auto, rt::Reject reject) {
+-      *listenerSlot = rt::EventListener([abortSignal, listenerHandle, reject]() {
+-        if (const std::shared_ptr<rt::EventListener> listener = listenerHandle.lock()) abortSignal.removeEventListener("abort", *listener);
+-        reject(abortReasonAsError(abortSignal.reason()));
++      const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = abortSignal.state();
++      *listenerSlot = rt::EventListener([weakSignal, listenerHandle, reject]() {
++        const auto state = weakSignal.lock();
++        if (!state) return;
++        const rt::AbortSignal active(state);
++        if (const auto listener = listenerHandle.lock()) active.removeEventListener("abort", *listener);
++        reject(abortReasonAsError(active.reason()));
+       });
+       abortSignal.addEventListener("abort", *listenerSlot, rt::AddEventListenerOptions{.once = true});
+--- a/cpp/gateway/src/codex/dispatch.cpp
++++ b/cpp/gateway/src/codex/dispatch.cpp
+@@ -618,4 +618,5 @@
+     }
+     rt::EventListener onAbort;
++    const auto removeListener = rt::scopeExit([&] { signal->removeEventListener("abort", onAbort); });
+     rt::Reason failure;
+     try {
+@@ -633,5 +634,4 @@
+       failure = std::current_exception();
+     }
+-    signal->removeEventListener("abort", onAbort);
+     if (failure) std::rethrow_exception(failure);
+   }
+--- a/cpp/gateway/src/codex/supervisor_transport.cpp
++++ b/cpp/gateway/src/codex/supervisor_transport.cpp
+@@ -132,5 +132,7 @@
+         auto self = shared_from_this();
+         return rt::newPromise<SupervisorCallResult>([&](const rt::Resolve<SupervisorCallResult>& resolve, const rt::Reject& reject) {
+-          const rt::EventListener onAbort([self, id] { self->settle(id, rt::makeReason(rt::JsError("app-server call aborted"))); });
++          const rt::EventListener onAbort([weak = weak_from_this(), id] {
++            if (const auto state = weak.lock()) state->settle(id, rt::makeReason(rt::JsError("app-server call aborted")));
++          });
+           const rt::Timeout timer = rt::setTimeout([self, id] { self->settle(id, rt::makeReason(rt::JsError("app-server call timed out"))); }, DEFAULT_CALL_TIMEOUT_MS);
+           std::function<void()> cleanup = [callSignal, onAbort] {
+--- a/cpp/gateway/src/embeddings/voyage.cpp
++++ b/cpp/gateway/src/embeddings/voyage.cpp
+@@ -197,8 +197,7 @@
+       }, ms);
+       const std::weak_ptr<State> weak = state;
+-      state->onAbort = rt::EventListener([signal, weak, resolve] {
++      state->onAbort = rt::EventListener([weak, resolve] {
+         if (const auto current = weak.lock()) {
+           rt::clearTimeout(current->timeout);
+-          signal.removeEventListener("abort", current->onAbort);
+           resolve(false);
+         }
+--- a/cpp/gateway/src/provider/claude_code.cpp
++++ b/cpp/gateway/src/provider/claude_code.cpp
+@@ -102,5 +102,8 @@
+       std::function<void()> dispose = [] {};
+       rt::Promise<rt::Response> aborted = rt::newPromise<rt::Response>([&](const rt::Resolve<rt::Response>&, const rt::Reject& reject) {
+-        const rt::EventListener onAbort([reject, signal] { reject(abortReasonError(signal)); });
++        const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = signal.state();
++        const rt::EventListener onAbort([reject, weakSignal] {
++          if (const auto active = weakSignal.lock()) reject(abortReasonError(rt::AbortSignal(active)));
++        });
+         signal.addEventListener("abort", onAbort, {.once = true});
+         dispose = [signal, onAbort] { signal.removeEventListener("abort", onAbort); };
+--- a/cpp/gateway/src/provider/metered.cpp
++++ b/cpp/gateway/src/provider/metered.cpp
+@@ -204,15 +204,17 @@
+       const rt::Reject reject = resolvers.reject;
+       auto race = std::make_shared<AbortRace>();
+-      const auto finish = [signal](AbortRace& state) {
++      const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = signal.state();
++      const auto finish = [weakSignal](AbortRace& state) {
+         if (state.settled) return false;
+         state.settled = true;
+-        signal.removeEventListener("abort", state.onAbort);
++        if (const auto active = weakSignal.lock()) rt::AbortSignal(active).removeEventListener("abort", state.onAbort);
+         return true;
+       };
+       const std::weak_ptr<AbortRace> weakRace = race;
+-      race->onAbort = rt::EventListener([weakRace, signal, finish, reject]() {
++      race->onAbort = rt::EventListener([weakRace, weakSignal, finish, reject]() {
+         const std::shared_ptr<AbortRace> state = weakRace.lock();
+-        if (!state || !finish(*state)) return;
+-        reject(asRejectionReason(reasonOr(signal.reason(), rt::makeReason(rt::DOMException("Aborted", "AbortError")))));
++        const auto active = weakSignal.lock();
++        if (!state || !active || !finish(*state)) return;
++        reject(asRejectionReason(reasonOr(rt::AbortSignal(active).reason(), rt::makeReason(rt::DOMException("Aborted", "AbortError")))));
+       });
+       if (signal.aborted()) {
+--- a/cpp/gateway/src/provider/surplus.cpp
++++ b/cpp/gateway/src/provider/surplus.cpp
+@@ -328,15 +328,17 @@
+       const rt::Reject reject = resolvers.reject;
+       auto race = std::make_shared<AbortRace>();
+-      const auto finish = [signal](AbortRace& state) {
++      const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = signal.state();
++      const auto finish = [weakSignal](AbortRace& state) {
+         if (state.settled) return false;
+         state.settled = true;
+-        signal.removeEventListener("abort", state.onAbort);
++        if (const auto active = weakSignal.lock()) rt::AbortSignal(active).removeEventListener("abort", state.onAbort);
+         return true;
+       };
+       const std::weak_ptr<AbortRace> weakRace = race;
+-      race->onAbort = rt::EventListener([weakRace, signal, finish, reject]() {
++      race->onAbort = rt::EventListener([weakRace, weakSignal, finish, reject]() {
+         const std::shared_ptr<AbortRace> state = weakRace.lock();
+-        if (!state || !finish(*state)) return;
+-        reject(abortRejectionReason(signal.reason()));
++        const auto active = weakSignal.lock();
++        if (!state || !active || !finish(*state)) return;
++        reject(abortRejectionReason(rt::AbortSignal(active).reason()));
+       });
+       if (signal.aborted()) {
+```
+
+### 5. A coalescing cell outlives its producer
+
+`provider/metered.cpp:684-707`, `provider/selection.cpp:82-98,264-277` and
+`provider/surplus.cpp:675-698`. A scoped fixture Loop is destroyed with a shared lookup
+still waiting. Its coroutine frame is destroyed before the explicit cache reset.
+The same process can later reuse the still-pending promise with no producer to settle it.
+
+Clear the matching entry from a frame guard, using the existing Lithos pattern and preserving
+the selection generation token. This applies to a process that reuses the APIs across loops.
+
+```diff
+--- a/cpp/gateway/src/provider/metered.cpp
++++ b/cpp/gateway/src/provider/metered.cpp
+@@ -696,13 +696,8 @@
+     }
+     meteredModelsFetchInFlight = request;
+-    std::optional<MeteredModelsSnapshot> result;
+-    rt::Reason failure;
+-    try {
+-      result = co_await request.wait();
+-    } catch (...) {
+-      failure = std::current_exception();
+-    }
+-    if (meteredModelsFetchInFlight && *meteredModelsFetchInFlight == request) meteredModelsFetchInFlight.reset();
+-    if (failure) std::rethrow_exception(failure);
++    const auto cleanup = rt::scopeExit([request] {
++      if (meteredModelsFetchInFlight && *meteredModelsFetchInFlight == request) meteredModelsFetchInFlight.reset();
++    });
++    auto result = co_await request.wait();
+     co_return result;
+   }
+--- a/cpp/gateway/src/provider/selection.cpp
++++ b/cpp/gateway/src/provider/selection.cpp
+@@ -82,4 +82,7 @@
+     rt::Task<std::optional<ProviderSelection>> loadSelectionIntoCache(double nowMs, std::optional<ProviderSelection> stale, double cacheGenerationAtLoad,
+                                                                       double loadToken) {
++      const auto cleanup = rt::scopeExit([loadToken] {
++        if (selectionLoadToken == loadToken) selectionLoadInFlight.reset();
++      });
+       std::optional<ProviderSelection> result;
+       try {
+@@ -95,5 +98,4 @@
+         result = std::move(stale);
+       }
+-      if (selectionLoadToken == loadToken) selectionLoadInFlight.reset();
+       co_return result;
+     }
+--- a/cpp/gateway/src/provider/surplus.cpp
++++ b/cpp/gateway/src/provider/surplus.cpp
+@@ -687,13 +687,8 @@
+     }
+     surplusModelsFetchInFlight = request;
+-    std::optional<SurplusModelsSnapshot> result;
+-    rt::Reason failure;
+-    try {
+-      result = co_await request.wait();
+-    } catch (...) {
+-      failure = std::current_exception();
+-    }
+-    if (surplusModelsFetchInFlight && *surplusModelsFetchInFlight == request) surplusModelsFetchInFlight.reset();
+-    if (failure) std::rethrow_exception(failure);
++    const auto cleanup = rt::scopeExit([request] {
++      if (surplusModelsFetchInFlight && *surplusModelsFetchInFlight == request) surplusModelsFetchInFlight.reset();
++    });
++    auto result = co_await request.wait();
+     co_return result;
+   }
+```
+
+### 6. Await expressions violate the GCC 12 comparison rule
+
+The Claude Chat and Messages normalizers pass owning aggregates by value in the await
+expression. The usage refresh includes two braced KV option temporaries in awaited calls.
+In the documented GCC 12.2 failure pattern, suspension crosses an incorrectly managed temporary
+and resumption can destroy it twice. This is a portability finding based on `PORTING.md`.
+The Clang 21 run does not establish failure for those exact expressions under GCC 12.2.
+Build the options and the task before suspending.
+
+```diff
+--- a/cpp/gateway/src/provider/anthropic_chat_responses.cpp
++++ b/cpp/gateway/src/provider/anthropic_chat_responses.cpp
+@@ -517,5 +517,6 @@
+     readOptions.maxBytes = MAX_RESPONSES_SSE_EVENT_BYTES;
+     readOptions.timeoutMs = inference_deadline::BUFFERED_INFERENCE_DEADLINE_MS;
+-    const bounded_response_body::BoundedResponseBody captured = co_await bounded_response_body::readBoundedResponseBody(response, std::move(readOptions));
++    auto reading = bounded_response_body::readBoundedResponseBody(response, std::move(readOptions));
++    const bounded_response_body::BoundedResponseBody captured = co_await std::move(reading);
+     if (options.signal && options.signal->aborted()) {
+       if (rt::isError(options.signal->reason())) rt::rethrow(options.signal->reason());
+--- a/cpp/gateway/src/provider/anthropic_responses.cpp
++++ b/cpp/gateway/src/provider/anthropic_responses.cpp
+@@ -777,5 +777,6 @@
+       readOptions.signal = options.signal;
+       const rt::Response cloned = response.clone();
+-      const bounded_response_body::BoundedResponseBody body = co_await bounded_response_body::readBoundedResponseBody(cloned, std::move(readOptions));
++      auto reading = bounded_response_body::readBoundedResponseBody(cloned, std::move(readOptions));
++      const bounded_response_body::BoundedResponseBody body = co_await std::move(reading);
+       if (options.signal && options.signal->aborted()) rt::rethrow(abortError(*options.signal));
+       if (!body.complete) co_return response;
+@@ -855,5 +856,6 @@
+   rt::Task<rt::Response> normalizeAnthropicResponsesResponse(rt::Response response, AnthropicResponsesOptions options) {
+     if (!response.ok()) {
+-      rt::Response normalized = co_await normalizeMessagesHttpError(response, options);
++      auto normalizing = normalizeMessagesHttpError(response, options);
++      rt::Response normalized = co_await std::move(normalizing);
+       co_return normalized;
+     }
+@@ -878,5 +880,6 @@
+     readOptions.maxBytes = MAX_RESPONSES_SSE_EVENT_BYTES;
+     readOptions.timeoutMs = inference_deadline::BUFFERED_INFERENCE_DEADLINE_MS;
+-    const bounded_response_body::BoundedResponseBody body = co_await bounded_response_body::readBoundedResponseBody(response, std::move(readOptions));
++    auto reading = bounded_response_body::readBoundedResponseBody(response, std::move(readOptions));
++    const bounded_response_body::BoundedResponseBody body = co_await std::move(reading);
+     if (options.signal && options.signal->aborted()) rt::rethrow(abortError(*options.signal));
+     if (!body.complete) throw ResponsesStreamError("Anthropic Messages body was incomplete or exceeded its bound.", {.cause = nullptr, .kind = "read_error"});
+--- a/cpp/gateway/src/provider/claude_code_usage_refresh.cpp
++++ b/cpp/gateway/src/provider/claude_code_usage_refresh.cpp
+@@ -33,5 +33,7 @@
+     if (quota && quota->usage && claudeCodeUsageIsFresh(quota, nowMs)) co_return ClaudeCodeUsageRefreshFresh{*quota->usage};
+     const rt::KvKey key{"uos_ai", "claude_code_usage", "v1", "lease", binding.account_id, binding.account_cohort_id};
+-    const auto entry = co_await kv->get(key, {.consistency = rt::KvConsistencyLevel::strong});
++    const rt::KvGetOptions strong{.consistency = rt::KvConsistencyLevel::strong};
++    auto reading = kv->get(key, strong);
++    const auto entry = co_await std::move(reading);
+     const auto lease = rt::storedJsonView(entry.value);
+     if (entry.value.truthy() && rt::toNumber(rt::get(lease, "until_ms")) > nowMs) co_return ClaudeCodeUsageRefreshBusy{};
+@@ -73,5 +75,7 @@
+     };
+     auto cleanup = [kv, key, owner]() -> rt::Task<void> {
+-      const auto current = co_await kv->get(key, {.consistency = rt::KvConsistencyLevel::strong});
++      const rt::KvGetOptions strong{.consistency = rt::KvConsistencyLevel::strong};
++      auto reading = kv->get(key, strong);
++      const auto current = co_await std::move(reading);
+       if (rt::getString(rt::storedJsonView(current.value), "owner") == owner) {
+         auto deletion = kv->atomic(); deletion->check(current).delete_(key); co_await deletion->commit();
+```
+
+### Handoff summary
+
+Reviewed 290 of 290 Area C files. The ledger records 368 SAFE, 23 DEFECT and
+0 UNCLEAR. Clang-tidy completed 144 of 144 selected translation units. Nine focused
+ASan/UBSan targets passed all 125 fixture cases. The separate Codex witnesses
+observed a released retry sleeper closure and a 776-byte shared-refresh leak.
+The commits contain the report, ledger and audit checker. GitHub write
+authentication was unavailable, so remote integration is pending.
