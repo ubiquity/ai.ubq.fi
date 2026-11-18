@@ -153,7 +153,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/claude_capacity_rollups.hpp`
 - [x] `include/uos/provider/claude_code.hpp`
 - [x] `include/uos/provider/claude_code_access.hpp`
-- [ ] `include/uos/provider/claude_code_accounts.hpp`
+- [x] `include/uos/provider/claude_code_accounts.hpp`
 - [ ] `include/uos/provider/claude_code_credentials.hpp`
 - [ ] `include/uos/provider/claude_code_fwd.hpp`
 - [ ] `include/uos/provider/claude_code_models.hpp`
@@ -976,3 +976,9 @@ Claude Code transport and workspace interfaces own their option records.
 Stores borrow an existing KV while owning the policy payload.
 
 - 24-27 · borrowed store · **SAFE** · The forwarding overloads copy or convert the supplied IDs into the store task, and the admin caller retains its owning store handle through the await.
+
+### `include/uos/provider/claude_code_accounts.hpp`
+
+Claude account load and mutation APIs.
+
+- 60-108 · owning task parameters · **SAFE** · The account tasks retain store, identity, binding, environment lookup and mutation data by value.

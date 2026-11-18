@@ -1253,8 +1253,16 @@
       ]
     },
     "include/uos/provider/claude_code_accounts.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Claude account load and mutation APIs.",
+      "sites": [
+        {
+          "lines": "60-108",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The account tasks retain store, identity, binding, environment lookup and mutation data by value."
+        }
+      ]
     },
     "include/uos/provider/claude_code_credentials.hpp": {
       "status": "pending",
