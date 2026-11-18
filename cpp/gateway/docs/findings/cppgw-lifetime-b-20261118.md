@@ -56,7 +56,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/rt/kv_sdk.cpp`
 - [x] `src/rt/kv_sdk.hpp`
 - [x] `src/rt/kv_sqlite.cpp`
-- [ ] `src/rt/kv_value.cpp`
+- [x] `src/rt/kv_value.cpp`
 - [ ] `src/rt/process.cpp`
 - [ ] `src/rt/sqlite.cpp`
 - [ ] `src/rt/sqlite_darwin.hpp`
@@ -378,6 +378,12 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | 682-685,700-739 | SQLite native snapshot/write and refusal | **SAFE** | SDK StorePtr keeps the native target alive. Native inputs and queued write state are owned, and no worker uses references to the request frame's inputs. |
 | 749-788,825-844 | SQLite SDK operations and queue delegation | **SAFE** | Free SDK coroutines own StorePtr and applicable arguments. Named operations or tasks cover suspension. The actual paid enqueue path keeps its shared KV wrapper alive until completion. |
 
+### `src/rt/kv_value.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 101-123,190-229,347-379,483-512 | KV value projection and synchronous walk | **SAFE** | The immediate visitors, comparison and validation use aliases only during synchronous calls. Returned element references borrow the named container; serializers and traced consumers copy before a suspension. |
+
 
 ## Ranked defects and counts
 
@@ -543,4 +549,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-33/97 files reviewed. **DEFECT 8, SAFE 81, UNCLEAR 3.**
+34/97 files reviewed. **DEFECT 8, SAFE 82, UNCLEAR 3.**

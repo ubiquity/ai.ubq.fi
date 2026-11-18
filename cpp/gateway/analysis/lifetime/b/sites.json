@@ -1100,8 +1100,19 @@
       ]
     },
     "src/rt/kv_value.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "101-123,190-229,347-379,483-512",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "KV value projection and synchronous walk",
+          "evidence": "The immediate visitors, comparison and validation use aliases only during synchronous calls. Returned element references borrow the named container; serializers and traced consumers copy before a suspension."
+        }
+      ]
     },
     "src/rt/process.cpp": {
       "reviewed": false,
