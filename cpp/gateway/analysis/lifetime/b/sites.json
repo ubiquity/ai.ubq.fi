@@ -2479,8 +2479,39 @@
       "note": "Queue-record inputs are owning strings, and list has no borrowed parameters. No inline coroutine or callback registration."
     },
     "include/uos/kernel/quota_reservations.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "38-55,105-119",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "Quota reservation task interfaces and callbacks",
+          "evidence": "Entries copy store/identity/record arguments. The returned reservation closures own a shared context, with timer and retry back-edges reviewed at registration."
+        },
+        {
+          "lines": "58-71,77-101",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "withKernelQuotaLock callable, turn and success/error cleanup",
+          "evidence": "The wrapper owns the coroutine callable by value before entering the lock and awaits it directly. Previous is a copied promise and ordinary operation success and exceptions both release the current turn."
+        },
+        {
+          "lines": "79-98",
+          "verdict": "UNCLEAR",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Quota lock turn abandoned before cleanup",
+          "evidence": "The static turn remains pending if its frame is abandoned before leaveKernelQuotaLock. Establish whether an in-service cancel or a supported reusable-loop teardown can drop a live holder or queued turn, and preserve predecessor ordering in any fix."
+        }
+      ]
     },
     "include/uos/kernel/quota_reserve.hpp": {
       "reviewed": false,

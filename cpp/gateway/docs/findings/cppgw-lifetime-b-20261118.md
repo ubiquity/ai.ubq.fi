@@ -104,7 +104,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/telemetry_gate.cpp`
 - [x] `include/uos/kernel/attestation.hpp`
 - [x] `include/uos/kernel/policy_queue.hpp`
-- [ ] `include/uos/kernel/quota_reservations.hpp`
+- [x] `include/uos/kernel/quota_reservations.hpp`
 - [ ] `include/uos/kernel/quota_reserve.hpp`
 - [ ] `include/uos/kernel/quota_v2.hpp`
 - [ ] `include/uos/kernel/quota_write.hpp`
@@ -714,6 +714,14 @@ Verification/context take value-owned Request and options or token; the refresh 
 
 Queue-record inputs are owning strings, and list has no borrowed parameters. No inline coroutine or callback registration.
 
+### `include/uos/kernel/quota_reservations.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 38-55,105-119 | Quota reservation task interfaces and callbacks | **SAFE** | Entries copy store/identity/record arguments. The returned reservation closures own a shared context, with timer and retry back-edges reviewed at registration. |
+| 58-71,77-101 | withKernelQuotaLock callable, turn and success/error cleanup | **SAFE** | The wrapper owns the coroutine callable by value before entering the lock and awaits it directly. Previous is a copied promise and ordinary operation success and exceptions both release the current turn. |
+| 79-98 | Quota lock turn abandoned before cleanup | **UNCLEAR** | The static turn remains pending if its frame is abandoned before leaveKernelQuotaLock. Establish whether an in-service cancel or a supported reusable-loop teardown can drop a live holder or queued turn, and preserve predecessor ordering in any fix. |
+
 
 ## Ranked defects and counts
 
@@ -919,4 +927,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-81/97 files reviewed. **DEFECT 9, SAFE 190, UNCLEAR 3.**
+82/97 files reviewed. **DEFECT 9, SAFE 192, UNCLEAR 4.**
