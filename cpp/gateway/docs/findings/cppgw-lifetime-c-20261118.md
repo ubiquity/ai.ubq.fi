@@ -82,7 +82,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/deepseek/context_admission_failure.hpp`
 - [x] `include/uos/deepseek/flash_aliases.hpp`
 - [x] `include/uos/deepseek/forwarded_payload_policy.hpp`
-- [ ] `include/uos/deepseek/handlers.hpp`
+- [x] `include/uos/deepseek/handlers.hpp`
 - [ ] `include/uos/deepseek/index.hpp`
 - [ ] `include/uos/deepseek/responses.hpp`
 - [ ] `include/uos/deepseek/responses_payload.hpp`
@@ -593,3 +593,9 @@ Catalog aliases expose owned snapshot values. Background publication is reviewed
 Payload projection and validation are synchronous.
 
 - 77-78 · projection callback · **SAFE** · The caller retains the callback and the input object throughout the inline admission projection.
+
+### `include/uos/deepseek/handlers.hpp`
+
+The DeepSeek entry points retain their request payloads, with a borrowed telemetry context.
+
+- 23-38 · borrowed context · **SAFE** · The chat/Responses callers keep the context in the joined handler frame, and the streaming branch copies it into relay state before returning.

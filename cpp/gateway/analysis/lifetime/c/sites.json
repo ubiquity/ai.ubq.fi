@@ -544,8 +544,16 @@
       ]
     },
     "include/uos/deepseek/handlers.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The DeepSeek entry points retain their request payloads, with a borrowed telemetry context.",
+      "sites": [
+        {
+          "lines": "23-38",
+          "kind": "borrowed context",
+          "verdict": "SAFE",
+          "reason": "The chat/Responses callers keep the context in the joined handler frame, and the streaming branch copies it into relay state before returning."
+        }
+      ]
     },
     "include/uos/deepseek/index.hpp": {
       "status": "pending",
