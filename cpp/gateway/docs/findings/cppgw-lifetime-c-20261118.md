@@ -298,7 +298,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/claude_capacity_history.cpp`
 - [x] `src/provider/claude_capacity_rollups.cpp`
 - [x] `src/provider/claude_code.cpp`
-- [ ] `src/provider/claude_code_access.cpp`
+- [x] `src/provider/claude_code_access.cpp`
 - [ ] `src/provider/claude_code_accounts.cpp`
 - [ ] `src/provider/claude_code_credentials.cpp`
 - [ ] `src/provider/claude_code_models.cpp`
@@ -1896,3 +1896,9 @@ Claude Messages transport owns fetch callbacks and request state. Its preheader 
 - 100-119 · Claude abort listener ownership cycle · **DEFECT** · The signal owns an abort callback that retains the same signal. If the transport and abort are both pending when the wait is destroyed, the frame drops dispose without calling it. Capture weak signal state or install a removal guard before suspension.
 - 137-158,213-289 · preheader transport, fetch branch and error body · **SAFE** · The provider options and hooks are frame values. rt::Fetch::keepAlive owns the transport callable if abort wins. The running timer owns its controller and normal paths clear it.
 - 426-496,498-624 · workspace discovery, retries and normalization · **SAFE** · The source frame owns workspace, native request, credentials and attempt snapshots. Before-dispatch closures remain live through joined attempts, and the returned normalizer stream has its own options.
+
+### `src/provider/claude_code_access.cpp`
+
+Access policy helpers consume environment/row inputs synchronously and join their writes.
+
+- 32-41,59-86 · borrowed store and owning arguments · **SAFE** · The storePolicy coroutine borrows KV from an awaited admin caller. Public forwarders copy allowed key IDs synchronously, and their result tasks keep the JSON values.

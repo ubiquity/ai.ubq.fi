@@ -3498,8 +3498,16 @@
       ]
     },
     "src/provider/claude_code_access.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Access policy helpers consume environment/row inputs synchronously and join their writes.",
+      "sites": [
+        {
+          "lines": "32-41,59-86",
+          "kind": "borrowed store and owning arguments",
+          "verdict": "SAFE",
+          "reason": "The storePolicy coroutine borrows KV from an awaited admin caller. Public forwarders copy allowed key IDs synchronously, and their result tasks keep the JSON values."
+        }
+      ]
     },
     "src/provider/claude_code_accounts.cpp": {
       "status": "pending",
