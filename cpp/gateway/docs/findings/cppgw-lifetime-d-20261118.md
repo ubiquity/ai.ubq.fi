@@ -328,7 +328,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/http.hpp`
 - [x] `include/uos/images.hpp`
 - [x] `include/uos/inference_admission.hpp`
-- [ ] `include/uos/inference_deadline.hpp`
+- [x] `include/uos/inference_deadline.hpp`
 - [ ] `include/uos/input_normalization.hpp`
 - [ ] `include/uos/jev_compaction/compaction.hpp`
 - [ ] `include/uos/jev_compaction/hybrid.hpp`
@@ -1842,6 +1842,12 @@ Reviewed released permits and controller interfaces. The queue abandonment cycle
 
 - L71, 76, 83, 103, 104, 123 **SAFE** · The release and controller callbacks carry shared State. Each acquire takes a request value, and literal kind tags have static storage.
 
+### `include/uos/inference_deadline.hpp`
+
+Reviewed deadline handles and their timer controls.
+
+- L50, 60, 65, 66, 67, 68, 75, 82 **SAFE** · The deadline handle owns its signal and control callbacks. Each active timer owns its own controller while the caller retains the clear and abort functions.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2090,4 +2096,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-220/286 files reviewed. 394 sites: 372 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+221/286 files reviewed. 395 sites: 373 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
