@@ -211,8 +211,132 @@
       ]
     },
     "src/rt/clock.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Timer APIs are synchronous. The one Task-returning overload creates an owning result before handing it to the lazy awaiter.",
+      "sites": [
+        {
+          "lines": [
+            13,
+            14,
+            21,
+            22,
+            78,
+            81,
+            85,
+            87,
+            91,
+            93,
+            99,
+            104
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Timer queue ownership and disarm",
+          "reason": "The queue owns each entry and the timer has a weak queue backedge; handles retain their timer during synchronous dequeue and callback release."
+        },
+        {
+          "lines": [
+            129,
+            134,
+            135,
+            176,
+            181,
+            185,
+            186,
+            187,
+            191
+          ],
+          "classes": [
+            "c"
+          ],
+          "verdict": "UNCLEAR",
+          "label": "Self-replacement of injected global hooks",
+          "reason": "Current production uses defaults and the scoped fixture overrides checked retain their captures. Supporting an override that replaces its own slot while it runs would require proving an independent callable owner."
+        },
+        {
+          "lines": [
+            141,
+            145,
+            151,
+            155,
+            163,
+            165,
+            167,
+            168
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Timeout handle operations",
+          "reason": "Ref, unref and refresh are synchronous, lock the weak queue locally, and do not publish a reference to the handle."
+        },
+        {
+          "lines": [
+            196,
+            197,
+            198,
+            199,
+            205,
+            209,
+            210,
+            220,
+            224,
+            225
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Sleep callback and timer construction",
+          "reason": "The callback and awaiter independently own Promise state, and each newly queued timer owns its moved callback."
+        },
+        {
+          "lines": [
+            234,
+            236,
+            242,
+            244,
+            246,
+            247,
+            251,
+            254,
+            260,
+            264,
+            265,
+            268
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Timer dispatch and callback rearm",
+          "reason": "The dispatcher pins the timer, erases the map entry and moves out the callable before invoking code that may clear or rearm it."
+        },
+        {
+          "lines": [
+            272,
+            273,
+            276,
+            277,
+            280,
+            281
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Timer teardown",
+          "reason": "Teardown owns a detached map and releases moved callbacks after marking the corresponding timers disarmed."
+        }
+      ]
     },
     "include/uos/rt/clock.hpp": {
       "status": "pending",

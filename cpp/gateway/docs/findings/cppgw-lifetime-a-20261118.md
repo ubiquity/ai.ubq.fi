@@ -34,7 +34,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 
 - [x] `src/rt/abort.cpp`
 - [x] `include/uos/rt/abort.hpp`
-- [ ] `src/rt/clock.cpp`
+- [x] `src/rt/clock.cpp`
 - [ ] `include/uos/rt/clock.hpp`
 - [ ] `src/rt/async.cpp`
 - [ ] `include/uos/rt/async.hpp`
@@ -90,18 +90,29 @@ The public header declares the abort bridge and listener handles. The implementa
 - **SAFE** `59, 62, 88, 91, 94, 102, 105` (b/c), Signal owner and borrowed accessors in current callers. The handle owns its state, callers copy or consume reason and state synchronously, and the separate abort-dispatch borrow is tracked in abort.cpp.
 - **SAFE** `115, 125, 126, 127, 128, 129` (a/b/c), Eager abortable wrapper. This ordinary function moves its Task into runInto and returns a Task owning the result state, while its fetch caller gives the native child owned request inputs.
 
+### `src/rt/clock.cpp`
+
+Timer APIs are synchronous. The one Task-returning overload creates an owning result before handing it to the lazy awaiter.
+
+- **SAFE** `13, 14, 21, 22, 78, 81, 85, 87, 91, 93, 99, 104` (c/d), Timer queue ownership and disarm. The queue owns each entry and the timer has a weak queue backedge; handles retain their timer during synchronous dequeue and callback release.
+- **UNCLEAR** `129, 134, 135, 176, 181, 185, 186, 187, 191` (c), Self-replacement of injected global hooks. Current production uses defaults and the scoped fixture overrides checked retain their captures. Supporting an override that replaces its own slot while it runs would require proving an independent callable owner.
+- **SAFE** `141, 145, 151, 155, 163, 165, 167, 168` (b/c), Timeout handle operations. Ref, unref and refresh are synchronous, lock the weak queue locally, and do not publish a reference to the handle.
+- **SAFE** `196, 197, 198, 199, 205, 209, 210, 220, 224, 225` (b/c), Sleep callback and timer construction. The callback and awaiter independently own Promise state, and each newly queued timer owns its moved callback.
+- **SAFE** `234, 236, 242, 244, 246, 247, 251, 254, 260, 264, 265, 268` (c/d), Timer dispatch and callback rearm. The dispatcher pins the timer, erases the map entry and moves out the callable before invoking code that may clear or rearm it.
+- **SAFE** `272, 273, 276, 277, 280, 281` (c/d), Timer teardown. Teardown owns a detached map and releases moved callbacks after marking the corresponding timers disarmed.
+
 ## Ranked defects and counts
 
-Reviewed **2/30 files** and **10 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **3/30 files** and **16 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 0 | 1 | 0 |
-| b. Borrowed coroutine parameter or receiver | 0 | 2 | 0 |
-| c. Callback ownership or cycle | 1 | 9 | 0 |
-| d. Container invalidation | 1 | 2 | 0 |
+| b. Borrowed coroutine parameter or receiver | 0 | 4 | 0 |
+| c. Callback ownership or cycle | 1 | 14 | 1 |
+| d. Container invalidation | 1 | 5 | 0 |
 | e. GCC 12 await-expression rule | 0 | 0 | 0 |
-| **Unique site groups** | 1 | 9 | 0 |
+| **Unique site groups** | 1 | 14 | 1 |
 
 ### 1. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
 
