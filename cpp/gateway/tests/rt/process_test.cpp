@@ -450,15 +450,15 @@ TEST("subprocess startup resets signal state and limits descriptor inheritance")
     EXPECT_EQ(unignored.signalCode(), std::optional<std::string>("SIGPIPE"));
 
     sigset_t mask, previous;
-    ::sigemptyset(&mask);
-    ::sigaddset(&mask, SIGUSR1);
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR1);
     const auto unblocked = [&] {
       ASSERT_EQ(::pthread_sigmask(SIG_BLOCK, &mask, &previous), 0);
       const auto restore = rt::scopeExit([&previous] { ::pthread_sigmask(SIG_SETMASK, &previous, nullptr); });
       auto child = process::spawn({"sh", "-c", "kill -USR1 $$; exit 0"}, {.stdout = process::Stdio::ignore});
       sigset_t parentMask;
       EXPECT_EQ(::pthread_sigmask(SIG_SETMASK, nullptr, &parentMask), 0);
-      EXPECT_EQ(::sigismember(&parentMask, SIGUSR1), 1);
+      EXPECT_EQ(sigismember(&parentMask, SIGUSR1), 1);
       return child;
     }();
     const int usrStatus = co_await unblocked.exited().wait();

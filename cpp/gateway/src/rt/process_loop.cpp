@@ -159,7 +159,7 @@ namespace uos::rt::process {
       boost::system::error_code on_exec_setup(bp::posix::default_launcher&, const bp::filesystem::path&, const char* const*) const {
         struct sigaction action{};
         action.sa_handler = SIG_DFL;
-        ::sigemptyset(&action.sa_mask);
+        sigemptyset(&action.sa_mask);
         for (int number = 1; number < NSIG; ++number) {
           if (::sigaction(number, &action, nullptr) < 0 && errno != EINVAL)
             return {errno, boost::system::system_category()};
@@ -361,7 +361,7 @@ namespace uos::rt::process {
 
       // An inherited handler could otherwise run in the child before exec setup.
       sigset_t all, previous;
-      ::sigfillset(&all);
+      sigfillset(&all);
       const int maskError = ::pthread_sigmask(SIG_BLOCK, &all, &previous);
       if (maskError != 0) throw fs::errnoError(maskError, "pthread_sigmask");
       const auto restoreMask = scopeExit([&previous] { ::pthread_sigmask(SIG_SETMASK, &previous, nullptr); });
