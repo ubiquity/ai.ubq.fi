@@ -1231,8 +1231,19 @@
       ]
     },
     "include/uos/storage/native_addon.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "44-75",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "Native artifact and NAPI callback contracts",
+          "evidence": "The artifact operations are synchronous and prepared NapiInterface is copied out. Linked export stubs own their messages and have no deferred use of input paths or bytes."
+        }
+      ]
     },
     "include/uos/storage/native_kv.hpp": {
       "reviewed": false,

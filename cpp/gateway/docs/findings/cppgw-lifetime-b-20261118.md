@@ -62,7 +62,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/rt/sqlite_darwin.hpp`
 - [x] `include/uos/storage/key_compatibility.hpp`
 - [x] `include/uos/storage/kv.hpp`
-- [ ] `include/uos/storage/native_addon.hpp`
+- [x] `include/uos/storage/native_addon.hpp`
 - [ ] `include/uos/storage/native_kv.hpp`
 - [ ] `include/uos/storage/sqlite_readonly.hpp`
 - [ ] `include/uos/storage/value_compatibility.hpp`
@@ -417,6 +417,12 @@ The only API consumes a byte span synchronously. No coroutine or deferred callba
 | --- | --- | --- | --- |
 | 53-69 | Replaceable native opener and codec interface | **SAFE** | The real opener is a free coroutine taking path/options by value. Test overrides delegate to free tasks and stay installed until their scopes finish. Codec views are synchronous. |
 
+### `include/uos/storage/native_addon.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 44-75 | Native artifact and NAPI callback contracts | **SAFE** | The artifact operations are synchronous and prepared NapiInterface is copied out. Linked export stubs own their messages and have no deferred use of input paths or bytes. |
+
 
 ## Ranked defects and counts
 
@@ -622,4 +628,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-39/97 files reviewed. **DEFECT 8, SAFE 91, UNCLEAR 3.**
+40/97 files reviewed. **DEFECT 8, SAFE 92, UNCLEAR 3.**
