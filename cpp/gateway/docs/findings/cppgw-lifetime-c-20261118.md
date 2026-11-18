@@ -66,7 +66,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/responses_runners.hpp`
 - [x] `include/uos/codex/responses_state.hpp`
 - [x] `include/uos/codex/routing_evaluation.hpp`
-- [ ] `include/uos/codex/routing_mutations.hpp`
+- [x] `include/uos/codex/routing_mutations.hpp`
 - [ ] `include/uos/codex/routing_serial.hpp`
 - [ ] `include/uos/codex/routing_state.hpp`
 - [ ] `include/uos/codex/session.hpp`
@@ -504,3 +504,9 @@ This header defines the request-local context and callback signatures.
 ### `include/uos/codex/routing_evaluation.hpp`
 
 Synchronous evaluation and aggregation types and methods. No deferred borrowing.
+
+### `include/uos/codex/routing_mutations.hpp`
+
+Routing mutations own command inputs; fence functions synchronously examine supplied values.
+
+- 18-43,61,75,91-107 · task parameters and fence interfaces · **SAFE** · Mutation frames retain response, account, pool and fence values; the transaction owns the rows read by fence callbacks.

@@ -369,8 +369,16 @@
       "sites": []
     },
     "include/uos/codex/routing_mutations.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Routing mutations own command inputs; fence functions synchronously examine supplied values.",
+      "sites": [
+        {
+          "lines": "18-43,61,75,91-107",
+          "kind": "task parameters and fence interfaces",
+          "verdict": "SAFE",
+          "reason": "Mutation frames retain response, account, pool and fence values; the transaction owns the rows read by fence callbacks."
+        }
+      ]
     },
     "include/uos/codex/routing_serial.hpp": {
       "status": "pending",
