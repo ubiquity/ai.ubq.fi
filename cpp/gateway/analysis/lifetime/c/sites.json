@@ -643,8 +643,16 @@
       ]
     },
     "include/uos/embeddings/ledger.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Idempotency and ledger declarations.",
+      "sites": [
+        {
+          "lines": "214-235",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Fingerprint, reservation and completion frames own their input vectors, lease, store and response handle."
+        }
+      ]
     },
     "include/uos/embeddings/voyage.hpp": {
       "status": "pending",
