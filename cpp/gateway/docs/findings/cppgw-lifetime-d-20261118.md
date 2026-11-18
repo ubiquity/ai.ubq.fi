@@ -172,7 +172,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/input_normalization.cpp`
 - [x] `src/jev_compaction/compaction.cpp`
 - [x] `src/jev_compaction/hybrid.cpp`
-- [ ] `src/kv.cpp`
+- [x] `src/kv.cpp`
 - [ ] `src/kv_conversion/cli.cpp`
 - [ ] `src/kv_conversion/convert.cpp`
 - [ ] `src/kv_conversion/cursors.cpp`
@@ -945,6 +945,13 @@ Reviewed non-streaming residue jobs, worker fan-out and synchronous transcript h
 
 - L113, 116, 120, 121, 123, 189, 190 **SAFE** · Each worker holds shared work plus a copied chunk and owns its fetch options and response. Shared vector sizes never change after dispatch, and workers use reserved distinct indices even if their parent join fails.
 
+### `src/kv.cpp`
+
+Reviewed coalesced KV open and mutable test opener configuration.
+
+- L56, 57, 85, 86, 97, 98 **DEFECT** · An injected capturing Task opener suspends after being invoked directly out of the mutable global opener. setKvForTest can replace that function before the suspended open resumes. Copy the selected opener into the awaiting frame before invocation.
+- L61, 72, 80, 82, 86 **SAFE** · Production uses the stable free-function opener and Promise settlement retains the store. The finalizer refers to process-local state, and the default/test resolved-value adapter owns its KV.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1158,4 +1165,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-82/286 files reviewed. 180 sites: 166 SAFE, 14 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+83/286 files reviewed. 182 sites: 167 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

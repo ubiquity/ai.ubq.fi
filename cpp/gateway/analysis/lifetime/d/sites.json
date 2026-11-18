@@ -3790,8 +3790,44 @@
       ]
     },
     "src/kv.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed coalesced KV open and mutable test opener configuration.",
+      "sites": [
+        {
+          "lines": [
+            56,
+            57,
+            85,
+            86,
+            97,
+            98
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "An injected capturing Task opener suspends after being invoked directly out of the mutable global opener. setKvForTest can replace that function before the suspended open resumes. Copy the selected opener into the awaiting frame before invocation."
+        },
+        {
+          "lines": [
+            61,
+            72,
+            80,
+            82,
+            86
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Production uses the stable free-function opener and Promise settlement retains the store. The finalizer refers to process-local state, and the default/test resolved-value adapter owns its KV."
+        }
+      ]
     },
     "src/kv_conversion/cli.cpp": {
       "reviewed": false,
