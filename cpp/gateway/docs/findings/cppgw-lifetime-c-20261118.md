@@ -68,7 +68,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/routing_evaluation.hpp`
 - [x] `include/uos/codex/routing_mutations.hpp`
 - [x] `include/uos/codex/routing_serial.hpp`
-- [ ] `include/uos/codex/routing_state.hpp`
+- [x] `include/uos/codex/routing_state.hpp`
 - [ ] `include/uos/codex/session.hpp`
 - [ ] `include/uos/codex/supervisor.hpp`
 - [ ] `include/uos/codex/supervisor_brief.hpp`
@@ -517,3 +517,7 @@ Serial routing APIs use owned snapshots.
 
 - 37-43,57,70,90-92 · owning task parameters · **SAFE** · Evaluation, row read and selection tasks retain their snapshot or KV inputs.
 - 77-82 · callback parameter · **SAFE** · Admission owns the action function and awaits its result before releasing its gate.
+
+### `include/uos/codex/routing_state.hpp`
+
+Synchronous value records, comparison and evaluation declarations. No coroutine or asynchronous callback registration.

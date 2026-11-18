@@ -399,7 +399,8 @@
       ]
     },
     "include/uos/codex/routing_state.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous value records, comparison and evaluation declarations. No coroutine or asynchronous callback registration.",
       "sites": []
     },
     "include/uos/codex/session.hpp": {
