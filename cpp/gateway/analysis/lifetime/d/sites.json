@@ -7353,8 +7353,43 @@
       ]
     },
     "include/uos/auth/index.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed method variants, kind labels and authentication entry points.",
+      "sites": [
+        {
+          "lines": [
+            23,
+            27,
+            35,
+            39,
+            45,
+            49,
+            53,
+            98,
+            99
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Authentication kind accessors return views of static literals, independent of how long the variant instance lives."
+        },
+        {
+          "lines": [
+            101,
+            103,
+            106,
+            108
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each asynchronous authentication or route entry receives an owning request handle."
+        }
+      ]
     },
     "include/uos/auth/local_admin.hpp": {
       "reviewed": false,

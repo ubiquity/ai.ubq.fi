@@ -268,7 +268,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/analytics.hpp`
 - [x] `include/uos/api_key_policy.hpp`
 - [x] `include/uos/api_keys.hpp`
-- [ ] `include/uos/auth/index.hpp`
+- [x] `include/uos/auth/index.hpp`
 - [ ] `include/uos/auth/local_admin.hpp`
 - [ ] `include/uos/auth/local_development_key.hpp`
 - [ ] `include/uos/auth/passkeys.hpp`
@@ -1484,6 +1484,13 @@ Reviewed key and token helper declarations.
 
 - L22, 23 **SAFE** · The key factories copy the view's characters before returning an owning key.
 
+### `include/uos/auth/index.hpp`
+
+Reviewed method variants, kind labels and authentication entry points.
+
+- L23, 27, 35, 39, 45, 49, 53, 98, 99 **SAFE** · Authentication kind accessors return views of static literals, independent of how long the variant instance lives.
+- L101, 103, 106, 108 **SAFE** · Each asynchronous authentication or route entry receives an owning request handle.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1732,4 +1739,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-160/286 files reviewed. 330 sites: 309 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+161/286 files reviewed. 332 sites: 311 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
