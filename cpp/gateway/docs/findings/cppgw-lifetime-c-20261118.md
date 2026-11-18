@@ -79,7 +79,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/supervisor_secret.hpp`
 - [x] `include/uos/codex/supervisor_transport.hpp`
 - [x] `include/uos/deepseek/chat_projection.hpp`
-- [ ] `include/uos/deepseek/context_admission_failure.hpp`
+- [x] `include/uos/deepseek/context_admission_failure.hpp`
 - [ ] `include/uos/deepseek/flash_aliases.hpp`
 - [ ] `include/uos/deepseek/forwarded_payload_policy.hpp`
 - [ ] `include/uos/deepseek/handlers.hpp`
@@ -579,3 +579,7 @@ The control connection is an owning pair of task factories.
 ### `include/uos/deepseek/chat_projection.hpp`
 
 Synchronous message projection declarations with call-local JSON borrows.
+
+### `include/uos/deepseek/context_admission_failure.hpp`
+
+Synchronous construction of context-admission failures. No suspendable body or registration.

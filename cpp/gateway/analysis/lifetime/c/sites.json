@@ -522,7 +522,8 @@
       "sites": []
     },
     "include/uos/deepseek/context_admission_failure.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous construction of context-admission failures. No suspendable body or registration.",
       "sites": []
     },
     "include/uos/deepseek/flash_aliases.hpp": {
