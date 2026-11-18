@@ -38,7 +38,7 @@ completes, or record the precise pending work and last passing tree.
 | Audit ID and site | Verdict and reason | Commit | Regression or coverage |
 | --- | --- | --- | --- |
 | A-ABORT-OWNER (`src/rt/abort.cpp`) | FIXED. `AbortController::abort` passed its member slot by reference into `signalAbort`. A listener could destroy that slot before the next once listener and final cleanup. Dispatch now owns the original signal. | This commit | `rt/abort_test`, a listener destroys the only controller. |
-| A-LOOP-TEARDOWN-OWNER (`src/rt/async.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
+| A-LOOP-TEARDOWN-OWNER (`src/rt/async.cpp`) | FIXED. Frame destructors could post under the ambient loop after the dying loop's run scope ended. Run destruction under the dying loop and discard work submitted to it during shutdown, including dispatch that would otherwise run inline. | This commit | `rt/async_test`, a destroyed frame queues a microtask while another loop is in scope. Baseline leaks the job into that loop. |
 | A-PROMISE-REACTION-CYCLE (`src/rt/async.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-PROMISE-GCC-AWAIT (`include/uos/rt/async.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-PROMISE-CALLBACK-INPUT (`include/uos/rt/async.hpp`) | FIXED. The reaction was the last owner of the outcome passed by reference to a Task-returning callback. Its child now owns both the callable and the outcome through completion. Value and Promise callbacks use the same settlement path as before. | This commit | `rt/async_test`, a pending sibling reads the value after early rejection, and `then` and `catch_` read rejection reasons after suspension. |

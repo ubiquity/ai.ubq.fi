@@ -802,6 +802,29 @@ TEST("a promise created outside any running loop starts its task synchronously o
   EXPECT_EQ(*log, (Strings{"started", "resumed"}));
 }
 
+TEST("destroyed coroutine frames cannot post microtasks into an enclosing loop") {
+  rt::FakeClock clock;
+  rt::Loop outer(clock);
+  rt::LoopScope ambient(outer);
+  auto log = makeLog();
+  {
+    rt::Loop inner(clock);
+    rt::LoopScope scope(inner);
+    auto never = rt::withResolvers();
+    rt::spawn(rt::async([log, waiting = never.promise]() -> rt::Task<void> {
+      auto cleanup = rt::scopeExit([log] {
+        log->push_back("cleanup");
+        rt::queueMicrotask([log] { log->push_back("orphaned microtask"); });
+      });
+      co_await waiting.wait();
+    }));
+    inner.run();
+  }
+  EXPECT_EQ(outer.microtaskCount(), 0u);
+  outer.run();
+  EXPECT_EQ(*log, (Strings{"cleanup"}));
+}
+
 namespace {
   struct Counted {
     std::shared_ptr<int> token;
