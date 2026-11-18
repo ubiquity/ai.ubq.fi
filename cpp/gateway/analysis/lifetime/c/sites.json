@@ -782,7 +782,8 @@
       "sites": []
     },
     "include/uos/harmony/reliability/verify.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous reliability verification predicates and records.",
       "sites": []
     },
     "include/uos/harmony/render.hpp": {
