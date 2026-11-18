@@ -2719,8 +2719,16 @@
       "sites": []
     },
     "src/harmony/probe_scenarios.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Probe scenarios sequence each model step while owning the probe context and its callables.",
+      "sites": [
+        {
+          "lines": "47-153,170-176",
+          "kind": "scenario joins and callback factory",
+          "verdict": "SAFE",
+          "reason": "The scenario frame owns its context, options, tool calls and conversation at each wait. The registered scenario wrapper is synchronous and copies its index into the returned task."
+        }
+      ]
     },
     "src/harmony/probes.cpp": {
       "status": "pending",

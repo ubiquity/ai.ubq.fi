@@ -244,7 +244,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/classifier.cpp`
 - [x] `src/harmony/conversation.cpp`
 - [x] `src/harmony/parse.cpp`
-- [ ] `src/harmony/probe_scenarios.cpp`
+- [x] `src/harmony/probe_scenarios.cpp`
 - [ ] `src/harmony/probes.cpp`
 - [ ] `src/harmony/reliability/context.cpp`
 - [ ] `src/harmony/reliability/failure.cpp`
@@ -1566,3 +1566,9 @@ Conversation transforms are synchronous. They return owned copies and do not sus
 ### `src/harmony/parse.cpp`
 
 The Harmony parser consumes text views synchronously and returns owning parse records.
+
+### `src/harmony/probe_scenarios.cpp`
+
+Probe scenarios sequence each model step while owning the probe context and its callables.
+
+- 47-153,170-176 · scenario joins and callback factory · **SAFE** · The scenario frame owns its context, options, tool calls and conversation at each wait. The registered scenario wrapper is synchronous and copies its index into the returned task.
