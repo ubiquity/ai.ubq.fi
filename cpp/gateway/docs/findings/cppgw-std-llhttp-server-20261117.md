@@ -93,9 +93,113 @@ Timing is median thread CPU time over seven runs of 50,000 operations after
 1,000 warmups. A separate 1,000-operation run counts C++ allocations via
 regular, array and aligned `operator new`.
 
-| Request | Wire bytes | Bytes per segment | Before ns/op | llhttp ns/op | Before allocations/op | llhttp allocations/op |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| GET /health | 54 | 54 | 666.24 | 334.04 | 13 | 4 |
-| POST /v1/responses head | 320 | 320 | 2706.33 | 891.54 | 50 | 12 |
-| POST /v1/responses head, fragmented | 320 | 16 | 4111.17 | 1233.41 | 50 | 12 |
-| Chunked POST | 8355 | 1024 | 1646.92 | 1392.00 | 33 | 17 |
+| Request                             | Wire bytes | Bytes per segment | Before ns/op | llhttp ns/op | Before allocations/op | llhttp allocations/op |
+| ----------------------------------- | ---------: | ----------------: | -----------: | -----------: | --------------------: | --------------------: |
+| GET /health                         |         54 |                54 |       666.24 |       334.04 |                    13 |                     4 |
+| POST /v1/responses head             |        320 |               320 |      2706.33 |       891.54 |                    50 |                    12 |
+| POST /v1/responses head, fragmented |        320 |                16 |      4111.17 |      1233.41 |                    50 |                    12 |
+| Chunked POST                        |       8355 |              1024 |      1646.92 |      1392.00 |                    33 |                    17 |
+
+## Fuzz smoke check
+
+The standalone `http_server_library` target builds with the port warning
+set and takes inputs through `ConnectionState::parseHead` and
+`decodeChunked` in segmented reads. Its four seeds cover head projection,
+fixed length, chunks and trailers, and buffered upgrade bytes.
+
+The 120-second single-process libFuzzer run with ASan, UBSan and leak
+detection exited 0 after 549,835 inputs in 121 seconds. It reported 2,012
+coverage counters, 4,606 features, a peak RSS of 393 MiB and zero artifacts.
+The binary SHA-256 was
+`82c45af0d083d08157eeeb6f6c0090b512e66153034fc2b94228dc6b28a50064`.
+The first campaign using the stock fork-mode runner finished its workers
+after 122 seconds with zero input findings. Its parent hit the runner's
+documented ARM64 libFuzzer leak at exit. The separate single-process
+receipt exercises the same binary with leak detection enabled.
+
+The stock Linux CI driver's single-source C++ compile was checked with
+`clang++-21 -std=c++20 -x c++ -c cpp/gateway/third_party/llhttp/llhttp.c`.
+It exits 1 when the generated C assigns callback pointers. A complete
+archive requires all three inputs compiled as C, as in the CMake receipt.
+
+## Optimized closure results
+
+On source and test commit `971bd53a2d3851cd133143335a9e62174cd5e7ee`, tree
+`00b0fa90af5d78346dcd49fa2400784341b9ded5`, the strict `-O2 -g0` build
+completed all 89 HTTP-linked binaries. It passed 88/89 binaries and
+1,077/1,078 harness cases. All seven standalone parser cases passed. The
+wire differential case passed 102/106 comparisons. The four differences
+were the documented requests that strict llhttp refuses before dispatch.
+
+A separate wire check used an include directory outside the checkout.
+Its vector copy changed only the four expected responses to
+`HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n<CLOSED>`.
+Its SHA-256 was
+`dc10ee28d823cee12974e28e0f732bec4e3c302fc343a1aa2c71e30a91a10aa6`.
+The same test passed all five harness cases and all 106 wire comparisons
+with that copy. The checkout's vector file is outside the listed owned
+paths. The checked-in run retains the four mismatches pending scope approval.
+
+## Reproduction commands
+
+Commands ran from the checkout root with Clang 21.1.8 and inherited Boost
+1.92.0 JSON and Container static archives and SQLite 3.54.0 under the
+scratch directory. System link inputs were OpenSSL 3, zlib, Brotli, Zstd,
+ICU, pthreads and libdl. The scratch verifier uses the repository's Links
+resolver, compile rule, isolation and test runner. It compiles `llhttp.c`,
+`api.c` and `http.c` with `clang-21 -std=c11` and archives them together.
+
+```bash
+scratch=/tmp/llhttp-server.186Y8HcO
+python3 -B cpp/gateway/tools/links.py --check
+(cd cpp/gateway/third_party/llhttp && sha256sum --check SHA256SUMS)
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 UOS_GATEWAY_BUILD_EVIDENCE=local-parser-job \
+  cmake -S cpp/gateway -B "$scratch/cmake" -G Ninja \
+  -DCMAKE_C_COMPILER=/usr/bin/clang-21 -DCMAKE_CXX_COMPILER=/usr/bin/clang++-21 \
+  -DCMAKE_BUILD_TYPE=Release -DUOS_GATEWAY_FRAME_RECYCLING_DISABLED=ON -DUOS_GATEWAY_TESTS=ON
+cmake --build "$scratch/cmake" --target uos_vendor_llhttp --parallel 2
+ar t "$scratch/cmake/libuos_vendor_llhttp.a"
+
+isolated=(env -i PATH=/home/runner/.bun/bin:/usr/local/bin:/usr/bin:/bin
+          LANG=C.UTF-8 TZ=UTC PYTHONDONTWRITEBYTECODE=1)
+"${isolated[@]}" python3 "$scratch/verify.py" release component --compiler clang++-21 --cc clang-21 --jobs 4
+"${isolated[@]}" python3 "$scratch/verify.py" release affected --compiler clang++-21 --cc clang-21 --jobs 3
+"${isolated[@]}" python3 "$scratch/verify.py" asan affected --compiler clang++-21 --cc clang-21 --jobs 3
+"${isolated[@]}" python3 "$scratch/verify.py" release unaffected --compiler clang++-21 --cc clang-21 --jobs 3
+"${isolated[@]}" python3 "$scratch/wire_strict.py" release
+"${isolated[@]}" bash "$scratch/benchmark/build.sh"
+for build in before after; do
+  "${isolated[@]}" HOME="$scratch/benchmark/home" TMPDIR="$scratch/benchmark/tmp" \
+    taskset -c 0 "$scratch/benchmark/$build"
+done
+```
+
+First-party objects used `-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror
+-DBOOST_JSON_NO_LIB -DBOOST_CONTAINER_NO_LIB -DBOOST_SYSTEM_NO_LIB
+-DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING -DUOS_GATEWAY_NATIVE_LIBRARIES=1`.
+The include paths were `cpp/gateway/include`, `cpp/gateway` and the prepared
+Boost and SQLite system headers. The sanitizer run used `-O1 -gline-tables-only
+-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined`
+with ASan leak detection and fatal UBSan errors. Links used mold with one thread.
+
+The fuzz build used the same pinned compilers through `clang` and `clang++`
+symlinks in `$scratch/fuzz-tools`. Both fuzz runs used a fresh network
+namespace and dropped to the runner user before running the harness.
+
+```bash
+sudo -n /usr/bin/unshare --net --setgid "$(id -g)" --setuid "$(id -u)" -- /usr/bin/env -i \
+  "PATH=$scratch/fuzz-tools:/usr/bin:/bin" LANG=C.UTF-8 TZ=UTC \
+  "HOME=$scratch/fuzz-isolation/home" "TMPDIR=$scratch/fuzz-isolation/tmp" \
+  "CPLUS_INCLUDE_PATH=$scratch/boost_1_92_0:$scratch/sqlite-autoconf-3540000" \
+  "LIBRARY_PATH=$scratch/boost_1_92_0/stage/lib:$scratch/sqlite-autoconf-3540000" \
+  /usr/bin/python3 cpp/gateway/fuzz/ci.py http_server_library --seconds 120 --out "$scratch/fuzz" --jobs 2 --compiler clang++
+
+campaign="$scratch/fuzz-single"
+sudo -n /usr/bin/unshare --net --setgid "$(id -g)" --setuid "$(id -u)" -- /usr/bin/env -i \
+  PATH=/usr/lib/llvm-21/bin:/usr/bin:/bin LANG=C.UTF-8 TZ=UTC \
+  "HOME=$campaign/home" "TMPDIR=$campaign/tmp" \
+  ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+  /usr/bin/timeout 150 "$scratch/fuzz/uos_fuzz_http_server_library" \
+  -seed=17112026 -max_len=32768 -timeout=3 -rss_limit_mb=768 -malloc_limit_mb=128 \
+  -max_total_time=120 -print_final_stats=1 "-artifact_prefix=$campaign/artifacts/" "$campaign/corpus"
+```
