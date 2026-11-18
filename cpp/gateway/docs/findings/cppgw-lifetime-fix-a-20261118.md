@@ -51,11 +51,11 @@ completes, or record the precise pending work and last passing tree.
 | A-STREAM-CANCEL-OWNER (`include/uos/rt/stream.hpp`) | FIXED. `cancelStreamInto` read the reader's stream slot after the synchronous cancel algorithm could empty it through `releaseLock`. Take an owning copy before closing the stream or invoking the callback. | This commit | `rt/stream_test`, cancel releases the reader while a read is pending. |
 | A-STREAM-TEE-READ-CYCLE (`include/uos/rt/stream.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-PROMISE-GCC-AWAIT (`include/uos/rt/stream.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
-| A-FETCH-CALLBACK-INPUT (`include/uos/rt/fetch.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
+| A-FETCH-CALLBACK-INPUT (`include/uos/rt/fetch.hpp`) | FIXED. A reference-taking coroutine passes the constructor constraint, but the erased by-value parameters end before the Task starts. Forward references to owned argument storage through the erasure. | This commit | `rt/fetch_test`, a callback uses both borrowed inputs after a microtask. |
 | A-FETCH-ABORT-BODY-CYCLE (`src/rt/fetch.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-FETCH-ABORT-TRANSPORT (`src/rt/fetch.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
-| A-FETCH-REENTRANT-FUNCTION (`src/rt/fetch.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
-| A-FETCH-CALLBACK-INPUT (`src/rt/fetch.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
+| A-FETCH-REENTRANT-FUNCTION (`src/rt/fetch.cpp`) | FIXED. Argument evaluation permitted callback invocation before the callable owner was copied. Snapshot the owner before invocation. | This commit | `rt/fetch_test`, a synchronous callback replaces the global function and reads its capture. The baseline depends on argument evaluation order. |
+| A-FETCH-CALLBACK-INPUT (`src/rt/fetch.cpp`) | FIXED. The old wrapper pinned only the function. The returned Task also retains the original request arguments through completion. | This commit | `rt/fetch_test`, same borrowed-input regression as the header site. |
 | A-MOCK-HANDLER-OWNER (`src/rt/fetch.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-FETCH-UPLOAD-STRANDED (`src/rt/fetch_transport.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-FETCH-RESPONSE-STRANDED (`src/rt/fetch_transport.cpp`) | LEFT. Current-tree re-verification pending. | — | — |

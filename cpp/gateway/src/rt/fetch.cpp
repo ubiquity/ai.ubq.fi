@@ -171,17 +171,14 @@ namespace uos::rt {
     }
   }
 
-  // The function is called now, as JS calls it; the returned Task keeps it
-  // alive (a coroutine lambda's captures live in it) until it completes.
+  // Call eagerly, pinning the function before it can replace itself. A
+  // returned coroutine may also borrow the arguments passed to the function.
   Task<Response> Fetch::operator()(RequestInfo input, RequestInit init) const {
-    if (!function_) throw std::logic_error("rt::Fetch: called an empty fetch value");
-    return keepAlive(function_, (*function_)(std::move(input), std::move(init)));
-  }
-
-  Task<Response> Fetch::keepAlive(std::shared_ptr<const Function> function, Task<Response> task) {
-    (void)function;
-    Response response = co_await std::move(task);
-    co_return response;
+    auto function = function_;
+    if (!function) throw std::logic_error("rt::Fetch: called an empty fetch value");
+    auto args = std::make_shared<std::pair<RequestInfo, RequestInit>>(std::move(input), std::move(init));
+    auto task = (*function)(std::move(args->first), std::move(args->second));
+    return detail::keepAlive<Response>(std::pair{std::move(function), std::move(args)}, std::move(task));
   }
 
   Task<Response> Fetch::resolved(Response response) { co_return response; }

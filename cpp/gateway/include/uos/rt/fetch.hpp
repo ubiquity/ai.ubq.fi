@@ -17,7 +17,7 @@ namespace uos::rt {
   // Copies share identity, so `globalThis.fetch === defaultFetch` ports as ==.
   class Fetch {
   public:
-    using Function = std::function<Task<Response>(RequestInfo input, RequestInit init)>;
+    using Function = std::function<Task<Response>(RequestInfo&& input, RequestInit&& init)>;
 
     // No function (JS `undefined`).
     Fetch() = default;
@@ -46,7 +46,6 @@ namespace uos::rt {
       }
     }
     static Task<Response> resolved(Response response);
-    static Task<Response> keepAlive(std::shared_ptr<const Function> function, Task<Response> task);
     std::shared_ptr<const Function> function_;
   };
 

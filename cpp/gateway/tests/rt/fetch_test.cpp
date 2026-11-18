@@ -58,6 +58,39 @@ ASYNC_TEST("Fetch values compare by identity like JS functions") {
   EXPECT(globalFetch() == original);
 }
 
+ASYNC_TEST("Fetch keeps borrowed inputs after returning its callback's Task") {
+  const std::string address = "http://example.test/" + std::string(128, 'x');
+  Fetch fetcher([](const RequestInfo& input, const RequestInit& init) -> Task<Response> {
+    co_await microtask();
+    co_return Response(BodyInit(init.method.value_or("") + " " + std::get<std::string>(input)));
+  });
+  RequestInit init;
+  init.method = "POST";
+  auto task = fetcher(RequestInfo(address), std::move(init));
+  auto response = co_await std::move(task);
+  const auto text = co_await response.text();
+  EXPECT_EQ(text, "POST " + address);
+}
+
+ASYNC_TEST("a global Fetch can replace itself during its eager invocation") {
+  GlobalFetchOverride scope(Fetch{});
+  auto payload = std::make_shared<std::string>("original");
+  setGlobalFetch(Fetch([payload](RequestInfo, RequestInit) {
+    setGlobalFetch(Fetch([](RequestInfo, RequestInit) { return Response(BodyInit(std::string("replacement"))); }));
+    return Response(BodyInit(*payload));
+  }));
+  payload.reset();
+
+  auto original = fetch(info("http://example.test/"));
+  auto replacement = fetch(info("http://example.test/"));
+  auto fromOriginal = co_await std::move(original);
+  auto fromReplacement = co_await std::move(replacement);
+  const auto originalText = co_await fromOriginal.text();
+  const auto replacementText = co_await fromReplacement.text();
+  EXPECT_EQ(originalText, "original");
+  EXPECT_EQ(replacementText, "replacement");
+}
+
 ASYNC_TEST("a replaced globalThis.fetch receives input and init unchanged") {
   auto seen = std::make_shared<std::vector<std::string>>();
   const Fetch mock([seen](RequestInfo input, RequestInit init) -> Task<Response> {
