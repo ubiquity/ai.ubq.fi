@@ -261,3 +261,9 @@ The native JSON parser, serializer and recursive helpers accept up to 128 nested
 containers. Deeper documents raise `RangeError`, including when projecting a stored
 value to JSON. The JSC codec and typed-value interchange retain their independent
 2,000-container limit for stored graphs.
+
+## Trusted resources use filesystem paths
+
+The C++ gateway joins the static asset and V8 helper names to the configured package resource root. Unconfigured fixtures use the working directory as that root. Development startup finds the native KV checkout and tracked inputs from the compiled source location. The default Linux permissions manifest and artifact live in `.uos-permissions` beside the running executable. Each location can contain literal space, `%`, `?`, and `#` bytes.
+
+POSIX file URL conversion serves SQLite URI encoding and explicit URL inputs such as native KV `PathLike` bindings. Decoding requires `file:` and a local host, rejects `%2f` and `%2F`, and decodes valid percent escapes once. Incomplete and nonhex escapes stay literal. Invalid decoded UTF-8 yields an empty path. SQLite conversion snapshots use `immutable=1` with explicit read-only URI flags.

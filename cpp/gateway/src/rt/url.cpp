@@ -447,10 +447,8 @@ namespace uos::rt {
     if (url.protocol() != "file:") throw NodeURLError("The URL must be of scheme file", "ERR_INVALID_URL_SCHEME");
     if (!url.hostname().empty()) throw NodeURLError("File URL host must be \"localhost\" or empty on linux", "ERR_INVALID_FILE_URL_HOST");
     const std::string pathname = url.pathname();
-    for (std::size_t index = 0; index + 2 < pathname.size(); ++index) {
-      if (pathname[index] == '%' && pathname[index + 1] == '2' && (pathname[index + 2] | 0x20) == 'f')
-        throw NodeURLError("File URL path must not include encoded / characters", "ERR_INVALID_FILE_URL_PATH");
-    }
+    if (pathname.find("%2f") != std::string::npos || pathname.find("%2F") != std::string::npos)
+      throw NodeURLError("File URL path must not include encoded / characters", "ERR_INVALID_FILE_URL_PATH");
     std::string decoded = ada::unicode::percent_decode(pathname, pathname.find('%'));
     return isUtf8(decoded) ? std::move(decoded) : std::string{};
   }
