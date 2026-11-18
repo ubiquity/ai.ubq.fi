@@ -186,7 +186,15 @@ Both Markdown files passed `bun --no-env-file --no-install run format:check` wit
 
 ## Handoff and summary
 
-The GitHub publication probe `GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false git push --dry-run origin HEAD:refs/heads/agent-jobs/cppgw-slim-file-urls-20261118` exited 128 while requesting HTTPS credentials. The refreshed `origin/development` at `2ac5aae69b0f0bac77cf1c6f329995cf1187616c` predates integration of `cpp/gateway`. The port maintainer owns the integration with the companion lanes once branch publication is available.
+The task-branch push exited 128 while requesting HTTPS credentials. The refreshed `origin/development` at `2ac5aae69b0f0bac77cf1c6f329995cf1187616c` predates integration of `cpp/gateway`. The ancestry check exited 1. The port maintainer owns the integration with the companion lanes once branch publication is available.
+
+```bash
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false \
+  git push origin HEAD:refs/heads/agent-jobs/cppgw-slim-file-urls-20261118
+git fetch origin +refs/heads/development:refs/remotes/origin/development
+git ls-tree -d origin/development cpp/gateway
+git merge-base --is-ancestor HEAD origin/development
+```
 
 - Trusted resource lookups now use filesystem paths. The refactor removed 37 production lines, from 1,753 to 1,716 across six files.
 - Linux ARM64 release and ASan/UBSan each passed 441 of 441 binaries and 5,030 of 5,030 cases, up from 5,025 baseline cases. The reserved-byte fixtures covered asset bytes, codec helper paths, startup confinement, and immutable read-only SQLite without sidecars.
