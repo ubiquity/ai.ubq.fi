@@ -26,7 +26,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/runtime/http.hpp`
 - [x] `include/uos/runtime/http_body.hpp`
 - [x] `include/uos/runtime/http_early_sse.hpp`
-- [ ] `include/uos/runtime/http_tasks.hpp`
+- [x] `include/uos/runtime/http_tasks.hpp`
 - [ ] `include/uos/runtime/http_upgrade.hpp`
 - [ ] `include/uos/runtime/native_kv_bootstrap.hpp`
 - [ ] `include/uos/runtime/permissions_linux.hpp`
@@ -148,7 +148,13 @@ Initial checkpoint. Manual review and tool verification are pending.
 | --- | --- | --- | --- |
 | 12-24 | Early SSE registration API | **SAFE** | The callback is passed as an owning function and invoked synchronously with the headers reference. The registry and captured request lifetime are reviewed at the actual registration. |
 
+### `include/uos/runtime/http_tasks.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 8-11 | Request task receipt API | **SAFE** | Receipts and tasks are copied shared-state handles. An owning drain callback is returned from the implementation. |
+
 
 ## Ranked defects and counts
 
-3/97 files reviewed. **DEFECT 0, SAFE 7, UNCLEAR 0.**
+4/97 files reviewed. **DEFECT 0, SAFE 8, UNCLEAR 0.**

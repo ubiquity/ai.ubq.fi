@@ -86,8 +86,19 @@
       ]
     },
     "include/uos/runtime/http_tasks.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "8-11",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "Request task receipt API",
+          "evidence": "Receipts and tasks are copied shared-state handles. An owning drain callback is returned from the implementation."
+        }
+      ]
     },
     "include/uos/runtime/http_upgrade.hpp": {
       "reviewed": false,
