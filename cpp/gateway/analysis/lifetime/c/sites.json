@@ -346,8 +346,22 @@
       ]
     },
     "include/uos/codex/responses_state.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "This header defines the request-local context and callback signatures.",
+      "sites": [
+        {
+          "lines": "5-11,133-191,250-285",
+          "kind": "callback ownership",
+          "verdict": "SAFE",
+          "reason": "The context owns operation and runner functions; the enclosing fetch frame owns the context throughout the joined serial dispatch and the functions use its nonowning back-pointer."
+        },
+        {
+          "lines": "303-305",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "State creation owns prepared inputs, options and the dispatch coordinator while assembling an independently owned context."
+        }
+      ]
     },
     "include/uos/codex/routing_evaluation.hpp": {
       "status": "pending",
