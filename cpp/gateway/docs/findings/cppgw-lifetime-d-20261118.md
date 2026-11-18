@@ -313,7 +313,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/catalog/models.hpp`
 - [x] `include/uos/catalog/promotion.hpp`
 - [x] `include/uos/catalog/store.hpp`
-- [ ] `include/uos/catalog/types.hpp`
+- [x] `include/uos/catalog/types.hpp`
 - [ ] `include/uos/config.hpp`
 - [ ] `include/uos/debug_routing.hpp`
 - [ ] `include/uos/decisions/handlers.hpp`
@@ -1755,6 +1755,10 @@ Reviewed catalog KV borrows, refresh lease callbacks and parser views.
 - L26, 39, 43, 45, 55, 57, 59, 61 **SAFE** · The request or refresh Task retains the KV handle and directly awaits the helpers that borrow it. Each helper owns version, owner and input values.
 - L49, 50 **SAFE** · The refresh state retains both the heartbeat controller and the shared KV context until the stop Task has drained renewal.
 
+### `include/uos/catalog/types.hpp`
+
+Reviewed the catalog snapshot types. They own stored chunks, tags and parsed JSON and declare no asynchronous callback.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2003,4 +2007,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-205/286 files reviewed. 379 sites: 358 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+206/286 files reviewed. 379 sites: 358 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

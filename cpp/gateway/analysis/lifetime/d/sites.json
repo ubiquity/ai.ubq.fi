@@ -8458,7 +8458,8 @@
       ]
     },
     "include/uos/catalog/types.hpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed the catalog snapshot types. They own stored chunks, tags and parsed JSON and declare no asynchronous callback.",
       "sites": []
     },
     "include/uos/config.hpp": {
