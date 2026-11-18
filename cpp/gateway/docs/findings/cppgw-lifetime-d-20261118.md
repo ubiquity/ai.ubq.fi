@@ -339,7 +339,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/kv_conversion/legacy_codec.hpp`
 - [x] `include/uos/kv_conversion/native_schema.hpp`
 - [x] `include/uos/kv_conversion/profile_json.hpp`
-- [ ] `include/uos/kv_conversion/proof.hpp`
+- [x] `include/uos/kv_conversion/proof.hpp`
 - [ ] `include/uos/kv_conversion/typed_value.hpp`
 - [ ] `include/uos/lib/jev_compaction/client.hpp`
 - [ ] `include/uos/lib/jev_compaction/codex_items.hpp`
@@ -1909,6 +1909,12 @@ Reviewed the stream-export boundary and synchronous profile codecs.
 
 - L50 **SAFE** · Export creates its list cursor before returning and both stream algorithms retain that shared cursor. Native cursors own their ongoing storage access.
 
+### `include/uos/kv_conversion/proof.hpp`
+
+Reviewed offline proof entry points and argument ownership.
+
+- L26, 31 **SAFE** · Proof work owns all path and digest inputs through the awaited offline stages.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2157,4 +2163,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-231/286 files reviewed. 406 sites: 384 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+232/286 files reviewed. 407 sites: 385 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

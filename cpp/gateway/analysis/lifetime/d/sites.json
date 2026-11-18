@@ -9055,8 +9055,22 @@
       ]
     },
     "include/uos/kv_conversion/proof.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed offline proof entry points and argument ownership.",
+      "sites": [
+        {
+          "lines": [
+            26,
+            31
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Proof work owns all path and digest inputs through the awaited offline stages."
+        }
+      ]
     },
     "include/uos/kv_conversion/typed_value.hpp": {
       "reviewed": false,
