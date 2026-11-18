@@ -1,18 +1,16 @@
 # Native macOS Apple Silicon build
 
-The November 18, 2026 requalification compiles the native gateway with Apple Clang and libc++.
-It builds simdjson 5.2.0 and simdutf 9.4.0 from the vendored sources and uses Homebrew ICU 78.3 for
-IDNA, case mapping and collation.
+The integrated F1 gateway builds with Apple Clang and libc++ on Apple Silicon. The Darwin driver builds Ada 4.0.0,
+llhttp 9.4.4, QCBOR 1.6.1, simdjson 5.2.0 and simdutf 9.4.0 from the verified vendor registry. It uses Homebrew
+ICU 78.3 for Unicode and IDNA.
 
-The existing `-O0 -g0` profile compiled all **373 production translation units** and linked
-the gateway and two offline KV utilities as arm64 Mach-O executables. The complete test run
-passed **442/442 binaries and 5,034/5,034 cases**.
+The `-O0 -g0` profile compiled **373/373 production sources**, linked **3/3 arm64 executables** and passed
+**450/450 binaries and 5,107/5,107 cases**. The macOS release workflow's packager built the archive and
+its gateway returned the qualified source commit from `--version`.
 
-See [the current findings](findings/cppgw-macos-requal-20261118.md) for exact commands, receipt
-identities and diagnostics. The [previous qualification](findings/cppgw-macos-native-20261117.md)
-covers the earlier platform port and the Darwin fallback loaders.
-
-The November 17 job passed 441/441 binaries and 5,029/5,029 cases using zlib 1.3.2. Its libc++ probe covered floating-point `from_chars` and `to_chars`. The November 18 receipts bind the requalification tree and dependencies below. The combined stage 2a tree and later QCBOR and v40 input-limit integrations need receipts on their own inputs. [Build checkpoints](BUILD.md#assignment-3-library-checkpoints) [Runtime limits](RUNTIME.md#input-limits)
+[Integrated F1 findings](findings/cppgw-macos-requal-f1-20261118.md) ·
+[Prior qualification, 442 binaries and 5,034 cases](findings/cppgw-macos-requal-20261118.md) ·
+[Initial Darwin port and fallback loaders](findings/cppgw-macos-native-20261117.md)
 
 ## Verified host and dependency selection
 
@@ -24,7 +22,7 @@ The November 17 job passed 441/441 binaries and 5,029/5,029 cases using zlib 1.3
 | Boost             | Homebrew 1.92.0_1, JSON and Container, libc++ ABI                     |
 | OpenSSL           | Homebrew openssl@3 3.5.9                                              |
 | SQLite            | Separate official 3.54.0 dylib, matching the versioned native fixture |
-| Other C libraries | zlib 1.4, ICU 78.3, Brotli 1.2.1, Zstd 1.5.7                          |
+| Other C libraries | zlib 1.3.2, ICU 78.3, Brotli 1.2.1, Zstd 1.5.7                        |
 | Tools             | Homebrew 7.0.11, CMake 4.4.5, Ninja 1.13.2, Python 3.15.2             |
 | Oracle            | Bun 1.4.0, revision 34cbb9a40b4bd1bd767d134a7065e66c2432a676          |
 
@@ -86,13 +84,17 @@ PYTHON
 
 ## Reproduce the build and tests
 
-Run the commands from the repository root with a clean committed checkout.
+Run the commands from the repository root with a clean committed checkout. The qualification runner used five
+workers. Set `--jobs` to fit your host.
 
 ```sh
-bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
-  --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite rt --require-clean
-bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
-  --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite all --require-clean
+mkdir "$UOS_MAC_BUILD/build-home" "$UOS_MAC_BUILD/build-tmp"
+env -i PATH=/opt/homebrew/bin:/usr/bin:/bin HOME="$UOS_MAC_BUILD/build-home" TMPDIR="$UOS_MAC_BUILD/build-tmp" \
+  bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
+  --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 5 --suite rt --require-clean &&
+env -i PATH=/opt/homebrew/bin:/usr/bin:/bin HOME="$UOS_MAC_BUILD/build-home" TMPDIR="$UOS_MAC_BUILD/build-tmp" \
+  bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
+  --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 5 --suite all --require-clean
 ```
 
 The script compiles the production sources once and builds the module archive. The three
@@ -113,10 +115,11 @@ The port's compiler flags include the following options.
 
 The driver resolves the prepared Homebrew dependencies with `brew --prefix` and `pkg-config`.
 Installed library headers are system includes, so the port keeps fatal warnings when Apple Clang
-parses ICU's headers. SQLite links directly to the prepared dylib. The vendored implementations
-compile separately without the port warning flags. The driver checks their registry hashes, records
-both archives and links them after the objects that use them. The JSON consumer enables
-`UOS_GATEWAY_SIMDJSON`. The external logs contain the expanded compiler and linker arguments.
+parses ICU's headers. SQLite links directly to the prepared dylib. The driver verifies the inputs in
+`cmake/vendors.json` through `tools/vendor_sources.py` and compiles each registered vendor into its own archive.
+llhttp and QCBOR use Apple Clang in C11 mode. Ada, simdjson and simdutf use C++20 and libc++. Vendor sources
+build without the first-party warning set. Each executable or test links the archives declared by its source
+closure. The JSON consumer enables `UOS_GATEWAY_SIMDJSON`. The external logs contain the expanded compiler and linker arguments.
 
 Every binary gets empty private HOME, fresh TMPDIR/cwd, an environment allowlist with no provider
 or credential variables, a new process group and a 180-second timeout. Unix paths use short `/tmp`
@@ -129,7 +132,7 @@ when launching the platform boundary binary.
 
 The external build root contains the following artifacts and receipts.
 
-- `libuos_gateway.a`, the two vendor archives, and `obj/` with per-object compiler logs and input hashes.
+- `libuos_gateway.a`, the five vendor archives, and `obj/` with per-object compiler logs and input hashes.
 - `runs/<id>/{uos-gateway,uos-kv-convert,uos-kv-proof}` and their link logs.
 - `runs/<id>/provenance.json` with toolchain, dependency, input and executable identities.
 - `runs/<id>/{production,runtime,gateway}-compile.json` with per-source build outcomes.
@@ -161,21 +164,47 @@ bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
 
 ## Native results
 
-| Gate                       | Result                                                                             |
-| -------------------------- | ---------------------------------------------------------------------------------- |
-| Production compile         | 373/373 passed (369 runtime/module sources, shared startup and three entry points) |
-| Vendor compile             | simdjson and simdutf both built and archived                                       |
-| Static application archive | 369 members                                                                        |
-| Mach-O executable links    | 3/3 passed                                                                         |
-| Test and support compile   | 464/464 passed                                                                     |
-| Runtime phase              | 36/36 binaries, 458/458 cases                                                      |
-| Application phase          | 406/406 binaries, 4,576/4,576 cases                                                |
-| Whole suite                | 442/442 binaries, 5,034/5,034 cases                                                |
+| Gate                       | Result                                                        |
+| -------------------------- | ------------------------------------------------------------- |
+| Production compile         | 373/373 sources, including startup and the three entry points |
+| Vendor compile             | 11/11 sources across five archives                            |
+| Static application archive | 369 members                                                   |
+| Mach-O executable links    | 3/3 passed                                                    |
+| Test and support compile   | 472/472                                                       |
+| Runtime phase              | 37/37 binaries, 478/478 cases                                 |
+| Application phase          | 413/413 binaries, 4,629/4,629 cases                           |
+| Whole suite                | 450/450 binaries, 5,107/5,107 cases                           |
 
-The cold standalone runtime command took 652.31 s. The full suite took 1,206.90 s after
-reusing verified production and runtime test objects. The clean receipt binds commit
-`b05ecda8d3727b56b791a363ec344ba2f1093230` and tree
-`c1c4aa854fb7488c05aa80d7b589bc776fc717f1`. The findings record the output hashes.
+The cold standalone runtime command took 265.98 s. The first full run found four stale JSON diagnostics
+in the Darwin native KV vectors. After that fixture update, the full rerun took 509.92 s with cached
+objects and qualified commit `aab86c74fab172eca13298c4da5ca21eb5463d69`, tree
+`3a1e3c79d3eed21128d1708d10f7d2f8b6f83c21`. [Receipt hashes](findings/cppgw-macos-requal-f1-20261118.md)
+
+## Build the release archive
+
+Run the macOS release workflow's entry point from a clean checkout with the Homebrew dependencies installed.
+It prepares its own SQLite 3.54.0, runs the runtime suite again, and packages three ad-hoc-signed arm64 executables
+with their static library licenses and a `VERSION` manifest. The package verifier checks that each executable
+links only system dylibs. [Release workflow](../../../.github/workflows/cpp-gateway-release.yml)
+
+```sh
+mkdir "$UOS_MAC_BUILD"/release "$UOS_MAC_BUILD"/package-home "$UOS_MAC_BUILD"/package-tmp
+mkdir "$UOS_MAC_BUILD"/unpacked "$UOS_MAC_BUILD"/version-home "$UOS_MAC_BUILD"/version-tmp
+archive="$UOS_MAC_BUILD/release/uos-gateway-macos-arm64.tar.gz"
+env -i PATH=/opt/homebrew/bin:/usr/bin:/bin HOME="$UOS_MAC_BUILD/package-home" TMPDIR="$UOS_MAC_BUILD/package-tmp" \
+  python3 -B cpp/gateway/packaging/macos/build.py "$archive"
+(cd "$UOS_MAC_BUILD/release" && shasum -a 256 uos-gateway-macos-arm64.tar.gz > SHA256SUMS && shasum -a 256 -c SHA256SUMS)
+tar --no-same-owner --no-same-permissions -xzf "$archive" -C "$UOS_MAC_BUILD/unpacked"
+expected="uos-gateway $(git rev-parse HEAD)"
+version=$(cd "$UOS_MAC_BUILD/unpacked" && env -i PATH=/usr/bin:/bin HOME="$UOS_MAC_BUILD/version-home" \
+  TMPDIR="$UOS_MAC_BUILD/version-tmp" /usr/bin/sandbox-exec -p '(version 1)(allow default)(deny network*)' \
+  ./bin/uos-gateway --version)
+test "$version" = "$expected" && printf '%s\n' "$version"
+```
+
+The workflow build took 399.86 s and produced a 142,729,792-byte archive. Its `VERSION` records minimum
+macOS 26.0. The sandboxed version command printed `uos-gateway aab86c74fab172eca13298c4da5ca21eb5463d69`.
+[Installation guide](../packaging/macos/INSTALL.md) · [Package receipt](findings/cppgw-macos-requal-f1-20261118.md)
 
 ## Proven Darwin behavior and remaining boundaries
 
@@ -205,5 +234,5 @@ reusing verified production and runtime test objects. The clean receipt binds co
   closure, ELF native artifacts and Linux confinement. The linked gateway reached the runtime closure
   check with a private synthetic manifest and exited 1 with `runtime closure platform is unsupported`.
   Idle gateway RSS remains unmeasured.
-- Packaging, production same-binary acceptance, Mac service activation, Linux/Pi regression execution,
-  and other sanitizer/fuzz/performance profiles remain separate work.
+- Production same-binary acceptance, Mac service activation, Linux/Pi regression execution,
+  and other sanitizer, fuzz and performance profiles remain separate work.
