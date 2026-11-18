@@ -2608,8 +2608,30 @@
       ]
     },
     "src/kernel/policy_queue.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "63-81,85-138",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Queue normalization, update and optimistic commit",
+          "evidence": "The store and atomic builder stay in the frame; normalization and sort consume only local data synchronously, and the selected record is copied before the commit wait."
+        },
+        {
+          "lines": "150-161",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "List policy queue",
+          "evidence": "The promise, shared store, key and result are owned. Iteration starts after the read and finishes synchronously before return."
+        }
+      ]
     },
     "src/kernel/quota_reservations.cpp": {
       "reviewed": false,

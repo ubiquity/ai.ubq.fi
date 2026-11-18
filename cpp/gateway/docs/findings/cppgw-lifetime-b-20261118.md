@@ -110,7 +110,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/kernel/quota_write.hpp`
 - [x] `include/uos/kernel/usage.hpp`
 - [x] `src/kernel/attestation.cpp`
-- [ ] `src/kernel/policy_queue.cpp`
+- [x] `src/kernel/policy_queue.cpp`
 - [ ] `src/kernel/quota_reservations.cpp`
 - [ ] `src/kernel/quota_reserve.cpp`
 - [ ] `src/kernel/quota_v2.cpp`
@@ -751,6 +751,13 @@ Usage read methods own identities and options, with a shared store or a resolved
 | 442-455,568-574 | JTI cache cleanup and update | **SAFE** | Iteration and deletion are synchronous, the key is copied before deletion, and no alias into the cache is used after a suspension. |
 | 505-566,584-599 | Attestation and repository context composition | **SAFE** | Both frames own the request, options, token and parsed state. Digest and signature children receive copies, and variant-member pointers are used only synchronously. |
 
+### `src/kernel/policy_queue.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 63-81,85-138 | Queue normalization, update and optimistic commit | **SAFE** | The store and atomic builder stay in the frame; normalization and sort consume only local data synchronously, and the selected record is copied before the commit wait. |
+| 150-161 | List policy queue | **SAFE** | The promise, shared store, key and result are owned. Iteration starts after the read and finishes synchronously before return. |
+
 
 ## Ranked defects and counts
 
@@ -956,4 +963,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-87/97 files reviewed. **DEFECT 9, SAFE 199, UNCLEAR 4.**
+88/97 files reviewed. **DEFECT 9, SAFE 201, UNCLEAR 4.**
