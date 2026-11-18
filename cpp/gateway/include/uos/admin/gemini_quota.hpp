@@ -37,11 +37,11 @@ namespace uos::admin::gemini_quota {
 
   rt::Task<rt::Response> handleAdminGeminiQuota();
   rt::Task<rt::Response> handleAdminGeminiQuotaRefresh(rt::Request req);
-  rt::Task<rt::Response> handleAdminGeminiQuotaRefresh(rt::Request req, const GeminiQuotaOptions& options);
+  rt::Task<rt::Response> handleAdminGeminiQuotaRefresh(rt::Request req, GeminiQuotaOptions options);
 
   // Test seams keep the same filesystem parser while selecting an isolated `.data` directory.
-  rt::Task<Snapshot> readSnapshot(const std::string& directory, double now_ms);
-  rt::Task<Snapshot> refreshSnapshot(const std::string& directory, const GeminiQuotaOptions& options, double now_ms);
+  rt::Task<Snapshot> readSnapshot(std::string directory, double now_ms);
+  rt::Task<Snapshot> refreshSnapshot(std::string directory, GeminiQuotaOptions options, double now_ms);
 
   std::optional<Snapshot> projectUsageCommand(const json::value& result, double observed_at_ms);
   json::value snapshotJson(const Snapshot& snapshot, double now_ms);

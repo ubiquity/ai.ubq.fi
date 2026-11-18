@@ -313,12 +313,12 @@ namespace uos::provider::gemini {
 
   void setGeminiCliRunnerForTest(GeminiCliRunner runner) { testRunner() = std::move(runner); }
 
-  rt::Task<GeminiCliTurn> runGeminiCli(const GeminiCliOptions& options) {
+  rt::Task<GeminiCliTurn> runGeminiCli(GeminiCliOptions options) {
     if (testRunner()) return runGeminiCli(options, *testRunner());
-    return runGeminiCli(options, {});
+    return runGeminiCli(std::move(options), {});
   }
 
-  rt::Task<GeminiCliTurn> runGeminiCli(const GeminiCliOptions& options, const GeminiCliRunner& runner) {
+  rt::Task<GeminiCliTurn> runGeminiCli(GeminiCliOptions options, GeminiCliRunner runner) {
     if (runner) {
       auto task = runner(options);
       co_return co_await std::move(task);
@@ -452,8 +452,10 @@ namespace uos::provider::gemini {
   }
 
   rt::Task<rt::Response> handleGeminiChatCompletions(rt::Request req, json::object rawRecord, std::string modelRaw,
-    const tel::UsageContext* usageContext, const GeminiHandlerOptions& handlerOptions) {
+    const tel::UsageContext* usageContext, GeminiHandlerOptions handlerOptions) {
     static_cast<void>(req);
+    GeminiHandlerOptions effectiveOptions = handlerOptions;
+    if (!effectiveOptions.runner && testRunner()) effectiveOptions.runner = *testRunner();
     std::optional<GeminiCliTurn> turn;
     rt::Reason failure;
     bool admitted = false;
@@ -470,7 +472,7 @@ namespace uos::provider::gemini {
       }
       const tel::RecordRequestUsageDetails details{.model = modelRaw, .route = "chat.completions", .stream = prepared.stream, .reasoning = prepared.reasoning};
       co_await tel::recordRequestUsage(usageContext, details).wait();
-      auto task = runWithAdmission(prepared, *model, usageContext, handlerOptions, admitted);
+      auto task = runWithAdmission(prepared, *model, usageContext, effectiveOptions, admitted);
       turn = co_await std::move(task);
     } catch (...) {
       failure = std::current_exception();
@@ -483,9 +485,9 @@ namespace uos::provider::gemini {
     const double created = rt::Math::floor(rt::dateNow() / 1000);
     const std::string id = normalizedId(turn->conversationId.value_or(""), "chatcmpl-");
     if (usageContext && usageContext->responseTelemetry) usageContext->responseTelemetry->providerRequestId = turn->conversationId;
-    if (handlerOptions.refreshQuota) {
+    if (effectiveOptions.refreshQuota) {
       rt::spawn(admin::gemini_quota::refreshSnapshot(rt::path::resolve(rt::process::cwd(), ".data"),
-                  admin::gemini_quota::GeminiQuotaOptions{.runner = handlerOptions.runner, .force_refresh = true}, rt::dateNow()),
+                  admin::gemini_quota::GeminiQuotaOptions{.runner = effectiveOptions.runner, .force_refresh = true}, rt::dateNow()),
         rt::ignoreRejection);
     }
     chat::stream_translation::markChatSemanticOutput(usageContext);
@@ -518,8 +520,10 @@ namespace uos::provider::gemini {
   }
 
   rt::Task<rt::Response> handleGeminiResponses(rt::Request req, json::object rawRecord, std::string modelRaw,
-    const tel::UsageContext* usageContext, const GeminiHandlerOptions& handlerOptions) {
+    const tel::UsageContext* usageContext, GeminiHandlerOptions handlerOptions) {
     static_cast<void>(req);
+    GeminiHandlerOptions effectiveOptions = handlerOptions;
+    if (!effectiveOptions.runner && testRunner()) effectiveOptions.runner = *testRunner();
     std::optional<GeminiCliTurn> turn;
     rt::Reason failure;
     bool admitted = false;
@@ -542,7 +546,7 @@ namespace uos::provider::gemini {
       }
       const tel::RecordRequestUsageDetails details{.model = modelRaw, .route = "responses", .stream = prepared.stream, .reasoning = prepared.reasoning};
       co_await tel::recordRequestUsage(usageContext, details).wait();
-      auto task = runWithAdmission(prepared, *model, usageContext, handlerOptions, admitted);
+      auto task = runWithAdmission(prepared, *model, usageContext, effectiveOptions, admitted);
       turn = co_await std::move(task);
     } catch (...) {
       failure = std::current_exception();
@@ -561,9 +565,9 @@ namespace uos::provider::gemini {
     const auto completion = syntheticCompletion(chatId, modelRaw, created, turn->response, usage);
     rt::Headers headers{{"x-uos-upstream", "gemini"}};
     if (turn->conversationId) headers.set("x-uos-provider-request-id", *turn->conversationId);
-    if (handlerOptions.refreshQuota) {
+    if (effectiveOptions.refreshQuota) {
       rt::spawn(admin::gemini_quota::refreshSnapshot(rt::path::resolve(rt::process::cwd(), ".data"),
-                  admin::gemini_quota::GeminiQuotaOptions{.runner = handlerOptions.runner, .force_refresh = true}, rt::dateNow()),
+                  admin::gemini_quota::GeminiQuotaOptions{.runner = effectiveOptions.runner, .force_refresh = true}, rt::dateNow()),
         rt::ignoreRejection);
     }
     chat::stream_translation::markChatSemanticOutput(usageContext);

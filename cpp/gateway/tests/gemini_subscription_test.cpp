@@ -49,6 +49,7 @@
 #include "uos/rt/test_async.hpp"
 
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <unistd.h>
 #include <variant>
@@ -67,9 +68,10 @@ namespace {
 
   gemini::GeminiCliRunner turnRunner() {
     return [](const gemini::GeminiCliOptions& command) -> rt::Task<gemini::GeminiCliTurn> {
-      EXPECT_EQ(command.mode, "plan");
-      EXPECT_EQ(command.disableSlashCommands, true);
-      EXPECT_EQ(command.streamJson, true);
+      const bool usage = command.prompt == "/usage";
+      EXPECT_EQ(command.mode, usage ? std::string() : std::string("plan"));
+      EXPECT_EQ(command.disableSlashCommands, !usage);
+      EXPECT_EQ(command.streamJson, !usage);
       gemini::GeminiCliTurn turn;
       turn.response = "GEMINI_OK";
       turn.conversationId = "80d7987f-f2e8-4ecf-a410-1d34184732a7";
@@ -124,6 +126,8 @@ ASYNC_TEST("Gemini CLI /usage projects the exact refreshable subscription bucket
 ASYNC_TEST("Gemini quota refresh writes a private snapshot through the CLI usage command") {
   const std::string root = rt::fs::mkdtempSync("/tmp/gemini-quota-");
   const std::string data = rt::path::join(root, ".data");
+  EXPECT_EQ(rt::path::isAbsolute(data), true);
+  EXPECT_EQ(std::filesystem::path(data).filename(), std::filesystem::path(".data"));
   rt::fs::mkdirSync(data, {.mode = 0700});
   auto cleanup = rt::scopeExit([root] { rt::fs::rmSync(root, {.recursive = true, .force = true}); });
   quota::GeminiQuotaOptions options;

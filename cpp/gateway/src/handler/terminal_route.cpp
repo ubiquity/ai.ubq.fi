@@ -314,7 +314,7 @@ namespace uos::handler::terminal_route {
           input.sentinelReplayOmission = sentinelReplayOmission;
           auto pending = terminal_log::withTerminalRequestLog(withCors(http::withRequestId(decorated, requestId)), input);
           auto result = co_await pending.wait();
-          co_return result;
+          co_return openai_telemetry::aggregateResponseTelemetry({response}, std::move(result));
         } catch (...) { failure = std::current_exception(); }
         sentinel::replay_observation::zeroSentinelReplayInput(sentinelReplayInput);
         sentinel::replay_observation::disposeSentinelUpstreamRecorder(sentinelReplayInput);

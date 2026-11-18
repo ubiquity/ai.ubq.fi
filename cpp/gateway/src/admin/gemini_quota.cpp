@@ -114,8 +114,9 @@ namespace uos::admin::gemini_quota {
       return result;
     }
 
-    void requireDirectory(const std::string& directory) {
-      if (!rt::path::isAbsolute(directory) || std::filesystem::path(directory).filename() != ".data") {
+    void requireDirectory(std::string_view directory) {
+      const std::filesystem::path stateDirectory(directory);
+      if (!stateDirectory.is_absolute() || stateDirectory.filename() != ".data") {
         throw rt::JsError("Gemini quota requires an absolute gateway state directory.");
       }
       const auto info = rt::fs::lstatSync(directory);
@@ -126,7 +127,7 @@ namespace uos::admin::gemini_quota {
 
     std::string filePath(const std::string& directory) { return rt::path::join(directory, std::string(GEMINI_QUOTA_FILE)); }
 
-    rt::Task<Snapshot> readSnapshotInternal(const std::string& directory, double nowMs) {
+    rt::Task<Snapshot> readSnapshotInternal(std::string directory, double nowMs) {
       requireDirectory(directory);
       int fd = -1;
       try {
@@ -151,7 +152,7 @@ namespace uos::admin::gemini_quota {
       co_return snapshot.value_or(unavailable("unavailable"));
     }
 
-    rt::Task<void> writeSnapshot(const std::string& directory, const Snapshot& snapshot) {
+    rt::Task<void> writeSnapshot(std::string directory, Snapshot snapshot) {
       requireDirectory(directory);
       const std::string path = filePath(directory);
       const std::string temporary = path + ".tmp-" + rt::crypto::randomUUID();
@@ -167,7 +168,7 @@ namespace uos::admin::gemini_quota {
       co_await rt::microtask();
     }
 
-    rt::Task<Snapshot> refreshNow(const std::string& directory, const GeminiQuotaOptions& options, double nowMs) {
+    rt::Task<Snapshot> refreshNow(std::string directory, GeminiQuotaOptions options, double nowMs) {
       provider::gemini::GeminiCliOptions command{
         .model = "gemini-3.8-flash-low", .prompt = "/usage", .mode = "", .disableSlashCommands = false, .streamJson = false};
       auto task = provider::gemini::runGeminiCli(command, options.runner);
@@ -215,9 +216,9 @@ namespace uos::admin::gemini_quota {
     return result;
   }
 
-  rt::Task<Snapshot> readSnapshot(const std::string& directory, double nowMs) { return readSnapshotInternal(directory, nowMs); }
+  rt::Task<Snapshot> readSnapshot(std::string directory, double nowMs) { return readSnapshotInternal(std::move(directory), nowMs); }
 
-  rt::Task<Snapshot> refreshSnapshot(const std::string& directory, const GeminiQuotaOptions& options, double nowMs) {
+  rt::Task<Snapshot> refreshSnapshot(std::string directory, GeminiQuotaOptions options, double nowMs) {
     RefreshGate& gate = refreshGate();
     if (gate.pending) {
       const auto pending = *gate.pending;
@@ -249,7 +250,7 @@ namespace uos::admin::gemini_quota {
     return handleAdminGeminiQuotaRefresh(std::move(req), GeminiQuotaOptions{.force_refresh = true});
   }
 
-  rt::Task<rt::Response> handleAdminGeminiQuotaRefresh(rt::Request, const GeminiQuotaOptions& options) {
+  rt::Task<rt::Response> handleAdminGeminiQuotaRefresh(rt::Request, GeminiQuotaOptions options) {
     const double now = rt::dateNow();
     try {
       auto task = refreshSnapshot(rt::path::resolve(rt::process::cwd(), ".data"), options, now);

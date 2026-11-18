@@ -74,9 +74,9 @@ namespace uos::provider::gemini {
   // Test seam. An empty runner selects the real installed `agy` executable.
   using GeminiCliRunner = std::function<rt::Task<GeminiCliTurn>(const GeminiCliOptions&)>;
 
-  rt::Task<GeminiCliTurn> runGeminiCli(const GeminiCliOptions& options);
+  rt::Task<GeminiCliTurn> runGeminiCli(GeminiCliOptions options);
   void setGeminiCliRunnerForTest(GeminiCliRunner runner);
-  rt::Task<GeminiCliTurn> runGeminiCli(const GeminiCliOptions& options, const GeminiCliRunner& runner);
+  rt::Task<GeminiCliTurn> runGeminiCli(GeminiCliOptions options, GeminiCliRunner runner);
 
   struct GeminiHandlerOptions {
     GeminiCliRunner runner{};
@@ -84,9 +84,9 @@ namespace uos::provider::gemini {
   };
 
   rt::Task<rt::Response> handleGeminiChatCompletions(rt::Request req, json::object rawRecord, std::string modelRaw,
-    const openai_telemetry::UsageContext* usageContext, const GeminiHandlerOptions& options = {});
+    const openai_telemetry::UsageContext* usageContext, GeminiHandlerOptions options = {});
   rt::Task<rt::Response> handleGeminiResponses(rt::Request req, json::object rawRecord, std::string modelRaw,
-    const openai_telemetry::UsageContext* usageContext, const GeminiHandlerOptions& options = {});
+    const openai_telemetry::UsageContext* usageContext, GeminiHandlerOptions options = {});
 
   std::optional<openai_telemetry::UsageTokens> geminiUsageTokens(const json::object& usage);
 }
