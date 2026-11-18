@@ -171,7 +171,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/inference_deadline.cpp`
 - [x] `src/input_normalization.cpp`
 - [x] `src/jev_compaction/compaction.cpp`
-- [ ] `src/jev_compaction/hybrid.cpp`
+- [x] `src/jev_compaction/hybrid.cpp`
 - [ ] `src/kv.cpp`
 - [ ] `src/kv_conversion/cli.cpp`
 - [ ] `src/kv_conversion/convert.cpp`
@@ -939,6 +939,12 @@ Reviewed compaction and rewrite tasks, request parsing, timed fetch callbacks, a
 - L261, 266, 268, 282, 381, 385, 388, 390, 392, 397, 398, 400, 401, 407 **SAFE** · Fetch and source adapters retain their callable through returned Tasks. The pending response reaction and stream own shared State, and abort callbacks use weak state with release on normal rejection, drain or cancel.
 - L238, 246, 250, 385, 388, 390 **DEFECT** · A timed fetch wrapper can be discarded after returning a body that has buffered a chunk and while its external abort signal remains live. State destruction leaves the weak forwarding listener installed, and the weak timeout callback can no longer unregister it. Release on State destruction as well as normal stream completion.
 
+### `src/jev_compaction/hybrid.cpp`
+
+Reviewed non-streaming residue jobs, worker fan-out and synchronous transcript helpers.
+
+- L113, 116, 120, 121, 123, 189, 190 **SAFE** · Each worker holds shared work plus a copied chunk and owns its fetch options and response. Shared vector sizes never change after dispatch, and workers use reserved distinct indices even if their parent join fails.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1152,4 +1158,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-81/286 files reviewed. 179 sites: 165 SAFE, 14 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+82/286 files reviewed. 180 sites: 166 SAFE, 14 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

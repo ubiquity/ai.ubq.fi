@@ -3766,8 +3766,28 @@
       ]
     },
     "src/jev_compaction/hybrid.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed non-streaming residue jobs, worker fan-out and synchronous transcript helpers.",
+      "sites": [
+        {
+          "lines": [
+            113,
+            116,
+            120,
+            121,
+            123,
+            189,
+            190
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each worker holds shared work plus a copied chunk and owns its fetch options and response. Shared vector sizes never change after dispatch, and workers use reserved distinct indices even if their parent join fails."
+        }
+      ]
     },
     "src/kv.cpp": {
       "reviewed": false,
