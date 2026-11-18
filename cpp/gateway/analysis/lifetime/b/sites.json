@@ -393,8 +393,28 @@
       ]
     },
     "src/runtime/http_body.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "32-69,91-118",
+          "verdict": "SAFE",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Body event and abort handlers",
+          "evidence": "Registered listeners use weak state and lock it for dispatch. The raw self callbacks are synchronous members of that same live state and are never independently registered."
+        },
+        {
+          "lines": "132-150",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "c"
+          ],
+          "symbol": "Request body source algorithms and controller",
+          "evidence": "Source callbacks own body state; the state drops its strong controller after synchronous start and then reaches the stream weakly. EOF, cancel and dispose remove registrations."
+        }
+      ]
     },
     "src/runtime/http_early_sse.cpp": {
       "reviewed": false,

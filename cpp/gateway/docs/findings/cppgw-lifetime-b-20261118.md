@@ -32,7 +32,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/runtime/permissions_linux.hpp`
 - [x] `include/uos/runtime/websocket.hpp`
 - [x] `src/runtime/http.cpp`
-- [ ] `src/runtime/http_body.cpp`
+- [x] `src/runtime/http_body.cpp`
 - [ ] `src/runtime/http_early_sse.cpp`
 - [ ] `src/runtime/http_tasks.cpp`
 - [ ] `src/runtime/http_upgrade.cpp`
@@ -203,6 +203,13 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 1935-1944,2022-2039 | Shutdown coroutine and lingering close timer | **SAFE** | Shutdown takes state and close callback by value; the timer holds the callable for each scheduled invocation and its self-reference and state reference are weak. |
 | 1992-2015,2040-2062 | Listen callback, abort cleanup and public handles | **SAFE** | Listening and terminal callbacks weakly lock state. The finished reaction removes the external abort registration and clears the state-held listener; returned handles own state for their use. |
 
+### `src/runtime/http_body.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 32-69,91-118 | Body event and abort handlers | **SAFE** | Registered listeners use weak state and lock it for dispatch. The raw self callbacks are synchronous members of that same live state and are never independently registered. |
+| 132-150 | Request body source algorithms and controller | **SAFE** | Source callbacks own body state; the state drops its strong controller after synchronous start and then reaches the stream weakly. EOF, cancel and dispose remove registrations. |
+
 
 ## Ranked defects and counts
 
@@ -368,4 +375,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-9/97 files reviewed. **DEFECT 5, SAFE 28, UNCLEAR 2.**
+10/97 files reviewed. **DEFECT 5, SAFE 30, UNCLEAR 2.**
