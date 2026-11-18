@@ -297,7 +297,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_codex.hpp`
 - [x] `include/uos/authority/native_codex_429.hpp`
 - [x] `include/uos/authority/native_codex_capacity.hpp`
-- [ ] `include/uos/authority/native_codex_contracts.hpp`
+- [x] `include/uos/authority/native_codex_contracts.hpp`
 - [ ] `include/uos/authority/native_codex_evaluation.hpp`
 - [ ] `include/uos/authority/native_codex_mutations.hpp`
 - [ ] `include/uos/authority/native_contracts.hpp`
@@ -1660,6 +1660,12 @@ Reviewed quota-class string views and the span-based capacity merge overloads.
 
 - L68, 71, 77, 79, 81, 85, 88, 96, 99, 100, 101, 118, 134 **SAFE** · Capacity helpers consume views and spans synchronously, and the variadic wrapper keeps its backing vector live through the merge. Results and keys own their data.
 
+### `include/uos/authority/native_codex_contracts.hpp`
+
+Reviewed owning pool, capacity, slot and route records and their synchronous codecs.
+
+- L232, 239, 263, 274, 281, 286, 344 **SAFE** · The alternative labels refer to static literals. Runtime data is stored in the owning record fields.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1908,4 +1914,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-189/286 files reviewed. 362 sites: 341 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+190/286 files reviewed. 363 sites: 342 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

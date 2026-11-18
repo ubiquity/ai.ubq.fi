@@ -8093,8 +8093,27 @@
       ]
     },
     "include/uos/authority/native_codex_contracts.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed owning pool, capacity, slot and route records and their synchronous codecs.",
+      "sites": [
+        {
+          "lines": [
+            232,
+            239,
+            263,
+            274,
+            281,
+            286,
+            344
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The alternative labels refer to static literals. Runtime data is stored in the owning record fields."
+        }
+      ]
     },
     "include/uos/authority/native_codex_evaluation.hpp": {
       "reviewed": false,
