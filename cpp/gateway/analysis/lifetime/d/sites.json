@@ -4809,8 +4809,24 @@
       ]
     },
     "src/openai.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed default model and reasoning waits and synchronous request signal and schema accessors.",
+      "sites": [
+        {
+          "lines": [
+            22,
+            27,
+            31,
+            46
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The defaults use named runtime snapshot values. Signal accessors copy the request/context signals synchronously before they return."
+        }
+      ]
     },
     "src/openai_schema.cpp": {
       "reviewed": false,

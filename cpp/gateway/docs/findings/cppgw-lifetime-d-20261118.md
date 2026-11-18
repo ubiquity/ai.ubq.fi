@@ -214,7 +214,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/models/codex_models_whitelist.cpp`
 - [x] `src/models/metadata.cpp`
 - [x] `src/models/openrouter_models.cpp`
-- [ ] `src/openai.cpp`
+- [x] `src/openai.cpp`
 - [ ] `src/openai_schema.cpp`
 - [ ] `src/openai_telemetry.cpp`
 - [ ] `src/optional_telemetry_queue.cpp`
@@ -1120,6 +1120,12 @@ Reviewed model refresh coalescing, injected Fetch ownership and the lookup cache
 - L221, 222, 227, 234 **SAFE** · The request task and Fetch retain the callable and signal. Every body operation uses a named Response or owned stream.
 - L320, 326, 327, 332, 333, 337, 342, 346, 351, 354, 355, 356 **SAFE** · The module-state reference points to static storage, and the coroutine copies fetcher and pending Promise before suspension. A detached refresh gets its own inputs, and synchronous matching finishes before the shared snapshots can be replaced.
 
+### `src/openai.cpp`
+
+Reviewed default model and reasoning waits and synchronous request signal and schema accessors.
+
+- L22, 27, 31, 46 **SAFE** · The defaults use named runtime snapshot values. Signal accessors copy the request/context signals synchronously before they return.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1368,4 +1374,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-107/286 files reviewed. 222 sites: 205 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+108/286 files reviewed. 223 sites: 206 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
