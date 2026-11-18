@@ -2244,7 +2244,8 @@
       ]
     },
     "src/codex/routing_evaluation.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Routing classification and proof folds are synchronous. The borrowed pool, account and map elements are consumed during each call.",
       "sites": []
     },
     "src/codex/routing_mutations.cpp": {

@@ -211,7 +211,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/responses_operations.cpp`
 - [x] `src/codex/responses_runners.cpp`
 - [x] `src/codex/responses_state.cpp`
-- [ ] `src/codex/routing_evaluation.cpp`
+- [x] `src/codex/routing_evaluation.cpp`
 - [ ] `src/codex/routing_mutations.cpp`
 - [ ] `src/codex/routing_serial.cpp`
 - [ ] `src/codex/routing_state.cpp`
@@ -1364,3 +1364,7 @@ Runner coroutines carry a strong context while request-local state is driven ser
 Creation reads and packages one request-local state. State reset and decision helpers are synchronous.
 
 - 13-94 · response context construction and callbacks · **SAFE** · The input, strong pool, route result and coordinator live in the frame. The stored reload callback owns its config or is copied from options.
+
+### `src/codex/routing_evaluation.cpp`
+
+Routing classification and proof folds are synchronous. The borrowed pool, account and map elements are consumed during each call.
