@@ -2,7 +2,7 @@
 
 Plan row 28. Target 55–95 net first-party lines. Risk 3. The active Headers lane and this brief need one owner. Recheck the parser and writer callers against the rebased tree.
 
-Own `src/rt/headers.cpp:13–229`, `include/uos/rt/headers.hpp:19–103` and `tests/rt/headers_test.cpp`. Keep the public `Headers` API and `detail::headerWireFields` while parser and transport changes integrate. The Fetch wire writer consumes the first spelling of each field at `src/rt/fetch_transport_http.cpp:179`.
+Own `src/rt/headers.cpp:13–229`, `include/uos/rt/headers.hpp:19–102` and `tests/rt/headers_test.cpp`. Keep the public `Headers` API and `detail::headerWireFields` while parser and transport changes integrate. The Fetch wire writer consumes the first spelling of each field at `src/rt/fetch_transport_http.cpp:179`.
 
 1. Store lowercased name, first spelling and combined value together in one sorted `std::vector` record. Use a single projected lookup for get/has/append/set/delete and a single combined Cookie value. Preserve the separate ordered Set-Cookie vector and the wire projection's first spelling until the field is deleted.
 2. Remove the common-name spellings used only to render invalid-value diagnostics. Keep ASCII token validation, trim and ByteString checks before modifying the collection. Preserve every reject/accept outcome, with fresh assertions for rejection classification if a legacy diagnostic string changes.
