@@ -185,7 +185,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/lib/jev_compaction/codex_items.cpp`
 - [x] `src/lib/jev_compaction/compact.cpp`
 - [x] `src/lib/jev_compaction/jev_codex_smoke.cpp`
-- [ ] `src/lib/jev_compaction/jev_compaction_smoke.cpp`
+- [x] `src/lib/jev_compaction/jev_compaction_smoke.cpp`
 - [ ] `src/lib/jev_compaction/request.cpp`
 - [ ] `src/lib/jev_compaction/state.cpp`
 - [ ] `src/lib/jev_compaction/types.cpp`
@@ -1028,6 +1028,14 @@ Reviewed the offline smoke tool's fake server, subprocess output pumps, RPC time
 - L479, 480, 485, 496, 522, 537, 539 **SAFE** · Thread callbacks copy the RPC owner and ID into owned Tasks. Notification scans use fresh indexing and consume each borrow before yielding.
 - L557, 562, 565, 583, 584, 586, 587, 592, 593, 596, 649, 654, 658, 663, 665, 667, 670, 675, 681, 684, 686, 696, 698, 702, 704, 722, 724, 733, 746, 779, 781, 785, 790, 807, 809, 811, 820, 835, 854, 855, 857, 861, 863, 864, 876 **SAFE** · Smoke startup, gateway stop and thread work keep copied fixture children and paths through each wait. Fetch owns its callable through use and normal teardown replaces it after subprocess waits.
 
+### `src/lib/jev_compaction/jev_compaction_smoke.cpp`
+
+Reviewed the local smoke run, owned mock transport callbacks, terminal polling and gateway lifecycle. Reviewed CLI code by reading and did not invoke it.
+
+- L227, 241, 246, 250, 268, 269, 271, 272, 278, 279, 280, 287, 288 **SAFE** · Polling owns its predicate and the gateway handle's noncoroutine stop factory copies the server and store into the child. Store close occurs after the server shutdown wait.
+- L294, 305, 321, 336, 337, 342 **SAFE** · The fake server task owns its request and shared call vector. Fixture preparation and reads keep the native-store and artifact inputs through completion.
+- L349, 361, 368, 372, 388, 390, 392, 408, 412, 418, 421, 435, 441, 444, 464, 466, 468, 482, 490, 499, 502, 504, 506, 515 **SAFE** · Terminal polls retain shared console capture through their await, Fetch retains its callback and the outer runner keeps gateway, upstream and utility handles through normal cleanup.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1241,4 +1249,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-95/286 files reviewed. 202 sites: 186 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+96/286 files reviewed. 205 sites: 189 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

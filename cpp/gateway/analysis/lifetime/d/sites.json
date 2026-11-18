@@ -4323,8 +4323,86 @@
       ]
     },
     "src/lib/jev_compaction/jev_compaction_smoke.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the local smoke run, owned mock transport callbacks, terminal polling and gateway lifecycle. Reviewed CLI code by reading and did not invoke it.",
+      "sites": [
+        {
+          "lines": [
+            227,
+            241,
+            246,
+            250,
+            268,
+            269,
+            271,
+            272,
+            278,
+            279,
+            280,
+            287,
+            288
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Polling owns its predicate and the gateway handle's noncoroutine stop factory copies the server and store into the child. Store close occurs after the server shutdown wait."
+        },
+        {
+          "lines": [
+            294,
+            305,
+            321,
+            336,
+            337,
+            342
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The fake server task owns its request and shared call vector. Fixture preparation and reads keep the native-store and artifact inputs through completion."
+        },
+        {
+          "lines": [
+            349,
+            361,
+            368,
+            372,
+            388,
+            390,
+            392,
+            408,
+            412,
+            418,
+            421,
+            435,
+            441,
+            444,
+            464,
+            466,
+            468,
+            482,
+            490,
+            499,
+            502,
+            504,
+            506,
+            515
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Terminal polls retain shared console capture through their await, Fetch retains its callback and the outer runner keeps gateway, upstream and utility handles through normal cleanup."
+        }
+      ]
     },
     "src/lib/jev_compaction/request.cpp": {
       "reviewed": false,
