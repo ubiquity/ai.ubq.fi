@@ -1742,7 +1742,7 @@
           "reason": "While shared refresh is pending, the signal owns its listener and the listener owns the same signal. Teardown before settlement or abort discards the finalizer without breaking that edge. Capture a weak signal state in the once listener and use the settled signal reason while the state is locked."
         },
         {
-          "lines": "538,543-549",
+          "lines": "526-534,538,543-549",
           "kind": "executor and sibling lifetime",
           "verdict": "SAFE",
           "reason": "newPromise calls its executor synchronously, and the abort race passes only owning promise values. Its shared-work finalizer owns the exact listener identity to remove on settlement."
@@ -1832,7 +1832,7 @@
           "reason": "Each child owns its candidate and hash, KV, or provider handle. None references the fan-out vector after a sibling can reject."
         },
         {
-          "lines": "332-357,440-465,565-603",
+          "lines": "332-357,421-431,440-465,565-603",
           "kind": "hash, duplicate, and credit scan awaits",
           "verdict": "SAFE",
           "reason": "The fence and inventory slices refer to immutable frame-owned inputs. Inventory and selection values remain alive through the awaited hash."
@@ -1950,6 +1950,12 @@
           "kind": "request transform and digest",
           "verdict": "SAFE",
           "reason": "The synchronous work stack stops using a frame reference after a push that may reallocate, and the digest coroutine owns the copied cache scope and key."
+        },
+        {
+          "lines": "611-618",
+          "kind": "joined retry without abort",
+          "verdict": "SAFE",
+          "reason": "The waiter owns the sleep callable until its only child settles."
         },
         {
           "lines": "623-635",
@@ -2182,7 +2188,7 @@
           "reason": "The only production caller is the serial runner waiting for reportHealthyFallback. The other map mutators run in separate, sequentially joined phases of that same request, so this loop has exclusive access to this context's map."
         },
         {
-          "lines": "511-594,600-714,718-763",
+          "lines": "511-599,600-714,718-763",
           "kind": "cohort, inventory, and overage awaits",
           "verdict": "SAFE",
           "reason": "Loops borrow from local candidate, observation and selection snapshots. Options, provider handles, fences and context stay owned through their joins."
@@ -2960,7 +2966,7 @@
       "note": "Pool work copies subscription data before forwarding and retains one shared lifetime per request.",
       "sites": [
         {
-          "lines": "53-124",
+          "lines": "53-127",
           "kind": "capability check, settlement hook, and pool fan-out",
           "verdict": "SAFE",
           "reason": "Each loadPoolState child owns a store/account copy. The joined bookkeeping frame owns each callback and its result/health snapshots."
@@ -3002,7 +3008,7 @@
           "reason": "Each refresh owns its options and signal. The routing lambda reads only local catalog values when invoked synchronously."
         },
         {
-          "lines": "319-356",
+          "lines": "142-150,319-356",
           "kind": "temporary Surplus transport",
           "verdict": "SAFE",
           "reason": "The frame copies the supplied telemetry and the dispatch callbacks capture independent context and marker copies through the joined fetch."
@@ -3175,7 +3181,7 @@
       "note": "The waterfall keeps one borrowed telemetry referent through serial provider attempts. Callback and accounting operations retain their required owners.",
       "sites": [
         {
-          "lines": "38-88,90-118",
+          "lines": "38-118",
           "kind": "primary hooks, telemetry and cancellation",
           "verdict": "SAFE",
           "reason": "The request's waiting frame retains context and the owned fetch options retain both hooks, which are used during joined dispatch. Bookkeeping owns reservation records."
@@ -3899,7 +3905,7 @@
       "note": "Provider selection reads and writes snapshots. Its in-flight token needs the same cleanup on frame destruction as on settlement.",
       "sites": [
         {
-          "lines": "82-96,102-107,181-204",
+          "lines": "82-96,102-107,181-204,258-262",
           "kind": "store, hash and selection snapshot ownership",
           "verdict": "SAFE",
           "reason": "The frame owns KV through the joined child or virtual task. Hash and selection reads do not keep shared map entries across suspension."

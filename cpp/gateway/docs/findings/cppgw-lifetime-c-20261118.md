@@ -345,11 +345,10 @@ supplemented by source and caller review.
 ```bash
 area=({src,include/uos}/{provider,codex,deepseek,paid_fallback,harmony,chat,embeddings,live})
 rg -n 'co_(await|return|yield)' "${area[@]}"
-rg -n 'rt::(all|allSettled|race|any|spawn|async)|\.then\(|\.catch_\(|\.finally_\(' "${area[@]}"
-rg -n 'addEventListener|set(On|Timeout|Interval)|\.pull\s*=|\.cancel\s*=|\[this|weak_from_this' "${area[@]}"
-rg -n -U '(?:auto|const auto)\s*(?:&&?\s*)?\[[^
-\]]+\]\s*=\s*co_await' "${area[@]}"
-rg -n -U '\(\s*co_await [^;]+\)\s*[.\[]|[a-zA-Z_]\w*\(\s*co_await' "${area[@]}"
+rg -n 'rt::(all|allSettled|race|any|spawn|async)\b|\.then\(|\.catch_\(|\.finally_\(' "${area[@]}"
+rg -n 'addEventListener|set(On|Timeout|Interval)|\.pull\s*=|\.cancel\s*=|\[this|\bweak_from_this\b' "${area[@]}"
+rg -n -U '\b(?:auto|const auto)\s*(?:&&?\s*)?\[[^\n\]]+\]\s*=\s*co_await' "${area[@]}"
+rg -n -U '\(\s*co_await [^;]+\)\s*[.\[]|\b[a-zA-Z_]\w*\(\s*co_await' "${area[@]}"
 rg -n 'co_await [^;]*\{' "${area[@]}"
 ```
 
@@ -401,7 +400,10 @@ mkdir "$launch/home" "$launch/tmp"
 mapfile -t files < <(cd cpp/gateway && rg --files src/{provider,codex,deepseek,paid_fallback,harmony,chat,embeddings,live} -g '*.cpp' | sort)
 arguments=()
 for path in "${files[@]}"; do arguments+=(--source "$path"); done
-env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC   HOME="$launch/home" TMPDIR="$launch/tmp"   bash cpp/gateway/tools/tidy.sh --compiler /usr/bin/clang++-21   --clang-tidy "$evidence/bin/clang-tidy-21" --config "$evidence/area-c.clang-tidy"   --jobs 3 --timeout 90 --build-dir "$launch/tidy-c" "${arguments[@]}"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC   HOME="$launch/home" TMPDIR="$launch/tmp" \
+    bash cpp/gateway/tools/tidy.sh --compiler /usr/bin/clang++-21 \
+    --clang-tidy "$evidence/bin/clang-tidy-21" --config "$evidence/area-c.clang-tidy" \
+    --jobs 3 --timeout 90 --build-dir "$launch/tidy-c" "${arguments[@]}"
 ```
 
 Retained run `tidy-c/tidy-baseline.json` names commit
@@ -455,9 +457,34 @@ evidence=/var/tmp/cppgw-lifetime-c.O1ER9aAI
 for target in live_sideband_http_test codex_dispatch_differential codex_supervisor_test paid_fallback_test; do
   launch=$(mktemp -d "$evidence/launch-asan.XXXXXXXX")
   mkdir "$launch/home" "$launch/tmp"
-  env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC     HOME="$launch/home" TMPDIR="$launch/tmp" CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4     UOS_CI_BUILD_DIR="$evidence/asan" UOS_CI_SQLITE_PREFIX="$evidence/sqlite"     PKG_CONFIG_PATH="$evidence/icu78/lib/pkgconfig" UOS_CI_CXXFLAGS="-isystem $evidence/boost_1_92_0"     UOS_CI_LDFLAGS="-L$evidence/boost_1_92_0/stage/lib -L$evidence/icu78/lib -Wl,-rpath,$evidence/icu78/lib -licudata"     bash cpp/gateway/tools/ci-build.sh --config asan "$target"
+  env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
+    HOME="$launch/home" TMPDIR="$launch/tmp" CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4 \
+    UOS_CI_BUILD_DIR="$evidence/asan" UOS_CI_SQLITE_PREFIX="$evidence/sqlite" \
+    PKG_CONFIG_PATH="$evidence/icu78/lib/pkgconfig" UOS_CI_CXXFLAGS="-isystem $evidence/boost_1_92_0" \
+    UOS_CI_LDFLAGS="-L$evidence/boost_1_92_0/stage/lib -L$evidence/icu78/lib -Wl,-rpath,$evidence/icu78/lib -licudata" \
+    bash cpp/gateway/tools/ci-build.sh --config asan "$target"
 done
 ```
+
+The continuation ran five more filters against checkpoint
+`a87e8fa107266aa9e3c49f2c9930093d516a4ea8` and tree
+`fe235d73fe4d2870e8a80dc8904d4512fe616dc4`. Use the same command above with these
+test names plus `.cpp`, add `UOS_CI_TIMEOUT=120` to the environment, and prefix
+`bash cpp/gateway/tools/ci-build.sh` with `timeout -k 5s 240s`. Each receipt has the
+same native input digest and 369/369 production objects accounted for.
+
+| Driver filter | Build s | Test wall s | Elapsed s | Passed cases |
+| --- | ---: | ---: | ---: | ---: |
+| `oss_stream_lifecycle_test.cpp` | 35.274 | 2.352 | 38.080 | 20/20 |
+| `provider_selection_health_differential_test.cpp` | 18.287 | 0.623 | 19.360 | 10/10 |
+| `embeddings_ledger_differential_test.cpp` | 20.286 | 3.607 | 24.396 | 7/7 |
+| `surplus_test.cpp` | 11.052 | 0.619 | 12.120 | 6/6 |
+| `metered_test.cpp` | 15.144 | 0.622 | 16.215 | 8/8 |
+
+Across the nine driver filters, 125 of 125 cases passed with zero sanitizer failures,
+build failures or timeouts. The focused suite results apply to those cases. The
+individual witnesses below exercise abandoned operations that the passing cases do
+not reach.
 
 ### Local lifetime witnesses
 
@@ -475,7 +502,10 @@ evidence=/var/tmp/cppgw-lifetime-c.O1ER9aAI
 for target in ownership retry; do
   scratch=$(mktemp -d /tmp/cppgw-witness.XXXXXXXX)
   parent_namespace=$(readlink /proc/self/ns/net)
-  sudo -n unshare --net --mount --pid --fork --mount-proc --propagation private --kill-child=SIGKILL --     /usr/bin/python3 -B cpp/gateway/cmake/ci/isolate.py "$scratch" "$evidence/witness/bin" "$target"     "$parent_namespace" "$(id -u)" "$(id -g)"     '{"PATH":"/usr/bin:/bin","LANG":"C.UTF-8","ASAN_OPTIONS":"detect_leaks=1:abort_on_error=1","UBSAN_OPTIONS":"halt_on_error=1"}'
+  sudo -n unshare --net --mount --pid --fork --mount-proc --propagation private --kill-child=SIGKILL -- \
+    /usr/bin/python3 -B cpp/gateway/cmake/ci/isolate.py "$scratch" "$evidence/witness/bin" "$target" \
+    "$parent_namespace" "$(id -u)" "$(id -g)" \
+    '{"PATH":"/usr/bin:/bin","LANG":"C.UTF-8","ASAN_OPTIONS":"detect_leaks=1:abort_on_error=1","UBSAN_OPTIONS":"halt_on_error=1"}'
   rmdir "$scratch"
 done
 ```
@@ -1356,7 +1386,7 @@ Refresh routing uses owned account snapshots and shares work while aborting only
 - 89-115,135-181,207-279 · response and refresh persistence awaits · **SAFE** · Response, parsed pool copies and database owners live in the joined frames, and the refresh decisions use scalar generation values.
 - 281-420,438-454,460-517 · lease, account, and retry awaits · **SAFE** · Each child receives copies of credentials, lease key and KV owner. Owner and lease views refer to local JSON and are consumed within one iteration.
 - 535-548 · abort listener ownership cycle · **DEFECT** · While shared refresh is pending, the signal owns its listener and the listener owns the same signal. Teardown before settlement or abort discards the finalizer without breaking that edge. Capture a weak signal state in the once listener and use the settled signal reason while the state is locked.
-- 538,543-549 · executor and sibling lifetime · **SAFE** · newPromise calls its executor synchronously, and the abort race passes only owning promise values. Its shared-work finalizer owns the exact listener identity to remove on settlement.
+- 526-534,538,543-549 · executor and sibling lifetime · **SAFE** · newPromise calls its executor synchronously, and the abort race passes only owning promise values. Its shared-work finalizer owns the exact listener identity to remove on settlement.
 - 554-608 · stateless refresh and single-flight finalizer · **SAFE** · Request and auth inputs are frame-owned. The hash-map value is copied before waiting and the registered eraser owns the account ID.
 
 ### `src/codex/auth_repair.cpp`
@@ -1387,7 +1417,7 @@ Pool evaluation snapshots inputs before concurrent work and keeps single-reader 
 
 - 133-185,192-226 · shadow KV read/write and list iterator · **SAFE** · The frame retains KV, its AtomicOperation or list iterator, and local decision data through each sequential suspension.
 - 297-313,377-408,490-512 · fail-fast all and provider interface · **SAFE** · Each child owns its candidate and hash, KV, or provider handle. None references the fan-out vector after a sibling can reject.
-- 332-357,440-465,565-603 · hash, duplicate, and credit scan awaits · **SAFE** · The fence and inventory slices refer to immutable frame-owned inputs. Inventory and selection values remain alive through the awaited hash.
+- 332-357,421-431,440-465,565-603 · hash, duplicate, and credit scan awaits · **SAFE** · The fence and inventory slices refer to immutable frame-owned inputs. Inventory and selection values remain alive through the awaited hash.
 - 528-551,634-645,667-737 · pool orchestration awaits · **SAFE** · Each frame owns its candidate, provider dependency and variant results and joins each nested operation before releasing them.
 
 ### `src/codex/banked_reset_provider.cpp`
@@ -1423,6 +1453,7 @@ Codex transport and retry use the request's owned argument state. The injectable
 - 89-113,145-211,224-272 · transport, health, and deadline callbacks · **SAFE** · The timer callback owns its controller, ScopeExit clears the timer, and beforeTransport remains frame-owned through the join. Spawned storage or body cancellation takes owned values.
 - 338-371 · dispatch coordinator callback chain · **SAFE** · The noncoroutine coordinator callbacks own their state. The outer dispatch frames retain the coordinator while the claim runs, and the then reaction owns the individual generation.
 - 380-390,396-481,514-544 · request transform and digest · **SAFE** · The synchronous work stack stops using a frame reference after a push that may reallocate, and the digest coroutine owns the copied cache scope and key.
+- 611-618 · joined retry without abort · **SAFE** · The waiter owns the sleep callable until its only child settles.
 - 623-635 · retry abort listener ownership cycle · **DEFECT** · While retry is suspended the signal owns its once listener and the listener owns that signal. Destroying the waiting frame before either branch settles skips explicit removal. Put removal in a scope guard so frame teardown also removes the listener.
 - 628-635 · retry sleeper closure after race · **DEFECT** · If the supplied retrySleep is a capturing coroutine and abort wins, the waiting frame destroys its copy of sleep. The losing sleeper can resume and use its dead closure. Wrap invocation in an owning rt::async child. The default function and current differential fixture use owning free tasks.
 - 639-645,712-791 · probe join and attributed response reads · **SAFE** · Probe promises are copied from the registry before allSettled. The auth loop retains its local pool snapshot through each joined identity hash.
@@ -1510,7 +1541,7 @@ Per-request callbacks lock a weak context before returning an owning coroutine. 
 
 - 191-218,253-387,453-476 · admission, proof, and banked candidate awaits · **SAFE** · Coroutine arguments own context and routing state, and fences snapshot account or row values before installation. Local KV remains live through each read.
 - 483-506 · candidate map references across two awaits · **SAFE** · The only production caller is the serial runner waiting for reportHealthyFallback. The other map mutators run in separate, sequentially joined phases of that same request, so this loop has exclusive access to this context's map.
-- 511-594,600-714,718-763 · cohort, inventory, and overage awaits · **SAFE** · Loops borrow from local candidate, observation and selection snapshots. Options, provider handles, fences and context stay owned through their joins.
+- 511-599,600-714,718-763 · cohort, inventory, and overage awaits · **SAFE** · Loops borrow from local candidate, observation and selection snapshots. Options, provider handles, fences and context stay owned through their joins.
 - 767-853,867-907,944-988 · transport callbacks, spawn, and auth refresh · **SAFE** · Installed preTransport/onDispatch callbacks travel by value in the awaited transport. Health children receive their own response and error data. The auth race's refreshing child takes auth by value.
 - 993-1055 · weak context dispatch table · **SAFE** · Context owns the callbacks without owning itself through them. Each noncoroutine wrapper locks before handing a strong context value to the async implementation.
 
@@ -1858,7 +1889,7 @@ Mapping operations own identifiers and retain KV through each joined operation.
 
 Pool work copies subscription data before forwarding and retains one shared lifetime per request.
 
-- 53-124 · capability check, settlement hook, and pool fan-out · **SAFE** · Each loadPoolState child owns a store/account copy. The joined bookkeeping frame owns each callback and its result/health snapshots.
+- 53-127 · capability check, settlement hook, and pool fan-out · **SAFE** · Each loadPoolState child owns a store/account copy. The joined bookkeeping frame owns each callback and its result/health snapshots.
 - 135-203 · before-dispatch and transport callbacks · **SAFE** · Fetch options own captured state and the handler waits for the fetch to settle with its telemetry referent live.
 - 206-293 · selection and one request lifetime · **SAFE** · The roster or pool view remains frame-local. Joined dispatch, outcome settlement and pool advancement receive owned request/state copies.
 
@@ -1869,7 +1900,7 @@ The lifecycle shares one recorded flag and sends owning values into deferred boo
 - 63-116,182-185 · bookkeeping spawn and fail-fast outcomes · **SAFE** · Detached bookkeeping takes the callable and operation string by value. Settlement and health children own their reservation/provider inputs and can finish independently.
 - 199-242,244-266 · classification and lifecycle callbacks · **SAFE** · Response classifiers own their handles and the lifecycle functions own shared state without a back-reference to themselves.
 - 270-285,358-401 · catalog fan-out, cache and background refresh · **SAFE** · Each refresh owns its options and signal. The routing lambda reads only local catalog values when invoked synchronously.
-- 319-356 · temporary Surplus transport · **SAFE** · The frame copies the supplied telemetry and the dispatch callbacks capture independent context and marker copies through the joined fetch.
+- 142-150,319-356 · temporary Surplus transport · **SAFE** · The frame copies the supplied telemetry and the dispatch callbacks capture independent context and marker copies through the joined fetch.
 
 ### `src/paid_fallback/index.cpp`
 
@@ -1933,7 +1964,7 @@ Rollup writes and listing use shared KV and independent local cursors.
 
 The waterfall keeps one borrowed telemetry referent through serial provider attempts. Callback and accounting operations retain their required owners.
 
-- 38-88,90-118 · primary hooks, telemetry and cancellation · **SAFE** · The request's waiting frame retains context and the owned fetch options retain both hooks, which are used during joined dispatch. Bookkeeping owns reservation records.
+- 38-118 · primary hooks, telemetry and cancellation · **SAFE** · The request's waiting frame retains context and the owned fetch options retain both hooks, which are used during joined dispatch. Bookkeeping owns reservation records.
 - 120-200 · paid attempts, deadline, and provider iteration · **SAFE** · The provider reference refers to a private immutable vector and the task inputs are copied. The deadline callback is guarded and the provider fetch is joined before returning.
 - 214-278 · delivery and admission handler joins · **SAFE** · The response recorder owns its reservation and response copies. Synchronous rejectAdmission ends with the frame that owns the other routing snapshots and borrows the live caller context.
 
@@ -2219,7 +2250,7 @@ The retired telemetry hook returns an already settled promise without retaining 
 
 Provider selection reads and writes snapshots. Its in-flight token needs the same cleanup on frame destruction as on settlement.
 
-- 82-96,102-107,181-204 · store, hash and selection snapshot ownership · **SAFE** · The frame owns KV through the joined child or virtual task. Hash and selection reads do not keep shared map entries across suspension.
+- 82-96,102-107,181-204,258-262 · store, hash and selection snapshot ownership · **SAFE** · The frame owns KV through the joined child or virtual task. Hash and selection reads do not keep shared map entries across suspension.
 - 82-98,264-277 · selection cache retains an abandoned load · **DEFECT** · Destroying a fixture Loop while KV is pending destroys the load frame without executing its global reset. A later Loop can reuse the stranded Promise. Move the token-checked reset into a frame scope guard.
 - 149-176,238-252 · selection views and synchronous predicate · **SAFE** · Views are consumed while their caller-owned strings or KV values remain live. The predicate never leaves selectedCatalogEntryProviders.
 
