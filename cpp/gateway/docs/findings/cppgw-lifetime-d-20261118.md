@@ -127,7 +127,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/bounded_response_body.cpp`
 - [x] `src/catalog/index.cpp`
 - [x] `src/catalog/models.cpp`
-- [ ] `src/catalog/promotion.cpp`
+- [x] `src/catalog/promotion.cpp`
 - [ ] `src/catalog/store.cpp`
 - [ ] `src/catalog/types.cpp`
 - [ ] `src/config.cpp`
@@ -783,6 +783,12 @@ Reviewed catalog projection, model composition and normalized snapshot updates.
 
 - L111, 117, 122, 141 **SAFE** · The refresh context owns the borrowed KV through the outer await. Current native KV get wrappers start store-owning children for the join. Parsed views and references are backed by the named tuple and transaction stays live through commit.
 
+### `src/catalog/promotion.cpp`
+
+Reviewed the scoped metadata promotion and atomic updates.
+
+- L55, 56, 57, 58, 66 **SAFE** · The frame owns the shared KV and its input and plan snapshots, including the ready result used after commit. Native KV gets have independent storage owners if the join rejects early.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -888,4 +894,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-61/286 files reviewed. 141 sites: 132 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+62/286 files reviewed. 142 sites: 133 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

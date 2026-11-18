@@ -2780,8 +2780,26 @@
       ]
     },
     "src/catalog/promotion.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the scoped metadata promotion and atomic updates.",
+      "sites": [
+        {
+          "lines": [
+            55,
+            56,
+            57,
+            58,
+            66
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The frame owns the shared KV and its input and plan snapshots, including the ready result used after commit. Native KV gets have independent storage owners if the join rejects early."
+        }
+      ]
     },
     "src/catalog/store.cpp": {
       "reviewed": false,
