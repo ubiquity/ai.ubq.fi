@@ -43,7 +43,7 @@ completes, or record the precise pending work and last passing tree.
 | A-PROMISE-GCC-AWAIT (`include/uos/rt/async.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-PROMISE-CALLBACK-INPUT (`include/uos/rt/async.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-PROMISE-REACTION-CYCLE (`include/uos/rt/async.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
-| A-GENERATOR-STEP-OWNER (`include/uos/rt/async.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
+| A-GENERATOR-STEP-OWNER (`include/uos/rt/async.hpp`) | FIXED. `requestStep` eagerly enqueues the result, but the generator body deliberately keeps only a weak link. Keep the core in the returned Task so either step can still settle after the last generator handle is dropped. | This commit | `rt/async_test`, checks `next` and a queued `return_` before a timer. The baseline failure is liveness. |
 | A-GENERATOR-GCC-AWAIT (`include/uos/rt/async.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-PROCESS-SIGNAL-CONTEXT (`src/rt/process_loop.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-STREAM-GCC-AWAIT (`include/uos/rt/stream.hpp`) | LEFT. Current-tree re-verification pending. | — | — |

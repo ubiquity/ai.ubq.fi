@@ -846,6 +846,38 @@ ASYNC_TEST("aggregate values pass through Promise, async, withFinally and genera
   EXPECT_EQ(token.use_count(), 1);
 }
 
+ASYNC_TEST("generator steps keep the generator alive until their results settle") {
+  auto makeGenerator = [] {
+    return rt::AsyncGenerator<int>([](rt::Yield<int> yield) -> rt::Task<void> {
+      auto yielding = yield(7);
+      co_await std::move(yielding);
+    });
+  };
+  rt::Task<rt::IteratorResult<int>> next;
+  rt::Task<rt::IteratorResult<int>> returning;
+  {
+    auto generator = makeGenerator();
+    next = generator.next();
+  }
+  {
+    auto generator = makeGenerator();
+    auto discarded = generator.next();
+    returning = generator.return_();
+  }
+  rt::Promise nextResult(std::move(next));
+  rt::Promise returnResult(std::move(returning));
+
+  // The timer runs after the microtask checkpoint. A stranded step fails
+  // here without parking the test on a Promise that never settles.
+  co_await rt::sleep(1);
+  ASSERT(nextResult.fulfilled());
+  ASSERT(returnResult.fulfilled());
+  EXPECT(!nextResult.value().done);
+  ASSERT(nextResult.value().value.has_value());
+  EXPECT_EQ(*nextResult.value().value, 7);
+  EXPECT(returnResult.value().done);
+}
+
 ASYNC_TEST("resolving functions: resolve(promise) locks the promise so a later reject is ignored; a throwing executor rejects") {
   auto [promise, resolve, reject] = rt::withResolvers<int>();
   auto source = rt::withResolvers<int>();

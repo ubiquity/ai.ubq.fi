@@ -1058,10 +1058,11 @@ namespace uos::rt {
       if (auto core = weak.lock()) core->finished(failure);
     }
 
-    template <class T> Task<IteratorResult<T>> requestStep(const std::shared_ptr<GeneratorCore<T>>& core, bool isReturn) {
+    template <class T> Task<IteratorResult<T>> requestStep(std::shared_ptr<GeneratorCore<T>> core, bool isReturn) {
       auto result = std::make_shared<PromiseState<IteratorResult<T>>>();
       core->enqueue(isReturn, result);
-      return awaitOwned(std::move(result));
+      auto waiting = awaitOwned(std::move(result));
+      return keepAlive<IteratorResult<T>>(std::move(core), std::move(waiting));
     }
 
     template <class T, class R> Task<R> delegateTo(Yield<T> outer, AsyncGenerator<T, R> inner) {
