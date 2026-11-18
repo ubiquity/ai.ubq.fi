@@ -388,7 +388,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/sentinel/replay_retention_schema.hpp`
 - [x] `include/uos/sentinel/replay_store.hpp`
 - [x] `include/uos/sentinel/upstream_capture.hpp`
-- [ ] `include/uos/serve.hpp`
+- [x] `include/uos/serve.hpp`
 - [ ] `include/uos/static.hpp`
 - [ ] `include/uos/systemone/handlers.hpp`
 - [ ] `include/uos/types.hpp`
@@ -2212,6 +2212,12 @@ Reviewed safe header labels, request-owned recorders and attempt callbacks.
 
 - L53, 122, 123, 128, 129, 130, 174 **SAFE** · Header views refer to static literals. Recorder and attempt closures share their state, and body wrappers own their reader without a reverse ownership edge from recorded attempts.
 
+### `include/uos/serve.hpp`
+
+Reviewed maintenance stop, request dispatch, initialization and startup interfaces. Signal and KV shutdown ordering defects are recorded in the implementation.
+
+- L13, 15, 17, 23, 24, 25, 27, 40, 43 **SAFE** · The stop closure owns shared maintenance state. Requests and connection information enter as values, and the startup wrapper copies host and port before returning its Task.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2461,4 +2467,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-280/286 files reviewed. 469 sites: 444 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+281/286 files reviewed. 470 sites: 445 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
