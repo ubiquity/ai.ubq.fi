@@ -99,26 +99,18 @@ namespace uos::provider::claude_code {
 
     rt::Task<rt::Response> awaitWithAbort(rt::Promise<rt::Response> promise, rt::AbortSignal signal) {
       if (signal.aborted()) std::rethrow_exception(abortReasonError(signal));
-      std::function<void()> dispose = [] {};
+      rt::EventListener onAbort;
+      const auto dispose = rt::scopeExit([&] { signal.removeEventListener("abort", onAbort); });
       rt::Promise<rt::Response> aborted = rt::newPromise<rt::Response>([&](const rt::Resolve<rt::Response>&, const rt::Reject& reject) {
-        const rt::EventListener onAbort([reject, signal] { reject(abortReasonError(signal)); });
+        onAbort = rt::EventListener([reject, signal] { reject(abortReasonError(signal)); });
         signal.addEventListener("abort", onAbort, {.once = true});
-        dispose = [signal, onAbort] { signal.removeEventListener("abort", onAbort); };
       });
       std::vector<rt::Promise<rt::Response>> racers;
       racers.push_back(promise);
       racers.push_back(aborted);
-      rt::Reason failure;
-      std::optional<rt::Response> response;
-      try {
-        rt::Promise<rt::Response> racing = rt::race(std::move(racers));
-        response = co_await racing.wait();
-      } catch (...) {
-        failure = std::current_exception();
-      }
-      dispose();
-      if (failure) std::rethrow_exception(failure);
-      co_return *response;
+      const rt::Promise<rt::Response> racing = rt::race(std::move(racers));
+      auto response = co_await racing.wait();
+      co_return response;
     }
 
     std::optional<std::string> responseRequestId(const rt::Response& response) {

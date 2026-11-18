@@ -34,6 +34,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <memory>
 
 #define AWAIT(name, expr) auto name##Task = (expr); auto name = co_await std::move(name##Task)
 #define WAIT(expr) do { auto waitingTask = (expr); co_await std::move(waitingTask); } while (false)
@@ -179,6 +180,21 @@ ASYNC_TEST("embeddings sleep helpers honor aborts and deadlines") {
   rt::AbortController pre;pre.abort(rt::makeReason(rt::JsError("already cancelled")));auto stopped=v::sleepUnlessAborted(10000,pre.signal());EXPECT(!(co_await stopped.wait()));
   rt::AbortController during;auto sleeping=v::sleepUnlessAborted(10000,during.signal());during.abort(rt::makeReason(rt::JsError("cancelled while sleeping")));EXPECT(!(co_await sleeping.wait()));
   co_return;
+}
+TEST("abandoning an embeddings retry timer releases the abort signal") {
+  std::weak_ptr<rt::detail::AbortSignalState> signalState;
+  {
+    rt::FakeClock clock;
+    rt::Loop loop(clock);
+    const rt::LoopScope scope(loop);
+    const rt::AbortController controller;
+    const auto signal = controller.signal();
+    signalState = signal.state();
+    const auto waiting = v::sleepUnlessAborted(10000, signal);
+    EXPECT(waiting.pending());
+    EXPECT_EQ(loop.timerCount(), 1u);
+  }
+  EXPECT(signalState.expired());
 }
 ASYNC_TEST("embeddings job token seeds prefer stable principals") {
   h::HarnessScope fixture;EXPECT_EQ(v::resolveEmbeddingsJobTokenSeed("job-1",std::nullopt),"job-1");EXPECT_EQ(v::resolveEmbeddingsJobTokenSeed("job-1","bearer-token"),"bearer-token");

@@ -193,8 +193,21 @@ namespace uos::provider::metered {
     // The settled flag and the abort listener of one awaitWithAbort call. The listener holds
     // the state weakly; the operation's reactions hold it until the operation settles.
     struct AbortRace {
+      rt::AbortSignal signal;
       bool settled = false;
       rt::EventListener onAbort;
+
+      explicit AbortRace(rt::AbortSignal signal_) : signal(std::move(signal_)) {}
+      ~AbortRace() {
+        if (!settled) signal.removeEventListener("abort", onAbort);
+      }
+
+      bool finish() {
+        if (settled) return false;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        return true;
+      }
     };
 
     // `new Promise((resolve, reject) => { ... })` racing `operation` against `signal`.
@@ -202,30 +215,24 @@ namespace uos::provider::metered {
       const rt::Resolvers<T> resolvers = rt::withResolvers<T>();
       const rt::Resolve<T> resolve = resolvers.resolve;
       const rt::Reject reject = resolvers.reject;
-      auto race = std::make_shared<AbortRace>();
-      const auto finish = [signal](AbortRace& state) {
-        if (state.settled) return false;
-        state.settled = true;
-        signal.removeEventListener("abort", state.onAbort);
-        return true;
-      };
+      auto race = std::make_shared<AbortRace>(std::move(signal));
       const std::weak_ptr<AbortRace> weakRace = race;
-      race->onAbort = rt::EventListener([weakRace, signal, finish, reject]() {
+      race->onAbort = rt::EventListener([weakRace, reject]() {
         const std::shared_ptr<AbortRace> state = weakRace.lock();
-        if (!state || !finish(*state)) return;
-        reject(asRejectionReason(reasonOr(signal.reason(), rt::makeReason(rt::DOMException("Aborted", "AbortError")))));
+        if (!state || !state->finish()) return;
+        reject(asRejectionReason(reasonOr(state->signal.reason(), rt::makeReason(rt::DOMException("Aborted", "AbortError")))));
       });
-      if (signal.aborted()) {
+      if (race->signal.aborted()) {
         race->onAbort();
         return resolvers.promise;
       }
-      signal.addEventListener("abort", race->onAbort, {.once = true});
+      race->signal.addEventListener("abort", race->onAbort, {.once = true});
       (void)operation.then(
-        [race, finish, resolve](T value) {
-          if (finish(*race)) resolve(std::move(value));
+        [race, resolve](T value) {
+          if (race->finish()) resolve(std::move(value));
         },
-        [race, finish, reject](rt::Reason error) {
-          if (finish(*race)) reject(asRejectionReason(std::move(error)));
+        [race, reject](rt::Reason error) {
+          if (race->finish()) reject(asRejectionReason(std::move(error)));
         });
       return resolvers.promise;
     }

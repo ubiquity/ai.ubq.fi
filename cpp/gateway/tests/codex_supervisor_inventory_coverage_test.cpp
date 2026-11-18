@@ -41,6 +41,7 @@
 #include <unistd.h>
 #include <deque>
 #include <map>
+#include <memory>
 
 namespace {
   using namespace uos::codex::supervisor_config;
@@ -678,6 +679,31 @@ ASYNC_TEST("an aborted call signal rejects the exact pending call") {
   controller.abort();
   const std::optional<std::string> message = co_await pending.wait();
   EXPECT(matches(message, "app-server call aborted"));
+}
+
+TEST("an abandoned supervisor call releases the control socket") {
+  std::weak_ptr<ScriptedSocket> socket;
+  std::weak_ptr<rt::detail::AbortSignalState> signalState;
+  {
+    rt::FakeClock clock;
+    rt::Loop loop(clock);
+    const rt::LoopScope scope(loop);
+    const ScriptedSockets scripted;
+    ScriptedSocket::plan([](const std::string& method, const json::object&, const json::object&) {
+      return method == "initialize" ? replyWith(json::object()) : DEFER;
+    });
+    auto opening = openSupervisorConnection("/var/lib/uos-supervisor/abandoned.sock");
+    const auto connection = rt::blockOn(loop, std::move(opening));
+    socket = ScriptedSocket::latest();
+    const rt::AbortController controller;
+    const auto signal = controller.signal();
+    signalState = signal.state();
+    const rt::Promise<SupervisorCallResult> pending(connection.call("thread/read", threadParams(), signal));
+    EXPECT(pending.pending());
+    EXPECT_EQ(frameMethods(*ScriptedSocket::latest()).back(), "thread/read");
+  }
+  EXPECT(socket.expired());
+  EXPECT(signalState.expired());
 }
 
 ASYNC_TEST("an aborted sampling signal never opens a socket") {

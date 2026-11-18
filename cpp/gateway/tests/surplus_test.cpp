@@ -5,6 +5,7 @@
 #include "uos/rt/regex.hpp"
 #include "uos/rt/test_async.hpp"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -270,4 +271,30 @@ ASYNC_TEST("fetchSurplusResponses runs the quota hook immediately before transpo
   auto task = fetchSurplusResponses(parse(R"({ "model": "gpt-5.6-sol", "input": "hello" })"), options);
   co_await std::move(task);
   EXPECT_EQ(events, (std::vector<std::string>{"before-dispatch", "started", "fetch"}));
+}
+
+TEST("abandoning a Surplus preheader request releases its combined abort signal") {
+  const rt::AbortController caller;
+  std::weak_ptr<rt::detail::AbortSignalState> signalState;
+  {
+    rt::FakeClock clock;
+    rt::Loop loop(clock);
+    const rt::LoopScope scope(loop);
+    const auto entered = rt::withResolvers();
+    const rt::Promise<rt::Response> never;
+    SurplusAuthenticatedFetchOptions options;
+    options.apiKey = "inf_test";
+    options.signal = caller.signal();
+    options.fetcher = SurplusFetch([&signalState, start = entered.resolve, never](rt::RequestInfo, rt::RequestInit init) {
+      if (init.signal) signalState = init.signal->state();
+      start();
+      return never.wait();
+    });
+    const auto body = parse(R"({ "model": "gpt-5.6-sol", "input": "hello" })");
+    const rt::Promise<SurplusResponsesResult> pending(fetchSurplusResponses(body, std::move(options)));
+    rt::blockOn(loop, entered.promise.wait());
+    EXPECT(pending.pending());
+    EXPECT(!signalState.expired());
+  }
+  EXPECT(signalState.expired());
 }

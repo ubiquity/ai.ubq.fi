@@ -196,10 +196,9 @@ namespace uos::embeddings::voyage {
         resolve(true);
       }, ms);
       const std::weak_ptr<State> weak = state;
-      state->onAbort = rt::EventListener([signal, weak, resolve] {
+      state->onAbort = rt::EventListener([weak, resolve] {
         if (const auto current = weak.lock()) {
           rt::clearTimeout(current->timeout);
-          signal.removeEventListener("abort", current->onAbort);
           resolve(false);
         }
       });

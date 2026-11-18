@@ -712,6 +712,22 @@ TEST("abandoning a Codex retry wait releases the abort signal") {
   EXPECT(signalState.expired());
 }
 
+TEST("abandoning a shared Codex refresh wait releases the abort signal") {
+  std::weak_ptr<rt::detail::AbortSignalState> signalState;
+  {
+    rt::FakeClock clock;
+    rt::Loop loop(clock);
+    const rt::LoopScope scope(loop);
+    const rt::AbortController controller;
+    const auto signal = controller.signal();
+    signalState = signal.state();
+    const rt::Promise<CodexAuthState> refreshing;
+    auto waiting = auth_refresh::awaitWithoutCancellingSharedWork(refreshing, signal);
+    rt::spawn(std::move(waiting));
+  }
+  EXPECT(signalState.expired());
+}
+
 ASYNC_TEST("an aborted Codex retry lets the sleeper finish with its captures alive") {
   const rt::AbortController controller;
   const auto entered = rt::withResolvers();
