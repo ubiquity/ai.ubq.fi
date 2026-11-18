@@ -87,6 +87,12 @@
       "entry": "uos::rt::URL / URLSearchParams",
       "max_len": 16384
     },
+    "string_icu_library": {
+      "harness": "fuzz/string_icu_library.cpp",
+      "entry": "uos::rt::toLowerCase / toUpperCase / localeCompare",
+      "extra_sources": [],
+      "max_len": 16384
+    },
     "regex": {
       "harness": "fuzz/regex.cpp",
       "entry": "uos::rt::Regex compile / exec / test",

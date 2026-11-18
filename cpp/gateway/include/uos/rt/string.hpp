@@ -93,6 +93,7 @@ namespace uos::rt {
   // String-pattern replace / replaceAll, with GetSubstitution ($$, $&, $`, $').
   std::string replace(std::string_view text, std::string_view pattern, std::string_view replacement);
   std::string replaceAll(std::string_view text, std::string_view pattern, std::string_view replacement);
+  // Unicode case mapping in the ICU root locale.
   std::string toLowerCase(std::string_view text);
   std::string toUpperCase(std::string_view text);
 
@@ -120,8 +121,8 @@ namespace uos::rt {
   // JS relational order (<, >, default Array.prototype.sort): UTF-16 code unit order.
   int compare(std::string_view left, std::string_view right);  // <0, 0, >0
   bool lessThan(std::string_view left, std::string_view right);
-  // a.localeCompare(b) with no locales/options: Bun's en-US ICU root collation,
-  // tertiary strength. Returns -1, 0 or 1. Coverage is documented in docs/rt/text.md.
+  // ICU root collation with canonical normalization and tertiary strength.
+  // Returns -1, 0 or 1.
   int localeCompare(std::string_view left, std::string_view right);
 
   // ---- URI coding --------------------------------------------------------------------
