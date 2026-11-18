@@ -65,7 +65,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/storage/native_addon.hpp`
 - [x] `include/uos/storage/native_kv.hpp`
 - [x] `include/uos/storage/sqlite_readonly.hpp`
-- [ ] `include/uos/storage/value_compatibility.hpp`
+- [x] `include/uos/storage/value_compatibility.hpp`
 - [ ] `src/storage/key_compatibility.cpp`
 - [ ] `src/storage/kv.cpp`
 - [ ] `src/storage/native_addon.cpp`
@@ -435,6 +435,10 @@ The only API consumes a byte span synchronously. No coroutine or deferred callba
 | --- | --- | --- | --- |
 | 40-50,90-108 | Read-only statement and inspection callback | **SAFE** | The statement is an owning handle. The erased callback runs inline even during a fallback retry, while the caller's callable, optional result and database are alive. |
 
+### `include/uos/storage/value_compatibility.hpp`
+
+A declaration alias to the synchronous KV value walk. No separate lifetime site.
+
 
 ## Ranked defects and counts
 
@@ -640,4 +644,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-42/97 files reviewed. **DEFECT 8, SAFE 94, UNCLEAR 3.**
+43/97 files reviewed. **DEFECT 8, SAFE 94, UNCLEAR 3.**

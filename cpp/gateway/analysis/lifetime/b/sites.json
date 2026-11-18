@@ -1278,8 +1278,9 @@
       ]
     },
     "include/uos/storage/value_compatibility.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "A declaration alias to the synchronous KV value walk. No separate lifetime site."
     },
     "src/storage/key_compatibility.cpp": {
       "reviewed": false,
