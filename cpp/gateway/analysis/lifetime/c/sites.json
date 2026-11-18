@@ -920,8 +920,16 @@
       ]
     },
     "include/uos/paid_fallback/index.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Paid reservation and terminal accounting API.",
+      "sites": [
+        {
+          "lines": "85-86,103-125,156-157",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "Accounting tasks own their reservations, delivery evidence and billing parameters; the test sweep hook is stored as a value."
+        }
+      ]
     },
     "include/uos/paid_fallback/ledger_admission.hpp": {
       "status": "pending",

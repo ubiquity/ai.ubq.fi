@@ -124,7 +124,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/live/upstream.hpp`
 - [x] `include/uos/paid_fallback/claude_code_route.hpp`
 - [x] `include/uos/paid_fallback/health.hpp`
-- [ ] `include/uos/paid_fallback/index.hpp`
+- [x] `include/uos/paid_fallback/index.hpp`
 - [ ] `include/uos/paid_fallback/ledger_admission.hpp`
 - [ ] `include/uos/paid_fallback/ledger_backfill.hpp`
 - [ ] `include/uos/paid_fallback/ledger_settlement.hpp`
@@ -807,3 +807,9 @@ The subscription attempt receives its body and options as values.
 Health reads, catalog operations and fallback routing API.
 
 - 23,27-39,69-70,87-88 · task and callback interface · **SAFE** · Each task owns its response, signal or option data; bookkeeping awaits its owned callable before releasing it.
+
+### `include/uos/paid_fallback/index.hpp`
+
+Paid reservation and terminal accounting API.
+
+- 85-86,103-125,156-157 · task and callback interface · **SAFE** · Accounting tasks own their reservations, delivery evidence and billing parameters; the test sweep hook is stored as a value.
