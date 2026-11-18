@@ -109,3 +109,83 @@ The first four rows correspond to `te-identity-unread`,
 server wire vectors. For the `info` case, the standalone parser test also
 exercises accepted OWS, mixed-case names, ordered duplicates, empty values and
 Latin-1 bytes.
+
+## Header replacement diagnostics
+
+`Headers::set` uses the same bounded `TypeError` diagnostic as `append` for
+invalid values. It reports the lowercase name, limited to 64 characters, and
+omits the value. The generated tests still require rejection for all 131
+affected inputs.
+
+## Inbound form bodies
+
+Images and Live decode the bounded request bytes into ordered text and file
+parts. Each file owns its bytes, an optional filename, and its inferred media
+type. Multipart parsing retains the existing boundary handling, extension table,
+and byte sniffing. URL-encoded parsing uses the shared UTF-8 decoder and
+`URLSearchParams`.
+
+The C++ body API retires generic Blob and File constructors, outbound FormData
+serialization, and asynchronous `Request::formData()` and
+`Response::formData()` methods. Fixtures with multipart or typed byte bodies
+supply the wire bytes and explicit Content-Type. Ordinary body readers and
+URLSearchParams content-type inference continue through the existing Body API.
+
+## Literal console arguments and shared JSON serialization
+
+The gateway joins arguments with spaces and appends a newline at the
+sink. All text is literal, including percent sequences and pre-serialized
+event payloads. Structured fields and error diagnostics use the gateway's
+compact JSON serializer. Nonfinite numbers become `null`, signed zero
+becomes `0`, and lone UTF-16 surrogates in structured strings and keys
+are escaped. The serializer replaces malformed UTF-8 and orders numeric
+object keys using its usual JSON ordering.
+
+Error diagnostics contain the name, message, known code and cause chain.
+OS errors carry the existing path, destination, descriptor, syscall and
+errno fields when present. Structured projection remains bounded to
+depth 16, 100 array elements and a 32 KiB budget for text and nodes, with
+the 256 KiB cap on the combined text. Captures retain independent text
+arguments and the original event prefix and payload.
+
+## Process environment snapshot
+
+The native runtime takes its first-use snapshot from the OS environment.
+This replaces the explicit file parser described above. The native service
+receives operator-selected values through its launcher environment. A `.env`
+file in the working directory or home has no effect on the C++ view. An
+explicit empty value remains present, and scoped overrides affect only the
+view. Subprocesses without an explicit environment inherit the OS values.
+[Launch and offline tools](RUNTIME.md#launch-and-offline-tools)
+
+## Native lexical path adapters
+
+The gateway retains `join`, `resolve`, `relative`, `dirname` and `isAbsolute`.
+Single-segment `join` covers the former normalization helper. The filename and
+extension vectors exercise `std::filesystem::path` directly. Resolve restarts at
+the last absolute segment, drops terminal separators except at the root, and
+uses the current directory for relative inputs. Relative comparisons return an
+empty string for equal paths and reject a comparison without absolute endpoints.
+Percent-encoded and backslash bytes stay literal in these operations.
+
+## Ordered containers
+
+Catalog membership checks use `std::unordered_set<std::string>`. The
+catalog arrays and vectors determine model order. An OpenRouter payload
+keeps the first valid row for each ID. Catalog merges that check against
+an existing list still use that list as the membership snapshot.
+
+Ordered Map and Set store stable list nodes. Erasing a key removes it
+from lookup immediately and keeps its node readable by active traversals.
+Reinserting the key appends a fresh node. A traversal can visit entries
+appended before it reaches the end. A C++ iterator already at the list's
+end remains there.
+
+## Whole-buffer gzip
+
+Whole-buffer decoding feeds fixed 64 KiB slices into the zlib inflater.
+Callbacks receive pieces up to 64 KiB. Compression and decoding return
+the complete bytes. The inflater still validates every gzip member and
+applies the format's trailing-data policy. Sentinel checks its plaintext
+limit before appending each piece and schedules both decode outcomes by
+one microtask. Fetch uses its existing streaming decoder.

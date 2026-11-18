@@ -171,6 +171,17 @@ namespace {
     throw std::invalid_argument("no format " + std::string(name));
   }
 
+  std::vector<gz::Bytes> partition(std::span<const std::uint8_t> input, std::size_t first, std::size_t step) {
+    std::vector<gz::Bytes> chunks;
+    while (!input.empty()) {
+      const auto chunk = input.first(std::min(first, input.size()));
+      chunks.emplace_back(chunk.begin(), chunk.end());
+      input = input.subspan(chunk.size());
+      first = step;
+    }
+    return chunks;
+  }
+
   // A reader loop over explicit chunks.
   json::value readChunks(gz::Format format, const std::vector<gz::Bytes>& chunks) {
     std::vector<std::size_t> pieces;
@@ -192,20 +203,26 @@ namespace {
     return outcome(pieces, output, failure);
   }
 
-  // A reader loop over `new Blob([input]).stream()`.
-  json::value readBlob(gz::Format format, std::span<const std::uint8_t> input) {
+  // Buffer results may have different piece lengths but must remain bounded.
+  json::value readBuffer(gz::Format format, std::span<const std::uint8_t> input) {
+    constexpr std::size_t step = 64 * 1024;
     std::vector<std::size_t> pieces;
     gz::Bytes output;
     rt::Reason failure;
     try {
       gz::forEachDecompressedPiece(input, format, [&pieces, &output](std::span<const std::uint8_t> piece) {
+        EXPECT(!piece.empty() && piece.size() <= step);
         pieces.push_back(piece.size());
         output.insert(output.end(), piece.begin(), piece.end());
       });
     } catch (...) {
       failure = std::current_exception();
     }
-    return outcome(pieces, output, failure);
+    const std::size_t slices = input.size() / step + (input.size() % step != 0);
+    EXPECT(pieces.size() <= output.size() / step + slices);
+    auto decoded = outcome(pieces, output, failure);
+    decoded.as_object().erase("pieces");
+    return decoded;
   }
 
   // Bun's fetch decoding as recorded (docs/rt/gzip.md): an empty body is not decoded; gzip and
@@ -309,17 +326,15 @@ TEST("the pieces of gzipSync's output follow Bun's reader for a Blob and for fix
   const json::object& ours = rt::get(vectors(), "ours")->as_object();
   for (const std::string_view name : RECIPES) {
     const json::value& recorded = ours.at(name);
-    const gz::Bytes compressed = gz::gzipSync(recipe(name));
-    const json::value blob = readBlob(gz::Format::gzip, compressed);
+    const gz::Bytes input = recipe(name);
+    const gz::Bytes compressed = gz::gzipSync(input);
+    json::value blob = readChunks(gz::Format::gzip, partition(compressed, 16'384, 2'097'152));
     EXPECT_EQ(rt::jsonStringify(*rt::get(blob, "pieces")), rt::jsonStringify(*rt::get(recorded, "blobPieces")));
+    blob.as_object().erase("pieces");
+    EXPECT_EQ(readBuffer(gz::Format::gzip, compressed), blob);
     for (const json::key_value_pair& member : rt::get(recorded, "chunked")->as_object()) {
       const std::size_t size = std::stoul(std::string(member.key()));
-      std::vector<gz::Bytes> chunks;
-      for (std::size_t offset = 0; offset < compressed.size(); offset += size) {
-        const std::size_t end = std::min(compressed.size(), offset + size);
-        chunks.emplace_back(compressed.begin() + static_cast<std::ptrdiff_t>(offset), compressed.begin() + static_cast<std::ptrdiff_t>(end));
-      }
-      const json::value read = readChunks(gz::Format::gzip, chunks);
+      const json::value read = readChunks(gz::Format::gzip, partition(compressed, size, size));
       EXPECT_EQ(rt::jsonStringify(*rt::get(read, "pieces")), rt::jsonStringify(member.value()));
       if (rt::jsonStringify(*rt::get(read, "pieces")) != rt::jsonStringify(member.value())) std::fprintf(stderr, "    %s in %zu-byte chunks\n", std::string(name).c_str(), size);
     }
@@ -330,9 +345,13 @@ TEST("DecompressionStream over a Blob reads the pieces and rejections Bun's read
   std::size_t checked = 0;
   for (const json::value& vector : section("streams")) {
     const gz::Bytes input = rt::fromHex(stringOf(vector, "input"));
-    const json::value actual = readBlob(formatOf(stringOf(vector, "format")), input);
-    EXPECT_EQ(rt::jsonStringify(actual), rt::jsonStringify(expectedOutcome(vector)));
+    const auto format = formatOf(stringOf(vector, "format"));
+    const json::value actual = readChunks(format, partition(input, 16'384, 2'097'152));
+    auto expected = expectedOutcome(vector);
+    EXPECT_EQ(rt::jsonStringify(actual), rt::jsonStringify(expected));
     if (rt::jsonStringify(actual) != rt::jsonStringify(expectedOutcome(vector))) std::fprintf(stderr, "    stream %s %s\n", stringOf(vector, "format").c_str(), stringOf(vector, "name").c_str());
+    expected.as_object().erase("pieces");
+    EXPECT_EQ(readBuffer(format, input), expected);
     checked += 1;
   }
   EXPECT_EQ(checked, std::size_t{53});
@@ -343,12 +362,39 @@ TEST("DecompressionStream across chunk boundaries reads the pieces and rejection
   for (const json::value& vector : section("chunked")) {
     std::vector<gz::Bytes> chunks;
     for (const json::value& chunk : rt::get(vector, "chunks")->as_array()) chunks.push_back(rt::fromHex(chunk.as_string()));
-    const json::value actual = readChunks(formatOf(stringOf(vector, "format")), chunks);
-    EXPECT_EQ(rt::jsonStringify(actual), rt::jsonStringify(expectedOutcome(vector)));
+    const auto format = formatOf(stringOf(vector, "format"));
+    const json::value actual = readChunks(format, chunks);
+    auto expected = expectedOutcome(vector);
+    EXPECT_EQ(rt::jsonStringify(actual), rt::jsonStringify(expected));
     if (rt::jsonStringify(actual) != rt::jsonStringify(expectedOutcome(vector))) std::fprintf(stderr, "    chunked %s %s\n", stringOf(vector, "format").c_str(), stringOf(vector, "name").c_str());
+    gz::Bytes joined;
+    for (const auto& chunk : chunks) joined.insert(joined.end(), chunk.begin(), chunk.end());
+    expected.as_object().erase("pieces");
+    EXPECT_EQ(readBuffer(format, joined), expected);
     checked += 1;
   }
   EXPECT_EQ(checked, std::size_t{15});
+}
+
+TEST("whole-buffer gzip validates concatenated members across the former Blob boundaries") {
+  const auto first = xorshift(16'384 + 2'097'152, 12345);
+  const gz::Bytes second(64 * 1024);
+  auto compressed = gz::gzipSync(first);
+  ASSERT(compressed.size() > first.size());
+  const auto tail = gz::gzipSync(second);
+  compressed.insert(compressed.end(), tail.begin(), tail.end());
+  gz::Bytes plaintext = first;
+  plaintext.insert(plaintext.end(), second.begin(), second.end());
+
+  auto legacy = readChunks(gz::Format::gzip, partition(compressed, 16'384, 2'097'152));
+  legacy.as_object().erase("pieces");
+  EXPECT_EQ(readBuffer(gz::Format::gzip, compressed), legacy);
+  EXPECT_EQ(gz::gunzipSync(compressed), plaintext);
+  compressed[compressed.size() - 8] ^= 1;
+  EXPECT_THROWS_MATCHING(gz::gunzipSync(compressed), "inflate failed");
+  compressed[compressed.size() - 8] ^= 1;
+  compressed.pop_back();
+  EXPECT_THROWS_MATCHING(gz::gunzipSync(compressed), "unexpected end of file");
 }
 
 TEST("gunzipSync inflates the gzip streams Bun's CompressionStream and node:zlib write") {
@@ -413,6 +459,33 @@ ASYNC_TEST("gzip and gunzip resume one microtask turn after the call; a corrupt 
   EXPECT_EQ(rt::reasonToString(failure), std::string("TypeError: inflate failed"));
   auto truncating = gz::gunzip(gz::Bytes{0x1F, 0x8B});
   EXPECT_REJECTS_MESSAGE(std::move(truncating), gz::InflateError, "unexpected end of file");
+}
+
+ASYNC_TEST("capped gzip accepts the limit and defers both overflow and corruption") {
+  auto turns = std::make_shared<int>(0);
+  rt::spawn(rt::async([turns]() -> rt::Task<void> {
+    for (int index = 0; index < 5; ++index) {
+      co_await rt::microtask();
+      ++*turns;
+    }
+  }));
+  constexpr std::size_t limit = 128 * 1024;
+  constexpr const char* message = "output limit reached";
+  const gz::Bytes plaintext(limit);
+  auto compressed = gz::gzipSync(plaintext);
+  auto exact = gz::gunzip(compressed, limit, message);
+  const auto decoded = co_await std::move(exact);
+  EXPECT_EQ(decoded, plaintext);
+  EXPECT_EQ(*turns, 1);
+
+  auto overflow = gz::gunzip(compressed, limit - 1, message);
+  EXPECT_REJECTS_MESSAGE(std::move(overflow), rt::JsError, message);
+  EXPECT_EQ(*turns, 2);
+
+  compressed[compressed.size() - 8] ^= 1;
+  auto corrupt = gz::gunzip(std::move(compressed), limit, message);
+  EXPECT_REJECTS_MESSAGE(std::move(corrupt), gz::InflateError, "inflate failed");
+  EXPECT_EQ(*turns, 3);
 }
 
 TEST("the inflater refuses misuse, keeps its failure and moves") {

@@ -21,6 +21,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace uos::rt::gzip {
@@ -121,32 +122,18 @@ namespace uos::rt::gzip {
     std::unique_ptr<State> state;
   };
 
-  // ---- whole buffers --------------------------------------------------------------------------
-
-  // `new Response(new Blob([input]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer()`'s
-  // bytes: one gzip member, zlib's default level (6) with a 15-bit window, memLevel 8 and the
-  // default strategy; header 1f 8b 08 00 00 00 00 00 00 03 as Bun writes it.
+  // Whole-buffer gzip with zlib defaults and concatenated-member validation.
   Bytes gzipSync(std::span<const std::uint8_t> input);
-
-  // `new Blob([input]).stream().pipeThrough(new DecompressionStream(format))` and a reader loop:
-  // `onPiece` gets every piece Bun's reader gets, in order (the Blob stream hands over 16 KiB and
-  // then 2 MiB chunks), and may throw to stop the loop; then InflateError where the reader's
-  // read() rejects.
-  void forEachDecompressedPiece(std::span<const std::uint8_t> input, Format format, const std::function<void(std::span<const std::uint8_t>)>& onPiece);
-
-  // The same stream for "gzip" read to its end: concatenated members inflate as one stream.
   Bytes gunzipSync(std::span<const std::uint8_t> input);
 
-  // ---- the TS `await` forms ------------------------------------------------------------------
-  // Both run the codec synchronously when awaited, like the C++ ports they serve, and resume the
-  // awaiting coroutine one microtask turn later; Bun takes more turns (docs/rt/gzip.md). The
-  // input copy is wiped.
+  // Borrowed pieces of up to 64 KiB, valid during the callback. The callback may throw to stop.
+  void forEachDecompressedPiece(std::span<const std::uint8_t> input, Format format, const std::function<void(std::span<const std::uint8_t>)>& onPiece);
 
-  // `await new Response(new Blob([input]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer()`.
+  // Owned input is scrubbed. Success takes one microtask turn, and uncapped failures are immediate.
   [[nodiscard]] Task<Bytes> gzip(Bytes input);
-  // `await new Response(new Blob([input]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer()`.
-  // A corrupt or truncated stream throws InflateError at once, before the microtask turn.
   [[nodiscard]] Task<Bytes> gunzip(Bytes input);
+  // Capped decoding defers either outcome by one turn and throws JsError on limit overflow.
+  [[nodiscard]] Task<Bytes> gunzip(Bytes input, std::size_t limit, std::string_view limitMessage);
 
   // Test seam: later loads use `library` instead of "libz.so.1" ("" restores it). Inflaters
   // already made keep the library they loaded.

@@ -18,57 +18,35 @@
 namespace uos::rt {
   class Headers;
   namespace detail {
-    // What a request head carries for `headers` (the HTTP client stage only; not a JS API): each
-    // header except Set-Cookie, in iteration order, as {name as first given, value as sent}. The
-    // name is the caller's spelling from the append/set that created the header (kept by later
-    // appends and sets in any spelling, replaced only after a delete); the value is the combined
-    // value get() returns (Cookie values are joined with "; " as Bun does). Set-Cookie values are getSetCookie().
+    // Ordinary fields in iteration order, with the first spelling and combined value.
+    // Set-Cookie lines come from getSetCookie().
     std::vector<std::pair<std::string, std::string>> headerWireFields(const Headers& headers);
   }
 
-  // A JS Headers object. Copying is `new Headers(other)`; to alias one (JS
-  // `const headers = response.headers`) hold a reference.
   class Headers {
   public:
     using Entry = std::pair<std::string, std::string>;
 
-    // `new Headers()`
     Headers() = default;
-    // `new Headers({ name: value, ... })` and `new Headers([[name, value], ...])`:
-    // appends every entry in order; the first invalid name or value throws.
     Headers(std::initializer_list<Entry> init);
     explicit Headers(const std::vector<Entry>& init);
-    // `new Headers(sequence)` whose items may have any length: TypeError
-    // "Header sub-sequence must contain exactly two items" at the first item
-    // that is not a pair (items before it are validated first).
     static Headers fromSequence(const std::vector<std::vector<std::string>>& sequence);
 
-    // Every method validates `name` (TypeError "Invalid header name: '<name>'";
-    // has() closes the quote with '"' as Bun does) and, where it takes one, the
-    // value after stripping leading and trailing tab/LF/CR/space (TypeError
-    // "Header '<name>' has invalid value: '<stripped value>'").
+    // Invalid names and values throw TypeError before mutation.
     void append(std::string_view name, std::string_view value);
     void delete_(std::string_view name);
-    // `headers.get(name)`: std::nullopt where JS returns null. Set-Cookie values
-    // are joined with ", "; Cookie values with "; ".
     std::optional<std::string> get(std::string_view name) const;
     std::vector<std::string> getSetCookie() const;
     bool has(std::string_view name) const;
     void set(std::string_view name, std::string_view value);
-    // Bun's `headers.count`: the number of entries iteration yields.
     std::size_t count() const { return fields_.size() + cookies_.size(); }
 
-    // `[...headers]`, `[...headers.keys()]`, `[...headers.values()]`: snapshots
-    // taken now (JS iterators are live; see begin()).
     std::vector<Entry> entries() const;
     std::vector<std::string> keys() const;
     std::vector<std::string> values() const;
-    // `headers.forEach((value, name) => ...)`: live, like the JS iterator.
     void forEach(const std::function<void(const std::string& value, const std::string& name)>& callback) const;
 
-    // `for (const [name, value] of headers)`: each step reads the entry at the
-    // iterator's index in the current state, so mutations made by the loop body
-    // are observed exactly as in Bun.
+    // Each step reads the current entry at its index, including mutations during traversal.
     class iterator {
     public:
       iterator(const Headers* owner, std::size_t index) : owner_(owner), index_(index) {}
@@ -88,15 +66,17 @@ namespace uos::rt {
     iterator end() const { return iterator(this, 0); }
 
   private:
+    struct Field {
+      std::string name;
+      std::string spelling;
+      std::string value;
+    };
+
     friend std::vector<Entry> detail::headerWireFields(const Headers& headers);
+    static auto findField(auto& fields, std::string_view key);
+    void write(std::string_view name, std::string_view value, bool append);
     Entry entryAt(std::size_t index) const;
-    // Lowercased name and combined value of every header except Set-Cookie,
-    // sorted by name.
-    std::vector<Entry> fields_;
+    std::vector<Field> fields_;  // Sorted by lowercase name.
     std::vector<std::string> cookies_;
-    // For the request head (detail::headerWireFields): fields_[i]'s name as first given, and the
-    // Cookie header's value with its appended parts joined by "; ".
-    std::vector<std::string> spellings_;
-    std::string cookieWire_;
   };
 }

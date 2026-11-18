@@ -136,11 +136,7 @@ namespace uos::catalog::store {
       }
     }
 
-    rt::Task<std::vector<std::uint8_t>> gzip(std::string body) {
-      auto compressing = rt::gzip::gzip(rt::encodeUtf8(body));
-      std::vector<std::uint8_t> compressed = co_await std::move(compressing);
-      co_return compressed;
-    }
+    rt::Task<std::vector<std::uint8_t>> gzip(std::string_view body) { return rt::gzip::gzip(rt::encodeUtf8(body)); }
 
     rt::Task<std::string> gunzip(std::vector<std::uint8_t> bytes) {
       auto inflating = rt::gzip::gunzip(std::move(bytes));
