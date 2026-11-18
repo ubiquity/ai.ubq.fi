@@ -170,3 +170,23 @@ The SIGCHLD control rebuilt only `src/rt/process_loop.cpp` with the same sanitiz
 `bash cpp/gateway/tools/ci-build.sh --config release` with the corrected flags exited 0 at commit `22273d2ff0fcf9f26adf1c7b1371eb6c0c01f3e5`, tree `dead9a59f35bf1ebbb947e80bdcf2e7ea334281b`. All 369 production objects compiled. All 442 selected binaries and 5,032 cases passed, including all 15 cases in `process_test`. Ninja took 1,781.296 seconds and the link and test phase took 64.958 seconds. The complete run took 1,846.783 seconds.
 
 The driver recorded the C++ input digest `d18ec4d2bfb09097dbf61d554548ee4c8ff0e9a182d369f7f71cfc44daa4b512` at start and finish. The SHA-256 of `ci-system-icu/clang++-21-20bb0de9f523/release/receipt.json` is `9ba886351427eda89b34d382d6b6cca014cece69f85956465a474b4acfb7bb1c`. The full sanitizer command started next with the same C++ inputs and reused the 49 focused build commands.
+
+## Full ARM64 sanitizer receipt
+
+`bash cpp/gateway/tools/ci-build.sh --config asan` with the corrected flags exited 0 at commit `69c9aa9a3c66ab06afdf56eace3970313918377d`, tree `89d48248c17c3c5e3ad3e40f7546cba8c3d1016b`. The driver compiled or reused all 369 production objects. All 442 selected binaries and 5,032 cases passed, including all 15 cases in `process_test`. Ninja took 2,574.534 seconds and the link and test phase took 186.659 seconds. The complete run took 2,761.720 seconds. Both full profiles reported zero failures, build failures and timeouts.
+
+The sanitizer input digest matched the release input digest at start and finish. The SHA-256 of `ci-system-icu/clang++-21-ec41fa52a422/asan/receipt.json` is `1d208154cbe274e90b6c66050380eb5f7e13cb20d4a95c582dd7c41088ebd658`. The Git diff between the two tested trees contains only this report. Both terminal receipts enumerate the same 442 test paths.
+
+## Integration handoff
+
+The diff from `b54357a92c0f2669335d83f04047c3f7de32f925` contains the two process implementation files, the public process header, `process_test.cpp`, the Bun deviation note and this report. `git diff --check` and `bun --no-env-file run format:check` for the two Markdown files passed with frozen formatting dependencies in scratch.
+
+Shared CMake, unit and macOS build settings need the matching Boost.Process library. The portable driver used the linker flags above and Clang's system include classification for installed ICU and vendored simdutf. Those shared settings are outside this lane's ownership.
+
+The completed lane is committed on `agent-job`. The scoped destination is `agent-jobs/cppgw-std-process-20261118-44214118327-1`. `GIT_TERMINAL_PROMPT=0 git push --dry-run origin HEAD:refs/heads/agent-jobs/cppgw-std-process-20261118-44214118327-1` exited 128 because GitHub write credentials were unavailable. The refreshed `origin/development` at `70afb98dc1651a7a5851d8ee4f79ace5d4c836d1` contains zero `cpp/gateway` paths. The port integration owner needs to pick up this lane with the other component branches before merging into `development`.
+
+## Summary
+
+Boost.Process v2 and Boost.Asio own ordinary child launch, pipes and reaping. POSIX calls remain for arbitrary signals and for cleaning up a child if launch fails before Boost can return its process handle. First-party production code decreased from 1,001 to 895 lines.
+
+Linux ARM64 release and ASan/UBSan each passed 442 of 442 binaries and 5,032 of 5,032 cases, with 15 of 15 process cases in each. The forced SIGCHLD sanitizer check also passed 15 of 15. The process sources cross-compiled for macOS arm64 and a minimal launcher cross-linked. Both platforms require compiled `libboost_process`. Integration requires shared build linkage and GitHub write access.
