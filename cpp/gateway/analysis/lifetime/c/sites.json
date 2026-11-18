@@ -1636,8 +1636,34 @@
       ]
     },
     "src/chat/stream_translation.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Event reconciliation mutates frame-owned output state synchronously. Replay and cancellation have separate iterator handles.",
+      "sites": [
+        {
+          "lines": "49,75-338,346-352,379-385,394-400",
+          "kind": "synchronous closures and accumulator references",
+          "verdict": "SAFE",
+          "reason": "The matcher only examines its live argument synchronously. Results own their tool calls, and no borrow of the accumulator container crosses a suspension."
+        },
+        {
+          "lines": "354-368",
+          "kind": "capturing coroutine generator",
+          "verdict": "SAFE",
+          "reason": "runGenerator owns the closure and its shared prepared state. The replay buffer is immutable and each yield uses an owned event value."
+        },
+        {
+          "lines": "369-374",
+          "kind": "capturing cancel coroutine",
+          "verdict": "SAFE",
+          "reason": "The returned cancel closure owns both iterator copies. Live callers invoke it through a SourceAlgorithm-owned StreamState and await it before that state can be released."
+        },
+        {
+          "lines": "386-393",
+          "kind": "borrowed context recorder",
+          "verdict": "SAFE",
+          "reason": "Stream and buffered callers retain their context owners across the join and this task uses the context only to start the completion write."
+        }
+      ]
     },
     "src/codex/account_routing.cpp": {
       "status": "pending",

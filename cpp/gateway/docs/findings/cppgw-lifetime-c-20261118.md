@@ -184,7 +184,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/surplus_claude_request.hpp`
 - [x] `src/chat/completions.cpp`
 - [x] `src/chat/envelope.cpp`
-- [ ] `src/chat/stream_translation.cpp`
+- [x] `src/chat/stream_translation.cpp`
 - [ ] `src/codex/account_routing.cpp`
 - [ ] `src/codex/auth.cpp`
 - [ ] `src/codex/auth_refresh.cpp`
@@ -1158,3 +1158,12 @@ The handler owns its telemetry copy through joined models and preflight, and res
 - 168-174 · probe termination callback and spawn · **SAFE** · The callback owns an upstream response handle and the once flag. Detached probe tasks receive their own response handle.
 - 180-189 · capturing coroutine generator · **SAFE** · AsyncGenerator transfers the first-event closure into runGenerator, whose frame owns both the closure and the upstream iterator across yields and return.
 - 204-207,215-225 · provider dispatch and handler wrappers · **SAFE** · Handler request tasks are joined and returned stream construction copies the telemetry. The public wrappers copy the context synchronously and the telemetry wrapper owns its callable.
+
+### `src/chat/stream_translation.cpp`
+
+Event reconciliation mutates frame-owned output state synchronously. Replay and cancellation have separate iterator handles.
+
+- 49,75-338,346-352,379-385,394-400 · synchronous closures and accumulator references · **SAFE** · The matcher only examines its live argument synchronously. Results own their tool calls, and no borrow of the accumulator container crosses a suspension.
+- 354-368 · capturing coroutine generator · **SAFE** · runGenerator owns the closure and its shared prepared state. The replay buffer is immutable and each yield uses an owned event value.
+- 369-374 · capturing cancel coroutine · **SAFE** · The returned cancel closure owns both iterator copies. Live callers invoke it through a SourceAlgorithm-owned StreamState and await it before that state can be released.
+- 386-393 · borrowed context recorder · **SAFE** · Stream and buffered callers retain their context owners across the join and this task uses the context only to start the completion write.
