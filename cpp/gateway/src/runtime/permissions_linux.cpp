@@ -9,12 +9,12 @@
 #include "uos/rt/process.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
-#include "uos/rt/url.hpp"
 
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <utility>
 
@@ -220,10 +220,9 @@ namespace uos::runtime::permissions_linux {
       return cache;
     }
 
-    std::string moduleUrl() { return rt::pathToFileURL(rt::path::dirname(rt::process::execPath()) + "/src/runtime/permissions-linux.ts").href(); }
-
     LinuxPermissionsArtifact defaultArtifact() {
-      const std::string manifest = rt::fileURLToPath(rt::URL("../../.uos-permissions/manifest.json", moduleUrl()));
+      const auto directory = std::filesystem::path(rt::process::execPath()).parent_path() / ".uos-permissions";
+      const auto manifest = (directory / "manifest.json").native();
       const rt::fs::Stats info = rt::fs::lstatSync(manifest);
       if (!info.isFile() || info.isSymbolicLink()) throw rt::JsError("Native confinement manifest is not a regular file");
       const json::value document = rt::jsonParse(rt::fs::readFileSync(manifest, "utf8"));
@@ -234,7 +233,7 @@ namespace uos::runtime::permissions_linux {
       if (document.is_null() || !(document.is_object() || document.is_array()) || path == nullptr || !path->is_string() || path->get_string() != "linux-arm64.node" ||
           architecture == nullptr || !architecture->is_string() || architecture->get_string() != "arm64" || sha256 == nullptr || !sha256->is_string())
         throw rt::JsError("Native confinement manifest is invalid");
-      return LinuxPermissionsArtifact{rt::path::join(rt::path::dirname(manifest), std::string_view(path->get_string())), std::string(sha256->get_string())};
+      return LinuxPermissionsArtifact{(directory / "linux-arm64.node").native(), std::string(sha256->get_string())};
     }
 
     NativePermissions nativeLibrary(const std::optional<LinuxPermissionsArtifact>& artifact) {
