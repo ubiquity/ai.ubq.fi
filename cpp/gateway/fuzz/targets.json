@@ -58,6 +58,12 @@
       "max_len": 16384,
       "extra_sources": ["src/rt/date.cpp"]
     },
+    "headers_library": {
+      "harness": "fuzz/headers_library.cpp",
+      "entry": "uos::rt::Headers append, set and lookups",
+      "max_len": 16384,
+      "extra_sources": ["src/rt/headers.cpp"]
+    },
     "url": {
       "harness": "fuzz/url.cpp",
       "entry": "uos::rt::URL / URLSearchParams",

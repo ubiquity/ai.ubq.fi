@@ -131,3 +131,33 @@ a synthetic January 2000 deadline. The isolated probe
 deadline while preserving the raw provider value. This matches the
 recorded legacy-date deviation. The application fixture
 `tests/claude_code_usage_schema_vectors.inc` is outside the assigned scope.
+
+## Headers
+
+Deleted the WebKit name lookup. The append path uses its existing lowercase
+key in errors and limits the visible field name to 64 token characters. The
+caught validation error's value is dropped before the error leaves
+`append`. The shared validator still builds its legacy text internally, and
+`set` and invalid-name errors can still expose raw input. Those paths are
+outside the assigned diagnostic region. Cookie and Set-Cookie handling and
+HTTP wire spellings are covered by the existing fixtures.
+
+- Production diff was **40 removed, 6 added**, a net reduction of 34 lines.
+- For each of `release` and `asan`,
+  `python3 -B /tmp/uos-small-r1/gate.py PROFILE quick headers 2 headers_test,fetch_transport_test,runtime_http_differential_test`
+  exited 0 with **3/3 binaries, 43/43 cases** and stable source inputs.
+  The heavy `serve_delivery_http_test` closure is compiling.
+- `python3 -B /tmp/uos-small-r1/gate.py asan fuzz headers_library 1` ran
+  **2,115,622 inputs in 121 seconds**, exit 0, with zero crash artifacts and
+  no sanitizer finding.
+- `python3 -B /tmp/uos-small-r1/bench.py headers headers` linked the actual
+  old and new objects against the same runtime. Invalid-input timing includes
+  exception handling. The rejected path allocates twice more because it maps
+  the existing validator exception to a bounded diagnostic.
+
+| Input                 | Before ns/op | After ns/op | Before alloc/op | After alloc/op |
+| --------------------- | -----------: | ----------: | --------------: | -------------: |
+| Content-Type          |        345.2 |       117.5 |               3 |              3 |
+| Custom field          |        245.5 |       109.2 |               2 |              2 |
+| Two Cookie fields     |        362.0 |       140.5 |               2 |              2 |
+| Rejected Content-Type |      6,878.9 |     5,125.0 |               2 |              4 |

@@ -22,3 +22,13 @@ the existing UTC default for an omitted offset remain supported.
 The stricter grammar removes ambiguous date interpretations from validation.
 The retained ISO and IMF forms cover the gateway's persisted timestamp and
 retry-deadline fixtures. All 2,050 parser inputs remain covered.
+
+## Headers diagnostics
+
+An invalid value passed to `Headers::append` or to a constructor reports a
+lowercase field name, limited to 64 characters, and omits the rejected value.
+For example, appending a value containing a newline to `Content-Type` throws
+`TypeError: Header 'content-type' has invalid value`. The diagnostic carries
+the field identity without printing untrusted value bytes. All 170 affected
+vectors still require rejection. HTTP field validation and serialization
+continue to use the original name and value rules.
