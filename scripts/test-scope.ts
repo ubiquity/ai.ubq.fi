@@ -52,9 +52,6 @@ export type CiScope = TestSelection &
     needsDarwinNative: boolean;
     needsDarwinTests: boolean;
     needsArtifact: boolean;
-    needsRustNative: boolean;
-    needsRustWasm: boolean;
-    needsRustBuild: boolean;
     needsTypeScriptValidate: boolean;
   }>;
 
@@ -385,11 +382,6 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
       (environment.GITHUB_BASE_REF === "queue-canary" ||
         (environment.GITHUB_BASE_REF === "development" && (environment.GITHUB_PR_AUTHOR === "ubiquity-sentinel[bot]" || changesCiPolicy))));
   const docsOnly = selection.reason === "documentation-only";
-  const rustSelected = !docsOnly && selection.paths.some(isRustGatePath);
-  const needsRustNative = completeCheckSet || selection.runAll || rustSelected;
-  const rustPaths = selection.paths.filter(isRustGatePath);
-  const nativeOnly = rustPaths.length > 0 && rustPaths.every((path) => RUST_NATIVE_ONLY_PACKAGES.some((name) => path.startsWith(`rust/crates/${name}/`)));
-  const needsRustWasm = needsRustNative && (completeCheckSet || selection.runAll || !nativeOnly);
   const separate = separateComponentPaths(selection.paths, root);
   const hasTypeScriptWork =
     requiresStaticValidation(selection.paths) || selection.paths.some((path) => !isDocumentationPath(path) && !isRustPath(path) && !separate.has(path));
@@ -415,9 +407,6 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
     needsDarwinNative: completeCheckSet || needsDarwinTests,
     needsDarwinTests,
     needsArtifact,
-    needsRustNative,
-    needsRustWasm,
-    needsRustBuild: needsRustWasm,
   };
 };
 
