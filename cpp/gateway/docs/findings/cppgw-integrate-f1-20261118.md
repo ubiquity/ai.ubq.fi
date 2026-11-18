@@ -222,6 +222,31 @@ runtime version.
 | `release-3.json`                | `f94362e465da0ab1d2afbb5930cfbbd47553694ade93e059db6529e7ccab5ffd` |
 | `release-4.json`                | `fbcaf55ac8352bd5b7516a979620ea170e8c76129baf7d173bbcffe93eb0d49c` |
 
+## Integrated Linux ARM64 sanitizers
+
+The focused AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer run passed **157/157 binaries and
+1,933/1,933 cases**. The selection covers all 37 runtime binaries, tests whose paths contain `passkey`, `kv`,
+`http` or `websocket`, and tests whose Links closure includes `src/runtime/http.cpp`. It uses the portable
+driver's real fixture boundary and stock `--config asan` compiler flags. All 157 run logs were free of sanitizer
+diagnostics. The WebSocket runtime fixture passed 17/17 cases, and the JSC reader and sparse-array fixtures
+passed 8/8 and 2/2. QCBOR and OpenSSL standalone tests passed 13/13 and 9/9, and the WebAuthn differential
+case passed all of its vectors.
+
+```bash
+scratch=/var/tmp/cppgw-integrate-f1.WpF47zpW
+out="$scratch/receipts/final"
+/usr/bin/time -o "$out/asan-resumed.time" -f 'wall_s=%e peak_process_kib=%M exit=%x' \
+  timeout -k 30s 1500s bash "$scratch/ci-gate.sh" python3 -B "$scratch/asan-focus.py" \
+  > "$out/asan-resumed.log" 2>&1
+```
+
+The earlier connection drop left 479 of 556 Ninja edges completed. The resumed compile phase took 303.291 s,
+the link and test phase took 131.864 s and the timed command took 435.94 s with 1,110,064 KiB reported peak
+process RSS and exit 0. The receipt binds `35d16ce92b1c577e6bdea66ea2d03b10d7690d14`, tree
+`7a913e86b13b200f85575d0dfdcdc6bf05100522`, and the same before-and-after driver input SHA-256 as Release.
+The SHA-256 of `receipts/final/asan-resumed.json` is
+`439f5140a42e18ce6b5a57bfe195c831612db1ea95942d5acd9e782070b373d6`.
+
 ## KV robustness
 
 The Ubuntu 26.04 ARM64 campaign on `5a8c3ec1` used the workflow's standalone target, four workers and the
@@ -310,3 +335,39 @@ and exited 1 for the two shared assertions. [Incoming conformance findings](cppg
 | Package manifest                    | `c4ef9e8df217234b3f6aae31091ed557b6bfeef373c2540ef56800e7634bf5d5` |
 | `run.6JWRPzZJ/output/results.json`  | `ce9bb46d2c7cd6da6ada75cdb5d790a08fcb9ce3c401837fc9d3ecf41d1d7355` |
 | `run.6JWRPzZJ/output/table.md`      | `2bea47a8a0cf89edca4f79f7da9b007578c6d65da0bc1e3028399fec1918de8e` |
+
+## Handoff
+
+The Links and vendor registry checks passed. Syntax checks covered 5 shell scripts, 13 Python files, 3 JSON
+inputs and the embedded Python in two build scripts. The scoped `bun --no-env-file --no-install run format:check` passed
+on the changed integration guides, release workflow and this report. The first-party `git diff --check` passed.
+The full diff reports one blank line at EOF in `third_party/qcbor/inc/qcbor/UsefulBuf.h`. Its bytes match the
+stage 2b vendor tree. The findings commits after `0c9dfda6` change only this report, so all driver and package
+inputs remain bound to their recorded source trees.
+
+The two shared validation defects remain open. The incoming macOS release supplies the Apple Silicon package
+receipt. This integration exercised Linux ARM64, including the Ubuntu 26.04 WebSocket and KV gates. Physical
+Raspberry Pi and production serving acceptance remain separate. The worktree is clean on `agent-job`, and
+build outputs, binaries and downloads are in runner scratch.
+
+The refreshed `origin/development` is `a3a96bc5fe96ba383936746fae23e64daa69562f`. It has no gateway tree and
+does not contain the F1 merges. The HTTPS push preflight for the F1 branch exited 128 because the runner has
+no GitHub write authentication. The GitHub PR, ancestry-preserving merge and checkout handoff to `development`
+remain pending. The verified Git bundle in runner scratch keeps the ordered integration available from the
+fetched input tips.
+
+```bash
+git fetch --no-tags origin refs/heads/development:refs/remotes/origin/development
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false git push --dry-run --porcelain origin \
+  HEAD:refs/heads/agent-jobs/cppgw-integrate-f1-20261118
+git bundle create "$scratch/cppgw-integrate-f1-20261118.bundle" agent-job \
+  ^6d28e858 ^af7a0036 ^980d97fb ^20c83e02
+git bundle verify "$scratch/cppgw-integrate-f1-20261118.bundle"
+```
+
+**Summary.** All three merges are committed on `agent-job`. Linux ARM64 passed 450 release binaries and 5,104
+cases, plus 157 sanitizer binaries and 1,933 cases. The Links check and Docker package verification passed.
+Native and Bun agreed on all 186 paired cases, with two shared validation failures. The gateway accepts WebSocket
+close code 1014 on Boost 1.90, and the 608-second KV fuzz campaign produced no OOM or other genuine findings.
+First-party production source fell from 188,326 to 185,211 lines. GitHub write authentication blocked publication
+and the `development` handoff.
