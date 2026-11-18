@@ -1816,8 +1816,34 @@
       ]
     },
     "src/codex/banked_reset_pool.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Pool evaluation snapshots inputs before concurrent work and keeps single-reader list iteration local.",
+      "sites": [
+        {
+          "lines": "133-185,192-226",
+          "kind": "shadow KV read/write and list iterator",
+          "verdict": "SAFE",
+          "reason": "The frame retains KV, its AtomicOperation or list iterator, and local decision data through each sequential suspension."
+        },
+        {
+          "lines": "297-313,377-408,490-512",
+          "kind": "fail-fast all and provider interface",
+          "verdict": "SAFE",
+          "reason": "Each child owns its candidate and hash, KV, or provider handle. None references the fan-out vector after a sibling can reject."
+        },
+        {
+          "lines": "332-357,440-465,565-603",
+          "kind": "hash, duplicate, and credit scan awaits",
+          "verdict": "SAFE",
+          "reason": "The fence and inventory slices refer to immutable frame-owned inputs. Inventory and selection values remain alive through the awaited hash."
+        },
+        {
+          "lines": "528-551,634-645,667-737",
+          "kind": "pool orchestration awaits",
+          "verdict": "SAFE",
+          "reason": "Each frame owns its candidate, provider dependency and variant results and joins each nested operation before releasing them."
+        }
+      ]
     },
     "src/codex/banked_reset_provider.cpp": {
       "status": "pending",

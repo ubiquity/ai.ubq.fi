@@ -191,7 +191,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/auth_repair.cpp`
 - [x] `src/codex/banked_reset.cpp`
 - [x] `src/codex/banked_reset_claim.cpp`
-- [ ] `src/codex/banked_reset_pool.cpp`
+- [x] `src/codex/banked_reset_pool.cpp`
 - [ ] `src/codex/banked_reset_provider.cpp`
 - [ ] `src/codex/banked_reset_submission.cpp`
 - [ ] `src/codex/capacity_routing.cpp`
@@ -1216,3 +1216,12 @@ Hash and ledger transitions preserve their candidate, row and transaction state 
 - 206-440 · claim and update transaction awaits · **SAFE** · Candidates, KV, rows, mutators and atomic operations are retained by the frames which join their reads and commits. Row alternatives and optional values are local snapshots.
 - 462-572,616-683 · submission preparation and renewal · **SAFE** · The row, budget, fences and usage variants are local to each attempt and remain live through sequential read and commit waits.
 - 783-820 · record update callbacks · **SAFE** · Each mutator's outcome data is captured by value and the update task owns the callable until after the commit.
+
+### `src/codex/banked_reset_pool.cpp`
+
+Pool evaluation snapshots inputs before concurrent work and keeps single-reader list iteration local.
+
+- 133-185,192-226 · shadow KV read/write and list iterator · **SAFE** · The frame retains KV, its AtomicOperation or list iterator, and local decision data through each sequential suspension.
+- 297-313,377-408,490-512 · fail-fast all and provider interface · **SAFE** · Each child owns its candidate and hash, KV, or provider handle. None references the fan-out vector after a sibling can reject.
+- 332-357,440-465,565-603 · hash, duplicate, and credit scan awaits · **SAFE** · The fence and inventory slices refer to immutable frame-owned inputs. Inventory and selection values remain alive through the awaited hash.
+- 528-551,634-645,667-737 · pool orchestration awaits · **SAFE** · Each frame owns its candidate, provider dependency and variant results and joins each nested operation before releasing them.
