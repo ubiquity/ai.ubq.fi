@@ -129,15 +129,36 @@ Each invocation starts with `env -i` and a new empty home and temporary
 directory. The driver verifies loopback access and external-route denial
 and gives each binary a private mount, PID and loopback network namespace.
 
+The invocation inside `run-gate.sh` runs from the selected Git worktree.
+`instrument` is empty in release and contains the two flags above in ASan.
+
+```bash
+session=$(mktemp -d "$scratch/gate.XXXXXXXX")
+mkdir "$session/home" "$session/tmp"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
+  HOME="$session/home" TMPDIR="$session/tmp" CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4 \
+  UOS_CI_BUILD_DIR="$scratch/ci" PKG_CONFIG_PATH="$scratch/icu78/lib/pkgconfig:$scratch/sqlite/lib/pkgconfig" \
+  UOS_CI_CFLAGS="$instrument" UOS_CI_CXXFLAGS="-isystem $scratch/boost_1_92_0 $instrument" \
+  UOS_CI_LDFLAGS="-L$scratch/boost_1_92_0/stage/lib -Wl,--disable-new-dtags,-rpath,$scratch/icu78/lib:$scratch/sqlite/lib" \
+  bash cpp/gateway/tools/ci-build.sh --config "$config"
+```
+
 ## Verification in progress
+
+The fresh release baseline passed all 448 binaries and 5,095 cases on
+`9acb016ae9900ffac255b7f3cec02c735f6ddeda`. The driver compiled all 369
+production translation units. Compile, link/test and total wall times
+were 3,168.300 s, 108.059 s and 3,276.885 s. The recorded input SHA-256 is
+`364b32a62c071736e67560aff226a28d2a6ff4d5f3a24fd57fd677eb19c73580`.
+The JSON receipt SHA-256 is
+`830c88fe8a2c7800dddf87e18fff2644e8e74c6f31972542c251a017312cc048`.
 
 The strict Clang syntax gate passed for the three changed translation units
 and both changed tests. Links resolved all 448 binaries. The scratch
 old/new differential matched digest `6057dda90c227365` across 120,000 cases
 covering searches, trimming, replacements and slices. Both versions also
 passed prefix, suffix and substring checks across all 65,536 two-byte inputs
-around `input_`. The full baseline release, candidate release and sanitizer
-receipts are pending.
+around `input_`. The candidate release and sanitizer receipts are pending.
 
 The focused release preview passed the 20-case string binary and all nine
 Responses conformance cases, including the new prefix fixture. The isolated
