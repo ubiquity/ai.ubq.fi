@@ -116,7 +116,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/kernel/quota_v2.cpp`
 - [x] `src/kernel/quota_write.cpp`
 - [x] `src/kernel/usage.cpp`
-- [ ] `include/uos/worker/entrypoint.hpp`
+- [x] `include/uos/worker/entrypoint.hpp`
 - [ ] `include/uos/worker/transport.hpp`
 - [ ] `src/worker/entrypoint.cpp`
 - [ ] `src/worker/transport.cpp`
@@ -805,6 +805,12 @@ Usage read methods own identities and options, with a shared store or a resolved
 | 266-308 | Point usage and optional daily reads | **SAFE** | The task owns request identities and options, uses a shared store and normalizes each independent result into an owned record. |
 | 318-373 | Usage scans and daily lookups | **SAFE** | Each cursor and current row are frame-owned. Keys and daily buckets are copied, and the sort callbacks run synchronously on a completed local vector. |
 
+### `include/uos/worker/entrypoint.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 25-37,41-53 | Worker dependencies and host lifetime handles | **SAFE** | Fetch wrappers synchronously copy the shared dependency holder into owning task arguments. WaitUntil takes a promise handle by value. The deferred registrations are reviewed in entrypoint.cpp. |
+
 
 ## Ranked defects and counts
 
@@ -1076,4 +1082,4 @@ removes the registrations on frame destruction as well as on normal return.
 +  const auto bindingHash = co_await std::move(bindingHashing);
 ```
 
-93/97 files reviewed. **DEFECT 10, SAFE 222, UNCLEAR 4.**
+94/97 files reviewed. **DEFECT 10, SAFE 223, UNCLEAR 4.**
