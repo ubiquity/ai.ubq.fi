@@ -465,7 +465,7 @@ TEST("differential: receipt byte accounting matches Bun") {
   EXPECT(!acceptsChatAt(988, chatFixture("hiddenchat1", false)));
 }
 
-TEST("differential: restored payloads carry Bun's canonical key order") {
+TEST("differential: restored payloads carry the store's canonical key order") {
   const AnthropicReplayStore store = createAnthropicReplayStore();
   const ReplayPublication receipt = fixture();
   EXPECT_EQ(store.remember(receipt), true);
@@ -480,7 +480,7 @@ TEST("differential: restored payloads carry Bun's canonical key order") {
   odd.output[2].as_object()["arguments"] = json::string(rt::jsonStringify(odd.nativeBlocks[3].as_object()["input"]));
   EXPECT_EQ(store.remember(odd), true);
   EXPECT_EQ(rt::jsonStringify(entriesJson(store.restore(odd.output, context))),
-            std::string(R"([{"type":"native_assistant","blocks":[{"signature":"real-provider-signature","thinking":"Inspect the input.","type":"thinking"},{"data":"real-provider-opaque-block","type":"redacted_thinking"},{"text":"Reading the file.","type":"text"},{"id":"call-odd1","input":{"9":2,"10":1,"_":0,"a":{"":true,"z":null},"b":[1.5,0,1e+21,"é😀"],"B":false},"name":"read_file","type":"tool_use"}]}])"));
+            std::string(R"([{"type":"native_assistant","blocks":[{"signature":"real-provider-signature","thinking":"Inspect the input.","type":"thinking"},{"data":"real-provider-opaque-block","type":"redacted_thinking"},{"text":"Reading the file.","type":"text"},{"id":"call-odd1","input":{"10":1,"9":2,"_":0,"a":{"":true,"z":null},"b":[1.5,0,1e+21,"é😀"],"B":false},"name":"read_file","type":"tool_use"}]}])"));
   ReplayPublication nullPart = fixture("nullpart1");
   nullPart.output[1].as_object()["content"] = parse("[null]");
   EXPECT_EQ(store.remember(nullPart), false);
