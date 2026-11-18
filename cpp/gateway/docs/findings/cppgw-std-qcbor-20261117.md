@@ -34,3 +34,9 @@ The inherited implementation at `3e496bc56494183e4ab2cab490864f9fd9bcf260` compi
 | 4 diagnostic expectations | The array containing null, tagged extension, duplicate extension label and empty stored key still return 400. The warning messages now identify the strict decoder failures.        |
 
 The existing passkeys parser fuzzer includes `src/auth/passkeys.cpp` directly. Its CMake object and link now select the same QCBOR target as the production translation unit. The generated test registry has 442 binaries, 59 with `src/auth/passkeys.cpp` in their closure. The remaining work is the release and ASan/UBSan closure, the new fuzz target's two-minute smoke, the broader release sweep, and the baseline measurement.
+
+## Closure verification checkpoint
+
+The inherited codec built at `28943ca1ca40dba9cf6901cbcbf8ac9d0a91aa4d` (`c9283e8ec2f48163acd92b6cb8b02b1d47b823d0`). The 59-test Links closure ran on ARM64 with GCC 14.2 at `-O2` and Clang 21 with ASan, UBSan and LeakSanitizer. Each configuration passed 58 binaries and 736 cases. The single failing binary contained the same nine WebAuthn replay mismatches listed above. The first Clang attempt stopped on headers in the existing simdutf vendor. A runner-local CMake setting treated those headers as system headers, with all first-party warning flags still enabled.
+
+The portable `cmake/ci/driver.py` and legacy `tools/unit.mk` use a single C++ source per vendor. QCBOR needs five C objects and its include directory. The portable compile probe failed at the missing header, and `g++-14 -std=c++20 -fsyntax-only` with the include path confirmed that QCBOR's upstream C source requires the C frontend. The CMake and dedicated fuzz paths use that frontend. The portable driver and `tools/unit.mk` are outside this task's ownership.
