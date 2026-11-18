@@ -113,7 +113,7 @@ namespace uos::rt::process {
   void removeListener(std::string_view event, const Listener& listener);
   std::size_t listenerCount(std::string_view event);
 
-  // Linux signal names as Bun spells them ("SIGINT"; 16 is "SIG16").
+  // Native signal names and numbers for the build target.
   std::optional<int> signalNumber(std::string_view name);
   std::optional<std::string_view> signalName(int number);
 
