@@ -9863,8 +9863,25 @@
       ]
     },
     "include/uos/responses_handler.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed ordinary and pre-parsed request interfaces.",
+      "sites": [
+        {
+          "lines": [
+            5,
+            7,
+            9,
+            11,
+            13
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Production route and image caller frames retain their context and parsed body through the direct awaits. Stream handoff captures owned copies before the caller can finish."
+        }
+      ]
     },
     "include/uos/responses_native_headers.hpp": {
       "reviewed": false,
