@@ -280,7 +280,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/paid_fallback/rollups.cpp`
 - [x] `src/paid_fallback/routing.cpp`
 - [x] `src/provider/anthropic_chat_responses.cpp`
-- [ ] `src/provider/anthropic_chat_stream.cpp`
+- [x] `src/provider/anthropic_chat_stream.cpp`
 - [ ] `src/provider/anthropic_replay.cpp`
 - [ ] `src/provider/anthropic_response_wire.cpp`
 - [ ] `src/provider/anthropic_responses.cpp`
@@ -1780,3 +1780,10 @@ Claude Chat projection hands owned frame and stream state to the generator and t
 - 353-445 · generator inputs, iterator and event vectors · **SAFE** · The generator body owns response/options, and the inner iterator and emitted byte buffers stay live through yield. The reference-capturing projections are synchronous, local helpers.
 - 446-518 · translated stream callbacks and cancellation · **SAFE** · Pull and cancel tasks take shared state by value and the source algorithms retain their closures across a join. Controller is weak and reader buffers are owned.
 - 519 · direct await of aggregate body-read options · **DEFECT** · The bounded-reader helper is a coroutine taking an owning aggregate by value. Passing the aggregate in the awaited expression violates PORTING.md's GCC 12.2 rule. Construct a named task before awaiting it.
+
+### `src/provider/anthropic_chat_stream.cpp`
+
+Framing and response bytes live in the generator, with owned watchdog and reader cancellation state.
+
+- 114-138 · read/abort race · **SAFE** · The executor is synchronous, the installed listener locks weak signal state and reader.readPromise owns its I/O state even when it loses the race.
+- 156-220 · generator, watchdog and cancellation · **SAFE** · The generator owns its reader and input response. Its chunk borrow points into the local read result across the yield. Abort and timeout callbacks copy their handles and normal cleanup or timer-queue teardown drops the ownership edges.

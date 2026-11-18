@@ -3219,8 +3219,22 @@
       ]
     },
     "src/provider/anthropic_chat_stream.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Framing and response bytes live in the generator, with owned watchdog and reader cancellation state.",
+      "sites": [
+        {
+          "lines": "114-138",
+          "kind": "read/abort race",
+          "verdict": "SAFE",
+          "reason": "The executor is synchronous, the installed listener locks weak signal state and reader.readPromise owns its I/O state even when it loses the race."
+        },
+        {
+          "lines": "156-220",
+          "kind": "generator, watchdog and cancellation",
+          "verdict": "SAFE",
+          "reason": "The generator owns its reader and input response. Its chunk borrow points into the local read result across the yield. Abort and timeout callbacks copy their handles and normal cleanup or timer-queue teardown drops the ownership edges."
+        }
+      ]
     },
     "src/provider/anthropic_replay.cpp": {
       "status": "pending",
