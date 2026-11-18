@@ -235,3 +235,34 @@ in the runner scratch directory.
 The HTTP wire binary passed all 107 comparisons. The IDNA fixture passed both
 test cases with 1,260 curated vectors and 2,228,224 exhaustive scalar records
 across 1,088 blocks.
+
+## Sanitizer receipt
+
+ASan/UBSan passed 105/105 binaries and 1,191/1,191 cases with zero failures,
+build failures, timeouts or sanitizer findings. The driver compiled 369/369
+production objects and exited 0. The incremental object phase took 2,423.845 s,
+link and test took 71.828 s, and the total was 2,496.387 s. The receipt matches
+the release commit, Git tree and input digest above.
+The SHA-256 of `receipts/asan-final.json` was
+`3ea7bbc80aeb1f08ca8487698b2db1d4847467fbbe4d2c818e359a46c0b2b4a9`.
+
+The receipt audit verified that the release shards together cover the full
+driver inventory exactly once and that every release and sanitizer selection
+has the same input digest as before execution. Commits after the tested tree
+only append this report. The three edited documents passed the repository's
+`bun --no-env-file --no-install run format:check` from a scratch setup with
+both frozen lockfiles. The first-party diff passed `git diff --check`, and
+all pinned vendor bytes matched the accepted branches.
+
+## Handoff
+
+The clean local stage 1 branch is
+`agent-jobs/cppgw-integrate-s1-20261118-44220704314-1`. GitHub publication
+is pending because the push preflight could not authenticate to `origin`
+and returned exit 128. The acceptance runs were on Linux ARM64. macOS and the
+owner's historical SDK were unavailable on this runner.
+
+Stage 1 preserves both accepted merges and is green on Linux ARM64 with
+443/443 release binaries and 5,037/5,037 cases across four shards, plus
+105/105 targeted ASan/UBSan binaries and 1,191/1,191 cases. First-party
+runtime production source fell from 34,571 to 32,250 lines.
