@@ -1319,8 +1319,16 @@
       ]
     },
     "include/uos/provider/claude_code_usage.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Usage fetch and its owning options.",
+      "sites": [
+        {
+          "lines": "68,76-77",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The fetch frame owns credential and options, including the clock and fetch functions."
+        }
+      ]
     },
     "include/uos/provider/claude_code_usage_fwd.hpp": {
       "status": "pending",
