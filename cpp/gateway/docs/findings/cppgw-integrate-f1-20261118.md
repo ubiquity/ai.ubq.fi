@@ -62,6 +62,13 @@ The stringify, comparison and coercion tests continue to require `RangeError` wh
 The stage 2b depth-related Codex 429, BigInt, fetch and WebAuthn fixture changes are recorded in its
 [findings](cppgw-integrate-s2b-20261118.md#fixture-decisions).
 
+The original stage 2b merge compiled 369 production objects after two portability corrections for
+Boost.JSON array construction and `std::min` argument types. The stage 2b replay on the prior parser
+promoted integer-index keys in two generic console vectors. The merged simdjson and console path
+prints both full objects in insertion order. The vectors now expect `4294967294` last (formerly first)
+and `1` between `valid_id` and `with space` (formerly first). Both inputs and all fields are retained.
+Pre-serialized gateway log records and terminal accounting fields use their existing paths.
+
 ## WebSocket close code 1014
 
 On ARM64 `ubuntu:26.04`, Clang 21.1.8 and distro Boost `1.90.0-6ubuntu1`, a direct

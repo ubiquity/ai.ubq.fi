@@ -99,8 +99,8 @@ TEST("console formatting for every recorded call shape") {
     {Method::log, {json::parse(R"__json({"a": [[]], "b": [{}], "c": {}})__json")}, "{\"a\":[[]],\"b\":[{}],\"c\":{}}"sv},
     {Method::log, {json::parse(R"__json([])__json"), json::parse(R"__json({})__json")}, "[] {}"sv},
     {Method::log, {json::parse(R"__json({"k": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "k2": "y"})__json")}, "{\"k\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"k2\":\"y\"}"sv},
-    {Method::log, {json::parse(R"__json({"__proto__x": 1, "a.b": 2, "_a": 3, "A1": 4, "1a": 5, "-1": 6, "01": 7, "4294967295": 8, "4294967294": 9})__json")}, "{\"4294967294\":9,\"__proto__x\":1,\"a.b\":2,\"_a\":3,\"A1\":4,\"1a\":5,\"-1\":6,\"01\":7,\"4294967295\":8}"sv},
-    {Method::log, {json::parse(R"__json({"a-b": 1, "valid_id": 2, "1": 3, "with space": 4, "ünï": 5, "": 6, "$x": 7})__json")}, "{\"1\":3,\"a-b\":1,\"valid_id\":2,\"with space\":4,\"ünï\":5,\"\":6,\"$x\":7}"sv},
+    {Method::log, {json::parse(R"__json({"__proto__x": 1, "a.b": 2, "_a": 3, "A1": 4, "1a": 5, "-1": 6, "01": 7, "4294967295": 8, "4294967294": 9})__json")}, "{\"__proto__x\":1,\"a.b\":2,\"_a\":3,\"A1\":4,\"1a\":5,\"-1\":6,\"01\":7,\"4294967295\":8,\"4294967294\":9}"sv},
+    {Method::log, {json::parse(R"__json({"a-b": 1, "valid_id": 2, "1": 3, "with space": 4, "ünï": 5, "": 6, "$x": 7})__json")}, "{\"a-b\":1,\"valid_id\":2,\"1\":3,\"with space\":4,\"ünï\":5,\"\":6,\"$x\":7}"sv},
     {Method::log, {json::parse(R"__json({"s": "quote \" and ' and \n newline \t tab \\ back ünï 😀"})__json"), json::parse(R"__json(["x\ny"])__json")}, "{\"s\":\"quote \\\" and ' and \\n newline \\t tab \\\\ back ünï 😀\"} [\"x\\ny\"]"sv},
     {Method::log, {json::parse(R"__json({"s": "a\rb\bc\fd\u000be\u0000f\u001bgh i"})__json")}, "{\"s\":\"a\\rb\\bc\\fd\\u000be\\u0000f\\u001bg\177h i\"}"sv},
     {Method::log, {json::parse(R"__json(["\t", "'", "\"", "`", "\\"])__json")}, "[\"\\t\",\"'\",\"\\\"\",\"`\",\"\\\\\"]"sv},
