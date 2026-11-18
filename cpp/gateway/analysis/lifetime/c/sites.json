@@ -2002,7 +2002,8 @@
       ]
     },
     "src/codex/external_auth.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Token shape and external account planning are synchronous. Returned records own their text and no async callback is installed.",
       "sites": []
     },
     "src/codex/index.cpp": {

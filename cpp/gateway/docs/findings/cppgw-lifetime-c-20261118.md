@@ -197,7 +197,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/capacity_routing.cpp`
 - [x] `src/codex/dispatch.cpp`
 - [x] `src/codex/experiment.cpp`
-- [ ] `src/codex/external_auth.cpp`
+- [x] `src/codex/external_auth.cpp`
 - [ ] `src/codex/index.cpp`
 - [ ] `src/codex/manual_reset.cpp`
 - [ ] `src/codex/manual_reset_state.cpp`
@@ -1271,3 +1271,7 @@ The cache-scope experiment owns its session, auth pool snapshot and callback opt
 - 45-57,69-85,108-117 · auth pool and row reads · **SAFE** · The KV owner and copied row stay in the awaited frame. Slot iteration uses the local copied pool.
 - 123-187 · refresh, classification, and compare-and-set · **SAFE** · The selectedAccount pointer refers to the const local selected variant through refresh and commit. The race's refresh child owns auth independently. Listener ownership is reviewed in auth_refresh.cpp.
 - 198-238,248-328 · transport, hooks, and probe fan-out · **SAFE** · Option and routing copies stay in the experiment frame. Probe handles are copied before allSettled, and detached health writes receive values.
+
+### `src/codex/external_auth.cpp`
+
+Token shape and external account planning are synchronous. Returned records own their text and no async callback is installed.
