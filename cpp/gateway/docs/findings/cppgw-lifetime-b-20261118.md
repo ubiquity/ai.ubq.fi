@@ -103,7 +103,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/scope_targets.cpp`
 - [x] `src/cache/telemetry_gate.cpp`
 - [x] `include/uos/kernel/attestation.hpp`
-- [ ] `include/uos/kernel/policy_queue.hpp`
+- [x] `include/uos/kernel/policy_queue.hpp`
 - [ ] `include/uos/kernel/quota_reservations.hpp`
 - [ ] `include/uos/kernel/quota_reserve.hpp`
 - [ ] `include/uos/kernel/quota_v2.hpp`
@@ -710,6 +710,10 @@ This facade does not define a coroutine or register callbacks. Its exported impl
 
 Verification/context take value-owned Request and options or token; the refresh entry takes no borrowed arguments. Implementation covers cache and cryptographic state.
 
+### `include/uos/kernel/policy_queue.hpp`
+
+Queue-record inputs are owning strings, and list has no borrowed parameters. No inline coroutine or callback registration.
+
 
 ## Ranked defects and counts
 
@@ -915,4 +919,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-80/97 files reviewed. **DEFECT 9, SAFE 190, UNCLEAR 3.**
+81/97 files reviewed. **DEFECT 9, SAFE 190, UNCLEAR 3.**

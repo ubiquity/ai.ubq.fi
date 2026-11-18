@@ -2474,8 +2474,9 @@
       "note": "Verification/context take value-owned Request and options or token; the refresh entry takes no borrowed arguments. Implementation covers cache and cryptographic state."
     },
     "include/uos/kernel/policy_queue.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "Queue-record inputs are owning strings, and list has no borrowed parameters. No inline coroutine or callback registration."
     },
     "include/uos/kernel/quota_reservations.hpp": {
       "reviewed": false,
