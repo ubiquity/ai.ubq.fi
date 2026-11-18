@@ -212,7 +212,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/responses_runners.cpp`
 - [x] `src/codex/responses_state.cpp`
 - [x] `src/codex/routing_evaluation.cpp`
-- [ ] `src/codex/routing_mutations.cpp`
+- [x] `src/codex/routing_mutations.cpp`
 - [ ] `src/codex/routing_serial.cpp`
 - [ ] `src/codex/routing_state.cpp`
 - [ ] `src/codex/session.cpp`
@@ -1368,3 +1368,10 @@ Creation reads and packages one request-local state. State reset and decision he
 ### `src/codex/routing_evaluation.cpp`
 
 Routing classification and proof folds are synchronous. The borrowed pool, account and map elements are consumed during each call.
+
+### `src/codex/routing_mutations.cpp`
+
+Route mutations use owned snapshots and joined persistence.
+
+- 33-49,83-154,172-215,329-395 · fence iteration, CAS, and proof awaits · **SAFE** · The private fence vector and KV/atomic operation remain in the waiting frames. Optional row/probe data is copied before any later mutation.
+- 222-237,244-288,291-308 · joined routing transform closures · **SAFE** · updateRoutingState owns the callable through each retry while the joined parent retains captured account and identity referents.

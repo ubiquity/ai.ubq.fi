@@ -2249,8 +2249,22 @@
       "sites": []
     },
     "src/codex/routing_mutations.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Route mutations use owned snapshots and joined persistence.",
+      "sites": [
+        {
+          "lines": "33-49,83-154,172-215,329-395",
+          "kind": "fence iteration, CAS, and proof awaits",
+          "verdict": "SAFE",
+          "reason": "The private fence vector and KV/atomic operation remain in the waiting frames. Optional row/probe data is copied before any later mutation."
+        },
+        {
+          "lines": "222-237,244-288,291-308",
+          "kind": "joined routing transform closures",
+          "verdict": "SAFE",
+          "reason": "updateRoutingState owns the callable through each retry while the joined parent retains captured account and identity referents."
+        }
+      ]
     },
     "src/codex/routing_serial.cpp": {
       "status": "pending",
