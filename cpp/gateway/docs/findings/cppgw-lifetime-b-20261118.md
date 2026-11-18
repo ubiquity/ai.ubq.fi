@@ -111,7 +111,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/kernel/usage.hpp`
 - [x] `src/kernel/attestation.cpp`
 - [x] `src/kernel/policy_queue.cpp`
-- [ ] `src/kernel/quota_reservations.cpp`
+- [x] `src/kernel/quota_reservations.cpp`
 - [ ] `src/kernel/quota_reserve.cpp`
 - [ ] `src/kernel/quota_v2.cpp`
 - [ ] `src/kernel/quota_write.cpp`
@@ -758,6 +758,20 @@ Usage read methods own identities and options, with a shared store or a resolved
 | 63-81,85-138 | Queue normalization, update and optimistic commit | **SAFE** | The store and atomic builder stay in the frame; normalization and sort consume only local data synchronously, and the selected record is copied before the commit wait. |
 | 150-161 | List policy queue | **SAFE** | The promise, shared store, key and result are owned. Iteration starts after the read and finishes synchronously before return. |
 
+### `src/kernel/quota_reservations.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 90-99,106-119,247-265 | Quota read fan-outs and named tuples | **SAFE** | Each promise starts a KV read owning its store and key. The caller materializes the tuple before binding references, and later tasks copy the projected entries. |
+| 127-141,513-545 | Reservation list reconciliation and reclaim | **SAFE** | The coroutine owns each iterator, row and window. Inner tasks receive copied inputs, and return_ is awaited while the same local iterator remains alive. |
+| 145-173 | Per-scope lock map operations | **SAFE** | The wrappers synchronously copy the predecessor handle before replacing the map entry, and erase a match without carrying a map iterator across suspension. |
+| 178-220,247-278,305-324 | Terminal intent, settlement and renewal KV writes | **SAFE** | The local variants and atomic builders survive their commit waits. Accesses to projected results refer to immutable storage in the same frame. |
+| 224-244,280-302,584-597 | Three capturing quota-lock coroutines | **SAFE** | The std::function moves into withKernelQuotaLock by value before invocation and directly awaits its child. The closure owns every capture, including store and scope values. |
+| 359-404,424-435,448-470 | Lease and settlement timers on completion or loop teardown | **SAFE** | Timeout callbacks reset their own slot, durable settlement clears all remaining slots, and Loop teardown clears queued callbacks. Retry timers deliberately keep already-admitted settlement live. |
+| 380-404,406-420,487-505 | Lease renewal after all reservation handles are dropped | **DEFECT** ([D09](#d09)) | The interval and context own each other. If the last commit/release handle is discarded without recording intent, successful renewals keep moving expiry and retain both the abandoned admission and KV. |
+| 406-445,448-483 | In-flight renewal and settlement reactions | **SAFE** | Each relay takes immutable copies or shared context. Promise completion moves reactions out of their source state, compares an owned identity token, and clears the matching slot. |
+| 550-603,606-666 | Default window scan and cutover guard | **SAFE** | The frame keeps each scan, task and optional guard. Releasing the guard copies its row and key, and iteration over the two static scopes carries no borrow of a mutable container. |
+
 
 ## Ranked defects and counts
 
@@ -788,6 +802,40 @@ lifetime contract violation. D02–D05 are retention failures under the stated e
 -        output.clear();
 +        if (!writing) output.clear();
          outputBytes = 0;
+```
+
+<a id="d09"></a>
+
+### D09. Dropped quota reservation handles leave lease renewal running, P2 retained admission
+
+- A successful quota reservation arms an interval whose callback owns the context, and the
+  context owns the interval. The caller drops both terminal callbacks without invoking either.
+- With a live loop and healthy KV, each renewal extends the row lease before the expiry callback
+  can stop renewal. The abandoned reservation retains KV and occupies capacity indefinitely.
+
+Give the two public callbacks a joint owner that stops renewal when the last callback is
+discarded before terminal intent. The lease can then expire naturally, and a recorded terminal
+intent keeps its existing renewal and durable retry behavior.
+
+```diff
+--- a/cpp/gateway/src/kernel/quota_reservations.cpp
++++ b/cpp/gateway/src/kernel/quota_reservations.cpp
+@@ after stopRenewal
++    struct ReservationClient {
++      explicit ReservationClient(ReservationContext live) : context(std::move(live)) {}
++      ~ReservationClient() {
++        if (!context->terminalIntent) stopRenewal(context);
++      }
++      ReservationContext context;
++    };
+@@ kernelReservationContext, after assigning leaseExpiresAtMs
++    const auto client = std::make_shared<ReservationClient>(context);
+     context->timers.renewal = rt::setInterval([context] { renew(context); }, renewalIntervalMs.value_or(native_kernel::KERNEL_QUOTA_RESERVATION_RENEWAL_MS));
+@@ kernelReservationContext, returned callbacks
+-      .commit = [context] { return settle(context, "committed", "completed"); },
+-      .release = [context](std::optional<std::string> reason) { return settle(context, "released", reason.value_or("request_incomplete")); },
++      .commit = [client] { return settle(client->context, "committed", "completed"); },
++      .release = [client](std::optional<std::string> reason) { return settle(client->context, "released", reason.value_or("request_incomplete")); },
 ```
 
 <a id="d06"></a>
@@ -963,4 +1011,36 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-88/97 files reviewed. **DEFECT 9, SAFE 201, UNCLEAR 4.**
+<a id="d08"></a>
+
+### D08. Cache fingerprint hashes pass inline strings to a coroutine, P3 comparison-profile rule
+
+- Each call creates a canonical JSON string and passes it by value in the suspending full-expression.
+- The retained GCC 12 comparison rule requires a separate named input and task. This was
+  identified by source review, with modern Clang as the build and sanitizer profile.
+
+```diff
+--- a/cpp/gateway/src/cache/scope_targets.cpp
++++ b/cpp/gateway/src/cache/scope_targets.cpp
+@@ inspectCodexAuthPoolBinding
+-      auto hash = co_await utils::sha256Hex(canonicalJson(material));
++      auto text = canonicalJson(material);
++      auto hashing = utils::sha256Hex(std::move(text));
++      auto hash = co_await std::move(hashing);
+@@ targetCapabilityFingerprint
+-    auto hash = co_await utils::sha256Hex(canonicalJson(material));
++    auto text = canonicalJson(material);
++    auto hashing = utils::sha256Hex(std::move(text));
++    auto hash = co_await std::move(hashing);
+@@ derivePromptCacheScopeTargetInventory
+-  const auto inventoryHash = co_await utils::sha256Hex(canonicalJson(inventoryMaterial));
+-  const auto bindingHash = co_await utils::sha256Hex(canonicalJson(bindingMaterial));
++  auto inventoryText = canonicalJson(inventoryMaterial);
++  auto inventoryHashing = utils::sha256Hex(std::move(inventoryText));
++  const auto inventoryHash = co_await std::move(inventoryHashing);
++  auto bindingText = canonicalJson(bindingMaterial);
++  auto bindingHashing = utils::sha256Hex(std::move(bindingText));
++  const auto bindingHash = co_await std::move(bindingHashing);
+```
+
+89/97 files reviewed. **DEFECT 10, SAFE 209, UNCLEAR 4.**

@@ -2634,8 +2634,104 @@
       ]
     },
     "src/kernel/quota_reservations.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "90-99,106-119,247-265",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Quota read fan-outs and named tuples",
+          "evidence": "Each promise starts a KV read owning its store and key. The caller materializes the tuple before binding references, and later tasks copy the projected entries."
+        },
+        {
+          "lines": "127-141,513-545",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Reservation list reconciliation and reclaim",
+          "evidence": "The coroutine owns each iterator, row and window. Inner tasks receive copied inputs, and return_ is awaited while the same local iterator remains alive."
+        },
+        {
+          "lines": "145-173",
+          "verdict": "SAFE",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "Per-scope lock map operations",
+          "evidence": "The wrappers synchronously copy the predecessor handle before replacing the map entry, and erase a match without carrying a map iterator across suspension."
+        },
+        {
+          "lines": "178-220,247-278,305-324",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Terminal intent, settlement and renewal KV writes",
+          "evidence": "The local variants and atomic builders survive their commit waits. Accesses to projected results refer to immutable storage in the same frame."
+        },
+        {
+          "lines": "224-244,280-302,584-597",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b"
+          ],
+          "symbol": "Three capturing quota-lock coroutines",
+          "evidence": "The std::function moves into withKernelQuotaLock by value before invocation and directly awaits its child. The closure owns every capture, including store and scope values."
+        },
+        {
+          "lines": "359-404,424-435,448-470",
+          "verdict": "SAFE",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Lease and settlement timers on completion or loop teardown",
+          "evidence": "Timeout callbacks reset their own slot, durable settlement clears all remaining slots, and Loop teardown clears queued callbacks. Retry timers deliberately keep already-admitted settlement live."
+        },
+        {
+          "lines": "380-404,406-420,487-505",
+          "verdict": "DEFECT",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Lease renewal after all reservation handles are dropped",
+          "evidence": "The interval and context own each other. If the last commit/release handle is discarded without recording intent, successful renewals keep moving expiry and retain both the abandoned admission and KV.",
+          "defect": "D09"
+        },
+        {
+          "lines": "406-445,448-483",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "In-flight renewal and settlement reactions",
+          "evidence": "Each relay takes immutable copies or shared context. Promise completion moves reactions out of their source state, compares an owned identity token, and clears the matching slot."
+        },
+        {
+          "lines": "550-603,606-666",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "e"
+          ],
+          "symbol": "Default window scan and cutover guard",
+          "evidence": "The frame keeps each scan, task and optional guard. Releasing the guard copies its row and key, and iteration over the two static scopes carries no borrow of a mutable container."
+        }
+      ]
     },
     "src/kernel/quota_reserve.cpp": {
       "reviewed": false,
