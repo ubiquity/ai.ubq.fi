@@ -87,7 +87,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/cache/scope_experiment_targets.hpp`
 - [x] `include/uos/cache/scope_targets.hpp`
 - [x] `include/uos/cache/telemetry_gate.hpp`
-- [ ] `src/cache/kv_migration.cpp`
+- [x] `src/cache/kv_migration.cpp`
 - [ ] `src/cache/kv_migration_base.cpp`
 - [ ] `src/cache/kv_migration_paid_fallback.cpp`
 - [ ] `src/cache/kv_migration_projection.cpp`
@@ -554,6 +554,16 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 | --- | --- | --- | --- |
 | 42-49,129-147 | Telemetry option and request values | **SAFE** | Entries own targets/events/options before the first suspension; an injected KV is a shared owner and result counter strings are owned. |
 
+### `src/cache/kv_migration.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 36-63 | migrateApiKeyQuotaV3 parallel reads and compare-and-set | **SAFE** | Each read owns its key and native retry state if its sibling rejects. Structured binding is over the frame-local tuple after the await, and the named operation owns its copied entries. |
+| 65-80,158-165 | Migration progress and handoff await | **SAFE** | The sole migration caller retains progress and its const pair inventory while awaiting the entire child. The handoff wrapper copies the policy before the child starts. |
+| 92-109 | Pending ledger migration batch | **SAFE** | Candidate references are into the coroutine's own immutable vector and the named operation remains live during commit and reread. |
+| 113-148 | Initial migration settings and catalog | **SAFE** | The frame owns KV and all read results. Inline key lists use the permitted variadic KvKey constructor, and JSON borrows are used synchronously. |
+| 150-190 | Migration phases and final write | **SAFE** | Inventory and projection tasks own KV and inputs or are awaited before local inputs change. The frame retains both the finish builder and its result through the terminal write. |
+
 
 ## Ranked defects and counts
 
@@ -759,4 +769,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-64/97 files reviewed. **DEFECT 8, SAFE 113, UNCLEAR 3.**
+65/97 files reviewed. **DEFECT 8, SAFE 118, UNCLEAR 3.**

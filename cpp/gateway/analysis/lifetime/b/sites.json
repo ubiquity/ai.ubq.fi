@@ -1583,8 +1583,61 @@
       ]
     },
     "src/cache/kv_migration.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "36-63",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "migrateApiKeyQuotaV3 parallel reads and compare-and-set",
+          "evidence": "Each read owns its key and native retry state if its sibling rejects. Structured binding is over the frame-local tuple after the await, and the named operation owns its copied entries."
+        },
+        {
+          "lines": "65-80,158-165",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Migration progress and handoff await",
+          "evidence": "The sole migration caller retains progress and its const pair inventory while awaiting the entire child. The handoff wrapper copies the policy before the child starts."
+        },
+        {
+          "lines": "92-109",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Pending ledger migration batch",
+          "evidence": "Candidate references are into the coroutine's own immutable vector and the named operation remains live during commit and reread."
+        },
+        {
+          "lines": "113-148",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Initial migration settings and catalog",
+          "evidence": "The frame owns KV and all read results. Inline key lists use the permitted variadic KvKey constructor, and JSON borrows are used synchronously."
+        },
+        {
+          "lines": "150-190",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Migration phases and final write",
+          "evidence": "Inventory and projection tasks own KV and inputs or are awaited before local inputs change. The frame retains both the finish builder and its result through the terminal write."
+        }
+      ]
     },
     "src/cache/kv_migration_base.cpp": {
       "reviewed": false,
