@@ -212,16 +212,16 @@ The driver built all 369 production translation units with Clang ASan and UBSan.
 Its fixture boundary provided isolated loopback, an empty home, a fresh tmpfs working
 directory, no provider variables, and leak detection. Tests used local fixtures and mocks.
 
-| Driver selection | Binaries passed | Cases passed | Wall time |
-| --- | ---: | ---: | ---: |
-| `runtime_http` | 8 | 49 | 1,151.409 s |
-| `tests/kernel_quota` | 5 | 53 | 41.161 s |
-| `tests/worker_boundary_test.cpp` | 1 | 6 | 21.829 s |
-| `tests/rt/kv` | 4 | 85 | 68.678 s |
-| `tests/runtime_websocket` | 1 | 2 | 12.553 s |
-| `tests/storage_` | 3 | 39 | 34.531 s |
-| `--shard 1/4 tests/cache_` | 1 | 31 | 11.876 s |
-| **Total** | **23** | **265** | |
+| Driver selection                 | Binaries passed | Cases passed |   Wall time |
+| -------------------------------- | --------------: | -----------: | ----------: |
+| `runtime_http`                   |               8 |           49 | 1,151.409 s |
+| `tests/kernel_quota`             |               5 |           53 |    41.161 s |
+| `tests/worker_boundary_test.cpp` |               1 |            6 |    21.829 s |
+| `tests/rt/kv`                    |               4 |           85 |    68.678 s |
+| `tests/runtime_websocket`        |               1 |            2 |    12.553 s |
+| `tests/storage_`                 |               3 |           39 |    34.531 s |
+| `--shard 1/4 tests/cache_`       |               1 |           31 |    11.876 s |
+| **Total**                        |          **23** |      **265** |             |
 
 The first run was cold and spent 1,125.515 s compiling objects. It recorded the same
 commit and tree as clang-tidy. The six later runs recorded commit
@@ -1254,7 +1254,6 @@ removes the registrations on frame destruction as well as on normal return.
        const rt::EventListener cancelListener(cancel);
 +      const rt::ScopeExit removeCancel([&] { signal.removeEventListener("abort", cancelListener); });
 ```
-
 
 <a id="d12"></a>
 
