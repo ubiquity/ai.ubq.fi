@@ -29,7 +29,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/runtime/http_tasks.hpp`
 - [x] `include/uos/runtime/http_upgrade.hpp`
 - [x] `include/uos/runtime/native_kv_bootstrap.hpp`
-- [ ] `include/uos/runtime/permissions_linux.hpp`
+- [x] `include/uos/runtime/permissions_linux.hpp`
 - [ ] `include/uos/runtime/websocket.hpp`
 - [ ] `src/runtime/http.cpp`
 - [ ] `src/runtime/http_body.cpp`
@@ -164,7 +164,11 @@ Initial checkpoint. Manual review and tool verification are pending.
 
 The path and receipt queries take references for synchronous calls. The asynchronous bootstrap entry takes an owning optional string. No inline coroutine or callback registration.
 
+### `include/uos/runtime/permissions_linux.hpp`
+
+Synchronous permission contract and owned value types. No coroutine, deferred capture or callback registration.
+
 
 ## Ranked defects and counts
 
-6/97 files reviewed. **DEFECT 0, SAFE 9, UNCLEAR 0.**
+7/97 files reviewed. **DEFECT 0, SAFE 9, UNCLEAR 0.**

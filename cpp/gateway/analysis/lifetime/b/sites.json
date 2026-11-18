@@ -122,8 +122,9 @@
       "note": "The path and receipt queries take references for synchronous calls. The asynchronous bootstrap entry takes an owning optional string. No inline coroutine or callback registration."
     },
     "include/uos/runtime/permissions_linux.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "Synchronous permission contract and owned value types. No coroutine, deferred capture or callback registration."
     },
     "include/uos/runtime/websocket.hpp": {
       "reviewed": false,
