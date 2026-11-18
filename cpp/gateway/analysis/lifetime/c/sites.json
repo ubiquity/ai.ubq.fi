@@ -1437,8 +1437,16 @@
       ]
     },
     "include/uos/provider/openrouter.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Ref-taking public funcs are synchronous wrappers for owning tasks.",
+      "sites": [
+        {
+          "lines": "44-49,56-57,67-68",
+          "kind": "task factories",
+          "verdict": "SAFE",
+          "reason": "Fetch wrappers copy the body, init or decision record before returning their coroutine; lookup frames own the model string."
+        }
+      ]
     },
     "include/uos/provider/openrouter_handlers.hpp": {
       "status": "pending",

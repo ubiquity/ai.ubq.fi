@@ -169,7 +169,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/lithos_rate_limits.hpp`
 - [x] `include/uos/provider/lithos_streams.hpp`
 - [x] `include/uos/provider/metered.hpp`
-- [ ] `include/uos/provider/openrouter.hpp`
+- [x] `include/uos/provider/openrouter.hpp`
 - [ ] `include/uos/provider/openrouter_handlers.hpp`
 - [ ] `include/uos/provider/openrouter_request_controls.hpp`
 - [ ] `include/uos/provider/openrouter_streams.hpp`
@@ -1069,3 +1069,9 @@ Synchronous construction of stream adapters.
 Metered Models and Responses request declarations.
 
 - 65-66,108,125-126,154-161 · task and callback interface · **SAFE** · Each operation owns its catalog, request and dispatch option values, including hook objects and clock.
+
+### `include/uos/provider/openrouter.hpp`
+
+Ref-taking public funcs are synchronous wrappers for owning tasks.
+
+- 44-49,56-57,67-68 · task factories · **SAFE** · Fetch wrappers copy the body, init or decision record before returning their coroutine; lookup frames own the model string.
