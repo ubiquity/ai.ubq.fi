@@ -470,6 +470,7 @@ Reviewed all admin Codex actions, catalog construction and refresh, provider sel
 - L207, 208, 209 **DEFECT** · Catalog override lifetime. A whitelist read rejects while an injected capturing catalog coroutine is pending. The join unwinds the dependency object; the pending coroutine can resume through its destroyed closure. Hold the catalog callable in rt::async before starting its Promise.
 - L216, 217, 218, 219, 220, 221 **DEFECT** · Refresh override lifetime. A refresh child rejects while a sibling created by an injected capturing refresh coroutine is suspended. Handler exit destroys the callback holding its captures; the sibling can still resume. Wrap each injected callback in rt::async with copied options.
 - L238, 239, 240 **DEFECT** · Provider selection override lifetime. The selection read rejects while an injected capturing catalog coroutine is pending. Handler exit destroys the callable; the pending build can resume through it. Hold the catalog callable in rt::async before starting its Promise.
+- L71 **DEFECT** · The debug-routing reset constructs an owning scenario string directly in the await operand. GCC 12.2 requires a named scenario or a separately constructed Task.
 
 ### `src/admin/codex_reset.cpp`
 
@@ -2499,4 +2500,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-286/286 files reviewed. 477 sites: 452 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+286/286 files reviewed. 478 sites: 452 SAFE, 26 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

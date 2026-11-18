@@ -653,6 +653,16 @@
           ],
           "verdict": "DEFECT",
           "detail": "Provider selection override lifetime. The selection read rejects while an injected capturing catalog coroutine is pending. Handler exit destroys the callable; the pending build can resume through it. Hold the catalog callable in rt::async before starting its Promise."
+        },
+        {
+          "lines": [
+            71
+          ],
+          "kinds": [
+            "e"
+          ],
+          "verdict": "DEFECT",
+          "detail": "The debug-routing reset constructs an owning scenario string directly in the await operand. GCC 12.2 requires a named scenario or a separately constructed Task."
         }
       ]
     },
