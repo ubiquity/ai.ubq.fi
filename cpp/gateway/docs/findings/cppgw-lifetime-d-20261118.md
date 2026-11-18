@@ -58,10 +58,11 @@ env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$empty_home" TMPDIR=
   python3 -B cpp/gateway/analysis/lifetime/d/tidy.py --boost "$boost/boost_1_92_0" --icu "$icu/prefix/include" \
   --out "$scratch/tidy-pinned" --jobs 4 --timeout 90
 python3 -B cpp/gateway/analysis/lifetime/d/audit.py verify
+python3 -B cpp/gateway/analysis/lifetime/d/audit.py verify --complete --tidy-summary "$scratch/tidy-pinned/summary.json"
 git diff --check 6d28e858e7ab8b8b1036db4a4adfdade0465ed40
 ```
 
-Each audit entry binds its source coordinates to the baseline Git blobs. `audit.py verify` reconciles the checklist, Markdown site entries and JSON, validates lines, and requires every lexical `co_await` line to have a verdict in a reviewed file. `audit.py pending` prints the restart order. Finish each file with `audit.py record`, which writes both ledgers and makes one Git commit per reviewed file.
+Each audit entry binds its source coordinates to the baseline Git blobs. `audit.py verify` reconciles the checklist, Markdown and JSON and checks coverage of 1,719 lexical `co_await` lines, 84 join or escape lines, and 22 callback-registration lines. The pinned Clang receipt anchors 99 in-scope diagnostics directly to verdict lines, 8 capturing-lambda and 91 reference-parameter. The remaining diagnostic is in `include/uos/codex/supervisor_config.hpp:256`, where `rt::async` holds the closure and the closure owns shared state. `audit.py pending` prints the restart order. `audit.py record` writes both ledgers and makes one Git commit per reviewed file.
 
 ## Focused sanitizer controls
 
@@ -102,6 +103,31 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
   env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$trial/home" TMPDIR="$trial/tmp" \
   ASAN_OPTIONS=detect_leaks=1:abort_on_error=0 UBSAN_OPTIONS=halt_on_error=1 \
   /usr/bin/time -f 'run elapsed %e s' "$trial/admission_owners"
+```
+
+The telemetry queue harness invokes the production `detail::waitForProgress` on one loop with an `inFlight` vector holding a fulfilled write. Each trial checks that the write wins and the timer is cleared, empties `inFlight`, and drains ready jobs. After 16 warmups it measures two batches of 256 waits with `__sanitizer_get_current_allocated_bytes()`. The original retained 71,680 bytes per batch while the loop was live, or **280 bytes per wait**. The proposed change in a scratch copy retained 0 bytes in both batches. Both returned to the pre-loop allocation count after teardown and exited 0 with no ASan, UBSan or LeakSanitizer diagnostic. Build times were 21.17 s and 21.09 s. Both runs took 0.02 s. The scratch control header contains only the queue timeout edit shown in the ranked list.
+
+```sh
+trial=/tmp/cppgw-lifetime-d-queue.urBQfL2z
+gateway="$PWD/cpp/gateway"
+boost_dir=/tmp/cppgw-lifetime-d.gktp0iv5/boost_1_92_0
+flags=(-std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
+  -DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING -DBOOST_JSON_NO_LIB -pthread
+  -I"$gateway/include" -isystem "$boost_dir")
+for fixture in queue_owners queue_owners_control; do
+  include=()
+  if [[ "$fixture" == queue_owners_control ]]; then include=(-I"$trial/control"); fi
+  env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$trial/home" TMPDIR="$trial/tmp" \
+    /usr/bin/time -f 'compile %e s' timeout 120 /usr/bin/clang++-21 "${include[@]}" "${flags[@]}" \
+    "$trial/queue_owners.cpp" "$gateway/src/rt/async.cpp" "$gateway/src/rt/clock.cpp" \
+    "$gateway/src/rt/number.cpp" "$boost_dir/stage/lib/libboost_json.a" -o "$trial/$fixture"
+  trial_run=$(mktemp -d "$trial/run.XXXXXXXX")
+  mkdir "$trial_run/home" "$trial_run/tmp"
+  sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --no-new-privs \
+    env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$trial_run/home" TMPDIR="$trial_run/tmp" \
+    ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
+    /usr/bin/time -f "$fixture run %e s" timeout 15 "$trial/$fixture"
+done
 ```
 
 ## File checklist
@@ -892,7 +918,7 @@ Reviewed route tables, admin and auth adapters, inference dispatch and upgrade h
 Reviewed request-to-delivery abort forwarding and handoff.
 
 - L12, 14, 16, 17, 18, 24, 28, 41, 42 **SAFE** · The serve coroutine copies the injected callable, and its armed scope guard removes the temporary abort listener on handoff or unwind. Transport completion owns the downstream controller through its success or failure.
-- L13, 14, 16, 17, 24, 25 **DEFECT** · The abort listener owns the request signal that stores it. If lifecycle setup throws after registration and before returning the handoff guard, or a direct caller drops the handoff, the aborted-never signal and downstream controller retain each other through that listener. Capture a weak request signal so normal handoff and failure can release the cycle.
+- L13, 14, 16, 17, 24, 25 **DEFECT** · The abort listener owns the request signal that stores it. If lifecycle setup throws before returning the handoff guard or a direct caller drops the handoff, the unaborted signal retains itself and also pins the downstream controller. Capture the request signal weakly.
 
 ### `src/handler/terminal_log.cpp`
 
@@ -2262,7 +2288,26 @@ Reviewed the byte and string views and digest declarations.
 - `include/uos/rt/async.hpp:855-861` and `src/rt/async.cpp:410-425`. A pending race source owns its reaction, which owns both the source and the combined result. An abandoned synthetic loser therefore pins the winner until `Loop::Impl` clears pending reactions on teardown. The default loop is process-long (`src/rt/async.cpp:399-403`). Runtime owner should address pending-source reaction ownership or disarm race-only observers after settlement while still observing late rejections. The local diffs below settle only an abandoned private latch. Actual sibling work keeps the same semantics.
 - `src/rt/kv.cpp:73`. `GenericAtomicOperation::commit` returns an awaited aggregate directly. The port's named-result rule also applies there. Request callers in this audit generally keep the receiver in their awaiting frame. Runtime owner should bind the result to a named local before returning it.
 
+## Verification and handoff
+
+The baseline is `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb54014cf79ba7c64b24be4d28dde250c40ccf`. All 143 owned source and 143 owned header blobs matched that baseline. The changed paths are this report, `analysis/lifetime/d/sites.json`, `analysis/lifetime/d/audit.py`, and `analysis/lifetime/d/tidy.py`. The selected gates are ledger reconciliation against the baseline and the pinned Clang receipt, Python parsing, changed-file formatting and `git diff --check`. The three focused controls used separate scratch builds on the prepared runner. The full native ASan shards and the qualified GCC 12.2 SDK are outside the measured evidence.
+
+Audit commits are on the job branch. The configured GitHub remote permitted anonymous fetch, while `GIT_TERMINAL_PROMPT=0 timeout 20 git push --dry-run origin HEAD:refs/heads/agent-jobs/cppgw-lifetime-d-20261118` returned `fatal: could not read Username for 'https://github.com': terminal prompts disabled`. The refreshed `origin/development` was `a3a96bc5fe96ba383936746fae23e64daa69562f`, which excludes both the integration baseline and the audit branch. Publication and integration are pending in the enclosing job. The proposed source fixes and their regression coverage are pending maintainer dispatch.
+
 ## Ranked defects and counts
+
+### P1 · OpenRouter refresh can publish an index whose rows have been freed
+
+`src/models/openrouter_models.cpp:203-207,239-245,353-356`. A refresh drops the prior cache owner and then allocating or building the new index throws. The catch resumes with the new snapshot and the old raw-pointer index. A later lookup can dereference a row from the retired snapshot.
+
+```diff
+       auto snapshot = std::make_shared<const OpenRouterModelsSnapshot>(OpenRouterModelsSnapshot{std::move(models), rt::dateNow()});
++      auto index = std::make_shared<const OpenRouterMatchIndex>(buildMatchIndex(snapshot->models));
+       ModuleState& state = moduleState();
+       state.cache = snapshot;
+-      state.index = std::make_shared<const OpenRouterMatchIndex>(buildMatchIndex(snapshot->models));
++      state.index = std::move(index);
+```
 
 ### P1 · Request-stream memory retention
 
@@ -2359,6 +2404,39 @@ The source edit belongs to the transport owner. The Web Headers adapter permits 
 
 Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refreshClaude` with the corresponding copied options. Apply the `buildCatalog` form at both sites.
 
+### P2 · Terminal writer setup failure can release a suspended writer closure
+
+`src/handler/terminal_log.cpp:61,162-219`. An injected writer returning a capturing Task suspends during batch setup. A subsequent writer throws synchronously, so the log frame and its copy of the invoked callable leave scope before the first writer resumes. Attach the callback owner immediately to each injected writer's own settlement.
+
+```diff
+     rt::Task<void> logTerminalRequest(LogInput data) {
+-      auto& input = data.input;
++      const auto callbacks = std::make_shared<WithTerminalRequestLogInput>(std::move(data.input));
++      auto& input = *callbacks;
++      const auto invokeWriter = [callbacks](const auto& writer, auto&&... args) {
++        auto pending = writer(std::forward<decltype(args)>(args)...);
++        return pending.finally_([callbacks] { (void)callbacks; });
++      };
+@@
+-      auto telemetryWrite = input.recordTelemetry ? input.recordTelemetry(telemetryEvent)
++      auto telemetryWrite = input.recordTelemetry ? invokeWriter(input.recordTelemetry, telemetryEvent)
+@@
+-      auto cacheAnalyticsWrite = input.recordCacheAnalytics ? input.recordCacheAnalytics(analyticsEvent)
++      auto cacheAnalyticsWrite = input.recordCacheAnalytics ? invokeWriter(input.recordCacheAnalytics, analyticsEvent)
+@@
+-      const auto usageRollupWrite = (input.recordUsageRollup ? input.recordUsageRollup(rollupInput)
++      const auto usageRollupWrite = (input.recordUsageRollup ? invokeWriter(input.recordUsageRollup, rollupInput)
+@@
+-        replayWrite = input.persistSentinelReplay ? input.persistSentinelReplay(*input.sentinelReplayInput, replayObservation, clientObservation)
++        replayWrite = input.persistSentinelReplay ? invokeWriter(input.persistSentinelReplay, *input.sentinelReplayInput, replayObservation, clientObservation)
+@@
+-        ? input.recordSentinelDegradation(rt::dateNow()) : rt::Promise<bool>::resolve(false);
++        ? invokeWriter(input.recordSentinelDegradation, rt::dateNow()) : rt::Promise<bool>::resolve(false);
+@@
+-      const auto adminErrorWrite = input.recordAdminError ? input.recordAdminError(errorInput) : rt::Promise(admin::error_log::recordAdminError(errorInput));
++      const auto adminErrorWrite = input.recordAdminError ? invokeWriter(input.recordAdminError, errorInput) : rt::Promise(admin::error_log::recordAdminError(errorInput));
+```
+
 ### P2 · Detached exception replay borrows its injected callable
 
 `src/handler/terminal_route.cpp:523-529`. An injected capturing Task can convert to the hook's Promise return type. Registration can return successfully while persistence remains suspended. On parent return the options frame releases the coroutine's closure. The default persistence task has owning parameters.
@@ -2398,6 +2476,27 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +      });
 ```
 
+### P2 · Telemetry queue retains one timeout Promise per successful wait
+
+`include/uos/optional_telemetry_queue.hpp:256-276`. A writer settles first, then the drain clears the only callback that can settle `timedOut`. The pending timeout retains the race outcome and its own reaction. The live-loop control measured 280 retained bytes per successful wait and zero with this edit.
+
+```diff
+-      std::function<void()> cancelTimeout = [] {};
+@@
+-      const rt::Promise<bool> timedOut = rt::newPromise<bool>([&cancelTimeout, timeoutMs](rt::Resolve<bool> resolve, rt::Reject) {
+-        const rt::Timeout timer = rt::setTimeout([resolve] { resolve(false); }, timeoutMs);
+-        cancelTimeout = [timer] { rt::clearTimeout(timer); };
+-      });
+-      std::vector<rt::Promise<bool>> racers = {progressed, timedOut};
++      const auto timedOut = rt::withResolvers<bool>();
++      const auto timer = rt::setTimeout([resolve = timedOut.resolve] { resolve(false); }, timeoutMs);
++      std::vector<rt::Promise<bool>> racers = {progressed, timedOut.promise};
+@@
+-      cancelTimeout();
++      rt::clearTimeout(timer);
++      timedOut.resolve(false);
+```
+
 ### P3 · Local provisioning retains the losing abort source
 
 `src/auth/local_development_key.cpp:94-113`. Pricing finishes before abort and the listener is removed. The abort-only source still retains the combined Promise with copied local key material until loop teardown. The existing timer cleanup and late initializer observation stay in place.
@@ -2411,6 +2510,16 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 @@
        signal.removeEventListener("abort", onAbort);
 +      if (observed) reject();
+```
+
+### P3 · Replay bootstrap wait retains a cleared timeout source
+
+`src/sentinel/replay_retention_bootstrap.cpp:469-482`. Index filling settles before maintenance's timer. Maintenance clears the timer and drops the only resolver, stranding the private Promise and its race reaction. Settle the private latch after clearing the timer, leaving the original result and the index fill's ownership intact.
+
+```diff
+       rt::clearTimeout(timer);
++      elapsed.resolve();
+       if (failure) std::rethrow_exception(failure);
 ```
 
 ### P3 · Queued admission listener survives loop teardown
@@ -2486,9 +2595,65 @@ Remove the replaced combined-signal construction. The module already includes `u
 +        };
 ```
 
-### P3 · Awaited temporary member access under GCC 12.2 rules
+### P3 · Development startup can leave a signal handler registered
 
-`src/admin/defaults.cpp:99`. The commit result is immediately dereferenced in the await expression. This violates `PORTING.md`'s named-result requirement, even though no failure was observed with Clang 21.
+`src/serve.cpp:159-169`. The process signal API stores its listener before it installs the signal wait. If either registration throws, the development launcher's removal guard has yet to run its constructor. The process signal table can retain the server and its callback after startup unwinds.
+
+```diff
+-      rt::process::once("SIGINT", shutdown);
+-      rt::process::once("SIGTERM", shutdown);
+       {
+         auto removeListeners = rt::scopeExit([shutdown] {
+           rt::process::removeListener("SIGINT", shutdown);
+           rt::process::removeListener("SIGTERM", shutdown);
+         });
++        rt::process::once("SIGINT", shutdown);
++        rt::process::once("SIGTERM", shutdown);
+         co_await server.ready.wait();
+```
+
+### P3 · Shutdown can close KV while the startup migration is pending
+
+`src/serve.cpp:118-133,155-175,181-216`. The launchers start the reset settings migration and discard its Promise. A shutdown that reaches KV closure before migration finishes leaves a live coroutine with a shared handle to a closed database. Retain its Promise and join it during cleanup after the server settles. Listening can still start concurrently.
+
+```diff
+-      (void)initializeModule();
++      const auto migration = initializeModule().catch_(rt::ignoreRejection);
+@@
+         co_await server.finished.wait();
++        co_await migration.wait();
+@@
+       rt::Reason failure;
+       std::optional<rt::process::Listener> shutdown;
++      std::optional<rt::Promise<void>> migration;
+       try {
+-        (void)initializeModule();
++        migration = initializeModule().catch_(rt::ignoreRejection);
+@@
+       try {
++        if (migration) co_await migration->wait();
+         rt::Promise<void> drained(shutdownOptionalTelemetry());
+```
+
+### P3 · A delivery abort listener retains its own request signal
+
+`src/handler/serve_handler.cpp:7-25`. Registration gives the request signal a callback that captures the same signal. If setup fails before the handoff guard is armed, or a direct caller drops the handoff, an unaborted request retains its own signal and the downstream controller. Keep the strong signal owner in the handoff closure and use a weak signal in the registered listener.
+
+```diff
++#include <memory>
+@@
+-      abortBeforeHandoff = rt::EventListener([requestSignal, downstream] { downstream.abort(requestSignal.reason()); });
++      const std::weak_ptr source = requestSignal.state();
++      abortBeforeHandoff = rt::EventListener([source, downstream] {
++        if (auto live = source.lock()) downstream.abort(rt::AbortSignal(std::move(live)).reason());
++      });
+```
+
+### P3 · GCC 12.2 await-expression violations
+
+These eight sites cover the mandatory comparison-profile rule. Clang diagnostics and source inspection established the expression forms. A qualified GCC 12.2 execution result is unavailable.
+
+`src/admin/defaults.cpp:99`. The commit result's member is accessed within the await expression. Bind the commit result before reading it.
 
 ```diff
 -    bool committed = false; rt::Reason failure; try { committed = (co_await atomic->commit()).ok; } catch (...) { failure = std::current_exception(); }
@@ -2502,5 +2667,91 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvKey handleKey = passkeyHandleKey(handle);
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
+
+`src/admin/codex.cpp:71`. The debug-routing delete call constructs a string as the coroutine starts. Name the scenario before starting that await.
+
+```diff
+-  if (req.method() == "DELETE") { const auto routing = co_await debug_routing::setDebugRoutingConfig(std::string("normal"), 0); co_return http::json(200, json::object{{"routing", json::value_from(routing)}}, rt::Headers{{"Cache-Control", "no-store"}}); }
++  if (req.method() == "DELETE") {
++    const std::string scenario = "normal";
++    const auto routing = co_await debug_routing::setDebugRoutingConfig(scenario, 0);
++    co_return http::json(200, json::object{{"routing", json::value_from(routing)}}, rt::Headers{{"Cache-Control", "no-store"}});
++  }
+```
+
+`src/admin/kernel.cpp:380,384,406,439`. Cohort hashing, reset/overage reads and an overage write construct owning strings within the await. Bind the concatenation and each account ID before the call.
+
+```diff
+-    const auto accountCohortId = co_await utils::sha256Hex(std::string("uos-prompt-cache-account-cohort-v1\0", 35) + account.account_id);
++    const std::string cohortInput = std::string("uos-prompt-cache-account-cohort-v1\0", 35) + account.account_id;
++    const auto accountCohortId = co_await utils::sha256Hex(cohortInput);
+@@
+-    const auto usage = co_await cs::readCodexResetUsage(kv, std::string(*rt::getString(account, "account_id_hash")));
++    const std::string accountIdHash(*rt::getString(account, "account_id_hash"));
++    const auto usage = co_await cs::readCodexResetUsage(kv, accountIdHash);
+@@
+-    const auto allow = co_await co::readOverageUsage(kv, std::string(*rt::getString(account, "account_id_hash")));
++    const std::string accountIdHash(*rt::getString(account, "account_id_hash"));
++    const auto allow = co_await co::readOverageUsage(kv, accountIdHash);
+@@
+-    co_await co::writeOverageUsage(kv, std::string(*accountIdHash), *allow); co_await refreshOverageUsageRoutingCache();
++    const std::string hash(*accountIdHash);
++    co_await co::writeOverageUsage(kv, hash, *allow);
++    co_await refreshOverageUsageRoutingCache();
+```
+
+`src/auth/index.cpp:137,195`. The bearer cache hash and policy queue construct owned text in the await expression. Bind each string before awaiting the consuming call.
+
+```diff
+-      const std::string cacheKey = co_await utils::sha256Base64Url(token + ":" + owner + "/" + repo);
++      const std::string cacheInput = token + ":" + owner + "/" + repo;
++      const std::string cacheKey = co_await utils::sha256Base64Url(cacheInput);
+@@
+-        co_await kernel::policy_queue::recordKernelPolicyQueue(owner, repo, getRequestPath(req));
++        const std::string path = getRequestPath(req);
++        co_await kernel::policy_queue::recordKernelPolicyQueue(owner, repo, path);
+```
+
+`src/models/codex_models_whitelist.cpp:134`. The strong-read options aggregate lives in the await full-expression. Create the get Task with named options before awaiting.
+
+```diff
+-    const auto entry = co_await kv->get(CODEX_MODELS_WHITELIST_KV_KEY, {.consistency = rt::KvConsistencyLevel::strong});
++    const rt::KvGetOptions options{.consistency = rt::KvConsistencyLevel::strong};
++    auto reading = kv->get(CODEX_MODELS_WHITELIST_KV_KEY, options);
++    const auto entry = co_await std::move(reading);
+```
+
+`src/responses_failover_stream.cpp:944,972`. Both failure paths pass an owning `ResponsesStreamEvent` aggregate by value within an await. Construct the Task in a named statement at both sites.
+
+```diff
+-        co_await emitFailureTerminal(state, controller, std::move(failure), std::move(error), std::move(upstreamTerminal));
++        auto emitting = emitFailureTerminal(state, controller, std::move(failure), std::move(error), std::move(upstreamTerminal));
++        co_await std::move(emitting);
+@@
+-      co_await emitFailureTerminal(state, controller, std::move(failure), std::move(error), std::move(noUpstreamTerminal));
++      auto emitting = emitFailureTerminal(state, controller, std::move(failure), std::move(error), std::move(noUpstreamTerminal));
++      co_await std::move(emitting);
+```
+
+`include/uos/responses_stream.hpp:125`. The asynchronous callback wrapper can pass an owning event or failure-details aggregate by value. Bind the Task before awaiting while the shared function remains in the frame.
+
+```diff
+-    static rt::Task<void> run(std::shared_ptr<const Async> function, A... args) { co_await (*function)(std::move(args)...); }
++    static rt::Task<void> run(std::shared_ptr<const Async> function, A... args) {
++      auto pending = (*function)(std::move(args)...);
++      co_await std::move(pending);
++    }
+```
+
+| Defect class | Sites |
+| --- | ---: |
+| Catalog index invalidation | 1 |
+| Abandoned private race sources | 6 |
+| Suspended callbacks whose owners can be released | 7 |
+| Other callback and resource lifecycle failures | 7 |
+| GCC 12.2 await-expression violations | 8 |
+| **Total** | **29** |
+
+Severity totals are 4 P1, 8 P2 and 17 P3 sites. Site counts group repeated calls with the same mechanism in one file or operation.
 
 286/286 files reviewed. 481 sites: 452 SAFE, 29 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

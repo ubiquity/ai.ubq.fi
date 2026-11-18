@@ -3202,7 +3202,7 @@
             "c"
           ],
           "verdict": "DEFECT",
-          "detail": "The abort listener owns the request signal that stores it. If lifecycle setup throws after registration and before returning the handoff guard, or a direct caller drops the handoff, the aborted-never signal and downstream controller retain each other through that listener. Capture a weak request signal so normal handoff and failure can release the cycle."
+          "detail": "The abort listener owns the request signal that stores it. If lifecycle setup throws before returning the handoff guard or a direct caller drops the handoff, the unaborted signal retains itself and also pins the downstream controller. Capture the request signal weakly."
         }
       ]
     },
