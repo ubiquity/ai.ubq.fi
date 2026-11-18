@@ -3284,8 +3284,40 @@
       ]
     },
     "src/provider/capacity.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Capacity refresh uses value snapshots, leases and independently owned sampling work.",
+      "sites": [
+        {
+          "lines": "55-127,203-275",
+          "kind": "KV options, Codex fetch, and Claude paired reads",
+          "verdict": "SAFE",
+          "reason": "Each task owns account, fetch, context and option data. Both quota/health branches and their reaction callbacks carry their own inputs."
+        },
+        {
+          "lines": "283-327,346-417",
+          "kind": "account and provider fail-fast fan-outs",
+          "verdict": "SAFE",
+          "reason": "Each slot or provider task receives its own account, options, fetch and signal values. The result tuple is named and remains live through routing observation recording."
+        },
+        {
+          "lines": "539-705,723-769",
+          "kind": "lease, comparison and history scan waits",
+          "verdict": "SAFE",
+          "reason": "The parent retains KV and transaction state. Comparison gets join through allSettled, and fail-fast history children themselves take KV ownership."
+        },
+        {
+          "lines": "772-777",
+          "kind": "borrowed CapacityReads",
+          "verdict": "SAFE",
+          "reason": "Both refresh and persisted-view callers wait while their local CapacityReads snapshot lives, and the nested merge receives copied history/events."
+        },
+        {
+          "lines": "781-834,854-871,914-1012,1014-1148",
+          "kind": "refresh publication and admin view awaits",
+          "verdict": "SAFE",
+          "reason": "Each child owns its rows, input handles and option snapshots. View assembly keeps the shared context, and each parallel child owns the KV and inputs it uses."
+        }
+      ]
     },
     "src/provider/capacity_analytics.cpp": {
       "status": "pending",

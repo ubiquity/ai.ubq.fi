@@ -284,7 +284,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/anthropic_replay.cpp`
 - [x] `src/provider/anthropic_response_wire.cpp`
 - [x] `src/provider/anthropic_responses.cpp`
-- [ ] `src/provider/capacity.cpp`
+- [x] `src/provider/capacity.cpp`
 - [ ] `src/provider/capacity_analytics.cpp`
 - [ ] `src/provider/capacity_contract.cpp`
 - [ ] `src/provider/capacity_events.cpp`
@@ -1806,3 +1806,13 @@ Native Messages parsing uses a per-stream generator and weak abort signal access
 - 644-719 · watchdog, frame borrow, and reader cancellation · **SAFE** · ReaderState and the native read result remain live through yield. The callback receives its own reader/cause state, and cleanup or timer shutdown releases the timer edge.
 - 721-771,805,820-852,864-876 · translation generator and source algorithms · **SAFE** · Frame and translated buffer values stay local. Pull and cancel own the shared translation state, and detached body cancel owns stream operation state.
 - 779,857,880 · direct awaits of by-value aggregates · **DEFECT** · The bounded-body reads and native error normalization await coroutine calls with owning option aggregates directly in the expression. GCC 12.2's documented pattern can miscompile their destruction. Name each task before awaiting.
+
+### `src/provider/capacity.cpp`
+
+Capacity refresh uses value snapshots, leases and independently owned sampling work.
+
+- 55-127,203-275 · KV options, Codex fetch, and Claude paired reads · **SAFE** · Each task owns account, fetch, context and option data. Both quota/health branches and their reaction callbacks carry their own inputs.
+- 283-327,346-417 · account and provider fail-fast fan-outs · **SAFE** · Each slot or provider task receives its own account, options, fetch and signal values. The result tuple is named and remains live through routing observation recording.
+- 539-705,723-769 · lease, comparison and history scan waits · **SAFE** · The parent retains KV and transaction state. Comparison gets join through allSettled, and fail-fast history children themselves take KV ownership.
+- 772-777 · borrowed CapacityReads · **SAFE** · Both refresh and persisted-view callers wait while their local CapacityReads snapshot lives, and the nested merge receives copied history/events.
+- 781-834,854-871,914-1012,1014-1148 · refresh publication and admin view awaits · **SAFE** · Each child owns its rows, input handles and option snapshots. View assembly keeps the shared context, and each parallel child owns the KV and inputs it uses.
