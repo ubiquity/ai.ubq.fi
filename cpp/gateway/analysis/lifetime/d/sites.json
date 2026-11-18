@@ -9142,8 +9142,20 @@
       ]
     },
     "include/uos/lib/jev_compaction/jev_codex_smoke.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the offline Codex smoke command's entry point. The fake upstream ownership cycle is recorded in the implementation.",
+      "sites": [
+        {
+          "lines": [
+            8
+          ],
+          "kinds": [
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The command Task takes no borrowed arguments and constructs its fixture objects in its own frame."
+        }
+      ]
     },
     "include/uos/lib/jev_compaction/jev_compaction_smoke.hpp": {
       "reviewed": false,

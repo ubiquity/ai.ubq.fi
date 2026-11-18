@@ -344,7 +344,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/lib/jev_compaction/client.hpp`
 - [x] `include/uos/lib/jev_compaction/codex_items.hpp`
 - [x] `include/uos/lib/jev_compaction/compact.hpp`
-- [ ] `include/uos/lib/jev_compaction/jev_codex_smoke.hpp`
+- [x] `include/uos/lib/jev_compaction/jev_codex_smoke.hpp`
 - [ ] `include/uos/lib/jev_compaction/jev_compaction_smoke.hpp`
 - [ ] `include/uos/lib/jev_compaction/request.hpp`
 - [ ] `include/uos/lib/jev_compaction/state.hpp`
@@ -1937,6 +1937,12 @@ Reviewed synchronous planning helpers and the asynchronous compaction interface.
 
 - L22, 40, 41 **SAFE** · Text truncation uses a synchronous view. Compaction owns the transcript, options and shared asker across all batch waits.
 
+### `include/uos/lib/jev_compaction/jev_codex_smoke.hpp`
+
+Reviewed the offline Codex smoke command's entry point. The fake upstream ownership cycle is recorded in the implementation.
+
+- L8 **SAFE** · The command Task takes no borrowed arguments and constructs its fixture objects in its own frame.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2185,4 +2191,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-236/286 files reviewed. 410 sites: 388 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+237/286 files reviewed. 411 sites: 389 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
