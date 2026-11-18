@@ -96,7 +96,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/contracts.cpp`
 - [x] `src/authority/credential_publication.cpp`
 - [x] `src/authority/delivery_outbox.cpp`
-- [ ] `src/authority/durable_store.cpp`
+- [x] `src/authority/durable_store.cpp`
 - [ ] `src/authority/native_api_key.cpp`
 - [ ] `src/authority/native_api_key_audit.cpp`
 - [ ] `src/authority/native_api_key_policy.cpp`
@@ -631,6 +631,12 @@ Reviewed the portable receipt facade and deferred observations.
 
 - L12, 14, 19, 21, 26, 31 **SAFE** · The facade methods are synchronous Task factories. The child frames directly own the copied AuthorityOperations and handle through observation and settlement, even if the facade has been dropped.
 
+### `src/authority/durable_store.cpp`
+
+Reviewed SQL row snapshots and the synchronous durable implementation of the Promise-based store interface.
+
+- L156, 204, 210, 221 **SAFE** · AuthoritySqlStorage transactionSync invokes both reference-capturing callbacks inline and never retains them. The read and CAS promises return already-copied values after those synchronous calls finish.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -736,4 +742,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-31/286 files reviewed. 121 sites: 112 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+32/286 files reviewed. 122 sites: 113 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
