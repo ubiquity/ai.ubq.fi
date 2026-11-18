@@ -253,7 +253,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/utils.cpp`
 - [x] `include/uos/admin/api_key_audit.hpp`
 - [x] `include/uos/admin/api_key_mutations.hpp`
-- [ ] `include/uos/admin/api_keys.hpp`
+- [x] `include/uos/admin/api_keys.hpp`
 - [ ] `include/uos/admin/capacity_observation_sync.hpp`
 - [ ] `include/uos/admin/chart_source_proxy.hpp`
 - [ ] `include/uos/admin/claude_code.hpp`
@@ -1391,6 +1391,13 @@ Reviewed the declarations for API key mutation and audit context propagation.
 
 - L8, 9, 10, 11, 12, 13, 14, 15 **SAFE** · Each context overload copies the audit context into the child Task and transfers the request value before the caller can return.
 
+### `include/uos/admin/api_keys.hpp`
+
+Reviewed the input normalizers and API key administration interfaces.
+
+- L21, 23, 25, 32, 34, 36, 38, 40, 44 **SAFE** · Normalizers read the caller's JSON synchronously and return owning strings or scalars.
+- L30, 31, 48, 49, 50, 51, 52 **SAFE** · The create wrapper copies its context. Paid projections and history work receive owning records, keys or shared KV handles.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1639,4 +1646,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-145/286 files reviewed. 311 sites: 290 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+146/286 files reviewed. 313 sites: 292 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
