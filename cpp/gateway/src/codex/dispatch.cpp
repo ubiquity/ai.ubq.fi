@@ -385,8 +385,9 @@ namespace uos::codex::dispatch {
       material = rt::concat(material, promptCacheKey);
       rt::Promise<std::string> hashing(::uos::utils::sha256Hex(std::move(material)));
       const std::string digest = co_await hashing.wait();
-      const double variantBits = rt::bitOr(rt::bitAnd(rt::parseInt(rt::charAt(digest, 16), 16), 0b0011), 0b1000);
-      const std::string variant = rt::numberToString(variantBits, 16);
+      const char digit = digest[16];
+      const int nibble = digit <= '9' ? digit - '0' : digit - 'a' + 10;
+      const char variant = "0123456789abcdef"[(nibble & 0b0011) | 0b1000];
       co_return rt::slice(digest, 0, 8) + "-" + rt::slice(digest, 8, 12) + "-8" + rt::slice(digest, 13, 16) + "-" + variant + rt::slice(digest, 17, 20) + "-" +
         rt::slice(digest, 20, 32);
     }
