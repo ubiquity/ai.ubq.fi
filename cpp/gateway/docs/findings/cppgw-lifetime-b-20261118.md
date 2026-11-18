@@ -49,7 +49,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/rt/kv.cpp`
 - [x] `src/rt/kv_internal.hpp`
 - [x] `src/rt/kv_js.cpp`
-- [ ] `src/rt/kv_jsc.cpp`
+- [x] `src/rt/kv_jsc.cpp`
 - [ ] `src/rt/kv_jsc_deserialize.cpp`
 - [ ] `src/rt/kv_key.cpp`
 - [ ] `src/rt/kv_memory.cpp`
@@ -325,6 +325,12 @@ Private synchronous codec declarations. Views and references are consumed during
 | 49-88,244-282,304-324 | Stored JSON and string conversion | **SAFE** | Typed-array element and variant references are read synchronously, with owned JSON and string outputs. |
 | 330-362 | Uint8Array view and KV key conversion | **SAFE** | The input KvValue owns the backing store. The key conversion copies the subspan synchronously, and replay_read consumes it during synchronous deserialization. |
 
+### `src/rt/kv_jsc.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 55-98,108-230 | JSC serializer string pool and visitor | **SAFE** | The Serializer and its pool are local to a synchronous encode. The visitor runs inline and copies fields into the owned output, with no map iterator retained between pool insertions. |
+
 
 ## Ranked defects and counts
 
@@ -490,4 +496,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-26/97 files reviewed. **DEFECT 7, SAFE 64, UNCLEAR 2.**
+27/97 files reviewed. **DEFECT 7, SAFE 65, UNCLEAR 2.**

@@ -867,8 +867,20 @@
       ]
     },
     "src/rt/kv_jsc.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "55-98,108-230",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "JSC serializer string pool and visitor",
+          "evidence": "The Serializer and its pool are local to a synchronous encode. The visitor runs inline and copies fields into the owned output, with no map iterator retained between pool insertions."
+        }
+      ]
     },
     "src/rt/kv_jsc_deserialize.cpp": {
       "reviewed": false,
