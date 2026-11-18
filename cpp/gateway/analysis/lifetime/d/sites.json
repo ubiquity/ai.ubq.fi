@@ -9301,8 +9301,28 @@
       ]
     },
     "include/uos/models/codex_models.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed snapshot queries, static labels and version parser views.",
+      "sites": [
+        {
+          "lines": [
+            34,
+            38,
+            134,
+            136,
+            139,
+            148,
+            169,
+            171
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Label views point to literals. Lookup and version parsing consume their input views synchronously; returned snapshots and records own their contents."
+        }
+      ]
     },
     "include/uos/models/codex_models_availability.hpp": {
       "reviewed": false,

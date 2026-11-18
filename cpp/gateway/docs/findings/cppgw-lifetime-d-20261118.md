@@ -351,7 +351,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/lib/jev_compaction/types.hpp`
 - [x] `include/uos/metered_quota.hpp`
 - [x] `include/uos/models/catalog.hpp`
-- [ ] `include/uos/models/codex_models.hpp`
+- [x] `include/uos/models/codex_models.hpp`
 - [ ] `include/uos/models/codex_models_availability.hpp`
 - [ ] `include/uos/models/codex_models_fetch.hpp`
 - [ ] `include/uos/models/codex_models_whitelist.hpp`
@@ -1980,6 +1980,12 @@ Reviewed public catalog, model capability and snapshot interfaces.
 
 - L47, 48, 50, 51 **SAFE** · Optional requests are transferred by value and all other entry points construct their own snapshot state.
 
+### `include/uos/models/codex_models.hpp`
+
+Reviewed snapshot queries, static labels and version parser views.
+
+- L34, 38, 134, 136, 139, 148, 169, 171 **SAFE** · Label views point to literals. Lookup and version parsing consume their input views synchronously; returned snapshots and records own their contents.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2228,4 +2234,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-243/286 files reviewed. 418 sites: 396 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+244/286 files reviewed. 419 sites: 397 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
