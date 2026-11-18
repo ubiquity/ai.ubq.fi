@@ -2110,7 +2110,8 @@
       ]
     },
     "src/authority/contracts.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed authority value codecs and snapshot shapes. Member references and viewed keys are consumed synchronously, and the exported serializers and parsers return owned values. No suspension or escaping callback.",
       "sites": []
     },
     "src/authority/credential_publication.cpp": {

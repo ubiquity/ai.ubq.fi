@@ -93,7 +93,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/auth/relay.cpp`
 - [x] `src/authority/admission_state.cpp`
 - [x] `src/authority/authority_rpc.cpp`
-- [ ] `src/authority/contracts.cpp`
+- [x] `src/authority/contracts.cpp`
 - [ ] `src/authority/credential_publication.cpp`
 - [ ] `src/authority/delivery_outbox.cpp`
 - [ ] `src/authority/durable_store.cpp`
@@ -615,6 +615,10 @@ Reviewed the portable RPC command bridge, server receiver and client call chain.
 - L188, 216, 221, 226, 231, 236, 241, 246, 252, 259, 264, 271, 276, 281, 286 **SAFE** · The RpcServer retains its AuthorityOperations dependency. The private execute frame owns the command backing its arguments view, and the selected operation receives decoded values before each direct await.
 - L296, 304, 311, 317, 324, 340, 348, 354, 360, 366, 372, 381, 387, 394, 401 **SAFE** · The retained client owns the RPC transport while invoking. Inputs, argument arrays and replies are named frame values, and selection copies its reply views before returning.
 
+### `src/authority/contracts.cpp`
+
+Reviewed authority value codecs and snapshot shapes. Member references and viewed keys are consumed synchronously, and the exported serializers and parsers return owned values. No suspension or escaping callback.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -720,4 +724,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-28/286 files reviewed. 119 sites: 110 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+29/286 files reviewed. 119 sites: 110 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
