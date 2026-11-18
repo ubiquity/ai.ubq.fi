@@ -3880,7 +3880,8 @@
       "sites": []
     },
     "src/provider/presentation.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Presentation tables and JSON conversion are synchronous and return copies.",
       "sites": []
     },
     "src/provider/removed_provider_circuit.cpp": {
