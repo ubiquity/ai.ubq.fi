@@ -116,6 +116,9 @@ def build(work, output, jobs):
     identity = profile["source_identity"]
     if (identity["commit"], identity["tree"]) != (commit, tree) or not (profile["inputs_unchanged"] and profile["identity_unchanged"]):
         raise ValueError("macOS test receipt does not match the source inputs")
+    vendors = tuple(vendor_sources.selected())
+    if profile["vendor_archives"].keys() != {library.archive for library in vendors}:
+        raise ValueError("macOS build receipt does not cover every registered vendor archive")
 
     stage = work / "stage"
     (stage / "bin").mkdir(parents=True)
@@ -132,12 +135,10 @@ def build(work, output, jobs):
         destination = licenses / library
         destination.mkdir(parents=True)
         shutil.copyfile(GATEWAY / "packaging/macos" / f"{library}.LICENSE", destination / "LICENSE")
-    vendors = {library.archive: library for library in vendor_sources.selected()}
-    for name in sorted(profile["vendor_archives"]):
-        library = vendors[name]
+    for library in vendors:
         directory = GATEWAY / "third_party" / library.name
         versions[library.name] = library.version
-        static_libraries.append(build_root / name)
+        static_libraries.append(build_root / library.archive)
         destination = licenses / library.name
         copy_license_files(directory, destination)
         notice = GATEWAY / "docs/licenses" / library.name / "NOTICE"

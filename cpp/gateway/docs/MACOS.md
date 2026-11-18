@@ -1,10 +1,10 @@
 # Native macOS Apple Silicon build
 
-The integrated F1 gateway builds with Apple Clang and libc++ on Apple Silicon. The Darwin driver builds Ada 4.0.0,
-llhttp 9.4.4, QCBOR 1.6.1, simdjson 5.2.0 and simdutf 9.4.0 from the verified vendor registry. It uses Homebrew
-ICU 78.3 for Unicode and IDNA.
+The Darwin driver builds Ada 4.0.0, llhttp 9.4.4, QCBOR 1.6.1, QuickJS-ng libregexp 0.18.0, simdjson 5.2.0
+and simdutf 9.4.0 from the verified vendor registry. It uses Homebrew ICU 78.3 for Unicode and IDNA.
+The build and packager with QuickJS-ng are unexecuted on Apple Silicon.
 
-The `-O0 -g0` profile compiled **373/373 production sources**, linked **3/3 arm64 executables** and passed
+The integrated F1 `-O0 -g0` profile compiled **373/373 production sources**, linked **3/3 arm64 executables** and passed
 **450/450 binaries and 5,107/5,107 cases**. The macOS release workflow's packager built the archive and
 its gateway returned the qualified source commit from `--version`.
 
@@ -117,7 +117,8 @@ The driver resolves the prepared Homebrew dependencies with `brew --prefix` and 
 Installed library headers are system includes, so the port keeps fatal warnings when Apple Clang
 parses ICU's headers. SQLite links directly to the prepared dylib. The driver verifies the inputs in
 `cmake/vendors.json` through `tools/vendor_sources.py` and compiles each registered vendor into its own archive.
-llhttp and QCBOR use Apple Clang in C11 mode. Ada, simdjson and simdutf use C++20 and libc++. Vendor sources
+llhttp and QCBOR use Apple Clang in C11 mode. QuickJS-ng libregexp uses GNU C11 for platform declarations.
+Ada, simdjson and simdutf use C++20 and libc++. Vendor sources
 build without the first-party warning set. Each executable or test links the archives declared by its source
 closure. The JSON consumer enables `UOS_GATEWAY_SIMDJSON`. The external logs contain the expanded compiler and linker arguments.
 
@@ -132,7 +133,7 @@ when launching the platform boundary binary.
 
 The external build root contains the following artifacts and receipts.
 
-- `libuos_gateway.a`, the five vendor archives, and `obj/` with per-object compiler logs and input hashes.
+- `libuos_gateway.a`, the six vendor archives, and `obj/` with per-object compiler logs and input hashes.
 - `runs/<id>/{uos-gateway,uos-kv-convert,uos-kv-proof}` and their link logs.
 - `runs/<id>/provenance.json` with toolchain, dependency, input and executable identities.
 - `runs/<id>/{production,runtime,gateway}-compile.json` with per-source build outcomes.
@@ -185,7 +186,8 @@ objects and qualified commit `aab86c74fab172eca13298c4da5ca21eb5463d69`, tree
 Run the macOS release workflow's entry point from a clean checkout with the Homebrew dependencies installed.
 It prepares its own SQLite 3.54.0, runs the runtime suite again, and packages three ad-hoc-signed arm64 executables
 with their static library licenses and a `VERSION` manifest. The package verifier checks that each executable
-links only system dylibs. [Release workflow](../../../.github/workflows/cpp-gateway-release.yml)
+links only system dylibs. The packager requires the build receipt to cover the complete vendor registry and
+links those archives into the executables. [Release workflow](../../../.github/workflows/cpp-gateway-release.yml)
 
 ```sh
 mkdir "$UOS_MAC_BUILD"/release "$UOS_MAC_BUILD"/package-home "$UOS_MAC_BUILD"/package-tmp
