@@ -207,3 +207,26 @@ Fetching `development` and the C++ port branch succeeded. GitHub CLI
 reported no authenticated session and `git push --dry-run` to the
 existing task branch could not obtain an HTTPS username. The task
 commits are preserved on `agent-job` for the branch owner.
+
+## Continuation at `9ddb2713`
+
+The inherited tree `b49e579950d6a39455e557e73dfaf8981db80bd2` built with
+Clang 21.1.8 and the fatal port warnings. Both optimized codec binaries
+passed, with 9/9 cases. This check used SQLite 3.54.0 and ICU 78.3 alongside
+the pinned Boost 1.92.0 static archives. The release receipt SHA-256 is
+`bbc6a4ad6663e5b396997ea9e1dc986cbdbfbc6a21cfa44ce77a62f283becb2d`.
+
+```sh
+python3 -B /tmp/kv-graph/verify.py release --jobs 3 \
+  rt/kv_jsc_sparse_test.cpp rt/kv_jsc_deserialize_test.cpp
+python3 -B /tmp/kv-graph/verify.py asan --jobs 4 --all
+```
+
+The sanitizer run selects all 442 standalone binaries because each links the
+changed storage runtime. The scratch driver uses the repository's Links,
+Ninja, vendor, and fixture-boundary helpers. It checks for source changes
+after the run and records the compiler exit, per-binary outcomes, and case
+totals. Test processes have an empty home and private tmpfs and run in
+network, mount, and PID namespaces. Compilation progress is recorded in
+`/tmp/kv-graph/verify-asan/compile-*.log`. The planned follow-up is the
+optimized rerun of the plain supervisor test.
