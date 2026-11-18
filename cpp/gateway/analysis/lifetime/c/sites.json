@@ -2714,7 +2714,8 @@
       "sites": []
     },
     "src/harmony/parse.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "The Harmony parser consumes text views synchronously and returns owning parse records.",
       "sites": []
     },
     "src/harmony/probe_scenarios.cpp": {
