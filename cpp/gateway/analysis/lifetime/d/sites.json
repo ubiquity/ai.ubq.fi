@@ -676,8 +676,82 @@
       ]
     },
     "src/admin/defaults.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed defaults reads and cutover writes, and the migration admin handlers.",
+      "sites": [
+        {
+          "lines": [
+            43,
+            118,
+            121,
+            125,
+            129,
+            130,
+            132,
+            133,
+            134
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The request and database handle remain in the awaiting frame. The migration line vector and options are local to the caller until the import task completes."
+        },
+        {
+          "lines": [
+            51,
+            52,
+            54
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The normal GET children own their KV store state or use an independent diagnostics task. The result tuple is named before its entries are borrowed."
+        },
+        {
+          "lines": [
+            53,
+            54
+          ],
+          "kinds": [
+            "a",
+            "c",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "Defaults diagnostics override lifetime. A KV read rejects while an injected capturing diagnostics coroutine waits. Fail-fast unwinding drops the callback object and the pending child can resume through the freed closure. Wrap the injected callable in rt::async."
+        },
+        {
+          "lines": [
+            61,
+            70,
+            85,
+            100,
+            107,
+            113
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The update attempt owns the fetched tuple, cutover guard and options across awaits. The public POST retries with copied arguments and keeps each child within its own await."
+        },
+        {
+          "lines": [
+            99
+          ],
+          "kinds": [
+            "e"
+          ],
+          "verdict": "DEFECT",
+          "detail": "GCC 12.2 coroutine-rule violation in the defaults write. Atomic commit suspends and returns a temporary, and the enclosing expression immediately accesses its member. Bind const auto result = co_await atomic->commit(), then assign committed = result.ok."
+        }
+      ]
     },
     "src/admin/error_log.cpp": {
       "reviewed": false,

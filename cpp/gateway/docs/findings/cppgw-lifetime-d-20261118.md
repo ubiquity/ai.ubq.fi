@@ -31,7 +31,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/admin/claude_code.cpp`
 - [x] `src/admin/codex.cpp`
 - [x] `src/admin/codex_reset.cpp`
-- [ ] `src/admin/defaults.cpp`
+- [x] `src/admin/defaults.cpp`
 - [ ] `src/admin/error_log.cpp`
 - [ ] `src/admin/index.cpp`
 - [ ] `src/admin/kernel.cpp`
@@ -392,6 +392,16 @@ Reviewed the manual-reset dispatch and error translation.
 
 - L6, 9, 14 **SAFE** · The handler owns request and dependencies. The hash view is converted to an owning string before the separately constructed consuming Promise, which the handler awaits.
 
+### `src/admin/defaults.cpp`
+
+Reviewed defaults reads and cutover writes, and the migration admin handlers.
+
+- L43, 118, 121, 125, 129, 130, 132, 133, 134 **SAFE** · The request and database handle remain in the awaiting frame. The migration line vector and options are local to the caller until the import task completes.
+- L51, 52, 54 **SAFE** · The normal GET children own their KV store state or use an independent diagnostics task. The result tuple is named before its entries are borrowed.
+- L53, 54 **DEFECT** · Defaults diagnostics override lifetime. A KV read rejects while an injected capturing diagnostics coroutine waits. Fail-fast unwinding drops the callback object and the pending child can resume through the freed closure. Wrap the injected callable in rt::async.
+- L61, 70, 85, 100, 107, 113 **SAFE** · The update attempt owns the fetched tuple, cutover guard and options across awaits. The public POST retries with copied arguments and keeps each child within its own await.
+- L99 **DEFECT** · GCC 12.2 coroutine-rule violation in the defaults write. Atomic commit suspends and returns a temporary, and the enclosing expression immediately accesses its member. Bind const auto result = co_await atomic->commit(), then assign committed = result.ok.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -400,4 +410,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-8/286 files reviewed. 38 sites: 35 SAFE, 3 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+9/286 files reviewed. 43 sites: 38 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
