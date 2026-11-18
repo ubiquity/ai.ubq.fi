@@ -8205,8 +8205,38 @@
       ]
     },
     "include/uos/authority/native_paid.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed synchronous paid usage, lease and rollup helpers, including borrowed key and correlation views.",
+      "sites": [
+        {
+          "lines": [
+            53,
+            54,
+            55,
+            56,
+            57,
+            62,
+            66,
+            71,
+            105,
+            123,
+            163,
+            174,
+            209,
+            213,
+            218,
+            235,
+            236,
+            245
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Paid views are consumed within synchronous key or settlement planning. Key and plan values retain their own data, and static labels refer to literals."
+        }
+      ]
     },
     "include/uos/authority/native_paid_contracts.hpp": {
       "reviewed": false,

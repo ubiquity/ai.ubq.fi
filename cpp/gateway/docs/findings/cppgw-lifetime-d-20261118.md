@@ -303,7 +303,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_contracts.hpp`
 - [x] `include/uos/authority/native_kernel.hpp`
 - [x] `include/uos/authority/native_kernel_contracts.hpp`
-- [ ] `include/uos/authority/native_paid.hpp`
+- [x] `include/uos/authority/native_paid.hpp`
 - [ ] `include/uos/authority/native_paid_contracts.hpp`
 - [ ] `include/uos/authority/native_paid_policy.hpp`
 - [ ] `include/uos/authority/native_principal_contracts.hpp`
@@ -1694,6 +1694,12 @@ Reviewed quota result alternatives and synchronous serialization declarations.
 
 - L144, 151, 159, 165, 174, 179, 190, 199, 204 **SAFE** · Each kind label is a static literal and the results carry owned state.
 
+### `include/uos/authority/native_paid.hpp`
+
+Reviewed synchronous paid usage, lease and rollup helpers, including borrowed key and correlation views.
+
+- L53, 54, 55, 56, 57, 62, 66, 71, 105, 123, 163, 174, 209, 213, 218, 235, 236, 245 **SAFE** · Paid views are consumed within synchronous key or settlement planning. Key and plan values retain their own data, and static labels refer to literals.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1942,4 +1948,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-195/286 files reviewed. 367 sites: 346 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+196/286 files reviewed. 368 sites: 347 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
