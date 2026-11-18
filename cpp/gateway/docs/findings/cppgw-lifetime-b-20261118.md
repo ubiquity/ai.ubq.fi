@@ -109,7 +109,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/kernel/quota_v2.hpp`
 - [x] `include/uos/kernel/quota_write.hpp`
 - [x] `include/uos/kernel/usage.hpp`
-- [ ] `src/kernel/attestation.cpp`
+- [x] `src/kernel/attestation.cpp`
 - [ ] `src/kernel/policy_queue.cpp`
 - [ ] `src/kernel/quota_reservations.cpp`
 - [ ] `src/kernel/quota_reserve.cpp`
@@ -741,6 +741,16 @@ Quota policy writes/delete take owned strings and option values, including the i
 
 Usage read methods own identities and options, with a shared store or a resolved environment handle. No inline coroutine or registration.
 
+### `src/kernel/attestation.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 148-192,208-229 | Fetch and import key material | **SAFE** | The task owns the store, PEM rows, decoded bytes and keys. The range spans an immutable frame-local vector, and synchronous crypto returns an owning key before the microtask. |
+| 197-240,469-471,511-515 | Memoized and force-reloaded key promises | **SAFE** | Every waiter copies the promise; replacing the static slot leaves existing waiters' states live, and the load task takes no address of that slot across suspension. |
+| 395-436 | Signature verification and refresh retry | **SAFE** | Each child owns its key vector and shared immutable byte arrays; the range iterator stays in that child frame, and no reference into the static cache survives a wait. |
+| 442-455,568-574 | JTI cache cleanup and update | **SAFE** | Iteration and deletion are synchronous, the key is copied before deletion, and no alias into the cache is used after a suspension. |
+| 505-566,584-599 | Attestation and repository context composition | **SAFE** | Both frames own the request, options, token and parsed state. Digest and signature children receive copies, and variant-member pointers are used only synchronously. |
+
 
 ## Ranked defects and counts
 
@@ -946,4 +956,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-86/97 files reviewed. **DEFECT 9, SAFE 194, UNCLEAR 4.**
+87/97 files reviewed. **DEFECT 9, SAFE 199, UNCLEAR 4.**
