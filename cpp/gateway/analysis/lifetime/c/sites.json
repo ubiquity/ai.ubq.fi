@@ -706,8 +706,16 @@
       "sites": []
     },
     "include/uos/harmony/probe_scenarios.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Scenario definitions store owned run functions.",
+      "sites": [
+        {
+          "lines": "17",
+          "kind": "callback interface",
+          "verdict": "SAFE",
+          "reason": "The scenario table retains the run functions, and each invocation passes its probe context by value."
+        }
+      ]
     },
     "include/uos/harmony/probes.hpp": {
       "status": "pending",

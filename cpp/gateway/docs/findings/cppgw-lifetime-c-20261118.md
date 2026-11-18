@@ -98,7 +98,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/classifier.hpp`
 - [x] `include/uos/harmony/conversation.hpp`
 - [x] `include/uos/harmony/parse.hpp`
-- [ ] `include/uos/harmony/probe_scenarios.hpp`
+- [x] `include/uos/harmony/probe_scenarios.hpp`
 - [ ] `include/uos/harmony/probes.hpp`
 - [ ] `include/uos/harmony/reliability/context.hpp`
 - [ ] `include/uos/harmony/reliability/failure.hpp`
@@ -679,3 +679,9 @@ Synchronous conversation construction and JSON values. No deferred borrowing.
 ### `include/uos/harmony/parse.hpp`
 
 Synchronous wire parsing API with call-local views.
+
+### `include/uos/harmony/probe_scenarios.hpp`
+
+Scenario definitions store owned run functions.
+
+- 17 · callback interface · **SAFE** · The scenario table retains the run functions, and each invocation passes its probe context by value.
