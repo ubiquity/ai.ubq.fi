@@ -1352,8 +1352,142 @@
       ]
     },
     "src/auth/index.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed client and admin auth, external token verification, cache use, and method reporting.",
+      "sites": [
+        {
+          "lines": [
+            54,
+            67,
+            72,
+            128,
+            137,
+            138,
+            148
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Fetch and verification own each request and token snapshot. The cache iterator is read only before the next await, and the body receiver remains in its awaiting frame."
+        },
+        {
+          "lines": [
+            176,
+            189,
+            195
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The GitHub authentication frame owns its policy variant, whose state remains valid across the queue write, and the queued path is an owning string."
+        },
+        {
+          "lines": [
+            297,
+            323,
+            333,
+            343,
+            352,
+            367,
+            390,
+            428
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The cookie adapter is synchronous and constructs a by-value Request. The other helpers own request or token and the logging callback through the work."
+        },
+        {
+          "lines": [
+            458,
+            466,
+            470,
+            474,
+            478,
+            488,
+            492,
+            495,
+            498
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The client auth frame and its logging callback both own Request handles. All branches await delegated authentication under those owners."
+        },
+        {
+          "lines": [
+            544,
+            547,
+            563,
+            567,
+            574,
+            584,
+            588,
+            597,
+            610,
+            622,
+            647
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Deploy-token fetches and loops retain token, URL and response in their frames, and the cache iterator dies before the remote verification await."
+        },
+        {
+          "lines": [
+            705,
+            737,
+            748,
+            750,
+            753,
+            757,
+            767,
+            772
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Admin auth owns its request, credentials and logger as values, and the cookie wrapper transfers its copied request to the called coroutine."
+        },
+        {
+          "lines": [
+            811,
+            841,
+            851,
+            864,
+            885,
+            890,
+            895,
+            902,
+            925
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Report generation holds auth and KV snapshots in the awaiting frame. JSON value-copying references a local stored record and invokes its helper synchronously."
+        }
+      ]
     },
     "src/auth/local_admin.cpp": {
       "reviewed": false,

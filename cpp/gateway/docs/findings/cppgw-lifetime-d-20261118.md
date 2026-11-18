@@ -40,7 +40,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/analytics.cpp`
 - [x] `src/api_key_policy.cpp`
 - [x] `src/api_keys.cpp`
-- [ ] `src/auth/index.cpp`
+- [x] `src/auth/index.cpp`
 - [ ] `src/auth/local_admin.cpp`
 - [ ] `src/auth/local_development_key.cpp`
 - [ ] `src/auth/passkeys.cpp`
@@ -470,6 +470,18 @@ Reviewed key construction, token formatting and synchronous policy normalizers.
 
 - L12, 14 **SAFE** · The key constructor copies each incoming view into owned key parts before the function returns.
 
+### `src/auth/index.cpp`
+
+Reviewed client and admin auth, external token verification, cache use, and method reporting.
+
+- L54, 67, 72, 128, 137, 138, 148 **SAFE** · Fetch and verification own each request and token snapshot. The cache iterator is read only before the next await, and the body receiver remains in its awaiting frame.
+- L176, 189, 195 **SAFE** · The GitHub authentication frame owns its policy variant, whose state remains valid across the queue write, and the queued path is an owning string.
+- L297, 323, 333, 343, 352, 367, 390, 428 **SAFE** · The cookie adapter is synchronous and constructs a by-value Request. The other helpers own request or token and the logging callback through the work.
+- L458, 466, 470, 474, 478, 488, 492, 495, 498 **SAFE** · The client auth frame and its logging callback both own Request handles. All branches await delegated authentication under those owners.
+- L544, 547, 563, 567, 574, 584, 588, 597, 610, 622, 647 **SAFE** · Deploy-token fetches and loops retain token, URL and response in their frames, and the cache iterator dies before the remote verification await.
+- L705, 737, 748, 750, 753, 757, 767, 772 **SAFE** · Admin auth owns its request, credentials and logger as values, and the cookie wrapper transfers its copied request to the called coroutine.
+- L811, 841, 851, 864, 885, 890, 895, 902, 925 **SAFE** · Report generation holds auth and KV snapshots in the awaiting frame. JSON value-copying references a local stored record and invokes its helper synchronously.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -478,4 +490,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-17/286 files reviewed. 72 sites: 67 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+18/286 files reviewed. 79 sites: 74 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
