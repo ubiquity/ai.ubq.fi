@@ -153,21 +153,22 @@ namespace uos::serve {
 
   namespace {
     rt::Task<void> serveConfigured(std::string hostname, int port) {
-      (void)initializeModule();
+      const auto migration = initializeModule().catch_(rt::ignoreRejection);
       runtime::http::ServeHttpOptions options{.hostname = std::move(hostname), .port = static_cast<double>(port), .onListen = application.onListen, .upgrade = application.upgrade};
       const auto server = runtime::http::serveHttp(options, application.fetch);
       rt::process::Listener shutdown([server] {
         server.shutdown().catch_([](rt::Reason) { rt::console::error("[ai.ubq.fi] Development HTTP shutdown failed"); });
       });
-      rt::process::once("SIGINT", shutdown);
-      rt::process::once("SIGTERM", shutdown);
       {
         auto removeListeners = rt::scopeExit([shutdown] {
           rt::process::removeListener("SIGINT", shutdown);
           rt::process::removeListener("SIGTERM", shutdown);
         });
+        rt::process::once("SIGINT", shutdown);
+        rt::process::once("SIGTERM", shutdown);
         co_await server.ready.wait();
         co_await server.finished.wait();
+        co_await migration.wait();
         rt::Promise<void> drained(shutdownOptionalTelemetry());
         co_await drained.wait();
         auto kvPending = kv::getKv();
@@ -188,8 +189,9 @@ namespace uos::serve {
       if (!store) throw rt::JsError("Native KV must be initialized before starting the gateway");
       rt::Reason failure;
       std::optional<rt::process::Listener> shutdown;
+      std::optional<rt::Promise<void>> migration;
       try {
-        (void)initializeModule();
+        migration = initializeModule().catch_(rt::ignoreRejection);
         runtime::http::ServeHttpOptions options{.hostname = std::move(hostname), .port = static_cast<double>(port), .onListen = application.onListen, .upgrade = application.upgrade};
         const auto server = runtime::http::serveHttp(options, application.fetch);
         shutdown.emplace([server] {
@@ -207,6 +209,7 @@ namespace uos::serve {
         rt::process::removeListener("SIGTERM", *shutdown);
       }
       try {
+        if (migration) co_await migration->wait();
         rt::Promise<void> drained(shutdownOptionalTelemetry());
         co_await drained.wait();
       } catch (...) {

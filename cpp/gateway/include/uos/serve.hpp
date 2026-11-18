@@ -16,7 +16,7 @@ namespace uos::serve {
 
   rt::Task<void> configureLoopbackServeRuntime(std::vector<std::string> args);
 
-  // Explicit boundary for the source's unguarded, unawaited reset-settings migration.
+  // Start the reset-settings migration while the listener is starting.
   rt::Promise<void> initializeModule();
 
   namespace detail {

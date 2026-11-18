@@ -26,7 +26,7 @@ gates. Final acceptance covers four affected sanitizer shards, one complete rele
 `python3 cpp/gateway/tools/links.py --check` and `git diff --check`. The driver builds all production objects on a
 cold run. The integrated runner measured about 46 minutes for cold release and 69 minutes for cold sanitizers.
 Expect incremental runs to rebuild the changed objects and run the affected tests. Build only in external scratch,
-use at most four compilation workers total, and keep the driver's incremental results and terminal receipts. If a
+use up to four workers across the suite builds, and keep the driver's incremental results and terminal receipts. If a
 gate fails, retain the diagnostic and rerun only the affected gate after a fix. Stop when every row has an evidenced
 verdict and the selected gates pass, or commit the building subset and record any outstanding work.
 
@@ -45,7 +45,7 @@ column identifies a source commit by its unique subject so the report can travel
 | `src/auth/local_development_key.cpp:97` | FIXED · `awaitWithAbort` settles the observed private abort promise after detaching it. The pricing work stays observed if the abort wins. | Settle private race losers | `local_development_key_test` provisions fresh in-memory stores and measures retained allocations. |
 | `src/sentinel/replay_retention_bootstrap.cpp:469` | FIXED · `settledWithin` resolves the private wait after clearing its timer and before delivering the original result. | Settle private race losers | `sentinel_replay_retention_test` repeats completed owner fills against fresh in-memory stores. |
 | `src/health.cpp:306` | FIXED · `probeUpstreamCoalesced` settles the private timeout promise when clearing the timer and the coalescing slot. | Settle private race losers | `health_test` checks one configured mock probe and measures the health timer across repeated unconfigured probes. |
-| `src/serve.cpp:123` | LEFT · Pending re-verification. | | |
+| `src/serve.cpp:123` | FIXED · Both launchers retain the migration. Normal shutdown and prepared startup failure await it before telemetry and KV close. | Drain startup migration before KV closure | `serve_test` delays the migration read and forces the loopback listener setup callback to fail, then checks close ordering and the original error. |
 | `src/models/openrouter_models.cpp:158` | LEFT · Pending re-verification. | | |
 | `src/admin/codex.cpp:207` | LEFT · Pending re-verification. | | |
 | `src/admin/codex.cpp:216` | LEFT · Pending re-verification. | | |
@@ -58,7 +58,7 @@ column identifies a source commit by its unique subject so the report can travel
 | `src/kv.cpp:56` | LEFT · Pending re-verification. | | |
 | `src/jev_compaction/compaction.cpp:238` | LEFT · Pending re-verification. | | |
 | `src/lib/jev_compaction/jev_codex_smoke.cpp:180` | LEFT · Pending re-verification. | | |
-| `src/serve.cpp:159` | LEFT · Pending re-verification. | | |
+| `src/serve.cpp:159` | FIXED · `process::once` stores its callback before arming the signal wait. The development launcher's cleanup guard now covers both registrations. | Drain startup migration before KV closure | `serve_test` covers startup cleanup. Faulting a valid OS signal registration requires intrusive failure injection. |
 | `src/handler/serve_handler.cpp:13` | LEFT · Pending re-verification. | | |
 | `src/admin/defaults.cpp:99` | LEFT · Pending re-verification. | | |
 | `src/auth/passkeys.cpp:4313` | LEFT · Pending re-verification. | | |
