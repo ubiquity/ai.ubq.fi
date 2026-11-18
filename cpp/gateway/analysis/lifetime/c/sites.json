@@ -619,8 +619,16 @@
       ]
     },
     "include/uos/embeddings/handlers.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Embeddings handler API with optional telemetry.",
+      "sites": [
+        {
+          "lines": "8-9",
+          "kind": "borrowed context",
+          "verdict": "SAFE",
+          "reason": "Existing route callers join the handler with a live context, and the implementation copies it into owned telemetry dispatch state."
+        }
+      ]
     },
     "include/uos/embeddings/jobs.hpp": {
       "status": "pending",
