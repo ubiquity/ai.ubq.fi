@@ -1389,8 +1389,16 @@
       ]
     },
     "include/uos/provider/lithos_models.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Lithos catalog API.",
+      "sites": [
+        {
+          "lines": "17-18",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Catalog tasks retain any supplied options as a value."
+        }
+      ]
     },
     "include/uos/provider/lithos_rate_limits.hpp": {
       "status": "pending",

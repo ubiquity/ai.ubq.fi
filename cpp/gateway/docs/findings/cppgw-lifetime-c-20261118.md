@@ -165,7 +165,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/health.hpp`
 - [x] `include/uos/provider/lithos.hpp`
 - [x] `include/uos/provider/lithos_handlers.hpp`
-- [ ] `include/uos/provider/lithos_models.hpp`
+- [x] `include/uos/provider/lithos_models.hpp`
 - [ ] `include/uos/provider/lithos_rate_limits.hpp`
 - [ ] `include/uos/provider/lithos_streams.hpp`
 - [ ] `include/uos/provider/metered.hpp`
@@ -1045,3 +1045,9 @@ Lithos provider transport API with owned options.
 Lithos handler interface with borrowed telemetry and an observer seam.
 
 - 12-19 · borrowed context and observer · **SAFE** · The caller awaits the handler while its context lives, and stream construction copies it. The test observer receives a weak controller handle.
+
+### `include/uos/provider/lithos_models.hpp`
+
+Lithos catalog API.
+
+- 17-18 · owning task parameters · **SAFE** · Catalog tasks retain any supplied options as a value.
