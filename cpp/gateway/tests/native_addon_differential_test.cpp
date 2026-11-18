@@ -155,7 +155,7 @@ namespace {
   }
 
   struct TempBase {
-    std::string path = rt::fs::realpathSync(rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "uos-native-kv-differential-")));
+    std::string path = rt::fs::realpathSync(rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "uos-native-kv %?#-")));
     ~TempBase() {
       rt::fs::RmOptions options;
       options.recursive = true;

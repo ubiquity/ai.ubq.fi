@@ -1,10 +1,12 @@
 // RegExp.prototype and String.prototype regex methods over rt::Regex programs, following the
-// ECMAScript algorithms (RegExpBuiltinExec, @@replace, @@split, @@matchAll, @@search) and the
-// observable JavaScriptCore behaviour where it differs.
+// ECMAScript algorithms (RegExpBuiltinExec, @@replace, @@split, @@matchAll, @@search).
 #include "uos/rt/regex.hpp"
 
 #include "regex_internal.hpp"
 #include "uos/rt/error.hpp"
+#include "uos/rt/string.hpp"
+
+#include <boost/container/small_vector.hpp>
 
 #include <algorithm>
 #include <stdexcept>
@@ -15,69 +17,43 @@ namespace uos::rt {
     using regex_detail::Matcher;
     using regex_detail::Program;
 
-    // Appends one UTF-16 code unit or code point as canonical WTF-8: a low surrogate that follows
-    // a lone high surrogate already in `out` joins it into one four-byte sequence.
-    void appendCodePoint(std::string& out, std::uint32_t c) {
-      if (regex_detail::isLowSurrogate(c) && out.size() >= 3) {
-        std::size_t n = out.size();
-        auto b0 = static_cast<unsigned char>(out[n - 3]), b1 = static_cast<unsigned char>(out[n - 2]), b2 = static_cast<unsigned char>(out[n - 1]);
-        if (b0 == 0xED && b1 >= 0xA0 && b1 <= 0xAF) {
-          std::uint32_t high = 0xD000u | ((b1 & 0x3Fu) << 6) | (b2 & 0x3Fu);
-          out.resize(n - 3);
-          regex_detail::appendWtf8(out, regex_detail::combineSurrogates(high, c));
-          return;
-        }
-      }
-      regex_detail::appendWtf8(out, c);
-    }
-
     // Appends caller-provided WTF-8 text, keeping the result canonical.
     void appendText(std::string& out, std::string_view text) {
       if (text.find('\xED') == std::string_view::npos) {
         out.append(text);
         return;
       }
-      std::size_t i = 0;
-      while (i < text.size()) appendCodePoint(out, regex_detail::decodeWtf8(text, i));
+      for (std::uint32_t ch : codePoints(text)) appendCodePoint(out, ch);
     }
 
     // A subject prepared for matching: the bytes themselves when they are ASCII, otherwise its
     // UTF-16 code units plus a checkpoint every 64 units for mapping indices back to bytes.
     class Subject {
     public:
-      explicit Subject(std::string_view bytes) : bytes_(bytes) {
-        for (char c : bytes) {
-          if (static_cast<unsigned char>(c) >= 0x80) {
-            ascii_ = false;
-            break;
-          }
-        }
+      explicit Subject(std::string_view bytes) : bytes_(bytes), ascii_(isAscii(bytes)) {
         if (ascii_) {
           length_ = bytes.size();
           return;
         }
-        std::size_t i = 0;
-        while (i < bytes.size()) {
-          std::size_t at = i;
-          std::uint32_t c = regex_detail::decodeWtf8(bytes, i);
-          std::size_t index = units_.size();
-          std::size_t width = c >= 0x10000 ? 2 : 1;
-          while (checkpoints_.size() * 64 < index + width) checkpoints_.push_back({index, at});
-          if (width == 2) {
-            units_.push_back(static_cast<char16_t>(0xD800 + ((c - 0x10000) >> 10)));
-            units_.push_back(static_cast<char16_t>(0xDC00 + ((c - 0x10000) & 0x3FF)));
-          } else {
-            units_.push_back(static_cast<char16_t>(c));
+        const auto points = codePoints(bytes);
+        for (auto it = points.begin(); it != points.end(); ++it) {
+          const std::uint32_t ch = *it;
+          const std::size_t index = units_.size();
+          const std::size_t width = ch >= 0x10000 ? 2 : 1;
+          if (checkpoints_.size() * 64 < index + width) {
+            checkpoints_.push_back({index, static_cast<std::size_t>(it.text().data() - bytes.data())});
           }
+          units_.push_back(leadCodeUnit(ch));
+          if (width == 2) units_.push_back(static_cast<std::uint16_t>(0xDC00 + ((ch - 0x10000) & 0x3FF)));
         }
         length_ = units_.size();
       }
 
       std::size_t length() const { return length_; }
 
-      bool search(Matcher& matcher, std::size_t start, bool sticky) const {
-        if (ascii_) return matcher.search(bytes_.data(), length_, start, sticky);
-        return matcher.search(units_.data(), length_, start, sticky);
+      bool search(Matcher& matcher, std::size_t start, bool splitting = false) const {
+        if (ascii_) return matcher.search(bytes_.empty() ? "" : bytes_.data(), length_, start, false, splitting);
+        return matcher.search(units_.data(), length_, start, true, splitting);
       }
 
       // Byte offset of a UTF-16 index (rounded down inside a pair). Callers mostly ask in
@@ -88,11 +64,11 @@ namespace uos::rt {
         const Checkpoint& checkpoint = checkpoints_[index / 64];
         std::size_t unit = checkpoint.index, byte = checkpoint.byte;
         if (cursorUnit_ <= index && cursorUnit_ > unit) unit = cursorUnit_, byte = cursorByte_;
-        while (unit < index) {
-          std::size_t next = byte;
-          std::size_t width = regex_detail::decodeWtf8(bytes_, next) >= 0x10000 ? 2 : 1;
+        for (auto it = codePoints(bytes_.substr(byte)).begin(); unit < index; ++it) {
+          const std::size_t width = *it >= 0x10000 ? 2 : 1;
           if (unit + width > index) break;
-          unit += width, byte = next;
+          unit += width;
+          byte += it.text().size();
         }
         cursorUnit_ = unit, cursorByte_ = byte;
         return byte;
@@ -104,15 +80,7 @@ namespace uos::rt {
           out.append(bytes_.data() + start, end - start);
           return;
         }
-        for (std::size_t i = start; i < end; ++i) {
-          std::uint32_t unit = units_[i];
-          if (regex_detail::isHighSurrogate(unit) && i + 1 < end && regex_detail::isLowSurrogate(units_[i + 1])) {
-            regex_detail::appendWtf8(out, regex_detail::combineSurrogates(unit, units_[i + 1]));
-            ++i;
-          } else {
-            appendCodePoint(out, unit);
-          }
-        }
+        for (std::size_t i = start; i < end; ++i) appendCodePoint(out, units_[i]);
       }
 
       std::string slice(std::size_t start, std::size_t end) const {
@@ -133,10 +101,10 @@ namespace uos::rt {
         std::size_t byte;
       };
       std::string_view bytes_;
-      bool ascii_ = true;
+      bool ascii_;
       std::size_t length_ = 0;
-      regex_detail::SmallVec<char16_t, 256> units_;
-      regex_detail::SmallVec<Checkpoint, 8> checkpoints_;
+      boost::container::small_vector<std::uint16_t, 256> units_;
+      boost::container::small_vector<Checkpoint, 8> checkpoints_;
       mutable std::size_t cursorUnit_ = 0;
       mutable std::size_t cursorByte_ = 0;
     };
@@ -145,7 +113,7 @@ namespace uos::rt {
     bool builtinExec(const Program& program, Matcher& matcher, const Subject& subject, std::size_t& lastIndex) {
       bool stateful = program.global || program.sticky;
       std::size_t start = stateful ? lastIndex : 0;
-      if (start > subject.length() || !subject.search(matcher, start, program.sticky)) {
+      if (start > subject.length() || !subject.search(matcher, start)) {
         if (stateful) lastIndex = 0;
         return false;
       }
@@ -275,7 +243,7 @@ namespace uos::rt {
         while (builtinExec(program, matcher, subject, lastIndex)) {
           const std::size_t* caps = matcher.captures();
           found.insert(found.end(), caps, caps + width);
-          if (caps[0] == caps[1]) lastIndex = subject.advance(lastIndex, program.unicode);
+          if (caps[0] == caps[1]) lastIndex = subject.advance(lastIndex, program.fullUnicode());
         }
       } else if (builtinExec(program, matcher, subject, lastIndex)) {
         found.assign(matcher.captures(), matcher.captures() + width);
@@ -306,7 +274,7 @@ namespace uos::rt {
       lastIndex = 0;
       while (builtinExec(program, matcher, subject, lastIndex)) {
         out.push_back(subject.slice(matcher.captureStart(0), matcher.captureEnd(0)));
-        if (matcher.captureStart(0) == matcher.captureEnd(0)) lastIndex = subject.advance(lastIndex, program.unicode);
+        if (matcher.captureStart(0) == matcher.captureEnd(0)) lastIndex = subject.advance(lastIndex, program.fullUnicode());
       }
       if (out.empty()) return std::nullopt;
       return out;
@@ -325,11 +293,11 @@ namespace uos::rt {
       }
       std::size_t p = 0, q = 0;
       while (q < size) {
-        if (!subject.search(matcher, q, false)) break;
+        if (!subject.search(matcher, q, true)) break;
         std::size_t start = matcher.captureStart(0), end = matcher.captureEnd(0);
         if (start >= size) break;
         if (end == p) {
-          q = subject.advance(start, program.unicode);
+          q = subject.advance(start, program.fullUnicode());
           continue;
         }
         out.push_back(Piece(subject.slice(p, start)));
@@ -411,7 +379,7 @@ namespace uos::rt {
     std::size_t lastIndex = re.lastIndex;
     while (builtinExec(program, matcher, subject, lastIndex)) {
       out.push_back(buildMatch(program, matcher.captures(), subject, input));
-      if (matcher.captureStart(0) == matcher.captureEnd(0)) lastIndex = subject.advance(lastIndex, program.unicode);
+      if (matcher.captureStart(0) == matcher.captureEnd(0)) lastIndex = subject.advance(lastIndex, program.fullUnicode());
     }
     return out;
   }

@@ -14,6 +14,7 @@
     "fuzz/passkeys.cpp",
     "fuzz/passkeys_asn1_library.cpp"
   ],
+  "quickjs-libregexp": ["src/rt/regex_compile.cpp", "src/rt/regex_match.cpp", "src/rt/regex_tables.cpp"],
   "simdjson": ["src/rt/json.cpp"],
   "simdutf": ["src/rt/base64.cpp", "src/rt/string.cpp", "src/rt/text_codec.cpp"]
 }

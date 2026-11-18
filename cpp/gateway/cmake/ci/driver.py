@@ -184,11 +184,14 @@ def write_ninja(build, sources, compiler, flags, c_compiler, c_flags, vendors):
     if json_sources:
         lines += ninja_compile_rule("selected_json", compiler + flags + vendor_sources.simdjson_flags(), "CXX")
     includes = {library.name: vendor_sources.include_flags(library) for library in vendors}
+    vendor_c_options = {library.name: includes[library.name] + vendor_sources.c_dialect_flags(library.sources[0])
+                        for library in vendors}
     include_consumers = {source: library for library in vendors if includes[library.name] for source in library.consumers}
     for library in vendors:
         if includes[library.name]:
             lines += ninja_compile_rule("cxx_" + library.name, compiler + flags + includes[library.name], "CXX")
-            lines += ninja_compile_rule("vendor_c_" + library.name, c_compiler + c_flags + includes[library.name], "Vendor C")
+        if vendor_c_options[library.name]:
+            lines += ninja_compile_rule("vendor_c_" + library.name, c_compiler + c_flags + vendor_c_options[library.name], "Vendor C")
     if vendors:
         archive = shutil.which("ar")
         if not archive:
@@ -212,7 +215,7 @@ def write_ninja(build, sources, compiler, flags, c_compiler, c_flags, vendors):
             target = object_path(build, source)
             target.parent.mkdir(parents=True, exist_ok=True)
             rule = "vendor_c" if source.endswith(".c") else "vendor_cxx"
-            if source.endswith(".c") and includes[library.name]:
+            if source.endswith(".c") and vendor_c_options[library.name]:
                 rule += "_" + library.name
             members.append(ninja_escape(target))
             headers = " | " + " ".join(vendor_headers[source])

@@ -10,6 +10,7 @@
 #include "uos/rt/fs.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/process.hpp"
+#include "uos/rt/sqlite.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test.hpp"
 #include "uos/rt/url.hpp"
@@ -64,7 +65,7 @@ namespace {
   // The store file is named inspected.sqlite3 (the TS names it kv-bun.sqlite3;
   // the module never reads the name).
   Fixture fixture(bool wal = true) {
-    const std::string root = rt::fs::mkdtempSync(fixtureRoot() + "/case-");
+    const std::string root = rt::fs::mkdtempSync(fixtureRoot() + "/case %?#-");
     directories.push_back(root);
     rt::fs::mkdirSync(root + "/.data");
     const std::string path = root + "/.data/inspected.sqlite3";
@@ -133,6 +134,23 @@ TEST("readonly codec inspection accepts a drained WAL-mode file without changing
   for (const char* suffix : {"-wal", "-shm", "-journal"}) EXPECT_EQ(rt::fs::existsSync(created.path + suffix), false);
   EXPECT_EQ(inspectSqliteReadOnly(created.path, marker), std::optional<std::string>("bun-jsc-v1"));
   // `await assertBunConvertedStore(root)` (ops/assert-bun-store.ts) is outside the ported tree.
+  EXPECT(rt::fs::readFileSync(created.path) == before);
+}
+
+TEST("an immutable read-only SQLite URI addresses a database with reserved path bytes") {
+  const AfterEach afterEach;
+  const Fixture created = fixture();
+  const rt::fs::Bytes before = rt::fs::readFileSync(created.path);
+  rt::URL uri = rt::pathToFileURL(created.path);
+  uri.searchParams().set("immutable", "1");
+  const rt::sqlite::Database db(uri.href(), rt::sqlite::constants::SQLITE_OPEN_READONLY | rt::sqlite::constants::SQLITE_OPEN_URI);
+  const auto row = db.query("SELECT value FROM uos_kv_metadata WHERE key='codec'").get();
+  ASSERT(row.has_value());
+  EXPECT_EQ(rt::sqlite::toJson(*row), json::object({{"value", "bun-jsc-v1"}}));
+  EXPECT_THROWS_MATCHING(db.run("DELETE FROM uos_kv_metadata"), "readonly");
+  for (const char* suffix : {"-wal", "-shm", "-journal"}) EXPECT(!rt::fs::existsSync(created.path + suffix));
+  db.close(true);
+  for (const char* suffix : {"-wal", "-shm", "-journal"}) EXPECT(!rt::fs::existsSync(created.path + suffix));
   EXPECT(rt::fs::readFileSync(created.path) == before);
 }
 

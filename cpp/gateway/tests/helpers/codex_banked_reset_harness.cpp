@@ -8,6 +8,7 @@
 #include "uos/rt/string.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <set>
@@ -389,8 +390,9 @@ namespace uos::tests::helpers::codex_banked_reset_harness {
       hash = rt::bitXor(static_cast<double>(hash), static_cast<double>(unit));
       hash = rt::Math::imul(static_cast<double>(hash), 16'777'619);
     }
-    return "test-hash-" + rt::numberToString(static_cast<double>(rt::toUint32(static_cast<double>(hash))), 16) + "-" +
-           rt::numberToString(static_cast<double>(units.size()));
+    char hex[8];
+    const auto end = std::to_chars(hex, hex + sizeof hex, static_cast<std::uint32_t>(hash), 16).ptr;
+    return "test-hash-" + std::string(hex, end) + "-" + rt::numberToString(static_cast<double>(units.size()));
   }
 
   rt::Task<std::string> testHash(std::string value) { return rt::fulfilledTask(testHashText(value)); }

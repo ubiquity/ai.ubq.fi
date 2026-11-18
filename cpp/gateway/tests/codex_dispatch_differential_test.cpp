@@ -385,6 +385,18 @@ ASYNC_TEST("dispatch differential: prepareCodexSubscriptionRequest") {
     actual["warnings"] = std::move(warnings);
     EXPECT(same(row.at("prepared"), actual, "prepare " + nameOf(row)));
   }
+  const std::optional<std::string> scope = "scope-a";
+  const std::pair<std::string, std::string> variants[]{
+    {"key-13", "912509f1-f9e6-86e6-898c-e3d583df9dbd"},
+    {"key-4", "2efbdd44-1e90-8fb7-ad4c-78712eea5269"},
+  };
+  for (const auto& [key, identity] : variants) {
+    const json::value body = json::object{{"prompt_cache_key", key}};
+    auto preparing = dispatch::prepareCodexSubscriptionRequest(body, scope);
+    const auto prepared = co_await std::move(preparing);
+    EXPECT_EQ(prepared.nativeSessionIdentity, std::optional<std::string>(identity));
+    EXPECT_EQ(prepared.conversationIdentity, identity);
+  }
 }
 
 ASYNC_TEST("dispatch differential: codexModelUnsupportedFromResponse") {

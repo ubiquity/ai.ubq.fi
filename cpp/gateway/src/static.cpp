@@ -16,6 +16,7 @@
 
 #include <array>
 #include <exception>
+#include <filesystem>
 #include <memory>
 #include <tuple>
 #include <utility>
@@ -24,20 +25,14 @@
 
 namespace uos::static_ {
   namespace {
-    // `import.meta.url` of src/static.ts is rooted in the verified immutable package;
-    // unconfigured module tests retain the source cwd convention.
-    rt::URL moduleUrl() { return rt::pathToFileURL(rt::path::resolve(runtime::paths::resourceRoot(), "src/static.ts")); }
+    std::filesystem::path resourcePath(std::string_view relative) { return std::filesystem::path(runtime::paths::resourceRoot()) / relative; }
 
-    // `await readFile(new URL(relative, import.meta.url), "utf8")`
-    std::string readModuleText(std::string_view relative) {
-      const rt::URL url(relative, moduleUrl());
-      return rt::fs::promises::readFile(rt::fileURLToPath(url), "utf8");
-    }
+    std::string readResourceText(std::string_view relative) { return rt::fs::promises::readFile(resourcePath(relative).native(), "utf8"); }
 
     using StaticBody = std::variant<std::string, rt::Bytes>;
 
     struct StaticAsset {
-      rt::URL url;
+      std::filesystem::path path;
       std::string label;
       std::string contentType;
       std::string readAs;  // "text" | "bytes"
@@ -66,28 +61,21 @@ namespace uos::static_ {
       std::shared_ptr<const StaticAsset> indexMarkdownAsset;
 
       StaticModule()
-        : aboutHtmlText(readModuleText("../static/about.html")),
-          contactHtmlText(readModuleText("../static/contact.html")),
-          developersHtmlText(readModuleText("../static/developers.html")),
-          homeMarkdownText(readModuleText("../static/home.md")),
-          indexHtmlText(readModuleText("../static/index.html")),
-          llmsFullText(readModuleText("../static/docs/llms-agents.md")),
-          llmsText(readModuleText("../static/llms.txt")),
-          modelsHtmlText(readModuleText("../static/models.html")),
-          openApiText(readModuleText("../static/openapi.json")),
-          privacyHtmlText(readModuleText("../static/privacy.html")),
-          robotsText(readModuleText("../static/robots.txt")),
-          sitemapText(readModuleText("../static/sitemap.xml")),
+        : aboutHtmlText(readResourceText("static/about.html")),
+          contactHtmlText(readResourceText("static/contact.html")),
+          developersHtmlText(readResourceText("static/developers.html")),
+          homeMarkdownText(readResourceText("static/home.md")),
+          indexHtmlText(readResourceText("static/index.html")),
+          llmsFullText(readResourceText("static/docs/llms-agents.md")),
+          llmsText(readResourceText("static/llms.txt")),
+          modelsHtmlText(readResourceText("static/models.html")),
+          openApiText(readResourceText("static/openapi.json")),
+          privacyHtmlText(readResourceText("static/privacy.html")),
+          robotsText(readResourceText("static/robots.txt")),
+          sitemapText(readResourceText("static/sitemap.xml")),
           staticCacheControl(config::config.isDeploy ? "public, max-age=300" : "no-store") {
         indexHtmlAsset = textAsset({"/index.html"}, "index.html", "text/html; charset=utf-8", "html", indexHtmlText);
-        indexMarkdownAsset = std::make_shared<const StaticAsset>(StaticAsset{
-          .url = fromStatic("home.md"),
-          .label = "static/home.md",
-          .contentType = "text/markdown; charset=utf-8",
-          .readAs = "text",
-          .security = "asset",
-          .body = StaticBody(homeMarkdownText),
-        });
+        indexMarkdownAsset = textAsset({}, "home.md", "text/markdown; charset=utf-8", "asset", homeMarkdownText);
 
         textAsset({"/docs", "/docs.html"}, "docs.html", "text/html; charset=utf-8", "html");
         textAsset({"/developers", "/developers.html"}, "developers.html", "text/html; charset=utf-8", "html", developersHtmlText);
@@ -134,9 +122,6 @@ namespace uos::static_ {
         bytesAsset({"/favicon-32.png"}, "favicon-32.png", "image/png");
       }
 
-      static rt::URL fromStatic(const std::string& path) { return rt::URL("../static/" + path, moduleUrl()); }
-      static rt::URL fromRoot(const std::string& path) { return rt::URL("../" + path, moduleUrl()); }
-
       std::shared_ptr<const StaticAsset> registerAsset(const std::vector<std::string>& routes, std::shared_ptr<const StaticAsset> asset) {
         for (const std::string& route : routes) staticAssets.set(route, asset);
         return asset;
@@ -144,9 +129,10 @@ namespace uos::static_ {
 
       std::shared_ptr<const StaticAsset> textAsset(const std::vector<std::string>& routes, const std::string& path, const std::string& contentType,
                                                    const std::string& security = "asset", const std::optional<std::string>& body = std::nullopt) {
+        const std::string relative = "static/" + path;
         return registerAsset(routes, std::make_shared<const StaticAsset>(StaticAsset{
-                                       .url = fromStatic(path),
-                                       .label = "static/" + path,
+                                       .path = resourcePath(relative),
+                                       .label = relative,
                                        .contentType = contentType,
                                        .readAs = "text",
                                        .security = security,
@@ -156,7 +142,7 @@ namespace uos::static_ {
 
       std::shared_ptr<const StaticAsset> bytesAsset(const std::vector<std::string>& routes, const std::string& path, const std::string& contentType) {
         return registerAsset(routes, std::make_shared<const StaticAsset>(StaticAsset{
-                                       .url = fromRoot(path),
+                                       .path = resourcePath(path),
                                        .label = path,
                                        .contentType = contentType,
                                        .readAs = "bytes",
@@ -177,10 +163,9 @@ namespace uos::static_ {
         if (asset->body) {
           body = *asset->body;
         } else if (asset->readAs == "text") {
-          body = StaticBody(rt::fs::promises::readFile(rt::fileURLToPath(asset->url), "utf8"));
+          body = StaticBody(rt::fs::promises::readFile(asset->path.native(), "utf8"));
         } else {
-          const rt::Bytes bytes = rt::fs::promises::readFile(rt::fileURLToPath(asset->url));
-          body = StaticBody(rt::Bytes(bytes.begin(), bytes.end()));
+          body = StaticBody(rt::fs::promises::readFile(asset->path.native()));
         }
       } catch (...) {
         rt::console::error("[ai.ubq.fi] Failed to load " + asset->label + ":", rt::console::Value(std::current_exception()));

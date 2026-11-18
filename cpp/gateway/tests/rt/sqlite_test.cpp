@@ -21,6 +21,7 @@
 
 #include <unistd.h>
 #include <exception>
+#include <charconv>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -2299,7 +2300,11 @@ TEST("errors: SQLiteError name, message, code, errno and byteOffset for compile 
       db->query(rt::fromUtf16(u"SELECT * FROM \"\xD800\""));
     } catch (const rt::JsError& error) {
       json::array units;
-      for (const std::uint32_t point : rt::codePoints(error.message)) units.push_back(json::value(rt::numberToString(point, 16)));
+      for (const std::uint32_t point : rt::codePoints(error.message)) {
+        char hex[8];
+        const auto end = std::to_chars(hex, hex + sizeof hex, point, 16).ptr;
+        units.push_back(json::value(std::string(hex, end)));
+      }
       return list({encError(error), units});
     }
     return nullptr;

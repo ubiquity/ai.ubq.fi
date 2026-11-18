@@ -14,21 +14,36 @@ SOURCES = {
     "ada": ("ada.cpp",),
     "llhttp": ("llhttp.c", "api.c", "http.c"),
     "qcbor": ("src/qcbor_decode.c", "src/qcbor_encode.c", "src/qcbor_err_to_str.c", "src/UsefulBuf.c", "src/ieee754.c"),
+    "quickjs-libregexp": ("libregexp.c", "libunicode.c"),
     "simdjson": ("simdjson.cpp",),
     "simdutf": ("simdutf.cpp",),
 }
-VERSIONS = {"ada": "4.0.0", "llhttp": "9.4.4", "qcbor": "1.6.1", "simdjson": "5.2.0", "simdutf": "9.4.0"}
-VENDOR_INCLUDES = {"qcbor": "third_party/qcbor/inc"}
-QCBOR_HEADERS = {
-    "inc/UsefulBuf.h", "inc/qcbor.h", "inc/qcbor/UsefulBuf.h", "inc/qcbor/qcbor.h", "inc/qcbor/qcbor_common.h",
-    "inc/qcbor/qcbor_decode.h", "inc/qcbor/qcbor_encode.h", "inc/qcbor/qcbor_private.h", "inc/qcbor/qcbor_spiffy_decode.h",
-    "src/ieee754.h",
+VERSIONS = {
+    "ada": "4.0.0",
+    "llhttp": "9.4.4",
+    "qcbor": "1.6.1",
+    "quickjs-libregexp": "0.18.0",
+    "simdjson": "5.2.0",
+    "simdutf": "9.4.0",
+}
+VENDOR_INCLUDES = {
+    "qcbor": "third_party/qcbor/inc",
+    "quickjs-libregexp": "third_party/quickjs-libregexp",
+}
+VENDOR_HEADERS = {
+    "qcbor": {
+        "inc/UsefulBuf.h", "inc/qcbor.h", "inc/qcbor/UsefulBuf.h", "inc/qcbor/qcbor.h", "inc/qcbor/qcbor_common.h",
+        "inc/qcbor/qcbor_decode.h", "inc/qcbor/qcbor_encode.h", "inc/qcbor/qcbor_private.h", "inc/qcbor/qcbor_spiffy_decode.h",
+        "src/ieee754.h",
+    },
+    "quickjs-libregexp": {"cutils.h", "libregexp-opcode.h", "libregexp.h", "libunicode-table.h", "libunicode.h"},
 }
 SIMDJSON_HEADER = "third_party/simdjson/simdjson.h"
 VENDOR_MANIFESTS = {
     "ada": "a6085f89c35fc39b06802935130c4aeffb449b695e568f71b14db0bb7a6e403f",
     "llhttp": "b9b8ae35e0b43ea291899360441bf4b6e4acf5942253118158c0d95fe1c9b8eb",
     "qcbor": "c149f42818ce685d5b2fc99f67ae7dd617274b111b28f2ceee185f9fc9aa4fbe",
+    "quickjs-libregexp": "698d914c326a35c7f009a663f079e56c61d51c7c03fc3e877f11c85f82b8bd0b",
     "simdjson": "e958e232e00f9de08ca1118888fbe15ddf75e5b9ffb0c4d5b606eb645909d834",
     "simdutf": "f7b0cb9c96b51c837550c4a68f0f5305833cc8649aa7f25897c5dab487c60481",
 }
@@ -69,7 +84,7 @@ def selected(root=GATEWAY):
         provenance = directory / "PROVENANCE.md"
         manifest = directory / "SHA256SUMS"
         sources = SOURCES[name]
-        headers = QCBOR_HEADERS if name == "qcbor" else {name + ".h"}
+        headers = VENDOR_HEADERS.get(name, {name + ".h"})
         filenames = {*sources, *headers, "LICENSE"}
         entries = {}
         manifest_bytes = (root / manifest).read_bytes()
@@ -106,6 +121,11 @@ def vendor_flags(flags):
     return [arg for arg in flags if arg not in STRICT_WARNINGS and not arg.startswith("-Werror=")]
 
 
+def c_dialect_flags(source):
+    # QuickJS's cutils.h uses platform declarations exposed by the GNU C dialect.
+    return ["-std=gnu11"] if source.startswith("third_party/quickjs-libregexp/") and source.endswith(".c") else []
+
+
 def include_flags(library, root=GATEWAY):
     directory = VENDOR_INCLUDES.get(library.name)
     return ["-isystem", str(root / directory)] if directory else []
@@ -127,6 +147,8 @@ def main(args):
             consumers = " ".join(f'"{source}"' for source in library.consumers)
             inputs = " ".join(f'"{path}"' for path in library.inputs)
             print(f'uos_register_vendor("{library.name}" SOURCES {sources} CONSUMERS {consumers} INPUTS {inputs})')
+            if c_dialect_flags(library.sources[0]):
+                print(f"set_property(TARGET {library.target} PROPERTY C_EXTENSIONS ON)")
             directory = VENDOR_INCLUDES.get(library.name)
             if directory:
                 print(f'target_include_directories({library.target} SYSTEM PUBLIC "${{CMAKE_CURRENT_SOURCE_DIR}}/{directory}")')
