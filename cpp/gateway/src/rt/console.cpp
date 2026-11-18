@@ -2,10 +2,11 @@
 
 #include "uos/rt/error.hpp"
 #include "uos/rt/fs.hpp"
-#include "uos/rt/number.hpp"
+#include "uos/rt/text_codec.hpp"
 #include <unistd.h>
 #include <algorithm>
 #include <cerrno>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -21,364 +22,154 @@ namespace uos::rt::console {
       return empty;
     }
 
-    // JSON.stringify(string) for a WTF-8 string.
-    std::string jsonQuote(std::string_view text) {
-      static constexpr char HEX[] = "0123456789abcdef";
-      std::string out = "\"";
-      auto unitAt = [&](std::size_t at) -> unsigned {
-        return ((static_cast<unsigned char>(text[at]) & 0x0Fu) << 12) | ((static_cast<unsigned char>(text[at + 1]) & 0x3Fu) << 6) |
-               (static_cast<unsigned char>(text[at + 2]) & 0x3Fu);
-      };
-      auto surrogateAt = [&](std::size_t at) {
-        return at + 2 < text.size() && static_cast<unsigned char>(text[at]) == 0xED && static_cast<unsigned char>(text[at + 1]) >= 0xA0;
-      };
-      for (std::size_t index = 0; index < text.size();) {
-        const auto c = static_cast<unsigned char>(text[index]);
-        if (surrogateAt(index)) {
-          const unsigned high = unitAt(index);
-          if (high <= 0xDBFF && surrogateAt(index + 3) && unitAt(index + 3) >= 0xDC00) {
-            const unsigned codePoint = 0x10000 + ((high - 0xD800) << 10) + (unitAt(index + 3) - 0xDC00);
-            out += static_cast<char>(0xF0 | (codePoint >> 18));
-            out += static_cast<char>(0x80 | ((codePoint >> 12) & 0x3F));
-            out += static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F));
-            out += static_cast<char>(0x80 | (codePoint & 0x3F));
-            index += 6;
-          } else {
-            out += "\\u";
-            for (int shift = 12; shift >= 0; shift -= 4) out += HEX[(high >> shift) & 15];
-            index += 3;
+    constexpr std::string_view truncated = "[truncated]";
+    constexpr std::size_t maxOutput = 256 * 1024;
+    constexpr unsigned maxDepth = 16;
+
+    std::string scalarNumber(double number) {
+      char buffer[64];
+      const auto result = std::to_chars(buffer, buffer + sizeof buffer, number);
+      if (result.ec != std::errc{}) return std::string(truncated);
+      return std::string(buffer, result.ptr);
+    }
+
+    double numericArgument(const Value& value) {
+      if (value.kind() == Value::Kind::number) return value.number();
+      if (value.kind() == Value::Kind::boolean) return value.boolean() ? 1 : 0;
+      if (value.kind() == Value::Kind::null) return 0;
+      if (value.isString() && !value.string().empty()) {
+        const auto& text = value.string();
+        double number = 0;
+        const auto result = std::from_chars(text.data(), text.data() + text.size(), number);
+        if (result.ec == std::errc{} && result.ptr == text.data() + text.size()) return number;
+      }
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    class JsonProjection {
+    public:
+      json::value value(const Value& item, unsigned depth = 0) {
+        using Kind = Value::Kind;
+        if (remaining < 32) return json::string(truncated);
+        remaining -= 32;
+        if (depth >= maxDepth) return json::string(truncated);
+        switch (item.kind()) {
+          case Kind::undefined:
+          case Kind::null: return nullptr;
+          case Kind::boolean: return item.boolean();
+          case Kind::number: {
+            const double number = item.number();
+            if (!std::isfinite(number)) return nullptr;
+            if (number >= -0x1p63 && number < 0x1p63 && std::trunc(number) == number) return static_cast<std::int64_t>(number);
+            return number;
           }
-          continue;
-        }
-        switch (c) {
-          case '"': out += "\\\""; break;
-          case '\\': out += "\\\\"; break;
-          case '\b': out += "\\b"; break;
-          case '\f': out += "\\f"; break;
-          case '\n': out += "\\n"; break;
-          case '\r': out += "\\r"; break;
-          case '\t': out += "\\t"; break;
-          default:
-            if (c < 0x20) {
-              out += "\\u00";
-              out += HEX[c >> 4];
-              out += HEX[c & 15];
-            } else {
-              out += static_cast<char>(c);
-            }
-        }
-        ++index;
-      }
-      return out + "\"";
-    }
-
-    bool isIdentifier(std::string_view key) {
-      if (key.empty()) return false;
-      auto start = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$'; };
-      if (!start(key[0])) return false;
-      for (char c : key.substr(1))
-        if (!start(c) && !(c >= '0' && c <= '9')) return false;
-      return true;
-    }
-
-    // A canonical array index, which JS enumerates first in ascending order.
-    std::optional<std::uint64_t> arrayIndex(std::string_view key) {
-      if (key.empty() || key.size() > 10 || (key.size() > 1 && key[0] == '0')) return std::nullopt;
-      std::uint64_t value = 0;
-      for (char c : key) {
-        if (c < '0' || c > '9') return std::nullopt;
-        value = value * 10 + static_cast<std::uint64_t>(c - '0');
-      }
-      if (value > 4294967294ULL) return std::nullopt;
-      return value;
-    }
-
-    std::vector<const std::pair<std::string, Value>*> ordered(const Properties& properties) {
-      std::vector<const std::pair<std::string, Value>*> indexed, named;
-      for (const auto& property : properties) (arrayIndex(property.first) ? indexed : named).push_back(&property);
-      std::stable_sort(indexed.begin(), indexed.end(), [](auto* left, auto* right) { return *arrayIndex(left->first) < *arrayIndex(right->first); });
-      indexed.insert(indexed.end(), named.begin(), named.end());
-      return indexed;
-    }
-
-    std::string inspectNumber(double value) {
-      if (value == 0 && std::signbit(value)) return "-0";
-      return numberToString(value);
-    }
-
-    std::string errorToString(const ErrorInfo& error) {
-      if (error.name.empty()) return error.message;
-      if (error.message.empty()) return error.name;
-      return error.name + ": " + error.message;
-    }
-
-    // `String(value)`, as %s prints it.
-    std::string jsString(const Value& value) {
-      switch (value.kind()) {
-        case Value::Kind::undefined: return "undefined";
-        case Value::Kind::null: return "null";
-        case Value::Kind::boolean: return value.boolean() ? "true" : "false";
-        case Value::Kind::number: return numberToString(value.number());
-        case Value::Kind::string: return value.string();
-        case Value::Kind::array: {
-          std::string out;
-          bool first = true;
-          for (const auto& element : value.elements()) {
-            if (!first) out += ',';
-            first = false;
-            if (element.kind() != Value::Kind::undefined && element.kind() != Value::Kind::null) out += jsString(element);
+          case Kind::string: return string(item.string());
+          case Kind::object: return object(item.properties(), depth);
+          case Kind::error: return error(item.errorInfo(), depth);
+          case Kind::array: {
+            json::array array;
+            const auto& elements = item.elements();
+            std::size_t index = 0;
+            for (; index < elements.size() && index < 100 && remaining >= 32; ++index) array.push_back(value(elements[index], depth + 1));
+            if (index < elements.size()) array.emplace_back(truncated);
+            return array;
           }
-          return out;
         }
-        case Value::Kind::object: return "[object Object]";
-        case Value::Kind::error: return errorToString(value.errorInfo());
+        return nullptr;
       }
-      return "";
-    }
 
-    // `Number(value)`.
-    double jsNumber(const Value& value) {
-      switch (value.kind()) {
-        case Value::Kind::undefined: return std::numeric_limits<double>::quiet_NaN();
-        case Value::Kind::null: return 0;
-        case Value::Kind::boolean: return value.boolean() ? 1 : 0;
-        case Value::Kind::number: return value.number();
-        case Value::Kind::string: return stringToNumber(value.string());
-        case Value::Kind::array: return stringToNumber(jsString(value));
-        default: return std::numeric_limits<double>::quiet_NaN();
-      }
-    }
+    private:
+      // Charge bytes for text and for each projected value before building the JSON tree.
+      std::size_t remaining = 32 * 1024;
 
-    // %d / %i: truncation saturated to 64 bits; beyond 1e21 the leading
-    // integer digits of String(n).
-    std::string formatInteger(double value) {
-      if (std::isnan(value)) return "NaN";
-      if (std::fabs(value) >= 1e21) {
-        const std::string text = numberToString(value);
-        std::size_t index = 0;
-        std::string out;
-        if (index < text.size() && text[index] == '-') out += text[index++];
-        const std::size_t digits = index;
-        while (index < text.size() && text[index] >= '0' && text[index] <= '9') out += text[index++];
-        if (index == digits) return "NaN";
-        return out;
-      }
-      const double truncated = std::trunc(value);
-      if (truncated >= 9223372036854775807.0) return "9223372036854775807";
-      if (truncated <= -9223372036854775808.0) return "-9223372036854775808";
-      return std::to_string(static_cast<long long>(truncated));
-    }
-
-    // JSON.stringify(value); std::nullopt is undefined (prints nothing).
-    std::optional<std::string> jsonStringify(const Value& value) {
-      switch (value.kind()) {
-        case Value::Kind::undefined: return std::nullopt;
-        case Value::Kind::null: return "null";
-        case Value::Kind::boolean: return value.boolean() ? "true" : "false";
-        case Value::Kind::number: return std::isfinite(value.number()) ? numberToString(value.number()) : "null";
-        case Value::Kind::string: return jsonQuote(value.string());
-        case Value::Kind::array: {
-          std::string out = "[";
-          bool first = true;
-          for (const auto& element : value.elements()) {
-            if (!first) out += ',';
-            first = false;
-            out += jsonStringify(element).value_or("null");
-          }
-          return out + "]";
+      json::string string(std::string_view text) {
+        if (text.size() > remaining) {
+          remaining = 0;
+          return json::string(truncated);
         }
-        case Value::Kind::object:
-        case Value::Kind::error: {
-          const auto& errorProperties = value.errorInfo().properties;
-          const Properties& properties = value.kind() == Value::Kind::object ? value.properties() : errorProperties ? *errorProperties : emptyProperties();
-          std::string out = "{";
-          bool first = true;
-          for (const auto* property : ordered(properties)) {
-            auto text = jsonStringify(property->second);
-            if (!text) continue;
-            if (!first) out += ',';
-            first = false;
-            out += jsonQuote(property->first) + ":" + *text;
-          }
-          return out + "}";
-        }
+        remaining -= text.size();
+        if (rt::isUtf8(text)) return json::string(text);
+        return json::string(rt::decodeUtf8(text, {.ignoreBOM = true}));
       }
-      return std::nullopt;
-    }
+
+      json::object object(const Properties& properties, unsigned depth) {
+        json::object object;
+        for (const auto& [key, item] : properties) {
+          if (remaining < 32) break;
+          if (item.kind() == Value::Kind::undefined) continue;
+          const auto member = string(key);
+          object.insert_or_assign(member, value(item, depth + 1));
+        }
+        return object;
+      }
+
+      json::value error(const ErrorInfo& info, unsigned depth) {
+        if (depth >= maxDepth || remaining < 32) return json::string(truncated);
+        remaining -= 32;
+        json::object error{{"name", string(info.name)}, {"message", string(info.message)}};
+        if (info.properties && !info.properties->empty()) error.emplace("properties", object(*info.properties, depth));
+        if (info.cause) error.emplace("cause", this->error(*info.cause, depth + 1));
+        return error;
+      }
+    };
 
     class Printer {
     public:
-      explicit Printer(Method method_) : method(method_) {}
       std::string out;
+      bool full() const { return exhausted || out.size() == maxOutput; }
 
       void put(std::string_view text) {
-        out += text;
-        const auto newline = text.rfind('\n');
-        if (newline != std::string_view::npos) lineStart = out.size() - (text.size() - newline - 1);
-      }
-
-      void value(const Value& item, int depth) {
-        switch (item.kind()) {
-          case Value::Kind::undefined: put("undefined"); break;
-          case Value::Kind::null: put("null"); break;
-          case Value::Kind::boolean: put(item.boolean() ? "true" : "false"); break;
-          case Value::Kind::number: put(inspectNumber(item.number())); break;
-          case Value::Kind::string: put(jsonQuote(item.string())); break;
-          case Value::Kind::array: array(item.elements(), depth); break;
-          case Value::Kind::object: object(item.properties(), depth); break;
-          case Value::Kind::error: error(item.errorInfo()); break;
+        if (full()) return;
+        if (text.size() <= maxOutput - out.size()) out += text;
+        else {
+          if (truncated.size() <= maxOutput - out.size()) out += truncated;
+          exhausted = true;
         }
       }
 
-      // A format string followed by `args[next...]`; returns the next unused index.
+      void value(const Value& item, bool quoteString = false) {
+        if (item.kind() == Value::Kind::undefined) put("undefined");
+        else if (item.isString() && !quoteString) put(item.string());
+        else if (item.kind() == Value::Kind::number) put(scalarNumber(item.number()));
+        else put(json::serialize(JsonProjection{}.value(item)));
+      }
+
       std::size_t format(std::string_view text, const std::vector<Value>& args, std::size_t next) {
-        std::string literal;
-        auto flush = [&] {
-          put(literal);
-          literal.clear();
-        };
-        for (std::size_t index = 0; index < text.size(); ++index) {
-          if (text[index] != '%' || index + 1 >= text.size()) {
-            literal += text[index];
+        while (!text.empty() && !full()) {
+          const auto percent = text.find('%');
+          put(text.substr(0, percent));
+          if (percent == std::string_view::npos || full()) break;
+          text.remove_prefix(percent + 1);
+          const char token = text.empty() ? '\0' : text.front();
+          if (token == '%') {
+            put("%");
+            text.remove_prefix(1);
             continue;
           }
-          const char specifier = text[index + 1];
-          if (specifier == '%') {
-            literal += '%';
-            ++index;
+          if (next == args.size() || std::string_view("sdifjoOc").find(token) == std::string_view::npos) {
+            put("%");
             continue;
           }
-          if (std::string_view("sdifjoOc").find(specifier) == std::string_view::npos || next >= args.size()) {
-            literal += '%';
-            continue;
-          }
-          ++index;
-          const Value& arg = args[next++];
-          switch (specifier) {
-            case 's': literal += jsString(arg); break;
-            case 'd':
-            case 'i': literal += formatInteger(jsNumber(arg)); break;
-            case 'f': literal += numberToString(jsNumber(arg)); break;
-            case 'j': literal += jsonStringify(arg).value_or(""); break;
+          text.remove_prefix(1);
+          const Value& item = args[next++];
+          switch (token) {
+            case 's': value(item); break;
             case 'o':
-            case 'O':
-              flush();
-              value(arg, 0);
+            case 'O': value(item, true); break;
+            case 'j':
+              if (item.kind() != Value::Kind::undefined) put(json::serialize(JsonProjection{}.value(item)));
               break;
+            case 'd':
+            case 'i': put(scalarNumber(std::trunc(numericArgument(item)))); break;
+            case 'f': put(scalarNumber(numericArgument(item))); break;
             default: break;
           }
         }
-        flush();
         return next;
       }
 
     private:
-      Method method;
-      std::size_t lineStart = 0;
-
-      std::size_t lineLength() const { return out.size() - lineStart; }
-
-      void newline(int indent) {
-        put("\n");
-        put(std::string(static_cast<std::size_t>(indent) * 2, ' '));
-      }
-
-      // An element that forces its array onto several lines: an object that
-      // is not collapsed, any array or Error, a string with a line break.
-      static bool expands(const Value& item, int depth) {
-        switch (item.kind()) {
-          case Value::Kind::object: return depth < 3;
-          case Value::Kind::array:
-          case Value::Kind::error: return true;
-          case Value::Kind::string: return item.string().find('\n') != std::string::npos;
-          default: return false;
-        }
-      }
-
-      void array(const std::vector<Value>& elements, int depth) {
-        if (elements.empty()) {
-          put("[]");
-          return;
-        }
-        bool multiline = elements.size() > 10;
-        for (const auto& element : elements) multiline = multiline || expands(element, depth + 1);
-        if (!multiline) {
-          put("[ ");
-          for (std::size_t index = 0; index < elements.size(); ++index) {
-            if (index) put(", ");
-            value(elements[index], depth + 1);
-          }
-          put(" ]");
-          return;
-        }
-        put("[");
-        newline(depth + 1);
-        const std::size_t shown = std::min<std::size_t>(elements.size(), 100);
-        for (std::size_t index = 0; index < shown; ++index) {
-          value(elements[index], depth + 1);
-          if (index + 1 < shown) {
-            put(",");
-            if (lineLength() > 80) newline(depth + 1);
-            else put(" ");
-          }
-        }
-        if (elements.size() > shown) {
-          put(",");
-          newline(depth + 1);
-          put("... " + std::to_string(elements.size() - shown) + " more items");
-        }
-        newline(depth);
-        put("]");
-      }
-
-      void object(const Properties& properties, int depth) {
-        if (properties.empty()) {
-          put("{}");
-          return;
-        }
-        if (depth >= 3) {
-          put("[Object ...]");
-          return;
-        }
-        put("{");
-        for (const auto* property : ordered(properties)) {
-          newline(depth + 1);
-          put(isIdentifier(property->first) ? property->first : jsonQuote(property->first));
-          put(": ");
-          value(property->second, depth + 1);
-          put(",");
-        }
-        newline(depth);
-        put("}");
-      }
-
-      void error(const ErrorInfo& info) {
-        if (info.native) put(info.message);
-        else if ((info.name == "Error" || info.name.empty()) && !info.message.empty()) put(std::string(method == Method::warn ? "warn" : "error") + ": " + info.message);
-        else put(info.name + ": " + info.message);
-        put("\n");
-        if (info.properties && !info.properties->empty()) {
-          std::vector<const std::pair<std::string, Value>*> lines;
-          const std::pair<std::string, Value>* code = nullptr;
-          for (const auto* property : ordered(*info.properties)) {
-            if (property->first == "code") code = property;
-            else lines.push_back(property);
-          }
-          if (code) lines.push_back(code);
-          std::size_t width = 0;
-          for (const auto* line : lines) width = std::max(width, line->first.size());
-          for (std::size_t index = 0; index < lines.size(); ++index) {
-            put(std::string(width - lines[index]->first.size() + 1, ' ') + lines[index]->first + ": ");
-            value(lines[index]->second, 0);
-            put(lines[index]->first == "code" ? "\n" : ",\n");
-          }
-          put("\n");
-        }
-        if (info.cause) {
-          put("\n");
-          error(*info.cause);
-        }
-      }
+      bool exhausted = false;
     };
 
     std::shared_ptr<const ErrorInfo> fromJsError(const JsError& error) {
@@ -523,18 +314,13 @@ namespace uos::rt::console {
     return error_ ? *error_ : none;
   }
 
-  std::string format(Method method, const std::vector<Value>& args) {
-    Printer printer(method);
-    std::size_t index = 0;
-    while (index < args.size()) {
+  std::string format(Method, const std::vector<Value>& args) {
+    Printer printer;
+    for (std::size_t index = 0; index < args.size() && !printer.full();) {
       if (index > 0) printer.put(" ");
       const Value& arg = args[index++];
-      if (arg.isString()) {
-        if (index < args.size()) index = printer.format(arg.string(), args, index);
-        else printer.put(arg.string());
-      } else {
-        printer.value(arg, 0);
-      }
+      if (arg.isString() && index < args.size()) index = printer.format(arg.string(), args, index);
+      else printer.value(arg);
     }
     return std::move(printer.out);
   }

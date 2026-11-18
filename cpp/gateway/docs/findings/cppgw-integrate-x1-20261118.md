@@ -31,3 +31,31 @@ credential-free environment and the driver's real loopback-only fixture
 boundary. The exact conflict inventory, compilation and fixture results are
 open at discovery. Prepare dependencies while merging; build, reconcile
 shard 1, then finish the remaining shards and focused sanitizer selection.
+
+## Stage 1 merge resolutions
+
+Git found six unmerged paths in the stage 1 merge.
+
+| Path | Resolution |
+| --- | --- |
+| `cmake/ci/driver.py` | Combined C11 compilation, multi-object archives, compiler identity and receipt fields with explicit SQLite 3.54.0 linkage, the isolated SQLite version probe, and Clang vendor header handling. Tracked each library's actual header with the shared vendor registry. |
+| `docs/CI.md` | Combined C/C++ toolchain selection and version/data requirements with the SQLite prerequisite, installed workflow, four-shard commands, and isolated fixture and fuzz instructions. |
+| `docs/DEVIATIONS-FROM-BUN.md` | Kept the JSON, UTF, WebSocket, helper and server HTTP sections under a single title and kept one ICU section. |
+| `fuzz/targets.json` | Kept Base64 and UTF harnesses alongside the date, Headers, explicit env, POSIX path, console and llhttp server harnesses and their closures. |
+| `tools/ci_sanitize.py` | Kept the retirement of the separate runner. Carried over its intent, matching C and C++ toolchains for C11 sanitizer instrumentation, through the unified driver and workflow. |
+| `tools/macos-build.sh` | Kept the stage 2a dependency discovery, system headers, executable and test closures, and packaging layout. Incorporated the C11 vendor compiler and multi-object archives with explicit vendor header dependencies. |
+
+Git merged `string.cpp` with one ICU implementation, stage 2a simdutf
+conversion and stage 1's scoped ICU header warning handling. The simdjson-only
+`json.cpp` and stage 2a limits and large-body path survived unchanged.
+Stage 1's console, date, environment, filesystem, Headers and HTTP source
+files merged byte-for-byte from its tip. The console and filesystem use
+the shared text codec. The headers parser retains its smaller 16,408-byte
+and 198-field request-head bounds. CMake and the vendor registry retained
+the simdjson and simdutf consumers and added the llhttp C archive and
+consumers. The existing Links declarations cover the standalone parser test.
+
+The helper and HTTP fixtures keep stage 1 expectations for strict wire
+rejections, bounded Header errors, ISO/IMF date validation and retention
+of raw Claude usage reset text. The newer JSON, UTF, WebSocket and
+request-path fixtures from stage 2a remain in the merged inventory.

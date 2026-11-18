@@ -1,6 +1,6 @@
 # Portable gateway CI build
 
-`tools/ci-build.sh` builds the C++20 port on a disposable Linux runner. It compiles every canonical `src/**/*.cpp` once and uses `tools/links.py` for each test's exact object list. Every `src/rt/*.cpp` object is linked into every test. Dot-prefixed staging files are excluded. The stage 2a inventory has 325 module sources, 44 runtime sources and 443 standalone tests.
+`tools/ci-build.sh` builds the C++20 port on a disposable Linux runner independently of the production SDK and CMake profiles. It compiles every canonical `src/**/*.cpp` once and uses `tools/links.py` for each test's exact object list. Every `src/rt/*.cpp` object is linked into every test. Dot-prefixed staging files are excluded. Use `bash cpp/gateway/tools/ci-build.sh --list` for the current test inventory.
 
 ## Ubuntu prerequisites
 
@@ -32,9 +32,9 @@ pkg-config --modversion sqlite3
 
 Library preparation is a separate prerequisite. The GitHub suite workflow prepares the same release and configure flags with `make -j4`. The driver takes `sqlite3.h` and `libsqlite3.so` from `UOS_CI_SQLITE_PREFIX` (default `/usr/local`) and adds that library directory to the test binaries' ELF RPATH. Use a prefix outside `/tmp`, which the test mount namespace hides. A probe built with the same flags checks the headers, prints `sqlite3_libversion()` from inside the fixture boundary and rejects a version mismatch before running the suite.
 
-Use GCC 14 or newer or Clang 21 or newer, with Boost 1.92 recommended and ICU 78.3 for the Unicode fixtures. GCC 12 is refused because of its known coroutine miscompile. Dependencies are linked through their installed headers and libraries with `UOS_GATEWAY_NATIVE_LIBRARIES=1`. SQLite uses the explicit prefix above, and `pkg-config` resolves flags for OpenSSL, zlib, Brotli, Zstd and ICU. Boost.JSON, Boost.Container and pthread are also required. The driver uses preinstalled dependencies.
+Use GCC 14 or newer or Clang 21 or newer, with Boost 1.86 or newer (1.92 recommended) and ICU 78.3 for the Unicode fixtures. GCC 12 is refused because of its known coroutine miscompile. Dependencies are linked through their installed headers and libraries with `UOS_GATEWAY_NATIVE_LIBRARIES=1`. SQLite uses the explicit prefix above, and `pkg-config` resolves flags for OpenSSL, zlib, Brotli, Zstd and ICU. Boost.JSON, Boost.Container and pthread are also required. For a staged ICU install, point `PKG_CONFIG_PATH` at its metadata and set its library RPATH through `UOS_CI_LDFLAGS`. This lets fixture subprocesses resolve the same library with a clean environment.
 
-The driver validates the vendored simdjson and simdutf sources using `cmake/vendors.json` and `tools/vendor_sources.py`, builds them as static archives, and links each archive into the test closures that need it. Vendor source builds omit the first-party warning set. With Clang, `--system-header-prefix=third_party/` covers tree-relative vendor includes while Ninja tracks those headers as explicit inputs.
+The driver validates the vendored simdjson, simdutf and llhttp sources using `cmake/vendors.json` and `tools/vendor_sources.py`. It compiles the three llhttp sources with the C compiler in C11 mode, builds a static archive for each vendor and links each archive into the test closures that need it. Vendor compilation uses the selected optimization and sanitizer profile and omits the first-party warning set. With Clang, `--system-header-prefix=third_party/` covers tree-relative vendor includes while Ninja tracks those headers as explicit inputs.
 
 Tests require real Linux network, mount and PID namespaces. The driver first tries unprivileged user namespaces. If those are restricted, it tries passwordless `sudo -n` for namespace setup and drops back to the invoking uid/gid before running the test. Each test gets its own loopback-only network namespace, private 512 MiB tmpfs at `/tmp`, empty `HOME=/tmp/h`, `TMPDIR=/tmp/t` and working directory `/tmp/w`. The helper proves loopback communication and an outside-route denial before executing the binary. A credential-free environment allowlist also excludes provider settings, `CODEX_HOME`, synchronized authentication locations and unknown future credential variables. Registry entries cannot override the home/temp/path isolation or introduce credential/provider variables. The tmpfs fixture preserves the full Linux timestamp range used by the Bun-recorded filesystem tests; an ext4-backed runner directory clamps those times. Unsupported isolation fails closed.
 
@@ -45,15 +45,15 @@ The current runtime and fixtures still contain ARM64-only application contracts.
 Run from any working directory; paths below assume the repository root:
 
 ```sh
-CXX=g++-14 UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config debug
-CXX=g++-14 UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config release
-CXX=clang++ UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config asan --shard 1/4
+CC=gcc-14 CXX=g++-14 UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config debug
+CC=gcc-14 CXX=g++-14 UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config release
+CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config asan --shard 1/4
 bash cpp/gateway/tools/ci-build.sh --list
 bash cpp/gateway/tools/ci-build.sh --config debug rt/process
 bash cpp/gateway/tools/ci-build.sh --config release --shard 1/4
 ```
 
-`CXX` defaults to `g++`. `UOS_CI_JOBS` defaults to the available CPU count (`nproc` equivalent). `UOS_CI_BUILD_DIR` defaults to `/tmp/uos-gateway-build` and must be outside the repository. The driver separates compiler/flag identities and configurations, locks each output tree, and lets Ninja track transitive header dependencies. A filter is a substring of the test path. `--shard i/n` takes every nth element of the sorted filtered list, starting with one-based index i. Empty selections and invalid arguments fail.
+`CC` defaults to `cc` and `CXX` to `g++`. Select compilers from the same toolchain for sanitizer runs. `UOS_CI_JOBS` defaults to the available CPU count (`nproc` equivalent). `UOS_CI_BUILD_DIR` defaults to `/tmp/uos-gateway-build` and must be outside the repository. The driver separates compiler/flag identities and configurations, locks each output tree, and lets Ninja track transitive header dependencies. A filter is a substring of the test path. `--shard i/n` takes every nth element of the sorted filtered list, starting with one-based index i. Empty selections and invalid arguments fail.
 
 | Configuration | Additional compiler flags                                     |
 | ------------- | ------------------------------------------------------------- |
@@ -61,7 +61,7 @@ bash cpp/gateway/tools/ci-build.sh --config release --shard 1/4
 | release       | `-O2`                                                         |
 | asan          | `-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer` |
 
-All configurations retain `-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror` and the Boost JSON/Container/System no-autolink definitions. Release and sanitizer configurations additionally define `BOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING` to use standard coroutine frame allocation. This avoids GCC 15/Boost.Asio 1.90 optimized allocator diagnostics without disabling any warning. Debug exercises Asio's recycling mode. The `asan` configuration instruments compilation and linkage with AddressSanitizer and UndefinedBehaviorSanitizer, enables LeakSanitizer with `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1`, and halts on UBSan errors. `UOS_CI_CXXFLAGS` and `UOS_CI_LDFLAGS` can supply additional dependency include and library paths. `UOS_CI_TIMEOUT` defaults to 300 seconds per binary. Links are bounded at 900 seconds. Timeouts and interruption kill the owned process group, including namespace descendants. At most `UOS_CI_JOBS` test binaries exist at once. The driver deletes binaries and scratch directories after execution and retains reusable objects and logs.
+All configurations retain `-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror` and the Boost JSON/Container/System no-autolink definitions. Release and sanitizer configurations additionally define `BOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING` to use standard coroutine frame allocation. This avoids GCC 15/Boost.Asio 1.90 optimized allocator diagnostics without disabling any warning. Debug exercises Asio's recycling mode. The `asan` configuration instruments compilation and linkage with AddressSanitizer and UndefinedBehaviorSanitizer, enables LeakSanitizer with `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1`, and halts on UBSan errors. `UOS_CI_CFLAGS` and `UOS_CI_CXXFLAGS` add language-specific compile flags. `UOS_CI_LDFLAGS` can add library paths. `UOS_CI_TIMEOUT` defaults to 300 seconds per binary. Links are bounded at 900 seconds. Timeouts and interruption kill the owned process group, including namespace descendants. At most `UOS_CI_JOBS` test binaries exist at once. The driver deletes binaries and scratch directories after execution and retains reusable objects and logs.
 
 The final table lists every selected test, `PASS`, `FAIL`, `BUILD_FAIL` or `TIMEOUT`, and the harness's run/passed/failed case counts. A crash or missing summary cannot pass. Compilation continues after individual failures to collect complete diagnostics; any failed production compilation, test build, run or timeout makes the command exit nonzero. A crashed binary without a flushed harness summary has zero reported cases, not an invented count.
 

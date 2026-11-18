@@ -62,6 +62,36 @@
       "entry": "uos::rt::decodeUtf8 / TextDecoder / UTF-16 and WTF-8 conversion",
       "max_len": 16384
     },
+    "date_parse": {
+      "harness": "fuzz/date_parse.cpp",
+      "entry": "uos::rt::Date::parse and string constructor",
+      "max_len": 16384,
+      "extra_sources": ["src/rt/date.cpp"]
+    },
+    "headers_library": {
+      "harness": "fuzz/headers_library.cpp",
+      "entry": "uos::rt::Headers append, set and lookups",
+      "max_len": 16384,
+      "extra_sources": ["src/rt/headers.cpp"]
+    },
+    "env_file": {
+      "harness": "fuzz/env_file.cpp",
+      "entry": "uos::rt::env::parseEnvFile",
+      "max_len": 16384,
+      "extra_sources": ["src/rt/env.cpp"]
+    },
+    "posix_path": {
+      "harness": "fuzz/posix_path.cpp",
+      "entry": "uos::rt::path lexical operations",
+      "max_len": 16384,
+      "extra_sources": ["src/rt/fs.cpp"]
+    },
+    "console_format": {
+      "harness": "fuzz/console_format.cpp",
+      "entry": "uos::rt::console::format and Value projection",
+      "max_len": 16384,
+      "extra_sources": ["src/rt/console.cpp", "src/rt/text_codec.cpp"]
+    },
     "url": {
       "harness": "fuzz/url.cpp",
       "entry": "uos::rt::URL / URLSearchParams",
@@ -94,6 +124,19 @@
       "included_implementation": "src/runtime/http.cpp",
       "entry": "ConnectionState::parseHead / decodeChunked",
       "max_len": 16384
+    },
+    "http_server_library": {
+      "harness": "fuzz/http_server_library.cpp",
+      "included_implementation": "src/runtime/http.cpp",
+      "entry": "ConnectionState::parseHead / decodeChunked",
+      "extra_sources": [
+        "src/runtime/http_body.cpp",
+        "src/runtime/http_early_sse.cpp",
+        "src/runtime/http_tasks.cpp",
+        "src/runtime/http_upgrade.cpp",
+        "src/runtime/websocket.cpp"
+      ],
+      "max_len": 32768
     },
     "fetch_response": {
       "harness": "fuzz/fetch_response.cpp",

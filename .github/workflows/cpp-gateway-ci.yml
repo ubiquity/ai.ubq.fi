@@ -51,6 +51,7 @@ jobs:
           make -j4 > /dev/null && sudo make install > /dev/null && sudo ldconfig
       - name: Build and test
         env:
+          CC: clang
           CXX: clang++
           UOS_CI_JOBS: 4
           UOS_CI_BUILD_DIR: ${{ runner.temp }}/uos-gateway-build

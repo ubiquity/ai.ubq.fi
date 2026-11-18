@@ -1,10 +1,15 @@
 #include "uos/rt/env.hpp"
 
+#include "uos/rt/error.hpp"
 #include "uos/rt/fs.hpp"
+#include <boost/property_tree/ini_parser.hpp>
 #include <unistd.h>
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
+#include <iomanip>
+#include <locale>
+#include <ranges>
+#include <sstream>
 
 #if defined(__APPLE__)
 #include <crt_externs.h>
@@ -77,127 +82,36 @@ namespace uos::rt::env {
       return value;
     }
 
-    // ---- Bun's .env parser
+    [[noreturn]] void invalidEnvFile() { throw SyntaxError("Invalid environment file"); }
 
-    bool isKeyChar(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.'; }
-    // Around keys, line breaks are whitespace too.
-    bool isWhitespace(char c) { return c == ' ' || c == '\t' || c == '\v' || c == '\f' || c == '\n' || c == '\r'; }
-    bool isInlineWhitespace(char c) { return c == ' ' || c == '\t' || c == '\v' || c == '\f'; }
-
-    class Parser {
-    public:
-      explicit Parser(std::string_view source) : src(source) {}
-
-      std::vector<std::pair<std::string, std::string>> parse() {
-        std::vector<std::pair<std::string, std::string>> out;
-        if (src.substr(0, 3) == "\xEF\xBB\xBF") pos = 3;
-        while (pos < src.size()) {
-          const auto key = parseKey(true);
-          if (!key) {
-            skipLine();
-            continue;
-          }
-          std::string value = parseValue();
-          auto existing = std::find_if(out.begin(), out.end(), [&](const auto& entry) { return entry.first == *key; });
-          if (existing != out.end()) existing->second = std::move(value);
-          else out.emplace_back(std::string(*key), std::move(value));
-        }
-        return out;
+    void validateEnvLines(std::string_view contents) {
+      for (const auto segment : std::views::split(contents, '\n')) {
+        std::string_view line(segment.begin(), segment.end());
+        if (line.ends_with('\r')) line.remove_suffix(1);
+        const auto first = line.find_first_not_of(" \t");
+        if (first != std::string_view::npos && line[first] == '[') invalidEnvFile();
+        if (std::ranges::any_of(line, [](char byte) {
+              const auto code = static_cast<unsigned char>(byte);
+              return (code < 0x20 && byte != '\t') || code == 0x7f;
+            })) invalidEnvFile();
       }
+    }
 
-    private:
-      std::string_view src;
-      std::size_t pos = 0;
-
-      void skipLine() {
-        const auto next = src.find_first_of("\n\r", pos);
-        pos = next == std::string_view::npos ? src.size() : next + 1;
+    std::string envValue(std::string_view value) {
+      if (!value.empty() && std::string_view("\"'`").find(value.front()) != std::string_view::npos) {
+        std::istringstream input{std::string(value)};
+        input.imbue(std::locale::classic());
+        std::string quoted;
+        if (!(input >> std::quoted(quoted, value.front()))) invalidEnvFile();
+        input >> std::ws;
+        const auto next = input.peek();
+        if (next != '#' && next != std::char_traits<char>::eof()) invalidEnvFile();
+        return quoted;
       }
-
-      void skipWhitespaces() {
-        while (pos < src.size() && isWhitespace(src[pos])) ++pos;
-      }
-
-      std::optional<std::string_view> parseKey(bool checkExport) {
-        if (checkExport) skipWhitespaces();
-        const std::size_t start = pos;
-        std::size_t end = start;
-        while (end < src.size() && isKeyChar(src[end])) ++end;
-        if (end < src.size() && start < end) {
-          pos = end;
-          skipWhitespaces();
-          if (pos < src.size()) {
-            if (checkExport && end < pos && src.substr(start, end - start) == "export") {
-              if (auto key = parseKey(false)) return key;
-            }
-            if (src[pos] == '=') {
-              ++pos;
-              return src.substr(start, end - start);
-            }
-            if (src[pos] == ':' && pos + 1 < src.size() && isWhitespace(src[pos + 1])) {
-              pos += 2;
-              return src.substr(start, end - start);
-            }
-          }
-        }
-        pos = start;
-        return std::nullopt;
-      }
-
-      // A value opened by `quote` at pos: std::nullopt when it never closes.
-      std::optional<std::string> parseQuoted(char quote) {
-        const std::size_t start = pos;
-        std::size_t end = start + 1;
-        for (; end < src.size(); ++end) {
-          if (src[end] == '\\') ++end;
-          else if (src[end] == quote) break;
-        }
-        if (end >= src.size()) return std::nullopt;
-        std::string out;
-        for (std::size_t i = start + 1; i < end;) {
-          const char c = src[i];
-          if (c == '\\') {
-            if (quote == '"' && i + 1 < end) {
-              const char next = src[i + 1];
-              if (next == 'n') out += '\n';
-              else if (next == 'r') out += '\r';
-              else {
-                out += c;
-                out += next;
-              }
-              i += 2;
-            } else {
-              out += '\\';
-              ++i;
-            }
-          } else if (c == '\r') {
-            ++i;
-            if (i >= end || src[i] != '\n') out += '\n';
-          } else {
-            out += c;
-            ++i;
-          }
-        }
-        pos = end + 1;
-        return out;
-      }
-
-      std::string parseValue() {
-        while (pos < src.size() && isInlineWhitespace(src[pos])) ++pos;
-        const std::size_t start = pos;
-        if (pos < src.size() && (src[pos] == '"' || src[pos] == '\'' || src[pos] == '`')) {
-          if (auto value = parseQuoted(src[pos])) {
-            skipLine();
-            return std::move(*value);
-          }
-        }
-        std::size_t end = start;
-        while (end < src.size() && src[end] != '#' && src[end] != '\r' && src[end] != '\n') ++end;
-        pos = end;
-        while (end > start && isInlineWhitespace(src[end - 1])) --end;
-        return std::string(src.substr(start, end - start));
-      }
-    };
+      value = value.substr(0, value.find('#'));
+      const auto end = value.find_last_not_of(" \t");
+      return end == std::string_view::npos ? std::string{} : std::string(value.substr(0, end + 1));
+    }
   }
 
   std::optional<std::string> get(std::string_view name) {
@@ -229,7 +143,28 @@ namespace uos::rt::env {
     return out;
   }
 
-  std::vector<std::pair<std::string, std::string>> parseEnvFile(std::string_view contents) { return Parser(contents).parse(); }
+  std::vector<std::pair<std::string, std::string>> parseEnvFile(std::string_view contents) {
+    if (contents.size() > 256 * 1024) throw RangeError("Environment file is too large");
+    if (contents.starts_with("\xEF\xBB\xBF")) contents.remove_prefix(3);
+    validateEnvLines(contents);
+    std::istringstream input{std::string(contents)};
+    input.imbue(std::locale::classic());
+    boost::property_tree::ptree tree;
+    try {
+      boost::property_tree::ini_parser::read_ini(input, tree);
+    } catch (const boost::property_tree::ini_parser::ini_parser_error&) {
+      invalidEnvFile();
+    }
+
+    std::vector<std::pair<std::string, std::string>> assignments;
+    assignments.reserve(tree.size());
+    for (const auto& [key, entry] : tree) {
+      constexpr std::string_view keyCharacters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-";
+      if (key.empty() || key.find_first_not_of(keyCharacters) != std::string::npos) invalidEnvFile();
+      assignments.emplace_back(key, envValue(entry.data()));
+    }
+    return assignments;
+  }
 
   void loadEnvFile(std::string_view path) {
     const fs::Bytes bytes = fs::readFileSync(path);

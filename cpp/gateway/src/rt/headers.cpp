@@ -1,13 +1,10 @@
 #include "uos/rt/headers.hpp"
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
-
-using namespace std::string_view_literals;
 
 namespace uos::rt {
   namespace {
@@ -24,41 +21,6 @@ namespace uos::rt {
       for (char& c : lower)
         if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
       return lower;
-    }
-
-    // WebKit's HTTPHeaderNames table, sorted by lowercased name. append()
-    // reports an invalid value under the table's spelling of the name.
-    constexpr std::array kCommonHeaderNames = {
-      "Accept"sv, "Accept-Charset"sv, "Accept-Encoding"sv, "Accept-Language"sv, "Accept-Ranges"sv, "Access-Control-Allow-Credentials"sv,
-      "Access-Control-Allow-Headers"sv, "Access-Control-Allow-Methods"sv, "Access-Control-Allow-Origin"sv, "Access-Control-Expose-Headers"sv,
-      "Access-Control-Max-Age"sv, "Access-Control-Request-Headers"sv, "Access-Control-Request-Method"sv, "Age"sv, "Authorization"sv,
-      "Cache-Control"sv, "Connection"sv, "Content-Disposition"sv, "Content-Encoding"sv, "Content-Language"sv, "Content-Length"sv,
-      "Content-Location"sv, "Content-Range"sv, "Content-Security-Policy"sv, "Content-Security-Policy-Report-Only"sv, "Content-Type"sv, "Cookie"sv,
-      "Cookie2"sv, "Cross-Origin-Embedder-Policy"sv, "Cross-Origin-Embedder-Policy-Report-Only"sv, "Cross-Origin-Opener-Policy"sv,
-      "Cross-Origin-Opener-Policy-Report-Only"sv, "Cross-Origin-Resource-Policy"sv, "Date"sv, "Default-Style"sv, "DNT"sv, "ETag"sv, "Expect"sv,
-      "Expires"sv, "Host"sv, "Icy-Metadata"sv, "Icy-MetaInt"sv, "If-Match"sv, "If-Modified-Since"sv, "If-None-Match"sv, "If-Range"sv,
-      "If-Unmodified-Since"sv, "Keep-Alive"sv, "Last-Event-ID"sv, "Last-Modified"sv, "Link"sv, "Location"sv, "Origin"sv, "Ping-From"sv, "Ping-To"sv,
-      "Pragma"sv, "Proxy-Authorization"sv, "Proxy-Connection"sv, "Purpose"sv, "Range"sv, "Referer"sv, "Referrer-Policy"sv, "Refresh"sv,
-      "Report-To"sv, "Sec-Fetch-Dest"sv, "Sec-Fetch-Mode"sv, "Sec-WebSocket-Accept"sv, "Sec-WebSocket-Extensions"sv, "Sec-WebSocket-Key"sv,
-      "Sec-WebSocket-Protocol"sv, "Sec-WebSocket-Version"sv, "Server-Timing"sv, "Service-Worker"sv, "Service-Worker-Allowed"sv,
-      "Service-Worker-Navigation-Preload"sv, "Set-Cookie"sv, "Set-Cookie2"sv, "SourceMap"sv, "Strict-Transport-Security"sv, "TE"sv,
-      "Timing-Allow-Origin"sv, "Trailer"sv, "Transfer-Encoding"sv, "Upgrade"sv, "Upgrade-Insecure-Requests"sv, "User-Agent"sv, "Vary"sv, "Via"sv,
-      "X-Content-Type-Options"sv, "X-DNS-Prefetch-Control"sv, "X-Frame-Options"sv, "X-SourceMap"sv, "X-Temp-Tablet"sv, "X-XSS-Protection"sv};
-
-    std::string_view commonSpelling(std::string_view lowercase) {
-      auto position = std::lower_bound(kCommonHeaderNames.begin(), kCommonHeaderNames.end(), lowercase, [](std::string_view entry, std::string_view target) {
-        for (std::size_t index = 0; index < entry.size() && index < target.size(); ++index) {
-          const char left = entry[index] >= 'A' && entry[index] <= 'Z' ? static_cast<char>(entry[index] + 32) : entry[index];
-          if (left != target[index]) return left < target[index];
-        }
-        return entry.size() < target.size();
-      });
-      if (position == kCommonHeaderNames.end() || position->size() != lowercase.size()) return {};
-      for (std::size_t index = 0; index < lowercase.size(); ++index) {
-        const char c = (*position)[index];
-        if ((c >= 'A' && c <= 'Z' ? static_cast<char>(c + 32) : c) != lowercase[index]) return {};
-      }
-      return *position;
     }
 
     bool isHttpWhitespace(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
@@ -105,8 +67,12 @@ namespace uos::rt {
 
   void Headers::append(std::string_view name, std::string_view value) {
     std::string key = normalizedName(name);
-    const std::string_view spelling = commonSpelling(key);
-    std::string normalized = normalizedValue(spelling.empty() ? name : spelling, value);
+    std::string normalized;
+    try {
+      normalized = normalizedValue(key, value);
+    } catch (const TypeError&) {
+      throw TypeError("Header '" + key.substr(0, 64) + "' has invalid value");
+    }
     if (key == kSetCookie) {
       cookies_.push_back(std::move(normalized));
       return;

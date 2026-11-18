@@ -1,4 +1,5 @@
 #include "uos/rt/fs.hpp"
+#include "uos/rt/text_codec.hpp"
 
 #include <dirent.h>
 #if defined(__linux__)
@@ -14,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -120,84 +122,6 @@ namespace uos::rt::fs {
     }
 
     std::string cString(std::string_view text) { return std::string(text); }
-
-    constexpr const char* REPLACEMENT = "\xEF\xBF\xBD";
-
-    // WHATWG UTF-8 decode: each maximal ill-formed subsequence becomes U+FFFD.
-    std::string decodeUtf8(std::span<const std::uint8_t> bytes) {
-      std::string out;
-      out.reserve(bytes.size());
-      std::size_t index = 0;
-      while (index < bytes.size()) {
-        const std::uint8_t lead = bytes[index];
-        if (lead < 0x80) {
-          out += static_cast<char>(lead);
-          ++index;
-          continue;
-        }
-        int need = 0;
-        std::uint8_t lower = 0x80, upper = 0xBF;
-        if (lead >= 0xC2 && lead <= 0xDF) need = 1;
-        else if (lead >= 0xE0 && lead <= 0xEF) {
-          need = 2;
-          if (lead == 0xE0) lower = 0xA0;
-          if (lead == 0xED) upper = 0x9F;
-        } else if (lead >= 0xF0 && lead <= 0xF4) {
-          need = 3;
-          if (lead == 0xF0) lower = 0x90;
-          if (lead == 0xF4) upper = 0x8F;
-        } else {
-          out += REPLACEMENT;
-          ++index;
-          continue;
-        }
-        std::size_t next = index + 1;
-        int seen = 0;
-        while (seen < need && next < bytes.size() && bytes[next] >= lower && bytes[next] <= upper) {
-          lower = 0x80;
-          upper = 0xBF;
-          ++next;
-          ++seen;
-        }
-        if (seen == need) out.append(reinterpret_cast<const char*>(bytes.data() + index), next - index);
-        else out += REPLACEMENT;
-        index = next;
-      }
-      return out;
-    }
-
-    // The UTF-8 bytes of a JS string held as WTF-8: a surrogate pair split over
-    // two 3-byte sequences joins, a lone surrogate becomes U+FFFD.
-    std::string encodeUtf8(std::string_view text) {
-      std::string out;
-      out.reserve(text.size());
-      auto unit = [&](std::size_t at) -> unsigned {
-        return ((static_cast<unsigned char>(text[at]) & 0x0Fu) << 12) | ((static_cast<unsigned char>(text[at + 1]) & 0x3Fu) << 6) |
-               (static_cast<unsigned char>(text[at + 2]) & 0x3Fu);
-      };
-      auto surrogateAt = [&](std::size_t at) {
-        return at + 2 < text.size() && static_cast<unsigned char>(text[at]) == 0xED && static_cast<unsigned char>(text[at + 1]) >= 0xA0;
-      };
-      for (std::size_t index = 0; index < text.size();) {
-        if (!surrogateAt(index)) {
-          out += text[index++];
-          continue;
-        }
-        const unsigned high = unit(index);
-        if (high <= 0xDBFF && surrogateAt(index + 3) && unit(index + 3) >= 0xDC00) {
-          const unsigned codePoint = 0x10000 + ((high - 0xD800) << 10) + (unit(index + 3) - 0xDC00);
-          out += static_cast<char>(0xF0 | (codePoint >> 18));
-          out += static_cast<char>(0x80 | ((codePoint >> 12) & 0x3F));
-          out += static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F));
-          out += static_cast<char>(0x80 | (codePoint & 0x3F));
-          index += 6;
-        } else {
-          out += REPLACEMENT;
-          index += 3;
-        }
-      }
-      return out;
-    }
 
     void requireUtf8(std::string_view encoding) {
       if (encoding != "utf8" && encoding != "utf-8" && encoding != "UTF8" && encoding != "UTF-8")
@@ -451,14 +375,14 @@ namespace uos::rt::fs {
 
   std::string readFileSync(std::string_view path, std::string_view encoding) {
     requireUtf8(encoding);
-    return decodeUtf8(readFileSync(path));
+    return rt::decodeUtf8(readFileSync(path), {.ignoreBOM = true});
   }
 
   Bytes readFileSync(int fd) { return readAll(fd); }
 
   std::string readFileSync(int fd, std::string_view encoding) {
     requireUtf8(encoding);
-    return decodeUtf8(readAll(fd));
+    return rt::decodeUtf8(readAll(fd), {.ignoreBOM = true});
   }
 
   void writeFileSync(std::string_view path, std::span<const std::uint8_t> data, const WriteFileOptions& options) {
@@ -468,8 +392,8 @@ namespace uos::rt::fs {
   }
 
   void writeFileSync(std::string_view path, std::string_view data, const WriteFileOptions& options) {
-    const std::string bytes = encodeUtf8(data);
-    writeFileSync(path, std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()), options);
+    const Bytes bytes = rt::encodeUtf8(data);
+    writeFileSync(path, bytes, options);
   }
 
   int openSync(std::string_view path, std::string_view flags, std::uint32_t mode) { return openPath(path, stringToFlags(flags), mode); }
@@ -747,250 +671,69 @@ namespace uos::rt::path {
       return buffer;
     }
 
-    // Node's normalizeString for POSIX separators.
-    std::string normalizeString(std::string_view path, bool allowAboveRoot) {
-      std::string res;
-      std::ptrdiff_t lastSegmentLength = 0;
-      std::ptrdiff_t lastSlash = -1;
-      int dots = 0;
-      char code = 0;
-      const auto length = static_cast<std::ptrdiff_t>(path.size());
-      for (std::ptrdiff_t i = 0; i <= length; ++i) {
-        if (i < length) code = path[static_cast<std::size_t>(i)];
-        else if (code == '/') break;
-        else code = '/';
-        if (code == '/') {
-          if (lastSlash == i - 1 || dots == 1) {
-          } else if (dots == 2) {
-            if (res.size() < 2 || lastSegmentLength != 2 || res[res.size() - 1] != '.' || res[res.size() - 2] != '.') {
-              if (res.size() > 2) {
-                const auto lastSlashIndex = res.rfind('/');
-                if (lastSlashIndex == std::string::npos) {
-                  res.clear();
-                  lastSegmentLength = 0;
-                } else {
-                  res.resize(lastSlashIndex);
-                  const auto previous = res.rfind('/');
-                  lastSegmentLength = static_cast<std::ptrdiff_t>(res.size()) - 1 - (previous == std::string::npos ? -1 : static_cast<std::ptrdiff_t>(previous));
-                }
-                lastSlash = i;
-                dots = 0;
-                continue;
-              } else if (!res.empty()) {
-                res.clear();
-                lastSegmentLength = 0;
-                lastSlash = i;
-                dots = 0;
-                continue;
-              }
-            }
-            if (allowAboveRoot) {
-              res += res.empty() ? ".." : "/..";
-              lastSegmentLength = 2;
-            }
-          } else {
-            const auto segment = path.substr(static_cast<std::size_t>(lastSlash + 1), static_cast<std::size_t>(i - lastSlash - 1));
-            if (!res.empty()) {
-              res += '/';
-              res += segment;
-            } else {
-              res = std::string(segment);
-            }
-            lastSegmentLength = i - lastSlash - 1;
-          }
-          lastSlash = i;
-          dots = 0;
-        } else if (code == '.' && dots != -1) {
-          ++dots;
-        } else {
-          dots = -1;
-        }
+    std::filesystem::path lexicalPath(std::string_view input) {
+      if (input.starts_with("//")) input.remove_prefix(std::min(input.size(), input.find_first_not_of('/')) - 1);
+      return std::filesystem::path(input);
+    }
+
+    std::string concatenateParts(std::string joined, std::span<const std::string_view> parts) {
+      for (const auto part : parts) {
+        if (part.empty()) continue;
+        if (!joined.empty()) joined += '/';
+        joined += part;
       }
-      return res;
+      return joined;
     }
   }
 
   std::string resolveAll(std::span<const std::string_view> parts) {
-    std::string resolvedPath;
-    bool resolvedAbsolute = false;
-    std::string cwd;
-    for (std::ptrdiff_t i = static_cast<std::ptrdiff_t>(parts.size()) - 1; i >= -1 && !resolvedAbsolute; --i) {
-      std::string_view part;
-      if (i >= 0) part = parts[static_cast<std::size_t>(i)];
-      else {
-        cwd = currentDirectory();
-        part = cwd;
-      }
-      if (part.empty()) continue;
-      resolvedPath = std::string(part) + "/" + resolvedPath;
-      resolvedAbsolute = part.front() == '/';
-    }
-    resolvedPath = normalizeString(resolvedPath, !resolvedAbsolute);
-    if (resolvedAbsolute) return "/" + resolvedPath;
-    return resolvedPath.empty() ? "." : resolvedPath;
+    std::size_t start = parts.size();
+    while (start > 0 && !isAbsolute(parts[start - 1])) --start;
+    std::string resolved = start == 0 ? concatenateParts(currentDirectory(), parts) : concatenateParts({}, parts.subspan(start - 1));
+    resolved = normalize(resolved);
+    if (resolved.size() > 1 && resolved.ends_with('/')) resolved.pop_back();
+    return resolved;
   }
 
-  std::string normalize(std::string_view path) {
-    if (path.empty()) return ".";
-    const bool absolute = path.front() == '/';
-    const bool trailingSeparator = path.back() == '/';
-    std::string out = normalizeString(path, !absolute);
-    if (out.empty()) {
-      if (absolute) return "/";
-      return trailingSeparator ? "./" : ".";
-    }
-    if (trailingSeparator) out += '/';
-    return absolute ? "/" + out : out;
+  std::string normalize(std::string_view input) {
+    if (input.empty()) return ".";
+    return lexicalPath(input).lexically_normal().generic_string();
   }
 
-  bool isAbsolute(std::string_view path) noexcept { return !path.empty() && path.front() == '/'; }
+  bool isAbsolute(std::string_view input) noexcept { return input.starts_with('/'); }
 
   std::string joinAll(std::span<const std::string_view> parts) {
-    std::optional<std::string> joined;
-    for (const auto part : parts) {
-      if (part.empty()) continue;
-      if (!joined) joined = std::string(part);
-      else {
-        *joined += '/';
-        *joined += part;
-      }
-    }
-    if (!joined) return ".";
-    return normalize(*joined);
+    return normalize(concatenateParts({}, parts));
   }
 
   std::string relative(std::string_view fromInput, std::string_view toInput) {
-    if (fromInput == toInput) return "";
-    const std::string from = resolve(fromInput);
-    const std::string to = resolve(toInput);
-    if (from == to) return "";
-    const std::size_t fromStart = 1, fromEnd = from.size(), fromLen = fromEnd - fromStart;
-    const std::size_t toStart = 1, toLen = to.size() - toStart;
-    const std::size_t length = fromLen < toLen ? fromLen : toLen;
-    std::ptrdiff_t lastCommonSep = -1;
-    std::size_t i = 0;
-    for (; i < length; ++i) {
-      const char fromCode = from[fromStart + i];
-      if (fromCode != to[toStart + i]) break;
-      if (fromCode == '/') lastCommonSep = static_cast<std::ptrdiff_t>(i);
-    }
-    if (i == length) {
-      if (toLen > length) {
-        if (to[toStart + i] == '/') return to.substr(toStart + i + 1);
-        if (i == 0) return to.substr(toStart + i);
-      } else if (fromLen > length) {
-        if (from[fromStart + i] == '/') lastCommonSep = static_cast<std::ptrdiff_t>(i);
-        else if (i == 0) lastCommonSep = 0;
-      }
-    }
-    std::string out;
-    for (std::size_t j = fromStart + static_cast<std::size_t>(lastCommonSep + 1); j <= fromEnd; ++j) {
-      if (j == fromEnd || from[j] == '/') out += out.empty() ? ".." : "/..";
-    }
-    return out + to.substr(static_cast<std::size_t>(static_cast<std::ptrdiff_t>(toStart) + lastCommonSep));
+    const auto from = resolve(fromInput);
+    const auto to = resolve(toInput);
+    if (!isAbsolute(from) || !isAbsolute(to)) throw JsError("Cannot resolve relative paths without a current directory");
+    if (from == to) return {};
+    const auto result = lexicalPath(to).lexically_relative(lexicalPath(from));
+    if (result.empty()) throw JsError("Cannot compute a relative path");
+    return result.generic_string();
   }
 
-  std::string dirname(std::string_view path) {
-    if (path.empty()) return ".";
-    const bool hasRoot = path.front() == '/';
-    std::ptrdiff_t end = -1;
-    bool matchedSlash = true;
-    for (std::ptrdiff_t i = static_cast<std::ptrdiff_t>(path.size()) - 1; i >= 1; --i) {
-      if (path[static_cast<std::size_t>(i)] == '/') {
-        if (!matchedSlash) {
-          end = i;
-          break;
-        }
-      } else {
-        matchedSlash = false;
-      }
+  std::string dirname(std::string_view input) {
+    const auto parent = lexicalPath(input).parent_path();
+    if (parent.empty()) return ".";
+    std::string directory;
+    for (const auto& component : parent) {
+      if (!directory.empty() && directory.back() != '/') directory += '/';
+      directory += component.native();
     }
-    if (end == -1) return hasRoot ? "/" : ".";
-    if (hasRoot && end == 1) return "//";
-    return std::string(path.substr(0, static_cast<std::size_t>(end)));
+    return directory;
   }
 
-  std::string basename(std::string_view path) {
-    std::size_t start = 0;
-    std::ptrdiff_t end = -1;
-    bool matchedSlash = true;
-    for (std::ptrdiff_t i = static_cast<std::ptrdiff_t>(path.size()) - 1; i >= 0; --i) {
-      if (path[static_cast<std::size_t>(i)] == '/') {
-        if (!matchedSlash) {
-          start = static_cast<std::size_t>(i + 1);
-          break;
-        }
-      } else if (end == -1) {
-        matchedSlash = false;
-        end = i + 1;
-      }
-    }
-    if (end == -1) return "";
-    return std::string(path.substr(start, static_cast<std::size_t>(end) - start));
+  std::string basename(std::string_view input) { return lexicalPath(input).filename().string(); }
+
+  std::string basename(std::string_view input, std::string_view suffix) {
+    std::string name = basename(input);
+    if (name.ends_with(suffix)) name.resize(name.size() - suffix.size());
+    return name;
   }
 
-  std::string basename(std::string_view path, std::string_view suffix) {
-    if (suffix.empty() || suffix.size() > path.size()) return basename(path);
-    if (suffix == path) return "";
-    std::size_t start = 0;
-    std::ptrdiff_t end = -1;
-    bool matchedSlash = true;
-    std::ptrdiff_t extIdx = static_cast<std::ptrdiff_t>(suffix.size()) - 1;
-    std::ptrdiff_t firstNonSlashEnd = -1;
-    for (std::ptrdiff_t i = static_cast<std::ptrdiff_t>(path.size()) - 1; i >= 0; --i) {
-      const char code = path[static_cast<std::size_t>(i)];
-      if (code == '/') {
-        if (!matchedSlash) {
-          start = static_cast<std::size_t>(i + 1);
-          break;
-        }
-      } else {
-        if (firstNonSlashEnd == -1) {
-          matchedSlash = false;
-          firstNonSlashEnd = i + 1;
-        }
-        if (extIdx >= 0) {
-          if (code == suffix[static_cast<std::size_t>(extIdx)]) {
-            if (--extIdx == -1) end = i;
-          } else {
-            extIdx = -1;
-            end = firstNonSlashEnd;
-          }
-        }
-      }
-    }
-    if (static_cast<std::ptrdiff_t>(start) == end) end = firstNonSlashEnd;
-    else if (end == -1) end = static_cast<std::ptrdiff_t>(path.size());
-    return std::string(path.substr(start, static_cast<std::size_t>(end) - start));
-  }
-
-  std::string extname(std::string_view path) {
-    std::ptrdiff_t startDot = -1;
-    std::ptrdiff_t startPart = 0;
-    std::ptrdiff_t end = -1;
-    bool matchedSlash = true;
-    int preDotState = 0;
-    for (std::ptrdiff_t i = static_cast<std::ptrdiff_t>(path.size()) - 1; i >= 0; --i) {
-      const char code = path[static_cast<std::size_t>(i)];
-      if (code == '/') {
-        if (!matchedSlash) {
-          startPart = i + 1;
-          break;
-        }
-        continue;
-      }
-      if (end == -1) {
-        matchedSlash = false;
-        end = i + 1;
-      }
-      if (code == '.') {
-        if (startDot == -1) startDot = i;
-        else if (preDotState != 1) preDotState = 1;
-      } else if (startDot != -1) {
-        preDotState = -1;
-      }
-    }
-    if (startDot == -1 || end == -1 || preDotState == 0 || (preDotState == 1 && startDot == end - 1 && startDot == startPart + 1)) return "";
-    return std::string(path.substr(static_cast<std::size_t>(startDot), static_cast<std::size_t>(end - startDot)));
-  }
+  std::string extname(std::string_view input) { return lexicalPath(input).extension().string(); }
 }
