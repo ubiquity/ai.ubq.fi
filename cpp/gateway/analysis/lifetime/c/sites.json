@@ -3171,8 +3171,28 @@
       ]
     },
     "src/paid_fallback/routing.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The waterfall keeps one borrowed telemetry referent through serial provider attempts. Callback and accounting operations retain their required owners.",
+      "sites": [
+        {
+          "lines": "38-88,90-118",
+          "kind": "primary hooks, telemetry and cancellation",
+          "verdict": "SAFE",
+          "reason": "The request's waiting frame retains context and the owned fetch options retain both hooks, which are used during joined dispatch. Bookkeeping owns reservation records."
+        },
+        {
+          "lines": "120-200",
+          "kind": "paid attempts, deadline, and provider iteration",
+          "verdict": "SAFE",
+          "reason": "The provider reference refers to a private immutable vector and the task inputs are copied. The deadline callback is guarded and the provider fetch is joined before returning."
+        },
+        {
+          "lines": "214-278",
+          "kind": "delivery and admission handler joins",
+          "verdict": "SAFE",
+          "reason": "The response recorder owns its reservation and response copies. Synchronous rejectAdmission ends with the frame that owns the other routing snapshots and borrows the live caller context."
+        }
+      ]
     },
     "src/provider/anthropic_chat_responses.cpp": {
       "status": "pending",

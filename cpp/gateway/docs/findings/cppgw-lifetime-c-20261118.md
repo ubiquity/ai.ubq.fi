@@ -278,7 +278,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/paid_fallback/ledger_stats.cpp`
 - [x] `src/paid_fallback/removed_provider.cpp`
 - [x] `src/paid_fallback/rollups.cpp`
-- [ ] `src/paid_fallback/routing.cpp`
+- [x] `src/paid_fallback/routing.cpp`
 - [ ] `src/provider/anthropic_chat_responses.cpp`
 - [ ] `src/provider/anthropic_chat_stream.cpp`
 - [ ] `src/provider/anthropic_replay.cpp`
@@ -1764,3 +1764,11 @@ Retired provider compatibility has synchronous implementation and immutable lite
 Rollup writes and listing use shared KV and independent local cursors.
 
 - 42-75,76-100 · CAS and listing ownership · **SAFE** · The frame keeps KV, the AtomicOperation and its list iterator alive through awaited commits or reads.
+
+### `src/paid_fallback/routing.cpp`
+
+The waterfall keeps one borrowed telemetry referent through serial provider attempts. Callback and accounting operations retain their required owners.
+
+- 38-88,90-118 · primary hooks, telemetry and cancellation · **SAFE** · The request's waiting frame retains context and the owned fetch options retain both hooks, which are used during joined dispatch. Bookkeeping owns reservation records.
+- 120-200 · paid attempts, deadline, and provider iteration · **SAFE** · The provider reference refers to a private immutable vector and the task inputs are copied. The deadline callback is guarded and the provider fetch is joined before returning.
+- 214-278 · delivery and admission handler joins · **SAFE** · The response recorder owns its reservation and response copies. Synchronous rejectAdmission ends with the frame that owns the other routing snapshots and borrows the live caller context.
