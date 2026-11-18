@@ -804,8 +804,16 @@
       ]
     },
     "include/uos/harmony/tools/fakes.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The local fake implements the shell backend interface.",
+      "sites": [
+        {
+          "lines": "105",
+          "kind": "member task",
+          "verdict": "SAFE",
+          "reason": "The router retains the backend through the await, and the fake's shell inputs are values."
+        }
+      ]
     },
     "include/uos/harmony/tools/result.hpp": {
       "status": "pending",

@@ -112,7 +112,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/reliability/verify.hpp`
 - [x] `include/uos/harmony/render.hpp`
 - [x] `include/uos/harmony/tools/backend.hpp`
-- [ ] `include/uos/harmony/tools/fakes.hpp`
+- [x] `include/uos/harmony/tools/fakes.hpp`
 - [ ] `include/uos/harmony/tools/result.hpp`
 - [ ] `include/uos/harmony/tools/router.hpp`
 - [ ] `include/uos/harmony/tools/schemas.hpp`
@@ -743,3 +743,9 @@ Synchronous Harmony text rendering declaration. The returned text owns its bytes
 Backend interfaces include a member task for shell work.
 
 - 81 · member task · **SAFE** · The awaited router frame retains the owning backend bundle until shell work finishes; the task's command and options are owned.
+
+### `include/uos/harmony/tools/fakes.hpp`
+
+The local fake implements the shell backend interface.
+
+- 105 · member task · **SAFE** · The router retains the backend through the await, and the fake's shell inputs are values.
