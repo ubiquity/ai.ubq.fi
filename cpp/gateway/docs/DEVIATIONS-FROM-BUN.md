@@ -85,3 +85,16 @@ within the output limit.
 | Scalars use `to_chars`, and numeric substitutions parse complete text with `from_chars` | `%d` with `"0x10"` gives `nan`, and `%d` with `1e21` gives `1e+21`                                                   | Negative zero, infinity, exponent spelling, and numeric text follow the standard functions. Arrays and objects use JSON instead of JavaScript coercion for `%s`.              |
 | Boost.JSON writes fractional values in standard exponent notation                       | `%j` with `1.5` gives `1.5E0`                                                                                        | JSON consumers read the same number.                                                                                                                                          |
 | Projection and output are bounded                                                       | A nested value beyond depth 16 or an array beyond its first 100 elements uses `"[truncated]"`                        | The projection also charges text and nodes against 32 KiB, and the complete formatted line is capped at 256 KiB. Malformed structured UTF-8 is replaced before serialization. |
+
+## Ordered containers
+
+Catalog membership checks use `std::unordered_set<std::string>`. The
+catalog arrays and vectors determine model order. An OpenRouter payload
+keeps the first valid row for each ID. Catalog merges that check against
+an existing list still use that list as the membership snapshot.
+
+Ordered Map and Set store stable list nodes. Erasing a key removes it
+from lookup immediately and keeps its node readable by active traversals.
+Reinserting the key appends a fresh node. A traversal can visit entries
+appended before it reaches the end. A C++ iterator already at the list's
+end remains there.
