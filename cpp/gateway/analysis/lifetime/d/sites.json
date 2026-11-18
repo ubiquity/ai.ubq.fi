@@ -2759,8 +2759,25 @@
       ]
     },
     "src/catalog/models.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed catalog projection, model composition and normalized snapshot updates.",
+      "sites": [
+        {
+          "lines": [
+            111,
+            117,
+            122,
+            141
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The refresh context owns the borrowed KV through the outer await. Current native KV get wrappers start store-owning children for the join. Parsed views and references are backed by the named tuple and transaction stays live through commit."
+        }
+      ]
     },
     "src/catalog/promotion.cpp": {
       "reviewed": false,

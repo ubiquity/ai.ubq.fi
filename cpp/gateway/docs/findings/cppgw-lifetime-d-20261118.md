@@ -126,7 +126,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_runtime_contracts.cpp`
 - [x] `src/bounded_response_body.cpp`
 - [x] `src/catalog/index.cpp`
-- [ ] `src/catalog/models.cpp`
+- [x] `src/catalog/models.cpp`
 - [ ] `src/catalog/promotion.cpp`
 - [ ] `src/catalog/store.cpp`
 - [ ] `src/catalog/types.cpp`
@@ -777,6 +777,12 @@ Reviewed catalog construction, paid-source joins, cache refresh and detached lea
 - L172, 173, 174, 176, 177, 178, 179, 180, 183, 184, 186, 187, 188, 190, 191, 192, 193, 194, 199, 200, 202, 203, 206, 207, 211, 213, 216, 218, 219, 220, 222 **SAFE** · Every refresh stage keeps the context containing the store. The provider error callback captures that context with no reverse edge and the response is a named frame value.
 - L225, 227, 230, 232, 244, 245, 247, 248, 250, 251, 253, 255, 256, 257, 258, 260, 263, 264, 266 **SAFE** · The detached refresh directly owns the context and its shared KV. Normal success, rejection and recovery all reach heartbeat stop and wait for pending renewal before the context can be released. The spawn error callback owns its version.
 
+### `src/catalog/models.cpp`
+
+Reviewed catalog projection, model composition and normalized snapshot updates.
+
+- L111, 117, 122, 141 **SAFE** · The refresh context owns the borrowed KV through the outer await. Current native KV get wrappers start store-owning children for the join. Parsed views and references are backed by the named tuple and transaction stays live through commit.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -882,4 +888,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-60/286 files reviewed. 140 sites: 131 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+61/286 files reviewed. 141 sites: 132 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
