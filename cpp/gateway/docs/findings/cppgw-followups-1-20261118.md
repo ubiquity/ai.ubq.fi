@@ -191,12 +191,17 @@ The Apple Silicon build, Darwin fixture execution and release packaging remain u
 combined tree. The remaining release shards, full sanitizer shards and fuzz campaigns are left to the
 automatic branch workflow. No defects outside the owned paths surfaced in the local checks.
 
-The runner's publication preflight exited 128 because GitHub required credentials. The branch is
-committed locally and hosted results for the follow-up are pending publication.
+The direct push and its preflight both exited 128 because GitHub required credentials. The clean
+`agent-job` branch and its verified bundle in scratch preserve the follow-up for an authenticated
+push. The pull request and hosted receipts are pending publication.
 
 ```bash
 GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false git push --dry-run --porcelain origin \
   HEAD:refs/heads/agent-jobs/cppgw-followups-1-20261118
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false git push --porcelain origin \
+  HEAD:refs/heads/agent-jobs/cppgw-followups-1-20261118
+git bundle create "$scratch/cppgw-followups-1-20261118.bundle" agent-job ^aae39d0ea73e7b5678dc92c437f7da6fb32f0c06
+git bundle verify "$scratch/cppgw-followups-1-20261118.bundle"
 ```
 
 ## Summary
