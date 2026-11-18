@@ -172,36 +172,43 @@ namespace uos::rt {
   // Array length includes holes. Large gaps occupy no element slots.
   class KvArray {
   public:
-    class const_iterator {
+    template<bool Const> class Iterator {
     public:
       using iterator_category = std::random_access_iterator_tag;
       using value_type = KvValue;
       using difference_type = std::ptrdiff_t;
-      using pointer = const KvValue*;
-      using reference = const KvValue&;
+      using pointer = std::conditional_t<Const, const KvValue*, KvValue*>;
+      using reference = std::conditional_t<Const, const KvValue&, KvValue&>;
 
-      const_iterator() = default;
-      reference operator*() const;
+      Iterator() = default;
+      template<bool Other>
+        requires(Const && !Other)
+      Iterator(const Iterator<Other>& other) : array_(other.array_), index_(other.index_) {}
+      reference operator*() const { return (*array_)[static_cast<std::size_t>(index_)]; }
       pointer operator->() const { return &**this; }
-      reference operator[](difference_type offset) const;
-      const_iterator& operator++() { return *this += 1; }
-      const_iterator& operator--() { return *this -= 1; }
-      const_iterator operator++(int) { auto previous = *this; ++*this; return previous; }
-      const_iterator operator--(int) { auto previous = *this; --*this; return previous; }
-      const_iterator& operator+=(difference_type offset) { index_ += offset; return *this; }
-      const_iterator& operator-=(difference_type offset) { index_ -= offset; return *this; }
-      friend const_iterator operator+(const_iterator it, difference_type offset) { return it += offset; }
-      friend const_iterator operator+(difference_type offset, const_iterator it) { return it += offset; }
-      friend const_iterator operator-(const_iterator it, difference_type offset) { return it -= offset; }
-      friend difference_type operator-(const_iterator left, const_iterator right) { return left.index_ - right.index_; }
-      friend auto operator<=>(const const_iterator&, const const_iterator&) = default;
+      reference operator[](difference_type offset) const { return *(*this + offset); }
+      Iterator& operator++() { return *this += 1; }
+      Iterator& operator--() { return *this -= 1; }
+      Iterator operator++(int) { auto previous = *this; ++*this; return previous; }
+      Iterator operator--(int) { auto previous = *this; --*this; return previous; }
+      Iterator& operator+=(difference_type offset) { index_ += offset; return *this; }
+      Iterator& operator-=(difference_type offset) { index_ -= offset; return *this; }
+      friend Iterator operator+(Iterator it, difference_type offset) { return it += offset; }
+      friend Iterator operator+(difference_type offset, Iterator it) { return it += offset; }
+      friend Iterator operator-(Iterator it, difference_type offset) { return it -= offset; }
+      friend difference_type operator-(Iterator left, Iterator right) { return left.index_ - right.index_; }
+      friend auto operator<=>(const Iterator&, const Iterator&) = default;
 
     private:
       friend class KvArray;
-      const_iterator(const KvArray* array, std::size_t index) : array_(array), index_(static_cast<difference_type>(index)) {}
-      const KvArray* array_ = nullptr;
+      template<bool> friend class Iterator;
+      using Array = std::conditional_t<Const, const KvArray, KvArray>;
+      Iterator(Array* array, std::size_t index) : array_(array), index_(static_cast<difference_type>(index)) {}
+      Array* array_ = nullptr;
       difference_type index_ = 0;
     };
+    using iterator = Iterator<false>;
+    using const_iterator = Iterator<true>;
 
     KvArray();
     KvArray(std::initializer_list<KvValue> values);
@@ -218,11 +225,15 @@ namespace uos::rt {
     void reserve(std::size_t count);
     void push_back(KvValue value);
     template<class... Args> void emplace_back(Args&&... args);
-    void insert(const_iterator position, const_iterator first, const_iterator last);
+    iterator insert(const_iterator position, const_iterator first, const_iterator last);
     const KvValue& operator[](std::size_t index) const noexcept;
     KvValue& operator[](std::size_t index);
+    iterator begin() noexcept { return iterator(this, 0); }
+    iterator end() noexcept { return iterator(this, size()); }
     const_iterator begin() const noexcept { return const_iterator(this, 0); }
     const_iterator end() const noexcept { return const_iterator(this, size()); }
+    const_iterator cbegin() const noexcept { return begin(); }
+    const_iterator cend() const noexcept { return end(); }
 
     // Define an index, extending the length as necessary. nextPresent returns
     // size() at the end. Explicit undefined is present; a hole is absent.
@@ -232,6 +243,9 @@ namespace uos::rt {
 
   private:
     struct Sparse;
+    std::size_t sparseSize() const noexcept;
+    const KvValue& sparseElement(std::size_t index) const noexcept;
+    std::size_t nextSparsePresent(std::size_t from) const noexcept;
     std::vector<KvValue> dense_;
     std::unique_ptr<Sparse> sparse_;
   };
@@ -523,7 +537,10 @@ namespace uos::rt {
     // Editable C++ values are snapshots of the selected node. Const access
     // traverses the decoded graph with its original identities.
     Variant& variant();
-    const void* identity() const noexcept;
+    const void* identity() const noexcept {
+      const auto* reference = std::get_if<GraphReference>(&value_);
+      return reference ? reference->node : nullptr;
+    }
     const KvValue* backingBuffer() const noexcept;
 
     // Structural equality; numbers (also inside Date) compare with Object.is.
@@ -557,6 +574,18 @@ namespace uos::rt {
     [[noreturn]] void throwMismatch(std::string_view expected) const;
     Variant value_;
   };
+
+  inline std::size_t KvArray::size() const noexcept { return sparse_ ? sparseSize() : dense_.size(); }
+
+  inline const KvValue& KvArray::operator[](std::size_t index) const noexcept {
+    return index < dense_.size() ? dense_[index] : sparseElement(index);
+  }
+
+  inline std::size_t KvArray::nextPresent(std::size_t from) const noexcept {
+    for (; from < dense_.size(); ++from)
+      if (!dense_[from].is<KvHole>()) return from;
+    return sparse_ ? nextSparsePresent(from) : dense_.size();
+  }
 
   template<class... Args> void KvArray::emplace_back(Args&&... args) {
     push_back(KvValue(std::forward<Args>(args)...));

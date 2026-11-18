@@ -98,3 +98,28 @@ TEST("Bun's large sparse arrays decode and transcode within a fixed allocation b
     EXPECT(allocated < allocationLimit);
   }
 }
+
+TEST("KvArray preserves mutable iteration for dense and sparse arrays") {
+  KvArray dense{KvHole{}, true};
+  for (KvValue& value : dense)
+    if (value.is<KvHole>()) value = KvValue();
+  EXPECT(dense[0].isUndefined());
+  EXPECT(dense[1].asBool());
+
+  KvArray sparse(16777217, KvHole{});
+  std::size_t allocated = 0;
+  {
+    const CountAllocations count;
+    *sparse.begin() = true;
+    sparse.begin()[16777216] = KvValue();
+    allocated = count.bytes;
+  }
+  const KvArray& read = sparse;
+  EXPECT_EQ(read.end() - sparse.begin(), std::ptrdiff_t{16777217});
+  EXPECT_EQ(read.nextPresent(0), std::size_t{0});
+  EXPECT_EQ(read.nextPresent(1), std::size_t{16777216});
+  EXPECT(read[0].asBool());
+  EXPECT(read[1].is<KvHole>());
+  EXPECT(read[16777216].isUndefined());
+  EXPECT(allocated < allocationLimit);
+}

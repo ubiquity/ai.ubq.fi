@@ -231,30 +231,27 @@ namespace uos::rt {
   KvArray& KvArray::operator=(KvArray&&) noexcept = default;
   KvArray::~KvArray() = default;
 
-  const KvValue& KvArray::const_iterator::operator*() const { return (*array_)[static_cast<std::size_t>(index_)]; }
-  const KvValue& KvArray::const_iterator::operator[](difference_type offset) const { return *(*this + offset); }
-
-  std::size_t KvArray::size() const noexcept { return sparse_ ? sparse_->length : dense_.size(); }
+  std::size_t KvArray::sparseSize() const noexcept { return sparse_->length; }
   void KvArray::reserve(std::size_t count) { if (!sparse_) dense_.reserve(count); }
   void KvArray::push_back(KvValue value) {
     if (sparse_) set(size(), std::move(value));
     else dense_.push_back(std::move(value));
   }
 
-  void KvArray::insert(const_iterator position, const_iterator first, const_iterator last) {
-    KvArray inserted(first, last);
-    if (inserted.empty()) return;
+  KvArray::iterator KvArray::insert(const_iterator position, const_iterator first, const_iterator last) {
     const auto at = static_cast<std::size_t>(position.index_);
+    KvArray inserted(first, last);
+    if (inserted.empty()) return iterator(this, at);
     KvArray result(size() + inserted.size(), holeValue());
     for (std::size_t index = nextPresent(0); index < size(); index = nextPresent(index + 1))
       result.set(index < at ? index : index + inserted.size(), std::move((*this)[index]));
     for (std::size_t index = inserted.nextPresent(0); index < inserted.size(); index = inserted.nextPresent(index + 1))
       result.set(at + index, std::move(inserted[index]));
     *this = std::move(result);
+    return iterator(this, at);
   }
 
-  const KvValue& KvArray::operator[](std::size_t index) const noexcept {
-    if (index < dense_.size()) return dense_[index];
+  const KvValue& KvArray::sparseElement(std::size_t index) const noexcept {
     if (sparse_) {
       const auto found = sparse_->entries.find(index);
       if (found != sparse_->entries.end()) return found->second;
@@ -288,15 +285,10 @@ namespace uos::rt {
     }
   }
 
-  std::size_t KvArray::nextPresent(std::size_t from) const noexcept {
-    for (; from < dense_.size(); ++from)
-      if (!dense_[from].is<KvHole>()) return from;
-    if (sparse_) {
-      auto next = sparse_->entries.lower_bound(from);
-      while (next != sparse_->entries.end() && next->second.is<KvHole>()) ++next;
-      if (next != sparse_->entries.end()) return next->first;
-    }
-    return size();
+  std::size_t KvArray::nextSparsePresent(std::size_t from) const noexcept {
+    auto next = sparse_->entries.lower_bound(from);
+    while (next != sparse_->entries.end() && next->second.is<KvHole>()) ++next;
+    return next == sparse_->entries.end() ? sparse_->length : next->first;
   }
 
   bool operator==(const KvArray& left, const KvArray& right) {
@@ -489,11 +481,6 @@ namespace uos::rt {
       value_ = std::move(snapshot);
     }
     return value_;
-  }
-
-  const void* KvValue::identity() const noexcept {
-    const auto* reference = std::get_if<GraphReference>(&value_);
-    return reference ? reference->node : nullptr;
   }
 
   const KvValue* KvValue::backingBuffer() const noexcept {

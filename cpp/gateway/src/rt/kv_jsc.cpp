@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <optional>
 #include <unordered_map>
 
 namespace uos::rt {
@@ -137,26 +138,28 @@ namespace uos::rt {
         out.insert(out.end(), bytes.begin(), bytes.end());
       }
 
-      void view(const KvValue& input, KvViewKind kind, std::span<const std::uint8_t> buffer, std::uint64_t byteOffset, std::uint64_t byteLength) {
+      void view(const KvValue& input, const void* identity, KvViewKind kind, std::span<const std::uint8_t> buffer, std::uint64_t byteOffset,
+                std::uint64_t byteLength) {
         if (byteOffset > buffer.size() || byteLength > buffer.size() - byteOffset) throw RangeError("KV value has an ArrayBuffer view outside its buffer");
         u8(ArrayBufferViewTag);
         u8(static_cast<std::uint8_t>(kind));
         u64(byteOffset);
         u64(byteLength);
-        if (const KvValue* backing = input.backingBuffer()) value(*backing);
+        if (const KvValue* backing = identity ? input.backingBuffer() : nullptr) value(*backing);
         else {
           record(nullptr);
           arrayBuffer(buffer);
         }
         // The backing buffer is entered into the object table before its view.
-        record(input.identity());
+        record(identity);
       }
 
       void value(const KvValue& input) {
         const void* identity = input.identity();
         if (identity) {
-          const auto found = objectIndices_.find(identity);
-          if (found != objectIndices_.end()) {
+          if (!objectIndices_) objectIndices_.emplace();
+          const auto found = objectIndices_->find(identity);
+          if (found != objectIndices_->end()) {
             u8(ObjectReferenceTag);
             poolIndex(found->second, objectCount_);
             return;
@@ -185,11 +188,11 @@ namespace uos::rt {
               u8(BigIntTag);
               bigint(item.toBigInt());
               u32(TerminatorTag);
-            } else if constexpr (std::is_same_v<T, KvBytes>) view(input, KvViewKind::Uint8Array, item, 0, item.size());
+            } else if constexpr (std::is_same_v<T, KvBytes>) view(input, identity, KvViewKind::Uint8Array, item, 0, item.size());
             else if constexpr (std::is_same_v<T, KvArrayBuffer>) {
               record(identity);
               arrayBuffer(item.bytes);
-            } else if constexpr (std::is_same_v<T, KvArrayBufferView>) view(input, item.kind, item.buffer, item.byteOffset, item.byteLength);
+            } else if constexpr (std::is_same_v<T, KvArrayBufferView>) view(input, identity, item.kind, item.buffer, item.byteOffset, item.byteLength);
             else if constexpr (std::is_same_v<T, KvDate>) {
               record(identity);
               u8(DateTag);
@@ -256,7 +259,7 @@ namespace uos::rt {
 
     private:
       void record(const void* identity) {
-        if (identity) objectIndices_.emplace(identity, objectCount_);
+        if (identity) objectIndices_->emplace(identity, objectCount_);
         ++objectCount_;
       }
 
@@ -264,13 +267,15 @@ namespace uos::rt {
         std::size_t operator()(const std::u16string& units) const noexcept { return std::hash<std::u16string>{}(units); }
       };
       std::unordered_map<std::u16string, std::uint32_t, UnitsHash> pool_;
-      std::unordered_map<const void*, std::uint32_t> objectIndices_;
+      std::optional<std::unordered_map<const void*, std::uint32_t>> objectIndices_;
       std::uint32_t objectCount_ = 0;
     };
   }
 
   KvBytes kvJscSerialize(const KvValue& value) {
     Serializer serializer;
+    // The version and a fixed-width scalar fit without growing the buffer.
+    serializer.out.reserve(16);
     serializer.u32(CurrentVersion);
     serializer.value(value);
     return std::move(serializer.out);
