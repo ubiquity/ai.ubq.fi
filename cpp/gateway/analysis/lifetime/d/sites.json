@@ -7173,7 +7173,8 @@
       ]
     },
     "include/uos/admin/index.hpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Namespace imports only. The imported functions are already recorded with their declaring headers and implementations.",
       "sites": []
     },
     "include/uos/admin/kernel.hpp": {

@@ -261,7 +261,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/admin/codex_reset.hpp`
 - [x] `include/uos/admin/defaults.hpp`
 - [x] `include/uos/admin/error_log.hpp`
-- [ ] `include/uos/admin/index.hpp`
+- [x] `include/uos/admin/index.hpp`
 - [ ] `include/uos/admin/kernel.hpp`
 - [ ] `include/uos/admin/sentinel_incident.hpp`
 - [ ] `include/uos/agent_messages.hpp`
@@ -1442,6 +1442,10 @@ Reviewed the error input record and error, history and file-size interfaces.
 - L66, 67 **SAFE** · The two error-recording overloads copy the input synchronously and make the optional shared KV owner part of the work.
 - L126, 127, 128, 130 **SAFE** · History listing, status handling and request delegation receive scalar values, an owning override or a request value.
 
+### `include/uos/admin/index.hpp`
+
+Namespace imports only. The imported functions are already recorded with their declaring headers and implementations.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1690,4 +1694,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-153/286 files reviewed. 322 sites: 301 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+154/286 files reviewed. 322 sites: 301 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
