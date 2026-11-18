@@ -3283,8 +3283,136 @@
       ]
     },
     "src/rt/fetch_transport_internal.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed the internal transport declarations against their call sites and the Asio execution-context shutdown path.",
+      "sites": [
+        {
+          "lines": [
+            29,
+            31,
+            33,
+            35,
+            44,
+            55,
+            56,
+            68,
+            69,
+            71,
+            73,
+            75,
+            83,
+            89,
+            98,
+            103,
+            112,
+            126,
+            127,
+            133,
+            136,
+            143,
+            146,
+            147,
+            148,
+            151
+          ],
+          "classes": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Synchronous parser, codec and byte queue interfaces",
+          "reason": "Parser and codec callers use borrowed views within the current operation, and their returned protocol values and appended buffers own their storage."
+        },
+        {
+          "lines": [
+            160,
+            162,
+            163,
+            171,
+            177,
+            179,
+            182,
+            183,
+            188,
+            192,
+            195,
+            198,
+            202,
+            204,
+            207,
+            208,
+            211,
+            212,
+            213,
+            214,
+            215,
+            217
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Native connection tasks and receiver contract",
+          "reason": "Connect pins the receiver and ClientState for handshake, fill wraps its child with shared ownership, and the detached writer owns the connection and passes a separate buffer owner."
+        },
+        {
+          "lines": [
+            226,
+            228,
+            229,
+            233,
+            235,
+            236,
+            237,
+            240,
+            241,
+            242,
+            244,
+            245,
+            246,
+            252,
+            256,
+            257,
+            258,
+            261,
+            262
+          ],
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Pool slots and Asio service ownership",
+          "reason": "The context owns the registry, whose map holds the pools. Slot references are synchronous, the timer captures a weak pool, and registry shutdown releases map owners before service destruction."
+        },
+        {
+          "lines": [
+            267,
+            268,
+            269,
+            272,
+            274,
+            275,
+            276,
+            278,
+            281,
+            285,
+            287,
+            288,
+            292
+          ],
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Client per-loop registry observers and send inputs",
+          "reason": "The client uses the registry pointer only while a pool on that loop can be promoted. Current strong pool copies stay within synchronous code or a coroutine handled by the same context."
+        }
+      ]
     },
     "src/rt/fetch_transport_net.cpp": {
       "status": "pending",

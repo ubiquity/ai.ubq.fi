@@ -52,7 +52,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/fetch_transport.cpp`
 - [x] `src/rt/fetch_transport_codec.cpp`
 - [x] `src/rt/fetch_transport_http.cpp`
-- [ ] `src/rt/fetch_transport_internal.hpp`
+- [x] `src/rt/fetch_transport_internal.hpp`
 - [ ] `src/rt/fetch_transport_net.cpp`
 - [ ] `src/rt/gzip.cpp`
 - [ ] `src/rt/tls.cpp`
@@ -288,18 +288,27 @@ Reviewed the complete HTTP wire helpers, including incomplete and malformed pars
 - **SAFE** `306, 310, 311, 313, 320, 321, 324, 327, 344, 347, 352, 374, 375, 376` (b/d), Framing token traversal and incremental chunk decode. Transfer-coding views borrow the immutable head during a synchronous scan, and the chunk decoder copies payload bytes before returning its status and offset.
 - **SAFE** `411, 412, 413, 414, 417, 422, 424, 425` (b/d), Byte queue compaction and caller views. Current exchange and pull callers consume or copy views before queue mutation or native I/O, and the native append sources are separate owned read buffers.
 
+### `src/rt/fetch_transport_internal.hpp`
+
+Reviewed the internal transport declarations against their call sites and the Asio execution-context shutdown path.
+
+- **SAFE** `29, 31, 33, 35, 44, 55, 56, 68, 69, 71, 73, 75, 83, 89, 98, 103, 112, 126, 127, 133, 136, 143, 146, 147, 148, 151` (b/d), Synchronous parser, codec and byte queue interfaces. Parser and codec callers use borrowed views within the current operation, and their returned protocol values and appended buffers own their storage.
+- **SAFE** `160, 162, 163, 171, 177, 179, 182, 183, 188, 192, 195, 198, 202, 204, 207, 208, 211, 212, 213, 214, 215, 217` (b/c), Native connection tasks and receiver contract. Connect pins the receiver and ClientState for handshake, fill wraps its child with shared ownership, and the detached writer owns the connection and passes a separate buffer owner.
+- **SAFE** `226, 228, 229, 233, 235, 236, 237, 240, 241, 242, 244, 245, 246, 252, 256, 257, 258, 261, 262` (b/c/d), Pool slots and Asio service ownership. The context owns the registry, whose map holds the pools. Slot references are synchronous, the timer captures a weak pool, and registry shutdown releases map owners before service destruction.
+- **SAFE** `267, 268, 269, 272, 274, 275, 276, 278, 281, 285, 287, 288, 292` (b/c/d), Client per-loop registry observers and send inputs. The client uses the registry pointer only while a pool on that loop can be promoted. Current strong pool copies stay within synchronous code or a coroutine handled by the same context.
+
 ## Ranked defects and counts
 
-Reviewed **20/30 files** and **118 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **21/30 files** and **122 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 5 | 19 | 0 |
-| b. Borrowed coroutine parameter or receiver | 11 | 71 | 3 |
-| c. Callback ownership or cycle | 16 | 67 | 4 |
-| d. Container invalidation | 3 | 43 | 0 |
+| b. Borrowed coroutine parameter or receiver | 11 | 75 | 3 |
+| c. Callback ownership or cycle | 16 | 70 | 4 |
+| d. Container invalidation | 3 | 46 | 0 |
 | e. GCC 12 await-expression rule | 4 | 12 | 1 |
-| **Unique site groups** | 22 | 91 | 5 |
+| **Unique site groups** | 22 | 95 | 5 |
 
 ### 1. A-FETCH-ABORT-TRANSPORT (memory safety in the injectable transport path) — Abort can outlive the owning virtual transport frame
 
