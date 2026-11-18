@@ -48,7 +48,7 @@ completes, or record the precise pending work and last passing tree.
 | A-PROCESS-SIGNAL-CONTEXT (`src/rt/process_loop.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-STREAM-GCC-AWAIT (`include/uos/rt/stream.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-PROMISE-REACTION-CYCLE (`include/uos/rt/stream.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
-| A-STREAM-CANCEL-OWNER (`include/uos/rt/stream.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
+| A-STREAM-CANCEL-OWNER (`include/uos/rt/stream.hpp`) | FIXED. `cancelStreamInto` read the reader's stream slot after the synchronous cancel algorithm could empty it through `releaseLock`. Take an owning copy before closing the stream or invoking the callback. | This commit | `rt/stream_test`, cancel releases the reader while a read is pending. |
 | A-STREAM-TEE-READ-CYCLE (`include/uos/rt/stream.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-PROMISE-GCC-AWAIT (`include/uos/rt/stream.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-FETCH-CALLBACK-INPUT (`include/uos/rt/fetch.hpp`) | LEFT. Current-tree re-verification pending. | — | — |

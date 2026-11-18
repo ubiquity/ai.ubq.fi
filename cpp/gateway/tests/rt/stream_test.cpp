@@ -289,6 +289,22 @@ ASYNC_TEST("bun stream2: cancel, failing pull/start, close with queued chunks, h
                            "desired after close with queue=0", "q1: resolved {\"value\":\"1\",\"done\":false}", "q2: resolved {\"done\":true}", "hwm2 pulls before read=2", "hwm2 got=[1,2,3,4] pulls=4"}));
 }
 
+ASYNC_TEST("reader cancellation retains the stream when the source releases the reader") {
+  using Reader = rt::ReadableStreamDefaultReader<std::string>;
+  std::optional<Reader> reader;
+  rt::UnderlyingSource<std::string> source;
+  source.cancel = [&reader](rt::Reason) { reader->releaseLock(); };
+  Stream stream(std::move(source));
+  reader.emplace(stream.getReader());
+  auto pending = reader->read();
+
+  auto cancelled = reader->cancelPromise();
+  EXPECT(!stream.locked());
+  co_await cancelled.wait();
+  const auto step = co_await std::move(pending);
+  EXPECT(step.done);
+}
+
 ASYNC_TEST("bun stream2: tee() gives both branches every chunk; both cancels cancel the source with [r1, r2]; a source error errors both") {
   auto log = makeLog();
   {

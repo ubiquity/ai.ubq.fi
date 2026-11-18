@@ -235,7 +235,7 @@ namespace uos::rt {
     }
 
     // ReadableStreamCancel: `out` settles one turn after the cancel algorithm's promise.
-    template <class T> void cancelStreamInto(const std::shared_ptr<StreamState<T>>& stream, Reason reason, const std::shared_ptr<PromiseState<void>>& out) {
+    template <class T> void cancelStreamInto(std::shared_ptr<StreamState<T>> stream, Reason reason, const std::shared_ptr<PromiseState<void>>& out) {
       stream->disturbed = true;
       using Status = typename StreamState<T>::Status;
       if (stream->status == Status::closed) {
