@@ -3118,8 +3118,22 @@
       ]
     },
     "src/paid_fallback/ledger_state.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The ledger view functions retain a store and each reader/queue receiver through joined operations.",
+      "sites": [
+        {
+          "lines": "64-128",
+          "kind": "store, pending iterator, and enqueue owner",
+          "verdict": "SAFE",
+          "reason": "The frame retains KV and the list handle while stepping. The borrowed KvEnqueue interface is obtained from the KV it owns through send completion."
+        },
+        {
+          "lines": "129-219,221-320",
+          "kind": "ledger projections and cursor storage",
+          "verdict": "SAFE",
+          "reason": "Each scan owns its iterator and accumulators. Awaited row values and readable request/pending snapshots remain local."
+        }
+      ]
     },
     "src/paid_fallback/ledger_stats.cpp": {
       "status": "pending",

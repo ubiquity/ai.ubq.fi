@@ -274,7 +274,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/paid_fallback/ledger_admission.cpp`
 - [x] `src/paid_fallback/ledger_backfill.cpp`
 - [x] `src/paid_fallback/ledger_settlement.cpp`
-- [ ] `src/paid_fallback/ledger_state.cpp`
+- [x] `src/paid_fallback/ledger_state.cpp`
 - [ ] `src/paid_fallback/ledger_stats.cpp`
 - [ ] `src/paid_fallback/removed_provider.cpp`
 - [ ] `src/paid_fallback/rollups.cpp`
@@ -1740,3 +1740,10 @@ Settlement keeps transaction values and cursor rows local. Directly injected sto
 - 225-260,388-445 · request-bound settlement against global KV · **SAFE** · The production store has a module owner and each guarded get also retains an inner native store. Durable settlement inputs are copied before the joins.
 - 266-271,322-327 · deferral and settlement KV fan-outs · **DEFECT** · A rejecting virtual read can end deferral or settlement while a sibling coroutine get from an injected store is pending. After the last public caller releases KV the sibling can use its dead receiver. Give each parallel read its own store owner.
 - 272-296,299-314,328-386 · row selection, provider log, and settlement CAS · **SAFE** · Tuple alternatives refer to named local await results, and rollup and commit inputs are owned by their respective child frames.
+
+### `src/paid_fallback/ledger_state.cpp`
+
+The ledger view functions retain a store and each reader/queue receiver through joined operations.
+
+- 64-128 · store, pending iterator, and enqueue owner · **SAFE** · The frame retains KV and the list handle while stepping. The borrowed KvEnqueue interface is obtained from the KV it owns through send completion.
+- 129-219,221-320 · ledger projections and cursor storage · **SAFE** · Each scan owns its iterator and accumulators. Awaited row values and readable request/pending snapshots remain local.
