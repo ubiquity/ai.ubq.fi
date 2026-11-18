@@ -4,7 +4,10 @@
 import hashlib
 import json
 from pathlib import Path
+import re
+import shutil
 import sys
+import tomllib
 
 work = Path(sys.argv[1])
 (log,) = (work / "kv-build").glob("*/build.log")
@@ -37,3 +40,30 @@ receipt["build"]["logSha256"] = digest(command_log)
 final = (json.dumps(receipt, indent=2) + "\n").encode()
 proof.write_bytes(final)
 binding.write_text(digest(final) + "\n")
+
+# Cargo has verified these source packages against the frozen lock before compiling.
+licenses = native / "kv-licenses"
+rust = work / "rust-1.98.1-aarch64-unknown-linux-gnu"
+toolchain = licenses / "rust"
+toolchain.mkdir(parents=True)
+for name in ("COPYRIGHT", "LICENSE-APACHE", "LICENSE-MIT"):
+    shutil.copyfile(rust / name, toolchain / name)
+
+inventory = {}
+notice = re.compile(r"^(?:licen[cs]e|copying|copyright|notice|unlicense)(?:$|[-_.])", re.IGNORECASE)
+for manifest in sorted((log.parent / "cargo-home/registry/src").glob("*/*/Cargo.toml")):
+    crate = manifest.parent
+    package = tomllib.loads(manifest.read_text())["package"]
+    files = {p for p in crate.rglob("*") if notice.match(p.name) and p.is_file()}
+    if package.get("license-file"):
+        files.add(crate / package["license-file"])
+    inventory[crate.name] = {"license": package.get("license"), "notices": []}
+    for source in sorted(files):
+        if not source.resolve(strict=True).is_relative_to(crate):
+            raise ValueError(f"License file escapes registry package: {source}")
+        relative = source.relative_to(crate)
+        target = licenses / "registry" / crate.name / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        inventory[crate.name]["notices"].append(relative.as_posix())
+(licenses / "registry.json").write_text(json.dumps(inventory, indent=2, sort_keys=True) + "\n")

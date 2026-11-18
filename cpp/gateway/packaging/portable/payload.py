@@ -53,6 +53,7 @@ def main(commit, tree, epoch):
 
     native.copy_vendor_licenses(payload)
     native.copy_file(kv / "LICENSE", payload / "licenses/native-kv/LICENSE")
+    shutil.copytree("/native/kv-licenses", payload / "licenses/native-kv", dirs_exist_ok=True)
     shutil.copytree("/opt/uos/licenses", payload / "licenses", dirs_exist_ok=True)
     native.copy_file(GATEWAY / "packaging/SQLITE-LICENSE", payload / "licenses/sqlite/LICENSE")
     native.copy_file(Path("/usr/share/common-licenses/GPL-3"), payload / "licenses/gcc/GPL-3")
