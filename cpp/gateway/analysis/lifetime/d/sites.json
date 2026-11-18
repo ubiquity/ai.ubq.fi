@@ -8488,8 +8488,26 @@
       ]
     },
     "include/uos/decisions/handlers.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the optional usage-context pointer and provider test dependencies.",
+      "sites": [
+        {
+          "lines": [
+            14,
+            15,
+            18,
+            19
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The public functions copy the context and dependency object synchronously. The owned implementation holds the selected fetcher through its direct wait and calls the API key supplier inline."
+        }
+      ]
     },
     "include/uos/defaults.hpp": {
       "reviewed": false,

@@ -316,7 +316,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/catalog/types.hpp`
 - [x] `include/uos/config.hpp`
 - [x] `include/uos/debug_routing.hpp`
-- [ ] `include/uos/decisions/handlers.hpp`
+- [x] `include/uos/decisions/handlers.hpp`
 - [ ] `include/uos/defaults.hpp`
 - [ ] `include/uos/handler/admission.hpp`
 - [ ] `include/uos/handler/http.hpp`
@@ -1769,6 +1769,12 @@ Reviewed debug route configuration interfaces and operation parameters.
 
 - L30, 31, 36, 37 **SAFE** · The load and set methods own their routing choice and take durations or clock readings by value.
 
+### `include/uos/decisions/handlers.hpp`
+
+Reviewed the optional usage-context pointer and provider test dependencies.
+
+- L14, 15, 18, 19 **SAFE** · The public functions copy the context and dependency object synchronously. The owned implementation holds the selected fetcher through its direct wait and calls the API key supplier inline.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2017,4 +2023,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-208/286 files reviewed. 380 sites: 359 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+209/286 files reviewed. 381 sites: 360 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
