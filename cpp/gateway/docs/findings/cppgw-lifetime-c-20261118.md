@@ -306,7 +306,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/claude_code_usage.cpp`
 - [x] `src/provider/claude_code_usage_refresh.cpp`
 - [x] `src/provider/claude_code_usage_schema.cpp`
-- [ ] `src/provider/health.cpp`
+- [x] `src/provider/health.cpp`
 - [ ] `src/provider/lithos.cpp`
 - [ ] `src/provider/lithos_handlers.cpp`
 - [ ] `src/provider/lithos_models.cpp`
@@ -1948,3 +1948,12 @@ The work and cleanup closures are owned correctly. Two KV await expressions cont
 ### `src/provider/claude_code_usage_schema.cpp`
 
 Usage and rate-limit schemas parse and serialize synchronously. Field views do not escape their source rows.
+
+### `src/provider/health.cpp`
+
+Provider observations are serialized per identity. Clock injection and the injectable KV boundary each have a distinct owner hazard.
+
+- 120-151,173-180,292-331 · queued writes and promise reaction ownership · **SAFE** · The continuation and persistence frame own transition data, KV and transaction. The finalizer re-finds its queue entry, and loop teardown clears the registered promise reactions.
+- 158-172 · reentrant clock callback and queue entry · **DEFECT** · With a pending distinct transition, an injected clock can synchronously clear the transition map via the test reset hook. The call then reads current->tail through a freed node. Re-find the entry after invoking the clock.
+- 254-266 · KV receiver in fail-fast read fan-out · **DEFECT** · One virtual get can reject and drop the reader's KV owner while a sibling waits. If the fixture replaces the global KV and the sibling borrows its receiver, resumption reads a dead object. Give each read an owning child; the production guard and native store retain their own receiver state.
+- 333-369 · forwarded view reads and binding lifetime · **SAFE** · Factories copy their inputs before returning. The Claude reader retains its binding and local KV while waiting on the owning health-view and account-entry lookups.

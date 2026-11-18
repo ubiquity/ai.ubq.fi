@@ -3623,8 +3623,34 @@
       "sites": []
     },
     "src/provider/health.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Provider observations are serialized per identity. Clock injection and the injectable KV boundary each have a distinct owner hazard.",
+      "sites": [
+        {
+          "lines": "120-151,173-180,292-331",
+          "kind": "queued writes and promise reaction ownership",
+          "verdict": "SAFE",
+          "reason": "The continuation and persistence frame own transition data, KV and transaction. The finalizer re-finds its queue entry, and loop teardown clears the registered promise reactions."
+        },
+        {
+          "lines": "158-172",
+          "kind": "reentrant clock callback and queue entry",
+          "verdict": "DEFECT",
+          "reason": "With a pending distinct transition, an injected clock can synchronously clear the transition map via the test reset hook. The call then reads current->tail through a freed node. Re-find the entry after invoking the clock."
+        },
+        {
+          "lines": "254-266",
+          "kind": "KV receiver in fail-fast read fan-out",
+          "verdict": "DEFECT",
+          "reason": "One virtual get can reject and drop the reader's KV owner while a sibling waits. If the fixture replaces the global KV and the sibling borrows its receiver, resumption reads a dead object. Give each read an owning child; the production guard and native store retain their own receiver state."
+        },
+        {
+          "lines": "333-369",
+          "kind": "forwarded view reads and binding lifetime",
+          "verdict": "SAFE",
+          "reason": "Factories copy their inputs before returning. The Claude reader retains its binding and local KV while waiting on the owning health-view and account-entry lookups."
+        }
+      ]
     },
     "src/provider/lithos.cpp": {
       "status": "pending",
