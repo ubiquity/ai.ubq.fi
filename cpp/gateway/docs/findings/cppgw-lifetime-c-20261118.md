@@ -254,7 +254,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/reliability/loops.cpp`
 - [x] `src/harmony/reliability/retry.cpp`
 - [x] `src/harmony/reliability/state.cpp`
-- [ ] `src/harmony/reliability/surfaces.cpp`
+- [x] `src/harmony/reliability/surfaces.cpp`
 - [ ] `src/harmony/reliability/verify.cpp`
 - [ ] `src/harmony/render.cpp`
 - [ ] `src/harmony/tools/backend.cpp`
@@ -1616,3 +1616,7 @@ Retry policy and ledger inspection are synchronous. Entry copies and scalar dela
 ### `src/harmony/reliability/state.cpp`
 
 Tool observation reducers and state normalization are synchronous. Returned state owns the values read from sources.
+
+### `src/harmony/reliability/surfaces.cpp`
+
+Provider surface assertions and request descriptions are synchronous. The returned records own their inspected fields.

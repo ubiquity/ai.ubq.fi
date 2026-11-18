@@ -2814,7 +2814,8 @@
       "sites": []
     },
     "src/harmony/reliability/surfaces.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Provider surface assertions and request descriptions are synchronous. The returned records own their inspected fields.",
       "sites": []
     },
     "src/harmony/reliability/verify.cpp": {
