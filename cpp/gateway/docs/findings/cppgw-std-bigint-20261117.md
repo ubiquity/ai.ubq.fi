@@ -73,3 +73,54 @@ The portable CI compiler applies strict warnings to `base64.cpp`, including its 
 The complete link closure exposed a compilation regression in the inherited BigInt header. Boost's `<iomanip>` include introduces `std::quoted` into argument-dependent lookup in `src/rt/kv_value.cpp`. The BigInt header will use Boost's forward declaration. The adapter will manage a `cpp_int` in aligned inline storage with compile-time size and alignment checks, retaining allocation-free small integers. All production writes stay in the BigInt regions. The source change supersedes the previous build, fuzz and benchmark receipts for acceptance. The same gates and prior stop condition apply to the revised source.
 
 A Clang 21 `--target=arm64-apple-darwin` probe confirmed 8-byte alignment for `long double` and 16-byte alignment for `__int128`. The storage explicitly aligns to 16 bytes for both deployment targets. The runner can check this ABI distinction and run the Linux suite. A native Darwin suite requires a Darwin runner.
+
+### v3 Linux ARM64 evidence
+
+The measured source is commit `5ab1a34de1cb47b31a990c0e3ca6ec3024440f2b`, tree `789c830f90d941ee4e4183f71ad33f91a875f0ed`. The v3 diff deletes **448 production lines** and adds **199**, for a net reduction of **249**. The inline object adds construction, destruction, copy, move and alignment checks. Boost handles the integer storage and operations inside it. The wide-storage regression covers independent copies and reuse after a move.
+
+The phased suite uses the existing portable CI driver's source inventory, dependency resolver, compiler rules, linker and Linux namespace runner. It compiles each distinct translation unit once per profile and runs closures in batches, starting with BigInt and its storage callers. Clang 21.1.8 uses the fatal port warning set and `-O2` for release. The ASan/UBSan profile uses `-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer`. The compile of the vendored simdutf include uses a system-header prefix on `base64.cpp`. SQLite 3.54.0 was built with `SQLITE_DQS=3`. The suite used system ICU 74.2.
+
+```bash
+scratch=/tmp/cppgw-bigint.cJMy6S
+for profile in release asan; do
+  run="$scratch/drivers/$profile"
+  env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$run/final-home" TMPDIR="$run/final-tmp" \
+    LANG=C.UTF-8 PKG_CONFIG_PATH="$scratch/sqlite/lib/pkgconfig" \
+    python3 -B "$scratch/run-closures.py" "$PWD/cpp/gateway" "$scratch" "$profile" --jobs 2
+done
+python3 -B cpp/gateway/tools/links.py --check tests/legacy/bigint_library_test.cpp
+git diff --check 093a9e05 HEAD
+```
+
+The two profile commands ran concurrently with two workers each. The runner helper SHA-256 is `f49db6e41fa77981a64ce309f14ffba7db6cf2f1e9d6f7242e53b7664b684948`. Each build directory's `closures.jsonl` and `logs` contain per-binary counts, exact link commands and test output. Both profiles passed the four BigInt regression cases. Both recorded Number runs passed 20 of 21 cases. The failure is the parser test with three Bun-only expectations. A temporary copy of that test with just those three expected results changed to rejection passed all 21 cases in each profile.
+
+At the first v3 checkpoint, release recorded 113 passing and 2 failing binaries with 1,137 passing cases out of 1,140. ASan/UBSan recorded 33 passing and 1 failing binary with 361 passing cases out of 362. In addition to the Number failure, the release IDNA binary failed its two ICU differential cases. The independent URL qualification uses ICU 78.3 and records a passing control with that version. [URL IDNA qualification](cppgw-oss-ada-url-20261117.md)
+
+The final registered BigInt fuzz entry was compiled with the port warning flags, `-O1 -gline-tables-only -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined`, and the two translation units `cpp/gateway/fuzz/bigint_library.cpp` and `cpp/gateway/src/rt/number.cpp`. The runner used `bash "$scratch/fuzz-final.sh"` to build and run with fresh namespaces and clear credentials. The executable received these options.
+
+```sh
+/tmp/b/bigint_library -seed=17112026 -max_len=4096 -max_total_time=120 \
+  -timeout=5 -rss_limit_mb=2048 -malloc_limit_mb=128 -print_final_stats=1 \
+  -artifact_prefix=/tmp/b/artifacts/ /tmp/b/corpus
+```
+
+LibFuzzer exited 0 after **753,947 inputs in 121 seconds** from the five checked-in seeds, with no findings and a peak RSS of 489 MiB. The binary SHA-256 is `fd01665e0dbecc167ee2477a91d808f9c7f9cd5fc657ba23c1fac410fa8d33ee`. The campaign log SHA-256 is `59c4db69a23c91c7f7e18c01e4ef2b92a5c32e72940956aa8757910af4ccd97f`.
+
+### v3 paired measurements
+
+The final source and the baseline reran the seven paired samples described above. Both Clang 21 binaries used the strict flags and `-O2`. The scratch benchmark driver SHA-256 is `a141c63e44190ca1dda9a8965ec12b16c52443188185e40115baacb3aa70ed7c`. The measurements supersede the earlier table.
+
+| Operation                              | Old ns/op | Boost ns/op | Old allocations/op | Boost allocations/op |
+| -------------------------------------- | --------: | ----------: | -----------------: | -------------------: |
+| Increment counter                      |     23.28 |       15.93 |              1.000 |                0.000 |
+| FNV-1a 64-bit byte step                |    113.12 |       92.68 |              5.996 |                0.000 |
+| Parse signed decimal                   |    138.51 |       64.25 |              6.000 |                0.000 |
+| Parse 256-bit decimal                  |    730.98 |      248.66 |             12.000 |                2.000 |
+| Parse 4,096-bit decimal                | 70,018.23 |    4,104.77 |             20.000 |                4.000 |
+| Multiply 4,097- and 2,048-bit operands |  8,461.29 |    2,696.85 |              1.000 |                1.000 |
+| Divide 4,097- by 2,048-bit operands    |  5,675.61 |    3,476.05 |              4.000 |                3.000 |
+| Format 4,097 bits in decimal           | 43,679.56 |   34,610.39 |              9.000 |               70.000 |
+| Format 4,097 bits in base 36           | 39,125.05 |   36,411.05 |              8.000 |                9.000 |
+| Convert 256 bits to binary64           |     26.46 |        9.67 |              1.000 |                0.000 |
+
+The type remains 32 bytes. The larger number of allocations for wide decimal formatting reflects Boost's `str()` implementation.
