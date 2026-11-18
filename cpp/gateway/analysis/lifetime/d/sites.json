@@ -9716,8 +9716,39 @@
       ]
     },
     "include/uos/request.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed one-shot body observation and JSON reader interfaces.",
+      "sites": [
+        {
+          "lines": [
+            17,
+            19,
+            36,
+            39,
+            41,
+            48
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The request map copies both callbacks and erases the chosen entry before synchronous invocation. Captured body bytes cross the callback boundary as a shared owner."
+        },
+        {
+          "lines": [
+            51,
+            54
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Both JSON reader entry Tasks own their Request and take body/document limits by value."
+        }
+      ]
     },
     "include/uos/request_policy.hpp": {
       "reviewed": false,

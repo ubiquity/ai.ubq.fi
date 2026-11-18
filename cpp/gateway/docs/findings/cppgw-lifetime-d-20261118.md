@@ -364,7 +364,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/quota_projection.hpp`
 - [x] `include/uos/recent_model_context.hpp`
 - [x] `include/uos/release.hpp`
-- [ ] `include/uos/request.hpp`
+- [x] `include/uos/request.hpp`
 - [ ] `include/uos/request_policy.hpp`
 - [ ] `include/uos/responses_attempts.hpp`
 - [ ] `include/uos/responses_buffered.hpp`
@@ -2062,6 +2062,13 @@ Reviewed the build identity declaration.
 
 - L6 **SAFE** · The release SHA view points to build-time literal storage.
 
+### `include/uos/request.hpp`
+
+Reviewed one-shot body observation and JSON reader interfaces.
+
+- L17, 19, 36, 39, 41, 48 **SAFE** · The request map copies both callbacks and erases the chosen entry before synchronous invocation. Captured body bytes cross the callback boundary as a shared owner.
+- L51, 54 **SAFE** · Both JSON reader entry Tasks own their Request and take body/document limits by value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2311,4 +2318,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-256/286 files reviewed. 437 sites: 413 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+257/286 files reviewed. 439 sites: 415 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
