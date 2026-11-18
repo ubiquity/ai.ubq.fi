@@ -233,7 +233,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/deepseek/responses.cpp`
 - [x] `src/deepseek/responses_payload.cpp`
 - [x] `src/deepseek/responses_stream.cpp`
-- [ ] `src/deepseek/stream.cpp`
+- [x] `src/deepseek/stream.cpp`
 - [ ] `src/deepseek/waterfall.cpp`
 - [ ] `src/deepseek/waterfall_handler.cpp`
 - [ ] `src/embeddings/handlers.cpp`
@@ -1494,3 +1494,10 @@ Responses payload construction is synchronous. Field lookups return copies or ar
 The projection API exposes synchronous translator operations.
 
 - 352-355 · translator callback bundle · **SAFE** · Each returned function owns shared translator state and that state does not retain the function bundle.
+
+### `src/deepseek/stream.cpp`
+
+The generator owns its reader session and watchdog. The individual read race uses a weak signal listener.
+
+- 129-151 · reader race and abort registration · **SAFE** · The executor is synchronous, its installed callback locks a weak signal, and reader.readPromise retains the pending read independently of the winning branch.
+- 157-234,250-287 · read session, timer, and generator · **SAFE** · The factory copies options and starts an owning generator task. Each read owns session, yielded frames belong to the task, and the watchdog captures a controller value. Finish clears the timer and releases the reader.

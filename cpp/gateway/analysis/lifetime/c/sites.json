@@ -2531,8 +2531,22 @@
       ]
     },
     "src/deepseek/stream.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The generator owns its reader session and watchdog. The individual read race uses a weak signal listener.",
+      "sites": [
+        {
+          "lines": "129-151",
+          "kind": "reader race and abort registration",
+          "verdict": "SAFE",
+          "reason": "The executor is synchronous, its installed callback locks a weak signal, and reader.readPromise retains the pending read independently of the winning branch."
+        },
+        {
+          "lines": "157-234,250-287",
+          "kind": "read session, timer, and generator",
+          "verdict": "SAFE",
+          "reason": "The factory copies options and starts an owning generator task. Each read owns session, yielded frames belong to the task, and the watchdog captures a controller value. Finish clears the timer and releases the reader."
+        }
+      ]
     },
     "src/deepseek/waterfall.cpp": {
       "status": "pending",
