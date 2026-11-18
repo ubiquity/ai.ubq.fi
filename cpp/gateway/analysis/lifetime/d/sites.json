@@ -1737,8 +1737,61 @@
       "sites": []
     },
     "src/bounded_response_body.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed bounded reads, abort races and detached reader cancellation.",
+      "sites": [
+        {
+          "lines": [
+            33,
+            34,
+            35,
+            36
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "detail": "The newPromise executor invokes its reference captures synchronously. The installed listener owns its Reject and signal and is removed on normal and exceptional race completion."
+        },
+        {
+          "lines": [
+            41,
+            42,
+            43,
+            47
+          ],
+          "kinds": [
+            "c",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "Orphaned bounded-body abort race. Each successful body read, including EOF, wins and removes the only callback able to settle the abort-only Promise. Its pending race reaction retains the winning ReadResult and chunk for the process loop lifetime. Create the private promise with withResolvers and settle it after unregistering the listener once the race has been installed."
+        },
+        {
+          "lines": [
+            78,
+            87,
+            92,
+            93,
+            94,
+            100,
+            103,
+            119,
+            120,
+            128
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The cleanup lambdas run in the owning reader frame. The plain reader.cancel wrapper captures stream state into the Task before releaseLock, so detached cancellation keeps its own stream owner."
+        }
+      ]
     },
     "src/catalog/index.cpp": {
       "reviewed": false,

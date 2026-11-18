@@ -80,7 +80,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [ ] `src/authority/native_paid_policy.cpp`
 - [ ] `src/authority/native_principal_contracts.cpp`
 - [ ] `src/authority/native_runtime_contracts.cpp`
-- [ ] `src/bounded_response_body.cpp`
+- [x] `src/bounded_response_body.cpp`
 - [ ] `src/catalog/index.cpp`
 - [ ] `src/catalog/models.cpp`
 - [ ] `src/catalog/promotion.cpp`
@@ -497,6 +497,14 @@ Reviewed the provisioning timer and abort race, retained initializer, deletion g
 - L187, 191, 201, 208, 228, 236, 239, 243, 290, 303 **SAFE** · Provisioning and deletion checks retain the KV and each iterator or atomic operation. Their prefix and record collections are private frame storage.
 - L310, 318, 321, 325 **SAFE** · The hash view is copied into an owning string and key before the second KV await, with the original JSON still live.
 
+### `src/bounded_response_body.cpp`
+
+Reviewed bounded reads, abort races and detached reader cancellation.
+
+- L33, 34, 35, 36 **SAFE** · The newPromise executor invokes its reference captures synchronously. The installed listener owns its Reject and signal and is removed on normal and exceptional race completion.
+- L41, 42, 43, 47 **DEFECT** · Orphaned bounded-body abort race. Each successful body read, including EOF, wins and removes the only callback able to settle the abort-only Promise. Its pending race reaction retains the winning ReadResult and chunk for the process loop lifetime. Create the private promise with withResolvers and settle it after unregistering the listener once the race has been installed.
+- L78, 87, 92, 93, 94, 100, 103, 119, 120, 128 **SAFE** · The cleanup lambdas run in the owning reader frame. The plain reader.cancel wrapper captures stream state into the Task before releaseLock, so detached cancellation keeps its own stream owner.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -505,4 +513,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-20/286 files reviewed. 84 sites: 78 SAFE, 6 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+21/286 files reviewed. 87 sites: 80 SAFE, 7 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
