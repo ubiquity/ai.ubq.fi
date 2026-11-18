@@ -43,7 +43,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/rt/kv.hpp`
 - [x] `include/uos/rt/kv_js.hpp`
 - [x] `include/uos/rt/kv_sqlite.hpp`
-- [ ] `include/uos/rt/process.hpp`
+- [x] `include/uos/rt/process.hpp`
 - [ ] `include/uos/rt/sqlite.hpp`
 - [ ] `src/rt/fs.cpp`
 - [ ] `src/rt/kv.cpp`
@@ -284,6 +284,14 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | --- | --- | --- | --- |
 | 24-31,40-55,73-82 | SQLite KV owner and callback contract | **SAFE** | Each handle owns its state and joins the database worker on close. Clock and codec callables are value-owned, and codec views are used synchronously. Production enqueue keeps the shared KV in its caller frame. |
 
+### `include/uos/rt/process.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 45-56 | argv and ScopedArgv | **SAFE** | The vector has static storage and ScopedArgv owns the previous contents. Traced consumers use or copy arguments before starting asynchronous work. |
+| 84-118 | Signal listener and signal name views | **SAFE** | Listener copies own shared callable identity. Signal-name views refer to static strings, and notification takes a copied listener snapshot in the process event implementation. |
+| 126-168,211-225 | Spawn, pipe and Bun file façade | **SAFE** | Options and file path have owning storage. Subprocess and sink handles own their state. A file stream takes its own path and source state at construction. |
+
 
 ## Ranked defects and counts
 
@@ -449,4 +457,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-20/97 files reviewed. **DEFECT 7, SAFE 52, UNCLEAR 2.**
+21/97 files reviewed. **DEFECT 7, SAFE 55, UNCLEAR 2.**

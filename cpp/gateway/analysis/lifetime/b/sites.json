@@ -717,8 +717,38 @@
       ]
     },
     "include/uos/rt/process.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "45-56",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "argv and ScopedArgv",
+          "evidence": "The vector has static storage and ScopedArgv owns the previous contents. Traced consumers use or copy arguments before starting asynchronous work."
+        },
+        {
+          "lines": "84-118",
+          "verdict": "SAFE",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Signal listener and signal name views",
+          "evidence": "Listener copies own shared callable identity. Signal-name views refer to static strings, and notification takes a copied listener snapshot in the process event implementation."
+        },
+        {
+          "lines": "126-168,211-225",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "Spawn, pipe and Bun file fa\u00e7ade",
+          "evidence": "Options and file path have owning storage. Subprocess and sink handles own their state. A file stream takes its own path and source state at construction."
+        }
+      ]
     },
     "include/uos/rt/sqlite.hpp": {
       "reviewed": false,
