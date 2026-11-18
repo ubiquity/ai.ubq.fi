@@ -279,7 +279,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/authority_rpc.hpp`
 - [x] `include/uos/authority/contracts.hpp`
 - [x] `include/uos/authority/credential_publication.hpp`
-- [ ] `include/uos/authority/delivery_outbox.hpp`
+- [x] `include/uos/authority/delivery_outbox.hpp`
 - [ ] `include/uos/authority/durable_store.hpp`
 - [ ] `include/uos/authority/native_api_key.hpp`
 - [ ] `include/uos/authority/native_api_key_audit.hpp`
@@ -1552,6 +1552,12 @@ Reviewed the publication receiver and asynchronous verification interface.
 
 - L49, 54, 57, 64 **SAFE** · The awaited publication has a named publisher owner that retains the verifier and store. The verifier receives a copied publication value.
 
+### `include/uos/authority/delivery_outbox.hpp`
+
+Reviewed the outbox interfaces and their forwarding ownership.
+
+- L18, 20, 21, 24 **SAFE** · The synchronous methods copy the shared authority and handle into observation Tasks before returning, so the outbox can be released.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1800,4 +1806,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-171/286 files reviewed. 343 sites: 322 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+172/286 files reviewed. 344 sites: 323 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
