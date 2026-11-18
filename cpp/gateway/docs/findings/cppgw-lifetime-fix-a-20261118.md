@@ -37,7 +37,7 @@ completes, or record the precise pending work and last passing tree.
 
 | Audit ID and site | Verdict and reason | Commit | Regression or coverage |
 | --- | --- | --- | --- |
-| A-ABORT-OWNER (`src/rt/abort.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
+| A-ABORT-OWNER (`src/rt/abort.cpp`) | FIXED. `AbortController::abort` passed its member slot by reference into `signalAbort`. A listener could destroy that slot before the next once listener and final cleanup. Dispatch now owns the original signal. | This commit | `rt/abort_test`, a listener destroys the only controller. |
 | A-LOOP-TEARDOWN-OWNER (`src/rt/async.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-PROMISE-REACTION-CYCLE (`src/rt/async.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-PROMISE-GCC-AWAIT (`include/uos/rt/async.hpp`) | LEFT. Current-tree re-verification pending. | — | — |

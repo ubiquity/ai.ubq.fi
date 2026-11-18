@@ -78,7 +78,7 @@ namespace uos::rt {
       signal->sources.clear();
     }
 
-    void signalAbort(const std::shared_ptr<State>& signal, Reason reason) {
+    void signalAbort(std::shared_ptr<State> signal, Reason reason) {
       if (signal->aborted) return;
       signal->aborted = true;
       signal->reason = reason ? std::move(reason) : abortErrorReason();
