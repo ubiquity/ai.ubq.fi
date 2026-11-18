@@ -113,3 +113,30 @@ An isolated Clang 21.1.8 `-O2` scratch benchmark compared the original and migra
 | Boost.Process  |                   1.589 ms |             13,276 KiB |
 
 The median launch took 0.544 ms longer in this fixture. The direct application spawn callers are the offline KV tools and the Codex smoke tool.
+
+## Continuation on a fresh ARM64 runner
+
+The continuation started at `98d86c499b8f17fc24cf41c12eab73fdbc8e7cc0`, tree `436ea19474306ead366c973f7b9d223983ee46af`. The prior runner's build objects and terminal receipts were unavailable. Both process implementation files and `process_test.cpp` compiled on the starting tree with Clang 21.1.8, Boost 1.92.0 and `-std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion -Werror -DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING`. The continuation corrected the public header comment to describe native signal names. The production line count is 895.
+
+The full runs started at `9ad53dec9385811549fe7496e0e0ae9b5075ec96`, tree `f2607603c7f8a1a9013476a9eef35f286ae022bb`. Each run selects all 442 registered test binaries and compiles all 369 production sources, including the 44 runtime objects linked into every test. `python3 -B cpp/gateway/tools/links.py --check` resolved all 442 entries. The namespaces probe passed via passwordless sudo and drops fixture execution to the runner UID. The runs have two build jobs each on the four-core host. The driver logs per-object progress, test status and terminal receipts in scratch.
+
+The continuation used the same verified dependency archives and build settings. It staged all four Boost archives with `./b2 --user-config="$work/user-config.jam" -j2 toolset=gcc-14 cxxstd=20 variant=release link=static threading=multi --with-json --with-container --with-process --with-filesystem stage`. The ICU and SQLite install prefixes are under `/var/tmp`, which stays visible from the driver test namespaces and across a child's explicit environment replacement. The linker is mold 2.30.0.
+
+```sh
+work=/var/tmp/cppgw-std-process-resume
+boost="$work/boost_1_92_0"
+
+# Run once per profile in separate shells, with config=release and config=asan.
+flags="-isystem $boost --system-header-prefix=third_party/simdutf/"
+if [ "$config" = asan ]; then flags="$flags -gline-tables-only"; fi
+empty_home=$(mktemp -d "$work/$config-home.XXXXXX")
+private_tmp=$(mktemp -d "$work/$config-tmp.XXXXXX")
+env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$empty_home" TMPDIR="$private_tmp" LANG=C.UTF-8 \
+  CXX=/usr/bin/clang++-21 UOS_CI_JOBS=2 \
+  PKG_CONFIG_PATH="$work/icu78/lib/pkgconfig:$work/sqlite/lib/pkgconfig" \
+  UOS_CI_BUILD_DIR="$work/ci" UOS_CI_CXXFLAGS="$flags" \
+  UOS_CI_LDFLAGS="-L$boost/stage/lib -lboost_process -lboost_filesystem -Wl,--disable-new-dtags,-rpath,$work/icu78/lib:$work/sqlite/lib" \
+  bash cpp/gateway/tools/ci-build.sh --config "$config"
+```
+
+The same three owned translation units cross-compiled again with the strict macOS command above and the verified macOS 15.5 SDK. `file` identified all three outputs as Mach-O arm64 objects. The runner cannot execute Darwin binaries.
