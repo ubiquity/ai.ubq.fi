@@ -98,17 +98,20 @@ namespace uos::auth::local_development_key {
       signal.addEventListener("abort", onAbort, rt::AddEventListenerOptions{.once = true});
       std::optional<T> result;
       rt::Reason failure;
+      bool observed = false;
       try {
         if (signal.aborted()) onAbort();
         std::vector<rt::Promise<T>> racers;
         racers.push_back(operation);
         racers.push_back(aborted.promise);
         const rt::Promise<T> racing = rt::race(std::move(racers));
+        observed = true;
         result = co_await racing.wait();
       } catch (...) {
         failure = std::current_exception();
       }
       signal.removeEventListener("abort", onAbort);
+      if (observed) reject();
       if (failure) std::rethrow_exception(failure);
       co_return std::move(*result);
     }

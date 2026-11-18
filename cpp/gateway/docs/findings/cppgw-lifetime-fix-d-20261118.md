@@ -39,12 +39,12 @@ column identifies a source commit by its unique subject so the report can travel
 
 | Audit ID | Verdict | Commit | Test |
 | --- | --- | --- | --- |
-| `src/bounded_response_body.cpp:41` | LEFT · Pending re-verification. | | |
-| `src/responses_stream.cpp:287` | LEFT · Pending re-verification. | | |
-| `include/uos/optional_telemetry_queue.hpp:258` | LEFT · Pending re-verification. | | |
-| `src/auth/local_development_key.cpp:97` | LEFT · Pending re-verification. | | |
-| `src/sentinel/replay_retention_bootstrap.cpp:469` | LEFT · Pending re-verification. | | |
-| `src/health.cpp:306` | LEFT · Pending re-verification. | | |
+| `src/bounded_response_body.cpp:41` | FIXED · `abortableRead` settles its private abort latch after unregistering the listener, releasing each completed read result. | Settle private race losers | `bounded_response_body_test` measures retained 64 KiB chunks on a live loop. |
+| `src/responses_stream.cpp:287` | FIXED · `readWithDeadline` settles its private inactivity latch after unregistering the timeout listener. | Settle private race losers | `responses_stream_test` reads text, a 64 KiB comment and a terminal event before sampling allocations. |
+| `include/uos/optional_telemetry_queue.hpp:258` | FIXED · `waitForProgress` finishes the private timeout promise as it clears the timer. | Settle private race losers | `optional_telemetry_queue_differential_test` repeats successful writer waits and checks the existing timing traces. |
+| `src/auth/local_development_key.cpp:97` | FIXED · `awaitWithAbort` settles the observed private abort promise after detaching it. The pricing work stays observed if the abort wins. | Settle private race losers | `local_development_key_test` provisions fresh in-memory stores and measures retained allocations. |
+| `src/sentinel/replay_retention_bootstrap.cpp:469` | FIXED · `settledWithin` resolves the private wait after clearing its timer and before delivering the original result. | Settle private race losers | `sentinel_replay_retention_test` repeats completed owner fills against fresh in-memory stores. |
+| `src/health.cpp:306` | FIXED · `probeUpstreamCoalesced` settles the private timeout promise when clearing the timer and the coalescing slot. | Settle private race losers | `health_test` checks one configured mock probe and measures the health timer across repeated unconfigured probes. |
 | `src/serve.cpp:123` | LEFT · Pending re-verification. | | |
 | `src/models/openrouter_models.cpp:158` | LEFT · Pending re-verification. | | |
 | `src/admin/codex.cpp:207` | LEFT · Pending re-verification. | | |
@@ -71,5 +71,11 @@ column identifies a source commit by its unique subject so the report can travel
 
 ## Verification and handoff
 
-The audit records zero UNCLEAR rows. Pending results and out-of-area ownership will be recorded here as each
-source unit is checked.
+The audit records zero UNCLEAR rows. In the integrated `rt::race` implementation, each pending source still owns
+a reaction that holds the combined result. Cleanup at all six sites removed the callback able to settle a private
+source. The new tests sample ASan's live allocation count before the loop is destroyed. The loop's teardown
+otherwise removes pending reactions and can leave LeakSanitizer clean even after a long-running process retains
+memory. The checked behavior includes the first event, inactivity, timeout and abort results and the existing
+microtask traces. The six race changes affect 218 of 450 link closures. Strict Clang 21.1.8 syntax checks passed
+for the 12 changed or instantiating source and test translation units. Release and sanitizer link and run gates
+are pending.
