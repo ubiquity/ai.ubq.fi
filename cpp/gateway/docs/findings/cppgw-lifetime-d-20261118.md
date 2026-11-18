@@ -308,7 +308,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_paid_policy.hpp`
 - [x] `include/uos/authority/native_principal_contracts.hpp`
 - [x] `include/uos/authority/native_runtime_contracts.hpp`
-- [ ] `include/uos/bounded_response_body.hpp`
+- [x] `include/uos/bounded_response_body.hpp`
 - [ ] `include/uos/catalog/index.hpp`
 - [ ] `include/uos/catalog/models.hpp`
 - [ ] `include/uos/catalog/promotion.hpp`
@@ -1722,6 +1722,12 @@ Reviewed runtime, routing and retained-history verifier interfaces.
 
 - L188, 189, 191, 193, 201 **SAFE** · The parent State retains all verifier callables, and arguments are passed by value. The method name views refer to static literals.
 
+### `include/uos/bounded_response_body.hpp`
+
+Reviewed the bounded body API and its response/signal options. The abandoned abort loser is classified at the race in the implementation.
+
+- L45, 49 **SAFE** · The reader takes Response and options by value, so input handles survive while its Task awaits chunks.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1970,4 +1976,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-200/286 files reviewed. 371 sites: 350 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+201/286 files reviewed. 372 sites: 351 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

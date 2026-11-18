@@ -8322,8 +8322,22 @@
       ]
     },
     "include/uos/bounded_response_body.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the bounded body API and its response/signal options. The abandoned abort loser is classified at the race in the implementation.",
+      "sites": [
+        {
+          "lines": [
+            45,
+            49
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The reader takes Response and options by value, so input handles survive while its Task awaits chunks."
+        }
+      ]
     },
     "include/uos/catalog/index.hpp": {
       "reviewed": false,
