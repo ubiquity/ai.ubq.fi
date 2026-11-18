@@ -320,7 +320,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/defaults.hpp`
 - [x] `include/uos/handler/admission.hpp`
 - [x] `include/uos/handler/http.hpp`
-- [ ] `include/uos/handler/index.hpp`
+- [x] `include/uos/handler/index.hpp`
 - [ ] `include/uos/handler/serve_handler.hpp`
 - [ ] `include/uos/handler/terminal_log.hpp`
 - [ ] `include/uos/handler/terminal_route.hpp`
@@ -1792,6 +1792,13 @@ Reviewed delivery completion, background registration, principal resolution and 
 - L23, 29, 37, 40 **SAFE** · The delivery metadata owns its Promise handle. The registrar receives a Promise copy synchronously. The runtime owns the registrar slot and the scheduled task has independent ownership obligations.
 - L54, 66, 68, 81, 95, 97, 100 **SAFE** · Principal inputs are passed by value and route normalization consumes borrowed text inline. Kind and header names refer to static literals.
 
+### `include/uos/handler/index.hpp`
+
+Reviewed the inline agent route table and its coroutine lambda.
+
+- L18, 23, 24, 25, 26, 28, 29, 32, 33 **SAFE** · The route table is immutable process storage. Its only coroutine lambda is captureless, and its frame owns the Request and both awaited results.
+- L36, 38 **SAFE** · The request and delivery or upgrade data pass by value into their handler frames.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2040,4 +2047,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-212/286 files reviewed. 384 sites: 363 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+213/286 files reviewed. 386 sites: 365 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
