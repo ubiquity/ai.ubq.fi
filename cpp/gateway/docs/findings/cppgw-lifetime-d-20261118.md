@@ -289,7 +289,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_authority_codex.hpp`
 - [x] `include/uos/authority/native_authority_contracts.hpp`
 - [x] `include/uos/authority/native_authority_kernel.hpp`
-- [ ] `include/uos/authority/native_authority_paid.hpp`
+- [x] `include/uos/authority/native_authority_paid.hpp`
 - [ ] `include/uos/authority/native_authority_principals.hpp`
 - [ ] `include/uos/authority/native_authority_rpc.hpp`
 - [ ] `include/uos/authority/native_authority_runtime.hpp`
@@ -1610,6 +1610,12 @@ Reviewed kernel command interfaces and their borrowed State members.
 
 - L8, 9, 10, 22 **SAFE** · The enclosing authority State owns SQL, API and initial settings for the duration of each synchronous kernel operation.
 
+### `include/uos/authority/native_authority_paid.hpp`
+
+Reviewed paid accounting and reconciliation interfaces and their borrowed dependencies.
+
+- L10, 11, 36 **SAFE** · The enclosing authority State owns SQL and API, and paid commands consume their borrowed arguments within synchronous storage transactions.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1858,4 +1864,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-181/286 files reviewed. 352 sites: 331 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+182/286 files reviewed. 353 sites: 332 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

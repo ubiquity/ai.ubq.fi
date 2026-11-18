@@ -7873,8 +7873,23 @@
       ]
     },
     "include/uos/authority/native_authority_paid.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed paid accounting and reconciliation interfaces and their borrowed dependencies.",
+      "sites": [
+        {
+          "lines": [
+            10,
+            11,
+            36
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The enclosing authority State owns SQL and API, and paid commands consume their borrowed arguments within synchronous storage transactions."
+        }
+      ]
     },
     "include/uos/authority/native_authority_principals.hpp": {
       "reviewed": false,
