@@ -8410,8 +8410,52 @@
       ]
     },
     "include/uos/catalog/store.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed catalog KV borrows, refresh lease callbacks and parser views.",
+      "sites": [
+        {
+          "lines": [
+            23
+          ],
+          "kinds": [
+            "b"
+          ],
+          "verdict": "SAFE",
+          "detail": "The body parser consumes a view synchronously, then returns an owning JSON object."
+        },
+        {
+          "lines": [
+            26,
+            39,
+            43,
+            45,
+            55,
+            57,
+            59,
+            61
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The request or refresh Task retains the KV handle and directly awaits the helpers that borrow it. Each helper owns version, owner and input values."
+        },
+        {
+          "lines": [
+            49,
+            50
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The refresh state retains both the heartbeat controller and the shared KV context until the stop Task has drained renewal."
+        }
+      ]
     },
     "include/uos/catalog/types.hpp": {
       "reviewed": false,

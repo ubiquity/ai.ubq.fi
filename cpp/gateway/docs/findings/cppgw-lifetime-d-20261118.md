@@ -312,7 +312,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/catalog/index.hpp`
 - [x] `include/uos/catalog/models.hpp`
 - [x] `include/uos/catalog/promotion.hpp`
-- [ ] `include/uos/catalog/store.hpp`
+- [x] `include/uos/catalog/store.hpp`
 - [ ] `include/uos/catalog/types.hpp`
 - [ ] `include/uos/config.hpp`
 - [ ] `include/uos/debug_routing.hpp`
@@ -1747,6 +1747,14 @@ Reviewed the catalog promotion boundary.
 
 - L20 **SAFE** · The promotion Task owns its shared KV and promotion input from creation through commit.
 
+### `include/uos/catalog/store.hpp`
+
+Reviewed catalog KV borrows, refresh lease callbacks and parser views.
+
+- L23 **SAFE** · The body parser consumes a view synchronously, then returns an owning JSON object.
+- L26, 39, 43, 45, 55, 57, 59, 61 **SAFE** · The request or refresh Task retains the KV handle and directly awaits the helpers that borrow it. Each helper owns version, owner and input values.
+- L49, 50 **SAFE** · The refresh state retains both the heartbeat controller and the shared KV context until the stop Task has drained renewal.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1995,4 +2003,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-204/286 files reviewed. 376 sites: 355 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+205/286 files reviewed. 379 sites: 358 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
