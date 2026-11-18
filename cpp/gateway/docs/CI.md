@@ -4,12 +4,11 @@
 
 ## Ubuntu prerequisites
 
-On Ubuntu 24.04 or newer:
+On Ubuntu 24.04, prepare Clang 21 or newer from apt.llvm.org or use GCC 14 or newer. Build Boost 1.92.0 JSON and Container and ICU 78.3 from their upstream sources. The distribution's Boost and ICU are older than those used by the ARM64 fixtures. For the other dependencies:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y g++-14 clang llvm ninja-build pkg-config libboost-json-dev libboost-container-dev \
-  libssl-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev util-linux
+sudo apt-get install -y ninja-build pkg-config libssl-dev zlib1g-dev libbrotli-dev libzstd-dev util-linux
 # Optional faster linker, detected automatically on Linux:
 sudo apt-get install -y mold
 ```
@@ -108,7 +107,7 @@ The C++ gateway workflow runs on pushes to `claude/cpp-gateway-port`, `pool-merg
 
 Each suite shard has a 240-minute job limit and four workers. It builds the production objects and vendors, then links and runs its share of the sorted test inventory. The `ci-<config>-shard-<i>` artifact contains the job summary and any `receipt.json`, `results.tsv`, and driver, compiler, namespace, link and run logs. The summary counts successful links, passed and failed targets, and reported cases. It lists unsuccessful targets, including build failures and timeouts.
 
-Both configurations split the current inventory into 111, 110, 110 and 110 tests. ASan shard 1 built and ran all 111 binaries on four x86_64 cores. The two build segments and the test run accounted for about 62 minutes of recorded work, excluding the interruption. The measurement supports four sanitizer shards under the 240-minute job limit. The local run recorded 107 passes and four existing fixture failures. [Sanitizer receipt and timings](findings/cppgw-ci-sanitizers-20261118.md#asan-shard-1-receipt)
+Both configurations split the stage 2a inventory into 111, 111, 111 and 110 tests. All four Release shards and a focused sanitizer selection passed on Linux ARM64. An earlier ASan shard built and ran 111 binaries on four x86_64 cores. The two build segments and the test run accounted for about 62 minutes, with 107 passes and four fixture failures before suite repair. [Stage 2a results](findings/cppgw-integrate-s2a-20261118.md) · [Earlier sanitizer receipt](findings/cppgw-ci-sanitizers-20261118.md#asan-shard-1-receipt)
 
 The robustness matrix uses all entries in `fuzz/targets.json`. The discovery job publishes the selected targets. Each harness job has a 120-minute limit and runs libFuzzer with four workers in a private Linux network namespace, using a fresh home and temporary directory and a credential-free environment. The `fuzz-<target>` artifact contains its build and campaign logs, summary, and any finding inputs. Slow `regex` inputs and the empty crash artifact from the known ARM64 libFuzzer fork-parent exit leak stay in the evidence and are counted separately. Genuine findings and incomplete campaigns fail the job.
 

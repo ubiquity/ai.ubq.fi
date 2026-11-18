@@ -3,10 +3,10 @@
 Oracle: ws 8.18.3 (the version `package.json` pins) running under Bun 1.4.0, which is
 what `src/runtime/websocket.ts` loads. Headers: `uos/rt/websocket.hpp` (namespace
 `uos::rt::ws`, mirroring the npm package) and `uos/runtime/websocket.hpp` (the port of
-`src/runtime/websocket.ts`). Implementation: `src/rt/websocket{,_frame,_socket,_client}.cpp`,
-a line-for-line port of ws's `lib/*.js` plus the node:net / node:http behaviour ws
-relies on. Every expected value in `tests/rt/websocket_test.cpp` was recorded from ws
-under Bun (section 7).
+`src/runtime/websocket.ts`). The implementation in `src/rt/websocket{,_frame,_socket,_client}.cpp`
+uses Boost.Beast for masking, handshake primitives, and received UTF-8 validation.
+The gateway's adapter owns the transport and event lifecycle. The original expectations
+in `tests/rt/websocket_test.cpp` came from ws under Bun (section 7). [Runtime deviations](../DEVIATIONS-FROM-BUN.md#websocket)
 
 ## 1. What the TypeScript uses (the mandatory surface)
 
@@ -149,12 +149,12 @@ path>` the socket path ends at the first ":" and the request path at the next on
   after which the socket stays CONNECTING until terminated. `handshakeTimeout` is an
   idle timer (it restarts on socket activity, as socket.setTimeout does) that stops once
   a response head arrived.
-- Frames: client frames masked with keys from an 8 KiB random pool (rt::crypto, so
-  `ScopedRandomSource` controls them), server frames unmasked, 7/16/64-bit lengths,
-  continuation frames reassembled with control frames in between, text and close
-  reasons validated as UTF-8 (1007), `maxPayload` checked against the running message
-  total from each frame header before its payload arrives (1009), every receiver error
-  with ws's text, `code` and close status; data after a close frame is ignored.
+- Frames: client masking keys come from Beast's secure generator. The transport
+  uses 7/16/64-bit lengths and reassembles continuations across interleaved control
+  frames. Received text and close reasons always require valid UTF-8 (1007).
+  The receiver checks `maxPayload` against the running message total from each
+  frame header before its payload arrives (1009). It preserves error codes and close
+  statuses and ignores data after a close frame.
 - Close: ws's handshake (echo, then FIN once both close frames passed; 30 s close timer,
   then destroy), codes 1005 (no status) and 1006 (no close frame), `close()` validation
   with readyState already CLOSING when it throws, `wasClean`, messages still delivered
