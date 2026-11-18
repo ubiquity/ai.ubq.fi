@@ -350,7 +350,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/lib/jev_compaction/state.hpp`
 - [x] `include/uos/lib/jev_compaction/types.hpp`
 - [x] `include/uos/metered_quota.hpp`
-- [ ] `include/uos/models/catalog.hpp`
+- [x] `include/uos/models/catalog.hpp`
 - [ ] `include/uos/models/codex_models.hpp`
 - [ ] `include/uos/models/codex_models_availability.hpp`
 - [ ] `include/uos/models/codex_models_fetch.hpp`
@@ -1974,6 +1974,12 @@ Reviewed quota cache options, callbacks and KV/history API boundaries.
 - L150, 152, 156, 162, 163, 175, 180, 184, 185, 198, 199, 201, 202, 204, 205 **SAFE** · The quota Tasks own credential and option snapshots. Fetch and KV are retained handles, and injected time and lease callbacks are invoked synchronously.
 - L214, 225, 234, 235, 237, 238, 240, 241 **SAFE** · History and diagnostics Tasks own their options, state and any shared KV handles through settlement.
 
+### `include/uos/models/catalog.hpp`
+
+Reviewed public catalog, model capability and snapshot interfaces.
+
+- L47, 48, 50, 51 **SAFE** · Optional requests are transferred by value and all other entry points construct their own snapshot state.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2222,4 +2228,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-242/286 files reviewed. 417 sites: 395 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+243/286 files reviewed. 418 sites: 396 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
