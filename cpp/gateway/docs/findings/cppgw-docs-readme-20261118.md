@@ -22,6 +22,52 @@ verified Markdown and relative-link check, `git diff --check`, and a complete fi
 The suite-repair report records 441 Release binaries and 5,031 cases passed on Linux ARM64 at the last source/test
 commit, `380a9b0a19fca261c910967ee24078f1b22aec9a`. [Suite-repair receipts](cppgw-suite-repair-20261118.md)
 
+## Runner and commands
+
+The runner had four CPUs, Clang 21.1.8, Ninja 1.13.2, mold 2.40.4, Boost 1.90.0, OpenSSL 3.5.5, zlib 1.3.1,
+ICU 78.2, Brotli 1.2.0 and Zstd 1.5.7. The [owner guide](../../README.md) records the apt and pinned SQLite
+commands run here. The SQLite archive matched the published SHA-256. `pkg-config --modversion sqlite3` printed
+`3.54.0`, the shared library in the test environment reported `3.54.0` with `DQS=3` compiled in, and the CLI
+query below printed `3.54.0|double quoted string`.
+
+```sh
+/usr/local/bin/sqlite3 :memory: 'select sqlite_version(), "double quoted string";'
+bash cpp/gateway/tools/ci-build.sh --list | wc -l
+```
+
+The unprivileged namespace probe failed at `uid_map`. The portable driver used its `sudo -n` fallback and
+dropped back to the runner uid for each test. Its kernel controls proved loopback connectivity and no outbound
+route. It supplied a fresh empty home and temp directory and used the fixture environment allowlist.
+
+```sh
+build_dir=$(mktemp -d /tmp/uos-gateway-build.XXXXXX)
+env -i PATH="$PATH" LC_ALL=C LD_LIBRARY_PATH=/usr/local/lib CXX=clang++ UOS_CI_JOBS=4 \
+  UOS_CI_BUILD_DIR="$build_dir" bash cpp/gateway/tools/ci-build.sh --config release >"$build_dir/driver.log" 2>&1
+```
+
+The build directory was `/tmp/uos-gateway-build.SuKRVT`, with the driver receipt and logs under
+`clang++-4ab551e14be2/release/`. The driver digest covers the compiled sources, tests and driver inputs.
+
+## Launch command check
+
+The portable driver compiles the service modules and builds standalone tests. For a separate launch preflight,
+the scratch probe compiled `runtime/startup.cpp` and `entrypoints/gateway.cpp` with the driver's generated Clang
+Release flags and linked them with all 369 production objects, both vendor archives and the same host libraries.
+It copied the launcher next to the scratch `bin/uos-gateway` and used the driver's real isolation helper. The
+manifest used an intentionally wrong package-manifest hash, an empty private state directory and port 0.
+
+```sh
+env -i PATH="$PATH" LC_ALL=C LD_LIBRARY_PATH=/usr/local/lib python3 -B \
+  /tmp/cppgw-guide-format.8FaOcD/launch-probe.py cpp/gateway /tmp/uos-gateway-build.SuKRVT/clang++-4ab551e14be2/release
+```
+
+The probe executed `bash "$package_root/ops/launch-native.sh" "$launch_manifest"` with the two scratch paths.
+The executable SHA-256 was `6905eb378fac21994c107309ca5e1686b2a104846ca8f2d098989b8ed92a9345`. The process
+exited 1 with `Native startup refused: package manifest integrity check failed` and the private `.data` stayed
+empty. The control printed `loopback: true` and `outside_errno: 101`. This verifies the command and the early
+integrity check on x64. The prior sealed ARM64 package's paired smoke supplies successful startup, authenticated
+request, reopen and shutdown evidence. [Launcher](../../ops/launch-native.sh) · [Smoke results](../PERFORMANCE.md)
+
 ## Documentation discrepancies
 
 - **JSON implementation.** `BUILD.md`, `RUNTIME.md`, `OPEN-STAGES.md`, the replacement plan and `PERFORMANCE.md`

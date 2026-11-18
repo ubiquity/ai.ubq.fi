@@ -1,7 +1,7 @@
 # Native C++ gateway
 
-This is a C++20 port of the TypeScript gateway that runs on Bun. It serves the same gateway APIs, including OpenAI
-Chat Completions and Responses, using compiled C++ and native libraries. The port preserves wire formats, status
+The native gateway runs compiled C++20. It ports the repository's TypeScript gateway, which runs on Bun, and serves
+the same gateway APIs, including OpenAI Chat Completions and Responses. The port preserves wire formats, status
 codes, stored data, authentication, validation and accounting as application contracts. Generic operations use
 standard or mature open-source libraries where they meet those contracts, including the required security checks.
 Differences in diagnostic wording are expected. [TypeScript source](../../src/) ·
@@ -83,9 +83,9 @@ build profile. [Build and test entry points](docs/BUILD.md) · [Verification rep
 ## Run a sealed Linux ARM64 package
 
 Prepare the ARM64 package for the target's host libraries using the native build and packaging instructions. Set
-`package_root` to its absolute path and `launch_manifest` to the absolute path of the owner-private JSON. The manifest binds the package and
-native KV provenance hashes, the private state root and the loopback listener. Normal startup needs an existing
-private `.data/kv-bun.sqlite3` with the Bun codec marker in that state root. The isolated package smoke guide
+`package_root` to its absolute path and `launch_manifest` to the absolute path of the owner-private JSON. The
+manifest binds the package and native KV provenance hashes, the private state root and the loopback listener.
+Normal startup needs an existing private `.data/kv-bun.sqlite3` with the Bun codec marker in that state root. The isolated package smoke guide
 describes the separate fixture mode with fresh state and a scripted upstream. [Package instructions](docs/RUNTIME.md) ·
 [Launch schema](runtime/launch-schema.json) · [Package smoke](tests/production_smoke/README.md)
 
@@ -93,8 +93,10 @@ describes the separate fixture mode with fresh state and a scripted upstream. [P
 bash "$package_root/ops/launch-native.sh" "$launch_manifest"
 ```
 
-The real launch command is part of the recorded paired ARM64 package smoke. The current operator files are an
-uninstalled draft. The candidate binds to `127.0.0.1` and refuses service ports `7999` and `8000`.
+The x64 runner exercised this command against the compiled entry point in isolation. It exited `1` with
+`package manifest integrity check failed` for an intentionally wrong hash. The recorded paired ARM64 package smoke
+supplies the successful startup evidence. The current operator files are an uninstalled draft. The candidate binds
+to `127.0.0.1` and refuses service ports `7999` and `8000`. [Launch probe](docs/findings/cppgw-docs-readme-20261118.md) ·
 [Smoke results](docs/PERFORMANCE.md) · [Operations draft](ops/README.md)
 
 ### Configuration
