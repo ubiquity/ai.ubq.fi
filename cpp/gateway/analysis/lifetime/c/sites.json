@@ -1098,8 +1098,16 @@
       ]
     },
     "include/uos/provider/capacity_contract.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Capacity observation and configuration types.",
+      "sites": [
+        {
+          "lines": "291-300",
+          "kind": "callback interface",
+          "verdict": "SAFE",
+          "reason": "The snapshot options own their fetch, clock and lease owner callable objects; invocation lifetimes are traced in capacity.cpp."
+        }
+      ]
     },
     "include/uos/provider/capacity_events.hpp": {
       "status": "pending",
