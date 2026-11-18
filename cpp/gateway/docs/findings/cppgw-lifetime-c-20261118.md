@@ -188,7 +188,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/account_routing.cpp`
 - [x] `src/codex/auth.cpp`
 - [x] `src/codex/auth_refresh.cpp`
-- [ ] `src/codex/auth_repair.cpp`
+- [x] `src/codex/auth_repair.cpp`
 - [ ] `src/codex/banked_reset.cpp`
 - [ ] `src/codex/banked_reset_claim.cpp`
 - [ ] `src/codex/banked_reset_pool.cpp`
@@ -1194,3 +1194,9 @@ Refresh routing uses owned account snapshots and shares work while aborting only
 - 535-548 · abort listener ownership cycle · **DEFECT** · While shared refresh is pending, the signal owns its listener and the listener owns the same signal. Teardown before settlement or abort discards the finalizer without breaking that edge. Capture a weak signal state in the once listener and use the settled signal reason while the state is locked.
 - 538,543-549 · executor and sibling lifetime · **SAFE** · newPromise calls its executor synchronously, and the abort race passes only owning promise values. Its shared-work finalizer owns the exact listener identity to remove on settlement.
 - 554-608 · stateless refresh and single-flight finalizer · **SAFE** · Request and auth inputs are frame-owned. The hash-map value is copied before waiting and the registered eraser owns the account ID.
+
+### `src/codex/auth_repair.cpp`
+
+Repair plans and records are built synchronously.
+
+- 25,30-48,286-316 · synchronous view and callbacks · **SAFE** · The result outcome view refers to a static literal, and the sort and expiry predicates finish before their captured or pointed-to inputs leave scope.

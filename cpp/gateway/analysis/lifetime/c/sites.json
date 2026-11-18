@@ -1756,8 +1756,16 @@
       ]
     },
     "src/codex/auth_repair.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Repair plans and records are built synchronously.",
+      "sites": [
+        {
+          "lines": "25,30-48,286-316",
+          "kind": "synchronous view and callbacks",
+          "verdict": "SAFE",
+          "reason": "The result outcome view refers to a static literal, and the sort and expiry predicates finish before their captured or pointed-to inputs leave scope."
+        }
+      ]
     },
     "src/codex/banked_reset.cpp": {
       "status": "pending",
