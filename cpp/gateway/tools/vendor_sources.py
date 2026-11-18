@@ -10,7 +10,11 @@ from typing import NamedTuple
 
 GATEWAY = Path(__file__).resolve().parents[1]
 REGISTRY = Path("cmake/vendors.json")
-SOURCES = {"simdutf": ("simdutf.cpp",), "simdjson": ("simdjson.cpp",), "llhttp": ("llhttp.c", "api.c", "http.c")}
+SOURCES = {
+    "llhttp": ("llhttp.c", "api.c", "http.c"),
+    "simdjson": ("simdjson.cpp",),
+    "simdutf": ("simdutf.cpp",),
+}
 SIMDJSON_HEADER = "third_party/simdjson/simdjson.h"
 VENDOR_MANIFESTS = {
     "llhttp": "b9b8ae35e0b43ea291899360441bf4b6e4acf5942253118158c0d95fe1c9b8eb",
@@ -22,10 +26,13 @@ STRICT_WARNINGS = {"-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror"}
 
 class Library(NamedTuple):
     name: str
-    source: str
+    sources: tuple[str, ...]
     consumers: tuple[str, ...]
     inputs: tuple[str, ...]
-    additional_sources: tuple[str, ...]
+
+    @property
+    def source(self):
+        return self.sources[0]
 
     @property
     def target(self):
@@ -49,8 +56,8 @@ def selected(root=GATEWAY):
         directory = Path("third_party") / name
         provenance = directory / "PROVENANCE.md"
         manifest = directory / "SHA256SUMS"
-        source_filename, *additional_sources = SOURCES[name]
-        filenames = {*SOURCES[name], name + ".h", "LICENSE"}
+        sources = SOURCES[name]
+        filenames = {*sources, name + ".h", "LICENSE"}
         entries = {}
         manifest_bytes = (root / manifest).read_bytes()
         if hashlib.sha256(manifest_bytes).hexdigest() != VENDOR_MANIFESTS[name]:
@@ -74,8 +81,7 @@ def selected(root=GATEWAY):
                 if hashlib.file_digest(handle, "sha256").hexdigest() != expected:
                     raise ValueError("Supplied vendor input bytes differ: " + str(relative))
             inputs.append(relative.as_posix())
-        yield Library(name, (directory / source_filename).as_posix(), tuple(consumers), tuple(inputs),
-                      tuple((directory / filename).as_posix() for filename in additional_sources))
+        yield Library(name, tuple((directory / source).as_posix() for source in sources), tuple(consumers), tuple(inputs))
 
 
 def required(libraries, sources, targets=()):
@@ -101,13 +107,13 @@ def main(args):
         for library in libraries:
             args = [library.name, library.source, *library.consumers]
             print("uos_register_vendor(" + " ".join('"' + value + '"' for value in args) + ")")
-            if library.additional_sources:
-                additional = " ".join('"' + source + '"' for source in library.additional_sources)
-                print(f"target_sources({library.target} PRIVATE {additional})")
-                print(f"set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS {additional})")
+            if len(library.sources) > 1:
+                extra = " ".join('"' + source + '"' for source in library.sources[1:])
+                print(f'target_sources("{library.target}" PRIVATE {extra})')
+                print(f'set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS {extra})')
     elif args[0] == "unit":
         print(" ".join(sorted(simdjson_consumers(libraries))))
-        print(" ".join(source for lib in required(libraries, args[1:]) for source in (lib.source, *lib.additional_sources)))
+        print(" ".join(source for lib in required(libraries, args[1:]) for source in lib.sources))
     else:
         raise ValueError("Expected cmake or unit")
 
