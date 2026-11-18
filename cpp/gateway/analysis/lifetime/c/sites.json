@@ -3361,8 +3361,16 @@
       ]
     },
     "src/provider/capacity_history.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "History scan and recovery use copied snapshots.",
+      "sites": [
+        {
+          "lines": "183-205,320-339,357-385",
+          "kind": "row scan, event persistence and recovery",
+          "verdict": "SAFE",
+          "reason": "Store, iterator, snapshots and event lists remain local across the joined operations, and source pointers are used only against live local data."
+        }
+      ]
     },
     "src/provider/capacity_parse.cpp": {
       "status": "pending",
