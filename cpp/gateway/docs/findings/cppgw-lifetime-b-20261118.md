@@ -123,7 +123,192 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 
 ## Tooling and verification
 
-Initial checkpoint. Manual review and tool verification are pending.
+The completed scope is 50 translation units and 47 headers. The grep pass produced 919
+matching lines and 41 lines of multiline lambda candidates, including comments and
+syntactic matches. The report covers all 443 non-line-comment `co_await` lines and all
+66 clang-tidy diagnostics. A site row can group related source locations.
+
+### Runner and dependencies
+
+Ubuntu 24.04 ARM64, Clang and clang-tidy 21.1.8 from apt.llvm.org, Boost 1.92.0 static
+JSON and Container, ICU 78.3, SQLite 3.54.0 with `SQLITE_DQS=3`, OpenSSL 3.0.13, zlib 1.3,
+Brotli 1.1.0 and Zstd 1.5.5. The setup logs and archives are outside the checkout under
+`/tmp/cppgw-lifetime-b-20261118`. The SQLite archive matched the CI guide's SHA-256.
+[CI build guide](../CI.md#ubuntu-prerequisites)
+
+```sh
+sudo -n apt-get -o Acquire::Retries=1 -o Acquire::https::Timeout=20 update -qq
+sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clang-21 clang-tidy-21 ninja-build pkg-config libssl-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev util-linux mold python3-yaml
+
+# In the extracted Boost, SQLite and ICU source directories, respectively.
+./bootstrap.sh --with-libraries=json,container --prefix=/usr/local
+./b2 -j2 --with-json --with-container cxxflags=-fPIC variant=release link=static stage
+sudo -n ./b2 -j2 --with-json --with-container cxxflags=-fPIC variant=release link=static install
+
+./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'
+make -j1
+sudo -n make install
+sudo -n ldconfig
+
+# In ICU's source/ directory.
+./runConfigureICU Linux --prefix=/usr/local --disable-tests --disable-samples
+make -j1
+sudo -n make install
+sudo -n ldconfig
+pkg-config --modversion openssl sqlite3 zlib icu-uc libbrotlidec libzstd
+```
+
+### Candidate selection and clang-tidy
+
+Run from the repository root using Bash. The explicit check configuration avoids 11
+unknown-check warnings that the repository-wide configuration emits on LLVM 21.
+The five selected checks parsed all 50 units successfully in 88.768 s with three jobs
+and a maximum process RSS of 516,148 KiB. Seven diagnostics flag capturing coroutine
+closures and 59 flag reference parameters. Each is mapped to a manually reviewed
+site. The other three checks emitted zero diagnostics. Native Linux preprocessing
+covers the compiled branches, with fallback and Darwin paths reviewed in source.
+
+```bash
+audit=/tmp/cppgw-lifetime-b-20261118
+mkdir -p "$audit"
+isolated=$(mktemp -d "$audit/scan.XXXXXX")
+mkdir "$isolated/home" "$isolated/tmp"
+(
+  cd cpp/gateway
+  mapfile -t paths < <(python3 -B -c 'import json; print(*json.load(open("analysis/lifetime/b/sites.json"))["files"], sep="\n")')
+  rg -n -e '\bco_(await|return|yield)\b' -e '\b(?:spawn|co_spawn|rt::(?:all|allSettled|race|any))\s*\(' \
+    -e '\[this\b|\b(?:setTimeout|setInterval|addEventListener|queueMicrotask|async_\w+)\b|\.(?:then|catch_|finally_|once)\s*\(' \
+    -- "${paths[@]}" > "$audit/candidates.txt"
+  rg -n -U '\[[^]\n]+\][^{};\n]*\{(?:[^{}]|\{[^{}]*\}){0,800}\bco_(?:await|return|yield)\b' \
+    -- "${paths[@]}" > "$audit/lambda-candidates.txt"
+)
+cat > "$isolated/area-b.clang-tidy" <<'YAML'
+InheritParentConfig: false
+Checks: '-*,cppcoreguidelines-avoid-capturing-lambda-coroutines,cppcoreguidelines-avoid-reference-coroutine-parameters,misc-coroutine-hostile-raii,bugprone-dangling-handle,bugprone-use-after-move'
+WarningsAsErrors: ''
+HeaderFilterRegex: '(^|/)cpp/gateway/(include|src)/'
+SystemHeaders: false
+CheckOptions:
+  bugprone-dangling-handle.HandleClasses: 'std::basic_string_view;std::span'
+  misc-coroutine-hostile-raii.RAIITypesList: 'std::lock_guard;std::scoped_lock;std::unique_lock;std::shared_lock'
+YAML
+mapfile -t sources < <(python3 -B -c 'import json; print(*(p for p in json.load(open("cpp/gateway/analysis/lifetime/b/sites.json"))["files"] if p.endswith(".cpp")), sep="\n")')
+selection=()
+for file in "${sources[@]}"; do selection+=(--source "$file"); done
+env -i PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C HOME="$isolated/home" TMPDIR="$isolated/tmp" \
+  bash cpp/gateway/tools/tidy.sh --compiler clang++-21 --jobs 3 \
+  --config "$isolated/area-b.clang-tidy" --build-dir "$isolated/tidy" "${selection[@]}"
+```
+
+The tidy receipt is bound to commit `c8c624a1e86f52d38d20694270c1d0eecf634e0f`,
+tree `7320034f242f648c8fac04bc3b4914a633461ae9`, and original input SHA-256
+`c01302fbaeaa1016b240853a5a096a717c2c109144bb7c7e850be93cb3e29b54`.
+The lexical scan produced candidates for inspection. Analyzer coverage alone cannot
+establish coroutine ownership on a path the analyzer does not model.
+
+### Local sanitizer gates
+
+The driver built all 369 production translation units with Clang ASan and UBSan.
+Its fixture boundary provided isolated loopback, an empty home, a fresh tmpfs working
+directory, no provider variables, and leak detection. Tests used local fixtures and mocks.
+
+| Driver selection | Binaries passed | Cases passed | Wall time |
+| --- | ---: | ---: | ---: |
+| `runtime_http` | 8 | 49 | 1,151.409 s |
+| `tests/kernel_quota` | 5 | 53 | 41.161 s |
+| `tests/worker_boundary_test.cpp` | 1 | 6 | 21.829 s |
+| `tests/rt/kv` | 4 | 85 | 68.678 s |
+| `tests/runtime_websocket` | 1 | 2 | 12.553 s |
+| `tests/storage_` | 3 | 39 | 34.531 s |
+| `--shard 1/4 tests/cache_` | 1 | 31 | 11.876 s |
+| **Total** | **23** | **265** | |
+
+The first run was cold and spent 1,125.515 s compiling objects. It recorded the same
+commit and tree as clang-tidy. The six later runs recorded commit
+`ed4e179da3036686f7f874fefdb2f6d172493fd6` and tree
+`38209bd1c35325562caa183e5f3d648eb1637a96`. All seven receipts agree on driver input
+SHA-256 `4487834eff106fc599066c9688b3f5231e9a6df888d521efe898af1aac6d3aa0`.
+An attempted filter of `tests/native_kv` selected zero tests. The corrected
+`tests/storage_` selection includes the native KV differential fixture.
+
+```bash
+audit=/tmp/cppgw-lifetime-b-20261118
+isolated=$(mktemp -d "$audit/asan-env.XXXXXX")
+mkdir "$isolated/home" "$isolated/tmp"
+run_asan() {
+  env -i PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C HOME="$isolated/home" TMPDIR="$isolated/tmp" \
+    CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4 UOS_CI_BUILD_DIR="$audit/asan" \
+    bash cpp/gateway/tools/ci-build.sh --config asan "$@"
+}
+run_asan runtime_http
+run_asan tests/kernel_quota
+run_asan tests/worker_boundary_test.cpp
+run_asan tests/rt/kv
+run_asan tests/runtime_websocket
+run_asan tests/storage_
+run_asan --shard 1/4 tests/cache_
+```
+
+### Scratch-only witnesses
+
+- **D02.** Start `serveHttp` on port `-1` with a handler owning a shared marker.
+  Await the rejected `ready` and `finished` receipts, discard the server and check
+  the marker's weak handle. LeakSanitizer reported **2,494 bytes in 21 allocations**
+  with a `ServeState` allocation in the stack. The probe ran in 0.465 s and exited through SIGTRAP.
+- **D09.** With fake time `1,800,000,000,000` and injected memory KV, admit one org request,
+  copy its abort signal and drop both terminal callbacks. Advance 360,000 ms.
+  The reservation's lease advanced from `1800000300000` to `1800000600000` and its
+  signal remained live. The functional witness returned its defect status 1 in 0.116 s.
+- **D12.** Extend a scratch copy of the existing worker fixture with an owned marker
+  in a mock upstream stream's pull callback, a settled semantic terminal, and
+  `highWaterMark = 0`. Discard the returned body before reading, clear the override,
+  drain registered background work and test the marker's weak handle. The assertion
+  failed and LeakSanitizer reported **9,260 bytes in 74 allocations**. The probe
+  ran in 0.666 s and exited through SIGTRAP.
+
+The probes use the production object cache and the fixture named on each command for its
+link closure. Their sources and logs live in runner scratch. The D01 conclusion comes
+from the Asio buffer lifetime contract and source interleaving. An actual access to the
+released storage depends on the I/O backend.
+
+```bash
+build=$(find "$audit/asan" -name receipt.json -not -path '*/history/*' -print -quit)
+isolated=$(mktemp -d "$audit/probe-env.XXXXXX")
+mkdir "$isolated/home" "$isolated/tmp"
+run_probe() {
+  env -i PATH=/usr/lib/llvm-21/bin:/usr/local/bin:/usr/bin:/bin LC_ALL=C HOME="$isolated/home" TMPDIR="$isolated/tmp" \
+    python3 -B cpp/gateway/analysis/lifetime/b/probe.py "${build%/*}" "$audit/$1.cpp" "$2"
+}
+run_probe failed_bind tests/runtime_http_lifetime_test.cpp
+run_probe abandoned_quota tests/kernel_quota_reserve_differential_test.cpp
+run_probe abandoned_worker_body tests/worker_boundary_test.cpp
+```
+
+### Remaining evidence and publication
+
+The unresolved sites need evidence for standalone node-http request timeout delivery,
+active listener abandonment, SQLite worker completion after loop destruction, and quota
+lock abandonment. The comparison-rule findings are based on source. GCC 12 execution,
+alternate I/O backend coverage for D01 and the full hosted suites remain open.
+
+The earlier audit's admin closure regression was fixed before this source revision. Its
+fetch-transport exception escape finding remains outside area B and is specific to allocation
+failure during cleanup. Adjacent implementations were followed only to determine ownership of
+callbacks entered from area B. [Prior clang-tidy audit](cppgw-clang-tidy-audit-20261117.md)
+
+The assigned integration base is outside `origin/development` at
+`a3a96bc5fe96ba383936746fae23e64daa69562f`, whose tree lacks `cpp/gateway`.
+The branch push preflight exited 128 because GitHub HTTPS authentication was unavailable.
+The audit is committed on `agent-job` for integration with its assigned source branch.
+A post-review verification interval exceeded the 15-minute checkpoint target after all file
+verdicts had been committed.
+
+```bash
+git fetch --no-tags origin refs/heads/development:refs/remotes/origin/development
+git merge-base --is-ancestor 6d28e858e7ab8b8b1036db4a4adfdade0465ed40 origin/development
+GIT_TERMINAL_PROMPT=0 git -c core.askPass=/bin/false push --dry-run origin \
+  HEAD:refs/heads/agent-jobs/cppgw-lifetime-b-20261118
+```
 
 ## File verdicts
 
@@ -1314,3 +1499,10 @@ registration owner used together with D11.
 ```
 
 97/97 files reviewed. **DEFECT 17, SAFE 235, UNCLEAR 4.**
+
+**Handoff summary.** Area B covers all 97 files with 14 distinct defect classes across
+17 defect sites, 235 safe sites and four unclear sites. The outstanding HTTP write buffer
+is the highest-priority request-path finding. Local ASan/UBSan fixtures passed 23 binaries
+and 265 cases. Focused probes confirmed the failed HTTP bind leak, the abandoned quota
+lease renewal and the discarded worker response leak. GitHub HTTPS authentication blocked
+publication of the committed audit.
