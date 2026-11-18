@@ -1,0 +1,1151 @@
+{
+  "schema_version": 1,
+  "source_commit": "6d28e858e7ab8b8b1036db4a4adfdade0465ed40",
+  "source_tree": "6abb54014cf79ba7c64b24be4d28dde250c40ccf",
+  "files": {
+    "src/admin/api_key_audit.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/admin/api_key_mutations.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/admin/api_keys.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/admin/capacity_observation_sync.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/admin/chart_source_proxy.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/admin/claude_code.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/admin/codex.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/admin/codex_reset.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/admin/defaults.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/admin/error_log.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/admin/index.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/admin/kernel.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/admin/sentinel_incident.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/agent_messages.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/analytics.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/api_key_policy.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/api_keys.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/auth/index.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/auth/local_admin.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/auth/local_development_key.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/auth/passkeys.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/auth/passport.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/auth/passport_sessions.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/auth/relay.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/admission_state.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/authority_rpc.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/contracts.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/credential_publication.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/delivery_outbox.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/durable_store.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_api_key.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_api_key_audit.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_api_key_policy.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_authority.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_authority_api.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_authority_codex.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_authority_contracts.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_authority_kernel.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_authority_paid.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_authority_principals.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_authority_rpc.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_authority_runtime.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_authority_sql.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_codex.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_codex_429.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_codex_capacity.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_codex_contracts.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_codex_evaluation.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_codex_mutations.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_contracts.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_kernel.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_kernel_contracts.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_paid.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_paid_contracts.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_paid_policy.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_principal_contracts.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/authority/native_runtime_contracts.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/bounded_response_body.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/catalog/index.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/catalog/models.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/catalog/promotion.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/catalog/store.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/catalog/types.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/config.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/debug_routing.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/decisions/handlers.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/defaults.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/handler/admission.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/handler/http.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/handler/index.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/handler/serve_handler.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/handler/terminal_log.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/handler/terminal_route.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/health.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/http.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/images.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/inference_admission.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/inference_deadline.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/input_normalization.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/jev_compaction/compaction.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/jev_compaction/hybrid.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kv.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kv_conversion/cli.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kv_conversion/convert.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kv_conversion/cursors.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kv_conversion/legacy_codec.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kv_conversion/native_schema.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kv_conversion/profile_json.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kv_conversion/proof.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kv_conversion/typed_value.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/lib/jev_compaction/client.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/lib/jev_compaction/codex_items.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/lib/jev_compaction/compact.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/lib/jev_compaction/jev_codex_smoke.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/lib/jev_compaction/jev_compaction_smoke.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/lib/jev_compaction/request.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/lib/jev_compaction/state.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/lib/jev_compaction/types.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/metered_quota.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/models/catalog.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/models/codex_models.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/models/codex_models_availability.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/models/codex_models_fetch.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/models/codex_models_whitelist.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/models/metadata.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/models/openrouter_models.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/openai.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/openai_schema.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/openai_telemetry.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/optional_telemetry_queue.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/quota_projection.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/recent_model_context.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/release.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/request.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/request_policy.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/responses_attempts.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/responses_buffered.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/responses_failover_stream.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/responses_handler.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/responses_native_headers.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/responses_request.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/responses_stream.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/runtime_config.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/incident_outbox.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/replay_admin.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/replay_capture.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/replay_envelope.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/replay_limits.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/replay_model.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/replay_observation.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/replay_read.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/replay_retention.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/replay_retention_bootstrap.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/replay_retention_metadata.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/replay_retention_schema.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/replay_store.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/sentinel/upstream_capture.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/serve.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/static.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/systemone/handlers.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/types.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/upstream_wire.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/utils.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/admin/api_key_audit.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/admin/api_key_mutations.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/admin/api_keys.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/admin/capacity_observation_sync.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/admin/chart_source_proxy.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/admin/claude_code.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/admin/codex.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/admin/codex_reset.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/admin/defaults.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/admin/error_log.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/admin/index.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/admin/kernel.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/admin/sentinel_incident.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/agent_messages.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/analytics.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/api_key_policy.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/api_keys.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/auth/index.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/auth/local_admin.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/auth/local_development_key.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/auth/passkeys.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/auth/passport.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/auth/passport_sessions.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/auth/relay.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/admission_state.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/authority_rpc.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/contracts.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/credential_publication.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/delivery_outbox.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/durable_store.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_api_key.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_api_key_audit.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_api_key_policy.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_authority.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_authority_api.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_authority_codex.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_authority_contracts.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_authority_kernel.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_authority_paid.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_authority_principals.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_authority_rpc.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_authority_runtime.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_authority_sql.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_codex.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_codex_429.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_codex_capacity.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_codex_contracts.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_codex_evaluation.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_codex_mutations.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_contracts.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_kernel.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_kernel_contracts.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_paid.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_paid_contracts.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_paid_policy.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_principal_contracts.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/authority/native_runtime_contracts.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/bounded_response_body.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/catalog/index.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/catalog/models.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/catalog/promotion.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/catalog/store.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/catalog/types.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/config.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/debug_routing.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/decisions/handlers.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/defaults.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/handler/admission.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/handler/http.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/handler/index.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/handler/serve_handler.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/handler/terminal_log.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/handler/terminal_route.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/health.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/http.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/images.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/inference_admission.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/inference_deadline.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/input_normalization.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/jev_compaction/compaction.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/jev_compaction/hybrid.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kv.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kv_conversion/cli.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kv_conversion/convert.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kv_conversion/cursors.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kv_conversion/legacy_codec.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kv_conversion/native_schema.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kv_conversion/profile_json.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kv_conversion/proof.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kv_conversion/typed_value.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/lib/jev_compaction/client.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/lib/jev_compaction/codex_items.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/lib/jev_compaction/compact.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/lib/jev_compaction/jev_codex_smoke.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/lib/jev_compaction/jev_compaction_smoke.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/lib/jev_compaction/request.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/lib/jev_compaction/state.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/lib/jev_compaction/types.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/metered_quota.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/models/catalog.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/models/codex_models.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/models/codex_models_availability.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/models/codex_models_fetch.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/models/codex_models_whitelist.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/models/metadata.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/models/openrouter_models.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/openai.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/openai_schema.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/openai_telemetry.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/optional_telemetry_queue.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/quota_projection.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/recent_model_context.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/release.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/request.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/request_policy.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/responses_attempts.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/responses_buffered.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/responses_failover_stream.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/responses_handler.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/responses_native_headers.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/responses_request.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/responses_stream.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/runtime_config.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/incident_outbox.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/replay_admin.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/replay_capture.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/replay_envelope.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/replay_limits.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/replay_model.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/replay_observation.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/replay_read.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/replay_retention.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/replay_retention_bootstrap.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/replay_retention_metadata.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/replay_retention_schema.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/replay_store.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/sentinel/upstream_capture.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/serve.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/static.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/systemone/handlers.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/types.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/upstream_wire.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/utils.hpp": {
+      "reviewed": false,
+      "sites": []
+    }
+  }
+}
