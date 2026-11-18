@@ -318,7 +318,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/debug_routing.hpp`
 - [x] `include/uos/decisions/handlers.hpp`
 - [x] `include/uos/defaults.hpp`
-- [ ] `include/uos/handler/admission.hpp`
+- [x] `include/uos/handler/admission.hpp`
 - [ ] `include/uos/handler/http.hpp`
 - [ ] `include/uos/handler/index.hpp`
 - [ ] `include/uos/handler/serve_handler.hpp`
@@ -1779,6 +1779,12 @@ Reviewed the optional usage-context pointer and provider test dependencies.
 
 Reviewed defaults keys and normalization declarations. Keys have static storage and synchronous normalization returns an owning string.
 
+### `include/uos/handler/admission.hpp`
+
+Reviewed admission controller access and local overload response interfaces.
+
+- L27, 32, 39, 41, 49 **SAFE** · The route set and error label have static storage. The controller is a shared-state value and the borrowed overload cause is consumed synchronously.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2027,4 +2033,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-210/286 files reviewed. 381 sites: 360 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+211/286 files reviewed. 382 sites: 361 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

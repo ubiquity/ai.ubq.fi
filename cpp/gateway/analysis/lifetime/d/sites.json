@@ -8515,8 +8515,26 @@
       "sites": []
     },
     "include/uos/handler/admission.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed admission controller access and local overload response interfaces.",
+      "sites": [
+        {
+          "lines": [
+            27,
+            32,
+            39,
+            41,
+            49
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The route set and error label have static storage. The controller is a shared-state value and the borrowed overload cause is consumed synchronously."
+        }
+      ]
     },
     "include/uos/handler/http.hpp": {
       "reviewed": false,
