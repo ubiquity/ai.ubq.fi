@@ -179,7 +179,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/kv_conversion/legacy_codec.cpp`
 - [x] `src/kv_conversion/native_schema.cpp`
 - [x] `src/kv_conversion/profile_json.cpp`
-- [ ] `src/kv_conversion/proof.cpp`
+- [x] `src/kv_conversion/proof.cpp`
 - [ ] `src/kv_conversion/typed_value.cpp`
 - [ ] `src/lib/jev_compaction/client.cpp`
 - [ ] `src/lib/jev_compaction/codex_items.cpp`
@@ -988,6 +988,14 @@ Reviewed entry/profile codecs and the asynchronous KV export stream.
 
 - L370, 371, 373, 375, 383, 385 **SAFE** · Both capturing coroutine lambdas are stored by SourceAlgorithm, whose runAsync retains the exact closure through completion even after stream close clears registered callbacks. The closure shares the list iterator and native lists own storage.
 
+### `src/kv_conversion/proof.cpp`
+
+Reviewed offline proof fixtures, subprocess output joins, typed KV writes and the command entry point.
+
+- L456, 506, 509, 510, 511, 513, 567 **SAFE** · The subprocess and output responses create independent owning read operations. The result tuple is named before taking references and hashing takes an owning path.
+- L593, 600, 604, 609, 614, 620, 625, 627, 629, 633, 637, 639 **SAFE** · The latest-state proof holds shared KV and output cells and owns all snapshots, atomic receivers and iteration state through writes and reads.
+- L673, 676, 699, 701, 706, 708, 714, 720, 729, 732, 734, 744, 753, 757, 763, 769, 771, 790, 797 **SAFE** · The outer proof owns all paths and fixture configuration and starts one named task at a time. Result and error views are local to the corresponding frame.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1201,4 +1209,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-89/286 files reviewed. 190 sites: 175 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+90/286 files reviewed. 193 sites: 178 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

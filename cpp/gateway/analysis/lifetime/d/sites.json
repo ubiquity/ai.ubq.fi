@@ -4022,8 +4022,81 @@
       ]
     },
     "src/kv_conversion/proof.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed offline proof fixtures, subprocess output joins, typed KV writes and the command entry point.",
+      "sites": [
+        {
+          "lines": [
+            456,
+            506,
+            509,
+            510,
+            511,
+            513,
+            567
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The subprocess and output responses create independent owning read operations. The result tuple is named before taking references and hashing takes an owning path."
+        },
+        {
+          "lines": [
+            593,
+            600,
+            604,
+            609,
+            614,
+            620,
+            625,
+            627,
+            629,
+            633,
+            637,
+            639
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The latest-state proof holds shared KV and output cells and owns all snapshots, atomic receivers and iteration state through writes and reads."
+        },
+        {
+          "lines": [
+            673,
+            676,
+            699,
+            701,
+            706,
+            708,
+            714,
+            720,
+            729,
+            732,
+            734,
+            744,
+            753,
+            757,
+            763,
+            769,
+            771,
+            790,
+            797
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The outer proof owns all paths and fixture configuration and starts one named task at a time. Result and error views are local to the corresponding frame."
+        }
+      ]
     },
     "src/kv_conversion/typed_value.cpp": {
       "reviewed": false,
