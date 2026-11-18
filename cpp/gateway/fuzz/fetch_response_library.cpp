@@ -48,7 +48,8 @@ namespace {
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
   if (size > uos::fuzz::maxInput) return 0;
   const auto input = uos::fuzz::text(data, size);
-  readFetchResponse(input, size % 2 == 0);
+  readFetchResponse(input, false);
+  readFetchResponse(input, true);
   readChunkedBody(input);
   (void)fetch::parseResponseHead(input);
   uos::fuzz::malformed([&] { (void)uos::rt::ws::detail::parseResponseHead({data, size}); });
