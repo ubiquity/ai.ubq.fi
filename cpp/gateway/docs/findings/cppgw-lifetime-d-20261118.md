@@ -223,7 +223,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/release.cpp`
 - [x] `src/request.cpp`
 - [x] `src/request_policy.cpp`
-- [ ] `src/responses_attempts.cpp`
+- [x] `src/responses_attempts.cpp`
 - [ ] `src/responses_buffered.cpp`
 - [ ] `src/responses_failover_stream.cpp`
 - [ ] `src/responses_handler.cpp`
@@ -1165,6 +1165,15 @@ Reviewed model routing metadata, provider joins and synchronous request field ru
 
 - L216, 219, 250, 257, 273, 274, 275, 276 **SAFE** · The frame owns model, route and snapshot while each provider task receives owning values. The joined result is named and metadata lookup consumes its element views synchronously.
 
+### `src/responses_attempts.cpp`
+
+Reviewed precommit iterator and options, primary and removed-provider attempts, semantic recovery and detached bookkeeping.
+
+- L50, 51, 54, 58, 61, 64 **SAFE** · AsyncGenerator retains the capturing body callable until its generator Task completes, and that callable owns the delegate iterator copy.
+- L82, 86, 93, 102, 105, 108, 115, 117, 120, 124, 129, 133, 137, 139, 143, 147, 149, 155, 159 **SAFE** · The current caller's shared request State outlives the awaited telemetry callbacks. The preparation frame owns response, options, iterator and event collections and invokes its inline fail callback.
+- L179, 182, 197, 211, 214, 219, 232, 233, 236, 238, 248, 252, 257, 258 **SAFE** · The caller retains the usage context through the whole attempt, including before-dispatch and headers callbacks. The read and cancel children copy their circuit or response handles before leaving this frame.
+- L265, 268, 270 **SAFE** · The deferred callback can contain a raw usage pointer. The checked-in circuit returns the already-settled value none, the recorder does no context access for none, and ordinary routing creates no probe.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1413,4 +1422,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-116/286 files reviewed. 227 sites: 210 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+117/286 files reviewed. 231 sites: 214 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
