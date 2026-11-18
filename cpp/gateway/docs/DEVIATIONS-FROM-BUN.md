@@ -23,6 +23,10 @@ The C++ runtime follows the Unicode data in the linked ICU release. On ICU 78.3,
 
 Outside the old port's recorded collation repertoire, ICU supplies the order and canonical equivalences. With ICU 78.3, Deseret U+10400 sorts before the lone surrogate U+D83D, and `가` and `가` compare equal. Both results match Bun 1.4.0. This extends collation to names in additional scripts and keeps tertiary ordering for catalog and schema names.
 
+## WebSocket
+
+- The receiver always validates UTF-8 in text messages and close reasons. With `skipUTF8Validation: true`, `ws@8.18.3` under Bun 1.4.0 delivers text bytes `c3 28` and accepts close 1000 with reason byte `ff`. The C++ receiver rejects both with close 1007. Beast enforces the RFC 6455 UTF-8 requirement and gateway callers use validation. The option still compiles for existing callers.
+
 ## Incoming integrations
 
 Add a component section after its verified handback. Record the changed behavior, one concrete input/outcome, the application or security rationale, and the exact source and test receipt. Use this location for URL/IDNA, HTTP, regex, WebSocket, passkey codecs, BigInt, ICU and the small helpers as their integrations land. Record limit-specific exceptions and tested boundary outcomes in [Runtime](RUNTIME.md#input-limits).

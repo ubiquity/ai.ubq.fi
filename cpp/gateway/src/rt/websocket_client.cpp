@@ -5,7 +5,6 @@
 #include "websocket_internal.hpp"
 
 #include "uos/rt/base64.hpp"
-#include "uos/rt/crypto.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/url.hpp"
@@ -14,6 +13,7 @@
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/local/stream_protocol.hpp>
+#include <boost/beast/websocket/detail/hybi13.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -24,7 +24,6 @@ namespace asio = boost::asio;
 
 namespace uos::rt::ws::detail {
   namespace {
-    constexpr const char* GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     // node:http's default limit on a response head.
     constexpr std::size_t MAX_HEADER_SIZE = 16 * 1024;
 
@@ -410,7 +409,9 @@ namespace uos::rt::ws::detail {
     if (invalidUrlMessage) throw SyntaxError(*invalidUrlMessage);
 
     const int defaultPort = isSecure ? 443 : 80;
-    const std::string key = toBase64(rt::crypto::randomBytes(16));
+    boost::beast::websocket::detail::sec_ws_key_type nonce;
+    boost::beast::websocket::detail::make_sec_ws_key(nonce);
+    const std::string key(nonce.data(), nonce.size());
     std::string hostname = parsedUrl.hostname();
     if (!hostname.empty() && hostname.front() == '[') hostname = hostname.substr(1, hostname.size() - 2);
     const std::string portText = parsedUrl.port();
@@ -512,7 +513,7 @@ namespace uos::rt::ws::detail {
       current.req = nullptr;
       const std::optional<std::string> upgrade = response->header("upgrade");
       if (!upgrade || toLowerCase(*upgrade) != "websocket") return abortHandshakeSocket(websocket, socket, "Invalid Upgrade header");
-      const std::string digest = rt::crypto::createHash("sha1").update(key + GUID).digest("base64");
+      const std::string digest = handshakeAccept(key);
       if (response->header("sec-websocket-accept") != digest) return abortHandshakeSocket(websocket, socket, "Invalid Sec-WebSocket-Accept header");
       if (response->header("sec-websocket-protocol")) return abortHandshakeSocket(websocket, socket, "Server sent a subprotocol but none was requested");
       if (response->header("sec-websocket-extensions"))

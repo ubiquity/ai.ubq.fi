@@ -2,10 +2,8 @@
 // The `ws` npm package (8.18.3, the version the gateway pins) on the rt loop, as
 // the gateway uses it: an RFC 6455 client for `ws:`, `wss:` and
 // `ws+unix:<socket>:<path>` URLs, and the server side of an HTTP upgrade
-// (`new WebSocketServer({ noServer: true })` + `handleUpgrade`). The C++ is a
-// line-for-line port of ws's JavaScript plus the node:net/node:http behaviour it
-// relies on, so event order, readyState transitions, close codes and error texts
-// are those of ws running on Bun 1.4. See docs/rt/websocket.md.
+// (`new WebSocketServer({ noServer: true })` + `handleUpgrade`). Beast supplies
+// wire primitives. The adapter supplies the gateway's socket and event API.
 //
 // Objects are JS-like handles: a WebSocket or WebSocketServer always lives in a
 // std::shared_ptr (clients come from WebSocket::create or the constructor()
@@ -214,7 +212,7 @@ namespace uos::rt::ws {
     bool autoPong = true;
     // `origin`: sent as the Origin header.
     std::optional<std::string> origin{};
-    // `skipUTF8Validation`: accept text and close reasons that are not UTF-8.
+    // Source compatibility. Received text and close reasons always require UTF-8.
     bool skipUTF8Validation = false;
     // tls.connect options for `wss:`. `ca` (PEM) replaces the default trust
     // store; `rejectUnauthorized: false` accepts any certificate; `servername`
@@ -392,6 +390,7 @@ namespace uos::rt::ws {
     // `maxPayload`: the largest message accepted (ToInt32; 0 = unlimited).
     double maxPayload = 104857600;
     bool autoPong = true;
+    // Source compatibility. Received text and close reasons always require UTF-8.
     bool skipUTF8Validation = false;
     // `path`: only requests whose pathname equals it are handled (400 otherwise).
     std::optional<std::string> path{};
