@@ -148,34 +148,36 @@ test("the hook uses the current signed-in quota during authentication and clears
   });
 });
 
-test.each(["absolute", "countdown"])("the hook coalesces rounded reset equivalents with %s first and saves a moved reset", async (first) => {
-  await withStatusLine(async (directory, send) => {
-    const { remaining_fraction, reset_in_seconds } = EVENT.quota.weekly;
-    const observedAt = Date.now() - 2_000;
-    const estimatedReset = observedAt + (reset_in_seconds + 2) * 1000;
-    const absolute = { remaining_fraction, reset_time: new Date(estimatedReset + 500).toISOString() };
-    const countdown = { remaining_fraction, reset_in_seconds: reset_in_seconds + 2 };
-    const previous = {
-      version: 1,
-      status: "observed",
-      observed_at_ms: observedAt,
-      plan_tier: EVENT.plan_tier,
-      quota: { weekly: first === "absolute" ? absolute : countdown },
-    };
-    await writeFile(join(directory, GEMINI_QUOTA_FILE), JSON.stringify(previous), { mode: 0o600 });
-    await send({ ...EVENT, quota: { weekly: first === "absolute" ? EVENT.quota.weekly : absolute } });
-    assert.deepEqual(await readGeminiQuotaSnapshot(directory), previous);
+for (const first of ["absolute", "countdown"]) {
+  test(`the hook coalesces rounded reset equivalents with ${first} first and saves a moved reset`, async () => {
+    await withStatusLine(async (directory, send) => {
+      const { remaining_fraction, reset_in_seconds } = EVENT.quota.weekly;
+      const observedAt = Date.now() - 2_000;
+      const estimatedReset = observedAt + (reset_in_seconds + 2) * 1000;
+      const absolute = { remaining_fraction, reset_time: new Date(estimatedReset + 500).toISOString() };
+      const countdown = { remaining_fraction, reset_in_seconds: reset_in_seconds + 2 };
+      const previous = {
+        version: 1,
+        status: "observed",
+        observed_at_ms: observedAt,
+        plan_tier: EVENT.plan_tier,
+        quota: { weekly: first === "absolute" ? absolute : countdown },
+      };
+      await writeFile(join(directory, GEMINI_QUOTA_FILE), JSON.stringify(previous), { mode: 0o600 });
+      await send({ ...EVENT, quota: { weekly: first === "absolute" ? EVENT.quota.weekly : absolute } });
+      assert.deepEqual(await readGeminiQuotaSnapshot(directory), previous);
 
-    const moved =
-      first === "absolute"
-        ? { remaining_fraction, reset_in_seconds: reset_in_seconds + 60 }
-        : { remaining_fraction, reset_time: new Date(estimatedReset + 60_000).toISOString() };
-    await send({ ...EVENT, quota: { weekly: moved } });
-    const changed = await readGeminiQuotaSnapshot(directory);
-    assert.equal(changed.status, "observed");
-    assert.deepEqual(changed.quota, { weekly: moved });
+      const moved =
+        first === "absolute"
+          ? { remaining_fraction, reset_in_seconds: reset_in_seconds + 60 }
+          : { remaining_fraction, reset_time: new Date(estimatedReset + 60_000).toISOString() };
+      await send({ ...EVENT, quota: { weekly: moved } });
+      const changed = await readGeminiQuotaSnapshot(directory);
+      assert.equal(changed.status, "observed");
+      assert.deepEqual(changed.quota, { weekly: moved });
+    });
   });
-});
+}
 
 test("the hook saves reset changes and transitions in fraction, amount, and disabled state", async () => {
   await withStatusLine(async (directory, send) => {
