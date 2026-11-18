@@ -276,8 +276,16 @@
       ]
     },
     "include/uos/codex/overage_settings.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Overage usage persistence and pool-loading API.",
+      "sites": [
+        {
+          "lines": "22-24,32",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Each store operation owns the KV handle and key, and pool loading owns its auth snapshot."
+        }
+      ]
     },
     "include/uos/codex/quota.hpp": {
       "status": "pending",
