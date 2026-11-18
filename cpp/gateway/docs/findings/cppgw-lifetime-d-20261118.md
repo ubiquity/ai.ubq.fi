@@ -378,7 +378,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/sentinel/replay_admin.hpp`
 - [x] `include/uos/sentinel/replay_capture.hpp`
 - [x] `include/uos/sentinel/replay_envelope.hpp`
-- [ ] `include/uos/sentinel/replay_limits.hpp`
+- [x] `include/uos/sentinel/replay_limits.hpp`
 - [ ] `include/uos/sentinel/replay_model.hpp`
 - [ ] `include/uos/sentinel/replay_observation.hpp`
 - [ ] `include/uos/sentinel/replay_read.hpp`
@@ -2151,6 +2151,10 @@ Reviewed the replay codec views and asynchronous crypto and compression interfac
 - L59, 80, 81, 116, 119 **SAFE** · Synchronous readers consume spans while the caller owns their bytes, and encoded, decoded and split results own their data.
 - L56, 90, 92, 95, 97 **SAFE** · The asynchronous codec entry points move or copy byte buffers and digest inputs into their own Tasks.
 
+### `include/uos/sentinel/replay_limits.hpp`
+
+Reviewed bound constants and synchronous charge calculations. These values and helpers neither suspend nor retain any inputs.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2400,4 +2404,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-270/286 files reviewed. 457 sites: 432 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+271/286 files reviewed. 457 sites: 432 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

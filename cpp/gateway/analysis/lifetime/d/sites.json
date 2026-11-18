@@ -10140,7 +10140,8 @@
       ]
     },
     "include/uos/sentinel/replay_limits.hpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed bound constants and synchronous charge calculations. These values and helpers neither suspend nor retain any inputs.",
       "sites": []
     },
     "include/uos/sentinel/replay_model.hpp": {
