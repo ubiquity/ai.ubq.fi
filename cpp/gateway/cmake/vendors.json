@@ -1,5 +1,10 @@
 {
-  "llhttp": ["src/runtime/http.cpp", "tests/legacy/runtime_http_llhttp_test.cpp", "fuzz/http_request.cpp", "fuzz/http_server_library.cpp"],
+  "llhttp": [
+    "src/runtime/http.cpp",
+    "tests/legacy/runtime_http_llhttp_test.cpp",
+    "fuzz/http_request.cpp",
+    "fuzz/http_server_library.cpp"
+  ],
   "simdjson": ["src/rt/json.cpp"],
   "simdutf": ["src/rt/base64.cpp", "src/rt/string.cpp", "src/rt/text_codec.cpp"]
 }

@@ -61,7 +61,8 @@ def main(commit, tree):
         "compiler": subprocess.check_output(["clang++-21", "--version"], text=True).splitlines()[0],
         "debianPackages": dict(line.split("\t", 1) for line in subprocess.check_output(
             ["dpkg-query", "-W", "-f=${Package}\t${Version}\n", *packages], text=True).splitlines()),
-        "static": {"Boost.JSON/Container": "1.92.0", "SQLite": "3.54.0", "ICU": "78.3", "simdjson": "5.2.0", "simdutf": "9.4.0"},
+        "static": {"Boost.JSON/Container": "1.92.0", "SQLite": "3.54.0", "ICU": "78.3", "llhttp": "9.4.4",
+                   "simdjson": "5.2.0", "simdutf": "9.4.0"},
         "linkFlags": ["-static-libstdc++", "-static-libgcc"],
     }
     native.write_json(payload / "build-profile.json", profile)

@@ -85,12 +85,7 @@
     },
     {
       "target": "uos_fuzz_base64",
-      "sources": [
-        "fuzz/base64.cpp",
-        "src/rt/base64.cpp",
-        "src/rt/string.cpp",
-        "src/rt/text_codec.cpp"
-      ],
+      "sources": ["fuzz/base64.cpp", "src/rt/base64.cpp", "src/rt/string.cpp", "src/rt/text_codec.cpp"],
       "fuzzer": true
     },
     {
@@ -105,33 +100,17 @@
     },
     {
       "target": "uos_fuzz_env_file",
-      "sources": [
-        "fuzz/env_file.cpp",
-        "src/rt/env.cpp",
-        "src/rt/fs.cpp",
-        "src/rt/string.cpp",
-        "src/rt/text_codec.cpp"
-      ],
+      "sources": ["fuzz/env_file.cpp", "src/rt/env.cpp", "src/rt/fs.cpp", "src/rt/string.cpp", "src/rt/text_codec.cpp"],
       "fuzzer": true
     },
     {
       "target": "uos_fuzz_posix_path",
-      "sources": [
-        "fuzz/posix_path.cpp",
-        "src/rt/fs.cpp",
-        "src/rt/string.cpp",
-        "src/rt/text_codec.cpp"
-      ],
+      "sources": ["fuzz/posix_path.cpp", "src/rt/fs.cpp", "src/rt/string.cpp", "src/rt/text_codec.cpp"],
       "fuzzer": true
     },
     {
       "target": "uos_fuzz_console_format",
-      "sources": [
-        "fuzz/console_format.cpp",
-        "src/rt/console.cpp",
-        "src/rt/string.cpp",
-        "src/rt/text_codec.cpp"
-      ],
+      "sources": ["fuzz/console_format.cpp", "src/rt/console.cpp", "src/rt/string.cpp", "src/rt/text_codec.cpp"],
       "fuzzer": true
     },
     {
@@ -398,6 +377,11 @@
       "target": "uos_fuzz_http_request",
       "sources": [
         "fuzz/http_request.cpp",
+        "src/runtime/http_body.cpp",
+        "src/runtime/http_early_sse.cpp",
+        "src/runtime/http_tasks.cpp",
+        "src/runtime/http_upgrade.cpp",
+        "src/runtime/websocket.cpp",
         "src/rt/abort.cpp",
         "src/rt/async.cpp",
         "src/rt/base64.cpp",
