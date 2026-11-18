@@ -24,6 +24,8 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
 
+#include <charconv>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -58,7 +60,11 @@ namespace {
     });
   }
 
-  std::string tombstoneFingerprint(double index) { return rt::padStart(rt::numberToString(index, 16), 64, "0"); }
+  std::string tombstoneFingerprint(double index) {
+    char hex[8];
+    const auto end = std::to_chars(hex, hex + sizeof hex, static_cast<std::uint32_t>(index), 16).ptr;
+    return rt::padStart(std::string(hex, end), 64, "0");
+  }
 
   // `{ ...tombstoneRow(index), evicted_at_ms }`
   rt::KvValue tombstoneRow(double index, double evictedAtMs = NOW) {

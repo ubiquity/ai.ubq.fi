@@ -32,7 +32,9 @@
 #include "uos/rt/text_codec.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cstdio>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -485,7 +487,10 @@ namespace {
 
   std::string fingerprintFor(const std::string& tag) {
     std::string out;
-    for (const std::string& character : rt::codePointStrings(tag)) out += rt::numberToString(rt::mod(rt::charCodeAt(character, 0), 16), 16);
+    for (const std::string& character : rt::codePointStrings(tag)) {
+      const auto unit = static_cast<std::uint16_t>(rt::charCodeAt(character, 0));
+      out += "0123456789abcdef"[unit & 0x0f];
+    }
     return rt::slice(out + std::string(64, '0'), 0, 64);
   }
 
@@ -1434,10 +1439,12 @@ ASYNC_TEST("a status row admitted into an unbootstrapped ledger is counted exact
 
 namespace {
   SentinelReplayManifest legacyManifestFor(double index, double capturedAtMs, std::optional<std::string> requestId = std::nullopt) {
+    char hex[8];
+    const auto end = std::to_chars(hex, hex + sizeof hex, static_cast<std::uint32_t>(index), 16).ptr;
     return {
       .version = 1,
       .capture_id = "legacy-bootstrap-" + rt::numberToString(index),
-      .fingerprint = rt::padStart(rt::numberToString(index, 16), 64, "0"),
+      .fingerprint = rt::padStart(std::string(hex, end), 64, "0"),
       .case_group_digest = std::string(64, 'c'),
       .captured_at_ms = capturedAtMs,
       .expires_at_ms = capturedAtMs + SENTINEL_REPLAY_TTL_MS,
