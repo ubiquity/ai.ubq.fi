@@ -26,17 +26,6 @@ namespace uos::rt::detail::fetch {
       return text;
     }
 
-    std::vector<std::string_view> splitTokens(std::string_view text) {
-      std::vector<std::string_view> tokens;
-      std::size_t start = 0;
-      for (;;) {
-        const std::size_t comma = text.find(',', start);
-        tokens.push_back(trimSpaces(text.substr(start, comma == std::string_view::npos ? std::string_view::npos : comma - start)));
-        if (comma == std::string_view::npos) return tokens;
-        start = comma + 1;
-      }
-    }
-
     // A JS string holding only code points up to U+00FF, as wire bytes.
     std::string latin1Bytes(std::string_view text) {
       std::string out;
@@ -83,6 +72,29 @@ namespace uos::rt::detail::fetch {
         llhttp_set_error_reason(parser, "Could not store HTTP response bytes");
         return HPE_USER;
       }
+    }
+
+    // llhttp permits responses with repeated or non-final chunked coding.
+    // Reject ambiguous framing across all Transfer-Encoding fields.
+    bool validTransferEncoding(const ResponseHead& head, bool chunked) {
+      bool sawChunked = false;
+      for (const auto& [name, value] : head.fields) {
+        if (!equalsIgnoringCase(name, "transfer-encoding")) continue;
+        std::string_view codings = value;
+        for (;;) {
+          const auto comma = codings.find(',');
+          const auto token = trimSpaces(codings.substr(0, comma));
+          if (!token.empty()) {
+            if (sawChunked) return false;
+            sawChunked = equalsIgnoringCase(trimSpaces(token.substr(0, token.find(';'))), "chunked");
+            if (sawChunked && !equalsIgnoringCase(token, "chunked")) return false;
+          }
+          if (comma == std::string_view::npos) break;
+          codings.remove_prefix(comma + 1);
+        }
+      }
+      // A trailing comma can make llhttp use EOF despite seeing chunked.
+      return sawChunked == chunked;
     }
   }
 
@@ -149,26 +161,25 @@ namespace uos::rt::detail::fetch {
 
   // ---- response head ------------------------------------------------------------
 
-  std::vector<std::string> ResponseHead::values(std::string_view lowercaseName) const {
-    std::vector<std::string> found;
-    for (const auto& [name, value] : fields) {
-      if (equalsIgnoringCase(name, lowercaseName)) found.push_back(value);
-    }
-    return found;
-  }
-
   std::optional<std::string> ResponseHead::field(std::string_view lowercaseName) const {
-    const std::vector<std::string> found = values(lowercaseName);
-    if (found.empty()) return std::nullopt;
-    std::string joined = found.front();
-    for (std::size_t index = 1; index < found.size(); ++index) joined += ", " + found[index];
+    std::optional<std::string> joined;
+    for (const auto& [name, value] : fields) {
+      if (!equalsIgnoringCase(name, lowercaseName)) continue;
+      if (joined) joined->append(", ").append(value);
+      else joined = value;
+    }
     return joined;
   }
 
   bool ResponseHead::connectionHas(std::string_view token) const {
-    for (const std::string& value : values("connection")) {
-      for (const std::string_view item : splitTokens(value)) {
-        if (equalsIgnoringCase(item, token)) return true;
+    for (const auto& [name, value] : fields) {
+      if (!equalsIgnoringCase(name, "connection")) continue;
+      std::string_view tokens = value;
+      for (;;) {
+        const auto comma = tokens.find(',');
+        if (equalsIgnoringCase(trimSpaces(tokens.substr(0, comma)), token)) return true;
+        if (comma == std::string_view::npos) break;
+        tokens.remove_prefix(comma + 1);
       }
     }
     return false;
@@ -215,8 +226,17 @@ namespace uos::rt::detail::fetch {
     };
     settings.on_headers_complete = [](llhttp_t*) { return static_cast<int>(HPE_PAUSED); };
     settings.on_body = [](llhttp_t* parser, const char* data, std::size_t size) {
+      if (size == 0) return 0;
       auto& self = *static_cast<ResponseParser*>(parser->data);
-      return storeParserBytes(parser, [&] { self.body_->append(data, size); });
+      if (auto* out = self.bodyBytes_) {
+        const auto* first = reinterpret_cast<const std::uint8_t*>(data);
+        return storeParserBytes(parser, [&] {
+          if (out->empty()) out->reserve(self.bodyInputSize_);
+          out->insert(out->end(), first, first + size);
+        });
+      }
+      if (self.body_) return storeParserBytes(parser, [&] { self.body_->append(data, size); });
+      return 0;
     };
     settings.on_message_complete = [](llhttp_t*) { return static_cast<int>(HPE_PAUSED); };
     return settings;
@@ -255,13 +275,39 @@ namespace uos::rt::detail::fetch {
     }
     head_.status = llhttp_get_status_code(&parser_);
     head_.minorVersion = llhttp_get_http_minor(&parser_);
-    if (llhttp_message_needs_eof(&parser_)) {
+    const bool chunked = parser_.flags & F_CHUNKED;
+    if (needsEof()) {
       head_.framing.framing = Framing::close;
-    } else if (parser_.flags & F_CHUNKED) {
+    } else if (chunked) {
       head_.framing.framing = Framing::chunked;
     } else if (parser_.flags & F_CONTENT_LENGTH) {
-      head_.framing = {Framing::length, parser_.content_length, std::nullopt};
+      head_.framing = {Framing::length, parser_.content_length};
     }
+    if ((parser_.flags & F_TRANSFER_ENCODING) && !validTransferEncoding(head_, chunked)) head_.framing.error = "UnsupportedTransferEncoding";
+    return result;
+  }
+
+  llhttp_errno_t ResponseParser::beginBody(bool headRequest) {
+    // llhttp handles 204, 304 and common 1xx statuses. Mark HEAD and all
+    // informational responses so unknown 1xx codes also terminate at the head.
+    if (headRequest || parser_.status_code / 100 == 1) parser_.flags |= F_SKIPBODY;
+    llhttp_resume(&parser_);
+    std::size_t consumed;
+    return execute({}, consumed);
+  }
+
+  void ResponseParser::reset() {
+    llhttp_reset(&parser_);
+    head_ = {};
+    firstHeadBytes_ = true;
+    startField_ = true;
+  }
+
+  llhttp_errno_t ResponseParser::readBody(std::string_view input, std::size_t& consumed, ByteChunk* out) {
+    bodyBytes_ = out;
+    bodyInputSize_ = input.size();
+    const auto result = execute(input, consumed);
+    bodyBytes_ = nullptr;
     return result;
   }
 
@@ -290,27 +336,8 @@ namespace uos::rt::detail::fetch {
   }
 
   FramingRule responseFraming(const std::string& method, const ResponseHead& head) {
-    // llhttp accepts repeated or non-final chunked coding in responses. Keep
-    // rejecting these ambiguous transfer codings across all header fields.
-    bool sawChunked = false;
-    for (const auto& [name, value] : head.fields) {
-      if (!equalsIgnoringCase(name, "transfer-encoding")) continue;
-      std::string_view codings = value;
-      for (;;) {
-        const auto comma = codings.find(',');
-        const auto token = trimSpaces(codings.substr(0, comma));
-        if (!token.empty()) {
-          if (sawChunked) return {Framing::empty, 0, "UnsupportedTransferEncoding"};
-          sawChunked = equalsIgnoringCase(token, "chunked");
-        }
-        if (comma == std::string_view::npos) break;
-        codings.remove_prefix(comma + 1);
-      }
-    }
-    if (method == "HEAD" || method == "TRACE" || head.status == 204 || head.status == 304) return {};
-    // A trailing comma can make llhttp treat an otherwise final chunked
-    // coding as EOF-delimited. Never send the chunk framing to the consumer.
-    if (sawChunked && head.framing.framing != Framing::chunked) return {Framing::empty, 0, "UnsupportedTransferEncoding"};
+    if (head.framing.error) return head.framing;
+    if (method == "HEAD" || head.status / 100 == 1 || head.status == 204 || head.status == 304) return {};
     return head.framing;
   }
 

@@ -1,7 +1,7 @@
 #pragma once
 // Internals of the HTTP/1.1 client transport (uos/rt/fetch_transport.hpp):
-// Bun's wire rules for the request head, the response head parser, body
-// framing, the chunked and content decoders, the connection (TCP, or TLS over
+// Bun's wire rules for the request head, the response parser, the content
+// decoders, the connection (TCP, or TLS over
 // OpenSSL memory BIOs) and the per-loop keep-alive pool.
 #include "uos/rt/clock.hpp"
 #include "uos/rt/fetch_transport.hpp"
@@ -66,7 +66,7 @@ namespace uos::rt::detail::fetch {
   struct FramingRule {
     Framing framing = Framing::empty;
     std::uint64_t length = 0;
-    std::optional<std::string> error;
+    const char* error = nullptr;
   };
 
   struct ResponseHead {
@@ -76,8 +76,6 @@ namespace uos::rt::detail::fetch {
     std::string reason;
     std::vector<std::pair<std::string, std::string>> fields;
     FramingRule framing;
-    // Every value of a field (case-insensitive name), in order.
-    std::vector<std::string> values(std::string_view lowercaseName) const;
     // The values joined with ", ", std::nullopt without any.
     std::optional<std::string> field(std::string_view lowercaseName) const;
     // A Connection token (case-insensitive) is present.
@@ -103,9 +101,16 @@ namespace uos::rt::detail::fetch {
     ResponseParser& operator=(const ResponseParser&) = delete;
 
     llhttp_errno_t readHead(std::string_view input, std::size_t& consumed);
+    const ResponseHead& head() const { return head_; }
     ResponseHead takeHead() { return std::move(head_); }
     const char* errorReason() const { return llhttp_get_error_reason(&parser_); }
-    void beginBody() { llhttp_resume(&parser_); }
+    // Completes immediately if llhttp determines the response has no body.
+    llhttp_errno_t beginBody(bool headRequest = false);
+    bool needsEof() const { return llhttp_message_needs_eof(&parser_); }
+    bool keepsAlive() const { return !(parser_.flags & F_CONNECTION_CLOSE) && llhttp_should_keep_alive(&parser_); }
+    bool paused() const { return llhttp_get_errno(&parser_) == HPE_PAUSED; }
+    void reset();
+    llhttp_errno_t readBody(std::string_view input, std::size_t& consumed, ByteChunk* out = nullptr);
     llhttp_errno_t readBody(std::string_view input, std::size_t& consumed, std::string& out);
     llhttp_errno_t finish() { return llhttp_finish(&parser_); }
 
@@ -115,6 +120,8 @@ namespace uos::rt::detail::fetch {
 
     llhttp_t parser_;
     ResponseHead head_;
+    ByteChunk* bodyBytes_ = nullptr;
+    std::size_t bodyInputSize_ = 0;
     std::string* body_ = nullptr;
     std::size_t maxFields_;
     bool firstHeadBytes_ = true;

@@ -242,12 +242,18 @@ namespace uos::rt::detail::fetch {
     // ---- one exchange -------------------------------------------------------------
 
     struct Exchange {
+      ResponseParser parser;
+      std::weak_ptr<Pool> pool;
       std::shared_ptr<Connection> connection;
-      ResponseHead head;
-      FramingRule framing;
+      std::unique_ptr<ContentDecoder> decoder;
       std::shared_ptr<WriterState> writer;
+      std::string url;
       // The response and the request allow the connection to be reused.
       bool keepAlive = false;
+
+      ~Exchange() {
+        if (connection) connection->close();
+      }
     };
 
     // A reused keep-alive connection failed before a response head arrived.
@@ -278,18 +284,28 @@ namespace uos::rt::detail::fetch {
       });
       spawn(writeRequest(connection, head, body, writer));
       auto exchange = std::make_shared<Exchange>();
+      std::size_t headBytes = 0;
       for (;;) {
-        const HeadParse parsed = parseResponseHead(connection->input.view());
-        if (parsed.status == HeadStatus::complete) {
-          connection->input.consume(parsed.length);
-          const int status = parsed.head.status;
+        std::size_t consumed = 0;
+        const auto parsed = exchange->parser.readHead(connection->input.view().substr(0, kMaxResponseHead - headBytes), consumed);
+        connection->input.consume(consumed);
+        if (parsed == HPE_PAUSED) {
+          const ResponseHead& response = exchange->parser.head();
+          const int status = response.status;
           if (status == 101) throw verboseError("UnrequestedUpgrade", originalUrl);
-          if (status >= 100 && status < 200) continue;
-          exchange->head = parsed.head;
+          if (response.framing.error) throw verboseError(response.framing.error, originalUrl);
+          const auto bodyStatus = exchange->parser.beginBody(method == "HEAD");
+          if (bodyStatus != HPE_OK && bodyStatus != HPE_PAUSED) throw verboseError("Malformed_HTTP_Response", originalUrl);
+          if (status >= 100 && status < 200) {
+            exchange->parser.reset();
+            headBytes = 0;
+            continue;
+          }
           break;
         }
-        if (parsed.status == HeadStatus::malformed) throw verboseError("Malformed_HTTP_Response", originalUrl);
-        if (connection->input.size() >= kMaxResponseHead) throw verboseError("ResponseHeadersTooLarge", originalUrl);
+        if (parsed != HPE_OK) throw verboseError("Malformed_HTTP_Response", originalUrl);
+        headBytes += consumed;
+        if (headBytes >= kMaxResponseHead) throw verboseError("ResponseHeadersTooLarge", originalUrl);
         auto filling = connection->fill();
         const ReadStatus status = co_await std::move(filling);
         if (status == ReadStatus::data) continue;
@@ -299,12 +315,11 @@ namespace uos::rt::detail::fetch {
         if (connection->reused) throw StaleConnection{};
         throw closedError(originalUrl);
       }
-      exchange->framing = responseFraming(method, exchange->head);
-      if (exchange->framing.error) throw verboseError(*exchange->framing.error, originalUrl);
-      const bool responseKeepsAlive = exchange->head.minorVersion >= 1 ? !exchange->head.connectionHas("close") : exchange->head.connectionHas("keep-alive");
-      exchange->keepAlive = responseKeepsAlive && !requestClosesConnection(headers) && exchange->framing.framing != Framing::close;
+      exchange->keepAlive = exchange->parser.keepsAlive() && !requestClosesConnection(headers);
+      exchange->pool = client->pool();
       exchange->connection = connection;
       exchange->writer = writer;
+      exchange->url = std::move(originalUrl);
       completed = true;
       co_return exchange;
     }
@@ -331,42 +346,9 @@ namespace uos::rt::detail::fetch {
 
     // ---- the response body ----------------------------------------------------------
 
-    struct BodyPump {
-      std::weak_ptr<Pool> pool;
-      std::shared_ptr<Connection> connection;
-      Framing framing = Framing::empty;
-      std::uint64_t remaining = 0;
-      ChunkedDecoder chunked;
-      std::unique_ptr<ContentDecoder> decoder;
-      std::shared_ptr<WriterState> writer;
-      bool keepAlive = false;
-      std::string url;
-      bool finished = false;
-      bool cancelled = false;
-      BodyPump() = default;
-      BodyPump(const BodyPump&) = delete;
-      BodyPump& operator=(const BodyPump&) = delete;
-      ~BodyPump() {
-        if (connection) connection->close();
-      }
-    };
-
-    std::shared_ptr<BodyPump> pumpFor(const std::shared_ptr<ClientState>& client, const Exchange& exchange, std::string url) {
-      auto pump = std::make_shared<BodyPump>();
-      pump->pool = client->pool();
-      pump->connection = exchange.connection;
-      pump->framing = exchange.framing.framing;
-      pump->remaining = exchange.framing.length;
-      pump->writer = exchange.writer;
-      pump->keepAlive = exchange.keepAlive;
-      pump->url = std::move(url);
-      return pump;
-    }
-
     // The body ended: the connection goes back to the pool when nothing else
     // arrived on it and the request was written in full; otherwise it closes.
-    void finishBody(BodyPump& pump) {
-      pump.finished = true;
+    void finishBody(Exchange& pump) {
       std::shared_ptr<Connection> connection = std::move(pump.connection);
       if (!connection) return;
       if (pump.keepAlive && pump.writer->done && connection->isOpen() && !connection->hasBufferedInput()) {
@@ -378,133 +360,93 @@ namespace uos::rt::detail::fetch {
       connection->close();
     }
 
-    // Moves the body bytes the framing allows out of the connection's input;
-    // true once the body ended. Throws InvalidHTTPResponse for bad chunking.
-    bool takeFramed(BodyPump& pump, std::string& raw) {
+    bool takeFramed(Exchange& pump, ByteChunk* out = nullptr) {
       ByteQueue& input = pump.connection->input;
-      switch (pump.framing) {
-        case Framing::empty: return true;
-        case Framing::length: {
-          const std::size_t take = static_cast<std::size_t>(std::min<std::uint64_t>(pump.remaining, input.size()));
-          raw.append(input.view().substr(0, take));
-          input.consume(take);
-          pump.remaining -= take;
-          return pump.remaining == 0;
-        }
-        case Framing::chunked: {
-          std::size_t offset = 0;
-          const ChunkedDecoder::Result result = pump.chunked.decode(input.view(), offset, raw);
-          input.consume(offset);
-          if (result == ChunkedDecoder::Result::invalid) throw verboseError("InvalidHTTPResponse", pump.url);
-          return result == ChunkedDecoder::Result::done;
-        }
-        case Framing::close:
-          raw.append(input.view());
-          input.clear();
-          return false;
-      }
-      return true;
+      std::size_t consumed = 0;
+      const auto result = pump.parser.readBody(input.view(), consumed, out);
+      input.consume(consumed);
+      if (result != HPE_OK && result != HPE_PAUSED) throw verboseError("InvalidHTTPResponse", pump.url);
+      return result == HPE_PAUSED;
     }
 
-    void enqueueText(const ReadableStreamDefaultController<ByteChunk>& controller, const std::string& text) {
-      if (!text.empty()) controller.enqueue(ByteChunk(text.begin(), text.end()));
+    void closeBody(Exchange& pump) {
+      if (auto connection = std::move(pump.connection)) connection->close();
     }
 
-    Task<void> pullBody(std::shared_ptr<BodyPump> pump, ReadableStreamDefaultController<ByteChunk> controller) {
+    Task<void> pullBody(std::shared_ptr<Exchange> pump, ReadableStreamDefaultController<ByteChunk> controller) {
       try {
-        for (;;) {
-          if (pump->cancelled || pump->finished || !pump->connection) co_return;
-          std::string raw;
-          const bool ended = takeFramed(*pump, raw);
-          std::string out;
+        while (pump->connection) {
+          ByteChunk out;
+          bool ended = takeFramed(*pump, &out);
+          if (!ended && out.empty()) {
+            auto filling = pump->connection->fill();
+            const ReadStatus status = co_await std::move(filling);
+            if (!pump->connection) co_return;
+            if (status == ReadStatus::data) continue;
+            if (pump->connection->timedOut()) rethrow(timeoutErrorReason());
+            if (status == ReadStatus::aborted) co_return;
+            if (status != ReadStatus::eof || pump->parser.finish() != HPE_PAUSED) throw closedError(pump->url);
+            ended = true;
+          }
           if (pump->decoder) {
-            if (!raw.empty()) pump->decoder->write(raw, out);
-            if (ended) pump->decoder->finish(out);
-          } else {
-            out = std::move(raw);
+            std::string decoded;
+            if (!out.empty()) pump->decoder->write({reinterpret_cast<const char*>(out.data()), out.size()}, decoded);
+            if (ended) pump->decoder->finish(decoded);
+            out.assign(decoded.begin(), decoded.end());
+          }
+          if (ended) finishBody(*pump);
+          if (!out.empty()) {
+            controller.enqueue(std::move(out));
+            if (!ended) co_return;
           }
           if (ended) {
-            finishBody(*pump);
-            enqueueText(controller, out);
             controller.close();
             co_return;
           }
-          if (!out.empty()) {
-            enqueueText(controller, out);
-            co_return;
-          }
-          auto filling = pump->connection->fill();
-          const ReadStatus status = co_await std::move(filling);
-          if (pump->cancelled) co_return;
-          if (status == ReadStatus::data) continue;
-          if (pump->connection->timedOut()) rethrow(timeoutErrorReason());
-          if (status == ReadStatus::aborted) co_return;
-          if (status == ReadStatus::eof && pump->framing == Framing::close) {
-            std::string tail;
-            if (pump->decoder) pump->decoder->finish(tail);
-            pump->finished = true;
-            pump->connection->close();
-            pump->connection.reset();
-            enqueueText(controller, tail);
-            controller.close();
-            co_return;
-          }
-          throw closedError(pump->url);
         }
       } catch (...) {
-        pump->finished = true;
-        if (pump->connection) {
-          pump->connection->close();
-          pump->connection.reset();
-        }
+        closeBody(*pump);
         throw;
       }
     }
 
-    Response makeResponse(const std::shared_ptr<ClientState>& client, const Exchange& exchange, std::string url) {
+    Response makeResponse(const std::shared_ptr<Exchange>& pump) {
+      const ResponseHead head = pump->parser.takeHead();
       Headers headers;
-      for (const auto& [name, value] : exchange.head.fields) headers.append(name, latin1Text(value));
-      std::shared_ptr<BodyPump> pump = pumpFor(client, exchange, url);
+      for (const auto& [name, value] : head.fields) headers.append(name, latin1Text(value));
       UnderlyingSource<ByteChunk> source;
-      if (pump->framing == Framing::empty) {
+      if (pump->parser.paused()) {
         finishBody(*pump);
         source.start = [](ReadableStreamDefaultController<ByteChunk> controller) { controller.close(); };
       } else {
-        pump->decoder = contentDecoder(exchange.head.field("content-encoding"), pump->url);
+        pump->decoder = contentDecoder(head.field("content-encoding"), pump->url);
         source.pull = [pump](ReadableStreamDefaultController<ByteChunk> controller) { return pullBody(pump, controller); };
-        source.cancel = [pump](Reason) {
-          pump->cancelled = true;
-          if (pump->connection) {
-            pump->connection->close();
-            pump->connection.reset();
-          }
-        };
+        source.cancel = [pump](Reason) { closeBody(*pump); };
       }
       const ByteStream stream(std::move(source));
       ResponseInit init;
-      init.status = exchange.head.status;
-      init.statusText = decodeUtf8(std::string_view(exchange.head.reason), TextDecoderOptions{.fatal = false, .ignoreBOM = true});
+      init.status = head.status;
+      init.statusText = decodeUtf8(std::string_view(head.reason), TextDecoderOptions{.fatal = false, .ignoreBOM = true});
       init.headers = std::move(headers);
       return Response(BodyInit(stream), std::move(init));
     }
 
     // Reads and drops a redirect response's body so its connection can be reused.
-    Task<void> drain(std::shared_ptr<ClientState> client, std::shared_ptr<Exchange> exchange, std::string url) {
-      std::shared_ptr<BodyPump> pump = pumpFor(client, *exchange, url);
-      if (pump->framing == Framing::close) co_return;
-      for (;;) {
-        std::string ignored;
-        if (takeFramed(*pump, ignored)) {
-          finishBody(*pump);
-          co_return;
-        }
+    Task<void> drain(std::shared_ptr<Exchange> pump) {
+      if (pump->parser.needsEof()) {
+        closeBody(*pump);
+        co_return;
+      }
+      while (!takeFramed(*pump)) {
         auto filling = pump->connection->fill();
         const ReadStatus status = co_await std::move(filling);
         if (status == ReadStatus::data) continue;
         if (pump->connection->timedOut()) rethrow(timeoutErrorReason());
         if (status == ReadStatus::aborted) abandon();
-        throw closedError(url);
+        if (status == ReadStatus::eof && pump->parser.finish() == HPE_PAUSED) break;
+        throw closedError(pump->url);
       }
+      finishBody(*pump);
     }
 
     bool isRedirect(int status) { return status == 301 || status == 302 || status == 303 || status == 307 || status == 308; }
@@ -525,12 +467,13 @@ namespace uos::rt::detail::fetch {
     for (;;) {
       auto exchanging = exchange(client, method, url, headers, body, originalUrl, signal);
       std::shared_ptr<Exchange> current = co_await std::move(exchanging);
-      const int status = current->head.status;
+      const ResponseHead& head = current->parser.head();
+      const int status = head.status;
       if (isRedirect(status) && mode == "error") {
         current->connection->close();
         throw verboseError("UnexpectedRedirect", originalUrl);
       }
-      const std::optional<std::string> location = isRedirect(status) && mode == "follow" ? current->head.field("location") : std::nullopt;
+      const std::optional<std::string> location = isRedirect(status) && mode == "follow" ? head.field("location") : std::nullopt;
       if (location) {
         std::optional<URL> target = URL::parse(latin1Text(*location), url.href());
         if (!target) {
@@ -558,13 +501,13 @@ namespace uos::rt::detail::fetch {
         if (target->origin() != url.origin()) {
           for (const char* name : {"authorization", "cookie", "proxy-authorization"}) headers.delete_(name);
         }
-        auto draining = drain(client, current, originalUrl);
+        auto draining = drain(current);
         co_await std::move(draining);
         url = std::move(*target);
         ++redirects;
         continue;
       }
-      Response response = makeResponse(client, *current, originalUrl);
+      Response response = makeResponse(current);
       response.setFetchResult(redirects > 0 ? url.href() : originalUrl, redirects > 0);
       co_return response;
     }
