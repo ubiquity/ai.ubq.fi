@@ -3415,8 +3415,280 @@
       ]
     },
     "src/rt/fetch_transport_net.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed the TCP and TLS paths, cancellation, idle timers, pool slots, registry teardown and both TLS context ownership modes.",
+      "sites": [
+        {
+          "lines": [
+            40,
+            41,
+            43,
+            44,
+            45,
+            48,
+            49,
+            52,
+            53,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            64,
+            67,
+            70,
+            71,
+            72,
+            75,
+            76
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Connection idle timer and close",
+          "reason": "The registered timer holds a weak connection, promotes it only for synchronous close, and is disarmed by close or destruction."
+        },
+        {
+          "lines": [
+            79,
+            81,
+            83,
+            84,
+            87,
+            89,
+            90,
+            94,
+            95,
+            99,
+            109,
+            110,
+            111,
+            120,
+            121,
+            124,
+            126,
+            131,
+            132,
+            133,
+            136
+          ],
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Handshake receiver, TLS context and read buffer",
+          "reason": "Connect owns the connection and client until handshake finishes, SSL takes the two BIOs, and the peer certificate reference is released synchronously after checking identity."
+        },
+        {
+          "lines": [
+            141,
+            143,
+            146,
+            147,
+            150,
+            151,
+            152,
+            156,
+            162,
+            163,
+            165,
+            175,
+            177,
+            178,
+            179,
+            182,
+            183
+          ],
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Plain and TLS fill buffer owners",
+          "reason": "The fill wrapper pins its receiver even when cancellation clears the pump slot. Only the active response reader mutates the receiver's read buffer and input queue."
+        },
+        {
+          "lines": [
+            187,
+            188,
+            190,
+            192,
+            193,
+            195,
+            198,
+            200,
+            201,
+            207,
+            208,
+            214,
+            215,
+            217,
+            219,
+            220,
+            223,
+            224,
+            226
+          ],
+          "classes": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Native write buffers through socket completion",
+          "reason": "The uploader owns the connection and the write frame owns its byte-buffer token. TLS flush copies ciphertext into its own vector before each write."
+        },
+        {
+          "lines": [
+            111,
+            151,
+            178,
+            193,
+            224
+          ],
+          "classes": [
+            "e"
+          ],
+          "verdict": "DEFECT",
+          "label": "Inline Asio buffer construction in native awaits",
+          "reason": "The awaits embed a constructed buffer descriptor. The port rule requires naming it before the await; current Clang compilation and the descriptor's trivial destruction do not demonstrate a GCC 12 failure.",
+          "defect": {
+            "id": "A-FETCH-NET-GCC-AWAIT",
+            "priority": 190,
+            "severity": "GCC 12 portability rule",
+            "interleaving": [
+              "The handshake, read or write initiates an Asio operation with an inline buffer descriptor inside the awaited expression.",
+              "The expression has the construction shape forbidden by the port. Separate the descriptor from the await on both connection branches."
+            ],
+            "diff": "--- a/cpp/gateway/src/rt/fetch_transport_net.cpp\n+++ b/cpp/gateway/src/rt/fetch_transport_net.cpp\n@@ -109,5 +109,6 @@\n       boost::system::error_code error;\n       auto token = asio::redirect_error(asio::use_awaitable, error);\n-      const std::size_t count = co_await socket_.async_read_some(asio::buffer(readBuffer_), token);\n+      auto buffer = asio::buffer(readBuffer_);\n+      const std::size_t count = co_await socket_.async_read_some(buffer, token);\n       if (error || count == 0) {\n         const ReadStatus status = statusOf(error, open_);\n@@ -149,5 +150,6 @@\n       boost::system::error_code error;\n       auto token = asio::redirect_error(asio::use_awaitable, error);\n-      const std::size_t count = co_await socket_.async_read_some(asio::buffer(readBuffer_), token);\n+      auto buffer = asio::buffer(readBuffer_);\n+      const std::size_t count = co_await socket_.async_read_some(buffer, token);\n       if (!open_) co_return ReadStatus::aborted;\n       if (error) co_return statusOf(error, open_);\n@@ -176,5 +178,6 @@\n       boost::system::error_code error;\n       auto token = asio::redirect_error(asio::use_awaitable, error);\n-      const std::size_t count = co_await socket_.async_read_some(asio::buffer(readBuffer_), token);\n+      auto buffer = asio::buffer(readBuffer_);\n+      const std::size_t count = co_await socket_.async_read_some(buffer, token);\n       if (!open_) co_return ReadStatus::aborted;\n       if (error) co_return statusOf(error, open_);\n@@ -191,5 +194,6 @@\n       boost::system::error_code error;\n       auto token = asio::redirect_error(asio::use_awaitable, error);\n-      co_await asio::async_write(socket_, asio::buffer(data, size), token);\n+      auto buffer = asio::buffer(data, size);\n+      co_await asio::async_write(socket_, buffer, token);\n       if (error || !open_) co_return false;\n       touch();\n@@ -222,5 +226,6 @@\n       boost::system::error_code error;\n       auto token = asio::redirect_error(asio::use_awaitable, error);\n-      co_await asio::async_write(socket_, asio::buffer(cipher.data(), static_cast<std::size_t>(taken)), token);\n+      auto buffer = asio::buffer(cipher.data(), static_cast<std::size_t>(taken));\n+      co_await asio::async_write(socket_, buffer, token);\n       if (error) co_return false;\n       touch();\n"
+          }
+        },
+        {
+          "lines": [
+            231,
+            233,
+            235,
+            236,
+            240,
+            241,
+            243,
+            251,
+            252,
+            253,
+            260,
+            262,
+            271,
+            273,
+            275,
+            276,
+            277,
+            278,
+            281,
+            282,
+            288,
+            290,
+            292,
+            295,
+            296,
+            299
+          ],
+          "classes": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Idle connection probe and slot handoff",
+          "reason": "Pool scanning stays synchronous, moves a connection into a local owner before checking it, and only returns idle sockets whose upload and parser phase has ended."
+        },
+        {
+          "lines": [
+            302,
+            304,
+            305,
+            309,
+            310,
+            311,
+            313,
+            314,
+            317,
+            323,
+            325,
+            326,
+            331,
+            335,
+            336,
+            338,
+            340,
+            341,
+            342,
+            345,
+            348,
+            350,
+            351,
+            353,
+            354,
+            358
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Pool timer reschedule and close traversal",
+          "reason": "The loop owns the timer job, the job temporarily promotes a weak pool, and no vector slot is borrowed across suspension or user callback invocation."
+        },
+        {
+          "lines": [
+            361,
+            363,
+            364,
+            365,
+            369,
+            371,
+            372,
+            373,
+            374,
+            379,
+            384,
+            387,
+            388,
+            392,
+            393,
+            394,
+            395,
+            396,
+            399,
+            402,
+            403,
+            405,
+            406,
+            408,
+            409,
+            410,
+            414,
+            415,
+            417,
+            418,
+            419,
+            420,
+            425,
+            427
+          ],
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Registry and TLS context lifetime during client teardown",
+          "reason": "Asio releases registry pool owners during service shutdown. The only other current pool owners are synchronous handles or same-context tasks destroyed before service deallocation, and the client and SSL connections hold their own context references."
+        }
+      ]
     },
     "src/rt/gzip.cpp": {
       "status": "pending",

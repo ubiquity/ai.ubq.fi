@@ -53,7 +53,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/fetch_transport_codec.cpp`
 - [x] `src/rt/fetch_transport_http.cpp`
 - [x] `src/rt/fetch_transport_internal.hpp`
-- [ ] `src/rt/fetch_transport_net.cpp`
+- [x] `src/rt/fetch_transport_net.cpp`
 - [ ] `src/rt/gzip.cpp`
 - [ ] `src/rt/tls.cpp`
 - [ ] `src/rt/tls_internal.hpp`
@@ -297,18 +297,31 @@ Reviewed the internal transport declarations against their call sites and the As
 - **SAFE** `226, 228, 229, 233, 235, 236, 237, 240, 241, 242, 244, 245, 246, 252, 256, 257, 258, 261, 262` (b/c/d), Pool slots and Asio service ownership. The context owns the registry, whose map holds the pools. Slot references are synchronous, the timer captures a weak pool, and registry shutdown releases map owners before service destruction.
 - **SAFE** `267, 268, 269, 272, 274, 275, 276, 278, 281, 285, 287, 288, 292` (b/c/d), Client per-loop registry observers and send inputs. The client uses the registry pointer only while a pool on that loop can be promoted. Current strong pool copies stay within synchronous code or a coroutine handled by the same context.
 
+### `src/rt/fetch_transport_net.cpp`
+
+Reviewed the TCP and TLS paths, cancellation, idle timers, pool slots, registry teardown and both TLS context ownership modes.
+
+- **SAFE** `40, 41, 43, 44, 45, 48, 49, 52, 53, 56, 57, 58, 59, 60, 61, 64, 67, 70, 71, 72, 75, 76` (b/c), Connection idle timer and close. The registered timer holds a weak connection, promotes it only for synchronous close, and is disarmed by close or destruction.
+- **SAFE** `79, 81, 83, 84, 87, 89, 90, 94, 95, 99, 109, 110, 111, 120, 121, 124, 126, 131, 132, 133, 136` (b/c/d), Handshake receiver, TLS context and read buffer. Connect owns the connection and client until handshake finishes, SSL takes the two BIOs, and the peer certificate reference is released synchronously after checking identity.
+- **SAFE** `141, 143, 146, 147, 150, 151, 152, 156, 162, 163, 165, 175, 177, 178, 179, 182, 183` (b/c/d), Plain and TLS fill buffer owners. The fill wrapper pins its receiver even when cancellation clears the pump slot. Only the active response reader mutates the receiver's read buffer and input queue.
+- **SAFE** `187, 188, 190, 192, 193, 195, 198, 200, 201, 207, 208, 214, 215, 217, 219, 220, 223, 224, 226` (b/d), Native write buffers through socket completion. The uploader owns the connection and the write frame owns its byte-buffer token. TLS flush copies ciphertext into its own vector before each write.
+- **DEFECT (A-FETCH-NET-GCC-AWAIT)** `111, 151, 178, 193, 224` (e), Inline Asio buffer construction in native awaits. The awaits embed a constructed buffer descriptor. The port rule requires naming it before the await; current Clang compilation and the descriptor's trivial destruction do not demonstrate a GCC 12 failure.
+- **SAFE** `231, 233, 235, 236, 240, 241, 243, 251, 252, 253, 260, 262, 271, 273, 275, 276, 277, 278, 281, 282, 288, 290, 292, 295, 296, 299` (b/d), Idle connection probe and slot handoff. Pool scanning stays synchronous, moves a connection into a local owner before checking it, and only returns idle sockets whose upload and parser phase has ended.
+- **SAFE** `302, 304, 305, 309, 310, 311, 313, 314, 317, 323, 325, 326, 331, 335, 336, 338, 340, 341, 342, 345, 348, 350, 351, 353, 354, 358` (c/d), Pool timer reschedule and close traversal. The loop owns the timer job, the job temporarily promotes a weak pool, and no vector slot is borrowed across suspension or user callback invocation.
+- **SAFE** `361, 363, 364, 365, 369, 371, 372, 373, 374, 379, 384, 387, 388, 392, 393, 394, 395, 396, 399, 402, 403, 405, 406, 408, 409, 410, 414, 415, 417, 418, 419, 420, 425, 427` (b/c/d), Registry and TLS context lifetime during client teardown. Asio releases registry pool owners during service shutdown. The only other current pool owners are synchronous handles or same-context tasks destroyed before service deallocation, and the client and SSL connections hold their own context references.
+
 ## Ranked defects and counts
 
-Reviewed **21/30 files** and **122 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **22/30 files** and **130 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 5 | 19 | 0 |
-| b. Borrowed coroutine parameter or receiver | 11 | 75 | 3 |
-| c. Callback ownership or cycle | 16 | 70 | 4 |
-| d. Container invalidation | 3 | 46 | 0 |
-| e. GCC 12 await-expression rule | 4 | 12 | 1 |
-| **Unique site groups** | 22 | 95 | 5 |
+| b. Borrowed coroutine parameter or receiver | 11 | 81 | 3 |
+| c. Callback ownership or cycle | 16 | 75 | 4 |
+| d. Container invalidation | 3 | 52 | 0 |
+| e. GCC 12 await-expression rule | 5 | 12 | 1 |
+| **Unique site groups** | 23 | 102 | 5 |
 
 ### 1. A-FETCH-ABORT-TRANSPORT (memory safety in the injectable transport path) — Abort can outlive the owning virtual transport frame
 
@@ -742,4 +755,56 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 -          co_await yield(std::move(*step->value));
 +          auto yielding = yield(std::move(*step->value));
 +          co_await std::move(yielding);
+```
+
+### 19. A-FETCH-NET-GCC-AWAIT (GCC 12 portability rule) — Inline Asio buffer construction in native awaits
+
+`src/rt/fetch_transport_net.cpp:111, 151, 178, 193, 224`
+
+- The handshake, read or write initiates an Asio operation with an inline buffer descriptor inside the awaited expression.
+- The expression has the construction shape forbidden by the port. Separate the descriptor from the await on both connection branches.
+
+```diff
+--- a/cpp/gateway/src/rt/fetch_transport_net.cpp
++++ b/cpp/gateway/src/rt/fetch_transport_net.cpp
+@@ -109,5 +109,6 @@
+       boost::system::error_code error;
+       auto token = asio::redirect_error(asio::use_awaitable, error);
+-      const std::size_t count = co_await socket_.async_read_some(asio::buffer(readBuffer_), token);
++      auto buffer = asio::buffer(readBuffer_);
++      const std::size_t count = co_await socket_.async_read_some(buffer, token);
+       if (error || count == 0) {
+         const ReadStatus status = statusOf(error, open_);
+@@ -149,5 +150,6 @@
+       boost::system::error_code error;
+       auto token = asio::redirect_error(asio::use_awaitable, error);
+-      const std::size_t count = co_await socket_.async_read_some(asio::buffer(readBuffer_), token);
++      auto buffer = asio::buffer(readBuffer_);
++      const std::size_t count = co_await socket_.async_read_some(buffer, token);
+       if (!open_) co_return ReadStatus::aborted;
+       if (error) co_return statusOf(error, open_);
+@@ -176,5 +178,6 @@
+       boost::system::error_code error;
+       auto token = asio::redirect_error(asio::use_awaitable, error);
+-      const std::size_t count = co_await socket_.async_read_some(asio::buffer(readBuffer_), token);
++      auto buffer = asio::buffer(readBuffer_);
++      const std::size_t count = co_await socket_.async_read_some(buffer, token);
+       if (!open_) co_return ReadStatus::aborted;
+       if (error) co_return statusOf(error, open_);
+@@ -191,5 +194,6 @@
+       boost::system::error_code error;
+       auto token = asio::redirect_error(asio::use_awaitable, error);
+-      co_await asio::async_write(socket_, asio::buffer(data, size), token);
++      auto buffer = asio::buffer(data, size);
++      co_await asio::async_write(socket_, buffer, token);
+       if (error || !open_) co_return false;
+       touch();
+@@ -222,5 +226,6 @@
+       boost::system::error_code error;
+       auto token = asio::redirect_error(asio::use_awaitable, error);
+-      co_await asio::async_write(socket_, asio::buffer(cipher.data(), static_cast<std::size_t>(taken)), token);
++      auto buffer = asio::buffer(cipher.data(), static_cast<std::size_t>(taken));
++      co_await asio::async_write(socket_, buffer, token);
+       if (error) co_return false;
+       touch();
 ```
