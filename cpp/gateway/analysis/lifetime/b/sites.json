@@ -2374,8 +2374,51 @@
       ]
     },
     "src/cache/scope_targets.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "82-96,110-120,201-206",
+          "verdict": "DEFECT",
+          "kinds": [
+            "e"
+          ],
+          "symbol": "Four fingerprint hash awaits with inline string temporaries",
+          "evidence": "Each inline canonicalJson call constructs a string in the same full-expression as a suspending hash coroutine taking that string by value. The port's GCC 12 rule calls for named input and separate task creation.",
+          "defect": "D08"
+        },
+        {
+          "lines": "82-96,110-126",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Owners of fingerprint material and point reads",
+          "evidence": "The tasks own JSON/catalog/material and key/store parameters. Field aliases refer to owned inputs. Await-expression portability at the hash sites is tracked separately."
+        },
+        {
+          "lines": "145-200",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "Derive target roster across hashes",
+          "evidence": "Range iteration is over an immutable frame-owned catalog. Each hash task gets a copied model and snapshot, and temporary topology/map views are used synchronously."
+        },
+        {
+          "lines": "212-237",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Load catalog and auth pool",
+          "evidence": "The fan-out uses free children that own KV and keys. Named aggregate results are owned through inventory derivation; no caller views escape either step."
+        }
+      ]
     },
     "src/cache/telemetry_gate.cpp": {
       "reviewed": false,

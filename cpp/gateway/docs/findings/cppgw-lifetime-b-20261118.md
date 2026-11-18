@@ -100,7 +100,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/scope_experiment.cpp`
 - [x] `src/cache/scope_experiment_model.cpp`
 - [x] `src/cache/scope_experiment_targets.cpp`
-- [ ] `src/cache/scope_targets.cpp`
+- [x] `src/cache/scope_targets.cpp`
 - [ ] `src/cache/telemetry_gate.cpp`
 - [ ] `include/uos/kernel/attestation.hpp`
 - [ ] `include/uos/kernel/policy_queue.hpp`
@@ -688,6 +688,15 @@ This facade does not define a coroutine or register callbacks. Its exported impl
 | 102-120,167-197 | Read and assert experiment telemetry baseline | **SAFE** | The resolved binding pointer points into a const result owned by the current frame across its read. Baseline and selected target are copied into the return value. |
 | 198-218,220-238 | Acquire cycle and renew lease | **SAFE** | Each frame keeps its state, binding and atomic operation. Parallel lease reads own the KV and keys regardless of sibling rejection. |
 
+### `src/cache/scope_targets.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 82-96,110-120,201-206 | Four fingerprint hash awaits with inline string temporaries | **DEFECT** ([D08](#d08)) | Each inline canonicalJson call constructs a string in the same full-expression as a suspending hash coroutine taking that string by value. The port's GCC 12 rule calls for named input and separate task creation. |
+| 82-96,110-126 | Owners of fingerprint material and point reads | **SAFE** | The tasks own JSON/catalog/material and key/store parameters. Field aliases refer to owned inputs. Await-expression portability at the hash sites is tracked separately. |
+| 145-200 | Derive target roster across hashes | **SAFE** | Range iteration is over an immutable frame-owned catalog. Each hash task gets a copied model and snapshot, and temporary topology/map views are used synchronously. |
+| 212-237 | Load catalog and auth pool | **SAFE** | The fan-out uses free children that own KV and keys. Named aggregate results are owned through inventory derivation; no caller views escape either step. |
+
 
 ## Ranked defects and counts
 
@@ -893,4 +902,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-77/97 files reviewed. **DEFECT 8, SAFE 183, UNCLEAR 3.**
+78/97 files reviewed. **DEFECT 9, SAFE 186, UNCLEAR 3.**
