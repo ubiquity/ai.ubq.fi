@@ -218,7 +218,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/openai_schema.cpp`
 - [x] `src/openai_telemetry.cpp`
 - [x] `src/optional_telemetry_queue.cpp`
-- [ ] `src/quota_projection.cpp`
+- [x] `src/quota_projection.cpp`
 - [ ] `src/recent_model_context.cpp`
 - [ ] `src/release.cpp`
 - [ ] `src/request.cpp`
@@ -1140,6 +1140,10 @@ Reviewed response and request telemetry WeakMaps, aggregate state, callback disp
 
 Reviewed synchronous payload sizing and error translation. Temporary child pointers are read while the caller's JSON remains unchanged. The asynchronous queue is implemented in the corresponding header.
 
+### `src/quota_projection.cpp`
+
+Reviewed synchronous balance/history projections and time-bin aggregators. Sort and erase predicates execute inline, and result bins own their data.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1388,4 +1392,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-111/286 files reviewed. 224 sites: 207 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+112/286 files reviewed. 224 sites: 207 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

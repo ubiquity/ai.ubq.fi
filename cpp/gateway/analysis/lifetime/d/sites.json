@@ -4864,7 +4864,8 @@
       "sites": []
     },
     "src/quota_projection.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous balance/history projections and time-bin aggregators. Sort and erase predicates execute inline, and result bins own their data.",
       "sites": []
     },
     "src/recent_model_context.cpp": {
