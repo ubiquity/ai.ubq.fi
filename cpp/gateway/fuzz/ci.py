@@ -8,16 +8,20 @@ requested time. Sources, libraries and sanitizer options come from
 targets.json, so both runners build the same harnesses.
 
 Usage: ci.py <target> --seconds N --out DIR [--jobs N]
-Exit status: 0 no findings, 1 findings were written to DIR/artifacts, 3 build or usage error.
+Exit status: 0 completed without findings, 1 findings were written to DIR/artifacts,
+3 build failure or incomplete campaign.
 """
 import argparse
 import concurrent.futures
 import json
 import os
 from pathlib import Path
+import platform
+import re
 import shutil
 import subprocess
 import sys
+import time
 
 GATEWAY = Path(__file__).resolve().parents[1]
 DEFINES = ["BOOST_JSON_NO_LIB", "BOOST_CONTAINER_NO_LIB", "BOOST_SYSTEM_NO_LIB",
@@ -26,6 +30,8 @@ DEFINES = ["BOOST_JSON_NO_LIB", "BOOST_CONTAINER_NO_LIB", "BOOST_SYSTEM_NO_LIB",
 # it is taken from the unit test that already links the same implementation.
 LINK_LIST_TEST = {"sse": "tests/responses_stream_test.cpp", "http_request": "tests/runtime_http_test.cpp",
                   "passkeys": "tests/passkeys_test.cpp"}
+FORK_EXIT = re.compile(r"^INFO: exiting: (\d+) time: (\d+)s$", re.MULTILINE)
+TIMEOUT_EXIT = 70
 
 
 def extra_sources(name, target, common):
@@ -70,17 +76,40 @@ def compile_one(compiler, flags, source, objects):
     return source, output, done.returncode, done.stderr[-6000:]
 
 
+def classify_campaign(target, seconds, artifacts, log, code):
+    inputs = {path for path in artifacts.iterdir() if path.is_file()}
+    slow = {path for path in inputs if target == "regex" and path.name.startswith("timeout-")}
+    fork_exit = FORK_EXIT.search(log)
+    fork_exit_code = int(fork_exit[1]) if fork_exit else None
+    fuzzed_seconds = int(fork_exit[2]) if fork_exit else 0
+    expected_codes = (0, TIMEOUT_EXIT) if target == "regex" else (0,)
+
+    # The ARM64 fork parent reports its own exit leak after its last child settles.
+    # Require that specific diagnostic and an empty crash artifact.
+    fork_leaks = set()
+    if platform.machine() in {"aarch64", "arm64"} and fork_exit and code != fork_exit_code:
+        after_exit = log[fork_exit.end():]
+        if "ERROR: LeakSanitizer: detected memory leaks" in after_exit and "fuzzer::FuzzWithFork" in after_exit:
+            fork_leaks = {path for path in inputs if path.name.startswith("crash-") and path.stat().st_size == 0}
+
+    findings = sorted(path.name for path in inputs - slow - fork_leaks)
+    completed = fuzzed_seconds >= seconds and fork_exit_code in expected_codes and (code == fork_exit_code or bool(fork_leaks))
+    outcome = "findings" if findings else "passed" if completed else "incomplete"
+    return {"outcome": outcome, "fuzzed_seconds": fuzzed_seconds, "findings": findings,
+            "expected_slow_inputs": len(slow), "expected_fork_exit_leaks": len(fork_leaks)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("target")
-    parser.add_argument("--seconds", type=int, default=600)
+    parser.add_argument("--seconds", type=int, default=300)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 2)
     parser.add_argument("--compiler", default=os.environ.get("CXX", "clang++"))
     args = parser.parse_args()
     policy = json.loads((GATEWAY / "fuzz/targets.json").read_text())
-    if args.target not in policy["targets"] or args.seconds < 1:
-        parser.error("known target and a positive duration are required")
+    if args.target not in policy["targets"] or args.seconds < 1 or args.jobs < 1:
+        parser.error("known target, positive duration and positive job count are required")
     target = policy["targets"][args.target]
     out = args.out.resolve()
     objects, corpus, artifacts = out / "obj", out / "corpus", out / "artifacts"
@@ -97,6 +126,7 @@ def main():
     sources.append(target["harness"])
     failed = []
     built = []
+    started = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         for source, output, code, stderr in pool.map(
                 lambda source: compile_one(args.compiler, flags, source, objects), sources):
@@ -116,6 +146,7 @@ def main():
     if linked.returncode:
         print("LINK FAILED\n" + linked.stderr[-12000:], file=sys.stderr)
         return 3
+    build_seconds = round(time.monotonic() - started, 3)
     for seed in (GATEWAY / "fuzz/corpus" / args.target).iterdir():
         if seed.is_file():
             shutil.copyfile(seed, corpus / seed.name)
@@ -125,30 +156,25 @@ def main():
                        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
     command = [str(binary), "-max_len=" + str(target["max_len"]), "-timeout=" + str(runtime["timeout_s"]),
                "-rss_limit_mb=" + str(runtime["rss_limit_mb"]), "-malloc_limit_mb=128",
-               "-fork=" + str(args.jobs), "-ignore_crashes=1", "-ignore_timeouts=1", "-ignore_ooms=1",
+               "-fork=" + str(args.jobs), "-ignore_crashes=0", "-ignore_ooms=0",
+               "-timeout_exitcode=" + str(TIMEOUT_EXIT), "-ignore_timeouts=" + str(int(args.target == "regex")),
                "-max_total_time=" + str(args.seconds), "-print_final_stats=1",
                "-artifact_prefix=" + str(artifacts) + "/", str(corpus)]
-    with (out / "campaign.log").open("wb") as log:
+    campaign_log = out / "campaign.log"
+    started = time.monotonic()
+    with campaign_log.open("wb") as log:
         code = subprocess.run(command, cwd=out, env=environment, stdout=log, stderr=subprocess.STDOUT).returncode
-    findings = sorted(path.name for path in artifacts.iterdir() if path.is_file())
-    # Catastrophic backtracking is the JavaScript engines' own behaviour for patterns such as
-    # (a*)+ and (.+)+, so slow regex inputs are kept in the artifacts but are not failures.
-    expected = [name for name in findings if args.target == "regex" and name.startswith("timeout-")]
-    # On ARM64 libFuzzer's fork-mode parent leaks 32 bytes of its own at exit (fuzzer::FuzzWithFork);
-    # LeakSanitizer then records an empty "crash" input. It is the tool's leak, not a target finding.
-    log_text = (out / "campaign.log").read_text(errors="replace")
-    if "fuzzer::FuzzWithFork" in log_text:
-        expected += [name for name in findings if name.startswith("crash-") and (artifacts / name).stat().st_size == 0]
-    findings = [name for name in findings if name not in expected]
-    tail = (out / "campaign.log").read_text(errors="replace")[-3000:]
+    campaign_seconds = round(time.monotonic() - started, 3)
+    log_text = campaign_log.read_text(errors="replace")
+    result = classify_campaign(args.target, args.seconds, artifacts, log_text, code)
     summary = {"target": args.target, "seconds": args.seconds, "jobs": args.jobs, "exit": code,
-               "corpus_count": len(list(corpus.iterdir())), "findings": findings,
-               "expected_slow_inputs": len(expected)}
+               "build_seconds": build_seconds, "campaign_seconds": campaign_seconds,
+               "corpus_count": len(list(corpus.iterdir())), **result}
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     shutil.rmtree(objects)
-    print(tail)
+    print(log_text[-3000:])
     print(json.dumps(summary, indent=2))
-    return 1 if findings else 0
+    return {"passed": 0, "findings": 1, "incomplete": 3}[result["outcome"]]
 
 
 if __name__ == "__main__":

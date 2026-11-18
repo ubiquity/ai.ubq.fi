@@ -8,7 +8,7 @@ On Ubuntu 24.04 or newer:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y g++-14 clang ninja-build pkg-config libboost-json-dev libboost-container-dev \
+sudo apt-get install -y g++-14 clang llvm ninja-build pkg-config libboost-json-dev libboost-container-dev \
   libssl-dev libsqlite3-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev util-linux
 # Optional faster linker, detected automatically on Linux:
 sudo apt-get install -y mold
@@ -46,12 +46,12 @@ The current runtime and fixtures still contain ARM64-only application contracts.
 Run from any working directory; paths below assume the repository root:
 
 ```sh
-CXX=g++-14 UOS_CI_JOBS=4 cpp/gateway/tools/ci-build.sh --config debug
-CXX=g++-14 UOS_CI_JOBS=4 cpp/gateway/tools/ci-build.sh --config release
-CXX=clang++ UOS_CI_JOBS=4 cpp/gateway/tools/ci-build.sh --config asan
-cpp/gateway/tools/ci-build.sh --list
-cpp/gateway/tools/ci-build.sh --config debug rt/process
-cpp/gateway/tools/ci-build.sh --config release --shard 1/4
+CXX=g++-14 UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config debug
+CXX=g++-14 UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config release
+CXX=clang++ UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config asan --shard 1/4
+bash cpp/gateway/tools/ci-build.sh --list
+bash cpp/gateway/tools/ci-build.sh --config debug rt/process
+bash cpp/gateway/tools/ci-build.sh --config release --shard 1/4
 ```
 
 `CXX` defaults to `g++`. `UOS_CI_JOBS` defaults to the available CPU count (`nproc` equivalent). `UOS_CI_BUILD_DIR` defaults to `/tmp/uos-gateway-build` and must be outside the repository. The driver separates compiler/flag identities and configurations, locks each output tree, and lets Ninja track transitive header dependencies. A filter is a substring of the test path. `--shard i/n` takes every nth element of the sorted filtered list, starting with one-based index i. Empty selections and invalid arguments fail.
@@ -62,7 +62,7 @@ cpp/gateway/tools/ci-build.sh --config release --shard 1/4
 | release       | `-O2`                                                         |
 | asan          | `-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer` |
 
-All configurations retain `-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror` and the Boost JSON/Container/System no-autolink definitions. Release and sanitizer configurations additionally define `BOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING` to use standard coroutine frame allocation. This avoids GCC 15/Boost.Asio 1.90 optimized allocator diagnostics without disabling any warning. Debug exercises Asio's recycling mode. Sanitizers also apply during linkage; runtime sanitizer errors are fatal. `UOS_CI_CXXFLAGS` and `UOS_CI_LDFLAGS` can supply additional dependency include/library paths. `UOS_CI_TIMEOUT` sets the per-binary run timeout in seconds (default 300); links are bounded at 900 seconds. Timeouts and interruption kill the owned process group, including namespace descendants. At most `UOS_CI_JOBS` test binaries exist at once; binaries and scratch directories are deleted after execution while objects and logs remain reusable.
+All configurations retain `-std=c++20 -Wall -Wextra -Wshadow -Wconversion -Werror` and the Boost JSON/Container/System no-autolink definitions. Release and sanitizer configurations additionally define `BOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING` to use standard coroutine frame allocation. This avoids GCC 15/Boost.Asio 1.90 optimized allocator diagnostics without disabling any warning. Debug exercises Asio's recycling mode. The `asan` configuration instruments compilation and linkage with AddressSanitizer and UndefinedBehaviorSanitizer, enables LeakSanitizer with `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1`, and halts on UBSan errors. `UOS_CI_CXXFLAGS` and `UOS_CI_LDFLAGS` can supply additional dependency include and library paths. `UOS_CI_TIMEOUT` defaults to 300 seconds per binary. Links are bounded at 900 seconds. Timeouts and interruption kill the owned process group, including namespace descendants. At most `UOS_CI_JOBS` test binaries exist at once. The driver deletes binaries and scratch directories after execution and retains reusable objects and logs.
 
 The final table lists every selected test, `PASS`, `FAIL`, `BUILD_FAIL` or `TIMEOUT`, and the harness's run/passed/failed case counts. A crash or missing summary cannot pass. Compilation continues after individual failures to collect complete diagnostics; any failed production compilation, test build, run or timeout makes the command exit nonzero. A crashed binary without a flushed harness summary has zero reported cases, not an invented count.
 
@@ -98,8 +98,28 @@ Exact commands, original failures, source changes, limitations and terminal coun
 
 ## GitHub Actions
 
-The C++ gateway workflow runs four Release shards with Clang on `ubuntu-26.04-arm`. It runs on pushes to `claude/cpp-gateway-port`, `pool-merge/**` and `agent-jobs/**`, on pull requests targeting `claude/cpp-gateway-port`, and on manual dispatch. A newer run for the same ref cancels the older run. Each shard builds the production objects and vendors, then links and executes its round-robin selection. [Workflow](../../../.github/workflows/cpp-gateway-ci.yml)
+The C++ gateway workflow runs on pushes to `claude/cpp-gateway-port`, `pool-merge/**` and `agent-jobs/**`, on pull requests targeting `claude/cpp-gateway-port`, and on manual dispatch. A newer run for the same ref cancels the older run. All jobs run on `ubuntu-26.04-arm` with read-only repository access and checkout credential persistence disabled. [Workflow](../../../.github/workflows/cpp-gateway-ci.yml)
 
-The workflow sets `UOS_CI_BUILD_DIR` under the runner's temporary directory. Each `ci-release-shard-i` artifact includes `receipt.json`, `results.tsv`, and the available driver, compiler, namespace, link and run logs. The job summary counts successful links, passed and failed targets, and reported cases, and lists every unsuccessful test. Failed targets include build failures and timeouts. An early driver exit may leave only logs and partial results.
+| Check              | Jobs                           | Coverage                                                             |
+| ------------------ | ------------------------------ | -------------------------------------------------------------------- |
+| Release suite      | Four round-robin shards        | Every registered test with Clang `--config release`                  |
+| Sanitizer suite    | Four round-robin shards        | The same tests with Clang `--config asan` and ASan, UBSan and LSan   |
+| Library robustness | One job per registered harness | Five minutes per harness, or 40 minutes on pushes to the port branch |
 
-The Clang x86_64 qualification records local counts and diagnostics. The workflow on the pushed result branch provides the matching ARM64 evidence. [Run report](findings/cppgw-ci-workflow-20261118.md)
+Each suite shard has a 240-minute job limit and four workers. It builds the production objects and vendors, then links and runs its share of the sorted test inventory. The `ci-<config>-shard-<i>` artifact contains the job summary and any `receipt.json`, `results.tsv`, and driver, compiler, namespace, link and run logs. The summary counts successful links, passed and failed targets, and reported cases. It lists unsuccessful targets, including build failures and timeouts.
+
+Both configurations split the current inventory into 111, 110, 110 and 110 tests. ASan shard 1 built and ran all 111 binaries on four x86_64 cores. The two build segments and the test run accounted for about 62 minutes of recorded work, excluding the interruption. The measurement supports four sanitizer shards under the 240-minute job limit. The local run recorded 107 passes and four existing fixture failures. [Sanitizer receipt and timings](findings/cppgw-ci-sanitizers-20261118.md#asan-shard-1-receipt)
+
+The robustness matrix uses all entries in `fuzz/targets.json`. The discovery job publishes the selected targets. Each harness job has a 120-minute limit and runs libFuzzer with four workers in a private Linux network namespace, using a fresh home and temporary directory and a credential-free environment. The `fuzz-<target>` artifact contains its build and campaign logs, summary, and any finding inputs. Slow `regex` inputs and the empty crash artifact from the known ARM64 libFuzzer fork-parent exit leak stay in the evidence and are counted separately. Genuine findings and incomplete campaigns fail the job.
+
+The same command runs the five-minute JSON harness on a disposable Linux host with passwordless sudo.
+
+```sh
+fuzz_out=$(mktemp -d)
+mkdir -p "$fuzz_out/home" "$fuzz_out/tmp"
+sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --no-new-privs \
+  env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$fuzz_out/home" TMPDIR="$fuzz_out/tmp" \
+  python3 -B cpp/gateway/fuzz/ci.py json --seconds 300 --jobs 4 --out "$fuzz_out"
+```
+
+The x86_64 qualification records local counts and diagnostics. Matching ARM64 results come from the workflow runs. [Release qualification](findings/cppgw-ci-workflow-20261118.md) · [Sanitizer and robustness qualification](findings/cppgw-ci-sanitizers-20261118.md)
