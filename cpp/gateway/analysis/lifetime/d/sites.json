@@ -2181,7 +2181,8 @@
       ]
     },
     "src/authority/native_api_key.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed validation, usage-window selectors and write-plan construction. All borrows refer to current JSON or records consumed synchronously, and plans own their records. No suspension or escaping callback.",
       "sites": []
     },
     "src/authority/native_api_key_audit.cpp": {
