@@ -392,7 +392,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/static.hpp`
 - [x] `include/uos/systemone/handlers.hpp`
 - [x] `include/uos/types.hpp`
-- [ ] `include/uos/upstream_wire.hpp`
+- [x] `include/uos/upstream_wire.hpp`
 - [ ] `include/uos/utils.hpp`
 
 ## Site ledger
@@ -2236,6 +2236,13 @@ Reviewed value codecs, enum conversion and message content type tags.
 
 - L54, 56, 400, 407, 413, 422, 435 **SAFE** · Stringified enum and type tag views point to static literals. The parser uses its input view synchronously and record codecs produce owned results.
 
+### `include/uos/upstream_wire.hpp`
+
+Reviewed provider request ID and error converter interfaces.
+
+- L22, 27, 33 **SAFE** · Formatters and normalizers consume views synchronously. The warning label is static literal storage.
+- L43, 45, 51, 53 **SAFE** · Each asynchronous converter owns its response, signal and any diagnostic values while the bounded body read runs.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2485,4 +2492,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-284/286 files reviewed. 473 sites: 448 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+285/286 files reviewed. 475 sites: 450 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
