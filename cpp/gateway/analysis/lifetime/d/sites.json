@@ -2531,7 +2531,8 @@
       "sites": []
     },
     "src/authority/native_contracts.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed native numeric, key and JSON shape helpers. Returned views are used synchronously by callers and no task or callback is created.",
       "sites": []
     },
     "src/authority/native_kernel.cpp": {

@@ -116,7 +116,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_codex_contracts.cpp`
 - [x] `src/authority/native_codex_evaluation.cpp`
 - [x] `src/authority/native_codex_mutations.cpp`
-- [ ] `src/authority/native_contracts.cpp`
+- [x] `src/authority/native_contracts.cpp`
 - [ ] `src/authority/native_kernel.cpp`
 - [ ] `src/authority/native_kernel_contracts.cpp`
 - [ ] `src/authority/native_paid.cpp`
@@ -736,6 +736,10 @@ Reviewed synchronous quota-window lookup and account evaluation. Results copy th
 
 Reviewed synchronous slot reset, dispatch and proof mutations. Reference-capturing lambdas are immediately called or used as inline predicates. No suspension or escaping callback.
 
+### `src/authority/native_contracts.cpp`
+
+Reviewed native numeric, key and JSON shape helpers. Returned views are used synchronously by callers and no task or callback is created.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -841,4 +845,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-51/286 files reviewed. 136 sites: 127 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+52/286 files reviewed. 136 sites: 127 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
