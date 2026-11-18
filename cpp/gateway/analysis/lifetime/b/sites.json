@@ -888,8 +888,30 @@
       "note": "The input span is borrowed only during the synchronous Decoder call. Local string/object pools and byte subspans produce owned KvValue results, including the inner storage envelope. No coroutine or deferred callback."
     },
     "src/rt/kv_key.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "131-190,192-245,261-334,378-491,509-525",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "KV key codecs and comparison helpers",
+          "evidence": "Reference-capturing lambdas are synchronous and parser subspans point to the current call's input. Pack and unpack build owning key results."
+        },
+        {
+          "lines": "343-360",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "KV tuple variant accessors",
+          "evidence": "Byte, string and BigInt references are into the caller's KvKeyPart. The serializing and checking call sites consume them synchronously before any await."
+        }
+      ]
     },
     "src/rt/kv_memory.cpp": {
       "reviewed": false,
