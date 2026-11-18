@@ -843,6 +843,16 @@ namespace uos::auth::passkeys {
 
     std::vector<RelativeDistinguishedName> parseName(const X509_NAME* name) {
       const asn1::ErrorScope errors;
+      // X509_NAME's flat entry list drops empty RDNs. Reject them before comparing names.
+      const unsigned char* der = nullptr;
+      std::size_t derSize = 0;
+      if (X509_NAME_get0_der(name, &der, &derSize) != 1 || derSize > asn1::maxInput) asn1::invalid("X.509 distinguished name");
+      BytesView encoded(der, derSize);
+      BytesView rdns = asn1::takeDer(encoded, "X.509 distinguished name").contents;
+      while (!rdns.empty()) {
+        if (asn1::takeDer(rdns, "X.509 distinguished name").contents.empty()) asn1::invalid("X.509 relative distinguished name");
+      }
+
       std::vector<RelativeDistinguishedName> out;
       int lastSet = -1;
       const int count = X509_NAME_entry_count(name);
@@ -2105,6 +2115,16 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       return crl;
     }
 
+    bool hasAsn1SequenceHeader(BytesView bytes) {
+      if (bytes.empty()) return false;
+      const asn1::ErrorScope errors;
+      const unsigned char* cursor = bytes.data();
+      long size = 0;
+      int tag = 0, tagClass = 0;
+      const int flags = ASN1_get_object(&cursor, &size, &tag, &tagClass, static_cast<long>(std::min(bytes.size(), asn1::maxInput)));
+      return (flags & V_ASN1_CONSTRUCTED) != 0 && tagClass == V_ASN1_UNIVERSAL && tag == V_ASN1_SEQUENCE;
+    }
+
     // Revocation fetches use the first distribution point and its first fullName.
     std::optional<std::string> crlDistributionPointUrl(const Certificate& cert) {
       const auto points = certificateExtension<CRL_DIST_POINTS, CRL_DIST_POINTS_free>(cert, NID_crl_distribution_points, "CRL Distribution Points");
@@ -2173,8 +2193,8 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       try {
         newCached = parseCrl(certListBytes);
       } catch (const rt::JsError&) {
-        // A malformed published list must not turn a revocation check into a successful one.
-        if (published) throw;
+        // A server can return a CRL body with an error status. Fail closed if that body looks like a list.
+        if (published || hasAsn1SequenceHeader(certListBytes)) throw;
         co_return false;
       }
       // Cache the results

@@ -107,6 +107,14 @@ TEST("certificate verification uses the decoded signing key and original signed 
   EXPECT(!passkeys::verifyCertificateSignature(modified, root));
 }
 
+TEST("name projection rejects empty RDNs that OpenSSL drops from its entry list") {
+  const auto empty = passkeys::asn1::decode<X509_NAME_free>(rt::fromHex("3000"), d2i_X509_NAME, "X.509 Name");
+  EXPECT(passkeys::parseName(empty.get()).empty());
+  const auto emptyRdn = passkeys::asn1::decode<X509_NAME_free>(rt::fromHex("30023100"), d2i_X509_NAME, "X.509 Name");
+  EXPECT_EQ(X509_NAME_entry_count(emptyRdn.get()), 0);
+  EXPECT_THROWS(passkeys::parseName(emptyRdn.get()), rt::JsError);
+}
+
 TEST("CRLs consume the complete DER and use unsigned serial magnitudes") {
   Bytes bytes = rt::fromBase64(androidCrl);
   const auto crl = passkeys::parseCrl(bytes);
@@ -125,6 +133,18 @@ ASYNC_TEST("invalid published CRL fails the revocation check and is never cached
   {
     const rt::GlobalFetchOverride fetchMock([](rt::RequestInfo, rt::RequestInit) {
       return rt::Response(rt::BodyInit(std::string("malformed")));
+    });
+    auto check = passkeys::isCertRevoked(leaf);
+    EXPECT_REJECTS(std::move(check), rt::JsError);
+  }
+  EXPECT(passkeys::cacheRevokedCerts().empty());
+  {
+    const rt::GlobalFetchOverride fetchMock([](rt::RequestInfo, rt::RequestInit) {
+      Bytes bytes = rt::fromBase64(androidCrl);
+      bytes.push_back(0);
+      rt::ResponseInit init;
+      init.status = 404;
+      return rt::Response(rt::BodyInit(std::move(bytes)), init);
     });
     auto check = passkeys::isCertRevoked(leaf);
     EXPECT_REJECTS(std::move(check), rt::JsError);
