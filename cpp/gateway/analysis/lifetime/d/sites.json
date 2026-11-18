@@ -10540,8 +10540,38 @@
       ]
     },
     "include/uos/utils.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the byte and string views and digest declarations.",
+      "sites": [
+        {
+          "lines": [
+            22,
+            24,
+            26,
+            29,
+            35,
+            38
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Encoding functions borrow input only during synchronous conversion and return owning strings or byte buffers."
+        },
+        {
+          "lines": [
+            31,
+            33
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The digest Tasks receive and hold owning strings through their yield."
+        }
+      ]
     }
   }
 }
