@@ -322,7 +322,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/removed_provider_circuit.cpp`
 - [x] `src/provider/removed_provider_telemetry.cpp`
 - [x] `src/provider/selection.cpp`
-- [ ] `src/provider/stream_relay.cpp`
+- [x] `src/provider/stream_relay.cpp`
 - [ ] `src/provider/surplus.cpp`
 - [ ] `src/provider/surplus_claude_chat_request.cpp`
 - [ ] `src/provider/surplus_claude_request.cpp`
@@ -2058,3 +2058,12 @@ Provider selection reads and writes snapshots. Its in-flight token needs the sam
 - 82-96,102-107,181-204 · store, hash and selection snapshot ownership · **SAFE** · The frame owns KV through the joined child or virtual task. Hash and selection reads do not keep shared map entries across suspension.
 - 82-98,264-277 · selection cache retains an abandoned load · **DEFECT** · Destroying a fixture Loop while KV is pending destroys the load frame without executing its global reset. A later Loop can reuse the stranded Promise. Move the token-checked reset into a frame scope guard.
 - 149-176,238-252 · selection views and synchronous predicate · **SAFE** · Views are consumed while their caller-owned strings or KV values remain live. The predicate never leaves selectedCatalogEntryProviders.
+
+### `src/provider/stream_relay.cpp`
+
+The relay copies telemetry, retains the upstream until late cancellation is handled, and preserves the existing loop-shutdown cleanup for the late-abort callback.
+
+- 33-43,100-122 · refusal buffer and detached body cancel · **SAFE** · The refusal frame owns its response and parsed JSON. The relay copies context and signals, and cancelPromise retains the detached body operation.
+- 62-82,125-142 · late downstream abort and pending response · **SAFE** · The abort listener owns PendingCancellation and only a weak signal. The loop registry releases any callback-owned cycle at shutdown, and the pending upstream reaction owns relay state until settlement or loop teardown.
+- 158-256,323-435 · member coroutines and awaited children · **SAFE** · SourceAlgorithm retains the state-capturing pull closure while the member pulls run and join their children. They use named iterator and response copies, so cancellation can reset the relay's copies independently.
+- 259-270,437-458,465-474 · cancel closure and detached generator return · **SAFE** · The stream owns the source closures, cancellation is synchronous, and iterator return takes a separate generator state handle before spawning.

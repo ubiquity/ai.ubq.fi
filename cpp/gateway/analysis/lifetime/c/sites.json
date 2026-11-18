@@ -3919,8 +3919,34 @@
       ]
     },
     "src/provider/stream_relay.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The relay copies telemetry, retains the upstream until late cancellation is handled, and preserves the existing loop-shutdown cleanup for the late-abort callback.",
+      "sites": [
+        {
+          "lines": "33-43,100-122",
+          "kind": "refusal buffer and detached body cancel",
+          "verdict": "SAFE",
+          "reason": "The refusal frame owns its response and parsed JSON. The relay copies context and signals, and cancelPromise retains the detached body operation."
+        },
+        {
+          "lines": "62-82,125-142",
+          "kind": "late downstream abort and pending response",
+          "verdict": "SAFE",
+          "reason": "The abort listener owns PendingCancellation and only a weak signal. The loop registry releases any callback-owned cycle at shutdown, and the pending upstream reaction owns relay state until settlement or loop teardown."
+        },
+        {
+          "lines": "158-256,323-435",
+          "kind": "member coroutines and awaited children",
+          "verdict": "SAFE",
+          "reason": "SourceAlgorithm retains the state-capturing pull closure while the member pulls run and join their children. They use named iterator and response copies, so cancellation can reset the relay's copies independently."
+        },
+        {
+          "lines": "259-270,437-458,465-474",
+          "kind": "cancel closure and detached generator return",
+          "verdict": "SAFE",
+          "reason": "The stream owns the source closures, cancellation is synchronous, and iterator return takes a separate generator state handle before spawning."
+        }
+      ]
     },
     "src/provider/surplus.cpp": {
       "status": "pending",
