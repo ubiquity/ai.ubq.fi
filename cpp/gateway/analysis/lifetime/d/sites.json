@@ -2278,8 +2278,21 @@
       ]
     },
     "src/authority/native_authority_codex.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed synchronous pool selection, reset, signal and write operations. The identity pointer refers to the pool argument and callers consume it within the same operation.",
+      "sites": [
+        {
+          "lines": [
+            14
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The identity finder uses its pool and slot synchronously and callers keep the local pool snapshot while using its result."
+        }
+      ]
     },
     "src/authority/native_authority_contracts.cpp": {
       "reviewed": false,

@@ -102,7 +102,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_api_key_policy.cpp`
 - [x] `src/authority/native_authority.cpp`
 - [x] `src/authority/native_authority_api.cpp`
-- [ ] `src/authority/native_authority_codex.cpp`
+- [x] `src/authority/native_authority_codex.cpp`
 - [ ] `src/authority/native_authority_contracts.cpp`
 - [ ] `src/authority/native_authority_kernel.cpp`
 - [ ] `src/authority/native_authority_paid.cpp`
@@ -663,6 +663,12 @@ Reviewed synchronous API admission, dispatch and status transactions. The snapsh
 
 - L92 **SAFE** · The invoked snapshot lambda is a local read factory with access to this and the active frame. It is called inline and never escapes.
 
+### `src/authority/native_authority_codex.cpp`
+
+Reviewed synchronous pool selection, reset, signal and write operations. The identity pointer refers to the pool argument and callers consume it within the same operation.
+
+- L14 **SAFE** · The identity finder uses its pool and slot synchronously and callers keep the local pool snapshot while using its result.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -768,4 +774,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-37/286 files reviewed. 126 sites: 117 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+38/286 files reviewed. 127 sites: 118 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
