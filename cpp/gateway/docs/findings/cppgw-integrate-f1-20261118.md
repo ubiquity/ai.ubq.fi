@@ -351,14 +351,16 @@ Raspberry Pi and production serving acceptance remain separate. The worktree is 
 build outputs, binaries and downloads are in runner scratch.
 
 The refreshed `origin/development` is `a3a96bc5fe96ba383936746fae23e64daa69562f`. It has no gateway tree and
-does not contain the F1 merges. The HTTPS push preflight for the F1 branch exited 128 because the runner has
+does not contain the F1 merges. Both the HTTPS push preflight and the push exited 128 because the runner has
 no GitHub write authentication. The GitHub PR, ancestry-preserving merge and checkout handoff to `development`
-remain pending. The verified Git bundle in runner scratch keeps the ordered integration available from the
-fetched input tips.
+remain pending. The verified Git bundle in runner scratch keeps the ordered integration available from the fetched
+input tips.
 
 ```bash
 git fetch --no-tags origin refs/heads/development:refs/remotes/origin/development
 GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false git push --dry-run --porcelain origin \
+  HEAD:refs/heads/agent-jobs/cppgw-integrate-f1-20261118
+GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false timeout -k 2s 20s git push --porcelain origin \
   HEAD:refs/heads/agent-jobs/cppgw-integrate-f1-20261118
 git bundle create "$scratch/cppgw-integrate-f1-20261118.bundle" agent-job \
   ^6d28e858 ^af7a0036 ^980d97fb ^20c83e02
@@ -367,7 +369,8 @@ git bundle verify "$scratch/cppgw-integrate-f1-20261118.bundle"
 
 **Summary.** All three merges are committed on `agent-job`. Linux ARM64 passed 450 release binaries and 5,104
 cases, plus 157 sanitizer binaries and 1,933 cases. The Links check and Docker package verification passed.
-Native and Bun agreed on all 186 paired cases, with two shared validation failures. The gateway accepts WebSocket
-close code 1014 on Boost 1.90, and the 608-second KV fuzz campaign produced no OOM or other genuine findings.
+Native and Bun agreed on all 186 paired cases, with shared validation failures for `chat-invalid-role` and
+`responses-invalid-tool-type`. Boost 1.90 rejected the registered WebSocket close code 1014. The fix preserves
+the one-close-frame assertion. The 608-second KV fuzz campaign produced no OOM or other genuine findings.
 First-party production source fell from 188,326 to 185,211 lines. GitHub write authentication blocked publication
 and the `development` handoff.
