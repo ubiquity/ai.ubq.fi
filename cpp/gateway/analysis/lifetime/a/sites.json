@@ -1434,8 +1434,331 @@
       ]
     },
     "include/uos/rt/stream.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed eager reader registration, source callback type erasure, reentrant cancellation, branch teeing and generator adapters. A copied controller is a strong stream owner. A copy kept in closure-owned state therefore needs an independent release path.",
+      "sites": [
+        {
+          "lines": [
+            38,
+            46,
+            48,
+            49,
+            55,
+            56,
+            58,
+            60,
+            72,
+            73,
+            74,
+            136,
+            251,
+            294,
+            295,
+            296,
+            297,
+            373,
+            378
+          ],
+          "classes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Source algorithm callable lifetime",
+          "reason": "The start source is owned by the constructor, runtime pull/cancel calls use local algorithm copies and runAsync retains the erased coroutine closure throughout each asynchronous call."
+        },
+        {
+          "lines": [
+            49,
+            72,
+            74
+          ],
+          "classes": [
+            "b"
+          ],
+          "verdict": "UNCLEAR",
+          "label": "Borrowing callback parameters through the by-value erased signature",
+          "reason": "The current callbacks checked take owned values or complete synchronously. A supported ABI check with a Task callback taking const A& would establish whether the materialized std::function parameter survives throughout its await."
+        },
+        {
+          "lines": [
+            72,
+            540
+          ],
+          "classes": [
+            "e"
+          ],
+          "verdict": "DEFECT",
+          "label": "Stream callback and yield arguments materialized inside awaits",
+          "reason": "runAsync forwards an owning erased argument and iterateStream moves an owning chunk within the await full expressions.",
+          "defect": {
+            "id": "A-STREAM-GCC-AWAIT",
+            "priority": 93,
+            "severity": "GCC 12 portability rule",
+            "interleaving": [
+              "A stream uses an owning controller, cancellation reason or chunk in a callback/yield invocation. The argument is materialized inside co_await.",
+              "The GCC 12 rule calls for creating the Task separately. Using an rvalue-reference erased signature keeps a borrowing callee attached to runAsync's frame while performing that split."
+            ],
+            "diff": "--- a/cpp/gateway/include/uos/rt/stream.hpp\n+++ b/cpp/gateway/include/uos/rt/stream.hpp\n@@ -49,1 +49,1 @@\n-        else async_ = std::make_shared<const std::function<Task<void>(A)>>(std::forward<F>(callable));\n+        else async_ = std::make_shared<const std::function<Task<void>(A&&)>>(std::forward<F>(callable));\n@@ -72,3 +72,6 @@\n-      static Task<void> runAsync(std::shared_ptr<const std::function<Task<void>(A)>> function, A argument) { co_await (*function)(std::move(argument)); }\n+      static Task<void> runAsync(std::shared_ptr<const std::function<Task<void>(A&&)>> function, A argument) {\n+        auto handling = (*function)(std::move(argument));\n+        co_await std::move(handling);\n+      }\n       std::shared_ptr<const std::function<void(A)>> sync_;\n-      std::shared_ptr<const std::function<Task<void>(A)>> async_;\n+      std::shared_ptr<const std::function<Task<void>(A&&)>> async_;\n@@ -540,1 +543,2 @@\n-          co_await yield(std::move(*step->value));\n+          auto yielding = yield(std::move(*step->value));\n+          co_await std::move(yielding);"
+          }
+        },
+        {
+          "lines": [
+            103,
+            104,
+            111,
+            124,
+            128,
+            135,
+            136,
+            137,
+            140,
+            146,
+            305,
+            307,
+            311,
+            316,
+            321,
+            324,
+            376,
+            377
+          ],
+          "classes": [
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Controller and active pull ownership",
+          "reason": "The executing controller and pull reaction pin state during use; a callback-owned controller cache can create a separate persistent backedge, assessed at each such source."
+        },
+        {
+          "lines": [
+            137,
+            138,
+            252,
+            254,
+            378,
+            380,
+            570,
+            571
+          ],
+          "classes": [
+            "c"
+          ],
+          "verdict": "DEFECT",
+          "related_defect": "A-PROMISE-REACTION-CYCLE",
+          "label": "Stream reactions capture their own pending Promise states",
+          "reason": "The pull, cancel, start and tee closed callbacks repeat the pending-source cycle from PromiseCore. Their source states need ownership only during delivery."
+        },
+        {
+          "lines": [
+            151,
+            153,
+            154,
+            155,
+            157,
+            162,
+            165,
+            171,
+            173,
+            174,
+            182,
+            183,
+            186,
+            190,
+            191,
+            269,
+            270,
+            283,
+            284,
+            286
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Stream and reader queue drain boundaries",
+          "reason": "Chunk and reader-request entries are moved out before settlement, reader release pins the stream, and Promise settlement queues reactions outside these synchronous traversals."
+        },
+        {
+          "lines": [
+            203,
+            204,
+            215,
+            216,
+            218,
+            221,
+            223,
+            225,
+            226,
+            231,
+            233,
+            234,
+            334,
+            346,
+            348,
+            359,
+            361,
+            408,
+            419,
+            425,
+            426,
+            428,
+            433
+          ],
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Read registration and reader accessors",
+          "reason": "Read registration happens synchronously and returns an owned result state, and no borrow of the reader's stream is used after a pull callback can reenter."
+        },
+        {
+          "lines": [
+            238,
+            249,
+            251,
+            252,
+            253,
+            262,
+            264,
+            336,
+            338,
+            352,
+            355,
+            396,
+            398,
+            401,
+            404
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "DEFECT",
+          "label": "Stream cancel borrows the owner slot through callback invocation",
+          "reason": "The callback can release the reader or replace the stream handle while the cancellation epilogue still dereferences its shared_ptr slot.",
+          "defect": {
+            "id": "A-STREAM-CANCEL-OWNER",
+            "priority": 18,
+            "severity": "memory safety in stream cancellation",
+            "interleaving": [
+              "reader.cancel closes the stream and invokes the underlying cancel callback while borrowing reader->stream.",
+              "The callback releases the reader lock. The same shared_ptr slot becomes null, then cancelStreamInto dereferences it to clear the algorithms."
+            ],
+            "diff": "--- a/cpp/gateway/include/uos/rt/stream.hpp\n+++ b/cpp/gateway/include/uos/rt/stream.hpp\n@@ -238,1 +238,1 @@\n-    template <class T> void cancelStreamInto(const std::shared_ptr<StreamState<T>>& stream, Reason reason, const std::shared_ptr<PromiseState<void>>& out) {\n+    template <class T> void cancelStreamInto(std::shared_ptr<StreamState<T>> stream, Reason reason, const std::shared_ptr<PromiseState<void>>& out) {"
+          }
+        },
+        {
+          "lines": [
+            444,
+            445,
+            446,
+            453,
+            454,
+            458,
+            460,
+            464,
+            469,
+            475,
+            479,
+            485,
+            486,
+            493,
+            496,
+            502,
+            554,
+            557,
+            558,
+            559,
+            561,
+            562,
+            567,
+            568
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "DEFECT",
+          "label": "In-flight tee read keeps abandoned branches' source alive",
+          "reason": "Weak branch references avoid one direct backedge, while an unfulfilled source read still owns the teeRead continuation that owns the source through TeeState.",
+          "defect": {
+            "id": "A-STREAM-TEE-READ-CYCLE",
+            "priority": 49,
+            "severity": "retention on cloned streaming bodies",
+            "interleaving": [
+              "Tee starts a read of a source that has no next chunk yet, registering the continuation on the source read request.",
+              "Drop both branch handles and the original source. The read request owns the parked frame, whose TeeState parameter owns the source and its read queue until external settlement or Loop teardown."
+            ],
+            "diff": "--- a/cpp/gateway/include/uos/rt/stream.hpp\n+++ b/cpp/gateway/include/uos/rt/stream.hpp\n@@ -460,5 +460,12 @@\n-    template <class T> Task<void> teeRead(std::shared_ptr<TeeState<T>> tee) {\n+    template <class T> Task<void> teeRead(std::weak_ptr<TeeState<T>> weak) {\n+      Task<ReadableStreamReadResult<T>> reading;\n+      {\n+        auto live = weak.lock();\n+        if (!live) co_return;\n+        reading = readFrom(live->reader);\n+      }\n       ReadableStreamReadResult<T> result;\n       bool failed = false;\n       try {\n-        result = co_await readFrom(tee->reader);\n+        result = co_await std::move(reading);\n@@ -467,1 +474,3 @@\n       }\n+      auto tee = weak.lock();\n+      if (!tee) co_return;\n@@ -502,1 +511,1 @@\n-      start(currentLoop(), teeRead(tee));\n+      start(currentLoop(), teeRead<T>(std::weak_ptr<TeeState<T>>(tee)));"
+          }
+        },
+        {
+          "lines": [
+            505,
+            507,
+            510,
+            513,
+            514,
+            515,
+            517
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Tee cancellation releases its tee owner before waiting",
+          "reason": "The cancel coroutine transfers to the shared completion state once branch bookkeeping is done, and adoption owns the source cancellation operation."
+        },
+        {
+          "lines": [
+            516
+          ],
+          "classes": [
+            "e"
+          ],
+          "verdict": "DEFECT",
+          "related_defect": "A-PROMISE-GCC-AWAIT",
+          "label": "Tee cancellation converts the shared Promise state inside the await",
+          "reason": "The typed shared_ptr is converted to a base shared_ptr in the co_await full expression. Use the same named Task as for awaitOwned."
+        },
+        {
+          "lines": [
+            461,
+            472,
+            473,
+            488,
+            489,
+            491,
+            520,
+            522,
+            525,
+            529,
+            531,
+            535,
+            540,
+            545,
+            546,
+            547,
+            581,
+            582,
+            583
+          ],
+          "classes": [
+            "a",
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Tee delivery and stream iterator step storage",
+          "reason": "The current step belongs to the coroutine, promoted branch handles are local, and the iteration frame owns its reader while it awaits the stored read or cancel."
+        }
+      ]
     },
     "src/rt/http.cpp": {
       "status": "pending",

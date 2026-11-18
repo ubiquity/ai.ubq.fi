@@ -41,7 +41,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/process_loop.cpp`
 - [x] `include/uos/rt/process.hpp`
 - [x] `src/rt/stream.cpp`
-- [ ] `include/uos/rt/stream.hpp`
+- [x] `include/uos/rt/stream.hpp`
 - [ ] `src/rt/http.cpp`
 - [ ] `include/uos/rt/http.hpp`
 - [ ] `include/uos/rt/fetch.hpp`
@@ -172,20 +172,52 @@ This translation unit contains synchronous reason/value construction and explici
 
 - **SAFE** `7, 10, 11, 13, 16, 19` (b), Tee cancellation reason construction. The helpers consume the borrowed exception handles synchronously and the resulting exception owns both reasons and its JSON representation.
 
+### `include/uos/rt/stream.hpp`
+
+Reviewed eager reader registration, source callback type erasure, reentrant cancellation, branch teeing and generator adapters. A copied controller is a strong stream owner. A copy kept in closure-owned state therefore needs an independent release path.
+
+- **SAFE** `38, 46, 48, 49, 55, 56, 58, 60, 72, 73, 74, 136, 251, 294, 295, 296, 297, 373, 378` (a/b/c), Source algorithm callable lifetime. The start source is owned by the constructor, runtime pull/cancel calls use local algorithm copies and runAsync retains the erased coroutine closure throughout each asynchronous call.
+- **UNCLEAR** `49, 72, 74` (b), Borrowing callback parameters through the by-value erased signature. The current callbacks checked take owned values or complete synchronously. A supported ABI check with a Task callback taking const A& would establish whether the materialized std::function parameter survives throughout its await.
+- **DEFECT (A-STREAM-GCC-AWAIT)** `72, 540` (e), Stream callback and yield arguments materialized inside awaits. runAsync forwards an owning erased argument and iterateStream moves an owning chunk within the await full expressions.
+- **SAFE** `103, 104, 111, 124, 128, 135, 136, 137, 140, 146, 305, 307, 311, 316, 321, 324, 376, 377` (c), Controller and active pull ownership. The executing controller and pull reaction pin state during use; a callback-owned controller cache can create a separate persistent backedge, assessed at each such source.
+- **DEFECT (A-PROMISE-REACTION-CYCLE)** `137, 138, 252, 254, 378, 380, 570, 571` (c), Stream reactions capture their own pending Promise states. The pull, cancel, start and tee closed callbacks repeat the pending-source cycle from PromiseCore. Their source states need ownership only during delivery.
+- **SAFE** `151, 153, 154, 155, 157, 162, 165, 171, 173, 174, 182, 183, 186, 190, 191, 269, 270, 283, 284, 286` (c/d), Stream and reader queue drain boundaries. Chunk and reader-request entries are moved out before settlement, reader release pins the stream, and Promise settlement queues reactions outside these synchronous traversals.
+- **SAFE** `203, 204, 215, 216, 218, 221, 223, 225, 226, 231, 233, 234, 334, 346, 348, 359, 361, 408, 419, 425, 426, 428, 433` (b/c/d), Read registration and reader accessors. Read registration happens synchronously and returns an owned result state, and no borrow of the reader's stream is used after a pull callback can reenter.
+- **DEFECT (A-STREAM-CANCEL-OWNER)** `238, 249, 251, 252, 253, 262, 264, 336, 338, 352, 355, 396, 398, 401, 404` (c/d), Stream cancel borrows the owner slot through callback invocation. The callback can release the reader or replace the stream handle while the cancellation epilogue still dereferences its shared_ptr slot.
+- **DEFECT (A-STREAM-TEE-READ-CYCLE)** `444, 445, 446, 453, 454, 458, 460, 464, 469, 475, 479, 485, 486, 493, 496, 502, 554, 557, 558, 559, 561, 562, 567, 568` (b/c), In-flight tee read keeps abandoned branches' source alive. Weak branch references avoid one direct backedge, while an unfulfilled source read still owns the teeRead continuation that owns the source through TeeState.
+- **SAFE** `505, 507, 510, 513, 514, 515, 517` (b/c), Tee cancellation releases its tee owner before waiting. The cancel coroutine transfers to the shared completion state once branch bookkeeping is done, and adoption owns the source cancellation operation.
+- **DEFECT (A-PROMISE-GCC-AWAIT)** `516` (e), Tee cancellation converts the shared Promise state inside the await. The typed shared_ptr is converted to a base shared_ptr in the co_await full expression. Use the same named Task as for awaitOwned.
+- **SAFE** `461, 472, 473, 488, 489, 491, 520, 522, 525, 529, 531, 535, 540, 545, 546, 547, 581, 582, 583` (a/b/d), Tee delivery and stream iterator step storage. The current step belongs to the coroutine, promoted branch handles are local, and the iteration frame owns its reader while it awaits the stored read or cancel.
+
 ## Ranked defects and counts
 
-Reviewed **9/30 files** and **57 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **10/30 files** and **69 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
-| a. Capturing coroutine closure | 1 | 12 | 0 |
-| b. Borrowed coroutine parameter or receiver | 3 | 30 | 1 |
-| c. Callback ownership or cycle | 7 | 41 | 2 |
-| d. Container invalidation | 2 | 15 | 0 |
-| e. GCC 12 await-expression rule | 2 | 6 | 1 |
-| **Unique site groups** | 9 | 46 | 2 |
+| a. Capturing coroutine closure | 1 | 14 | 0 |
+| b. Borrowed coroutine parameter or receiver | 4 | 34 | 2 |
+| c. Callback ownership or cycle | 10 | 46 | 2 |
+| d. Container invalidation | 3 | 18 | 0 |
+| e. GCC 12 await-expression rule | 4 | 6 | 1 |
+| **Unique site groups** | 14 | 52 | 3 |
 
-### 1. A-PROMISE-CALLBACK-INPUT (memory safety in the public runtime API) — Task-returning Promise callbacks can borrow a destroyed outcome
+### 1. A-STREAM-CANCEL-OWNER (memory safety in stream cancellation) — Stream cancel borrows the owner slot through callback invocation
+
+`include/uos/rt/stream.hpp:238, 249, 251, 252, 253, 262, 264, 336, 338, 352, 355, 396, 398, 401, 404`
+
+- reader.cancel closes the stream and invokes the underlying cancel callback while borrowing reader->stream.
+- The callback releases the reader lock. The same shared_ptr slot becomes null, then cancelStreamInto dereferences it to clear the algorithms.
+
+```diff
+--- a/cpp/gateway/include/uos/rt/stream.hpp
++++ b/cpp/gateway/include/uos/rt/stream.hpp
+@@ -238,1 +238,1 @@
+-    template <class T> void cancelStreamInto(const std::shared_ptr<StreamState<T>>& stream, Reason reason, const std::shared_ptr<PromiseState<void>>& out) {
++    template <class T> void cancelStreamInto(std::shared_ptr<StreamState<T>> stream, Reason reason, const std::shared_ptr<PromiseState<void>>& out) {
+```
+
+### 2. A-PROMISE-CALLBACK-INPUT (memory safety in the public runtime API) — Task-returning Promise callbacks can borrow a destroyed outcome
 
 `include/uos/rt/async.hpp:692, 701, 704, 713, 715, 726, 731, 744, 745, 746, 758, 760`
 
@@ -216,7 +248,7 @@ Reviewed **9/30 files** and **57 site groups**. A site group can have multiple l
 +        detail::settleWith(target, callback, source, [&] { return (*callback)(source->error); });
 ```
 
-### 2. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
+### 3. A-ABORT-OWNER (memory safety in the public runtime API) — Abort dispatch borrows the controller's state slot
 
 `src/rt/abort.cpp:62, 69, 74, 81, 95, 228`
 
@@ -231,7 +263,7 @@ Reviewed **9/30 files** and **57 site groups**. A site group can have multiple l
 +    void signalAbort(std::shared_ptr<State> signal, Reason reason) {
 ```
 
-### 3. A-PROCESS-SIGNAL-CONTEXT (memory safety with scoped runtime loops) — Static process signal registry retains a scoped Asio context
+### 4. A-PROCESS-SIGNAL-CONTEXT (memory safety with scoped runtime loops) — Static process signal registry retains a scoped Asio context
 
 `src/rt/process_loop.cpp:100, 102, 107, 108, 119, 124, 125, 134, 136, 142, 148`
 
@@ -259,7 +291,40 @@ Reviewed **9/30 files** and **57 site groups**. A site group can have multiple l
      }
 ```
 
-### 4. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
+### 5. A-STREAM-TEE-READ-CYCLE (retention on cloned streaming bodies) — In-flight tee read keeps abandoned branches' source alive
+
+`include/uos/rt/stream.hpp:444, 445, 446, 453, 454, 458, 460, 464, 469, 475, 479, 485, 486, 493, 496, 502, 554, 557, 558, 559, 561, 562, 567, 568`
+
+- Tee starts a read of a source that has no next chunk yet, registering the continuation on the source read request.
+- Drop both branch handles and the original source. The read request owns the parked frame, whose TeeState parameter owns the source and its read queue until external settlement or Loop teardown.
+
+```diff
+--- a/cpp/gateway/include/uos/rt/stream.hpp
++++ b/cpp/gateway/include/uos/rt/stream.hpp
+@@ -460,5 +460,12 @@
+-    template <class T> Task<void> teeRead(std::shared_ptr<TeeState<T>> tee) {
++    template <class T> Task<void> teeRead(std::weak_ptr<TeeState<T>> weak) {
++      Task<ReadableStreamReadResult<T>> reading;
++      {
++        auto live = weak.lock();
++        if (!live) co_return;
++        reading = readFrom(live->reader);
++      }
+       ReadableStreamReadResult<T> result;
+       bool failed = false;
+       try {
+-        result = co_await readFrom(tee->reader);
++        result = co_await std::move(reading);
+@@ -467,1 +474,3 @@
+       }
++      auto tee = weak.lock();
++      if (!tee) co_return;
+@@ -502,1 +511,1 @@
+-      start(currentLoop(), teeRead(tee));
++      start(currentLoop(), teeRead<T>(std::weak_ptr<TeeState<T>>(tee)));
+```
+
+### 6. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
 
 `src/rt/async.cpp:485, 490, 491, 492, 494, 497`
 
@@ -285,7 +350,7 @@ Reviewed **9/30 files** and **57 site groups**. A site group can have multiple l
 +      source->react([source = source.get(), out, remaining] {
 ```
 
-### 5. A-GENERATOR-STEP-OWNER (public runtime liveness) — Pending generator step does not keep its generator alive
+### 7. A-GENERATOR-STEP-OWNER (public runtime liveness) — Pending generator step does not keep its generator alive
 
 `include/uos/rt/async.hpp:1041, 1058, 1061, 1062, 1063, 1064, 1099, 1101`
 
@@ -306,7 +371,7 @@ Reviewed **9/30 files** and **57 site groups**. A site group can have multiple l
      }
 ```
 
-### 6. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
+### 8. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
 
 `src/rt/async.cpp:252, 257, 258, 261, 263, 266, 268, 367, 368, 396, 397, 400, 401, 443, 445`
 
@@ -321,7 +386,7 @@ Reviewed **9/30 files** and **57 site groups**. A site group can have multiple l
 +    LoopScope scope(owner);
 ```
 
-### 7. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
+### 9. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
 
 `include/uos/rt/async.hpp:219, 375`
 
@@ -341,7 +406,7 @@ Reviewed **9/30 files** and **57 site groups**. A site group can have multiple l
 +      co_await std::move(ready);
 ```
 
-### 8. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
+### 10. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
 
 `include/uos/rt/async.hpp:1073, 1123, 1124`
 
@@ -361,4 +426,32 @@ Reviewed **9/30 files** and **57 site groups**. A site group can have multiple l
 +        auto handling = body(std::move(*step.value));
 +        if constexpr (std::is_same_v<Result, Task<bool>>) proceed = co_await std::move(handling);
 +        else co_await std::move(handling);
+```
+
+### 11. A-STREAM-GCC-AWAIT (GCC 12 portability rule) — Stream callback and yield arguments materialized inside awaits
+
+`include/uos/rt/stream.hpp:72, 540`
+
+- A stream uses an owning controller, cancellation reason or chunk in a callback/yield invocation. The argument is materialized inside co_await.
+- The GCC 12 rule calls for creating the Task separately. Using an rvalue-reference erased signature keeps a borrowing callee attached to runAsync's frame while performing that split.
+
+```diff
+--- a/cpp/gateway/include/uos/rt/stream.hpp
++++ b/cpp/gateway/include/uos/rt/stream.hpp
+@@ -49,1 +49,1 @@
+-        else async_ = std::make_shared<const std::function<Task<void>(A)>>(std::forward<F>(callable));
++        else async_ = std::make_shared<const std::function<Task<void>(A&&)>>(std::forward<F>(callable));
+@@ -72,3 +72,6 @@
+-      static Task<void> runAsync(std::shared_ptr<const std::function<Task<void>(A)>> function, A argument) { co_await (*function)(std::move(argument)); }
++      static Task<void> runAsync(std::shared_ptr<const std::function<Task<void>(A&&)>> function, A argument) {
++        auto handling = (*function)(std::move(argument));
++        co_await std::move(handling);
++      }
+       std::shared_ptr<const std::function<void(A)>> sync_;
+-      std::shared_ptr<const std::function<Task<void>(A)>> async_;
++      std::shared_ptr<const std::function<Task<void>(A&&)>> async_;
+@@ -540,1 +543,2 @@
+-          co_await yield(std::move(*step->value));
++          auto yielding = yield(std::move(*step->value));
++          co_await std::move(yielding);
 ```
