@@ -2521,7 +2521,8 @@
       "sites": []
     },
     "src/authority/native_codex_evaluation.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous quota-window lookup and account evaluation. Results copy their window/class evidence and no callback escapes.",
       "sites": []
     },
     "src/authority/native_codex_mutations.cpp": {
