@@ -45,7 +45,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/auth_repair.hpp`
 - [x] `include/uos/codex/banked_reset.hpp`
 - [x] `include/uos/codex/banked_reset_claim.hpp`
-- [ ] `include/uos/codex/banked_reset_pool.hpp`
+- [x] `include/uos/codex/banked_reset_pool.hpp`
 - [ ] `include/uos/codex/banked_reset_provider.hpp`
 - [ ] `include/uos/codex/banked_reset_submission.hpp`
 - [ ] `include/uos/codex/capacity_routing.hpp`
@@ -384,3 +384,9 @@ Reset records own their data and hook callables.
 The claim API uses owned arguments for the optimistic KV operations.
 
 - 28-29,110,121,124-136,146-148,215-227 · owning task parameters · **SAFE** · Each operation retains KV, its candidate and fence data, and any clock, hash or mutator callable it invokes.
+
+### `include/uos/codex/banked_reset_pool.hpp`
+
+Pool evaluation and shadow read declarations.
+
+- 17-19,27-28 · owning task parameters · **SAFE** · The returned tasks own the optional store override or candidate array and evaluation dependencies.

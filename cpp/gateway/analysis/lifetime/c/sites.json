@@ -128,8 +128,16 @@
       ]
     },
     "include/uos/codex/banked_reset_pool.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Pool evaluation and shadow read declarations.",
+      "sites": [
+        {
+          "lines": "17-19,27-28",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The returned tasks own the optional store override or candidate array and evaluation dependencies."
+        }
+      ]
     },
     "include/uos/codex/banked_reset_provider.hpp": {
       "status": "pending",
