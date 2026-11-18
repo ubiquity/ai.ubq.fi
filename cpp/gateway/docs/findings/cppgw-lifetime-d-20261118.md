@@ -355,7 +355,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/models/codex_models_availability.hpp`
 - [x] `include/uos/models/codex_models_fetch.hpp`
 - [x] `include/uos/models/codex_models_whitelist.hpp`
-- [ ] `include/uos/models/metadata.hpp`
+- [x] `include/uos/models/metadata.hpp`
 - [ ] `include/uos/models/openrouter_models.hpp`
 - [ ] `include/uos/openai.hpp`
 - [ ] `include/uos/openai_schema.hpp`
@@ -2004,6 +2004,12 @@ Reviewed stored whitelist APIs. The inline strong-read argument in the implement
 
 - L22, 23 **SAFE** · The read and write interfaces retain a shared KV and the stored ID vector is passed by value.
 
+### `include/uos/models/metadata.hpp`
+
+Reviewed model metadata source and match functions.
+
+- L111, 112 **SAFE** · The lookup consumes model and source views synchronously and returns owning metadata fields.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2252,4 +2258,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-247/286 files reviewed. 422 sites: 400 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+248/286 files reviewed. 423 sites: 401 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

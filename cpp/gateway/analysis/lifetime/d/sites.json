@@ -9395,8 +9395,22 @@
       ]
     },
     "include/uos/models/metadata.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed model metadata source and match functions.",
+      "sites": [
+        {
+          "lines": [
+            111,
+            112
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The lookup consumes model and source views synchronously and returns owning metadata fields."
+        }
+      ]
     },
     "include/uos/models/openrouter_models.hpp": {
       "reviewed": false,
