@@ -274,7 +274,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/auth/passkeys.hpp`
 - [x] `include/uos/auth/passport.hpp`
 - [x] `include/uos/auth/passport_sessions.hpp`
-- [ ] `include/uos/auth/relay.hpp`
+- [x] `include/uos/auth/relay.hpp`
 - [ ] `include/uos/authority/admission_state.hpp`
 - [ ] `include/uos/authority/authority_rpc.hpp`
 - [ ] `include/uos/authority/contracts.hpp`
@@ -1521,6 +1521,12 @@ Reviewed the session lifecycle entry points.
 
 - L34, 35, 37, 41 **SAFE** · Create, read and revoke operations own the grant or token and any replacement input throughout their asynchronous work.
 
+### `include/uos/auth/relay.hpp`
+
+Reviewed the relay origin parser interface.
+
+- L13 **SAFE** · The parser consumes an optional string synchronously and returns an owning origin string.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1769,4 +1775,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-166/286 files reviewed. 337 sites: 316 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+167/286 files reviewed. 338 sites: 317 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

@@ -7516,8 +7516,20 @@
       ]
     },
     "include/uos/auth/relay.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the relay origin parser interface.",
+      "sites": [
+        {
+          "lines": [
+            13
+          ],
+          "kinds": [
+            "b"
+          ],
+          "verdict": "SAFE",
+          "detail": "The parser consumes an optional string synchronously and returns an owning origin string."
+        }
+      ]
     },
     "include/uos/authority/admission_state.hpp": {
       "reviewed": false,
