@@ -2549,7 +2549,8 @@
       ]
     },
     "src/deepseek/waterfall.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Provider waterfall order, status classification and callback decisions are synchronous. The enabled/configured predicates execute during plan construction.",
       "sites": []
     },
     "src/deepseek/waterfall_handler.cpp": {

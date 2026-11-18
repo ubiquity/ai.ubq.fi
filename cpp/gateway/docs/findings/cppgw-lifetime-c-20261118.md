@@ -234,7 +234,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/deepseek/responses_payload.cpp`
 - [x] `src/deepseek/responses_stream.cpp`
 - [x] `src/deepseek/stream.cpp`
-- [ ] `src/deepseek/waterfall.cpp`
+- [x] `src/deepseek/waterfall.cpp`
 - [ ] `src/deepseek/waterfall_handler.cpp`
 - [ ] `src/embeddings/handlers.cpp`
 - [ ] `src/embeddings/jobs.cpp`
@@ -1501,3 +1501,7 @@ The generator owns its reader session and watchdog. The individual read race use
 
 - 129-151 · reader race and abort registration · **SAFE** · The executor is synchronous, its installed callback locks a weak signal, and reader.readPromise retains the pending read independently of the winning branch.
 - 157-234,250-287 · read session, timer, and generator · **SAFE** · The factory copies options and starts an owning generator task. Each read owns session, yielded frames belong to the task, and the watchdog captures a controller value. Finish clears the timer and releases the reader.
+
+### `src/deepseek/waterfall.cpp`
+
+Provider waterfall order, status classification and callback decisions are synchronous. The enabled/configured predicates execute during plan construction.
