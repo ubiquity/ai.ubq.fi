@@ -144,7 +144,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [ ] `src/responses_handler.cpp`
 - [ ] `src/responses_native_headers.cpp`
 - [ ] `src/responses_request.cpp`
-- [ ] `src/responses_stream.cpp`
+- [x] `src/responses_stream.cpp`
 - [ ] `src/runtime_config.cpp`
 - [ ] `src/sentinel/incident_outbox.cpp`
 - [ ] `src/sentinel/replay_admin.cpp`
@@ -505,6 +505,17 @@ Reviewed bounded reads, abort races and detached reader cancellation.
 - L41, 42, 43, 47 **DEFECT** · Orphaned bounded-body abort race. Each successful body read, including EOF, wins and removes the only callback able to settle the abort-only Promise. Its pending race reaction retains the winning ReadResult and chunk for the process loop lifetime. Create the private promise with withResolvers and settle it after unregistering the listener once the race has been installed.
 - L78, 87, 92, 93, 94, 100, 103, 119, 120, 128 **SAFE** · The cleanup lambdas run in the owning reader frame. The plain reader.cancel wrapper captures stream state into the Task before releaseLock, so detached cancellation keeps its own stream owner.
 
+### `src/responses_stream.cpp`
+
+Reviewed stream framing, abort and timeout races, generator delegation, proxy lifecycle callback ownership, preflight and SSE heartbeats.
+
+- L209, 212, 250, 251, 254, 258, 266, 271 **SAFE** · The abort listener owns only reader control and weakly references the signal. Disposal removes it, while detached cancel has already acquired a stream owner.
+- L287, 288, 291, 294, 295, 299 **DEFECT** · Orphaned Responses inactivity race. The upstream read wins and the code unregisters the only inactivity rejection callback. The pending inactivity source owns its race reaction and the winning ReadResult, retaining a chunk for every ordinary read. Settle that private loser after removing the listener and only after its race has been installed.
+- L308, 314, 315, 317, 325, 326, 332, 341, 354, 364 **SAFE** · Frames points into the consuming coroutine's own unchanged chunk while yielding. The generator captures are retained by the generator runtime and its delegated task owns the session.
+- L391, 395, 400, 422, 423, 444, 454, 458, 470, 476, 478, 479 **SAFE** · The iterator and callback dispatchers put copied state, reason or event into Task frames before asynchronous use. Proxy pull also holds state after controller.close clears callbacks.
+- L498, 499, 501, 502, 510, 515, 517, 529, 530, 532, 533, 536, 570 **SAFE** · The newPromise executor uses this only synchronously and its timer uses weak state. Cancellation and read wins resolve the synthetic heartbeat even when stopping the timer. A heartbeat win leaves the same read pending until a chunk or cancel.
+- L575, 585, 589, 594, 605, 609, 614, 623, 624, 635, 636, 644, 646, 650 **SAFE** · Preflight and stream factories transfer values to generator and source holders. Escaping cancellation and pull tasks take copied iterator, stream control or source state before the wrapper returns.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -513,4 +524,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-21/286 files reviewed. 87 sites: 80 SAFE, 7 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+22/286 files reviewed. 93 sites: 85 SAFE, 8 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
