@@ -97,7 +97,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/prompt_analytics_core.cpp`
 - [x] `src/cache/prompt_analytics_queue.cpp`
 - [x] `src/cache/prompt_analytics_read.cpp`
-- [ ] `src/cache/scope_experiment.cpp`
+- [x] `src/cache/scope_experiment.cpp`
 - [ ] `src/cache/scope_experiment_model.cpp`
 - [ ] `src/cache/scope_experiment_targets.cpp`
 - [ ] `src/cache/scope_targets.cpp`
@@ -660,6 +660,19 @@ This facade does not define a coroutine or register callbacks. Its exported impl
 | 361-399 | Read analytics with three possible scans | **SAFE** | The coroutine owns KV, window, group-by and the named iterators. Each accumulator consumes its copied row synchronously before the next iterator await. |
 | 415-468 | Analytics read orchestration | **SAFE** | Options, grouped data and all scan arguments are owned by the frames. Aggregation uses an immutable result snapshot and finishes synchronously. |
 
+### `src/cache/scope_experiment.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 19-22,37-43 | Parallel experiment persistence reads | **SAFE** | Each read owns a KV/store copy and key, and the tuple is named before decomposition or moves. |
+| 44-63,77-97 | Persist or finalize one cycle | **SAFE** | Each task owns state/lease/evidence, awaits its read snapshot, and keeps the named atomic builder through commit. |
+| 103-117 | Refresh a pinned experiment session | **SAFE** | The frame owns the store, session, binding and abort signal. The refreshed result is used only as a view into the local owned variant and copied before return. |
+| 126-168 | Run an experiment cycle | **SAFE** | The reference-capturing inconclusive callback runs synchronously in its own frame. Transport and parse tasks take value args, and all sample references are consumed before the next suspension. |
+| 179-210 | Promotion and terminal write | **SAFE** | Tasks own binding/lease inputs and share a retained promotion receipt. Fresh finalization args are built before waiting. |
+| 215-236 | Cycle completion and persistence | **SAFE** | The classification reference is into the caller's immutable owned CycleRun across a directly awaited owned write, and its value is copied when returning. |
+| 244-258 | Cycle failure handling | **SAFE** | Child finalization owns KV/state/options and its output is discarded; no projected field or caller borrow survives the wait. |
+| 260-270,278-307 | Campaign preflight and top-level orchestration | **SAFE** | The resolved-target alias points into a frame-owned const variant. The acquired state and session are copied into later tasks, which also own the shared promotion receipt. |
+
 
 ## Ranked defects and counts
 
@@ -865,4 +878,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-74/97 files reviewed. **DEFECT 8, SAFE 170, UNCLEAR 3.**
+75/97 files reviewed. **DEFECT 8, SAFE 178, UNCLEAR 3.**

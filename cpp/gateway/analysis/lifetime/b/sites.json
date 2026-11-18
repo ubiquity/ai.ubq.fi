@@ -2220,8 +2220,95 @@
       ]
     },
     "src/cache/scope_experiment.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "19-22,37-43",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d",
+            "e"
+          ],
+          "symbol": "Parallel experiment persistence reads",
+          "evidence": "Each read owns a KV/store copy and key, and the tuple is named before decomposition or moves."
+        },
+        {
+          "lines": "44-63,77-97",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Persist or finalize one cycle",
+          "evidence": "Each task owns state/lease/evidence, awaits its read snapshot, and keeps the named atomic builder through commit."
+        },
+        {
+          "lines": "103-117",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Refresh a pinned experiment session",
+          "evidence": "The frame owns the store, session, binding and abort signal. The refreshed result is used only as a view into the local owned variant and copied before return."
+        },
+        {
+          "lines": "126-168",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "Run an experiment cycle",
+          "evidence": "The reference-capturing inconclusive callback runs synchronously in its own frame. Transport and parse tasks take value args, and all sample references are consumed before the next suspension."
+        },
+        {
+          "lines": "179-210",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Promotion and terminal write",
+          "evidence": "Tasks own binding/lease inputs and share a retained promotion receipt. Fresh finalization args are built before waiting."
+        },
+        {
+          "lines": "215-236",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Cycle completion and persistence",
+          "evidence": "The classification reference is into the caller's immutable owned CycleRun across a directly awaited owned write, and its value is copied when returning."
+        },
+        {
+          "lines": "244-258",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "e"
+          ],
+          "symbol": "Cycle failure handling",
+          "evidence": "Child finalization owns KV/state/options and its output is discarded; no projected field or caller borrow survives the wait."
+        },
+        {
+          "lines": "260-270,278-307",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "d"
+          ],
+          "symbol": "Campaign preflight and top-level orchestration",
+          "evidence": "The resolved-target alias points into a frame-owned const variant. The acquired state and session are copied into later tasks, which also own the shared promotion receipt."
+        }
+      ]
     },
     "src/cache/scope_experiment_model.cpp": {
       "reviewed": false,
