@@ -3,6 +3,8 @@
 
 #include "uos/rt/string.hpp"
 
+#include <boost/beast/http/rfc7230.hpp>
+
 #include <algorithm>
 #include <array>
 
@@ -12,13 +14,7 @@ namespace uos::rt::detail::fetch {
   namespace {
     char lowerAscii(char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c + 32) : c; }
 
-    bool equalsIgnoringCase(std::string_view left, std::string_view right) {
-      if (left.size() != right.size()) return false;
-      for (std::size_t index = 0; index < left.size(); ++index) {
-        if (lowerAscii(left[index]) != lowerAscii(right[index])) return false;
-      }
-      return true;
-    }
+    using boost::beast::iequals;
 
     std::string_view trimSpaces(std::string_view text) {
       while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
@@ -79,18 +75,19 @@ namespace uos::rt::detail::fetch {
     bool validTransferEncoding(const ResponseHead& head, bool chunked) {
       bool sawChunked = false;
       for (const auto& [name, value] : head.fields) {
-        if (!equalsIgnoringCase(name, "transfer-encoding")) continue;
-        std::string_view codings = value;
-        for (;;) {
-          const auto comma = codings.find(',');
-          const auto token = trimSpaces(codings.substr(0, comma));
-          if (!token.empty()) {
-            if (sawChunked) return false;
-            sawChunked = equalsIgnoringCase(trimSpaces(token.substr(0, token.find(';'))), "chunked");
-            if (sawChunked && !equalsIgnoringCase(token, "chunked")) return false;
-          }
-          if (comma == std::string_view::npos) break;
-          codings.remove_prefix(comma + 1);
+        if (!iequals(name, "transfer-encoding")) continue;
+        if (sawChunked && value.find_first_not_of(" ,\t") != std::string::npos) return false;
+        if (iequals(value, "chunked")) {
+          sawChunked = true;
+          continue;
+        }
+        for (const auto& extension : boost::beast::http::ext_list(value)) {
+          const auto coding = extension.first;
+          if (!iequals(coding, "chunked")) continue;
+          // The field value is already OWS-trimmed. Any suffix after
+          // chunked is another coding, a parameter, or a malformed tail.
+          if (coding.data() + coding.size() != value.data() + value.size()) return false;
+          sawChunked = true;
         }
       }
       // A trailing comma can make llhttp use EOF despite seeing chunked.
@@ -124,7 +121,7 @@ namespace uos::rt::detail::fetch {
     std::string lowercase(name);
     for (char& c : lowercase) c = lowerAscii(c);
     const auto position = std::lower_bound(kCommonHeaderNames.begin(), kCommonHeaderNames.end(), std::string_view(lowercase), lowercaseLess);
-    if (position != kCommonHeaderNames.end() && equalsIgnoringCase(*position, name)) return std::string(*position);
+    if (position != kCommonHeaderNames.end() && iequals(*position, name)) return std::string(*position);
     return name;
   }
 
@@ -136,7 +133,7 @@ namespace uos::rt::detail::fetch {
     std::vector<std::pair<std::string, std::string>> lines;
     std::vector<std::string> cookies;
     for (const auto& [name, value] : detail::headerWireFields(headers)) {
-      if (equalsIgnoringCase(name, "content-length") || equalsIgnoringCase(name, "transfer-encoding")) continue;
+      if (iequals(name, "content-length") || iequals(name, "transfer-encoding")) continue;
       lines.emplace_back(wireName(name), latin1Bytes(value));
     }
     for (const std::string& value : headers.getSetCookie()) cookies.push_back(latin1Bytes(value));
@@ -164,7 +161,7 @@ namespace uos::rt::detail::fetch {
   std::optional<std::string> ResponseHead::field(std::string_view lowercaseName) const {
     std::optional<std::string> joined;
     for (const auto& [name, value] : fields) {
-      if (!equalsIgnoringCase(name, lowercaseName)) continue;
+      if (!iequals(name, lowercaseName)) continue;
       if (joined) joined->append(", ").append(value);
       else joined = value;
     }
@@ -173,11 +170,11 @@ namespace uos::rt::detail::fetch {
 
   bool ResponseHead::connectionHas(std::string_view token) const {
     for (const auto& [name, value] : fields) {
-      if (!equalsIgnoringCase(name, "connection")) continue;
+      if (!iequals(name, "connection")) continue;
       std::string_view tokens = value;
       for (;;) {
         const auto comma = tokens.find(',');
-        if (equalsIgnoringCase(trimSpaces(tokens.substr(0, comma)), token)) return true;
+        if (iequals(trimSpaces(tokens.substr(0, comma)), token)) return true;
         if (comma == std::string_view::npos) break;
         tokens.remove_prefix(comma + 1);
       }
@@ -204,6 +201,7 @@ namespace uos::rt::detail::fetch {
       }
       return storeParserBytes(parser, [&] {
         if (self.startField_) {
+          if (self.head_.fields.empty()) self.head_.fields.reserve(std::min<std::size_t>(self.maxFields_, 4));
           self.head_.fields.emplace_back();
           self.startField_ = false;
         }
@@ -249,7 +247,7 @@ namespace uos::rt::detail::fetch {
 
   llhttp_errno_t ResponseParser::execute(std::string_view input, std::size_t& consumed) {
     consumed = 0;
-    if (const auto previous = llhttp_get_errno(&parser_); previous != HPE_OK) return previous;
+    if (parser_.error != HPE_OK) return static_cast<llhttp_errno_t>(parser_.error);
     const char* const bytes = input.empty() ? "" : input.data();
     const auto result = llhttp_execute(&parser_, bytes, input.size());
     if (result == HPE_OK) consumed = input.size();
