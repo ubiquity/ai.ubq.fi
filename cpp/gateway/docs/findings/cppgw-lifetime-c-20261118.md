@@ -157,7 +157,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/claude_code_credentials.hpp`
 - [x] `include/uos/provider/claude_code_fwd.hpp`
 - [x] `include/uos/provider/claude_code_models.hpp`
-- [ ] `include/uos/provider/claude_code_quota.hpp`
+- [x] `include/uos/provider/claude_code_quota.hpp`
 - [ ] `include/uos/provider/claude_code_usage.hpp`
 - [ ] `include/uos/provider/claude_code_usage_fwd.hpp`
 - [ ] `include/uos/provider/claude_code_usage_refresh.hpp`
@@ -1000,3 +1000,10 @@ Transport and environment type aliases.
 Model discovery and store interfaces.
 
 - 51,83-100 · owning task parameters · **SAFE** · The coroutine owns the credential, workspace, options and any KV handle or prepared catalog it receives.
+
+### `include/uos/provider/claude_code_quota.hpp`
+
+Quota state and observation recording API.
+
+- 120-127 · callback registration · **SAFE** · Registration owns the callable in module state and the quota write copies it before invoking the awaited work.
+- 228-230,300-310 · owning task parameters · **SAFE** · Quota reads, mutations and clearing tasks retain their store and input/binding values.

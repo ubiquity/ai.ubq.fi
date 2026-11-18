@@ -1301,8 +1301,22 @@
       ]
     },
     "include/uos/provider/claude_code_quota.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Quota state and observation recording API.",
+      "sites": [
+        {
+          "lines": "120-127",
+          "kind": "callback registration",
+          "verdict": "SAFE",
+          "reason": "Registration owns the callable in module state and the quota write copies it before invoking the awaited work."
+        },
+        {
+          "lines": "228-230,300-310",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Quota reads, mutations and clearing tasks retain their store and input/binding values."
+        }
+      ]
     },
     "include/uos/provider/claude_code_usage.hpp": {
       "status": "pending",
