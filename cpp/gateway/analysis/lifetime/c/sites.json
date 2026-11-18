@@ -1074,8 +1074,16 @@
       ]
     },
     "include/uos/provider/capacity.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Capacity readers, samplers and handlers use owning arguments.",
+      "sites": [
+        {
+          "lines": "75-84,103-104,114-121",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Capacity snapshot tasks own stores, request handles and options during reads, refreshes and detached sampling."
+        }
+      ]
     },
     "include/uos/provider/capacity_analytics.hpp": {
       "status": "pending",

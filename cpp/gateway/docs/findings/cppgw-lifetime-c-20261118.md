@@ -138,7 +138,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/anthropic_replay.hpp`
 - [x] `include/uos/provider/anthropic_response_wire.hpp`
 - [x] `include/uos/provider/anthropic_responses.hpp`
-- [ ] `include/uos/provider/capacity.hpp`
+- [x] `include/uos/provider/capacity.hpp`
 - [ ] `include/uos/provider/capacity_analytics.hpp`
 - [ ] `include/uos/provider/capacity_contract.hpp`
 - [ ] `include/uos/provider/capacity_events.hpp`
@@ -887,3 +887,9 @@ Synchronous Anthropic wire event and output conversion declarations.
 Anthropic Messages adapter task interface.
 
 - 36 · owning task parameters · **SAFE** · The normalization task owns its response handle and options.
+
+### `include/uos/provider/capacity.hpp`
+
+Capacity readers, samplers and handlers use owning arguments.
+
+- 75-84,103-104,114-121 · owning task parameters · **SAFE** · Capacity snapshot tasks own stores, request handles and options during reads, refreshes and detached sampling.
