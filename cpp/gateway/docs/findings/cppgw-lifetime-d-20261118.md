@@ -241,7 +241,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/sentinel/replay_read.cpp`
 - [x] `src/sentinel/replay_retention.cpp`
 - [x] `src/sentinel/replay_retention_bootstrap.cpp`
-- [ ] `src/sentinel/replay_retention_metadata.cpp`
+- [x] `src/sentinel/replay_retention_metadata.cpp`
 - [ ] `src/sentinel/replay_retention_schema.cpp`
 - [x] `src/sentinel/replay_store.cpp`
 - [x] `src/sentinel/upstream_capture.cpp`
@@ -1305,6 +1305,15 @@ Reviewed release and bootstrap batches, detached chunk-owner filling, weak KV id
 - L668, 679, 697, 708 **SAFE** · The commit operation and materializations belong to the local frame, and the sweep's child receives an owned delta before suspension.
 - L722, 725, 729, 746, 770, 776, 782, 787, 789, 793, 794, 803 **SAFE** · These directly awaited entry points borrow a store whose owning caller remains suspended. Ledger values and recursive work are established in named locals before awaiting.
 
+### `src/sentinel/replay_retention_metadata.cpp`
+
+Reviewed prefix scanning, status reconciliation and marker/failure reads and writes.
+
+- L71, 97, 205 **SAFE** · Validation uses borrowed row members and field names only while their synchronous callers retain the values.
+- L109, 125, 128, 132 **SAFE** · The frame owns the cursor and the array points to static prefix keys. Cursor close finishes inside its owner scope, and the awaited caller retains KV.
+- L145, 147, 151, 153, 156, 160, 183, 193, 200 **SAFE** · The reconciliation chain directly awaits the scan and writes. It copies maintenance inputs, and each atomic operation remains frame-owned across its commit.
+- L214, 219, 232 **SAFE** · Marker references point into the frame's immutable getMany result and end before the next suspension. The reconciliation child owns its options.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1553,4 +1562,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-135/286 files reviewed. 275 sites: 256 SAFE, 19 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+136/286 files reviewed. 279 sites: 260 SAFE, 19 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

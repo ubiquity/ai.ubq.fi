@@ -6124,8 +6124,72 @@
       ]
     },
     "src/sentinel/replay_retention_metadata.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed prefix scanning, status reconciliation and marker/failure reads and writes.",
+      "sites": [
+        {
+          "lines": [
+            71,
+            97,
+            205
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Validation uses borrowed row members and field names only while their synchronous callers retain the values."
+        },
+        {
+          "lines": [
+            109,
+            125,
+            128,
+            132
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The frame owns the cursor and the array points to static prefix keys. Cursor close finishes inside its owner scope, and the awaited caller retains KV."
+        },
+        {
+          "lines": [
+            145,
+            147,
+            151,
+            153,
+            156,
+            160,
+            183,
+            193,
+            200
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The reconciliation chain directly awaits the scan and writes. It copies maintenance inputs, and each atomic operation remains frame-owned across its commit."
+        },
+        {
+          "lines": [
+            214,
+            219,
+            232
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Marker references point into the frame's immutable getMany result and end before the next suspension. The reconciliation child owns its options."
+        }
+      ]
     },
     "src/sentinel/replay_retention_schema.cpp": {
       "reviewed": false,
