@@ -7853,8 +7853,24 @@
       ]
     },
     "include/uos/authority/native_authority_kernel.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed kernel command interfaces and their borrowed State members.",
+      "sites": [
+        {
+          "lines": [
+            8,
+            9,
+            10,
+            22
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The enclosing authority State owns SQL, API and initial settings for the duration of each synchronous kernel operation."
+        }
+      ]
     },
     "include/uos/authority/native_authority_paid.hpp": {
       "reviewed": false,

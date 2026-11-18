@@ -288,7 +288,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_authority_api.hpp`
 - [x] `include/uos/authority/native_authority_codex.hpp`
 - [x] `include/uos/authority/native_authority_contracts.hpp`
-- [ ] `include/uos/authority/native_authority_kernel.hpp`
+- [x] `include/uos/authority/native_authority_kernel.hpp`
 - [ ] `include/uos/authority/native_authority_paid.hpp`
 - [ ] `include/uos/authority/native_authority_principals.hpp`
 - [ ] `include/uos/authority/native_authority_rpc.hpp`
@@ -1604,6 +1604,12 @@ Reviewed the native records and synchronous SQL adapter template.
 
 - L512, 514, 515, 516, 518 **SAFE** · The adapter's transaction contract runs inline, so the reference to the template's local result remains valid. The SQL callback transfers its query, bindings and result rows by value.
 
+### `include/uos/authority/native_authority_kernel.hpp`
+
+Reviewed kernel command interfaces and their borrowed State members.
+
+- L8, 9, 10, 22 **SAFE** · The enclosing authority State owns SQL, API and initial settings for the duration of each synchronous kernel operation.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1852,4 +1858,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-180/286 files reviewed. 351 sites: 330 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+181/286 files reviewed. 352 sites: 331 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
