@@ -349,8 +349,64 @@
       ]
     },
     "src/admin/chart_source_proxy.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the body cancellation, local and remote response reads, and retained capacity push.",
+      "sites": [
+        {
+          "lines": [
+            55,
+            56,
+            71,
+            74,
+            78,
+            131,
+            134,
+            138
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each fetch or cancellation child has a named response or body owner in its awaiting frame, and Fetch retains its callable through the delegated task."
+        },
+        {
+          "lines": [
+            152,
+            168,
+            169,
+            170
+          ],
+          "kinds": [
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The push task owns copied samples, fetcher and shared state. The normal transport's timeout aborts the exchange and the owned finally reaction clears inFlight on settlement."
+        },
+        {
+          "lines": [
+            179,
+            186,
+            191,
+            196,
+            205,
+            207,
+            212,
+            215,
+            218,
+            221
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The proxy frame owns request, pathname string, dependency callbacks and local response. Work escaping through the push is copied into its own frame."
+        }
+      ]
     },
     "src/admin/claude_code.cpp": {
       "reviewed": false,

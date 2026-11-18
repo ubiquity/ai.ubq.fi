@@ -27,7 +27,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/admin/api_key_mutations.cpp`
 - [x] `src/admin/api_keys.cpp`
 - [x] `src/admin/capacity_observation_sync.cpp`
-- [ ] `src/admin/chart_source_proxy.cpp`
+- [x] `src/admin/chart_source_proxy.cpp`
 - [ ] `src/admin/claude_code.cpp`
 - [ ] `src/admin/codex.cpp`
 - [ ] `src/admin/codex_reset.cpp`
@@ -354,6 +354,14 @@ Reviewed the capped body reader and ingest options handoff.
 - L35, 40, 41 **SAFE** · The request, stream handle, reader and chunk vector are frame-local owners. Cancellation waits with the same reader and the rejection callback is captureless.
 - L56, 61, 81, 87, 100, 103 **SAFE** · The plain wrapper copies KV and clock callback into the ingest frame. Storage receives a named task with copied host and moved points; the borrowed JSON field is converted to an owning string first.
 
+### `src/admin/chart_source_proxy.cpp`
+
+Reviewed the body cancellation, local and remote response reads, and retained capacity push.
+
+- L55, 56, 71, 74, 78, 131, 134, 138 **SAFE** · Each fetch or cancellation child has a named response or body owner in its awaiting frame, and Fetch retains its callable through the delegated task.
+- L152, 168, 169, 170 **SAFE** · The push task owns copied samples, fetcher and shared state. The normal transport's timeout aborts the exchange and the owned finally reaction clears inFlight on settlement.
+- L179, 186, 191, 196, 205, 207, 212, 215, 218, 221 **SAFE** · The proxy frame owns request, pathname string, dependency callbacks and local response. Work escaping through the push is copied into its own frame.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -362,4 +370,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-4/286 files reviewed. 20 sites: 20 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+5/286 files reviewed. 23 sites: 23 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
