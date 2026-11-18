@@ -2323,8 +2323,78 @@
       "sites": []
     },
     "src/authority/native_authority_principals.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the principal control capability, synchronous commit closures, and shared preparation and cleanup work. The normal entry point keeps the enclosing NativeAuthority State and its SQL, initial settings and subcomponents alive.",
+      "sites": [
+        {
+          "lines": [
+            53,
+            153,
+            160,
+            169,
+            182,
+            190,
+            253,
+            257,
+            262
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The control owner retains the principal receiver and asynchronous source callables throughout preparation. The create flight is a shared owner, parsed views refer to a private command, and the returned synchronous Commit owns its copied arguments while only borrowing the retained receiver."
+        },
+        {
+          "lines": [
+            267,
+            268,
+            282,
+            287,
+            289,
+            290,
+            295,
+            296,
+            299,
+            301
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The pending work is copied out of each map to an owned Promise and maps are looked up again by key after suspension. Commit and cleanup tasks remain awaited by a control frame retaining their receiver and borrowed SQL components."
+        },
+        {
+          "lines": [
+            306,
+            307,
+            308,
+            311,
+            319,
+            321,
+            322,
+            330,
+            331,
+            335,
+            341,
+            348
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Callback captures move or copy the command, binding and verified arguments into stable frames. SQL uses its reference captures inline. The admin variant pointer refers to the current frame's immutable verified value."
+        }
+      ]
     },
     "src/authority/native_authority_rpc.cpp": {
       "reviewed": false,

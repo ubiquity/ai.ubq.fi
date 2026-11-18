@@ -106,7 +106,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_authority_contracts.cpp`
 - [x] `src/authority/native_authority_kernel.cpp`
 - [x] `src/authority/native_authority_paid.cpp`
-- [ ] `src/authority/native_authority_principals.cpp`
+- [x] `src/authority/native_authority_principals.cpp`
 - [ ] `src/authority/native_authority_rpc.cpp`
 - [ ] `src/authority/native_authority_runtime.cpp`
 - [ ] `src/authority/native_authority_sql.cpp`
@@ -683,6 +683,14 @@ Reviewed synchronous kernel quota transactions, policy snapshots and expiry hand
 
 Reviewed synchronous paid admission, settlement, reconciliation and deletion. The visitor runs inline and SQL reads supply materialized owned rows. No suspension or escaping callback.
 
+### `src/authority/native_authority_principals.cpp`
+
+Reviewed the principal control capability, synchronous commit closures, and shared preparation and cleanup work. The normal entry point keeps the enclosing NativeAuthority State and its SQL, initial settings and subcomponents alive.
+
+- L53, 153, 160, 169, 182, 190, 253, 257, 262 **SAFE** · The control owner retains the principal receiver and asynchronous source callables throughout preparation. The create flight is a shared owner, parsed views refer to a private command, and the returned synchronous Commit owns its copied arguments while only borrowing the retained receiver.
+- L267, 268, 282, 287, 289, 290, 295, 296, 299, 301 **SAFE** · The pending work is copied out of each map to an owned Promise and maps are looked up again by key after suspension. Commit and cleanup tasks remain awaited by a control frame retaining their receiver and borrowed SQL components.
+- L306, 307, 308, 311, 319, 321, 322, 330, 331, 335, 341, 348 **SAFE** · Callback captures move or copy the command, binding and verified arguments into stable frames. SQL uses its reference captures inline. The admin variant pointer refers to the current frame's immutable verified value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -788,4 +796,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-41/286 files reviewed. 128 sites: 119 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+42/286 files reviewed. 131 sites: 122 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
