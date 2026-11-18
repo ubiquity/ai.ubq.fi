@@ -37,7 +37,9 @@ env -i PATH=/usr/bin:/bin HOME="$work/home" TMPDIR="$work/tmp" \
 
 mkdir /native/permissions
 permissions=/native/permissions/linux-arm64.node
+# Bookworm's UAPI predates these four ARM64 syscall names. Match the linked C++ filter.
 cc -shared -fPIC -O2 -Wall -Wextra -Werror -march=armv8-a -DNAPI_VERSION=8 -I/usr/include/node \
+  -D__NR_fchmodat2=452 -D__NR_setxattrat=463 -D__NR_removexattrat=466 -D__NR_file_setattr=469 \
   -o "$permissions" src/runtime/permissions-native.c
 python3 -B - "$permissions" <<'PY'
 import hashlib
