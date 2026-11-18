@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""Render the Release driver's final receipt as a GitHub Actions job summary."""
+"""Render the driver's final receipt as a GitHub Actions job summary."""
 import argparse
 import json
 from pathlib import Path
+
+LABELS = {"release": "Release", "asan": "ASan, UBSan and LeakSanitizer"}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build_root", type=Path)
+    parser.add_argument("--config", choices=LABELS, default="release")
     options = parser.parse_args()
-    receipts = list(options.build_root.glob("*/release/receipt.json"))
-    print("### C++ gateway Release results\n")
+    receipts = list(options.build_root.glob(f"*/{options.config}/receipt.json"))
+    print(f"### C++ gateway {LABELS[options.config]} results\n")
     if not receipts:
         print("The driver produced no final receipt. See the step logs and any uploaded diagnostics.")
         return
     if len(receipts) != 1:
-        parser.error("expected one Release receipt in " + str(options.build_root))
+        parser.error(f"expected one {options.config} receipt in {options.build_root}")
     receipt = json.loads(receipts[0].read_text())
     results = receipt["results"]
     failing = [row for row in results if row["status"] != "PASS"]
