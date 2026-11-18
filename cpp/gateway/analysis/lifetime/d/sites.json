@@ -9212,8 +9212,22 @@
       ]
     },
     "include/uos/lib/jev_compaction/types.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed Jev value records and the virtual asker interface.",
+      "sites": [
+        {
+          "lines": [
+            202,
+            203
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The batch frame owns the shared receiver and supplies owning state and question values to the directly awaited call."
+        }
+      ]
     },
     "include/uos/metered_quota.hpp": {
       "reviewed": false,

@@ -348,7 +348,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/lib/jev_compaction/jev_compaction_smoke.hpp`
 - [x] `include/uos/lib/jev_compaction/request.hpp`
 - [x] `include/uos/lib/jev_compaction/state.hpp`
-- [ ] `include/uos/lib/jev_compaction/types.hpp`
+- [x] `include/uos/lib/jev_compaction/types.hpp`
 - [ ] `include/uos/metered_quota.hpp`
 - [ ] `include/uos/models/catalog.hpp`
 - [ ] `include/uos/models/codex_models.hpp`
@@ -1961,6 +1961,12 @@ Reviewed transcript state helpers and token estimation.
 
 - L14, 25 **SAFE** · The context view refers to a static literal, and estimation consumes the caller's view synchronously.
 
+### `include/uos/lib/jev_compaction/types.hpp`
+
+Reviewed Jev value records and the virtual asker interface.
+
+- L202, 203 **SAFE** · The batch frame owns the shared receiver and supplies owning state and question values to the directly awaited call.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2209,4 +2215,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-240/286 files reviewed. 414 sites: 392 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+241/286 files reviewed. 415 sites: 393 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
