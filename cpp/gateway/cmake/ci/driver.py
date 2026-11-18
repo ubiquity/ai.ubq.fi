@@ -172,7 +172,7 @@ def ninja_compile_rule(name, argv, description):
             "  depfile = $out.d", "  deps = gcc", "  description = " + description + " $in"]
 
 
-def write_ninja(build, sources, compiler, flags, vendors=()):
+def write_ninja(build, sources, compiler, flags, c_compiler, c_flags, vendors):
     # Ninja's depfiles track transitive headers; a failed rebuild removes stale output.
     lines = ["ninja_required_version = 1.10", *ninja_compile_rule("cxx", compiler + flags, "CXX")]
     json_sources = vendor_sources.simdjson_consumers(vendors)
@@ -183,6 +183,7 @@ def write_ninja(build, sources, compiler, flags, vendors=()):
         if not archive:
             raise RuntimeError("ar is required for the selected vendors")
         lines += ninja_compile_rule("vendor_cxx", compiler + vendor_sources.vendor_flags(flags), "Vendor CXX")
+        lines += ninja_compile_rule("vendor_c", c_compiler + c_flags, "Vendor C")
         lines += ["rule vendor_archive", "  command = rm -f $out && " + shlex.quote(archive).replace("$", "$$") + " rcs $out $in"]
     for source in sources:
         target = object_path(build, source)
@@ -191,10 +192,14 @@ def write_ninja(build, sources, compiler, flags, vendors=()):
         dependency = " | " + ninja_escape(GATEWAY / vendor_sources.SIMDJSON_HEADER) if source in json_sources else ""
         lines.append("build " + ninja_escape(target) + ": " + rule + " " + ninja_escape(GATEWAY / source) + dependency)
     for library in vendors:
-        target = object_path(build, library.source)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        lines += ["build " + ninja_escape(target) + ": vendor_cxx " + ninja_escape(GATEWAY / library.source),
-                  "build " + ninja_escape(build / library.archive) + ": vendor_archive " + ninja_escape(target)]
+        members = []
+        for source in library.sources:
+            target = object_path(build, source)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            rule = "vendor_c" if source.endswith(".c") else "vendor_cxx"
+            members.append(ninja_escape(target))
+            lines.append("build " + members[-1] + ": " + rule + " " + ninja_escape(GATEWAY / source))
+        lines.append("build " + ninja_escape(build / library.archive) + ": vendor_archive " + " ".join(members))
     (build / "build.ninja").write_text("\n".join(lines) + "\n")
 
 
@@ -301,6 +306,11 @@ def main():
         parser.error("CXX compiler not found")
     compiler[0] = shutil.which(compiler[0])
     version = subprocess.check_output(compiler + ["--version"], text=True)
+    c_compiler = shlex.split(os.environ.get("CC", "cc"))
+    if not c_compiler or not shutil.which(c_compiler[0]):
+        parser.error("CC compiler not found")
+    c_compiler[0] = shutil.which(c_compiler[0])
+    c_version = subprocess.check_output(c_compiler + ["--version"], text=True)
     if "clang" not in version.lower():
         major = int(subprocess.check_output(compiler + ["-dumpversion"], text=True).split(".")[0])
         if major < 14:
@@ -314,13 +324,15 @@ def main():
              "-DUOS_GATEWAY_NATIVE_LIBRARIES=1", "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY)]
     flags += CONFIGS[options.config] + [flag for flag in package_flags if flag.startswith(("-I", "-D"))]
     flags += shlex.split(os.environ.get("UOS_CI_CXXFLAGS", ""))
+    c_flags = ["-std=c11"] + [flag for flag in CONFIGS[options.config] if not flag.startswith("-D")]
+    c_flags += vendor_sources.vendor_flags(shlex.split(os.environ.get("UOS_CI_CFLAGS", "")))
     libraries = ["-lboost_json", "-lboost_container"] + [flag for flag in package_flags if not flag.startswith(("-I", "-D"))] + ["-pthread"]
     if sys.platform.startswith("linux"):
         libraries.append("-ldl")
         if shutil.which("mold"):
             libraries += ["-fuse-ld=mold", "-Wl,--threads=1"]
     libraries += shlex.split(os.environ.get("UOS_CI_LDFLAGS", ""))
-    identity = hashlib.sha256(json.dumps([compiler, version, flags, libraries]).encode()).hexdigest()[:12]
+    identity = hashlib.sha256(json.dumps([compiler, version, flags, c_compiler, c_version, c_flags, libraries]).encode()).hexdigest()[:12]
     build_root = Path(os.environ.get("UOS_CI_BUILD_DIR", "/tmp/uos-gateway-build")).resolve()
     if build_root.is_relative_to(GATEWAY.parents[1]):
         parser.error("UOS_CI_BUILD_DIR must be outside the repository checkout")
@@ -361,8 +373,9 @@ def main():
     source_hash = input_digest(vendors)
     git_identity = subprocess.check_output(["git", "-C", str(GATEWAY), "rev-parse", "HEAD", "HEAD^{tree}"], text=True).splitlines()
     announce("Compiler: " + version.splitlines()[0])
+    announce("C compiler: " + c_version.splitlines()[0])
     announce("Build: %s; %d production sources (%d runtime), %d tests, jobs=%d" % (build, len(production), len(runtime), len(tests), jobs))
-    write_ninja(build, sorted(sources), compiler, flags, vendors)
+    write_ninja(build, sorted(sources), compiler, flags, c_compiler, c_flags, vendors)
     environment = clean_environment()
     boundary = find_boundary(build, environment)
     environment["NINJA_STATUS"] = "[%f/%t %es] "
@@ -408,6 +421,7 @@ def main():
     vendor_archives = {library.archive: hashlib.sha256((build / library.archive).read_bytes()).hexdigest()
                        for library in vendors if (build / library.archive).is_file()}
     receipt = dict(config=options.config, compiler=compiler, compiler_version=version, flags=flags,
+                   c_compiler=c_compiler, c_compiler_version=c_version, c_flags=c_flags,
                    libraries=libraries, vendor_archives=vendor_archives, source_sha256=source_hash, after_source_sha256=after_hash,
                    inputs_unchanged=source_hash == after_hash, git_commit=git_identity[0], git_tree=git_identity[1], selected=tests,
                    production_sources=len(production), runtime_sources=len(runtime),

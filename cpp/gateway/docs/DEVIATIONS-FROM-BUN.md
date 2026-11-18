@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # C++ gateway runtime library behavior
 
 ## Date parsing
@@ -91,3 +92,24 @@ within the output limit.
 The C++ runtime follows the Unicode data in the linked ICU release. On ICU 78.3, the existing Bun 1.4.0 case and collation vectors keep their expected values. The gateway uses ICU root-locale collation independently of machine locale.
 
 Outside the old port's recorded collation repertoire, ICU supplies the order and canonical equivalences. With ICU 78.3, Deseret U+10400 sorts before the lone surrogate U+D83D, and `가` and `가` compare equal. Both results match Bun 1.4.0. This extends collation to names in additional scripts and keeps tertiary ordering for catalog and schema names.
+=======
+# C++ gateway deviations from Bun
+
+## Server HTTP request parsing with llhttp 9.4.4
+
+| Input or behavior                                                                               | Bun 1.4.0                                                                                   | C++ server with llhttp                                                                   | Reason                                                                                                      |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Request transfer coding without a final `chunked` coding, such as `Transfer-Encoding: identity` | An unread request can reach the handler and produce a response before the parser sends 400. | Sends HTTP 400 before dispatch.                                                          | A request body needs unambiguous framing.                                                                   |
+| Two identical `Content-Length: 1` fields                                                        | Accepts the request and reads one byte.                                                     | Sends HTTP 400 before dispatch.                                                          | A single length field avoids ambiguity between HTTP peers.                                                  |
+| ASCII DEL in a field value, such as `X-Test: a<DEL>b`                                           | Preserves the byte in `rawHeaders`.                                                         | Sends HTTP 400.                                                                          | Strict llhttp rejects DEL in HTTP field values. Valid Latin-1 field bytes retain their existing projection. |
+| Literal UTF-8 in a request target, such as the bytes for `/café`                                | Decodes the bytes into the incoming URL.                                                    | Sends HTTP 400.                                                                          | Valid URI targets can send `/caf%C3%A9`.                                                                    |
+| `Proxy-Connection: close` without `Connection`                                                  | Keeps the HTTP/1.1 connection alive.                                                        | Uses llhttp's close decision.                                                            | The client receives `Connection: close` and can open a fresh connection.                                    |
+| A 4,192-byte chunk extension value or two 8,300-byte trailer values                             | Accepts those requests.                                                                     | Limits each chunk size line to 4,096 bytes and the full trailer block to 16,408 bytes.   | Caps metadata buffering across socket reads.                                                                |
+| Parser error details after dispatch, such as a missing CR after chunk data                      | The incoming request can report `ECONNRESET`.                                               | The parser reports its own error code and reason when the request has an error listener. | The server retains the abort and HTTP 400 behavior.                                                         |
+
+The first four rows correspond to `te-identity-unread`,
+`duplicate-equal-content-length`, `info` and `info-utf8-target` in the
+server wire vectors. For the `info` case, the standalone parser test also
+exercises accepted OWS, mixed-case names, ordered duplicates, empty values and
+Latin-1 bytes.
+>>>>>>> origin/agent-jobs/cppgw-std-llhttp-server-r1-44202666506-1

@@ -86,8 +86,9 @@ if args.sqlite_prefix:
     prefixes["sqlite"] = args.sqlite_prefix.resolve()
 env["PKG_CONFIG_PATH"] = ":".join(str(p / "lib/pkgconfig") for p in prefixes.values())
 compiler = shutil.which(os.environ["CXX"]) if os.environ.get("CXX") else capture(["xcrun", "--find", "clang++"])
-if not compiler:
-    parser.error("CXX must name an available compiler")
+c_compiler = shutil.which(os.environ["CC"]) if os.environ.get("CC") else capture(["xcrun", "--find", "clang"])
+if not compiler or not c_compiler:
+    parser.error("CC and CXX must name available compilers")
 env["SDKROOT"] = capture(["xcrun", "--show-sdk-path"])
 packages = ["openssl", "zlib", "libbrotlidec", "libzstd", "icu-uc", "icu-i18n"]
 cflags = shlex.split(capture(["pkg-config", "--cflags", *packages]))
@@ -98,10 +99,13 @@ flags = [compiler, "-std=c++20", "-stdlib=libc++", "-O0", "-g0", "-Wall", "-Wext
          "-I", str(gateway / "include"), "-I", str(gateway), "-isystem", str(prefixes["boost"] / "include"),
          "-isystem", str(sqlite / "include"), "-pthread", *cflags]
 flags.append("-DUOS_GATEWAY_NATIVE_LIBRARIES")
+vendor_c_flags = [c_compiler, "-std=c11", "-O0", "-g0"]
+vendor_cxx_flags = vendor_sources.vendor_flags(flags)
 libs += [str(sqlite / "lib/libsqlite3.dylib"), "-L" + str(prefixes["boost"] / "lib"), "-lboost_json", "-lboost_container"]
 # dyld fallback search is explicit and credential-free; native links use the exact dylib above.
 env["DYLD_LIBRARY_PATH"] = ":".join(str(p / "lib") for p in prefixes.values())
 provenance = dict(source_identity=source_identity, platform=platform.platform(), compiler=capture([compiler, "--version"]),
+                  c_compiler=capture([c_compiler, "--version"]),
                   sdk=env["SDKROOT"], dependencies=capture([brew, "list", "--versions", *prefixes]),
                   package_versions=capture(["pkg-config", "--modversion", *packages]),
                   flags=flags, libraries=libs, inputs=inputs, arguments=vars(args))
@@ -189,12 +193,15 @@ if len(members) != len(runtime + modules):
 archive_path.replace(build / "libuos_gateway.a")
 vendor_archives = {}
 for library in vendor_sources.required(vendors, runtime + modules):
-    relative = Path(library.source)
-    compiled = compile_one(relative, vendor_sources.vendor_flags(flags))
-    if compiled["status"]:
-        raise SystemExit("Vendor compile failed: " + compiled["log"])
+    members = []
+    for source in library.sources:
+        relative = Path(source)
+        compiled = compile_one(relative, vendor_c_flags if relative.suffix == ".c" else vendor_cxx_flags)
+        if compiled["status"]:
+            raise SystemExit("Vendor compile failed: " + compiled["log"])
+        members.append(obj(relative))
     archive_path = run / library.archive
-    archived = invoke(["/usr/bin/ar", "rcs", archive_path, obj(relative)], run / (library.archive + ".log"))
+    archived = invoke(["/usr/bin/ar", "rcs", archive_path, *members], run / (library.archive + ".log"))
     if archived["status"]:
         raise SystemExit("Vendor archive failed: " + archived["log"])
     target = build / library.archive
