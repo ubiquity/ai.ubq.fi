@@ -301,7 +301,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/claude_code_access.cpp`
 - [x] `src/provider/claude_code_accounts.cpp`
 - [x] `src/provider/claude_code_credentials.cpp`
-- [ ] `src/provider/claude_code_models.cpp`
+- [x] `src/provider/claude_code_models.cpp`
 - [ ] `src/provider/claude_code_quota.cpp`
 - [ ] `src/provider/claude_code_usage.cpp`
 - [ ] `src/provider/claude_code_usage_refresh.cpp`
@@ -1915,3 +1915,11 @@ Account roster state is snapshotted at each read and mutation.
 Credential and workspace lookup accepts owned store and environment callables.
 
 - 160-216,222-248,279-319 · credential and workspace KV joins · **SAFE** · The frames retain KV and local roster, state and environment owners. The recursive reload copies the KV handle and no pointer into the prior result crosses the recursion.
+
+### `src/provider/claude_code_models.cpp`
+
+Catalog fetch keeps the active task and its cache object alive independently of registry replacement.
+
+- 123-166,188-249 · bounded page read, credential and workspace resolution · **SAFE** · Response, reader, scoped account and payload values live in each joined frame. The identity hash owns its material.
+- 252-290,353-399,403-425 · single-flight cache and publication · **SAFE** · Refresh owns a shared cache object and re-finds registry membership after suspension. The caller waits on a copied promise, and Loop teardown clears pending reactions and their frame owners.
+- 301-351 · catalog pagination and fetch · **SAFE** · The discovery frame owns the fetch callable and parsed page, and each body cancel is joined under its live handle.

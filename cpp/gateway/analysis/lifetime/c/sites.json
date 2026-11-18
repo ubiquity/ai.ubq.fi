@@ -3540,8 +3540,28 @@
       ]
     },
     "src/provider/claude_code_models.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Catalog fetch keeps the active task and its cache object alive independently of registry replacement.",
+      "sites": [
+        {
+          "lines": "123-166,188-249",
+          "kind": "bounded page read, credential and workspace resolution",
+          "verdict": "SAFE",
+          "reason": "Response, reader, scoped account and payload values live in each joined frame. The identity hash owns its material."
+        },
+        {
+          "lines": "252-290,353-399,403-425",
+          "kind": "single-flight cache and publication",
+          "verdict": "SAFE",
+          "reason": "Refresh owns a shared cache object and re-finds registry membership after suspension. The caller waits on a copied promise, and Loop teardown clears pending reactions and their frame owners."
+        },
+        {
+          "lines": "301-351",
+          "kind": "catalog pagination and fetch",
+          "verdict": "SAFE",
+          "reason": "The discovery frame owns the fetch callable and parsed page, and each body cancel is joined under its live handle."
+        }
+      ]
     },
     "src/provider/claude_code_quota.cpp": {
       "status": "pending",
