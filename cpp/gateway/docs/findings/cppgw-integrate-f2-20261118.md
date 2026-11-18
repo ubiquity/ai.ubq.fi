@@ -147,6 +147,45 @@ SQLite configured with `./configure --prefix="$scratch/sqlite" --disable-static 
 The portable driver independently checks the SQLite headers and loaded version in the isolated fixture.
 [Preparation guide](../CI.md#ubuntu-prerequisites) · [Upstream Boost and ICU build commands](../CONFORMANCE.md#run-on-linux-arm64)
 
+## Fuzz campaigns
+
+The two requested workflow harnesses and the additional QuickJS-ng harness each ran for at least 600 seconds
+with four workers. Each invocation used a fresh home and temporary directory, an empty environment and a private
+network namespace. The scratch compiler wrappers select Clang 21 and the prepared Boost, ICU and SQLite headers.
+
+```bash
+bash "$scratch/run-fuzz.sh" regex
+bash "$scratch/run-fuzz.sh" kv_jsc
+bash "$scratch/run-fuzz.sh" regex_library
+```
+
+The wrapper runs the workflow's command for each target with the staged library paths.
+
+```bash
+out=$(mktemp -d "$scratch/fuzz-$target.XXXXXXXX")
+mkdir "$out/home" "$out/tmp"
+sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --no-new-privs \
+  env -i PATH="$scratch/fuzz-compilers:/usr/local/bin:/usr/bin:/bin" LANG=C.UTF-8 HOME="$out/home" TMPDIR="$out/tmp" \
+  LDFLAGS="-L$scratch/boost_1_92_0/stage/lib -L$scratch/icu78/lib -L$scratch/sqlite/lib -Wl,--disable-new-dtags,-rpath,$scratch/icu78/lib:$scratch/sqlite/lib" \
+  python3 -B cpp/gateway/fuzz/ci.py "$target" --seconds 600 --jobs 4 --out "$out"
+```
+
+| Harness         | Fuzzed seconds | Campaign wall (s) | Final corpus entries | Findings | Workflow exit |
+| --------------- | -------------: | ----------------: | -------------------: | -------: | ------------: |
+| `regex`         |            605 |           606.082 |                2,713 |        0 |             0 |
+| `kv_jsc`        |            611 |           611.942 |                1,965 |        0 |             0 |
+| `regex_library` |            605 |           605.864 |                3,233 |        0 |             0 |
+
+The workflow retained three expected slow inputs from `regex` and one empty ARM64 libFuzzer fork-parent leak
+artifact per campaign. The underlying libFuzzer commands exited 77 after completing their campaigns. The workflow
+driver classified all three as complete, with zero genuine findings. The per-run logs contain the tool diagnostics.
+
+| Receipt under scratch                      | SHA-256                                                            |
+| ------------------------------------------ | ------------------------------------------------------------------ |
+| `fuzz-regex.q1ViNCYz/summary.json`         | `9afaa38f6d7f6e5805feabc1ccba9477b057b48d752c175c7cd2c180adaa3447` |
+| `fuzz-kv_jsc.Wa70FroG/summary.json`        | `14afdc9a148ac8557757ff92d854a96181b9c2973ac89283fcb4f10ad745e1ca` |
+| `fuzz-regex_library.jQBtRq9u/summary.json` | `a184a5c85d7c835ebc7a24438eb22d86a1a7959be24c6d9f6de7ea06db25ff64` |
+
 ## Package and conformance
 
 The portable build was already running at the merge commit when the first connection dropped. Docker Buildx finished
@@ -203,7 +242,7 @@ timeout -k 10s 180s bash "$run/isolated.sh" --bench "$bench" --benchmark-revisio
   --bun /home/runner/.bun/bin/bun --binding "$run/bun-kv-binding.json" --package "$run/package" --out "$run/output"
 ```
 
-Native and Bun agreed on all 186 cases, 162 before restart and 24 after it. There were 184 passing assertions,
+Native and Bun agreed on all 186 cases, 162 before restart and 24 after it. There were 184 passing cases,
 zero differential functional or cosmetic differences, and two shared validation failures. Both gateways returned
 HTTP 200 and dispatched `chat-invalid-role` and `responses-invalid-tool-type`. Both cases require HTTP 400 without
 dispatch. The comparator exited 1 for those same defects present in the preceding integration. The paired phase took

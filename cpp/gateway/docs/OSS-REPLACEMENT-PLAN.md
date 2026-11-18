@@ -111,7 +111,7 @@ column records what the integrated release ships. Retained adapters cover the be
 
 The Linux ARM64 gate combines four Release shards, selected ASan/UBSan/LSan fixtures, namespace-isolated
 fuzzing, and paired package conformance. The packaged gateways agreed on 186 cases. The suite recorded 184
-passing assertions and the two shared failures above. [Final integration](findings/cppgw-integrate-f2-20261118.md) ·
+passing cases and the two shared failures above. [Final integration](findings/cppgw-integrate-f2-20261118.md) ·
 [Portable driver](CI.md)
 
 Run the focused `tools/run-tests.sh` selectors and affected application fixtures using the documented synthetic isolation. Verify exact I/O bytes and status where clients/providers use them, and test the preserved trust and input bounds with finite controls. Run architecture-matched robustness fuzz and sanitizers for new parser/codec entry points. Keep Linux and Darwin closure receipts and the required comparison profile. A records the affected tests and integrated release suite after each merge and binds final qualification to the frozen package. [Test wrappers](TESTING.md) [Build and release gates](BUILD.md) [Runtime contracts](RUNTIME.md)

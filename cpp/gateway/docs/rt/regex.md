@@ -10,7 +10,7 @@ in `std::string`. [API](../../include/uos/rt/regex.hpp) · [Text](text.md) ·
 | TypeScript                                                             | C++                                                                                                                               |
 | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `const RE = /a(b)/i;` (module level or literal in a function)          | `static const rt::Regex RE("a(b)", "i");` (see "State" for `g`/`y`)                                                               |
-| `new RegExp(source, flags)`                                            | `rt::Regex re(source, flags);` throws `rt::SyntaxError` with JSC's text                                                           |
+| `new RegExp(source, flags)`                                            | `rt::Regex re(source, flags);` throws `rt::SyntaxError` on invalid patterns or flags                                              |
 | `re.test(s)`                                                           | `re.test(s)`                                                                                                                      |
 | `re.exec(s)` / `s.match(re)` without `g`                               | `re.exec(s)` / `rt::match(s, re)` -> `std::optional<rt::RegexMatch>` (nullopt = `null`)                                           |
 | `m[0]`, `m[1]`, `m.index`, `m.groups?.name`, `m.input`                 | `m->str()`, `(*m)[1]` (`std::optional<std::string>`), `m->index`, `m->group("name")`, `m->input`                                  |
@@ -133,8 +133,7 @@ Dynamic `RegExp` constructions, also in the vectors with their concrete patterns
 - `src/harmony/tools/backend.ts:147`: `patternToRegExp(glob)`, a `^...$` built from `[^/]*`,
   `.*`, `(?:.*/)?`, `[^/]` and escaped literals (test).
 - `src/kv-conversion/typed-value.ts:133`, `src/kv-conversion/profile-json.ts:100`: stored RegExp
-  values rebuilt from `source` and `flags` (any pattern: everything except `v` round-trips through
-  `source()`, `flags()` and `toString()`).
+  values rebuilt from `source` and `flags`. The round trip includes `v` and preserves the typed graph bytes.
 
 Literals (pattern, methods, sites):
 
