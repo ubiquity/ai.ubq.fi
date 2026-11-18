@@ -30,7 +30,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/admin/chart_source_proxy.cpp`
 - [x] `src/admin/claude_code.cpp`
 - [x] `src/admin/codex.cpp`
-- [ ] `src/admin/codex_reset.cpp`
+- [x] `src/admin/codex_reset.cpp`
 - [ ] `src/admin/defaults.cpp`
 - [ ] `src/admin/error_log.cpp`
 - [ ] `src/admin/index.cpp`
@@ -386,6 +386,12 @@ Reviewed all admin Codex actions, catalog construction and refresh, provider sel
 - L216, 217, 218, 219, 220, 221 **DEFECT** · Refresh override lifetime. A refresh child rejects while a sibling created by an injected capturing refresh coroutine is suspended. Handler exit destroys the callback holding its captures; the sibling can still resume. Wrap each injected callback in rt::async with copied options.
 - L238, 239, 240 **DEFECT** · Provider selection override lifetime. The selection read rejects while an injected capturing catalog coroutine is pending. Handler exit destroys the callable; the pending build can resume through it. Hold the catalog callable in rt::async before starting its Promise.
 
+### `src/admin/codex_reset.cpp`
+
+Reviewed the manual-reset dispatch and error translation.
+
+- L6, 9, 14 **SAFE** · The handler owns request and dependencies. The hash view is converted to an owning string before the separately constructed consuming Promise, which the handler awaits.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -394,4 +400,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-7/286 files reviewed. 37 sites: 34 SAFE, 3 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+8/286 files reviewed. 38 sites: 35 SAFE, 3 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
