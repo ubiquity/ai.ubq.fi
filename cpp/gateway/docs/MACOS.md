@@ -2,29 +2,29 @@
 
 The Darwin driver builds Ada 4.0.0, llhttp 9.4.4, QCBOR 1.6.1, QuickJS-ng libregexp 0.18.0, simdjson 5.2.0
 and simdutf 9.4.0 from the verified vendor registry. It uses Homebrew ICU 78.3 for Unicode and IDNA.
-The build and packager with QuickJS-ng are unexecuted on Apple Silicon.
 
-The integrated F1 `-O0 -g0` profile compiled **373/373 production sources**, linked **3/3 arm64 executables** and passed
-**450/450 binaries and 5,107/5,107 cases**. The macOS release workflow's packager built the archive and
-its gateway returned the qualified source commit from `--version`.
+The integrated follow-ups compiled **373/373 production sources**, linked **3/3 arm64 executables** and passed
+**450/450 binaries and 5,119/5,119 cases** on the `-O0 -g0` profile. The macOS release workflow's packager
+built the archive and the extracted gateway returned the qualified source commit from `--version`.
 
+[Integrated follow-up findings](findings/cppgw-macos-requal-fu1-20261118.md) ·
 [Integrated F1 findings](findings/cppgw-macos-requal-f1-20261118.md) ·
 [Prior qualification, 442 binaries and 5,034 cases](findings/cppgw-macos-requal-20261118.md) ·
 [Initial Darwin port and fallback loaders](findings/cppgw-macos-native-20261117.md)
 
 ## Verified host and dependency selection
 
-| Component         | Native job                                                            |
-| ----------------- | --------------------------------------------------------------------- |
-| Host              | macOS 26.7.2, build 25G332, arm64; Darwin 25.6.0                      |
-| Compiler          | Apple Clang 21.0.0, clang-2100.1.1.101, Xcode 26.6                    |
-| C++ library       | Apple macOS 26.5 SDK, libc++, C++20                                   |
-| Boost             | Homebrew 1.92.0_1, JSON and Container, libc++ ABI                     |
-| OpenSSL           | Homebrew openssl@3 3.5.9                                              |
-| SQLite            | Separate official 3.54.0 dylib, matching the versioned native fixture |
-| Other C libraries | zlib 1.3.2, ICU 78.3, Brotli 1.2.1, Zstd 1.5.7                        |
-| Tools             | Homebrew 7.0.11, CMake 4.4.5, Ninja 1.13.2, Python 3.15.2             |
-| Oracle            | Bun 1.4.0, revision 34cbb9a40b4bd1bd767d134a7065e66c2432a676          |
+| Component         | Native job                                                                |
+| ----------------- | ------------------------------------------------------------------------- |
+| Host              | macOS 26.7.2, build 25G332, arm64; Darwin 25.6.0                          |
+| Compiler          | Apple Clang 21.0.0, clang-2100.1.1.101, Xcode 26.6                        |
+| C++ library       | Apple macOS 26.5 SDK, libc++, C++20                                       |
+| Boost             | Homebrew 1.92.0_1, JSON and Container, libc++ ABI                         |
+| OpenSSL           | Homebrew openssl@3 3.5.9                                                  |
+| SQLite            | Separate official 3.54.0 dylib, matching the versioned native fixture     |
+| Other C libraries | zlib 1.4, ICU 78.3, Brotli 1.2.1, Zstd 1.5.7                              |
+| Tools             | Homebrew 7.0.11, CMake 4.5.0, Ninja 1.13.2, Python 3.15.2, pkgconf 3.0.11 |
+| Oracle            | Bun 1.4.0, revision 34cbb9a40b4bd1bd767d134a7065e66c2432a676              |
 
 Homebrew SQLite 3.54.1 is installed but the qualified fixture run selects the separate **3.54.0**
 header and dylib explicitly. The system SQLite is not selected. Bun 1.4.0 on this Mac reports
@@ -84,17 +84,17 @@ PYTHON
 
 ## Reproduce the build and tests
 
-Run the commands from the repository root with a clean committed checkout. The qualification runner used five
-workers. Set `--jobs` to fit your host.
+Run the commands from the repository root with a clean committed checkout. The qualification runner used three
+workers on an arm64 host with 7 GiB of RAM. Set `--jobs` to fit your host.
 
-```sh
-mkdir "$UOS_MAC_BUILD/build-home" "$UOS_MAC_BUILD/build-tmp"
-env -i PATH=/opt/homebrew/bin:/usr/bin:/bin HOME="$UOS_MAC_BUILD/build-home" TMPDIR="$UOS_MAC_BUILD/build-tmp" \
+```bash
+mkdir "$UOS_MAC_BUILD"/{runtime-home,runtime-tmp,full-home,full-tmp}
+env -i PATH=/opt/homebrew/bin:/usr/bin:/bin HOME="$UOS_MAC_BUILD/runtime-home" TMPDIR="$UOS_MAC_BUILD/runtime-tmp" \
   bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
-  --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 5 --suite rt --require-clean &&
-env -i PATH=/opt/homebrew/bin:/usr/bin:/bin HOME="$UOS_MAC_BUILD/build-home" TMPDIR="$UOS_MAC_BUILD/build-tmp" \
+  --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite rt --require-clean &&
+env -i PATH=/opt/homebrew/bin:/usr/bin:/bin HOME="$UOS_MAC_BUILD/full-home" TMPDIR="$UOS_MAC_BUILD/full-tmp" \
   bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
-  --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 5 --suite all --require-clean
+  --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite all --require-clean
 ```
 
 The script compiles the production sources once and builds the module archive. The three
@@ -168,18 +168,18 @@ bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
 | Gate                       | Result                                                        |
 | -------------------------- | ------------------------------------------------------------- |
 | Production compile         | 373/373 sources, including startup and the three entry points |
-| Vendor compile             | 11/11 sources across five archives                            |
+| Vendor compile             | 13/13 sources across six archives                             |
 | Static application archive | 369 members                                                   |
 | Mach-O executable links    | 3/3 passed                                                    |
 | Test and support compile   | 472/472                                                       |
-| Runtime phase              | 37/37 binaries, 478/478 cases                                 |
-| Application phase          | 413/413 binaries, 4,629/4,629 cases                           |
-| Whole suite                | 450/450 binaries, 5,107/5,107 cases                           |
+| Runtime phase              | 37/37 binaries, 485/485 cases                                 |
+| Application phase          | 413/413 binaries, 4,634/4,634 cases                           |
+| Whole suite                | 450/450 binaries, 5,119/5,119 cases                           |
 
-The cold standalone runtime command took 265.98 s. The first full run found four stale JSON diagnostics
-in the Darwin native KV vectors. After that fixture update, the full rerun took 509.92 s with cached
-objects and qualified commit `aab86c74fab172eca13298c4da5ca21eb5463d69`, tree
-`3a1e3c79d3eed21128d1708d10f7d2f8b6f83c21`. [Receipt hashes](findings/cppgw-macos-requal-f1-20261118.md)
+The cold standalone runtime command took 498.25 s. The full command took 1,472.22 s, reusing production
+and runtime test objects. The receipts bind commit `53e8ef88cdccc698e29fc079bd7bd79f9dc61405`, tree
+`02514762c0a7cf9f0b140534e62efd5e31754b82`. The C++20 date fixture passed seven cases and the QuickJS-ng
+regex fixture passed 20. [Receipt hashes](findings/cppgw-macos-requal-fu1-20261118.md)
 
 ## Build the release archive
 
@@ -204,9 +204,10 @@ version=$(cd "$UOS_MAC_BUILD/unpacked" && env -i PATH=/usr/bin:/bin HOME="$UOS_M
 test "$version" = "$expected" && printf '%s\n' "$version"
 ```
 
-The workflow build took 399.86 s and produced a 142,729,792-byte archive. Its `VERSION` records minimum
-macOS 26.0. The sandboxed version command printed `uos-gateway aab86c74fab172eca13298c4da5ca21eb5463d69`.
-[Installation guide](../packaging/macos/INSTALL.md) · [Package receipt](findings/cppgw-macos-requal-f1-20261118.md)
+The workflow build took 748.99 s and produced a 142,557,927-byte archive. Its `VERSION` records QuickJS-ng
+libregexp 0.18.0 and minimum macOS 26.0. The sandboxed version command printed
+`uos-gateway 53e8ef88cdccc698e29fc079bd7bd79f9dc61405`.
+[Installation guide](../packaging/macos/INSTALL.md) · [Package receipt](findings/cppgw-macos-requal-fu1-20261118.md#release-archive)
 
 ## Proven Darwin behavior and remaining boundaries
 
