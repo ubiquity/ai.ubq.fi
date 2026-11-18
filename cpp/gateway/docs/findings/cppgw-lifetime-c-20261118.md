@@ -246,7 +246,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/parse.cpp`
 - [x] `src/harmony/probe_scenarios.cpp`
 - [x] `src/harmony/probes.cpp`
-- [ ] `src/harmony/reliability/context.cpp`
+- [x] `src/harmony/reliability/context.cpp`
 - [ ] `src/harmony/reliability/failure.cpp`
 - [ ] `src/harmony/reliability/feedback.cpp`
 - [ ] `src/harmony/reliability/harness.cpp`
@@ -1579,3 +1579,7 @@ Probe transport and result projections own their per-call state.
 
 - 112-170,179-203 · probe invocation, JSON reads and result values · **SAFE** · Each task owns a context and request arguments, and each parse uses a local response. The zero-capture catch reaction owns no referents.
 - 241-249 · published probe callback bundle · **SAFE** · The returned functions own a shared ContextState which contains transport and clock values, without a back-reference to the bundle.
+
+### `src/harmony/reliability/context.cpp`
+
+Transcript sizing, compaction and rendering are synchronous. Indexes and views are used while the conversation is live.

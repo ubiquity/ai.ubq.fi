@@ -2749,7 +2749,8 @@
       ]
     },
     "src/harmony/reliability/context.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Transcript sizing, compaction and rendering are synchronous. Indexes and views are used while the conversation is live.",
       "sites": []
     },
     "src/harmony/reliability/failure.cpp": {
