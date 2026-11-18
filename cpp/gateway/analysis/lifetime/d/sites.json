@@ -9377,8 +9377,22 @@
       ]
     },
     "include/uos/models/codex_models_whitelist.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed stored whitelist APIs. The inline strong-read argument in the implementation is separately flagged for GCC 12.2.",
+      "sites": [
+        {
+          "lines": [
+            22,
+            23
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The read and write interfaces retain a shared KV and the stored ID vector is passed by value."
+        }
+      ]
     },
     "include/uos/models/metadata.hpp": {
       "reviewed": false,

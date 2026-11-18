@@ -354,7 +354,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/models/codex_models.hpp`
 - [x] `include/uos/models/codex_models_availability.hpp`
 - [x] `include/uos/models/codex_models_fetch.hpp`
-- [ ] `include/uos/models/codex_models_whitelist.hpp`
+- [x] `include/uos/models/codex_models_whitelist.hpp`
 - [ ] `include/uos/models/metadata.hpp`
 - [ ] `include/uos/models/openrouter_models.hpp`
 - [ ] `include/uos/openai.hpp`
@@ -1998,6 +1998,12 @@ Reviewed model fetch and validation options, transport failure callback, and cat
 
 - L28, 32, 33, 35, 42, 43, 45, 84, 85 **SAFE** · The fetch and validation Tasks own option, credential and KV values. The on-failure callable is stored by value and invoked synchronously.
 
+### `include/uos/models/codex_models_whitelist.hpp`
+
+Reviewed stored whitelist APIs. The inline strong-read argument in the implementation is separately flagged for GCC 12.2.
+
+- L22, 23 **SAFE** · The read and write interfaces retain a shared KV and the stored ID vector is passed by value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2246,4 +2252,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-246/286 files reviewed. 421 sites: 399 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+247/286 files reviewed. 422 sites: 400 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
