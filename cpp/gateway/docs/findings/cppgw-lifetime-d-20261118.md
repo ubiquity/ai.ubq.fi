@@ -292,7 +292,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_authority_paid.hpp`
 - [x] `include/uos/authority/native_authority_principals.hpp`
 - [x] `include/uos/authority/native_authority_rpc.hpp`
-- [ ] `include/uos/authority/native_authority_runtime.hpp`
+- [x] `include/uos/authority/native_authority_runtime.hpp`
 - [ ] `include/uos/authority/native_authority_sql.hpp`
 - [ ] `include/uos/authority/native_codex.hpp`
 - [ ] `include/uos/authority/native_codex_429.hpp`
@@ -1629,6 +1629,12 @@ Reviewed native RPC ports, callback-enabled transports and inline argument adapt
 - L34, 35, 38, 40, 41, 46, 47, 52, 53, 56, 61, 64, 84, 88 **SAFE** · Each issued server Task retains the bound port or copied callable through its wait, and the port itself owns its binding and native State.
 - L69, 70, 71, 72, 73, 74, 76, 77, 97, 98, 99, 100 **SAFE** · The inline templates serialize arguments synchronously. The forwarded overload copies the object and transport into an owning Task before the temporary JSON leaves scope.
 
+### `include/uos/authority/native_authority_runtime.hpp`
+
+Reviewed the runtime verifier interfaces and the borrowing subcomponent.
+
+- L7, 8, 9, 11, 13, 18, 21 **SAFE** · The bound State keeps the runtime receiver, verifier and all referenced subcomponents alive throughout direct asynchronous verification.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1877,4 +1883,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-184/286 files reviewed. 356 sites: 335 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+185/286 files reviewed. 357 sites: 336 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
