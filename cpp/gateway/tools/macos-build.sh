@@ -207,7 +207,7 @@ if len(members) != len(runtime + modules):
 gateway_archive = build / archive_path.name
 archive_path.replace(gateway_archive)
 vendor_archives = {}
-for library in vendor_sources.required(vendors, production_sources):
+for library in vendors:
     members = []
     for source in library.sources:
         relative = Path(source)
@@ -224,12 +224,14 @@ for library in vendor_sources.required(vendors, production_sources):
     archive_path.replace(target)
     vendor_archives[library.archive] = target
 provenance["vendor_archives"] = {name: digest(path) for name, path in vendor_archives.items()}
+print("vendor archives:", ", ".join(vendor_archives), flush=True)
 link_flags = [compiler, "-stdlib=libc++", "-pthread"]
+production_vendors = [vendor_archives[library.archive] for library in vendor_sources.required(vendors, production_sources)]
 executables = {}
 for name, source in entrypoints.items():
     binary = run / name
     command = [*link_flags, obj(source), obj(startup), "-Xlinker", "-force_load", "-Xlinker", gateway_archive,
-               *vendor_archives.values(), *libs, "-o", binary]
+               *production_vendors, *libs, "-o", binary]
     result = invoke(command, run / (name + ".link.log"))
     if result["status"] == 0:
         result["sha256"] = digest(binary)
