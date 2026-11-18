@@ -165,6 +165,33 @@ bash "$scratch/measure/run-isolated-priority.sh" after-strings
 llvm-size-21 -A "$scratch/measure/before-string.o" "$scratch/measure/after-string.o"
 ```
 
+Five interleaved request-path preview pairs ran the actual header filter and
+Responses normalizer, then sent 960 timed authenticated requests per run through
+the loopback conformance gateway. The request used a 1,031-byte `input_` type.
+Each of 40 fresh fixture batches warmed up with six requests, timed 24 delivered
+HTTP 400 responses, checked the error field and drained before reopening its
+SQLite state. There were zero upstream calls. The benchmark reused unchanged
+release objects and compiled the changed objects for each revision. It ran
+pinned to CPU 3 at nice −15 while the suites compiled. Values are medians with
+the full sample ranges.
+
+| Operation                             |              Before |               After |
+| ------------------------------------- | ------------------: | ------------------: |
+| Quota filter, eight headers (µs/call) | 2.359 [2.349–2.394] | 1.588 [1.586–1.594] |
+| Responses short ASCII type (µs/call)  | 1.423 [1.417–1.436] | 1.419 [1.410–1.423] |
+| Responses long UTF-8 type (µs/call)   | 3.416 [3.411–3.430] | 1.417 [1.409–1.422] |
+| Loopback Responses 400 (ms/request)   | 2.034 [2.025–2.054] | 2.028 [1.980–2.088] |
+
+The quota and long-type reductions were visible within the affected functions.
+The loopback samples overlap within measurement variation.
+
+```bash
+python3 -B "$scratch/measure/early-baseline.py" "$scratch/baseline"
+python3 -B "$scratch/measure/early.py" "$PWD"
+bash "$scratch/measure/run-isolated-priority.sh" preview-baseline-request
+bash "$scratch/measure/run-isolated-priority.sh" preview-request
+```
+
 The runtime's general text guide still lists the retired APIs. The two
 packaged-validation defects in the starting receipt remain outside this
 lane. Both `chat-invalid-role` and `responses-invalid-tool-type` returned 200
