@@ -1335,8 +1335,21 @@
       ]
     },
     "src/api_keys.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed key construction, token formatting and synchronous policy normalizers.",
+      "sites": [
+        {
+          "lines": [
+            12,
+            14
+          ],
+          "kinds": [
+            "b"
+          ],
+          "verdict": "SAFE",
+          "detail": "The key constructor copies each incoming view into owned key parts before the function returns."
+        }
+      ]
     },
     "src/auth/index.cpp": {
       "reviewed": false,

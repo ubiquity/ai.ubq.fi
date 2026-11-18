@@ -39,7 +39,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/agent_messages.cpp`
 - [x] `src/analytics.cpp`
 - [x] `src/api_key_policy.cpp`
-- [ ] `src/api_keys.cpp`
+- [x] `src/api_keys.cpp`
 - [ ] `src/auth/index.cpp`
 - [ ] `src/auth/local_admin.cpp`
 - [ ] `src/auth/local_development_key.cpp`
@@ -464,6 +464,12 @@ Reviewed window-lock promise ownership, quota reservation and compensation callb
 - L853, 856, 857 **SAFE** · The deletion frame owns both iterators and the vector of copied keys. No other coroutine can mutate the vector being iterated.
 - L862, 870, 872, 875, 881 **SAFE** · Authentication copies the cached policy immediately and never dereferences the shared cache entry after suspending for storage.
 
+### `src/api_keys.cpp`
+
+Reviewed key construction, token formatting and synchronous policy normalizers.
+
+- L12, 14 **SAFE** · The key constructor copies each incoming view into owned key parts before the function returns.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -472,4 +478,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-16/286 files reviewed. 71 sites: 66 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+17/286 files reviewed. 72 sites: 67 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
