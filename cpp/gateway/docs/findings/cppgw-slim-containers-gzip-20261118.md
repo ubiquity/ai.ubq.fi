@@ -57,3 +57,29 @@ growth, tail reinsertion and release of the last cursor.
 | `src/models/catalog.cpp` | 272 | 273 | −1 |
 | `src/models/openrouter_models.cpp` | 360 | 360 | 0 |
 | Total | 1,016 | 962 | 54 |
+
+## Whole-buffer gzip
+
+The adapter drains the existing inflater in 64 KiB input slices and
+checks its final status. Whole-buffer compression and decompression use
+one scrubbed buffer. Sentinel checks its existing plaintext limit before
+copying each piece and uses that limit for accumulator growth. Superseded
+allocations and abandoned inputs or outputs are scrubbed.
+
+Catalog and Sentinel compression directly return the runtime task.
+Uncapped decode failures surface during the await without scheduling a
+turn. Capped decode schedules both outcomes by one microtask, preserving
+Sentinel's existing completion order and limit error.
+
+The original gzip recordings still exercise the streaming partitions and
+exact pieces. Buffer cases compare joined plaintext or errors with bounded
+callbacks, including concatenated members across both former Blob boundaries,
+CRC and truncation failures, and exact-limit success and overflow.
+
+| First-party production file | Before | After | Net removed |
+| --------------------------- | -----: | ----: | ----------: |
+| `include/uos/rt/gzip.hpp` | 154 | 141 | 13 |
+| `src/rt/gzip.cpp` | 455 | 447 | 8 |
+| `src/catalog/store.cpp` | 817 | 813 | 4 |
+| `src/sentinel/replay_envelope.cpp` | 561 | 538 | 23 |
+| Total | 1,987 | 1,939 | 48 |

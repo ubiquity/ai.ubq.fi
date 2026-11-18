@@ -98,3 +98,12 @@ from lookup immediately and keeps its node readable by active traversals.
 Reinserting the key appends a fresh node. A traversal can visit entries
 appended before it reaches the end. A C++ iterator already at the list's
 end remains there.
+
+## Whole-buffer gzip
+
+Whole-buffer decoding feeds fixed 64 KiB slices into the zlib inflater.
+Callbacks receive pieces up to 64 KiB. Compression and decoding return
+the complete bytes. The inflater still validates every gzip member and
+applies the format's trailing-data policy. Sentinel checks its plaintext
+limit before appending each piece and schedules both decode outcomes by
+one microtask. Fetch uses its existing streaming decoder.
