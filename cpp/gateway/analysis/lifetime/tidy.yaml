@@ -1,0 +1,12 @@
+InheritParentConfig: false
+Checks: -*,cppcoreguidelines-avoid-capturing-lambda-coroutines,cppcoreguidelines-avoid-reference-coroutine-parameters,misc-coroutine-hostile-raii,bugprone-dangling-handle,bugprone-use-after-move,clang-analyzer-core.*,clang-analyzer-cplusplus.*,clang-analyzer-unix.*,clang-analyzer-security.*
+WarningsAsErrors: ''
+HeaderFilterRegex: (^|/)cpp/gateway/(include|src)/
+SystemHeaders: false
+FormatStyle: none
+CheckOptions:
+  bugprone-dangling-handle.HandleClasses: std::basic_string_view;std::span
+  bugprone-narrowing-conversions.WarnOnIntegerNarrowingConversion: 'true'
+  bugprone-narrowing-conversions.WarnOnIntegerToFloatingPointNarrowingConversion: 'true'
+  bugprone-narrowing-conversions.WarnOnFloatingPointNarrowingConversion: 'true'
+  misc-coroutine-hostile-raii.RAIITypesList: std::lock_guard;std::scoped_lock
