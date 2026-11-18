@@ -164,3 +164,9 @@ UOS_CI_BUILD_DIR="$work/ci-system-icu"
 The focused ASan/UBSan run built 45 translation units and the two vendor archives through the portable driver's Ninja rules with the exact full-profile flags. It passed `process_test` 15 of 15 in 0.918 seconds, using the driver's Linux fixture boundary and fatal sanitizer settings. `focused-asan-receipt.json` has SHA-256 `29805e72a56f8125e727460a5a643c7d82a5208c91706ee84f2f32959b5726c7`. The full sanitizer invocation can reuse this configuration's compiled objects.
 
 The SIGCHLD control rebuilt only `src/rt/process_loop.cpp` with the same sanitizer flags plus `-DBOOST_PROCESS_V2_DISABLE_PIDFD_OPEN`, linked the other focused objects through `driver.run_test`, and passed 15 of 15 in 0.921 seconds. `asan-sigchld/receipt.json` has SHA-256 `aad57e40d7e4a7d1c0f69ae51b0e19489ec3f24dd7cc8a72810da32736858c8f`. This exercises the backend selected on macOS on the Linux runner.
+
+## Full ARM64 release receipt
+
+`bash cpp/gateway/tools/ci-build.sh --config release` with the corrected flags exited 0 at commit `22273d2ff0fcf9f26adf1c7b1371eb6c0c01f3e5`, tree `dead9a59f35bf1ebbb947e80bdcf2e7ea334281b`. All 369 production objects compiled. All 442 selected binaries and 5,032 cases passed, including all 15 cases in `process_test`. Ninja took 1,781.296 seconds and the link and test phase took 64.958 seconds. The complete run took 1,846.783 seconds.
+
+The driver recorded the C++ input digest `d18ec4d2bfb09097dbf61d554548ee4c8ff0e9a182d369f7f71cfc44daa4b512` at start and finish. The SHA-256 of `ci-system-icu/clang++-21-20bb0de9f523/release/receipt.json` is `9ba886351427eda89b34d382d6b6cca014cece69f85956465a474b4acfb7bb1c`. The full sanitizer command started next with the same C++ inputs and reused the 49 focused build commands.
