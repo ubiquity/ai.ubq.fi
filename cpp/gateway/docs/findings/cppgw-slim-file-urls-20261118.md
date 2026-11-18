@@ -50,6 +50,11 @@ job=/tmp/cppgw-slim-file-urls-20261118
 sudo apt-get update
 sudo apt-get install -y g++-14 ninja-build pkg-config libssl-dev zlib1g-dev \
   libicu-dev libbrotli-dev libzstd-dev util-linux mold
+curl -fLsS https://apt.llvm.org/llvm-snapshot.gpg.key -o "$job/prep/llvm-key.asc"
+sudo install -m 644 "$job/prep/llvm-key.asc" /usr/share/keyrings/cppgw-apt-llvm.asc
+printf '%s\n' 'deb [arch=arm64 signed-by=/usr/share/keyrings/cppgw-apt-llvm.asc] https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main' \
+  | sudo tee /etc/apt/sources.list.d/cppgw-llvm-21.list >/dev/null
+sudo apt-get update -o Acquire::Retries=2
 sudo apt-get install -y clang-21 lld-21 libclang-rt-21-dev
 curl -fLsS https://archives.boost.io/release/1.92.0/source/boost_1_92_0.tar.bz2 -o "$job/prep/boost_1_92_0.tar.bz2"
 printf '%s  %s\n' 5c1d40cb8e19adbf740a4ec2da35b3e58f3f5804b1dce44deb53df72193cbc6c \
@@ -100,8 +105,28 @@ run_ci() {
 }
 
 cd '../file-url qualification %?#'
-run_ci release
-run_ci asan
+run_ci release &
+release_pid=$!
+run_ci asan &
+asan_pid=$!
+wait "$release_pid"
+wait "$asan_pid"
 ```
 
 Both baseline profiles entered their own private network, mount, and PID namespaces via `sudo -n`. The fixture helper verified loopback communication and outside route denial before running each binary. The driver runs with an empty fixture `HOME`, a fresh `TMPDIR`, and an allowlisted environment with the provider settings absent.
+
+### Focused release checkpoint
+
+The nine tests named in the brief passed all 98 cases in an early release run at `fb6d30097d3cf4168d63f92769eeaa86eb63dfb5`. The scratch harness rebuilt six changed production units and the selected test sources, reused 298 baseline objects whose source bytes matched, and used the CI driver's link closure and namespace helpers. Preparation took 111.867 seconds. Both startup tests passed, including a relocated executable whose parent contains ` %?#`. The confinement fixture reported Landlock ABI 8 and seccomp available. The reserved SQLite file resisted a write and had no sidecars during and after its immutable open.
+
+The focused command ran from the task checkout. Its script and log are under the external scratch directory.
+
+```bash
+git worktree add --detach '../file-url focused %?#' fb6d30097d3cf4168d63f92769eeaa86eb63dfb5
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 TZ=UTC HOME="$job/early/home" TMPDIR="$job/early/tmp" \
+  PKG_CONFIG_PATH="$job/pkgconfig" python3 -B "$job/early/run.py" "$job" \
+  "$PWD/../file-url focused %?#/cpp/gateway" "$job/ci/clang++-21-758f8f07dcf4/release" \
+  > "$job/receipts/early-release.log" 2>&1
+```
+
+Strict Clang syntax checks passed for all six changed production units and eight changed test units. The resolved test link lists reach `url.cpp` in all 441 tests, `static.cpp` in 45, `native_addon.cpp` in 237, `legacy_codec.cpp` in six, `native_kv_bootstrap.cpp` in eight, and `permissions_linux.cpp` in one. Both complete driver profiles cover the union.
