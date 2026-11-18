@@ -7440,8 +7440,40 @@
       ]
     },
     "include/uos/auth/passkeys.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed registration, session and user-management interfaces. The GCC comparison sites are recorded at their KV calls in the implementation.",
+      "sites": [
+        {
+          "lines": [
+            74,
+            92,
+            108,
+            116,
+            139,
+            142,
+            143,
+            145,
+            146,
+            153,
+            154,
+            156,
+            158,
+            160,
+            166,
+            167,
+            169,
+            170,
+            172,
+            174
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Passkey, session and registration Tasks receive owning inputs and shared KV handles, and the literal cookie-name view has static storage."
+        }
+      ]
     },
     "include/uos/auth/passport.hpp": {
       "reviewed": false,

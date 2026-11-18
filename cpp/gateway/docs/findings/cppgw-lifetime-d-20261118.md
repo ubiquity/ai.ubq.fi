@@ -271,7 +271,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/auth/index.hpp`
 - [x] `include/uos/auth/local_admin.hpp`
 - [x] `include/uos/auth/local_development_key.hpp`
-- [ ] `include/uos/auth/passkeys.hpp`
+- [x] `include/uos/auth/passkeys.hpp`
 - [ ] `include/uos/auth/passport.hpp`
 - [ ] `include/uos/auth/passport_sessions.hpp`
 - [ ] `include/uos/auth/relay.hpp`
@@ -1503,6 +1503,12 @@ Reviewed the pricing initializer interface and local provisioning options. The o
 
 - L73, 78, 91, 92, 101, 102 **SAFE** · Pricing work owns the initializer callback and its signal independently of the caller that may finish on deadline; the callable stays in the frame awaiting the initializer.
 
+### `include/uos/auth/passkeys.hpp`
+
+Reviewed registration, session and user-management interfaces. The GCC comparison sites are recorded at their KV calls in the implementation.
+
+- L74, 92, 108, 116, 139, 142, 143, 145, 146, 153, 154, 156, 158, 160, 166, 167, 169, 170, 172, 174 **SAFE** · Passkey, session and registration Tasks receive owning inputs and shared KV handles, and the literal cookie-name view has static storage.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1751,4 +1757,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-163/286 files reviewed. 334 sites: 313 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+164/286 files reviewed. 335 sites: 314 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
