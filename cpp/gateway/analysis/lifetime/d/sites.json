@@ -5843,8 +5843,35 @@
       ]
     },
     "src/sentinel/upstream_capture.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the captured upstream stream, attempt callbacks, sealing and disposal.",
+      "sites": [
+        {
+          "lines": [
+            545,
+            572,
+            578,
+            580,
+            584,
+            624,
+            626,
+            656,
+            674,
+            675,
+            682,
+            709
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The stream runtime holds the capturing coroutine closure through each pull. The reader, recorder and attempt are shared owners in callbacks, with no reverse edge from recorded attempts to the wrapping stream. Retention and disposal update state synchronously."
+        }
+      ]
     },
     "src/serve.cpp": {
       "reviewed": false,

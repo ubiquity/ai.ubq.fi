@@ -244,7 +244,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [ ] `src/sentinel/replay_retention_metadata.cpp`
 - [ ] `src/sentinel/replay_retention_schema.cpp`
 - [x] `src/sentinel/replay_store.cpp`
-- [ ] `src/sentinel/upstream_capture.cpp`
+- [x] `src/sentinel/upstream_capture.cpp`
 - [ ] `src/serve.cpp`
 - [ ] `src/static.cpp`
 - [ ] `src/systemone/handlers.cpp`
@@ -1270,6 +1270,12 @@ Reviewed all persistence and dedupe stages, chunk ownership, cryptographic byte 
 - L661, 679, 714, 716, 725, 729, 740, 751, 788, 798, 799, 821, 841, 845, 853, 860, 865, 868 **SAFE** · Dedupe and persistence retain their dependency and metadata snapshots. In-frame zeroing guards run after reads and publication finish. The reference-taking API is a plain wrapper that copies before creating a Task.
 - L905, 918, 926, 951, 959, 972, 980, 994, 999, 1009, 1015, 1020, 1024 **SAFE** · The environment wrapper constructs a Task with copied inputs. Its frame owns secret bytes, the store, incident entries and guards through ordered durable writes and settlement.
 
+### `src/sentinel/upstream_capture.cpp`
+
+Reviewed the captured upstream stream, attempt callbacks, sealing and disposal.
+
+- L545, 572, 578, 580, 584, 624, 626, 656, 674, 675, 682, 709 **SAFE** · The stream runtime holds the capturing coroutine closure through each pull. The reader, recorder and attempt are shared owners in callbacks, with no reverse edge from recorded attempts to the wrapping stream. Retention and disposal update state synchronously.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1518,4 +1524,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-132/286 files reviewed. 255 sites: 237 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+133/286 files reviewed. 256 sites: 238 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
