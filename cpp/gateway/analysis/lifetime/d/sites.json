@@ -2295,7 +2295,8 @@
       ]
     },
     "src/authority/native_authority_contracts.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed native authority argument and row codecs. Variant visitation invokes the local callback inline and outputs own their JSON. No suspension or escaping callback.",
       "sites": []
     },
     "src/authority/native_authority_kernel.cpp": {

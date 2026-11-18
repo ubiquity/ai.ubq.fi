@@ -103,7 +103,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_authority.cpp`
 - [x] `src/authority/native_authority_api.cpp`
 - [x] `src/authority/native_authority_codex.cpp`
-- [ ] `src/authority/native_authority_contracts.cpp`
+- [x] `src/authority/native_authority_contracts.cpp`
 - [ ] `src/authority/native_authority_kernel.cpp`
 - [ ] `src/authority/native_authority_paid.cpp`
 - [ ] `src/authority/native_authority_principals.cpp`
@@ -669,6 +669,10 @@ Reviewed synchronous pool selection, reset, signal and write operations. The ide
 
 - L14 **SAFE** · The identity finder uses its pool and slot synchronously and callers keep the local pool snapshot while using its result.
 
+### `src/authority/native_authority_contracts.cpp`
+
+Reviewed native authority argument and row codecs. Variant visitation invokes the local callback inline and outputs own their JSON. No suspension or escaping callback.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -774,4 +778,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-38/286 files reviewed. 127 sites: 118 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+39/286 files reviewed. 127 sites: 118 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
