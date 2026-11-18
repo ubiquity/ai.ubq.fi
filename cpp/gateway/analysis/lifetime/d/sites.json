@@ -2491,8 +2491,24 @@
       "sites": []
     },
     "src/authority/native_codex_429.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed 429 classification, bounded body ownership and retry evidence parsing.",
+      "sites": [
+        {
+          "lines": [
+            312,
+            318,
+            319
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The response and header handle are values in the awaiting frame. The named body reader owns its copied argument and the classifier uses its owned byte snapshot after completion."
+        }
+      ]
     },
     "src/authority/native_codex_capacity.cpp": {
       "reviewed": false,

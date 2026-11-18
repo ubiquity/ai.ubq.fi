@@ -111,7 +111,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_authority_runtime.cpp`
 - [x] `src/authority/native_authority_sql.cpp`
 - [x] `src/authority/native_codex.cpp`
-- [ ] `src/authority/native_codex_429.cpp`
+- [x] `src/authority/native_codex_429.cpp`
 - [ ] `src/authority/native_codex_capacity.cpp`
 - [ ] `src/authority/native_codex_contracts.cpp`
 - [ ] `src/authority/native_codex_evaluation.cpp`
@@ -714,6 +714,12 @@ Reviewed SQLite storage, initialization, pagination and row materialization.
 
 Reviewed synchronous active-account selection, proof classification and fallback checks. Each selector only borrows the current input containers during the algorithm, and returns a value snapshot. No suspension or escaping callback.
 
+### `src/authority/native_codex_429.cpp`
+
+Reviewed 429 classification, bounded body ownership and retry evidence parsing.
+
+- L312, 318, 319 **SAFE** · The response and header handle are values in the awaiting frame. The named body reader owns its copied argument and the classifier uses its owned byte snapshot after completion.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -819,4 +825,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-46/286 files reviewed. 135 sites: 126 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+47/286 files reviewed. 136 sites: 127 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
