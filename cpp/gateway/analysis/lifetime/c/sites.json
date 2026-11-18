@@ -364,7 +364,8 @@
       ]
     },
     "include/uos/codex/routing_evaluation.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous evaluation and aggregation types and methods. No deferred borrowing.",
       "sites": []
     },
     "include/uos/codex/routing_mutations.hpp": {

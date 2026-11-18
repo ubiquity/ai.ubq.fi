@@ -65,7 +65,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/responses_operations.hpp`
 - [x] `include/uos/codex/responses_runners.hpp`
 - [x] `include/uos/codex/responses_state.hpp`
-- [ ] `include/uos/codex/routing_evaluation.hpp`
+- [x] `include/uos/codex/routing_evaluation.hpp`
 - [ ] `include/uos/codex/routing_mutations.hpp`
 - [ ] `include/uos/codex/routing_serial.hpp`
 - [ ] `include/uos/codex/routing_state.hpp`
@@ -500,3 +500,7 @@ This header defines the request-local context and callback signatures.
 
 - 5-11,133-191,250-285 · callback ownership · **SAFE** · The context owns operation and runner functions; the enclosing fetch frame owns the context throughout the joined serial dispatch and the functions use its nonowning back-pointer.
 - 303-305 · owning task parameters · **SAFE** · State creation owns prepared inputs, options and the dispatch coordinator while assembling an independently owned context.
+
+### `include/uos/codex/routing_evaluation.hpp`
+
+Synchronous evaluation and aggregation types and methods. No deferred borrowing.
