@@ -13,91 +13,74 @@
 
 namespace uos::rt {
   namespace {
-    constexpr double MS_PER_DAY = 86400000.0;
+    using namespace std::chrono;
+    using WideDays = duration<std::int64_t, days::period>;
+    using WideMilliseconds = duration<std::int64_t, milliseconds::period>;
+    using DoubleDays = duration<double, days::period>;
+    using DoubleMilliseconds = duration<double, milliseconds::period>;
+    constexpr int DAYS_PER_CYCLE = 146097;
+    constexpr int YEARS_PER_CYCLE = 400;
+    constexpr auto FIRST_CALENDAR_DAY = sys_days{year::min() / January / 1}.time_since_epoch().count();
+    constexpr auto LAST_CALENDAR_DAY = sys_days{year::max() / December / 31}.time_since_epoch().count();
     constexpr double MAX_TIME = 8.64e15;
     constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
-
-    // ---- Time value arithmetic (ECMA-262 21.4.1) -----------------------------------------
-    double toIntegerOrInfinity(double value) {
-      if (std::isnan(value)) return 0;
-      return std::trunc(value) + 0.0;
-    }
 
     double timeClip(double time) {
       if (!std::isfinite(time) || std::fabs(time) > MAX_TIME) return NaN;
       return std::trunc(time) + 0.0;
     }
 
-    // Days from 1970-01-01 to January 1 of `year`; exact for |year| below 1e13.
-    double dayFromYear(double year) { return 365.0 * (year - 1970) + std::floor((year - 1969) / 4) - std::floor((year - 1901) / 100) + std::floor((year - 1601) / 400); }
-    bool inLeapYear(double year) { return std::fmod(year, 4) == 0 && (std::fmod(year, 100) != 0 || std::fmod(year, 400) == 0); }
-    constexpr int DAYS_BEFORE_MONTH[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
-
-    double makeTime(double hour, double minute, double second, double ms) {
-      if (!std::isfinite(hour) || !std::isfinite(minute) || !std::isfinite(second) || !std::isfinite(ms)) return NaN;
-      return toIntegerOrInfinity(hour) * 3600000.0 + toIntegerOrInfinity(minute) * 60000.0 + toIntegerOrInfinity(second) * 1000.0 + toIntegerOrInfinity(ms);
+    DoubleMilliseconds makeTime(double hour, double minute, double second, double ms) {
+      const DoubleMilliseconds hoursMs{duration<double, hours::period>{std::trunc(hour)}};
+      const DoubleMilliseconds minutesMs{duration<double, minutes::period>{std::trunc(minute)}};
+      const DoubleMilliseconds secondsMs{duration<double, seconds::period>{std::trunc(second)}};
+      return hoursMs + minutesMs + secondsMs + DoubleMilliseconds{std::trunc(ms)};
     }
 
-    double makeDay(double year, double month, double date) {
-      if (!std::isfinite(year) || !std::isfinite(month) || !std::isfinite(date)) return NaN;
-      const double y = toIntegerOrInfinity(year);
-      const double m = toIntegerOrInfinity(month);
-      const double dt = toIntegerOrInfinity(date);
-      const double ym = y + std::floor(m / 12);
-      // Beyond this the year start is not exactly representable; every such date is far
-      // outside the time value range.
-      if (!(std::fabs(ym) < 1e13)) return NaN;
-      const int mn = static_cast<int>(m - std::floor(m / 12) * 12);
-      const double start = dayFromYear(ym) + DAYS_BEFORE_MONTH[mn] + (mn >= 2 && inLeapYear(ym) ? 1 : 0);
-      return start + dt - 1;
-    }
-
-    double makeDate(double day, double time) {
-      if (!std::isfinite(day) || !std::isfinite(time)) return NaN;
-      const double value = day * MS_PER_DAY + time;
-      return std::isfinite(value) ? value : NaN;
+    DoubleDays makeDay(double fullYear, double monthIndex, double dayOfMonth) {
+      const double wholeMonth = std::trunc(monthIndex);
+      // Combine the year and month before dividing so large opposing inputs can cancel exactly.
+      const double normalizedYear = std::floor(std::fma(std::trunc(fullYear), 12, wholeMonth) / 12);
+      if (!(std::fabs(normalizedYear) < 1e13)) return DoubleDays{NaN};
+      const double remainder = std::fmod(wholeMonth, 12);
+      const month normalizedMonth{static_cast<unsigned>(remainder < 0 ? remainder + 12 : remainder) + 1};
+      const bool extended = normalizedYear < static_cast<int>(year::min()) || normalizedYear > static_cast<int>(year::max());
+      const double cycles = extended ? std::trunc(normalizedYear / YEARS_PER_CYCLE) : 0;
+      const auto reducedYear = static_cast<int>(normalizedYear - cycles * YEARS_PER_CYCLE);
+      const auto start = sys_days{year{reducedYear} / normalizedMonth / 1};
+      // Keep the day adjustment wide through TimeClip, including offsets outside chrono's calendar.
+      return DoubleDays{static_cast<double>(start.time_since_epoch().count()) + cycles * DAYS_PER_CYCLE + std::trunc(dayOfMonth) - 1};
     }
 
     // The calendar fields of a valid time value.
     struct Fields {
-      std::int64_t year;
+      int year;
       int month;  // 0-based
-      int day;    // 1-based
+      int day;
       int weekDay;
       int hour;
       int minute;
       int second;
       int ms;
-      std::int64_t dayNumber;  // Day(t)
-      double timeInDay;        // TimeWithinDay(t)
+      DoubleDays dayNumber;
+      DoubleMilliseconds timeInDay;
     };
+
     Fields fieldsOf(double time) {
-      const auto total = static_cast<std::int64_t>(time);
-      std::int64_t days = total / 86400000;
-      std::int64_t rest = total % 86400000;
-      if (rest < 0) {
-        rest += 86400000;
-        --days;
-      }
-      // Civil date from a day count (proleptic Gregorian).
-      const std::int64_t shifted = days + 719468;
-      const std::int64_t era = (shifted >= 0 ? shifted : shifted - 146096) / 146097;
-      const std::int64_t dayOfEra = shifted - era * 146097;
-      const std::int64_t yearOfEra = (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 - dayOfEra / 146096) / 365;
-      const std::int64_t dayOfYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100);
-      const std::int64_t shiftedMonth = (5 * dayOfYear + 2) / 153;
-      Fields fields{};
-      fields.day = static_cast<int>(dayOfYear - (153 * shiftedMonth + 2) / 5 + 1);
-      fields.month = static_cast<int>(shiftedMonth < 10 ? shiftedMonth + 2 : shiftedMonth - 10);
-      fields.year = yearOfEra + era * 400 + (fields.month <= 1 ? 1 : 0);
-      fields.weekDay = static_cast<int>(((days % 7) + 11) % 7);
-      fields.hour = static_cast<int>(rest / 3600000);
-      fields.minute = static_cast<int>(rest / 60000 % 60);
-      fields.second = static_cast<int>(rest / 1000 % 60);
-      fields.ms = static_cast<int>(rest % 1000);
-      fields.dayNumber = days;
-      fields.timeInDay = static_cast<double>(rest);
-      return fields;
+      const sys_time<WideMilliseconds> timestamp{WideMilliseconds{static_cast<std::int64_t>(time)}};
+      const auto midnight = floor<WideDays>(timestamp);
+      const auto dayCount = midnight.time_since_epoch().count();
+      // Each Gregorian cycle preserves the weekday as well as the month and day.
+      const auto cycles = dayCount < FIRST_CALENDAR_DAY || dayCount > LAST_CALENDAR_DAY ? dayCount / DAYS_PER_CYCLE : 0;
+      const sys_days reducedDay{days{static_cast<days::rep>(dayCount - cycles * DAYS_PER_CYCLE)}};
+      const year_month_day date{reducedDay};
+      const auto timeInDay = duration_cast<milliseconds>(timestamp - midnight);
+      const hh_mm_ss clock{timeInDay};
+      return {static_cast<int>(date.year()) + static_cast<int>(cycles) * YEARS_PER_CYCLE,
+              static_cast<int>(static_cast<unsigned>(date.month())) - 1, static_cast<int>(static_cast<unsigned>(date.day())),
+              static_cast<int>(weekday{reducedDay}.c_encoding()), static_cast<int>(clock.hours().count()),
+              static_cast<int>(clock.minutes().count()), static_cast<int>(clock.seconds().count()), static_cast<int>(clock.subseconds().count()),
+              DoubleDays{static_cast<double>(dayCount)}, DoubleMilliseconds{timeInDay}};
     }
 
     // ---- Formatting -------------------------------------------------------------------------
@@ -226,12 +209,9 @@ namespace uos::rt {
   }
 
   double Date::UTC(double year, double month, double date, double hours, double minutes, double seconds, double ms) noexcept {
-    double fullYear = year;
-    if (!std::isnan(year)) {
-      const double integer = toIntegerOrInfinity(year);
-      if (integer >= 0 && integer <= 99) fullYear = 1900 + integer;
-    }
-    return timeClip(makeDate(makeDay(fullYear, month, date), makeTime(hours, minutes, seconds, ms)));
+    const double wholeYear = std::trunc(year);
+    const double fullYear = wholeYear >= 0 && wholeYear <= 99 ? 1900 + wholeYear : wholeYear;
+    return timeClip((makeDay(fullYear, month, date) + makeTime(hours, minutes, seconds, ms)).count());
   }
 
   double Date::getUTCFullYear() const noexcept { return std::isnan(time_) ? NaN : static_cast<double>(fieldsOf(time_).year); }
@@ -248,48 +228,48 @@ namespace uos::rt {
 
   double Date::setUTCFullYear(double year, std::optional<double> month, std::optional<double> date) noexcept {
     const Fields fields = fieldsOf(std::isnan(time_) ? 0 : time_);
-    const double newDate = makeDate(makeDay(year, month.value_or(fields.month), date.value_or(fields.day)), fields.timeInDay);
+    const double newDate = (makeDay(year, month.value_or(fields.month), date.value_or(fields.day)) + fields.timeInDay).count();
     return time_ = timeClip(newDate);
   }
 
   double Date::setUTCMonth(double month, std::optional<double> date) noexcept {
     if (std::isnan(time_)) return NaN;
     const Fields fields = fieldsOf(time_);
-    return time_ = timeClip(makeDate(makeDay(static_cast<double>(fields.year), month, date.value_or(fields.day)), fields.timeInDay));
+    return time_ = timeClip((makeDay(fields.year, month, date.value_or(fields.day)) + fields.timeInDay).count());
   }
 
   double Date::setUTCDate(double date) noexcept {
     if (std::isnan(time_)) return NaN;
     const Fields fields = fieldsOf(time_);
-    return time_ = timeClip(makeDate(makeDay(static_cast<double>(fields.year), fields.month, date), fields.timeInDay));
+    return time_ = timeClip((makeDay(fields.year, fields.month, date) + fields.timeInDay).count());
   }
 
   double Date::setUTCHours(double hours, std::optional<double> minutes, std::optional<double> seconds, std::optional<double> ms) noexcept {
     if (std::isnan(time_)) return NaN;
     const Fields fields = fieldsOf(time_);
-    const double time = makeTime(hours, minutes.value_or(fields.minute), seconds.value_or(fields.second), ms.value_or(fields.ms));
-    return time_ = timeClip(makeDate(static_cast<double>(fields.dayNumber), time));
+    const auto time = makeTime(hours, minutes.value_or(fields.minute), seconds.value_or(fields.second), ms.value_or(fields.ms));
+    return time_ = timeClip((fields.dayNumber + time).count());
   }
 
   double Date::setUTCMinutes(double minutes, std::optional<double> seconds, std::optional<double> ms) noexcept {
     if (std::isnan(time_)) return NaN;
     const Fields fields = fieldsOf(time_);
-    const double time = makeTime(fields.hour, minutes, seconds.value_or(fields.second), ms.value_or(fields.ms));
-    return time_ = timeClip(makeDate(static_cast<double>(fields.dayNumber), time));
+    const auto time = makeTime(fields.hour, minutes, seconds.value_or(fields.second), ms.value_or(fields.ms));
+    return time_ = timeClip((fields.dayNumber + time).count());
   }
 
   double Date::setUTCSeconds(double seconds, std::optional<double> ms) noexcept {
     if (std::isnan(time_)) return NaN;
     const Fields fields = fieldsOf(time_);
-    const double time = makeTime(fields.hour, fields.minute, seconds, ms.value_or(fields.ms));
-    return time_ = timeClip(makeDate(static_cast<double>(fields.dayNumber), time));
+    const auto time = makeTime(fields.hour, fields.minute, seconds, ms.value_or(fields.ms));
+    return time_ = timeClip((fields.dayNumber + time).count());
   }
 
   double Date::setUTCMilliseconds(double ms) noexcept {
     if (std::isnan(time_)) return NaN;
     const Fields fields = fieldsOf(time_);
-    const double time = makeTime(fields.hour, fields.minute, fields.second, ms);
-    return time_ = timeClip(makeDate(static_cast<double>(fields.dayNumber), time));
+    const auto time = makeTime(fields.hour, fields.minute, fields.second, ms);
+    return time_ = timeClip((fields.dayNumber + time).count());
   }
 
   std::string Date::toISOString() const {
