@@ -345,6 +345,7 @@ supplemented by source and caller review.
 ```bash
 area=({src,include/uos}/{provider,codex,deepseek,paid_fallback,harmony,chat,embeddings,live})
 rg -n 'co_(await|return|yield)' "${area[@]}"
+rg -n -U '\[[^\]\n]*\]\s*\([^;{}]{0,350}\)\s*(?:mutable\s*)?->\s*(?:rt::)?Task\b' "${area[@]}"
 rg -n 'rt::(all|allSettled|race|any|spawn|async)\b|\.then\(|\.catch_\(|\.finally_\(' "${area[@]}"
 rg -n 'addEventListener|set(On|Timeout|Interval)|\.pull\s*=|\.cancel\s*=|\[this|\bweak_from_this\b' "${area[@]}"
 rg -n -U '\b(?:auto|const auto)\s*(?:&&?\s*)?\[[^\n\]]+\]\s*=\s*co_await' "${area[@]}"
@@ -355,6 +356,9 @@ rg -n 'co_await [^;]*\{' "${area[@]}"
 Both searches for direct structured bindings and direct use of an awaited result returned
 zero matches. The braced-expression search also finds loop bodies that open on the same line.
 Those are distinct from an aggregate supplied to a coroutine inside an await expression.
+The final check matched ledger ranges against 1,760 await lines, 101 combinator or start
+lines, 38 continuation lines and 48 callback registration lines after omitting standalone
+comment lines. The same line can match two searches.
 
 ### Toolchain and clang-tidy
 
@@ -392,6 +396,18 @@ checks, a first-party header filter, and no fix application. The external clang-
 appends `--extra-arg=-isystem<dir>` for the staged Boost, ICU and SQLite headers.
 `tidy-c/manifest.json` records the configuration, C++ inputs and exact tool identity.
 The selected-source invocation can be reproduced from the repository root.
+
+```yaml
+Checks: "-*,cppcoreguidelines-avoid-capturing-lambda-coroutines,cppcoreguidelines-avoid-reference-coroutine-parameters,misc-coroutine-hostile-raii,bugprone-dangling-handle,bugprone-use-after-move"
+InheritParentConfig: false
+WarningsAsErrors: ""
+HeaderFilterRegex: "(^|/)cpp/gateway/(include|src|tests)/"
+SystemHeaders: false
+FormatStyle: none
+CheckOptions:
+  bugprone-dangling-handle.HandleClasses: "std::basic_string_view;std::span"
+  misc-coroutine-hostile-raii.RAIITypesList: "std::lock_guard;std::scoped_lock"
+```
 
 ```bash
 evidence=/var/tmp/cppgw-lifetime-c.O1ER9aAI
@@ -2304,9 +2320,12 @@ Changed paths are this report, `analysis/lifetime/c/sites.json` and
 `analysis/lifetime/c/checkpoint.py`. The checker reconciles the on-disk inventory with
 the audited Git tree, the checked file list, valid source anchors, and byte-identical
 verdict rows in the two artifacts. Proposed diffs were checked with `git apply --check`
-against the audited source. The Voyage signature proposal indicates the required
-unchanged-assertion fixture migrations. Each proposal is for maintainer application
-and follow-up verification.
+against the audited source. An external `git archive` of the audited `include`, `src`
+and `third_party` paths took the six diffs in rank order. On that copy, Clang 21 with
+the ASan driver's recorded flags and `-fsyntax-only` accepted all 19 edited production
+translation units in 25.439 s on four workers. The Voyage signature proposal still
+requires migrating its direct cache-writer fixture callers to pass shared owners.
+Maintainer application, functional regressions and the GCC 12 comparison remain open.
 
 ```sh
 python3 -B cpp/gateway/analysis/lifetime/c/checkpoint.py verify --complete
@@ -2319,7 +2338,7 @@ The report and JSON use the locked Prettier 3.9.6 under Bun 1.4.0. The
 evidence root, where dependencies were installed with
 `bun --no-env-file install --frozen-lockfile --ignore-scripts`. The formatter used the
 checkout's `.prettierrc` and `.prettierignore` with only the two changed formatted paths.
-All formatter, checkout and audit artifacts stay confined to their specified paths.
+Downloads and build artifacts stayed under `/var/tmp`.
 
 Fetching `origin/development` succeeded. The task branch started from the assigned
 port ref, with 220 base commits outside the fetched development history. GitHub
