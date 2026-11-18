@@ -71,3 +71,5 @@ The portable CI compiler applies strict warnings to `base64.cpp`, including its 
 ## Contract v3
 
 The complete link closure exposed a compilation regression in the inherited BigInt header. Boost's `<iomanip>` include introduces `std::quoted` into argument-dependent lookup in `src/rt/kv_value.cpp`. The BigInt header will use Boost's forward declaration. The adapter will manage a `cpp_int` in aligned inline storage with compile-time size and alignment checks, retaining allocation-free small integers. All production writes stay in the BigInt regions. The source change supersedes the previous build, fuzz and benchmark receipts for acceptance. The same gates and prior stop condition apply to the revised source.
+
+A Clang 21 `--target=arm64-apple-darwin` probe confirmed 8-byte alignment for `long double` and 16-byte alignment for `__int128`. The storage explicitly aligns to 16 bytes for both deployment targets. The runner can check this ABI distinction and run the Linux suite. A native Darwin suite requires a Darwin runner.

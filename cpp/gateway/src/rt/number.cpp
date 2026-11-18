@@ -577,7 +577,7 @@ namespace uos::rt {
 
   BigInt::BigInt() noexcept {
     static_assert(sizeof(cpp_int) <= sizeof(storage_));
-    static_assert(alignof(cpp_int) <= alignof(std::max_align_t));
+    static_assert(alignof(cpp_int) <= storageAlignment);
     std::construct_at(reinterpret_cast<cpp_int*>(storage_));
   }
 

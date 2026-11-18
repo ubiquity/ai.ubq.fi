@@ -240,6 +240,7 @@ namespace uos::rt {
     const boost::multiprecision::cpp_int& value() const;
 
     // Keep Boost's implementation header private without allocating for small integers.
-    alignas(std::max_align_t) std::byte storage_[32];
+    static constexpr std::size_t storageAlignment = 16;
+    alignas(storageAlignment) std::byte storage_[32];
   };
 }
