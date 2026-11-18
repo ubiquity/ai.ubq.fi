@@ -527,7 +527,8 @@
       "sites": []
     },
     "include/uos/deepseek/flash_aliases.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Catalog aliases expose owned snapshot values. Background publication is reviewed in flash_aliases.cpp.",
       "sites": []
     },
     "include/uos/deepseek/forwarded_payload_policy.hpp": {

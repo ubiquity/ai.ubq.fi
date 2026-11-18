@@ -80,7 +80,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/supervisor_transport.hpp`
 - [x] `include/uos/deepseek/chat_projection.hpp`
 - [x] `include/uos/deepseek/context_admission_failure.hpp`
-- [ ] `include/uos/deepseek/flash_aliases.hpp`
+- [x] `include/uos/deepseek/flash_aliases.hpp`
 - [ ] `include/uos/deepseek/forwarded_payload_policy.hpp`
 - [ ] `include/uos/deepseek/handlers.hpp`
 - [ ] `include/uos/deepseek/index.hpp`
@@ -583,3 +583,7 @@ Synchronous message projection declarations with call-local JSON borrows.
 ### `include/uos/deepseek/context_admission_failure.hpp`
 
 Synchronous construction of context-admission failures. No suspendable body or registration.
+
+### `include/uos/deepseek/flash_aliases.hpp`
+
+Catalog aliases expose owned snapshot values. Background publication is reviewed in flash_aliases.cpp.
