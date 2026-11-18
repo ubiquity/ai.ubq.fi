@@ -23,7 +23,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 
 286 first-party files.
 
-- [ ] `src/admin/api_key_audit.cpp`
+- [x] `src/admin/api_key_audit.cpp`
 - [ ] `src/admin/api_key_mutations.cpp`
 - [ ] `src/admin/api_keys.cpp`
 - [ ] `src/admin/capacity_observation_sync.cpp`
@@ -314,6 +314,14 @@ The initial unknowns are current ownership after the integration refactors, avai
 
 A checked file has a corresponding entry here and in the JSON ledger.
 
+### `src/admin/api_key_audit.cpp`
+
+Reviewed list traversal, atomic staging and request forwarding.
+
+- L27, 33 **SAFE** · The list coroutine owns the store, iterator and page vector, and awaits each iterator operation while those owners are in its frame.
+- L41, 53, 75, 76, 77 **SAFE** · Request and override handles enter the owning handler by value, and the synchronous list wrapper copies the input before the child runs.
+- L66 **SAFE** · The audit sources are captureless synchronous calls consumed during event construction.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -322,4 +330,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-0/286 files reviewed. 0 sites: 0 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+1/286 files reviewed. 3 sites: 3 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

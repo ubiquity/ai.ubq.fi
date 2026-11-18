@@ -4,8 +4,48 @@
   "source_tree": "6abb54014cf79ba7c64b24be4d28dde250c40ccf",
   "files": {
     "src/admin/api_key_audit.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed list traversal, atomic staging and request forwarding.",
+      "sites": [
+        {
+          "lines": [
+            27,
+            33
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The list coroutine owns the store, iterator and page vector, and awaits each iterator operation while those owners are in its frame."
+        },
+        {
+          "lines": [
+            41,
+            53,
+            75,
+            76,
+            77
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Request and override handles enter the owning handler by value, and the synchronous list wrapper copies the input before the child runs."
+        },
+        {
+          "lines": [
+            66
+          ],
+          "kinds": [
+            "c"
+          ],
+          "verdict": "SAFE",
+          "detail": "The audit sources are captureless synchronous calls consumed during event construction."
+        }
+      ]
     },
     "src/admin/api_key_mutations.cpp": {
       "reviewed": false,
