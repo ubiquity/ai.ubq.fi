@@ -88,7 +88,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/auth/local_admin.cpp`
 - [x] `src/auth/local_development_key.cpp`
 - [x] `src/auth/passkeys.cpp`
-- [ ] `src/auth/passport.cpp`
+- [x] `src/auth/passport.cpp`
 - [ ] `src/auth/passport_sessions.cpp`
 - [ ] `src/auth/relay.cpp`
 - [ ] `src/authority/admission_state.cpp`
@@ -577,6 +577,16 @@ Reviewed attestation and certificate chains, CRL cache, passkey KV transactions 
 - L4882, 4891, 4895, 4909, 4914, 4930, 4935, 4940 **SAFE** · Login-finish retains the copied body and credential entry through counter and session updates. The assertion verifier uses its views synchronously while the caller owns the data.
 - L4977, 4997, 5000, 5011, 5017, 5032, 5040, 5054, 5065 **SAFE** · Session, logout and administration keep their Request, KV handles, local body and iterator owners in scope through the corresponding awaits.
 
+### `src/auth/passport.cpp`
+
+Reviewed JWT verification, JWKS caching, OAuth callback and persistent-session routing, and bounded stream reads.
+
+- L124, 131, 143, 155 **SAFE** · The bounded reader frame owns Response, body and reader through each drain or cancel and releases the reader lock afterwards.
+- L176, 185, 187, 189, 193, 208 **SAFE** · Cache-hit keys are copied synchronously. The JWKS cursor and views spanning the microtask point into this frame's unchanged JSON, and each fetch owns its timeout signal.
+- L293, 298 **SAFE** · The token and claims are frame values. A local map owns the key through the synchronous signature check before the final microtask.
+- L367, 369, 373, 378 **SAFE** · The callback owns request, state and exchange response. It copies token and grant into downstream tasks before suspending.
+- L445, 465, 498, 513, 526, 548 **SAFE** · Route frames own request, path, cookies and verifier state, and every authentication, revocation or callback Task receives its required values before the parent suspends.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -682,4 +692,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-23/286 files reviewed. 105 sites: 96 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+24/286 files reviewed. 110 sites: 101 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

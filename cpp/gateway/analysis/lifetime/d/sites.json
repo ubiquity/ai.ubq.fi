@@ -1811,8 +1811,86 @@
       ]
     },
     "src/auth/passport.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed JWT verification, JWKS caching, OAuth callback and persistent-session routing, and bounded stream reads.",
+      "sites": [
+        {
+          "lines": [
+            124,
+            131,
+            143,
+            155
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The bounded reader frame owns Response, body and reader through each drain or cancel and releases the reader lock afterwards."
+        },
+        {
+          "lines": [
+            176,
+            185,
+            187,
+            189,
+            193,
+            208
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Cache-hit keys are copied synchronously. The JWKS cursor and views spanning the microtask point into this frame's unchanged JSON, and each fetch owns its timeout signal."
+        },
+        {
+          "lines": [
+            293,
+            298
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The token and claims are frame values. A local map owns the key through the synchronous signature check before the final microtask."
+        },
+        {
+          "lines": [
+            367,
+            369,
+            373,
+            378
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The callback owns request, state and exchange response. It copies token and grant into downstream tasks before suspending."
+        },
+        {
+          "lines": [
+            445,
+            465,
+            498,
+            513,
+            526,
+            548
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Route frames own request, path, cookies and verifier state, and every authentication, revocation or callback Task receives its required values before the parent suspends."
+        }
+      ]
     },
     "src/auth/passport_sessions.cpp": {
       "reviewed": false,
