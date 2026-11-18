@@ -10325,8 +10325,48 @@
       ]
     },
     "include/uos/sentinel/replay_retention_schema.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed schema labels, fault and transaction callbacks, and borrowed KV operations.",
+      "sites": [
+        {
+          "lines": [
+            41,
+            42,
+            43,
+            44,
+            45,
+            215,
+            316,
+            318,
+            321
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Status views point to literals. Fault and mutation callbacks are invoked synchronously, and current atomic application callbacks return the operation the frame owns."
+        },
+        {
+          "lines": [
+            289,
+            301,
+            302,
+            311,
+            313,
+            326,
+            327
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Read and chunk helpers await only owned cursor or storage operations. The caller retains KV, or the eager ledger read consumes the borrow before suspension when running in a fail-fast join."
+        }
+      ]
     },
     "include/uos/sentinel/replay_store.hpp": {
       "reviewed": false,
