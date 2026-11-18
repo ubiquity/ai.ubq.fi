@@ -2143,8 +2143,22 @@
       ]
     },
     "src/codex/reset_settings.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Native migration reads normally own their backing store. The public shared-KV override also accepts virtual methods that use their receiver after suspension.",
+      "sites": [
+        {
+          "lines": "59-67,108-112",
+          "kind": "injectable KV reads in fail-fast all",
+          "verdict": "DEFECT",
+          "reason": "The read promises run virtual get methods but the parent holds the only guaranteed KV owner. A rejecting sibling can unwind that owner while an injected coroutine get still uses its receiver. Wrap each parallel read in a coroutine with a shared KV parameter."
+        },
+        {
+          "lines": "68-98,113-145",
+          "kind": "owned hashes and sequential migration writes",
+          "verdict": "SAFE",
+          "reason": "Hash children receive owned strings. Account iteration, rows and the AtomicOperation are owned by the frame through the joined reads and commits."
+        }
+      ]
     },
     "src/codex/responses_error.cpp": {
       "status": "pending",

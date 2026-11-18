@@ -206,7 +206,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/overage_settings.cpp`
 - [x] `src/codex/quota.cpp`
 - [x] `src/codex/rate_limit_429.cpp`
-- [ ] `src/codex/reset_settings.cpp`
+- [x] `src/codex/reset_settings.cpp`
 - [ ] `src/codex/responses_error.cpp`
 - [ ] `src/codex/responses_operations.cpp`
 - [ ] `src/codex/responses_runners.cpp`
@@ -1328,3 +1328,10 @@ Header classification and redaction are synchronous. Header iteration uses keys 
 Quota classification and probe updates use owned response and account state.
 
 - 16-25,28-65 · routing transformations and classifier awaits · **SAFE** · The account values remain in joined parent frames through updateRoutingState's calls. The parse result is a frame-owned value and response decoding takes its own handle.
+
+### `src/codex/reset_settings.cpp`
+
+Native migration reads normally own their backing store. The public shared-KV override also accepts virtual methods that use their receiver after suspension.
+
+- 59-67,108-112 · injectable KV reads in fail-fast all · **DEFECT** · The read promises run virtual get methods but the parent holds the only guaranteed KV owner. A rejecting sibling can unwind that owner while an injected coroutine get still uses its receiver. Wrap each parallel read in a coroutine with a shared KV parameter.
+- 68-98,113-145 · owned hashes and sequential migration writes · **SAFE** · Hash children receive owned strings. Account iteration, rows and the AtomicOperation are owned by the frame through the joined reads and commits.
