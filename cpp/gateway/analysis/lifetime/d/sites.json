@@ -1131,8 +1131,208 @@
       ]
     },
     "src/api_key_policy.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed window-lock promise ownership, quota reservation and compensation callbacks, KV traversal, policy cache and authentication.",
+      "sites": [
+        {
+          "lines": [
+            166,
+            170,
+            175,
+            176,
+            181
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The lock frame copies the prior Promise before suspending and owns the operation callable. The tail is looked up afresh after the operation and never retained across suspension."
+        },
+        {
+          "lines": [
+            196,
+            207,
+            208,
+            213,
+            224,
+            225,
+            230,
+            239,
+            253,
+            257
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Release and compensation use owned keys, policy, KV and snapshots. Native reads own their store, and the lock owns the synchronous Task factory through settlement."
+        },
+        {
+          "lines": [
+            276,
+            278,
+            285,
+            286,
+            296,
+            300,
+            312,
+            327,
+            330
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Dispatch cancellation takes state and inputs by value. The callbacks only construct owning Tasks, and the sweeps retain their iterator or immutable ID snapshot through awaits."
+        },
+        {
+          "lines": [
+            349,
+            350,
+            351,
+            362,
+            379,
+            383,
+            400,
+            412,
+            416
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The lock owns the Task factories and each atomic operation stays in its awaiting frame. Structured bindings name entries of already-stored tuples that no other task mutates."
+        },
+        {
+          "lines": [
+            441,
+            444,
+            456,
+            461
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Reservation callbacks forward copied data into owning Tasks. The response clone stays live through JSON read and its parsed views are used only after the final microtask."
+        },
+        {
+          "lines": [
+            498,
+            501,
+            511,
+            513,
+            523,
+            525,
+            526,
+            534,
+            546,
+            549
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Admission, dispatch and release copy the state, KV and options. The coalesced admission result contains a separate active reservation state and the frame releases its copy on settlement."
+        },
+        {
+          "lines": [
+            592,
+            621,
+            630,
+            631,
+            632,
+            647,
+            658,
+            673,
+            687
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each attempt owns its snapshots and keeps tuple and variant alternatives valid until the awaited full-window handling or atomic commit returns."
+        },
+        {
+          "lines": [
+            723,
+            728,
+            730,
+            735,
+            743,
+            749,
+            753,
+            764,
+            770,
+            774,
+            781,
+            788,
+            791,
+            800,
+            809,
+            836,
+            845
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The lock retains both Task-factory captures and their by-value arguments. Reads keep the KV and immutable iteration inputs until the respective wait completes."
+        },
+        {
+          "lines": [
+            853,
+            856,
+            857
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The deletion frame owns both iterators and the vector of copied keys. No other coroutine can mutate the vector being iterated."
+        },
+        {
+          "lines": [
+            862,
+            870,
+            872,
+            875,
+            881
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Authentication copies the cached policy immediately and never dereferences the shared cache entry after suspending for storage."
+        }
+      ]
     },
     "src/api_keys.cpp": {
       "reviewed": false,

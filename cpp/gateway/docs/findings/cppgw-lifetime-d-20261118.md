@@ -38,7 +38,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/admin/sentinel_incident.cpp`
 - [x] `src/agent_messages.cpp`
 - [x] `src/analytics.cpp`
-- [ ] `src/api_key_policy.cpp`
+- [x] `src/api_key_policy.cpp`
 - [ ] `src/api_keys.cpp`
 - [ ] `src/auth/index.cpp`
 - [ ] `src/auth/local_admin.cpp`
@@ -449,6 +449,21 @@ Reviewed log mutation and history listing, plus synchronous record codecs.
 - L120, 127, 129, 141, 274, 284, 289, 294, 301, 307 **SAFE** · The mutation frame owns the callable and copied JSON. It consumes each prior record synchronously and retains the atomic operation until commit finishes.
 - L312, 322, 333 **SAFE** · History holds the shared KV, iterator and output vector for the traversal, and each fetched entry is an owned value.
 
+### `src/api_key_policy.cpp`
+
+Reviewed window-lock promise ownership, quota reservation and compensation callbacks, KV traversal, policy cache and authentication.
+
+- L166, 170, 175, 176, 181 **SAFE** · The lock frame copies the prior Promise before suspending and owns the operation callable. The tail is looked up afresh after the operation and never retained across suspension.
+- L196, 207, 208, 213, 224, 225, 230, 239, 253, 257 **SAFE** · Release and compensation use owned keys, policy, KV and snapshots. Native reads own their store, and the lock owns the synchronous Task factory through settlement.
+- L276, 278, 285, 286, 296, 300, 312, 327, 330 **SAFE** · Dispatch cancellation takes state and inputs by value. The callbacks only construct owning Tasks, and the sweeps retain their iterator or immutable ID snapshot through awaits.
+- L349, 350, 351, 362, 379, 383, 400, 412, 416 **SAFE** · The lock owns the Task factories and each atomic operation stays in its awaiting frame. Structured bindings name entries of already-stored tuples that no other task mutates.
+- L441, 444, 456, 461 **SAFE** · Reservation callbacks forward copied data into owning Tasks. The response clone stays live through JSON read and its parsed views are used only after the final microtask.
+- L498, 501, 511, 513, 523, 525, 526, 534, 546, 549 **SAFE** · Admission, dispatch and release copy the state, KV and options. The coalesced admission result contains a separate active reservation state and the frame releases its copy on settlement.
+- L592, 621, 630, 631, 632, 647, 658, 673, 687 **SAFE** · Each attempt owns its snapshots and keeps tuple and variant alternatives valid until the awaited full-window handling or atomic commit returns.
+- L723, 728, 730, 735, 743, 749, 753, 764, 770, 774, 781, 788, 791, 800, 809, 836, 845 **SAFE** · The lock retains both Task-factory captures and their by-value arguments. Reads keep the KV and immutable iteration inputs until the respective wait completes.
+- L853, 856, 857 **SAFE** · The deletion frame owns both iterators and the vector of copied keys. No other coroutine can mutate the vector being iterated.
+- L862, 870, 872, 875, 881 **SAFE** · Authentication copies the cached policy immediately and never dereferences the shared cache entry after suspending for storage.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -457,4 +472,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-15/286 files reviewed. 61 sites: 56 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+16/286 files reviewed. 71 sites: 66 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
