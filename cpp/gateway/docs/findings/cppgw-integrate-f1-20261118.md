@@ -6,12 +6,12 @@ Start at cross-line tip `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`. Merge the fe
 README/architecture tips in that order as ordinary two-parent merges. Build and test each integrated tree before the
 next merge. Record textual conflicts, semantic reconciliations, and expectation changes as they are resolved.
 
-| Surface | Integration decision |
-| ------- | -------------------- |
-| JSON and text | One simdjson JSON parser with the stage 2b depth cap, the shared input limits, simdutf text and ICU Unicode handling. |
-| HTTP and WebSocket | llhttp for the inbound HTTP and outbound fetch boundaries. Keep Beast's WebSocket client and handshake, and preserve close, framing and delivery decisions across supported Boost versions. |
-| Runtime and storage | Take the stage 2b helper slimming, Ada, QCBOR, OpenSSL, Boost.Multiprecision and sparse/cyclic KV changes. Preserve strict input validation, the stored codec and graph bounds. |
-| Gateway behavior | Preserve wire, status, authentication, validation, quota and accounting contracts. Compare packaged native and Bun gateways with the same local mocks. |
+| Surface                  | Integration decision                                                                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JSON and text            | One simdjson JSON parser with the stage 2b depth cap, the shared input limits, simdutf text and ICU Unicode handling.                                                                       |
+| HTTP and WebSocket       | llhttp for the inbound HTTP and outbound fetch boundaries. Keep Beast's WebSocket client and handshake, and preserve close, framing and delivery decisions across supported Boost versions. |
+| Runtime and storage      | Take the stage 2b helper slimming, Ada, QCBOR, OpenSSL, Boost.Multiprecision and sparse/cyclic KV changes. Preserve strict input validation, the stored codec and graph bounds.             |
+| Gateway behavior         | Preserve wire, status, authentication, validation, quota and accounting contracts. Compare packaged native and Bun gateways with the same local mocks.                                      |
 | Dependencies and release | Register each vendored library once in every build and packaging path. Preserve vendor bytes. Retain the default Linux confinement requirement and the explicit reduced-confinement opt-in. |
 
 Edits are confined to `cpp/gateway/` and the gateway workflows as needed. TypeScript, other `cpp/` paths, credentials,
@@ -31,10 +31,10 @@ stop condition is a clean, verified handoff with all three ordered merges and an
 
 ## Starting refs
 
-| Input | Fetched tip |
-| ----- | ----------- |
-| Stage 2b | `af7a0036b823ef2357c26b9b5f03f2677796b775` |
-| macOS release | `980d97fb0c90bd6937c06d4f9e3b25bc1d52a9e1` |
+| Input                   | Fetched tip                                |
+| ----------------------- | ------------------------------------------ |
+| Stage 2b                | `af7a0036b823ef2357c26b9b5f03f2677796b775` |
+| macOS release           | `980d97fb0c90bd6937c06d4f9e3b25bc1d52a9e1` |
 | README and architecture | `20c83e02258a5435b6ebc9f16c7b927d3b111407` |
 
 The checkout was clean on `agent-job`. The host is Ubuntu 24.04.5, Linux ARM64, with four CPUs and 15 GiB RAM.
@@ -42,13 +42,13 @@ Passwordless network namespace setup and Docker 28.0.4 are available. Bun report
 
 ## Merge 1 — stage 2b
 
-| Git conflict | Resolution |
-| ------------ | ---------- |
-| `cmake/ci/driver.py` | Combine per-vendor include flags and the explicit Ninja dependencies on every registered vendor header, including QCBOR's nested includes. |
-| `cmake/vendors.json` | Keep a single llhttp entry for server, fetch and WebSocket response-head consumers. Add Ada and QCBOR. Keep all three simdutf consumers. |
-| `docs/DEVIATIONS-FROM-BUN.md` | Keep the cross-line deviations and add the runtime, library and depth decisions from stage 2b. Describe the Beast and llhttp boundaries. |
-| `fuzz/ci.py` | Use the same verified vendor registry as the other build paths. Keep the matching C frontend, library link flags, timed campaign receipt and finding classification. |
-| `tests/rt/json_test.cpp` | Keep cross-line's document-size and array/object depth rejection cases. Keep stage 2b's value-copy coverage and exercise both arrays and objects. |
+| Git conflict                  | Resolution                                                                                                                                                           |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cmake/ci/driver.py`          | Combine per-vendor include flags and the explicit Ninja dependencies on every registered vendor header, including QCBOR's nested includes.                           |
+| `cmake/vendors.json`          | Keep a single llhttp entry for server, fetch and WebSocket response-head consumers. Add Ada and QCBOR. Keep all three simdutf consumers.                             |
+| `docs/DEVIATIONS-FROM-BUN.md` | Keep the cross-line deviations and add the runtime, library and depth decisions from stage 2b. Describe the Beast and llhttp boundaries.                             |
+| `fuzz/ci.py`                  | Use the same verified vendor registry as the other build paths. Keep the matching C frontend, library link flags, timed campaign receipt and finding classification. |
+| `tests/rt/json_test.cpp`      | Keep cross-line's document-size and array/object depth rejection cases. Keep stage 2b's value-copy coverage and exercise both arrays and objects.                    |
 
 The automatic WebSocket client merge retains Beast's handshake key and accept digest and uses the existing llhttp
 response-head adapter where the socket transport needs HTTP parsing. The merged JSON parser remains simdjson.
@@ -87,13 +87,23 @@ All four release shards passed on `7b602c71` after the console fixture correctio
 
 ## Merge 2 — release packaging
 
-| Git conflict | Resolution |
-| ------------ | ---------- |
-| `packaging/portable/payload.py` | Keep the release branch's timestamps, `VERSION`, native build receipt and installation files. Derive all linked vendor versions from the same registry used to collect their licenses. |
-| `tools/macos-build.sh` | Keep expanded pkg-config system include paths, matching C/C++ compilers, system treatment for all vendor headers, and explicit header dependencies for each C and C++ vendor source and consumer. |
+| Git conflict                    | Resolution                                                                                                                                                                                        |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packaging/portable/payload.py` | Keep the release branch's timestamps, `VERSION`, native build receipt and installation files. Derive all linked vendor versions from the same registry used to collect their licenses.            |
+| `tools/macos-build.sh`          | Keep expanded pkg-config system include paths, matching C/C++ compilers, system treatment for all vendor headers, and explicit header dependencies for each C and C++ vendor source and consumer. |
 
 The Docker build context retains the llhttp consumer and adds the direct QCBOR test consumer. Portable Linux
 payloads include the five linked vendor licenses and notices where supplied, SQLite's public-domain notice,
 Boost and ICU licenses, Rust addon notices and the Debian copyright files for the linked toolchain and system
 libraries. The macOS package uses the same vendor registry for versions and includes each linked vendor license.
 The Linux release instructions describe the reduced-confinement opt-in.
+
+The focused Release gate on the packaging merge passed 2 WebSocket binaries and all 21 cases. Shell and Python
+syntax checks, the vendor registry and the Links registry passed. The Docker package gate uses this merge's
+committed snapshot.
+
+## Merge 3 — README and architecture
+
+| Git conflict | Resolution                                                                                                                                                                                        |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| None         | Update the incoming guides with the integrated release inventory, selected libraries, sparse and cyclic KV support, default and opt-in confinement, and the macOS package's `--version` boundary. |
