@@ -1978,8 +1978,28 @@
       ]
     },
     "src/codex/experiment.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The cache-scope experiment owns its session, auth pool snapshot and callback options.",
+      "sites": [
+        {
+          "lines": "45-57,69-85,108-117",
+          "kind": "auth pool and row reads",
+          "verdict": "SAFE",
+          "reason": "The KV owner and copied row stay in the awaited frame. Slot iteration uses the local copied pool."
+        },
+        {
+          "lines": "123-187",
+          "kind": "refresh, classification, and compare-and-set",
+          "verdict": "SAFE",
+          "reason": "The selectedAccount pointer refers to the const local selected variant through refresh and commit. The race's refresh child owns auth independently. Listener ownership is reviewed in auth_refresh.cpp."
+        },
+        {
+          "lines": "198-238,248-328",
+          "kind": "transport, hooks, and probe fan-out",
+          "verdict": "SAFE",
+          "reason": "Option and routing copies stay in the experiment frame. Probe handles are copied before allSettled, and detached health writes receive values."
+        }
+      ]
     },
     "src/codex/external_auth.cpp": {
       "status": "pending",

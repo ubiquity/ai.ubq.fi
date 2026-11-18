@@ -196,7 +196,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/banked_reset_submission.cpp`
 - [x] `src/codex/capacity_routing.cpp`
 - [x] `src/codex/dispatch.cpp`
-- [ ] `src/codex/experiment.cpp`
+- [x] `src/codex/experiment.cpp`
 - [ ] `src/codex/external_auth.cpp`
 - [ ] `src/codex/index.cpp`
 - [ ] `src/codex/manual_reset.cpp`
@@ -1263,3 +1263,11 @@ Codex transport and retry use the request's owned argument state. The injectable
 - 628-635 · retry sleeper closure after race · **DEFECT** · If the supplied retrySleep is a capturing coroutine and abort wins, the waiting frame destroys its copy of sleep. The losing sleeper can resume and use its dead closure. Wrap invocation in an owning rt::async child. The default function and current differential fixture use owning free tasks.
 - 639-645,712-791 · probe join and attributed response reads · **SAFE** · Probe promises are copied from the registry before allSettled. The auth loop retains its local pool snapshot through each joined identity hash.
 - 807-881 · serial driver and loop-state borrows · **SAFE** · The loop owns both driver and state values through the joined private helper tasks, and each dispatched response is passed by value.
+
+### `src/codex/experiment.cpp`
+
+The cache-scope experiment owns its session, auth pool snapshot and callback options.
+
+- 45-57,69-85,108-117 · auth pool and row reads · **SAFE** · The KV owner and copied row stay in the awaited frame. Slot iteration uses the local copied pool.
+- 123-187 · refresh, classification, and compare-and-set · **SAFE** · The selectedAccount pointer refers to the const local selected variant through refresh and commit. The race's refresh child owns auth independently. Listener ownership is reviewed in auth_refresh.cpp.
+- 198-238,248-328 · transport, hooks, and probe fan-out · **SAFE** · Option and routing copies stay in the experiment frame. Probe handles are copied before allSettled, and detached health writes receive values.
