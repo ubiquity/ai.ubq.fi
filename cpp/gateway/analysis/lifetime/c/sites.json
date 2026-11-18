@@ -2980,8 +2980,34 @@
       ]
     },
     "src/paid_fallback/health.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The lifecycle shares one recorded flag and sends owning values into deferred bookkeeping.",
+      "sites": [
+        {
+          "lines": "63-116,182-185",
+          "kind": "bookkeeping spawn and fail-fast outcomes",
+          "verdict": "SAFE",
+          "reason": "Detached bookkeeping takes the callable and operation string by value. Settlement and health children own their reservation/provider inputs and can finish independently."
+        },
+        {
+          "lines": "199-242,244-266",
+          "kind": "classification and lifecycle callbacks",
+          "verdict": "SAFE",
+          "reason": "Response classifiers own their handles and the lifecycle functions own shared state without a back-reference to themselves."
+        },
+        {
+          "lines": "270-285,358-401",
+          "kind": "catalog fan-out, cache and background refresh",
+          "verdict": "SAFE",
+          "reason": "Each refresh owns its options and signal. The routing lambda reads only local catalog values when invoked synchronously."
+        },
+        {
+          "lines": "319-356",
+          "kind": "temporary Surplus transport",
+          "verdict": "SAFE",
+          "reason": "The frame copies the supplied telemetry and the dispatch callbacks capture independent context and marker copies through the joined fetch."
+        }
+      ]
     },
     "src/paid_fallback/index.cpp": {
       "status": "pending",

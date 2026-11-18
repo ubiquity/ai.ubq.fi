@@ -269,7 +269,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/live/sideband.cpp`
 - [x] `src/live/upstream.cpp`
 - [x] `src/paid_fallback/claude_code_route.cpp`
-- [ ] `src/paid_fallback/health.cpp`
+- [x] `src/paid_fallback/health.cpp`
 - [ ] `src/paid_fallback/index.cpp`
 - [ ] `src/paid_fallback/ledger_admission.cpp`
 - [ ] `src/paid_fallback/ledger_backfill.cpp`
@@ -1697,3 +1697,12 @@ Pool work copies subscription data before forwarding and retains one shared life
 - 53-124 · capability check, settlement hook, and pool fan-out · **SAFE** · Each loadPoolState child owns a store/account copy. The joined bookkeeping frame owns each callback and its result/health snapshots.
 - 135-203 · before-dispatch and transport callbacks · **SAFE** · Fetch options own captured state and the handler waits for the fetch to settle with its telemetry referent live.
 - 206-293 · selection and one request lifetime · **SAFE** · The roster or pool view remains frame-local. Joined dispatch, outcome settlement and pool advancement receive owned request/state copies.
+
+### `src/paid_fallback/health.cpp`
+
+The lifecycle shares one recorded flag and sends owning values into deferred bookkeeping.
+
+- 63-116,182-185 · bookkeeping spawn and fail-fast outcomes · **SAFE** · Detached bookkeeping takes the callable and operation string by value. Settlement and health children own their reservation/provider inputs and can finish independently.
+- 199-242,244-266 · classification and lifecycle callbacks · **SAFE** · Response classifiers own their handles and the lifecycle functions own shared state without a back-reference to themselves.
+- 270-285,358-401 · catalog fan-out, cache and background refresh · **SAFE** · Each refresh owns its options and signal. The routing lambda reads only local catalog values when invoked synchronously.
+- 319-356 · temporary Surplus transport · **SAFE** · The frame copies the supplied telemetry and the dispatch callbacks capture independent context and marker copies through the joined fetch.
