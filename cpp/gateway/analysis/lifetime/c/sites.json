@@ -2479,8 +2479,22 @@
       "sites": []
     },
     "src/deepseek/handlers.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Chat and Responses handlers join upstream fetch and buffered projection. The streaming adapters copy state before returning.",
+      "sites": [
+        {
+          "lines": "77-129,204-224",
+          "kind": "error, projected-body callback, and preheader awaits",
+          "verdict": "SAFE",
+          "reason": "The joined handler retains its telemetry owner, and projected JSON is consumed synchronously by a callable owning the diagnostic destination."
+        },
+        {
+          "lines": "186-196,226-262,269-323",
+          "kind": "stream adapter, buffered read and usage record",
+          "verdict": "SAFE",
+          "reason": "The relay copies telemetry for streaming, and the joined frame owns each response, payload, options and request input for buffered work."
+        }
+      ]
     },
     "src/deepseek/index.cpp": {
       "status": "pending",

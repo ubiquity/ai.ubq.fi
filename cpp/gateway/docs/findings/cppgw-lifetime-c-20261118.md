@@ -228,7 +228,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/deepseek/context_admission_failure.cpp`
 - [x] `src/deepseek/flash_aliases.cpp`
 - [x] `src/deepseek/forwarded_payload_policy.cpp`
-- [ ] `src/deepseek/handlers.cpp`
+- [x] `src/deepseek/handlers.cpp`
 - [ ] `src/deepseek/index.cpp`
 - [ ] `src/deepseek/responses.cpp`
 - [ ] `src/deepseek/responses_payload.cpp`
@@ -1467,3 +1467,10 @@ Catalog warming is detached while alias calculation uses copied catalog and mode
 ### `src/deepseek/forwarded_payload_policy.cpp`
 
 Payload and context limits are parsed and applied synchronously. The profile view is consumed within the lookup call.
+
+### `src/deepseek/handlers.cpp`
+
+Chat and Responses handlers join upstream fetch and buffered projection. The streaming adapters copy state before returning.
+
+- 77-129,204-224 · error, projected-body callback, and preheader awaits · **SAFE** · The joined handler retains its telemetry owner, and projected JSON is consumed synchronously by a callable owning the diagnostic destination.
+- 186-196,226-262,269-323 · stream adapter, buffered read and usage record · **SAFE** · The relay copies telemetry for streaming, and the joined frame owns each response, payload, options and request input for buffered work.
