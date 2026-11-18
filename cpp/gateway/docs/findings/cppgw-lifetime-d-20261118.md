@@ -285,7 +285,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_api_key_audit.hpp`
 - [x] `include/uos/authority/native_api_key_policy.hpp`
 - [x] `include/uos/authority/native_authority.hpp`
-- [ ] `include/uos/authority/native_authority_api.hpp`
+- [x] `include/uos/authority/native_authority_api.hpp`
 - [ ] `include/uos/authority/native_authority_codex.hpp`
 - [ ] `include/uos/authority/native_authority_contracts.hpp`
 - [ ] `include/uos/authority/native_authority_kernel.hpp`
@@ -1586,6 +1586,12 @@ Reviewed the native authority facade and conversion to owned runtime and control
 
 - L12, 15, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27 **SAFE** · The facade copies its shared State into returned ports and Task factories. Parsed binding JSON is converted synchronously and each child retains the State it will access.
 
+### `include/uos/authority/native_authority_api.hpp`
+
+Reviewed the API subcomponent's SQL borrow and synchronous admission interfaces.
+
+- L8, 16 **SAFE** · The enclosing native State owns SQL before constructing API and retains it throughout each synchronous command.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1834,4 +1840,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-177/286 files reviewed. 348 sites: 327 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+178/286 files reviewed. 349 sites: 328 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
