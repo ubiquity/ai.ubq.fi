@@ -73,7 +73,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/storage/sqlite_readonly.cpp`
 - [x] `src/storage/value_compatibility.cpp`
 - [x] `include/uos/cache/kv_migration.hpp`
-- [ ] `include/uos/cache/kv_migration_base.hpp`
+- [x] `include/uos/cache/kv_migration_base.hpp`
 - [ ] `include/uos/cache/kv_migration_paid_fallback.hpp`
 - [ ] `include/uos/cache/kv_migration_projection.hpp`
 - [ ] `include/uos/cache/kv_migration_usage.hpp`
@@ -484,6 +484,12 @@ This translation unit delegates to the synchronous runtime value validator, alre
 
 The migration entry takes an owning shared KV. The progress borrow is private and covered at its definition and call site.
 
+### `include/uos/cache/kv_migration_base.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 129-136 | Migration import options and scan ownership | **SAFE** | Import overloads are ordinary functions that synchronously copy options into ImportState. The returned tasks own their input lines or generator, state, and KV. |
+
 
 ## Ranked defects and counts
 
@@ -689,4 +695,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-50/97 files reviewed. **DEFECT 8, SAFE 106, UNCLEAR 3.**
+51/97 files reviewed. **DEFECT 8, SAFE 107, UNCLEAR 3.**

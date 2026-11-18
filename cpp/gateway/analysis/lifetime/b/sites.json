@@ -1445,8 +1445,18 @@
       "note": "The migration entry takes an owning shared KV. The progress borrow is private and covered at its definition and call site."
     },
     "include/uos/cache/kv_migration_base.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "129-136",
+          "verdict": "SAFE",
+          "kinds": [
+            "b"
+          ],
+          "symbol": "Migration import options and scan ownership",
+          "evidence": "Import overloads are ordinary functions that synchronously copy options into ImportState. The returned tasks own their input lines or generator, state, and KV."
+        }
+      ]
     },
     "include/uos/cache/kv_migration_paid_fallback.hpp": {
       "reviewed": false,
