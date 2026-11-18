@@ -285,7 +285,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/anthropic_response_wire.cpp`
 - [x] `src/provider/anthropic_responses.cpp`
 - [x] `src/provider/capacity.cpp`
-- [ ] `src/provider/capacity_analytics.cpp`
+- [x] `src/provider/capacity_analytics.cpp`
 - [ ] `src/provider/capacity_contract.cpp`
 - [ ] `src/provider/capacity_events.cpp`
 - [ ] `src/provider/capacity_history.cpp`
@@ -1816,3 +1816,9 @@ Capacity refresh uses value snapshots, leases and independently owned sampling w
 - 539-705,723-769 · lease, comparison and history scan waits · **SAFE** · The parent retains KV and transaction state. Comparison gets join through allSettled, and fail-fast history children themselves take KV ownership.
 - 772-777 · borrowed CapacityReads · **SAFE** · Both refresh and persisted-view callers wait while their local CapacityReads snapshot lives, and the nested merge receives copied history/events.
 - 781-834,854-871,914-1012,1014-1148 · refresh publication and admin view awaits · **SAFE** · Each child owns its rows, input handles and option snapshots. View assembly keeps the shared context, and each parallel child owns the KV and inputs it uses.
+
+### `src/provider/capacity_analytics.cpp`
+
+Capacity analytics read and write via local snapshots.
+
+- 139-187 · CAS and remote row iteration · **SAFE** · KV, the AtomicOperation and list cursor remain in the waiting frames, and sorting follows the scan.

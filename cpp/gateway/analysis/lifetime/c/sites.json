@@ -3320,8 +3320,16 @@
       ]
     },
     "src/provider/capacity_analytics.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Capacity analytics read and write via local snapshots.",
+      "sites": [
+        {
+          "lines": "139-187",
+          "kind": "CAS and remote row iteration",
+          "verdict": "SAFE",
+          "reason": "KV, the AtomicOperation and list cursor remain in the waiting frames, and sorting follows the scan."
+        }
+      ]
     },
     "src/provider/capacity_contract.cpp": {
       "status": "pending",
