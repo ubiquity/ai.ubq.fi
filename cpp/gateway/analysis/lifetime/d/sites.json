@@ -2137,8 +2137,27 @@
       ]
     },
     "src/authority/delivery_outbox.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the portable receipt facade and deferred observations.",
+      "sites": [
+        {
+          "lines": [
+            12,
+            14,
+            19,
+            21,
+            26,
+            31
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The facade methods are synchronous Task factories. The child frames directly own the copied AuthorityOperations and handle through observation and settlement, even if the facade has been dropped."
+        }
+      ]
     },
     "src/authority/durable_store.cpp": {
       "reviewed": false,

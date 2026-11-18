@@ -95,7 +95,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/authority_rpc.cpp`
 - [x] `src/authority/contracts.cpp`
 - [x] `src/authority/credential_publication.cpp`
-- [ ] `src/authority/delivery_outbox.cpp`
+- [x] `src/authority/delivery_outbox.cpp`
 - [ ] `src/authority/durable_store.cpp`
 - [ ] `src/authority/native_api_key.cpp`
 - [ ] `src/authority/native_api_key_audit.cpp`
@@ -625,6 +625,12 @@ Reviewed capability binding, asynchronous verifier use and the publication CAS r
 
 - L103, 104, 124, 129 **SAFE** · The caller retains the publisher and its verifier. The publication input and identity are owned values and no references into the private snapshot survive the synchronous update or its CAS.
 
+### `src/authority/delivery_outbox.cpp`
+
+Reviewed the portable receipt facade and deferred observations.
+
+- L12, 14, 19, 21, 26, 31 **SAFE** · The facade methods are synchronous Task factories. The child frames directly own the copied AuthorityOperations and handle through observation and settlement, even if the facade has been dropped.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -730,4 +736,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-30/286 files reviewed. 120 sites: 111 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+31/286 files reviewed. 121 sites: 112 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
