@@ -10104,8 +10104,40 @@
       "sites": []
     },
     "include/uos/sentinel/replay_envelope.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the replay codec views and asynchronous crypto and compression interfaces.",
+      "sites": [
+        {
+          "lines": [
+            59,
+            80,
+            81,
+            116,
+            119
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Synchronous readers consume spans while the caller owns their bytes, and encoded, decoded and split results own their data."
+        },
+        {
+          "lines": [
+            56,
+            90,
+            92,
+            95,
+            97
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The asynchronous codec entry points move or copy byte buffers and digest inputs into their own Tasks."
+        }
+      ]
     },
     "include/uos/sentinel/replay_limits.hpp": {
       "reviewed": false,
