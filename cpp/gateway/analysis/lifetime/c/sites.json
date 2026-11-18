@@ -655,8 +655,22 @@
       ]
     },
     "include/uos/embeddings/voyage.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Embeddings cache/budget operations borrow KV where specified.",
+      "sites": [
+        {
+          "lines": "12-18,31-32",
+          "kind": "borrowed store and owned signal",
+          "verdict": "SAFE",
+          "reason": "Handlers and jobs keep the shared KV handle alive until each cache/budget task returns; the timer factory uses a signal value."
+        },
+        {
+          "lines": "42-44,45-67",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Encryption and fetch frames own their inputs, provider callback bundle and any store handle."
+        }
+      ]
     },
     "include/uos/harmony/adapter.hpp": {
       "status": "pending",

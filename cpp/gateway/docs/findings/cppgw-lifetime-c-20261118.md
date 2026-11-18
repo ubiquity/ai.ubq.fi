@@ -93,7 +93,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/embeddings/handlers.hpp`
 - [x] `include/uos/embeddings/jobs.hpp`
 - [x] `include/uos/embeddings/ledger.hpp`
-- [ ] `include/uos/embeddings/voyage.hpp`
+- [x] `include/uos/embeddings/voyage.hpp`
 - [ ] `include/uos/harmony/adapter.hpp`
 - [ ] `include/uos/harmony/classifier.hpp`
 - [ ] `include/uos/harmony/conversation.hpp`
@@ -653,3 +653,10 @@ Job API with a shared store and borrowed request telemetry.
 Idempotency and ledger declarations.
 
 - 214-235 · owning task parameters · **SAFE** · Fingerprint, reservation and completion frames own their input vectors, lease, store and response handle.
+
+### `include/uos/embeddings/voyage.hpp`
+
+Embeddings cache/budget operations borrow KV where specified.
+
+- 12-18,31-32 · borrowed store and owned signal · **SAFE** · Handlers and jobs keep the shared KV handle alive until each cache/budget task returns; the timer factory uses a signal value.
+- 42-44,45-67 · owning task parameters · **SAFE** · Encryption and fetch frames own their inputs, provider callback bundle and any store handle.
