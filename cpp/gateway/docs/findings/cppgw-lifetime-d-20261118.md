@@ -258,7 +258,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/admin/chart_source_proxy.hpp`
 - [x] `include/uos/admin/claude_code.hpp`
 - [x] `include/uos/admin/codex.hpp`
-- [ ] `include/uos/admin/codex_reset.hpp`
+- [x] `include/uos/admin/codex_reset.hpp`
 - [ ] `include/uos/admin/defaults.hpp`
 - [ ] `include/uos/admin/error_log.hpp`
 - [ ] `include/uos/admin/index.hpp`
@@ -1423,6 +1423,12 @@ Reviewed admin boundaries and callback aliases. The fail-fast catalog and refres
 - L20, 21, 22, 23, 30, 31, 32, 33, 34, 47, 50 **SAFE** · These request handlers take owning request or scalar arguments.
 - L24, 25, 26, 27, 28, 29 **SAFE** · The telemetry and analytics interfaces take their callback objects by value, and the active callable remains in an awaiting frame for the child Task.
 
+### `include/uos/admin/codex_reset.hpp`
+
+Reviewed the two reset-consume overloads.
+
+- L6, 7 **SAFE** · Requests and manual-reset dependency objects cross the boundary by value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1671,4 +1677,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-150/286 files reviewed. 318 sites: 297 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+151/286 files reviewed. 319 sites: 298 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
