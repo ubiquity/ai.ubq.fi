@@ -116,8 +116,16 @@
       ]
     },
     "include/uos/codex/banked_reset_claim.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The claim API uses owned arguments for the optimistic KV operations.",
+      "sites": [
+        {
+          "lines": "28-29,110,121,124-136,146-148,215-227",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Each operation retains KV, its candidate and fence data, and any clock, hash or mutator callable it invokes."
+        }
+      ]
     },
     "include/uos/codex/banked_reset_pool.hpp": {
       "status": "pending",

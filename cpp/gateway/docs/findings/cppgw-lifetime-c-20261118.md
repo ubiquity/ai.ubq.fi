@@ -44,7 +44,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/auth_refresh.hpp`
 - [x] `include/uos/codex/auth_repair.hpp`
 - [x] `include/uos/codex/banked_reset.hpp`
-- [ ] `include/uos/codex/banked_reset_claim.hpp`
+- [x] `include/uos/codex/banked_reset_claim.hpp`
 - [ ] `include/uos/codex/banked_reset_pool.hpp`
 - [ ] `include/uos/codex/banked_reset_provider.hpp`
 - [ ] `include/uos/codex/banked_reset_submission.hpp`
@@ -378,3 +378,9 @@ Synchronous repair planning, token metadata and JSON conversion declarations. Th
 Reset records own their data and hook callables.
 
 - 84-86,151-166 · task and callback interfaces · **SAFE** · The usage gate owns the store and candidate authorization; dependencies copied into reset operations keep the provider and telemetry/hash functions alive.
+
+### `include/uos/codex/banked_reset_claim.hpp`
+
+The claim API uses owned arguments for the optimistic KV operations.
+
+- 28-29,110,121,124-136,146-148,215-227 · owning task parameters · **SAFE** · Each operation retains KV, its candidate and fence data, and any clock, hash or mutator callable it invokes.
