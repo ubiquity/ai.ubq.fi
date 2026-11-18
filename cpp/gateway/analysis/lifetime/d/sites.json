@@ -7476,8 +7476,24 @@
       ]
     },
     "include/uos/auth/passport.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed passport principal records and route interfaces.",
+      "sites": [
+        {
+          "lines": [
+            16,
+            68,
+            71,
+            75
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The kind view points to a literal. Passport authentication and routing frames receive owning request and path values."
+        }
+      ]
     },
     "include/uos/auth/passport_sessions.hpp": {
       "reviewed": false,

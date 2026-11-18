@@ -272,7 +272,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/auth/local_admin.hpp`
 - [x] `include/uos/auth/local_development_key.hpp`
 - [x] `include/uos/auth/passkeys.hpp`
-- [ ] `include/uos/auth/passport.hpp`
+- [x] `include/uos/auth/passport.hpp`
 - [ ] `include/uos/auth/passport_sessions.hpp`
 - [ ] `include/uos/auth/relay.hpp`
 - [ ] `include/uos/authority/admission_state.hpp`
@@ -1509,6 +1509,12 @@ Reviewed registration, session and user-management interfaces. The GCC compariso
 
 - L74, 92, 108, 116, 139, 142, 143, 145, 146, 153, 154, 156, 158, 160, 166, 167, 169, 170, 172, 174 **SAFE** · Passkey, session and registration Tasks receive owning inputs and shared KV handles, and the literal cookie-name view has static storage.
 
+### `include/uos/auth/passport.hpp`
+
+Reviewed passport principal records and route interfaces.
+
+- L16, 68, 71, 75 **SAFE** · The kind view points to a literal. Passport authentication and routing frames receive owning request and path values.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1757,4 +1763,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-164/286 files reviewed. 335 sites: 314 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+165/286 files reviewed. 336 sites: 315 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
