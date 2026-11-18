@@ -131,7 +131,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/paid_fallback/ledger_state.hpp`
 - [x] `include/uos/paid_fallback/ledger_stats.hpp`
 - [x] `include/uos/paid_fallback/removed_provider.hpp`
-- [ ] `include/uos/paid_fallback/rollups.hpp`
+- [x] `include/uos/paid_fallback/rollups.hpp`
 - [ ] `include/uos/paid_fallback/routing.hpp`
 - [ ] `include/uos/provider/anthropic_chat_responses.hpp`
 - [ ] `include/uos/provider/anthropic_chat_stream.hpp`
@@ -849,3 +849,9 @@ Ledger statistics API.
 Removed provider stub and compatibility helpers.
 
 - 14-37,46-59 · synchronous promise factories · **SAFE** · The stub returns settled promises and stores no borrows of caller input; the identity projection is synchronous and rejects rvalues.
+
+### `include/uos/paid_fallback/rollups.hpp`
+
+Terminal rollup write/read API.
+
+- 46-47,56 · owning task parameters · **SAFE** · Rollup frames own their inputs, optional store override and read options.

@@ -1004,8 +1004,16 @@
       ]
     },
     "include/uos/paid_fallback/rollups.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Terminal rollup write/read API.",
+      "sites": [
+        {
+          "lines": "46-47,56",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Rollup frames own their inputs, optional store override and read options."
+        }
+      ]
     },
     "include/uos/paid_fallback/routing.hpp": {
       "status": "pending",
