@@ -6986,8 +6986,24 @@
       ]
     },
     "include/uos/admin/capacity_observation_sync.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed ingest options and the only injected callback.",
+      "sites": [
+        {
+          "lines": [
+            24,
+            38,
+            39
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The wrapper copies options before delegation, and the stored clock function is later called synchronously."
+        }
+      ]
     },
     "include/uos/admin/chart_source_proxy.hpp": {
       "reviewed": false,
