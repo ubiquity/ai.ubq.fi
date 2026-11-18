@@ -3550,8 +3550,43 @@
       "sites": []
     },
     "src/inference_admission.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed release callbacks, fair queue updates and queued abort/timer ownership.",
+      "sites": [
+        {
+          "lines": [
+            56,
+            57,
+            58,
+            84,
+            88,
+            149,
+            158,
+            178,
+            179,
+            205
+          ],
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "All queue and map mutations execute synchronously. Permit release owns the controller and normal grant, caller abort and timeout remove the waiter and its event listener before resolving."
+        },
+        {
+          "lines": [
+            170,
+            172,
+            176,
+            177
+          ],
+          "kinds": [
+            "c"
+          ],
+          "verdict": "DEFECT",
+          "detail": "A queued waiter owns its listener and the listener strongly captures both that waiter and its controller. Dropping an isolated loop before the unreferenced wait timer fires drops the timer without invoking abort, so the controller, entries and signal remain in a cycle. Let registered waits use weak listener captures and put the lease of controller ownership in an external clearable timer."
+        }
+      ]
     },
     "src/inference_deadline.cpp": {
       "reviewed": false,

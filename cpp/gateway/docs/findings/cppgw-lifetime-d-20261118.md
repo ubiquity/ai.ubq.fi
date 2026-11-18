@@ -143,7 +143,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/health.cpp`
 - [x] `src/http.cpp`
 - [ ] `src/images.cpp`
-- [ ] `src/inference_admission.cpp`
+- [x] `src/inference_admission.cpp`
 - [ ] `src/inference_deadline.cpp`
 - [ ] `src/input_normalization.cpp`
 - [ ] `src/jev_compaction/compaction.cpp`
@@ -882,6 +882,13 @@ Reviewed passive fan-out, provider bindings and the active-probe timeout race.
 
 Reviewed synchronous OpenAI error/JSON creation, CORS and request-response helpers. Headers and other input views are consumed synchronously and outputs retain the required response/body handles.
 
+### `src/inference_admission.cpp`
+
+Reviewed release callbacks, fair queue updates and queued abort/timer ownership.
+
+- L56, 57, 58, 84, 88, 149, 158, 178, 179, 205 **SAFE** · All queue and map mutations execute synchronously. Permit release owns the controller and normal grant, caller abort and timeout remove the waiter and its event listener before resolving.
+- L170, 172, 176, 177 **DEFECT** · A queued waiter owns its listener and the listener strongly captures both that waiter and its controller. Dropping an isolated loop before the unreferenced wait timer fires drops the timer without invoking abort, so the controller, entries and signal remain in a cycle. Let registered waits use weak listener captures and put the lease of controller ownership in an external clearable timer.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -987,4 +994,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-76/286 files reviewed. 170 sites: 158 SAFE, 12 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+77/286 files reviewed. 172 sites: 159 SAFE, 13 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
