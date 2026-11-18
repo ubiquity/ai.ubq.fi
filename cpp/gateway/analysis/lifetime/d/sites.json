@@ -5966,8 +5966,162 @@
       ]
     },
     "src/sentinel/replay_retention_bootstrap.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed release and bootstrap batches, detached chunk-owner filling, weak KV identity guards and the bounded maintenance wait.",
+      "sites": [
+        {
+          "lines": [
+            76,
+            78,
+            82,
+            84,
+            87,
+            92,
+            94
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "An awaiting caller keeps KV alive. The release Task owns its reservation and key, and the copied CAS callbacks run synchronously while the operation is owned."
+        },
+        {
+          "lines": [
+            219,
+            226,
+            277,
+            280
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Entry members and delta references belong to the same coroutine frame; the legacy-release Task is constructed separately with owning arguments and directly awaited."
+        },
+        {
+          "lines": [
+            332,
+            360,
+            387,
+            400,
+            423,
+            425,
+            432,
+            435,
+            442,
+            446,
+            450,
+            464
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "On the gateway loop the detached fill checks the KV identity before every fresh KV use. Native cursors and reads own their storage after creation. The fill owns the index, and map lookups copy its shared pointer before any suspension."
+        },
+        {
+          "lines": [
+            469,
+            472,
+            473,
+            476,
+            480
+          ],
+          "kinds": [
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "The owner fill can settle before the wait timer. Cleanup clears the only resolver, stranding the pending elapsed Promise and its race reaction for the process-loop lifetime. Resolve elapsed after clearing the timer, preserving the original outcome."
+        },
+        {
+          "lines": [
+            484,
+            491,
+            508,
+            513,
+            520
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The awaited preparation keeps its KV caller alive. The cursor, filled Promise and copied index handle stay owned while maintenance waits and later reads the index state."
+        },
+        {
+          "lines": [
+            536,
+            544,
+            546,
+            564,
+            569,
+            576,
+            581,
+            601,
+            608,
+            620,
+            626,
+            631,
+            636
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Bootstrap sweeps own their cursors and deltas, walk static prefix keys and only lend values within synchronous code. Every folded or closing Task is awaited before its cursor leaves scope."
+        },
+        {
+          "lines": [
+            668,
+            679,
+            697,
+            708
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The commit operation and materializations belong to the local frame, and the sweep's child receives an owned delta before suspension."
+        },
+        {
+          "lines": [
+            722,
+            725,
+            729,
+            746,
+            770,
+            776,
+            782,
+            787,
+            789,
+            793,
+            794,
+            803
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "These directly awaited entry points borrow a store whose owning caller remains suspended. Ledger values and recursive work are established in named locals before awaiting."
+        }
+      ]
     },
     "src/sentinel/replay_retention_metadata.cpp": {
       "reviewed": false,

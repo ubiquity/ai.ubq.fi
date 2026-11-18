@@ -240,7 +240,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/sentinel/replay_observation.cpp`
 - [x] `src/sentinel/replay_read.cpp`
 - [x] `src/sentinel/replay_retention.cpp`
-- [ ] `src/sentinel/replay_retention_bootstrap.cpp`
+- [x] `src/sentinel/replay_retention_bootstrap.cpp`
 - [ ] `src/sentinel/replay_retention_metadata.cpp`
 - [ ] `src/sentinel/replay_retention_schema.cpp`
 - [x] `src/sentinel/replay_store.cpp`
@@ -1292,6 +1292,19 @@ Reviewed KV snapshot ownership and iterator, cleanup, fail-fast read, publicatio
 - L899, 903, 913, 915, 917, 924, 934, 942, 954, 955, 957, 961, 967, 976, 978, 986, 991, 994, 1003, 1007, 1009, 1014, 1017, 1026, 1030 **SAFE** · Selection owns the cursor and predicate, invokes the predicate synchronously and returns its own vector. Nested claims and cleanup use copied rows and named Tasks; the outer awaited frame retains KV.
 - L1040, 1044, 1052, 1056, 1064, 1065, 1068, 1075, 1078, 1089, 1092, 1122, 1126, 1130, 1138, 1141, 1145, 1147, 1150, 1151, 1159, 1163, 1165, 1170, 1174 **SAFE** · Admission and maintenance keep owning options and snapshots in their frames. They await all local cleanup and CAS work, while the bootstrap helper separately manages its detached store owner.
 
+### `src/sentinel/replay_retention_bootstrap.cpp`
+
+Reviewed release and bootstrap batches, detached chunk-owner filling, weak KV identity guards and the bounded maintenance wait.
+
+- L76, 78, 82, 84, 87, 92, 94 **SAFE** · An awaiting caller keeps KV alive. The release Task owns its reservation and key, and the copied CAS callbacks run synchronously while the operation is owned.
+- L219, 226, 277, 280 **SAFE** · Entry members and delta references belong to the same coroutine frame; the legacy-release Task is constructed separately with owning arguments and directly awaited.
+- L332, 360, 387, 400, 423, 425, 432, 435, 442, 446, 450, 464 **SAFE** · On the gateway loop the detached fill checks the KV identity before every fresh KV use. Native cursors and reads own their storage after creation. The fill owns the index, and map lookups copy its shared pointer before any suspension.
+- L469, 472, 473, 476, 480 **DEFECT** · The owner fill can settle before the wait timer. Cleanup clears the only resolver, stranding the pending elapsed Promise and its race reaction for the process-loop lifetime. Resolve elapsed after clearing the timer, preserving the original outcome.
+- L484, 491, 508, 513, 520 **SAFE** · The awaited preparation keeps its KV caller alive. The cursor, filled Promise and copied index handle stay owned while maintenance waits and later reads the index state.
+- L536, 544, 546, 564, 569, 576, 581, 601, 608, 620, 626, 631, 636 **SAFE** · Bootstrap sweeps own their cursors and deltas, walk static prefix keys and only lend values within synchronous code. Every folded or closing Task is awaited before its cursor leaves scope.
+- L668, 679, 697, 708 **SAFE** · The commit operation and materializations belong to the local frame, and the sweep's child receives an owned delta before suspension.
+- L722, 725, 729, 746, 770, 776, 782, 787, 789, 793, 794, 803 **SAFE** · These directly awaited entry points borrow a store whose owning caller remains suspended. Ledger values and recursive work are established in named locals before awaiting.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1540,4 +1553,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-134/286 files reviewed. 267 sites: 249 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+135/286 files reviewed. 275 sites: 256 SAFE, 19 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
