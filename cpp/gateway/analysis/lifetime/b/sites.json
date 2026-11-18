@@ -802,8 +802,39 @@
       ]
     },
     "src/rt/kv.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "73",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b"
+          ],
+          "symbol": "GenericAtomicOperation::commit",
+          "evidence": "Every traced production caller has a named atomic builder through the direct commit await. The builder owns commitFn, and native wrappers start free coroutines with copied StorePtr and mutation vectors."
+        },
+        {
+          "lines": "77-80",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "kvListToArray borrowed iterator",
+          "evidence": "The caller in auth/passkeys.cpp retains its named owning list iterator through the direct await. Each returned entry is moved into the collector's owned vector."
+        },
+        {
+          "lines": "85-97,134",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b"
+          ],
+          "symbol": "Forwarding KV and atomic tasks",
+          "evidence": "These synchronous wrappers consume the receiver only to obtain a child task. Actual callers retain the inner owner through the await, and durable read/write implementations capture their StorePtr before returning."
+        }
+      ]
     },
     "src/rt/kv_internal.hpp": {
       "reviewed": false,

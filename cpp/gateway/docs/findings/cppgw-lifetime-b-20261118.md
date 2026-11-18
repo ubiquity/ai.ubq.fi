@@ -46,7 +46,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/rt/process.hpp`
 - [x] `include/uos/rt/sqlite.hpp`
 - [x] `src/rt/fs.cpp`
-- [ ] `src/rt/kv.cpp`
+- [x] `src/rt/kv.cpp`
 - [ ] `src/rt/kv_internal.hpp`
 - [ ] `src/rt/kv_js.cpp`
 - [ ] `src/rt/kv_jsc.cpp`
@@ -306,6 +306,14 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 349-376,502-535,607-655 | File wrappers and read/write buffers | **SAFE** | Filesystem operations use borrowed buffers only inside synchronous syscalls. Scoped descriptors close on error or on return, and FileHandle moves invalidate the source descriptor. |
 | 675-716 | Path helper views | **SAFE** | The call resolves and normalizes the input pieces synchronously and produces owning path strings. |
 
+### `src/rt/kv.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 73 | GenericAtomicOperation::commit | **SAFE** | Every traced production caller has a named atomic builder through the direct commit await. The builder owns commitFn, and native wrappers start free coroutines with copied StorePtr and mutation vectors. |
+| 77-80 | kvListToArray borrowed iterator | **SAFE** | The caller in auth/passkeys.cpp retains its named owning list iterator through the direct await. Each returned entry is moved into the collector's owned vector. |
+| 85-97,134 | Forwarding KV and atomic tasks | **SAFE** | These synchronous wrappers consume the receiver only to obtain a child task. Actual callers retain the inner owner through the await, and durable read/write implementations capture their StorePtr before returning. |
+
 
 ## Ranked defects and counts
 
@@ -471,4 +479,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-23/97 files reviewed. **DEFECT 7, SAFE 59, UNCLEAR 2.**
+24/97 files reviewed. **DEFECT 7, SAFE 62, UNCLEAR 2.**
