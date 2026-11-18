@@ -31,3 +31,32 @@ llhttp. This preserves delivery of the payload fragment before a delimiter
 error, including when both arrive in the same socket read. The parser test
 covers this boundary and verifies both orders of the length/transfer-coding
 conflict.
+
+## Discovery and local gates
+
+The active checkout has 442 registered binaries. The Links resolver finds 88
+that list `src/runtime/http.cpp`, plus the standalone parser test that includes
+it. The portable continuation builder compiles each source once and uses the
+repository CI fixture boundary with a fresh network, mount and PID namespace,
+empty home and temporary directories, and an allowlisted environment. The
+release run selects all 442 closures. The sanitizer run selects the 89 server
+closures. The standalone test passed 5/5 after the chunk fix.
+
+The archive SHA-256 matched
+`5600adb1498f82a9c719b8eb19310021737388e0d92362a6d47be532710d3c96`.
+`sha256sum --check SHA256SUMS` and direct `cmp` against the five extracted
+upstream inputs passed. The generated upstream C file contains trailing
+whitespace. The first-party diff passes `git diff --check` with the verified
+vendor directory excluded.
+
+Bun 1.4.0 loopback probes used `bun --no-env-file --no-install` inside an
+isolated network namespace. They confirmed all four wire differences, along
+with the metadata-limit and connection decisions recorded in
+[Deviations from Bun](../DEVIATIONS-FROM-BUN.md).
+
+The CMake registration builds all three C files. The portable production
+driver `cmake/ci/driver.py` and the Mac script `tools/macos-build.sh` read the
+single-member `library.source` view when building archives. The legacy SDK
+`tools/unit.mk` has a vendor object rule for C++ inputs only. These build
+drivers are outside the assigned files. The local verifier uses
+`library.sources` and the C compiler for the three llhttp inputs.
