@@ -30,7 +30,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/runtime/http_upgrade.hpp`
 - [x] `include/uos/runtime/native_kv_bootstrap.hpp`
 - [x] `include/uos/runtime/permissions_linux.hpp`
-- [ ] `include/uos/runtime/websocket.hpp`
+- [x] `include/uos/runtime/websocket.hpp`
 - [ ] `src/runtime/http.cpp`
 - [ ] `src/runtime/http_body.cpp`
 - [ ] `src/runtime/http_early_sse.cpp`
@@ -168,7 +168,11 @@ The path and receipt queries take references for synchronous calls. The asynchro
 
 Synchronous permission contract and owned value types. No coroutine, deferred capture or callback registration.
 
+### `include/uos/runtime/websocket.hpp`
+
+Declaration of the memoized module promise. Constructor call and cache lifetime are reviewed with the implementation.
+
 
 ## Ranked defects and counts
 
-7/97 files reviewed. **DEFECT 0, SAFE 9, UNCLEAR 0.**
+8/97 files reviewed. **DEFECT 0, SAFE 9, UNCLEAR 0.**

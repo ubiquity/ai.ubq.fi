@@ -127,8 +127,9 @@
       "note": "Synchronous permission contract and owned value types. No coroutine, deferred capture or callback registration."
     },
     "include/uos/runtime/websocket.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "Declaration of the memoized module promise. Constructor call and cache lifetime are reviewed with the implementation."
     },
     "src/runtime/http.cpp": {
       "reviewed": false,
