@@ -220,7 +220,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/supervisor_brief.cpp`
 - [x] `src/codex/supervisor_config.cpp`
 - [x] `src/codex/supervisor_follow.cpp`
-- [ ] `src/codex/supervisor_inventory.cpp`
+- [x] `src/codex/supervisor_inventory.cpp`
 - [ ] `src/codex/supervisor_log.cpp`
 - [ ] `src/codex/supervisor_secret.cpp`
 - [ ] `src/codex/supervisor_transport.cpp`
@@ -1421,3 +1421,11 @@ Supervisor configuration copies its env reader before the file-read boundary.
 Each poll owns its revisions state and goes through one joined connection read and close.
 
 - 143-199 · RPC and revisions map ownership · **SAFE** · The connection and shared revisions are task parameters. The awaited RPCs consume local result values and revisions are accessed synchronously at the end.
+
+### `src/codex/supervisor_inventory.cpp`
+
+Inventory sampling keeps source records, connection hooks and per-source projections independent.
+
+- 99-126,193-233,314-373,430-446 · SQLite and socket reads · **SAFE** · Path, database and connection handles belong to their calling frames. SQL statements and payload projections are consumed synchronously.
+- 580-590,632-708 · sample reads, fan-out and join · **SAFE** · Each worker is held by rt::async and mapWithConcurrency owns shared worker state. probeOne copies the thread ID and client into each task. Projection maps and callback are local.
+- 711-774,785-797,842-856 · sampling ownership and cache finalizer · **SAFE** · Source, connection, timeout and copied in-flight promise survive waits. Close is joined, and cache reactions only access module storage.

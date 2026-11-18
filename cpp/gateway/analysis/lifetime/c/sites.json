@@ -2380,8 +2380,28 @@
       ]
     },
     "src/codex/supervisor_inventory.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Inventory sampling keeps source records, connection hooks and per-source projections independent.",
+      "sites": [
+        {
+          "lines": "99-126,193-233,314-373,430-446",
+          "kind": "SQLite and socket reads",
+          "verdict": "SAFE",
+          "reason": "Path, database and connection handles belong to their calling frames. SQL statements and payload projections are consumed synchronously."
+        },
+        {
+          "lines": "580-590,632-708",
+          "kind": "sample reads, fan-out and join",
+          "verdict": "SAFE",
+          "reason": "Each worker is held by rt::async and mapWithConcurrency owns shared worker state. probeOne copies the thread ID and client into each task. Projection maps and callback are local."
+        },
+        {
+          "lines": "711-774,785-797,842-856",
+          "kind": "sampling ownership and cache finalizer",
+          "verdict": "SAFE",
+          "reason": "Source, connection, timeout and copied in-flight promise survive waits. Close is joined, and cache reactions only access module storage."
+        }
+      ]
     },
     "src/codex/supervisor_log.cpp": {
       "status": "pending",
