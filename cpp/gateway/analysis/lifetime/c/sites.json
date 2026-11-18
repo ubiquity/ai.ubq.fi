@@ -2846,7 +2846,8 @@
       ]
     },
     "src/harmony/tools/result.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Tool result shaping and clipping are synchronous. Results own their strings.",
       "sites": []
     },
     "src/harmony/tools/router.cpp": {
