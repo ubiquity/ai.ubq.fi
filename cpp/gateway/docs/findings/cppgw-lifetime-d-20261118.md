@@ -226,7 +226,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/responses_attempts.cpp`
 - [x] `src/responses_buffered.cpp`
 - [x] `src/responses_failover_stream.cpp`
-- [ ] `src/responses_handler.cpp`
+- [x] `src/responses_handler.cpp`
 - [ ] `src/responses_native_headers.cpp`
 - [ ] `src/responses_request.cpp`
 - [x] `src/responses_stream.cpp`
@@ -1188,6 +1188,15 @@ Reviewed precommit iteration, event parsing and rewriting, stream delivery and l
 - L894, 916, 935, 942, 943, 956, 966, 979, 980, 984, 993, 1037, 1038 **SAFE** · Pull and cancel share flags, while each asynchronous pull owns State and controller. Original-event lookups become value snapshots before suspension and detached generator return owns its core.
 - L944, 972 **DEFECT** · emitFailureTerminal receives an owning ResponsesStreamEvent aggregate by value directly in the await expression. The GCC 12.2 porting rule requires constructing the Task in a named statement before awaiting each call.
 
+### `src/responses_handler.cpp`
+
+Reviewed request-state construction, recovery, delivery and telemetry, including before-dispatch, event and terminal callbacks.
+
+- L37, 38, 46, 48, 50, 52, 62, 69, 75, 77, 103, 112, 114, 116, 122, 140, 142, 144, 149, 150, 155, 161, 165, 168, 169, 171, 172, 173, 180, 183, 187, 206, 209, 214, 215, 223, 224 **SAFE** · The caller keeps its borrowed usage context in the directly awaiting frame. Recovery children each own State, responses and options, and variant borrows refer to named local snapshots.
+- L233, 239, 241, 274, 324, 325, 326, 334, 341, 342, 343, 344, 355 **SAFE** · The detached capturing coroutine uses rt::async and shares Delivery. Buffered and stream callbacks own Delivery or complete in its owning frame. The terminal task accepts a copied Response.
+- L315, 317, 318, 319, 360 **SAFE** · The interval closure owns a copied probe. The checked-in circuit provides no probe, so this timer cannot start on a current route. Terminal, cancel and failure callbacks clear an armed timer.
+- L361, 365, 368, 372, 374, 375, 378, 379, 382, 383, 386, 388, 389, 392, 397, 398, 405, 407, 412, 415, 418, 420, 424, 426, 428 **SAFE** · Delegated request and telemetry tasks are directly awaited with their request, parsed body and context retained by the route/image caller. Streaming callbacks after handoff use a separate Delivery snapshot.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1436,4 +1445,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-119/286 files reviewed. 235 sites: 217 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+120/286 files reviewed. 239 sites: 221 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

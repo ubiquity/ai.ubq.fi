@@ -5133,8 +5133,136 @@
       ]
     },
     "src/responses_handler.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed request-state construction, recovery, delivery and telemetry, including before-dispatch, event and terminal callbacks.",
+      "sites": [
+        {
+          "lines": [
+            37,
+            38,
+            46,
+            48,
+            50,
+            52,
+            62,
+            69,
+            75,
+            77,
+            103,
+            112,
+            114,
+            116,
+            122,
+            140,
+            142,
+            144,
+            149,
+            150,
+            155,
+            161,
+            165,
+            168,
+            169,
+            171,
+            172,
+            173,
+            180,
+            183,
+            187,
+            206,
+            209,
+            214,
+            215,
+            223,
+            224
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The caller keeps its borrowed usage context in the directly awaiting frame. Recovery children each own State, responses and options, and variant borrows refer to named local snapshots."
+        },
+        {
+          "lines": [
+            233,
+            239,
+            241,
+            274,
+            324,
+            325,
+            326,
+            334,
+            341,
+            342,
+            343,
+            344,
+            355
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The detached capturing coroutine uses rt::async and shares Delivery. Buffered and stream callbacks own Delivery or complete in its owning frame. The terminal task accepts a copied Response."
+        },
+        {
+          "lines": [
+            315,
+            317,
+            318,
+            319,
+            360
+          ],
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "detail": "The interval closure owns a copied probe. The checked-in circuit provides no probe, so this timer cannot start on a current route. Terminal, cancel and failure callbacks clear an armed timer."
+        },
+        {
+          "lines": [
+            361,
+            365,
+            368,
+            372,
+            374,
+            375,
+            378,
+            379,
+            382,
+            383,
+            386,
+            388,
+            389,
+            392,
+            397,
+            398,
+            405,
+            407,
+            412,
+            415,
+            418,
+            420,
+            424,
+            426,
+            428
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Delegated request and telemetry tasks are directly awaited with their request, parsed body and context retained by the route/image caller. Streaming callbacks after handoff use a separate Delivery snapshot."
+        }
+      ]
     },
     "src/responses_native_headers.cpp": {
       "reviewed": false,
