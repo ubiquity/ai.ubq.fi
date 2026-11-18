@@ -40,7 +40,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/chat/envelope.hpp`
 - [x] `include/uos/chat/stream_translation.hpp`
 - [x] `include/uos/codex/account_routing.hpp`
-- [ ] `include/uos/codex/auth.hpp`
+- [x] `include/uos/codex/auth.hpp`
 - [ ] `include/uos/codex/auth_refresh.hpp`
 - [ ] `include/uos/codex/auth_repair.hpp`
 - [ ] `include/uos/codex/banked_reset.hpp`
@@ -355,3 +355,10 @@ Translation and accumulator methods are synchronous except for the completion re
 Routing decisions accept snapshots and keys by value.
 
 - 46-48,57,68-83,90 · owning task parameters · **SAFE** · The election, refresh, selection and slot recheck frames own their account, pool, model and time inputs.
+
+### `include/uos/codex/auth.hpp`
+
+The async API owns response handles, while the shared caches are reviewed at mutation sites in auth.cpp and auth_refresh.cpp.
+
+- 203-208 · shared registries · **SAFE** · The namespace owns the promise maps and uses weak response identities; consumers copy results or handles before awaiting.
+- 230,238-244,250 · owning task parameters · **SAFE** · Each probe or lookup coroutine owns its response or scalar lookup inputs.

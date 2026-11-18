@@ -69,8 +69,22 @@
       ]
     },
     "include/uos/codex/auth.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The async API owns response handles, while the shared caches are reviewed at mutation sites in auth.cpp and auth_refresh.cpp.",
+      "sites": [
+        {
+          "lines": "203-208",
+          "kind": "shared registries",
+          "verdict": "SAFE",
+          "reason": "The namespace owns the promise maps and uses weak response identities; consumers copy results or handles before awaiting."
+        },
+        {
+          "lines": "230,238-244,250",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Each probe or lookup coroutine owns its response or scalar lookup inputs."
+        }
+      ]
     },
     "include/uos/codex/auth_refresh.hpp": {
       "status": "pending",
