@@ -71,3 +71,8 @@ install -Dm644 icu/LICENSE /opt/uos/licenses/icu/LICENSE
 install -Dm644 /opt/uos/boost-1.92.0/LICENSE_1_0.txt /opt/uos/licenses/boost/LICENSE
 install -Dm644 /usr/share/doc/libstdc++6/copyright /opt/uos/licenses/libstdc++/copyright
 install -Dm644 /usr/share/doc/libgcc-s1/copyright /opt/uos/licenses/libgcc/copyright
+install -Dm644 /usr/share/doc/libc6/copyright /opt/uos/licenses/glibc/copyright
+install -Dm644 /usr/share/doc/libssl-dev/copyright /opt/uos/licenses/openssl/copyright
+install -Dm644 /usr/share/doc/zlib1g-dev/copyright /opt/uos/licenses/zlib/copyright
+install -Dm644 /usr/share/doc/libbrotli-dev/copyright /opt/uos/licenses/brotli/copyright
+install -Dm644 /usr/share/doc/libzstd-dev/copyright /opt/uos/licenses/zstd/copyright

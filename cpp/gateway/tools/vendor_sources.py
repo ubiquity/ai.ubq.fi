@@ -17,6 +17,7 @@ SOURCES = {
     "simdjson": ("simdjson.cpp",),
     "simdutf": ("simdutf.cpp",),
 }
+VERSIONS = {"ada": "4.0.0", "llhttp": "9.4.4", "qcbor": "1.6.1", "simdjson": "5.2.0", "simdutf": "9.4.0"}
 VENDOR_INCLUDES = {"qcbor": "third_party/qcbor/inc"}
 QCBOR_HEADERS = {
     "inc/UsefulBuf.h", "inc/qcbor.h", "inc/qcbor/UsefulBuf.h", "inc/qcbor/qcbor.h", "inc/qcbor/qcbor_common.h",
@@ -36,6 +37,7 @@ STRICT_WARNINGS = {"-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror"}
 
 class Library(NamedTuple):
     name: str
+    version: str
     sources: tuple[str, ...]
     consumers: tuple[str, ...]
     inputs: tuple[str, ...]
@@ -92,7 +94,7 @@ def selected(root=GATEWAY):
                 if hashlib.file_digest(handle, "sha256").hexdigest() != expected:
                     raise ValueError("Supplied vendor input bytes differ: " + str(relative))
             inputs.append(relative.as_posix())
-        yield Library(name, tuple((directory / source).as_posix() for source in sources), tuple(consumers), tuple(inputs))
+        yield Library(name, VERSIONS[name], tuple((directory / source).as_posix() for source in sources), tuple(consumers), tuple(inputs))
 
 
 def required(libraries, sources, targets=()):

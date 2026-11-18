@@ -163,6 +163,7 @@ def compile_one(source, selected_flags=None):
     result["source"] = str(source)
     if result["status"] == 0:
         deps = shlex.split(target.with_suffix(".d").read_text().replace("\\\n", " ").split(":", 1)[1])
+        # -MMD omits system headers, including nested headers from the registry.
         for library in vendors:
             if str(source) in library.consumers or str(source) in library.sources:
                 deps.extend(str(gateway / header) for header in library.headers)

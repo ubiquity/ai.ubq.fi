@@ -78,3 +78,22 @@ invalid close code for a 1014 frame. The gateway now handles 1014 in its shared 
 uses Boost.Endian to read the code, and uses Beast to validate the reason's UTF-8. The original assertion
 still requires the client to enter CLOSING without throwing and send exactly one masked 1014 frame.
 Two new received-frame examples check a valid 1014 reason and rejection of a malformed UTF-8 reason.
+
+## Stage 2b release gate
+
+All four release shards passed on `7b602c71` after the console fixture correction. The counts by shard were
+113/1,332, 113/1,233, 112/1,439 and 112/1,100, for 450 binaries and 5,104 cases. The receipts are under
+`/var/tmp/cppgw-integrate-f1.WpF47zpW/receipts/stage2b/`.
+
+## Merge 2 — release packaging
+
+| Git conflict | Resolution |
+| ------------ | ---------- |
+| `packaging/portable/payload.py` | Keep the release branch's timestamps, `VERSION`, native build receipt and installation files. Derive all linked vendor versions from the same registry used to collect their licenses. |
+| `tools/macos-build.sh` | Keep expanded pkg-config system include paths, matching C/C++ compilers, system treatment for all vendor headers, and explicit header dependencies for each C and C++ vendor source and consumer. |
+
+The Docker build context retains the llhttp consumer and adds the direct QCBOR test consumer. Portable Linux
+payloads include the five linked vendor licenses and notices where supplied, SQLite's public-domain notice,
+Boost and ICU licenses, Rust addon notices and the Debian copyright files for the linked toolchain and system
+libraries. The macOS package uses the same vendor registry for versions and includes each linked vendor license.
+The Linux release instructions describe the reduced-confinement opt-in.
