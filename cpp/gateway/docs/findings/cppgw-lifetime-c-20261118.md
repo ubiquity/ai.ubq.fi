@@ -161,7 +161,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/claude_code_usage.hpp`
 - [x] `include/uos/provider/claude_code_usage_fwd.hpp`
 - [x] `include/uos/provider/claude_code_usage_refresh.hpp`
-- [ ] `include/uos/provider/claude_code_usage_schema.hpp`
+- [x] `include/uos/provider/claude_code_usage_schema.hpp`
 - [ ] `include/uos/provider/health.hpp`
 - [ ] `include/uos/provider/lithos.hpp`
 - [ ] `include/uos/provider/lithos_handlers.hpp`
@@ -1023,3 +1023,7 @@ Forward declarations for the Claude usage schema. No executable site.
 Usage refresh entry point.
 
 - 18-19 · owning task parameters · **SAFE** · The refresh task owns KV, account binding and optional fetch inputs.
+
+### `include/uos/provider/claude_code_usage_schema.hpp`
+
+Synchronous usage schema records and converters.

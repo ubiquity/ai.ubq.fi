@@ -1348,7 +1348,8 @@
       ]
     },
     "include/uos/provider/claude_code_usage_schema.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous usage schema records and converters.",
       "sites": []
     },
     "include/uos/provider/health.hpp": {
