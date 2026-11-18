@@ -25,7 +25,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 
 - [x] `src/admin/api_key_audit.cpp`
 - [x] `src/admin/api_key_mutations.cpp`
-- [ ] `src/admin/api_keys.cpp`
+- [x] `src/admin/api_keys.cpp`
 - [ ] `src/admin/capacity_observation_sync.cpp`
 - [ ] `src/admin/chart_source_proxy.cpp`
 - [ ] `src/admin/claude_code.cpp`
@@ -336,6 +336,17 @@ Reviewed update authorization, versioned writes, revocation and guarded deletion
 - L374, 376, 381, 385, 387, 392, 396, 400, 404, 413, 415, 440, 441 **SAFE** · The deletion frame owns both the result variant and the operation, including the blocked alternative accessed after the release wait.
 - L423, 425, 428, 429 **SAFE** · The prefix vector is frame-local and immutable, and each iterator and yielded entry remains owned through its awaited deletion.
 
+### `src/admin/api_keys.cpp`
+
+Reviewed paid-fallback fan-out, request-owned mutation records, detached reconciliation, and immutable list snapshots.
+
+- L61, 63, 65, 66, 213, 217 **SAFE** · Both paid ledger children take their key ID and KV owner by value. Fail-fast all can release the parent without invalidating either child.
+- L91, 103, 106, 121, 124, 128, 145, 150, 293, 294 **SAFE** · The synchronous create wrapper copies the context, and the create and policy frames own their request, signal, records and atomic operation until the respective waits finish.
+- L157, 163, 177, 354, 355 **SAFE** · History owns its request, KV and normalized ID through the key read and record list. Both overloads transfer ownership to the history frame.
+- L173, 174 **SAFE** · The detached reconciler owns the copied optional shared KV and timestamp in its frame. The rejection handler borrows nothing.
+- L297, 303, 304, 322 **SAFE** · The listing frame owns the store, iterator and record vector. The vector is sorted before usage awaits and stays immutable while element references are in use.
+- L327, 330, 333, 334 **SAFE** · Each paid-field child copies its row and shared KV before it starts. The parent keeps independent output and ordering state.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -344,4 +355,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-2/286 files reviewed. 12 sites: 12 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+3/286 files reviewed. 18 sites: 18 SAFE, 0 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

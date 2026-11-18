@@ -210,8 +210,105 @@
       ]
     },
     "src/admin/api_keys.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed paid-fallback fan-out, request-owned mutation records, detached reconciliation, and immutable list snapshots.",
+      "sites": [
+        {
+          "lines": [
+            61,
+            63,
+            65,
+            66,
+            213,
+            217
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Both paid ledger children take their key ID and KV owner by value. Fail-fast all can release the parent without invalidating either child."
+        },
+        {
+          "lines": [
+            91,
+            103,
+            106,
+            121,
+            124,
+            128,
+            145,
+            150,
+            293,
+            294
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The synchronous create wrapper copies the context, and the create and policy frames own their request, signal, records and atomic operation until the respective waits finish."
+        },
+        {
+          "lines": [
+            157,
+            163,
+            177,
+            354,
+            355
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "History owns its request, KV and normalized ID through the key read and record list. Both overloads transfer ownership to the history frame."
+        },
+        {
+          "lines": [
+            173,
+            174
+          ],
+          "kinds": [
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The detached reconciler owns the copied optional shared KV and timestamp in its frame. The rejection handler borrows nothing."
+        },
+        {
+          "lines": [
+            297,
+            303,
+            304,
+            322
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The listing frame owns the store, iterator and record vector. The vector is sorted before usage awaits and stays immutable while element references are in use."
+        },
+        {
+          "lines": [
+            327,
+            330,
+            333,
+            334
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each paid-field child copies its row and shared KV before it starts. The parent keeps independent output and ordering state."
+        }
+      ]
     },
     "src/admin/capacity_observation_sync.cpp": {
       "reviewed": false,
