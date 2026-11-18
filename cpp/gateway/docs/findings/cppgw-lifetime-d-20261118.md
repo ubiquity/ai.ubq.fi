@@ -346,7 +346,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/lib/jev_compaction/compact.hpp`
 - [x] `include/uos/lib/jev_compaction/jev_codex_smoke.hpp`
 - [x] `include/uos/lib/jev_compaction/jev_compaction_smoke.hpp`
-- [ ] `include/uos/lib/jev_compaction/request.hpp`
+- [x] `include/uos/lib/jev_compaction/request.hpp`
 - [ ] `include/uos/lib/jev_compaction/state.hpp`
 - [ ] `include/uos/lib/jev_compaction/types.hpp`
 - [ ] `include/uos/metered_quota.hpp`
@@ -1949,6 +1949,12 @@ Reviewed the local gateway smoke command declaration.
 
 - L8 **SAFE** · The command Task takes no borrowed arguments and owns the local smoke-run options.
 
+### `include/uos/lib/jev_compaction/request.hpp`
+
+Reviewed request helper views and synchronous response and answer parsing.
+
+- L16, 17, 39, 43 **SAFE** · Default views refer to literals. Reply text and answer fields are read synchronously and results are values.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2197,4 +2203,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-238/286 files reviewed. 412 sites: 390 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+239/286 files reviewed. 413 sites: 391 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

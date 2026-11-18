@@ -9174,8 +9174,24 @@
       ]
     },
     "include/uos/lib/jev_compaction/request.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed request helper views and synchronous response and answer parsing.",
+      "sites": [
+        {
+          "lines": [
+            16,
+            17,
+            39,
+            43
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Default views refer to literals. Reply text and answer fields are read synchronously and results are values."
+        }
+      ]
     },
     "include/uos/lib/jev_compaction/state.hpp": {
       "reviewed": false,
