@@ -41,7 +41,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/api_key_policy.cpp`
 - [x] `src/api_keys.cpp`
 - [x] `src/auth/index.cpp`
-- [ ] `src/auth/local_admin.cpp`
+- [x] `src/auth/local_admin.cpp`
 - [ ] `src/auth/local_development_key.cpp`
 - [ ] `src/auth/passkeys.cpp`
 - [ ] `src/auth/passport.cpp`
@@ -482,6 +482,12 @@ Reviewed client and admin auth, external token verification, cache use, and meth
 - L705, 737, 748, 750, 753, 757, 767, 772 **SAFE** · Admin auth owns its request, credentials and logger as values, and the cookie wrapper transfers its copied request to the called coroutine.
 - L811, 841, 851, 864, 885, 890, 895, 902, 925 **SAFE** · Report generation holds auth and KV snapshots in the awaiting frame. JSON value-copying references a local stored record and invokes its helper synchronously.
 
+### `src/auth/local_admin.cpp`
+
+Reviewed listener configuration, request-scoped peer binding, and URL-origin inspection. The fallback peer and request entries are copied before use.
+
+- L112, 126, 171, 172 **SAFE** · The WeakMap key is request identity and its value is an owned address. The lookup pointer is immediately copied in a synchronous function.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -490,4 +496,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-18/286 files reviewed. 79 sites: 74 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+19/286 files reviewed. 80 sites: 75 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

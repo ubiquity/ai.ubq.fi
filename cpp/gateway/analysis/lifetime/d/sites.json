@@ -1490,8 +1490,23 @@
       ]
     },
     "src/auth/local_admin.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed listener configuration, request-scoped peer binding, and URL-origin inspection. The fallback peer and request entries are copied before use.",
+      "sites": [
+        {
+          "lines": [
+            112,
+            126,
+            171,
+            172
+          ],
+          "kinds": [
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The WeakMap key is request identity and its value is an owned address. The lookup pointer is immediately copied in a synchronous function."
+        }
+      ]
     },
     "src/auth/local_development_key.cpp": {
       "reviewed": false,
