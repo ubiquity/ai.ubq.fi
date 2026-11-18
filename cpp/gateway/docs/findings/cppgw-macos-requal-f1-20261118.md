@@ -6,12 +6,12 @@ Qualify the integrated F1 tree with Apple Clang and libc++ on arm64 macOS. Build
 every production translation unit and the three native executables. Run the runtime tests first, then the complete
 native suite. Build the macOS release archive with the workflow entry point and run its packaged `--version`.
 
-| Surface | Acceptance |
-| --- | --- |
-| Native build | The Darwin driver verifies vendor hashes, uses C11 for C and C++20/libc++ for C++, and links each test closure. |
-| Gateway behavior | Preserve functional and security decisions. Use Darwin-specific expectations for observed OS quirks. |
-| Test isolation | Keep the real Seatbelt network boundary, empty private `HOME`, fresh `TMPDIR` and credential-free test processes. All inference fixtures use local mocks. |
-| Release package | Build through `python3 -B cpp/gateway/packaging/macos/build.py` and verify the arm64 artifact and build identity. |
+| Surface          | Acceptance                                                                                                                                                |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native build     | The Darwin driver verifies vendor hashes, uses C11 for C and C++20/libc++ for C++, and links each test closure.                                           |
+| Gateway behavior | Preserve functional and security decisions. Use Darwin-specific expectations for observed OS quirks.                                                      |
+| Test isolation   | Keep the real Seatbelt network boundary, empty private `HOME`, fresh `TMPDIR` and credential-free test processes. All inference fixtures use local mocks. |
+| Release package  | Build through `python3 -B cpp/gateway/packaging/macos/build.py` and verify the arm64 artifact and build identity.                                         |
 
 Owned paths are `tools/macos-build.sh`, `docs/MACOS.md`, this report, Darwin paths in `include`, `src` and `tests`,
 and standard-library portability fixes with unchanged Linux semantics. Shared build and packaging code, vendors,
@@ -26,3 +26,17 @@ Budget 20 minutes for the cold runtime qualification and 30 minutes each for the
 using external scratch and one native driver at a time. Follow compiler counts and per-binary receipts, retain the
 first diagnostics and reuse verified objects after bounded repairs. The local stop condition is the package version
 receipt and a clean full-suite receipt or an exact record of each remaining failure.
+
+## First Apple Silicon receipt
+
+Builds use `/private/tmp/cppgw-macos-requal-f1-20261118`. From clean commit
+`b044a5125c5823ab3dabdad75127a6d6a0b4b67c`, Apple Clang compiled all 373 production sources and linked all
+three executables with five vendor archives. The cold runtime run passed 37/37 binaries and 478/478 cases in
+265.98 s. Its receipt is `native/runs/1795030276393774000`.
+
+The first full run reached all 450 binaries and 5,107 cases in 757.34 s. One binary failed, leaving 449/450
+binaries and 5,105/5,107 cases passed. See `native/runs/1795030574903312000/native_addon_differential_test.log`.
+Its first error was `native_addon_differential_test.cpp:145: verify inputs not json`. The integrated parser
+returned `SyntaxError("Invalid JSON")` where the Darwin vectors retained the four old Bun messages. The
+Darwin-only vector fix updates those messages and retains all 50 verification and 28 bootstrap inputs.
+The focused test, full rerun and package gate follow on the corrected commit.
