@@ -376,7 +376,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/runtime_config.hpp`
 - [x] `include/uos/sentinel/incident_outbox.hpp`
 - [x] `include/uos/sentinel/replay_admin.hpp`
-- [ ] `include/uos/sentinel/replay_capture.hpp`
+- [x] `include/uos/sentinel/replay_capture.hpp`
 - [ ] `include/uos/sentinel/replay_envelope.hpp`
 - [ ] `include/uos/sentinel/replay_limits.hpp`
 - [ ] `include/uos/sentinel/replay_model.hpp`
@@ -2140,6 +2140,10 @@ Reviewed captured replay lookup and injected dependency interfaces.
 
 - L18, 19, 21, 23, 29, 30 **SAFE** · The public adapter copies dependencies. The admin frame owns the exact opening or list callable and the shared KV through each direct wait.
 
+### `include/uos/sentinel/replay_capture.hpp`
+
+Namespace imports only. The replay and capture functions are recorded at their defining interfaces and implementations.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2389,4 +2393,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-268/286 files reviewed. 455 sites: 430 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+269/286 files reviewed. 455 sites: 430 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

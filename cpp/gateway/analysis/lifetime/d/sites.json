@@ -10099,7 +10099,8 @@
       ]
     },
     "include/uos/sentinel/replay_capture.hpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Namespace imports only. The replay and capture functions are recorded at their defining interfaces and implementations.",
       "sites": []
     },
     "include/uos/sentinel/replay_envelope.hpp": {
