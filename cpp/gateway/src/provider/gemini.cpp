@@ -276,7 +276,11 @@ namespace uos::provider::gemini {
       if (const auto* usage = rt::getObject(*result, "usage")) parsed.turn.usage = *usage;
       parsed.turn.deniedActions = deniedActions(rt::get(*result, "denied_actions"));
       if (parsed.status != "SUCCESS") {
-        throw GeminiError(502, "gemini_cli_failed", "Antigravity CLI returned status " + (parsed.status.empty() ? std::string("unknown") : parsed.status) + ".");
+        std::string message = "Antigravity CLI returned status " + (parsed.status.empty() ? std::string("unknown") : parsed.status) + ".";
+        const auto error = rt::getString(*result, "error");
+        const std::string detail = rt::trim(error ? *error : stderrText);
+        if (!detail.empty()) message += " " + rt::slice(detail, 0, 1000);
+        throw GeminiError(502, "gemini_cli_failed", std::move(message));
       }
       if (rt::trim(parsed.turn.response).empty() && !parsed.turn.deniedActions.empty()) {
         throw GeminiError(502, "gemini_tool_denied", "Antigravity requested a tool that headless gateway inference cannot approve.");

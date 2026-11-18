@@ -326,7 +326,8 @@ namespace uos::runtime::startup {
       permissions.read = {package.string(), state.string()};
       permissions.write = {(state / ".data").string()};
       permissions.immutable = std::vector<std::string>{package.string()};
-      for (const std::string_view name : {"/usr/lib", "/lib", "/usr/bin", "/etc/ssl", "/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/localtime", "/etc/passwd", "/etc/group", "/dev/null", "/dev/urandom", "/dev/random", "/proc/self"}) {
+      for (const std::string_view name : {"/usr/lib", "/lib", "/usr/bin", "/etc/ssl", "/etc/ca-certificates", "/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf",
+                                           "/etc/localtime", "/etc/passwd", "/etc/group", "/dev/null", "/dev/urandom", "/dev/random", "/proc/self"}) {
         if (fs::exists(name)) permissions.read.push_back(fs::canonical(name).string());
       }
       // The owner-authorized Antigravity CLI is the only executable admitted
@@ -347,6 +348,12 @@ namespace uos::runtime::startup {
           permissions.execute.push_back(fs::canonical(executable).string());
           const fs::path loader = "/lib/ld-linux-aarch64.so.1";
           if (fs::exists(loader)) permissions.execute.push_back(fs::canonical(loader).string());
+          const fs::path cliConfig = fs::path(*home) / ".gemini/config";
+          struct stat configInfo {};
+          if (::lstat(cliConfig.c_str(), &configInfo) == 0 && S_ISDIR(configInfo.st_mode) && !S_ISLNK(configInfo.st_mode) &&
+              configInfo.st_uid == ::getuid() && (configInfo.st_mode & 0077) == 0) {
+            permissions.read.push_back(fs::canonical(cliConfig).string());
+          }
           const fs::path pluginConfig = fs::path(*home) / ".config/antigravity";
           struct stat pluginInfo {};
           if (::lstat(pluginConfig.c_str(), &pluginInfo) == 0 && S_ISDIR(pluginInfo.st_mode) && !S_ISLNK(pluginInfo.st_mode) &&
