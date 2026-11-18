@@ -8139,8 +8139,26 @@
       ]
     },
     "include/uos/authority/native_contracts.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the native quota value contracts and synchronous helpers.",
+      "sites": [
+        {
+          "lines": [
+            49,
+            58,
+            62,
+            67,
+            75,
+            79
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The plan labels refer to static literals, and variant members own their payloads."
+        }
+      ]
     },
     "include/uos/authority/native_kernel.hpp": {
       "reviewed": false,
