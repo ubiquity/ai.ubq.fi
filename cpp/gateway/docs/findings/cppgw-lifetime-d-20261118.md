@@ -43,7 +43,7 @@ The signing-key fingerprint was `6084F3CF814B57C1CF12EFD515CF4D18AF4F7421`. Open
 | [SQLite 3.54.0](https://www.sqlite.org/2026/sqlite-autoconf-3540000.tar.gz) | `134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed` | `./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'`, `make -j1`, `sudo -n make install`, `sudo -n ldconfig`. `pkg-config --modversion sqlite3` returned 3.54.0. |
 | [ICU 78.3](https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz) | `3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0` | `../icu/source/configure --prefix="$icu/prefix" --disable-tests --disable-samples --disable-extras --disable-static`, then `make -j1`, `make install`. The staged pkg-config returned 78.3. |
 
-The repository's `tools/tidy.sh` verifies the entire routine configuration before running a selected check. LLVM 21 reported 11 unrelated check names from the earlier LLVM 24 snapshot as unknown during `--verify-config`. The area runner uses the original `.clang-tidy` options and header filter with an exact check override. Its `--list-checks` inventory showed all five requested checks. The first run used Ubuntu ICU 74.2 headers and completed 143/143 translation units in 209.645 seconds with zero failures or timeouts. It emitted 100 deduplicated diagnostics including transitive headers, 9 capturing-lambda and 91 reference-parameter. The pinned-ICU rerun is in progress. The audit scripts and exact bound are reproducible with the following commands.
+The repository's `tools/tidy.sh` verifies the entire routine configuration before running a selected check. LLVM 21 reported 11 unrelated check names from the earlier LLVM 24 snapshot as unknown during `--verify-config`. The area runner uses the original `.clang-tidy` options and header filter with an exact check override. Its `--list-checks` inventory showed all five requested checks. The first run used Ubuntu ICU 74.2 headers and completed 143/143 translation units in 209.645 seconds with zero failures or timeouts. It emitted 100 deduplicated diagnostics including transitive headers, 9 capturing-lambda and 91 reference-parameter. The ICU 78.3 rerun completed 143/143 translation units in 208.652 seconds with the same 100 diagnostics and zero failures or timeouts. The audit scripts and exact bound are reproducible with the following commands.
 
 ```sh
 python3 -B cpp/gateway/analysis/lifetime/d/audit.py pending
@@ -62,6 +62,30 @@ git diff --check 6d28e858e7ab8b8b1036db4a4adfdade0465ed40
 ```
 
 Each audit entry binds its source coordinates to the baseline Git blobs. `audit.py verify` reconciles the checklist, Markdown site entries and JSON, validates lines, and requires every lexical `co_await` line to have a verdict in a reviewed file. `audit.py pending` prints the restart order. Finish each file with `audit.py record`, which writes both ledgers and makes one Git commit per reviewed file.
+
+## Focused sanitizer control
+
+A scratch harness used the production `rt::race`, `Loop` and Promise identities with 128 synthetic 64 KiB payloads per condition. With a winner and a pending private loser, 128/128 loser/payload pairs remained live on the same running loop. Rejecting the private loser after observing the winner left 0/128 pairs live. Loop teardown released all 128 original pairs. This measures retained owners before teardown, when a process-long event loop still serves requests. The two-condition run exited 0 with no ASan, UBSan or LeakSanitizer diagnostic. Compilation took 20.03 s and execution 0.02 s.
+
+The test source was created outside the checkout as `$source_dir/race_owners.cpp`. Its `Task<Observation>` used `auto winner = std::make_shared<std::array<char, 64 * 1024>>();`, a private `withResolvers<std::shared_ptr<Payload>>()`, and a ready `Promise::resolve(std::move(winner))`. It returned a weak Promise identity and a weak winning payload captured before starting the race. Each trial awaited the race with `co_await racing.wait()`. The control then called `abandoned.reject()`. The driver alternated 128 trials of each condition with `rt::blockOn(loop, sample(settleLoser))`, called `loop.run()`, and counted owners before and after the loop scope. All code used local data.
+
+```sh
+scratch=/tmp/cppgw-lifetime-d.gktp0iv5
+source_dir="$scratch/race-asan.ngbqeWmT"
+trial=$(mktemp -d "$scratch/race-recheck.XXXXXXXX")
+mkdir "$trial/home" "$trial/tmp"
+gateway="$PWD/cpp/gateway"
+boost_dir="$scratch/boost_1_92_0"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$trial/home" TMPDIR="$trial/tmp" \
+  /usr/bin/time -f 'compile elapsed %e s' /usr/bin/clang++-21 -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+  -DBOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING -DBOOST_JSON_NO_LIB -pthread -I"$gateway/include" -isystem "$boost_dir" \
+  "$source_dir/race_owners.cpp" "$gateway/src/rt/async.cpp" "$gateway/src/rt/clock.cpp" "$gateway/src/rt/number.cpp" \
+  "$boost_dir/stage/lib/libboost_json.a" -o "$trial/race_owners"
+sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --no-new-privs \
+  env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$trial/home" TMPDIR="$trial/tmp" \
+  ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 \
+  /usr/bin/time -f 'run elapsed %e s' "$trial/race_owners"
+```
 
 ## File checklist
 
@@ -960,6 +984,29 @@ Use the same small edit in each reader. In `readWithDeadline` the resolver repla
 +      if (observed) inactive.reject();
 ```
 
+### P1 · Transport setup can strand the SSE body outcome and request drain
+
+`src/handler/terminal_log.cpp:519-538`. A terminal SSE wrapper registers logging that needs both the transport outcome and the body outcome. Native header setup can throw before reading the body, and the fallback failure path can finish delivery without cancelling the wrapper. Both layers keep the request drain, terminal state and admission permit waiting on the private body outcome indefinitely.
+
+The source edit belongs to the transport owner. The Web Headers adapter permits values that node:http rejects, such as DEL, so the error is reachable without allocation failure. In `src/runtime/http.cpp:1783-1795`, name `response.body()` before preparing the headers, and dispatch cancellation on header setup failure. Preserve the original failure and the separate transport receipt.
+
+```diff
++      const std::optional<rt::ByteStream> body = response.body();
+       if (responseInterrupted(*outgoing, signal)) {
+-        if (const std::optional<rt::ByteStream> body = response.body()) rt::spawn(body->cancel(signal.reason()), rt::ignoreRejection);
++        if (body) rt::spawn(body->cancel(signal.reason()), rt::ignoreRejection);
+         co_return;
+       }
+-      prepareResponseHeaders(request, response, *outgoing);
+-      const std::optional<rt::ByteStream> body = response.body();
++      try {
++        prepareResponseHeaders(request, response, *outgoing);
++      } catch (...) {
++        if (body) rt::spawn(body->cancel(std::current_exception()), rt::ignoreRejection);
++        throw;
++      }
+```
+
 ### P2 · Injected admin Tasks retain the parent callback address
 
 `src/admin/codex.cpp:208-209,216-221,239-240` and `src/admin/defaults.cpp:53-54`. Any failing sibling lets the join return while an injected capturing coroutine is suspended. The corresponding handler frame owns the callable and is destroyed during unwind, leaving the pending coroutine without its closure. Normal route dispatch constructs empty dependency overrides. Keep each injected callable in an owning child frame before starting it.
@@ -980,6 +1027,45 @@ Use the same small edit in each reader. In `readWithDeadline` the resolver repla
 
 Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refreshClaude` with the corresponding copied options. Apply the `buildCatalog` form at both sites.
 
+### P2 · Detached exception replay borrows its injected callable
+
+`src/handler/terminal_route.cpp:523-529`. An injected capturing Task can convert to the hook's Promise return type. Registration can return successfully while persistence remains suspended. On parent return the options frame releases the coroutine's closure. The default persistence task has owning parameters.
+
+```diff
+-    rt::Promise<SentinelReplayPersistResult> persisted = options.persistSentinelReplay
+-      ? options.persistSentinelReplay(replaySnapshot, observation)
++    auto persist = std::make_shared<decltype(options.persistSentinelReplay)>(std::move(options.persistSentinelReplay));
++    rt::Promise<SentinelReplayPersistResult> persisted = *persist
++      ? (*persist)(replaySnapshot, observation)
+       : rt::Promise<SentinelReplayPersistResult>(persistSentinelReplayFromEnvironment(replaySnapshot, observation));
+-    auto persistence = persisted.then(ignoreSuccess, ignoreFailure).then([replaySnapshot] {
++    auto persistence = persisted.then(ignoreSuccess, ignoreFailure).then([replaySnapshot, persist] {
++      (void)persist;
+       zeroSentinelReplayInput(&replaySnapshot);
+     });
+```
+
+### P2 · Successful active health probes retain cleared timeout losers
+
+`src/health.cpp:306-319`. The provider probe wins, then its finalizer clears the only timeout callback. The pending race source retains the combined Promise, including its probe summary, on the process loop. Each independently completed active probe repeats the retention.
+
+```diff
+-      auto timeout = rt::newPromise<json::object>([controller, progress, timer](rt::Resolve<json::object> resolve, rt::Reject) {
+-        *timer = rt::setTimeout([controller, progress, resolve] { controller.abort(rt::makeReason(rt::DOMException("Active upstream health probe timed out.", "TimeoutError"))); resolve(timeoutProbe(*progress)); }, activeUpstreamHealthTimeoutMs);
+-      });
++      auto timeout = rt::withResolvers<json::object>();
++      *timer = rt::setTimeout([controller, progress, resolve = timeout.resolve] { controller.abort(rt::makeReason(rt::DOMException("Active upstream health probe timed out.", "TimeoutError"))); resolve(timeoutProbe(*progress)); }, activeUpstreamHealthTimeoutMs);
+@@
+-      std::vector<rt::Promise<json::object>> racers; racers.emplace_back(std::move(task)); racers.push_back(timeout);
+-      auto pending = rt::race(std::move(racers)).finally_([timer] { if (*timer) rt::clearTimeout(*timer); upstreamProbeInFlight = std::nullopt; });
++      std::vector<rt::Promise<json::object>> racers; racers.emplace_back(std::move(task)); racers.push_back(timeout.promise);
++      auto pending = rt::race(std::move(racers)).finally_([timer, reject = timeout.reject] {
++        if (*timer) rt::clearTimeout(*timer);
++        reject();
++        upstreamProbeInFlight = std::nullopt;
++      });
+```
+
 ### P3 · Local provisioning retains the losing abort source
 
 `src/auth/local_development_key.cpp:94-113`. Pricing finishes before abort and the listener is removed. The abort-only source still retains the combined Promise with copied local key material until loop teardown. The existing timer cleanup and late initializer observation stay in place.
@@ -995,6 +1081,44 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +      if (observed) reject();
 ```
 
+### P3 · Queued admission listener survives loop teardown
+
+`src/inference_admission.cpp:149-179`. A dropped loop clears the queue-timeout timer without running its abort callback. The controller owns each waiter, and the waiter and signal own a listener that strongly captures both. No remaining action can detach it once the loop and external owners are gone.
+
+Keep the original queue deadline and the preference for a simultaneous caller abort. Make the explicit exact timer the outside owner of pending waiters. The waiter retains a clearable timer identity, with no strong path back to the closure. The caller-signal listener holds weak references, locks them inline and uses the existing settlement path.
+
+```diff
+-    std::optional<rt::AbortSignal> waitSignal;
++    std::optional<rt::Timeout> timeout;
+@@
+-      if (waiter->waitSignal && waiter->onWaitAbort) waiter->waitSignal->removeEventListener("abort", *waiter->onWaitAbort);
+-      waiter->waitSignal.reset();
++      if (waiter->callerSignal && waiter->onWaitAbort) waiter->callerSignal->removeEventListener("abort", *waiter->onWaitAbort);
++      if (waiter->timeout) rt::clearTimeout(*waiter->timeout);
+@@
+-          const rt::EventListener onWaitAbort([self, waiter, callerSignal, queuedAtMs] { /* settle caller abort or timeout */ });
++          const rt::EventListener onWaitAbort([controller = std::weak_ptr(self), pending = std::weak_ptr(waiter), queuedAtMs] {
++            const auto owner = controller.lock();
++            const auto live = pending.lock();
++            if (owner && live) owner->settleWaiter(live, InferenceAdmissionCallerAborted{.waitedMs = elapsedMs(queuedAtMs)});
++          });
++          waiter->timeout = rt::detail::createExactTimer([self, waiter, queuedAtMs] {
++            if (waiter->callerSignal && waiter->callerSignal->aborted())
++              self->settleWaiter(waiter, InferenceAdmissionCallerAborted{.waitedMs = elapsedMs(queuedAtMs)});
++            else
++              self->settleWaiter(waiter, InferenceAdmissionLocalOverload{.cause = "queue_wait_timeout", .waitedMs = elapsedMs(queuedAtMs)});
++          }, maxQueueWaitMs);
++          waiter->timeout->unref();
+@@
+-          waitSignal.addEventListener("abort", onWaitAbort);
++          if (callerSignal) callerSignal->addEventListener("abort", onWaitAbort);
+           enqueueWaiter(waiter);
+-          if (waitSignal.aborted()) onWaitAbort();
++          if (callerSignal && callerSignal->aborted()) onWaitAbort();
+```
+
+Remove the replaced combined-signal construction and add the corresponding `uos/rt/clock.hpp` dependency if needed.
+
 ### P3 · Awaited temporary member access under GCC 12.2 rules
 
 `src/admin/defaults.cpp:99`. The commit result is immediately dereferenced in the await expression. This violates `PORTING.md`'s named-result requirement, even though no failure was observed with Clang 21.
@@ -1002,6 +1126,14 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 ```diff
 -    bool committed = false; rt::Reason failure; try { committed = (co_await atomic->commit()).ok; } catch (...) { failure = std::current_exception(); }
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
+```
+
+`src/auth/passkeys.cpp:4313, 4410, 4425, 4488, 4919, 5001`. The lookups construct a temporary KV key within the awaited call expression. Current native adapters copy the receiver's storage and move the key, and Clang 21 reported no failure. Factor the key out for the required GCC comparison profile. The logout equivalent uses an explicit conditional block.
+
+```diff
+-      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(passkeyHandleKey(handle));
++      const rt::KvKey handleKey = passkeyHandleKey(handle);
++      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
 79/286 files reviewed. 173 sites: 160 SAFE, 13 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
