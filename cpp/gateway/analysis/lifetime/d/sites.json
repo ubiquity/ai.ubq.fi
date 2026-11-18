@@ -3622,7 +3622,8 @@
       ]
     },
     "src/input_normalization.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous payload, tool, message and schema normalizers. Any reference-capturing algorithms run inline and normalization owns its output. No suspension or deferred callbacks.",
       "sites": []
     },
     "src/jev_compaction/compaction.cpp": {

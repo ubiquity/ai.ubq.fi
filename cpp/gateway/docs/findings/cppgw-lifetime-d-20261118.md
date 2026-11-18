@@ -145,7 +145,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [ ] `src/images.cpp`
 - [x] `src/inference_admission.cpp`
 - [x] `src/inference_deadline.cpp`
-- [ ] `src/input_normalization.cpp`
+- [x] `src/input_normalization.cpp`
 - [ ] `src/jev_compaction/compaction.cpp`
 - [ ] `src/jev_compaction/hybrid.cpp`
 - [ ] `src/kv.cpp`
@@ -895,6 +895,10 @@ Reviewed the three stream/paid timer factories and request-deadline signal compo
 
 - L15, 16, 24, 25, 32, 35, 38, 51, 52, 59, 62, 65, 83, 84, 91, 94, 97 **SAFE** · Timer callbacks copy the abort controller and active flag, and returned handles use timer identity. The timer owns no callback that retains its returned deadline handle, and clear or expiry releases the registration.
 
+### `src/input_normalization.cpp`
+
+Reviewed synchronous payload, tool, message and schema normalizers. Any reference-capturing algorithms run inline and normalization owns its output. No suspension or deferred callbacks.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1000,4 +1004,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-78/286 files reviewed. 173 sites: 160 SAFE, 13 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+79/286 files reviewed. 173 sites: 160 SAFE, 13 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
