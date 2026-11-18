@@ -1518,8 +1518,20 @@
       ]
     },
     "include/uos/cache/prompt_analytics_queue.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "15-35,46-71,79-94",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Optional telemetry payload and queue options",
+          "evidence": "Queue values own event metadata and any injected store; no request frame borrow is stored. An injected queue is a copied handle over state and the sink takes its entry by value."
+        }
+      ]
     },
     "include/uos/cache/prompt_analytics_read.hpp": {
       "reviewed": false,
