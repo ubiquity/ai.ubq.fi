@@ -194,3 +194,18 @@ env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$qual_home" TMPDIR="$qual_tmp" L
 ```
 
 The ICU release archive SHA-256 is `3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0`. The release receipt `icu78-release/receipt.json` has SHA-256 `fa7814ca3c38e98812ffc2d1d0ce0bfd9b06888cc8b691e7111bdf0838d5ef01`. It binds commit `f4c37d68f95197b134ec08b975cb55926c568d5e`, tree `cea7d458b1baf39554aa22d9d8c6c899f87f6caf`, and portable build-input digest `d34339801085fa2b124ae7e6cdee153a82686a732d3bf5aea34a8964afab3124`. The source digest matches the initial release build and the end of the requalification. [Starting branch's ICU qualification](cppgw-std-icu-20261117.md)
+
+## Sanitizer verification and branch handoff
+
+ASan, UBSan and LeakSanitizer passed **50/50 linked binaries and 609/609 cases** with ICU 78.3. The original sanitizer build compiled 307 link-selected application and runtime objects with `-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer`. The run used `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1` and `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1` in the portable driver's private fixture namespaces. The ICU 78.3 pass rebuilt the two ICU consumers and relinked the same 50-target selection. Its recompile took 10.448 seconds and relinking and test execution took 42.453 seconds. Each binary ran the same case count as the ICU 78.3 release run.
+
+```sh
+env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$qual_home" TMPDIR="$qual_tmp" LC_ALL=C.UTF-8 TZ=UTC \
+  python3 -B "$work/qualify_icu78.py" "$PWD" asan
+python3 -B "$work/final_receipts.py" "$PWD"
+git diff --check b54357a9..HEAD
+```
+
+The ICU 78.3 sanitizer receipt `icu78-asan/receipt.json` has SHA-256 `c86922eb0a7c090d27cfe5f67d358c36d71129ae271e77ea6c57846bab8fd6d2`. It binds commit `c7d7d3d619e06781b28fa973de28465c531ede3b` and tree `9540e9fe99c2cc4b793c27d59d6f41f6f4613f74`. The earlier sanitizer receipt with ICU 74.2 also passed 50/50 binaries and 609/609 cases, with SHA-256 `e200509faa29508646288f7228dc0f1ece272f959aae1fd430775bd6c33f81b3`. Both sanitizer receipts and the release receipts use the same portable build-input digest. The final source and test diff against the paired candidate is empty. The only application changes against `b54357a9` are the two owned source files.
+
+The GitHub push preflight could not authenticate from this runner. The commits are on the clean local task checkout. A fresh fetch resolved `origin/development` to `6bd78fc5e3b0783809691c6bd45d25ac45e9696e`, which lacks the task tip. Remote branch delivery and integration remain pending.
