@@ -3594,8 +3594,28 @@
       ]
     },
     "src/provider/claude_code_usage_refresh.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The work and cleanup closures are owned correctly. Two KV await expressions contain the same direct aggregate temporary.",
+      "sites": [
+        {
+          "lines": "22-34,36-72",
+          "kind": "usage refresh task and capturing work coroutine",
+          "verdict": "SAFE",
+          "reason": "rt::async retains the work closure and its KV, binding, clock and options captures through the refreshed usage write."
+        },
+        {
+          "lines": "35,75",
+          "kind": "braced read options in co_await",
+          "verdict": "DEFECT",
+          "reason": "Each virtual get is awaited with an inline KvGetOptions aggregate. The port forbids that form in its GCC 12 comparison profile, even with this trivial value. Name the options and get task before the await."
+        },
+        {
+          "lines": "74,76-83",
+          "kind": "cleanup coroutine closure",
+          "verdict": "SAFE",
+          "reason": "withFinally owns the cleanup callback throughout the final read/commit, including when the main work rejects."
+        }
+      ]
     },
     "src/provider/claude_code_usage_schema.cpp": {
       "status": "pending",
