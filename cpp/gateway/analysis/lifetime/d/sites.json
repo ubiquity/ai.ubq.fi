@@ -4759,7 +4759,8 @@
       ]
     },
     "src/models/metadata.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous model capability normalization, defaults and metadata merging. Input views are consumed synchronously and copied into the returned hints. No suspended or retained callback.",
       "sites": []
     },
     "src/models/openrouter_models.cpp": {

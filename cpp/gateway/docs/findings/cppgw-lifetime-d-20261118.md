@@ -212,7 +212,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/models/codex_models_availability.cpp`
 - [x] `src/models/codex_models_fetch.cpp`
 - [x] `src/models/codex_models_whitelist.cpp`
-- [ ] `src/models/metadata.cpp`
+- [x] `src/models/metadata.cpp`
 - [ ] `src/models/openrouter_models.cpp`
 - [ ] `src/openai.cpp`
 - [ ] `src/openai_schema.cpp`
@@ -1109,6 +1109,10 @@ Reviewed whitelist selection, retention and KV writes.
 - L134 **DEFECT** · The strong-read options aggregate is constructed in the await full-expression, which the GCC 12.2 porting rule forbids. Bind options and the get Task to named locals before awaiting.
 - L140 **SAFE** · The frame owns KV and serialized input and waits for the storage-owning native put wrapper.
 
+### `src/models/metadata.cpp`
+
+Reviewed synchronous model capability normalization, defaults and metadata merging. Input views are consumed synchronously and copied into the returned hints. No suspended or retained callback.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1357,4 +1361,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-105/286 files reviewed. 220 sites: 203 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+106/286 files reviewed. 220 sites: 203 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
