@@ -3254,8 +3254,34 @@
       ]
     },
     "src/provider/anthropic_responses.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Native Messages parsing uses a per-stream generator and weak abort signal access. The normalizer has direct aggregate awaits requiring task naming.",
+      "sites": [
+        {
+          "lines": "551-575",
+          "kind": "read and abort race",
+          "verdict": "SAFE",
+          "reason": "The synchronous setup installs a weak signal listener and independent resolvers. Both branches retain operation state after the race settles."
+        },
+        {
+          "lines": "644-719",
+          "kind": "watchdog, frame borrow, and reader cancellation",
+          "verdict": "SAFE",
+          "reason": "ReaderState and the native read result remain live through yield. The callback receives its own reader/cause state, and cleanup or timer shutdown releases the timer edge."
+        },
+        {
+          "lines": "721-771,805,820-852,864-876",
+          "kind": "translation generator and source algorithms",
+          "verdict": "SAFE",
+          "reason": "Frame and translated buffer values stay local. Pull and cancel own the shared translation state, and detached body cancel owns stream operation state."
+        },
+        {
+          "lines": "779,857,880",
+          "kind": "direct awaits of by-value aggregates",
+          "verdict": "DEFECT",
+          "reason": "The bounded-body reads and native error normalization await coroutine calls with owning option aggregates directly in the expression. GCC 12.2's documented pattern can miscompile their destruction. Name each task before awaiting."
+        }
+      ]
     },
     "src/provider/capacity.cpp": {
       "status": "pending",

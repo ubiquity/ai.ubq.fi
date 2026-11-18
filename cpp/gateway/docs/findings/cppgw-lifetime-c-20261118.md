@@ -283,7 +283,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/anthropic_chat_stream.cpp`
 - [x] `src/provider/anthropic_replay.cpp`
 - [x] `src/provider/anthropic_response_wire.cpp`
-- [ ] `src/provider/anthropic_responses.cpp`
+- [x] `src/provider/anthropic_responses.cpp`
 - [ ] `src/provider/capacity.cpp`
 - [ ] `src/provider/capacity_analytics.cpp`
 - [ ] `src/provider/capacity_contract.cpp`
@@ -1797,3 +1797,12 @@ Replay validation, identity and cache maintenance are synchronous. Borrowed JSON
 The Responses writer's callable bundle is synchronous.
 
 - 231-345 · writer and output projection state · **SAFE** · The writer callables own their state and synchronously copy event or tool values, without a state-to-callable back-reference.
+
+### `src/provider/anthropic_responses.cpp`
+
+Native Messages parsing uses a per-stream generator and weak abort signal access. The normalizer has direct aggregate awaits requiring task naming.
+
+- 551-575 · read and abort race · **SAFE** · The synchronous setup installs a weak signal listener and independent resolvers. Both branches retain operation state after the race settles.
+- 644-719 · watchdog, frame borrow, and reader cancellation · **SAFE** · ReaderState and the native read result remain live through yield. The callback receives its own reader/cause state, and cleanup or timer shutdown releases the timer edge.
+- 721-771,805,820-852,864-876 · translation generator and source algorithms · **SAFE** · Frame and translated buffer values stay local. Pull and cancel own the shared translation state, and detached body cancel owns stream operation state.
+- 779,857,880 · direct awaits of by-value aggregates · **DEFECT** · The bounded-body reads and native error normalization await coroutine calls with owning option aggregates directly in the expression. GCC 12.2's documented pattern can miscompile their destruction. Name each task before awaiting.
