@@ -1786,8 +1786,34 @@
       ]
     },
     "src/codex/banked_reset_claim.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Hash and ledger transitions preserve their candidate, row and transaction state through sequential waits.",
+      "sites": [
+        {
+          "lines": "69-105,169-191",
+          "kind": "hash callback and fence iterator",
+          "verdict": "SAFE",
+          "reason": "The hash callable and candidate are frame values. Each fence reference refers to the private immutable candidate vector during its joined KV read."
+        },
+        {
+          "lines": "206-440",
+          "kind": "claim and update transaction awaits",
+          "verdict": "SAFE",
+          "reason": "Candidates, KV, rows, mutators and atomic operations are retained by the frames which join their reads and commits. Row alternatives and optional values are local snapshots."
+        },
+        {
+          "lines": "462-572,616-683",
+          "kind": "submission preparation and renewal",
+          "verdict": "SAFE",
+          "reason": "The row, budget, fences and usage variants are local to each attempt and remain live through sequential read and commit waits."
+        },
+        {
+          "lines": "783-820",
+          "kind": "record update callbacks",
+          "verdict": "SAFE",
+          "reason": "Each mutator's outcome data is captured by value and the update task owns the callable until after the commit."
+        }
+      ]
     },
     "src/codex/banked_reset_pool.cpp": {
       "status": "pending",

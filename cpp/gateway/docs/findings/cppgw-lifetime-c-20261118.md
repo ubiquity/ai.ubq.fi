@@ -190,7 +190,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/auth_refresh.cpp`
 - [x] `src/codex/auth_repair.cpp`
 - [x] `src/codex/banked_reset.cpp`
-- [ ] `src/codex/banked_reset_claim.cpp`
+- [x] `src/codex/banked_reset_claim.cpp`
 - [ ] `src/codex/banked_reset_pool.cpp`
 - [ ] `src/codex/banked_reset_provider.cpp`
 - [ ] `src/codex/banked_reset_submission.cpp`
@@ -1207,3 +1207,12 @@ The usage gate performs one asynchronous read. Record conversion and observers r
 
 - 44-69 · usage gate read · **SAFE** · The coroutine owns KV, account hash, and authorization until readCodexResetUsage settles and the decision is made.
 - 381-403 · telemetry invocation · **SAFE** · Observer and metric arguments are consumed synchronously under the caller's live telemetry and field owners.
+
+### `src/codex/banked_reset_claim.cpp`
+
+Hash and ledger transitions preserve their candidate, row and transaction state through sequential waits.
+
+- 69-105,169-191 · hash callback and fence iterator · **SAFE** · The hash callable and candidate are frame values. Each fence reference refers to the private immutable candidate vector during its joined KV read.
+- 206-440 · claim and update transaction awaits · **SAFE** · Candidates, KV, rows, mutators and atomic operations are retained by the frames which join their reads and commits. Row alternatives and optional values are local snapshots.
+- 462-572,616-683 · submission preparation and renewal · **SAFE** · The row, budget, fences and usage variants are local to each attempt and remain live through sequential read and commit waits.
+- 783-820 · record update callbacks · **SAFE** · Each mutator's outcome data is captured by value and the update task owns the callable until after the commit.
