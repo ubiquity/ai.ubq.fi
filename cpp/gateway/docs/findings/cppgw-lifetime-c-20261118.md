@@ -227,7 +227,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/deepseek/chat_projection.cpp`
 - [x] `src/deepseek/context_admission_failure.cpp`
 - [x] `src/deepseek/flash_aliases.cpp`
-- [ ] `src/deepseek/forwarded_payload_policy.cpp`
+- [x] `src/deepseek/forwarded_payload_policy.cpp`
 - [ ] `src/deepseek/handlers.cpp`
 - [ ] `src/deepseek/index.cpp`
 - [ ] `src/deepseek/responses.cpp`
@@ -1463,3 +1463,7 @@ Failure marking and recognition are synchronous. Response identity tracking uses
 Catalog warming is detached while alias calculation uses copied catalog and model results.
 
 - 104-107 · detached catalog fetches · **SAFE** · Each spawned task obtains or owns its fetch state and receives no local view or closure from the warming function.
+
+### `src/deepseek/forwarded_payload_policy.cpp`
+
+Payload and context limits are parsed and applied synchronously. The profile view is consumed within the lookup call.

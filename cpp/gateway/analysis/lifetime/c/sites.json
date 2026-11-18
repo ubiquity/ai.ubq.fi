@@ -2474,7 +2474,8 @@
       ]
     },
     "src/deepseek/forwarded_payload_policy.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Payload and context limits are parsed and applied synchronously. The profile view is consumed within the lookup call.",
       "sites": []
     },
     "src/deepseek/handlers.cpp": {
