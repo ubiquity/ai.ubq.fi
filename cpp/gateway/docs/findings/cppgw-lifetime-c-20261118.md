@@ -282,7 +282,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/anthropic_chat_responses.cpp`
 - [x] `src/provider/anthropic_chat_stream.cpp`
 - [x] `src/provider/anthropic_replay.cpp`
-- [ ] `src/provider/anthropic_response_wire.cpp`
+- [x] `src/provider/anthropic_response_wire.cpp`
 - [ ] `src/provider/anthropic_responses.cpp`
 - [ ] `src/provider/capacity.cpp`
 - [ ] `src/provider/capacity_analytics.cpp`
@@ -1791,3 +1791,9 @@ Framing and response bytes live in the generator, with owned watchdog and reader
 ### `src/provider/anthropic_replay.cpp`
 
 Replay validation, identity and cache maintenance are synchronous. Borrowed JSON blocks and cache iterators are consumed in the corresponding call.
+
+### `src/provider/anthropic_response_wire.cpp`
+
+The Responses writer's callable bundle is synchronous.
+
+- 231-345 · writer and output projection state · **SAFE** · The writer callables own their state and synchronously copy event or tool values, without a state-to-callable back-reference.

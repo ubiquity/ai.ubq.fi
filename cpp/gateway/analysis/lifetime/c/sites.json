@@ -3242,8 +3242,16 @@
       "sites": []
     },
     "src/provider/anthropic_response_wire.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The Responses writer's callable bundle is synchronous.",
+      "sites": [
+        {
+          "lines": "231-345",
+          "kind": "writer and output projection state",
+          "verdict": "SAFE",
+          "reason": "The writer callables own their state and synchronously copy event or tool values, without a state-to-callable back-reference."
+        }
+      ]
     },
     "src/provider/anthropic_responses.cpp": {
       "status": "pending",
