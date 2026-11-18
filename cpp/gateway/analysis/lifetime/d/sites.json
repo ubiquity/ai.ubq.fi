@@ -7698,8 +7698,29 @@
       ]
     },
     "include/uos/authority/durable_store.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed synchronous SQL adapter pointers, cursor results and Promise-based store methods.",
+      "sites": [
+        {
+          "lines": [
+            39,
+            43,
+            47,
+            53,
+            55,
+            56,
+            63
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The SQL storage contract invokes transaction callbacks synchronously. The durable store owns the storage and its cursor returns a materialized row vector."
+        }
+      ]
     },
     "include/uos/authority/native_api_key.hpp": {
       "reviewed": false,

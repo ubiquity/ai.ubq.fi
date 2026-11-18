@@ -280,7 +280,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/contracts.hpp`
 - [x] `include/uos/authority/credential_publication.hpp`
 - [x] `include/uos/authority/delivery_outbox.hpp`
-- [ ] `include/uos/authority/durable_store.hpp`
+- [x] `include/uos/authority/durable_store.hpp`
 - [ ] `include/uos/authority/native_api_key.hpp`
 - [ ] `include/uos/authority/native_api_key_audit.hpp`
 - [ ] `include/uos/authority/native_api_key_policy.hpp`
@@ -1558,6 +1558,12 @@ Reviewed the outbox interfaces and their forwarding ownership.
 
 - L18, 20, 21, 24 **SAFE** · The synchronous methods copy the shared authority and handle into observation Tasks before returning, so the outbox can be released.
 
+### `include/uos/authority/durable_store.hpp`
+
+Reviewed synchronous SQL adapter pointers, cursor results and Promise-based store methods.
+
+- L39, 43, 47, 53, 55, 56, 63 **SAFE** · The SQL storage contract invokes transaction callbacks synchronously. The durable store owns the storage and its cursor returns a materialized row vector.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1806,4 +1812,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-172/286 files reviewed. 344 sites: 323 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+173/286 files reviewed. 345 sites: 324 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
