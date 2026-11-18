@@ -336,6 +336,26 @@ ASYNC_TEST("an abandoned tee releases its source while a read is parked") {
   EXPECT(weak.expired());
 }
 
+ASYNC_TEST("tee cancellation still settles from the source after the branches are released") {
+  for (const bool fail : {false, true}) {
+    std::optional<Controller> controller;
+    rt::UnderlyingSource<std::string> source;
+    source.start = [&controller](Controller active) { controller.emplace(std::move(active)); };
+    const Stream stream(std::move(source), rt::QueuingStrategy{0});
+    rt::Promise<void> cancelled;
+    {
+      const auto branches = stream.tee();
+      cancelled = branches.first.cancelPromise();
+      co_await rt::sleep(1);
+      EXPECT(cancelled.pending());
+    }
+    if (fail) controller->error(rt::makeReason(rt::JsError("source failed")));
+    else controller->close();
+    co_await rt::sleep(1);
+    EXPECT(cancelled.fulfilled());
+  }
+}
+
 ASYNC_TEST("bun stream2: tee() gives both branches every chunk; both cancels cancel the source with [r1, r2]; a source error errors both") {
   auto log = makeLog();
   {
