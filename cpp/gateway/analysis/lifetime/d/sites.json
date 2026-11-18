@@ -8906,8 +8906,20 @@
       ]
     },
     "include/uos/kv_conversion/cli.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the offline conversion command declaration.",
+      "sites": [
+        {
+          "lines": [
+            11
+          ],
+          "kinds": [
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The argumentless entry Task constructs its own CLI options before awaiting conversion."
+        }
+      ]
     },
     "include/uos/kv_conversion/convert.hpp": {
       "reviewed": false,

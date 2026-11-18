@@ -333,7 +333,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/jev_compaction/compaction.hpp`
 - [x] `include/uos/jev_compaction/hybrid.hpp`
 - [x] `include/uos/kv.hpp`
-- [ ] `include/uos/kv_conversion/cli.hpp`
+- [x] `include/uos/kv_conversion/cli.hpp`
 - [ ] `include/uos/kv_conversion/convert.hpp`
 - [ ] `include/uos/kv_conversion/cursors.hpp`
 - [ ] `include/uos/kv_conversion/legacy_codec.hpp`
@@ -1872,6 +1872,12 @@ Reviewed KV startup and test overrides. Replacing a pending injected opener is c
 
 - L14, 17, 21 **SAFE** · Initialization and the resolved override take shared KV values, and coalesced consumers obtain their own Promise and store handles.
 
+### `include/uos/kv_conversion/cli.hpp`
+
+Reviewed the offline conversion command declaration.
+
+- L11 **SAFE** · The argumentless entry Task constructs its own CLI options before awaiting conversion.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2120,4 +2126,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-225/286 files reviewed. 399 sites: 377 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+226/286 files reviewed. 400 sites: 378 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
