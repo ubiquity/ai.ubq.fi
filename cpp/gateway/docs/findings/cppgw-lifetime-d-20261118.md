@@ -239,7 +239,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/sentinel/replay_model.cpp`
 - [x] `src/sentinel/replay_observation.cpp`
 - [x] `src/sentinel/replay_read.cpp`
-- [ ] `src/sentinel/replay_retention.cpp`
+- [x] `src/sentinel/replay_retention.cpp`
 - [ ] `src/sentinel/replay_retention_bootstrap.cpp`
 - [ ] `src/sentinel/replay_retention_metadata.cpp`
 - [ ] `src/sentinel/replay_retention_schema.cpp`
@@ -1276,6 +1276,22 @@ Reviewed the captured upstream stream, attempt callbacks, sealing and disposal.
 
 - L545, 572, 578, 580, 584, 624, 626, 656, 674, 675, 682, 709 **SAFE** · The stream runtime holds the capturing coroutine closure through each pull. The reader, recorder and attempt are shared owners in callbacks, with no reverse edge from recorded attempts to the wrapping stream. Retention and disposal update state synchronously.
 
+### `src/sentinel/replay_retention.cpp`
+
+Reviewed KV snapshot ownership and iterator, cleanup, fail-fast read, publication, eviction and maintenance paths.
+
+- L102, 156, 249 **SAFE** · Joining and sorting use synchronous views and predicates. The temporary values and the sorted vector have owners throughout each call.
+- L206, 213, 217, 233, 236 **SAFE** · The working frame owns each list cursor and collected candidates. The awaited callers retain the KV, and each cursor close is awaited before the cursor leaves scope.
+- L257, 261, 263, 267, 271, 276, 280, 284, 298 **SAFE** · The input wrapper copies metadata before returning a Task. Directly awaited pruning keeps its candidate vector, version snapshots and atomic operation in the same frame.
+- L305, 314, 317, 322, 323, 324, 325, 343 **SAFE** · Fail-fast siblings only read KV. Each runtime get copies storage and the key before suspending, readLedger performs its only KV use in the inline-started prefix, and references to joined values point into the named frame-owned tuple.
+- L349, 352, 361, 369, 393, 394, 402 **SAFE** · Staging and quota helpers await only local KV work. Each iteration owns its rows and operation, while the calling persistence or maintenance frame holds the store.
+- L435, 442, 445, 446, 447, 448, 449, 501, 505 **SAFE** · Publication wrappers copy rows and options. The eagerly invoked read helpers consume their KV borrow before suspension, and publication only reads references into its local joined tuple.
+- L524, 528, 539, 545, 550, 554, 558, 565, 571, 576, 578, 585 **SAFE** · Abandonment owns its row and key snapshots. Its mutation callbacks are copied into the CAS Task and invoked synchronously. The caller retains KV until the awaited cleanup ends.
+- L604, 605, 615, 619, 626, 636, 642, 644, 649, 654, 659, 667, 675, 680, 688, 690, 699, 710, 711, 717, 720, 728 **SAFE** · Reaping and payload deletion await frame-owned iterators and operations. The only candidate predicate runs synchronously, and range references point into immutable local vectors or values.
+- L776, 777, 786, 792, 796, 814, 839, 844, 845, 846, 847, 848, 849, 850, 875, 887 **SAFE** · Finalization owns its row snapshots and atomic operation. The optional read and ledger read consume their KV borrow before suspension, and later tuple aliases refer to a named immutable local through the commit.
+- L899, 903, 913, 915, 917, 924, 934, 942, 954, 955, 957, 961, 967, 976, 978, 986, 991, 994, 1003, 1007, 1009, 1014, 1017, 1026, 1030 **SAFE** · Selection owns the cursor and predicate, invokes the predicate synchronously and returns its own vector. Nested claims and cleanup use copied rows and named Tasks; the outer awaited frame retains KV.
+- L1040, 1044, 1052, 1056, 1064, 1065, 1068, 1075, 1078, 1089, 1092, 1122, 1126, 1130, 1138, 1141, 1145, 1147, 1150, 1151, 1159, 1163, 1165, 1170, 1174 **SAFE** · Admission and maintenance keep owning options and snapshots in their frames. They await all local cleanup and CAS work, while the bootstrap helper separately manages its detached store owner.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1524,4 +1540,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-133/286 files reviewed. 256 sites: 238 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+134/286 files reviewed. 267 sites: 249 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
