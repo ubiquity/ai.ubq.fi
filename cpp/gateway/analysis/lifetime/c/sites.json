@@ -1086,8 +1086,16 @@
       ]
     },
     "include/uos/provider/capacity_analytics.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "One remote observation writer and one snapshot reader.",
+      "sites": [
+        {
+          "lines": "70-74",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Both tasks own their store handle and writer or query inputs."
+        }
+      ]
     },
     "include/uos/provider/capacity_contract.hpp": {
       "status": "pending",

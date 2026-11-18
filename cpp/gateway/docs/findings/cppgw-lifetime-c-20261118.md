@@ -139,7 +139,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/anthropic_response_wire.hpp`
 - [x] `include/uos/provider/anthropic_responses.hpp`
 - [x] `include/uos/provider/capacity.hpp`
-- [ ] `include/uos/provider/capacity_analytics.hpp`
+- [x] `include/uos/provider/capacity_analytics.hpp`
 - [ ] `include/uos/provider/capacity_contract.hpp`
 - [ ] `include/uos/provider/capacity_events.hpp`
 - [ ] `include/uos/provider/capacity_history.hpp`
@@ -893,3 +893,9 @@ Anthropic Messages adapter task interface.
 Capacity readers, samplers and handlers use owning arguments.
 
 - 75-84,103-104,114-121 · owning task parameters · **SAFE** · Capacity snapshot tasks own stores, request handles and options during reads, refreshes and detached sampling.
+
+### `include/uos/provider/capacity_analytics.hpp`
+
+One remote observation writer and one snapshot reader.
+
+- 70-74 · owning task parameters · **SAFE** · Both tasks own their store handle and writer or query inputs.
