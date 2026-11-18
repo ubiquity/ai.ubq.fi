@@ -98,7 +98,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/prompt_analytics_queue.cpp`
 - [x] `src/cache/prompt_analytics_read.cpp`
 - [x] `src/cache/scope_experiment.cpp`
-- [ ] `src/cache/scope_experiment_model.cpp`
+- [x] `src/cache/scope_experiment_model.cpp`
 - [ ] `src/cache/scope_experiment_targets.cpp`
 - [ ] `src/cache/scope_targets.cpp`
 - [ ] `src/cache/telemetry_gate.cpp`
@@ -673,6 +673,13 @@ This facade does not define a coroutine or register callbacks. Its exported impl
 | 244-258 | Cycle failure handling | **SAFE** | Child finalization owns KV/state/options and its output is discarded; no projected field or caller borrow survives the wait. |
 | 260-270,278-307 | Campaign preflight and top-level orchestration | **SAFE** | The resolved-target alias points into a frame-owned const variant. The acquired state and session are copied into later tasks, which also own the shared promotion receipt. |
 
+### `src/cache/scope_experiment_model.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 73-82,133-145 | Detached cancel and response settlement | **SAFE** | Cancellation gets a stream handle immediately and the catch callback is captureless. The settlement coroutine retains its Response by value through exactly one transition. |
+| 322-370 | Completed usage stream iterator and terminal result | **SAFE** | The frame owns Response/model/signal and the returned iterator owns its stream inputs. Payload is copied before either return_ await, and the final probe keeps the Response until settlement. |
+
 
 ## Ranked defects and counts
 
@@ -878,4 +885,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-75/97 files reviewed. **DEFECT 8, SAFE 178, UNCLEAR 3.**
+76/97 files reviewed. **DEFECT 8, SAFE 180, UNCLEAR 3.**

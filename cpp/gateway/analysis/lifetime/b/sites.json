@@ -2311,8 +2311,30 @@
       ]
     },
     "src/cache/scope_experiment_model.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "73-82,133-145",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Detached cancel and response settlement",
+          "evidence": "Cancellation gets a stream handle immediately and the catch callback is captureless. The settlement coroutine retains its Response by value through exactly one transition."
+        },
+        {
+          "lines": "322-370",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Completed usage stream iterator and terminal result",
+          "evidence": "The frame owns Response/model/signal and the returned iterator owns its stream inputs. Payload is copied before either return_ await, and the final probe keeps the Response until settlement."
+        }
+      ]
     },
     "src/cache/scope_experiment_targets.cpp": {
       "reviewed": false,
