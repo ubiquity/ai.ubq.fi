@@ -202,7 +202,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/manual_reset.cpp`
 - [x] `src/codex/manual_reset_state.cpp`
 - [x] `src/codex/native_auth.cpp`
-- [ ] `src/codex/native_auth_transport.cpp`
+- [x] `src/codex/native_auth_transport.cpp`
 - [ ] `src/codex/overage_settings.cpp`
 - [ ] `src/codex/quota.cpp`
 - [ ] `src/codex/rate_limit_429.cpp`
@@ -1303,3 +1303,11 @@ Native binding carries immutable auth snapshots, exact KV rows, and owned copies
 - 73-93,153-178,180-235,244-291 · document, hash, and binding awaits · **SAFE** · Document text and auth snapshots belong to each frame. The installed readAuth callable is copied before invocation, pool iterators are consumed or copied before the next await, and KV stays live through each transaction.
 - 318-420 · generation, binding, and external adoption · **SAFE** · The frame owns the candidate pool and generation inputs. Persist/copy and hash operations retain their local records through joined waits.
 - 424-480 · native refresh hook and socket join · **SAFE** · The account context and hook copy stay live until refresh settles, and the transport entry point takes owned strings.
+
+### `src/codex/native_auth_transport.cpp`
+
+The registered native WebSocket outlives its RPC callbacks through the connection and clears listeners on close or loop teardown.
+
+- 63-76,144-193 · socket open, file, and RPC awaits · **SAFE** · The coroutine owns RefreshState and its strings. Open/error callbacks own the promise resolvers. Pointers into initialized and account payloads have frame-owned optional storage.
+- 85-139 · pending-call iteration and timer · **SAFE** · Resolve and reject enqueue reactions, so the synchronous pending scan cannot be invalidated by a resumed caller. Timers are cleared on reply, send failure, socket failure or Loop teardown.
+- 196-222 · socket listener cycle · **SAFE** · The concrete socket clears persistent callbacks in emitClose, and WebSocketRegistry clears the same callbacks at loop shutdown when no close is emitted. Refresh normally terminates the socket after success or error.

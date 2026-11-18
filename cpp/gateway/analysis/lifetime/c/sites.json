@@ -2084,8 +2084,28 @@
       ]
     },
     "src/codex/native_auth_transport.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The registered native WebSocket outlives its RPC callbacks through the connection and clears listeners on close or loop teardown.",
+      "sites": [
+        {
+          "lines": "63-76,144-193",
+          "kind": "socket open, file, and RPC awaits",
+          "verdict": "SAFE",
+          "reason": "The coroutine owns RefreshState and its strings. Open/error callbacks own the promise resolvers. Pointers into initialized and account payloads have frame-owned optional storage."
+        },
+        {
+          "lines": "85-139",
+          "kind": "pending-call iteration and timer",
+          "verdict": "SAFE",
+          "reason": "Resolve and reject enqueue reactions, so the synchronous pending scan cannot be invalidated by a resumed caller. Timers are cleared on reply, send failure, socket failure or Loop teardown."
+        },
+        {
+          "lines": "196-222",
+          "kind": "socket listener cycle",
+          "verdict": "SAFE",
+          "reason": "The concrete socket clears persistent callbacks in emitClose, and WebSocketRegistry clears the same callbacks at loop shutdown when no close is emitted. Refresh normally terminates the socket after success or error."
+        }
+      ]
     },
     "src/codex/overage_settings.cpp": {
       "status": "pending",
