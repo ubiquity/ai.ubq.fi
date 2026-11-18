@@ -351,3 +351,16 @@ its 1900–1999 mapping to years 0–99.
 For a stable HTTP Retry-After deadline, the provider header must round-trip through UTC formatting with its
 canonical weekday and GMT spelling. The date, provider 429, filesystem and persisted-value fixtures exercise
 these behaviors. [ARM64 verification](findings/cppgw-slim-dates-20261118.md)
+
+## String operations at protocol boundaries
+
+Codex quota header names and the Responses `input_` type prefix use C++20
+byte comparisons. ASCII bytes decode directly, including after a truncated or
+malformed UTF-8 subpart. The shared string predicates also use native byte
+operations for ASCII tokens at byte-defined boundaries. User-text positions
+and search results continue to count UTF-16 code units.
+
+The C++ runtime drops the unused `codePointAt` and `trimStart` wrappers.
+Their fixture vectors use `charAt`, `slice`, code-point iteration and the
+existing whitespace predicate to check the same ranges, surrogates and
+whitespace behavior.
