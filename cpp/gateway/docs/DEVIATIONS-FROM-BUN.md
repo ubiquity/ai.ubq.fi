@@ -20,3 +20,7 @@ The simdutf 9.4.0 checkpoint kept the tested generic outputs and error classes. 
 ## Incoming integrations
 
 Add a component section after its verified handback. Record the changed behavior, one concrete input/outcome, the application or security rationale, and the exact source and test receipt. Use this location for URL/IDNA, HTTP, regex, WebSocket, passkey codecs, BigInt, ICU and the small helpers as their integrations land. Record limit-specific exceptions and tested boundary outcomes in [Runtime](RUNTIME.md#input-limits).
+
+## Linux confinement
+
+The native C++ launcher accepts an operator opt-in for Landlock ABI 3–7. For example, an ABI 3 Raspberry Pi with `UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1` installs the filesystem rules and the same seccomp filter used on ABI 8. Its bootstrap verifies that future threads will inherit the Landlock restrictions from the sole existing thread. The startup receipt reports the protections that the kernel applied. [Runtime configuration](RUNTIME.md#linux-confinement) [Verification report](findings/cppgw-landlock-fallback-20261118.md)
