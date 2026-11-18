@@ -222,7 +222,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/supervisor_follow.cpp`
 - [x] `src/codex/supervisor_inventory.cpp`
 - [x] `src/codex/supervisor_log.cpp`
-- [ ] `src/codex/supervisor_secret.cpp`
+- [x] `src/codex/supervisor_secret.cpp`
 - [ ] `src/codex/supervisor_transport.cpp`
 - [ ] `src/deepseek/chat_projection.cpp`
 - [ ] `src/deepseek/context_admission_failure.cpp`
@@ -1435,3 +1435,9 @@ Inventory sampling keeps source records, connection hooks and per-source project
 Rollout tail reads use owned input and a local fd guard across file checks and bounded reads.
 
 - 154-194 · file guard across microtasks · **SAFE** · The read frame owns file/path handles and byte buffers. Its fd guard releases the descriptor on every exit and is unrelated to serialized shared state.
+
+### `src/codex/supervisor_secret.cpp`
+
+Secret detection and redaction are synchronous.
+
+- 600,716,755 · synchronous redaction callbacks · **SAFE** · Regex captures refer to static pattern storage. Local accumulation callbacks are invoked before their output collections leave scope.

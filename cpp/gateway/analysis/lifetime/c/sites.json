@@ -2416,8 +2416,16 @@
       ]
     },
     "src/codex/supervisor_secret.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Secret detection and redaction are synchronous.",
+      "sites": [
+        {
+          "lines": "600,716,755",
+          "kind": "synchronous redaction callbacks",
+          "verdict": "SAFE",
+          "reason": "Regex captures refer to static pattern storage. Local accumulation callbacks are invoked before their output collections leave scope."
+        }
+      ]
     },
     "src/codex/supervisor_transport.cpp": {
       "status": "pending",
