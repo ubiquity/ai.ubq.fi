@@ -91,6 +91,21 @@ TEST("llhttp refuses ambiguous request framing before dispatch") {
   }
 }
 
+TEST("llhttp rejects malformed request lines and header values") {
+  for (const std::string_view wire : {
+         "GET  / HTTP/1.1\r\nHost: local\r\n\r\n",
+         "GET /  HTTP/1.1\r\nHost: local\r\n\r\n",
+         "GET /caf\xc3\xa9 HTTP/1.1\r\nHost: local\r\n\r\n",
+         "GET / HTTP/1.1\r\nHost: local\r\nX-Value: a\x7f" "b\r\n\r\n",
+       }) {
+    Fixture fixture;
+    fixture.append(wire);
+    EXPECT(!fixture.connection->parseHead());
+    EXPECT(!fixture.connection->request);
+    EXPECT(fixture.connection->phase == ConnectionState::Phase::lingering);
+  }
+}
+
 TEST("llhttp delivers payload before reporting a malformed chunk delimiter") {
   Fixture fixture;
   auto& connection = *fixture.connection;
@@ -132,4 +147,21 @@ TEST("llhttp bounds a fragmented header and chunk extension") {
   chunked.append(std::string(2100, 'x'));
   progress = chunked.connection->decodeChunked(chunk);
   EXPECT(!progress);
+}
+
+TEST("llhttp bounds the complete trailer block across fields") {
+  Fixture fixture;
+  auto& connection = *fixture.connection;
+  fixture.append("POST / HTTP/1.1\r\nHost: local\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n");
+  ASSERT(connection.parseHead());
+  rt::ByteChunk chunk;
+  const auto finalChunk = connection.decodeChunked(chunk);
+  ASSERT(finalChunk && *finalChunk);
+
+  fixture.append("X-First: " + std::string(8300, 'x') + "\r\n");
+  const auto partial = connection.decodeChunked(chunk);
+  EXPECT(partial && !*partial);
+  fixture.append("X-Second: " + std::string(8300, 'x') + "\r\n\r\n");
+  EXPECT(!connection.decodeChunked(chunk));
+  EXPECT(!connection.bodyComplete);
 }
