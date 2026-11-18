@@ -141,7 +141,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/handler/terminal_log.cpp`
 - [x] `src/handler/terminal_route.cpp`
 - [x] `src/health.cpp`
-- [ ] `src/http.cpp`
+- [x] `src/http.cpp`
 - [ ] `src/images.cpp`
 - [ ] `src/inference_admission.cpp`
 - [ ] `src/inference_deadline.cpp`
@@ -878,6 +878,10 @@ Reviewed passive fan-out, provider bindings and the active-probe timeout race.
 - L306, 311, 312, 313, 316, 317, 319 **DEFECT** · The probe or its failure can win, then finalization clears the only timer that settles the private timeout Promise. That pending source retains the combined outcome and the active result until the process loop ends. Use withResolvers and settle the timeout loser after clearing its timer.
 - L306, 324, 326, 329, 332, 343, 344, 350, 364, 373 **SAFE** · Coalescing copies the in-flight promise before waiting. Passive joins use independent tasks and subsequent views point into the named tuple or immutable frame snapshots.
 
+### `src/http.cpp`
+
+Reviewed synchronous OpenAI error/JSON creation, CORS and request-response helpers. Headers and other input views are consumed synchronously and outputs retain the required response/body handles.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -983,4 +987,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-75/286 files reviewed. 170 sites: 158 SAFE, 12 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+76/286 files reviewed. 170 sites: 158 SAFE, 12 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

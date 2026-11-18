@@ -3541,7 +3541,8 @@
       ]
     },
     "src/http.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous OpenAI error/JSON creation, CORS and request-response helpers. Headers and other input views are consumed synchronously and outputs retain the required response/body handles.",
       "sites": []
     },
     "src/images.cpp": {
