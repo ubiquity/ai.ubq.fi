@@ -360,7 +360,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/openai.hpp`
 - [x] `include/uos/openai_schema.hpp`
 - [x] `include/uos/openai_telemetry.hpp`
-- [ ] `include/uos/optional_telemetry_queue.hpp`
+- [x] `include/uos/optional_telemetry_queue.hpp`
 - [ ] `include/uos/quota_projection.hpp`
 - [ ] `include/uos/recent_model_context.hpp`
 - [ ] `include/uos/release.hpp`
@@ -2038,6 +2038,16 @@ Reviewed usage-context callbacks, weak response association, wrapper Tasks and u
 - L271, 273, 369, 372, 376 **SAFE** · Usage entry points consume their context and input pointers synchronously or copy fields into independently queued work before returning.
 - L291 **SAFE** · The wrapper holds its copied handler closure and context through the directly awaited Task, and hands streams a separate shared record.
 
+### `include/uos/optional_telemetry_queue.hpp`
+
+Reviewed the complete inline queue, clock and writer hooks, wait races, in-flight cleanup, and bounded drain.
+
+- L101, 104, 109, 113, 114, 121, 128, 151, 152, 186, 228, 230, 231, 470, 471, 472, 473 **SAFE** · The queue closures own shared State and each write Task owns State and its entry until the writer settles. Size and time callbacks run synchronously.
+- L156, 241, 244, 245, 246, 247, 249 **SAFE** · Write settlement takes a fresh iterator before erasing and releases the charge in the same synchronous callback. In-flight writes keep their owner and charge until settlement.
+- L256, 259, 260, 261, 266, 267, 271 **SAFE** · The waiter copies Promise handles while scanning inFlight, so mutations on settlement cannot invalidate the handles retained by its race.
+- L258, 262, 263, 264, 266, 267, 271, 275 **DEFECT** · A normal writer completion wins, then cancelTimeout clears the only settlement callback for the timeout Promise. Its self-owning race reaction and combined outcome stay on the process loop for each successful drain wait. Clear the timer and settle the private timeout Promise during cleanup.
+- L307, 318, 319, 328, 332, 342, 343, 356, 358, 360, 364, 399, 403, 409, 410 **SAFE** · Drain frames own State and use fresh queue lookups across waits. The detached completion holds the matching drain Promise and State until it retires and settles that slot.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2287,4 +2297,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-252/286 files reviewed. 431 sites: 408 SAFE, 23 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+253/286 files reviewed. 436 sites: 412 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

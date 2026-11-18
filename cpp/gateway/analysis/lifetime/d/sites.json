@@ -9573,8 +9573,120 @@
       ]
     },
     "include/uos/optional_telemetry_queue.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the complete inline queue, clock and writer hooks, wait races, in-flight cleanup, and bounded drain.",
+      "sites": [
+        {
+          "lines": [
+            101,
+            104,
+            109,
+            113,
+            114,
+            121,
+            128,
+            151,
+            152,
+            186,
+            228,
+            230,
+            231,
+            470,
+            471,
+            472,
+            473
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The queue closures own shared State and each write Task owns State and its entry until the writer settles. Size and time callbacks run synchronously."
+        },
+        {
+          "lines": [
+            156,
+            241,
+            244,
+            245,
+            246,
+            247,
+            249
+          ],
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Write settlement takes a fresh iterator before erasing and releases the charge in the same synchronous callback. In-flight writes keep their owner and charge until settlement."
+        },
+        {
+          "lines": [
+            256,
+            259,
+            260,
+            261,
+            266,
+            267,
+            271
+          ],
+          "kinds": [
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The waiter copies Promise handles while scanning inFlight, so mutations on settlement cannot invalidate the handles retained by its race."
+        },
+        {
+          "lines": [
+            258,
+            262,
+            263,
+            264,
+            266,
+            267,
+            271,
+            275
+          ],
+          "kinds": [
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "A normal writer completion wins, then cancelTimeout clears the only settlement callback for the timeout Promise. Its self-owning race reaction and combined outcome stay on the process loop for each successful drain wait. Clear the timer and settle the private timeout Promise during cleanup."
+        },
+        {
+          "lines": [
+            307,
+            318,
+            319,
+            328,
+            332,
+            342,
+            343,
+            356,
+            358,
+            360,
+            364,
+            399,
+            403,
+            409,
+            410
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Drain frames own State and use fresh queue lookups across waits. The detached completion holds the matching drain Promise and State until it retires and settles that slot."
+        }
+      ]
     },
     "include/uos/quota_projection.hpp": {
       "reviewed": false,
