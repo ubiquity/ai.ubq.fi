@@ -7336,8 +7336,21 @@
       ]
     },
     "include/uos/api_keys.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed key and token helper declarations.",
+      "sites": [
+        {
+          "lines": [
+            22,
+            23
+          ],
+          "kinds": [
+            "b"
+          ],
+          "verdict": "SAFE",
+          "detail": "The key factories copy the view's characters before returning an owning key."
+        }
+      ]
     },
     "include/uos/auth/index.hpp": {
       "reviewed": false,

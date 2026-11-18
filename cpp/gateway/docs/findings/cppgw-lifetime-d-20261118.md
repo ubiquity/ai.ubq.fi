@@ -267,7 +267,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/agent_messages.hpp`
 - [x] `include/uos/analytics.hpp`
 - [x] `include/uos/api_key_policy.hpp`
-- [ ] `include/uos/api_keys.hpp`
+- [x] `include/uos/api_keys.hpp`
 - [ ] `include/uos/auth/index.hpp`
 - [ ] `include/uos/auth/local_admin.hpp`
 - [ ] `include/uos/auth/local_development_key.hpp`
@@ -1478,6 +1478,12 @@ Reviewed quota decision and reservation callback interfaces.
 - L56, 57, 74, 76 **SAFE** · The shipped reservation callbacks own their dependencies, and each returned Task copies the state it will use while cancel, release and dispatch are pending.
 - L169, 170, 183, 184, 186, 187, 189, 190, 192, 193, 195, 203, 204 **SAFE** · Quota, usage and authentication Tasks take their policy, IDs, options and KV handles by value.
 
+### `include/uos/api_keys.hpp`
+
+Reviewed key and token helper declarations.
+
+- L22, 23 **SAFE** · The key factories copy the view's characters before returning an owning key.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1726,4 +1732,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-159/286 files reviewed. 329 sites: 308 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+160/286 files reviewed. 330 sites: 309 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
