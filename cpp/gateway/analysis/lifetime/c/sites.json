@@ -264,8 +264,16 @@
       ]
     },
     "include/uos/codex/native_auth_transport.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Native refresh request interface.",
+      "sites": [
+        {
+          "lines": "36",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The refresh task owns the home, email and account identity strings for the duration of its IPC."
+        }
+      ]
     },
     "include/uos/codex/overage_settings.hpp": {
       "status": "pending",

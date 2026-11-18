@@ -56,7 +56,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/manual_reset.hpp`
 - [x] `include/uos/codex/manual_reset_state.hpp`
 - [x] `include/uos/codex/native_auth.hpp`
-- [ ] `include/uos/codex/native_auth_transport.hpp`
+- [x] `include/uos/codex/native_auth_transport.hpp`
 - [ ] `include/uos/codex/overage_settings.hpp`
 - [ ] `include/uos/codex/quota.hpp`
 - [ ] `include/uos/codex/rate_limit_429.hpp`
@@ -449,3 +449,9 @@ Native credential inputs are owned; installed hooks need an invocation-time owne
 
 - 22-26,31 · hook storage · **SAFE** · The hook bundle stores callable values. The native-auth implementation copies the bundle for asynchronous use.
 - 38-50 · owning task parameters · **SAFE** · Credential, pool, JSON and path arguments are frame-owned, with owned values returned to the caller.
+
+### `include/uos/codex/native_auth_transport.hpp`
+
+Native refresh request interface.
+
+- 36 · owning task parameters · **SAFE** · The refresh task owns the home, email and account identity strings for the duration of its IPC.
