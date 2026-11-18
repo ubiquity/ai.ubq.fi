@@ -90,3 +90,76 @@ The addon probe stages only `scripts/build-native-kv.ts`, `src/runtime/permissio
 - `runtime/paths.hpp` selects the manifest-verified immutable package resource root, or the current directory of a module test. `src/static.cpp` uses `src/static.ts` as a synthetic URL base and serves the 38 `static/` files and two root favicons. The Linux host and portable packagers and the macOS packager currently copy `static/` alone. Missing packaged favicons are a pre-existing defect to reproduce separately.
 - `cpp/gateway/packaging/portable/build.sh` archives committed source paths, then the Dockerfile copies only the two V8 codec files from root `src/kv-conversion/`. `v8-helper.mjs` imports `typed-value.ts` and is an offline Deno helper. Package manifests require both bytes even for normal serving, and conversion invokes them. The package builders also verify the real KV and permissions artifact files and manifests.
 - The paired conformance script currently diffs the whole candidate tree against the oracle revision with a narrow conformance-only exception, then builds both sides from the same archived source. A detached pinned TypeScript checkout needs a separate candidate build/package input. Existing comparison assertions and restart phases can be reused.
+
+## Native addon audit
+
+`native-minimum.sh` exited 0 after 228.19 seconds and reported peak process RSS of 547,872 KiB. The eight archived files were sufficient. Both outputs are AArch64 ELF shared objects. No `rust/`, installed npm package, root Bun manifest, root Bun lock or root TS application source was present. The exact commands after staging the pinned Rust host components were:
+
+```bash
+work="$scratch/native-minimum"
+cd "$work/source"
+env -i PATH=/usr/bin:/bin HOME="$work/home" TMPDIR="$work/tmp" LC_ALL=C.UTF-8 \
+  CPPGW_NATIVE_WORK="$work" CPPGW_RUST_STAGE="$scratch/native-deps/rust" \
+  /home/runner/.bun/bin/bun --no-env-file --no-install -e '
+    import { buildNativeKv } from "./scripts/build-native-kv.ts";
+    const work = Bun.env.CPPGW_NATIVE_WORK;
+    const receipt = await buildNativeKv(work + "/artifacts/kv", {
+      toolchainDirectory: Bun.env.CPPGW_RUST_STAGE + "/bin", workspaceDirectory: work + "/build",
+    });
+    console.log(JSON.stringify(receipt));
+  ' > "$work/kv-receipt.json"
+env -i PATH=/usr/bin:/bin HOME="$work/home" TMPDIR="$work/tmp" \
+  cc -shared -fPIC -O2 -Wall -Wextra -Werror -march=armv8-a -DNAPI_VERSION=8 -I/usr/include/node \
+    -D__NR_fchmodat2=452 -D__NR_setxattrat=463 -D__NR_removexattrat=466 -D__NR_file_setattr=469 \
+    -o "$work/artifacts/permissions/linux-arm64.node" src/runtime/permissions-native.c
+```
+
+| Output                           | SHA-256                                                            |
+| -------------------------------- | ------------------------------------------------------------------ |
+| Host `native-kv.node`            | `56017beb299528f1e45c9d0eb71ddf5e22dee39d07495cd3ac2e2ed441a1774f` |
+| Host `native-kv.provenance.json` | `2833e3319121f5237077be2b045ca7742a4fba9beb92039e853476557e8c824c` |
+| Host `linux-arm64.node`          | `14a586d14df4b695260edda4ad37d0b2e0f5b1944c46ba5e1f5873f1ccb52af2` |
+
+- **KV.** `scripts/build-native-kv.ts` uses Bun 1.4.0 builtins and Node standard modules. It downloads the Git source archive for `denoland/denokv@9fe65cc138ff56ca5bfe7a1bf8c53e832246f9d5`, verifies the archive and upstream lock/license, applies `tools/native-kv/{atomic-write-rollback,napi-workspace}.patch` at fuzz 0, and installs the verified frozen lock plus its derivation record. It then runs Rust 1.98.1 `cargo build --locked --release --jobs 1 --package deno-kv-napi --target aarch64-unknown-linux-gnu --manifest-path source/Cargo.toml --color never`. The recipe identifies npm SDK `@deno/kv@0.14.0` and N-API v4. `libdeno_kv_napi.so` comes from the fetched patched upstream workspace. Its dependencies are registry packages verified by Cargo against the frozen lock, including `napi`, `napi-sys`, `napi-derive` and the pinned SQLite stack. The workspace lock preserves 304 upstream entries and pins 316 registry checksums. The local inputs and patches supply provenance and correctness rules. The app's npm patch at `src/storage/patches/deno-kv-0.14.0.patch` is used by the oracle's package install, outside this native build.
+- **Confinement.** `src/runtime/permissions-native.c` is the sole first-party input to the C compiler. The Docker build installs `libnode-dev` and uses `cc` with N-API v8 and the four syscall number defines above. It writes `manifest.json` with `path`, `architecture`, object and source hashes and Landlock ABI bounds 8–10. The legacy `scripts/build-permissions.ts` drives the same source for the TypeScript service using the pinned npm `node-api-headers@1.9.0` by default and an explicit header-directory override. The native Docker route calls `cc` directly.
+- **Provenance and platform variations.** `native-receipt.py` retains the command and exit records, canonicalizes scratch paths, rebinds provenance to that log and copies license notices from upstream KV, the pinned Rust distribution and the verified registry. `scripts/build-native-kv-darwin.ts` drives the separate TypeScript Darwin build from `inputs-darwin-arm64.json` and the same six-file frozen set with the Darwin pin substituted. The C++ Darwin startup test reads that pin. The current macOS C++ package contains C++ development/version binaries and assets. Its workflow runs runtime primitives and `--version` without packaging either addon.
+- **Runtime consumption.** `runtime/startup.cpp` requires both bound ELF files, provenance and permission manifests, and the V8 helper pair in the sealed package digest. `src/storage/native_addon.cpp` validates the KV binding and uses the linked `rt::SqliteKv` backend. `src/runtime/permissions_linux.cpp` validates the permission artifact and selects linked native Landlock/seccomp functions. Neither C++ implementation dynamically runs the `.node` code. The Bun oracle loads the actual N-API KV addon. Replacing these artifact requirements needs an explicit package/startup contract change.
+
+`git ls-files rust/crates | cut -d/ -f3 | sort -u` and `rust/Cargo.toml` agree on **35 workspace members** at the pin, with **zero required by the C++ gateway**. The tree has 977 tracked entries and 311,482 text newlines. The full workspace is a separate Rust port and its support tooling:
+
+| Scope                                      | Members                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native Rust gateway boundary (2)           | `gateway-native`, `gateway-native-supervisor-read`                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Worker entry point and fixture tooling (3) | `gateway-worker`, `gateway-worker-fixture`, `gateway-worker-fixture-setup`                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Quality tools (2)                          | `gateway-quality`, `gateway-quality-syntax`                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Test support (7)                           | `gateway-admin-test-support`, `gateway-claude-runtime-test-support`, `gateway-extras-runtime-test-support`, `gateway-migration-test-support`, `gateway-observability-test-support`, `gateway-publication-test-support`, `gateway-routing-runtime-test-support`                                                                                                                                                                                                                                           |
+| Shared Rust gateway implementation (21)    | `gateway-core`, `gateway-compaction`, `gateway-schema`, `gateway-providers`, `gateway-authority`, `gateway-admission`, `gateway-catalog-runtime`, `gateway-capacity-recovery`, `gateway-auth`, `gateway-admin`, `gateway-admin-data`, `gateway-admin-runtime`, `gateway-migration`, `gateway-claude-runtime`, `gateway-observability`, `gateway-routing-runtime`, `gateway-extras-runtime`, `gateway-publication`, `gateway-publication-policy`, `gateway-publication-transport`, `gateway-live-runtime` |
+
+`rust/vendor/webauthn-rs-core-0.6.1-dev` is a patched Rust-port dependency excluded from its workspace members. It is independent of the portable package's C++ vendors under `cpp/gateway/third_party/` and the KV addon's upstream Cargo build.
+
+## Packaging and standalone control runs
+
+`portable-closure.sh` archived `cpp/gateway`, `static`, `scripts/build-native-kv.ts`, `src/runtime/permissions-native.c`, `src/kv-conversion/{v8-helper.mjs,typed-value.ts}` and `tools/native-kv/{inputs.json,Cargo.lock,lock-derivation.json,LICENSE,atomic-write-rollback.patch,napi-workspace.patch}`. That is 48 external files. The scratch commit is `2c35bff35c1de8974ae5776d2efeb09e802ada78`, tree `96d222886e1e61bd2f2b2a477ba84e74f4add2c3`. The standard builder archives only those committed paths. The Docker native stage completed toolchain preparation and the CMake stage reached production object compilation.
+
+```bash
+cd "$scratch/portable/source"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$scratch/portable/home" TMPDIR="$scratch/portable/tmp" \
+  DOCKER_CONFIG="$scratch/portable/docker" PORTABLE_JOBS=2 \
+  bash cpp/gateway/packaging/portable/build.sh "$scratch/portable/uos-gateway-linux-arm64.tar.gz"
+```
+
+The wrapper is bounded to 60 minutes including networked dependency staging, network-disabled C++ compilation and archive production. `portable-build.log` is the Buildx progress handle. The Bookworm package will proceed to the existing Debian 12/13 verification and the pinned conformance check if the build succeeds.
+
+I also extracted a `cpp/gateway`-only archive with no outside repository files. These commands ran in that archive with Clang 21, `env -i`, an empty home and external `TMPDIR`:
+
+```bash
+cmake -S cpp/gateway -B "$scratch/cpp-controls/cmake" -G Ninja -DUOS_GATEWAY_TESTS=ON
+python3 -B cpp/gateway/tools/links.py --check
+python3 -B cpp/gateway/conformance/compare_test.py
+```
+
+CMake with `UOS_GATEWAY_BUILD_EVIDENCE=scratch-closure` configured 325 manifest source entries plus 44 runtime units, and generated CTest registrations for all 450 Link tests with zero skips. Configure took 17.9 seconds and generation 6.0 seconds. The Links check and all nine comparator controls passed. The CMake configure proof establishes source registration only. The suite and package runs provide the compile/link and test evidence.
+
+The historical oracle checkout was created with `git worktree add --detach "$scratch/oracle" 2b23fb6837e2b5c0dc9ffa50771f52d322dd413a`. After verifying both lockfiles exist, `bun --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile` ran inside an empty environment and installed 89 packages in 2.77 seconds. The package remains the independent native input to the paired run.
+
+The doc gate needed a separate **11-file** archive: `package.json`, `bun.lock`, `bunfig.toml`, `.prettierrc`, `.prettierignore`, `scripts/{format.sh,_bootstrap.sh,patch-bun-types.ts}`, `src/storage/patches/deno-kv-0.14.0.patch` and `tools/lint/{package.json,bun.lock}`. I installed the existing root and lint locks with `bun --no-env-file install --frozen-lockfile --ignore-scripts` in scratch, with `--backend=copyfile` for `tools/lint`. The locked Prettier is 3.9.6. `bun --no-env-file --no-install run format:check <changed Markdown paths>` passed on the report checkpoint. `scripts/format.sh` sources `_bootstrap.sh`, which checks both locks, the tools' ESLint/Prettier/Knip shims and patched Bun types plus Node types and `tsc`. The older workflow's docs-only gate instead invokes `scripts/test-scope.ts --check-docs` with the frozen lint install. The two C++ workflows have no root Bun formatter step.
