@@ -4026,8 +4026,492 @@
       ]
     },
     "src/rt/websocket.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed live and teardown ownership for client and server sockets, synchronous emitter reentrancy, and the native gateway upgrade caller. This file contains no coroutine bodies.",
+      "sites": [
+        {
+          "verdict": "SAFE",
+          "lines": [
+            25,
+            31,
+            32,
+            36,
+            38,
+            40,
+            43,
+            44,
+            50,
+            51,
+            54,
+            59,
+            61,
+            62,
+            63,
+            448,
+            449
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "label": "Weak registry and listener teardown",
+          "reason": "The Asio service tracks weak identities. Shutdown moves the registry before promotion and pins each WebSocket locally while clearing listener cycles."
+        },
+        {
+          "verdict": "DEFECT",
+          "lines": [
+            35,
+            42,
+            44,
+            47,
+            49,
+            50,
+            51,
+            480,
+            481,
+            482
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "label": "A retained WebSocket outlives its Asio socket service",
+          "reason": "The service closes native handles and clears callbacks during shutdown, while the public WebSocket and its Sender still own the Asio socket object.",
+          "defect": {
+            "id": "A-WEBSOCKET-CONTEXT",
+            "priority": 114,
+            "severity": "memory safety when a socket survives a scoped Loop",
+            "interleaving": [
+              "Retain an opened or already-closed client WebSocket outside a scoped Loop. During context shutdown the registry closes its descriptor, while state.socket and Sender still hold the Asio object.",
+              "Destroy the last public WebSocket after the Loop. Its Asio socket destructor reaches the service destroyed with the old io_context."
+            ],
+            "diff": "--- a/cpp/gateway/src/rt/websocket.cpp\n+++ b/cpp/gateway/src/rt/websocket.cpp\n@@ -49,3 +49,10 @@\n-          if (state.socket) state.socket->shutdown();\n+          if (state.socket) {\n+            state.socket->shutdown();\n+            state.bufferedAmount = static_cast<double>(state.socket->writableLength()) + state.sender->bufferedBytes;\n+          }\n+          state.sender.reset();\n+          state.socket.reset();\n+          state.socketAttached = false;\n+          state.readyState = WebSocket::CLOSED;\n           if (state.receiver) state.receiver->removeAllListeners();\n           websocket->removeAllListeners();"
+          }
+        },
+        {
+          "verdict": "SAFE",
+          "lines": [
+            75,
+            77,
+            79,
+            80,
+            138,
+            140,
+            146,
+            150,
+            154,
+            156,
+            158,
+            167,
+            168,
+            240,
+            242,
+            245,
+            251,
+            643,
+            647,
+            651,
+            654,
+            656,
+            657,
+            659,
+            660,
+            662,
+            669,
+            678,
+            679,
+            713,
+            722,
+            723,
+            732,
+            738
+          ],
+          "classes": [
+            "b",
+            "d"
+          ],
+          "label": "HTTP handshake and byte or string views",
+          "reason": "Header lookup and protocol parsing consume borrowed storage synchronously and copy it into owning results before an upgrade or deferred operation."
+        },
+        {
+          "verdict": "SAFE",
+          "lines": [
+            172,
+            173,
+            177,
+            178,
+            182,
+            183,
+            185,
+            187,
+            193,
+            198,
+            202,
+            203,
+            207,
+            208,
+            209,
+            215,
+            217,
+            218,
+            219,
+            221
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "label": "Listener identity under mutation during delivery",
+          "reason": "The snapshot retains callbacks and fired flags while once removal and ordinary registration mutations affect only the live registry. Native delivery pins the receiver separately."
+        },
+        {
+          "verdict": "DEFECT",
+          "lines": [
+            206,
+            208,
+            215,
+            219,
+            221,
+            586,
+            587,
+            588,
+            589,
+            607,
+            608,
+            612
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "label": "Public event delivery can lose its WebSocket receiver",
+          "reason": "Direct emit through the public EventEmitter API has no owner to pin the derived WebSocket throughout snapshot iteration.",
+          "defect": {
+            "id": "A-WEBSOCKET-EMIT-OWNER",
+            "priority": 77,
+            "severity": "memory safety in explicit WebSocket event delivery",
+            "interleaving": [
+              "Invoke public emit on a shared WebSocket and let its first listener reset the last external owner. The dispatch snapshot keeps callable identities alive.",
+              "The next once registration accesses the destroyed registry, or an attribute wrapper uses the deleted WebSocket as its target."
+            ],
+            "diff": "--- a/cpp/gateway/include/uos/rt/websocket.hpp\n+++ b/cpp/gateway/include/uos/rt/websocket.hpp\n@@ -165,2 +165,3 @@\n   protected:\n+    virtual std::shared_ptr<const void> pinEventReceiver() const { return {}; }\n     std::vector<Registration> registrations_;\n@@ -339,1 +340,2 @@\n   private:\n+    std::shared_ptr<const void> pinEventReceiver() const override { return weak_from_this().lock(); }\n@@ -441,1 +443,2 @@\n   private:\n+    std::shared_ptr<const void> pinEventReceiver() const override { return weak_from_this().lock(); }\n--- a/cpp/gateway/src/rt/websocket.cpp\n+++ b/cpp/gateway/src/rt/websocket.cpp\n@@ -206,2 +206,3 @@\n   bool EventEmitter::emit(std::string_view event, const EventArgs& args) {\n+    const auto receiver = pinEventReceiver();\n     std::vector<Registration> listeners;"
+          }
+        },
+        {
+          "verdict": "SAFE",
+          "lines": [
+            66,
+            68,
+            73,
+            233,
+            234,
+            258,
+            259,
+            265,
+            266,
+            267,
+            276,
+            277,
+            287,
+            288,
+            296,
+            297,
+            301,
+            303,
+            305,
+            306
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "label": "Synchronous dispatch adapters and deferred post-close send result",
+          "reason": "Native event dispatch is reached through an owning WebSocket handle, stack event arguments stay local, and the posted send result captures its callback and reason by value."
+        },
+        {
+          "verdict": "SAFE",
+          "lines": [
+            271,
+            272,
+            273,
+            309,
+            310,
+            312,
+            314,
+            315,
+            316,
+            319,
+            323,
+            325,
+            326,
+            327,
+            330,
+            332,
+            334,
+            389,
+            391,
+            396,
+            399,
+            400,
+            403,
+            409,
+            410
+          ],
+          "classes": [
+            "c"
+          ],
+          "label": "Close timer and receiver finish ownership",
+          "reason": "The close timer owns its native socket, and close detaches the timer and drains the receiver finish callback. Final delivery or registry teardown clears the remaining listener owners."
+        },
+        {
+          "verdict": "SAFE",
+          "lines": [
+            339,
+            342,
+            343,
+            344,
+            345,
+            347,
+            348,
+            351,
+            354,
+            362,
+            365,
+            372,
+            373,
+            375,
+            376,
+            377,
+            378,
+            379,
+            381,
+            382,
+            384,
+            386
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "label": "Receiver and transport callback graph",
+          "reason": "Receiver hooks promote weak WebSocket links. Native transport hooks keep the public socket alive until close or loop teardown, and each dispatched onData consumes its bytes while the handler owns the buffer."
+        },
+        {
+          "verdict": "SAFE",
+          "lines": [
+            413,
+            418,
+            419,
+            420,
+            421,
+            424,
+            427,
+            428,
+            429,
+            430,
+            431,
+            434,
+            436,
+            437,
+            452,
+            453,
+            454,
+            456,
+            458,
+            459,
+            467,
+            468
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "label": "Handshake abort and construction ownership",
+          "reason": "The connecting caller pins the WebSocket, abort clears request registrations synchronously, and pending close/error notifications own the WebSocket through dispatch."
+        },
+        {
+          "verdict": "UNCLEAR",
+          "lines": [
+            473,
+            474,
+            475,
+            478
+          ],
+          "classes": [
+            "c"
+          ],
+          "label": "Injected buffered-amount getter replaces itself",
+          "reason": "The production getter is stable. The supported test override would need an explicit receiver/callable ownership rule or confirmation for reentrant self-replacement."
+        },
+        {
+          "verdict": "SAFE",
+          "lines": [
+            489,
+            492,
+            497,
+            500,
+            504,
+            508,
+            512,
+            513,
+            517,
+            519,
+            521,
+            523,
+            526,
+            529,
+            533,
+            536,
+            539,
+            543,
+            546,
+            550,
+            555
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "label": "Public writes and close-frame completion",
+          "reason": "The Sender materializes write bytes synchronously. Close's completion promotes a weak socket before accessing state, and native close is scheduled with an owning Socket handler."
+        },
+        {
+          "verdict": "SAFE",
+          "lines": [
+            565,
+            566,
+            568,
+            570,
+            573,
+            574,
+            577,
+            578,
+            579,
+            586,
+            587,
+            588,
+            590,
+            595,
+            596,
+            597,
+            601,
+            606,
+            607,
+            608,
+            612,
+            614,
+            619,
+            620,
+            621,
+            626,
+            631,
+            632,
+            633,
+            634
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "label": "Attribute wrapper capture and replacement in native dispatch",
+          "reason": "The listener snapshot owns the callable while the native dispatch retains its WebSocket target. Direct public emit has the separate receiver pinning issue."
+        },
+        {
+          "verdict": "SAFE",
+          "lines": [
+            684,
+            685,
+            688,
+            690,
+            692,
+            693,
+            694,
+            696,
+            697,
+            704,
+            709,
+            710
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "label": "Rejected upgrade response ownership",
+          "reason": "The native Socket takes the moved stream and owns pending writes, while the finish hook uses a weak backedge and the response bytes leave their local string before dispatch."
+        },
+        {
+          "verdict": "DEFECT",
+          "lines": [
+            741,
+            750,
+            752,
+            759,
+            762,
+            768,
+            769,
+            770,
+            771,
+            781
+          ],
+          "classes": [
+            "c"
+          ],
+          "label": "Upgrade hooks can release the last WebSocketServer owner",
+          "reason": "The server method calls external factory, protocol and headers hooks before reusing its own options and client list. The gateway's named upgradeServer retains it, while the public method borrows its receiver.",
+          "defect": {
+            "id": "A-WEBSOCKET-UPGRADE-OWNER",
+            "priority": 78,
+            "severity": "memory safety in the public server upgrade API",
+            "interleaving": [
+              "Call handleUpgrade using the last shared Server handle. A synchronous configured hook or headers listener drops that handle before returning.",
+              "completeUpgrade resumes and reads options_ or mutates clients_ after the server was destroyed."
+            ],
+            "diff": "--- a/cpp/gateway/src/rt/websocket.cpp\n+++ b/cpp/gateway/src/rt/websocket.cpp\n@@ -741,2 +741,3 @@\n   void WebSocketServer::completeUpgrade(const std::string& key, const std::vector<std::string>& protocols, const UpgradeRequest& request, UpgradeSocket& socket, Bytes head, UpgradeCallback cb) {\n+    const auto self = weak_from_this().lock();\n     // Destroy the socket if the client has already sent a FIN packet."
+          }
+        },
+        {
+          "verdict": "SAFE",
+          "lines": [
+            750,
+            752,
+            759,
+            760,
+            761,
+            762,
+            763,
+            765,
+            768,
+            769,
+            770,
+            771,
+            772,
+            773,
+            774,
+            775,
+            776,
+            777,
+            778,
+            781,
+            784,
+            786,
+            791,
+            792,
+            794,
+            795,
+            798,
+            801,
+            805,
+            808
+          ],
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "label": "Upgrade inputs and tracked-client close",
+          "reason": "The gateway owns request and socket inputs through synchronous delivery. The tracking callback uses weak links, erases a client before posting the retained server's close notification, and leaves no client iterator suspended."
+        }
+      ]
     },
     "src/rt/websocket_client.cpp": {
       "status": "pending",

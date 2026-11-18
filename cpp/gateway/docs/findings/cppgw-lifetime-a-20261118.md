@@ -57,7 +57,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/gzip.cpp`
 - [x] `src/rt/tls.cpp`
 - [x] `src/rt/tls_internal.hpp`
-- [ ] `src/rt/websocket.cpp`
+- [x] `src/rt/websocket.cpp`
 - [ ] `src/rt/websocket_client.cpp`
 - [ ] `src/rt/websocket_frame.cpp`
 - [ ] `src/rt/websocket_internal.hpp`
@@ -334,18 +334,38 @@ Checked the shared TLS declarations against Fetch and WebSocket callers in both 
 
 - **SAFE** `19, 23, 25, 28, 30, 34` (b/c), TLS helper API and ownership handoff. The context accessors document whether callers receive ownership. The remaining declarations borrow their inputs only synchronously and return owned result values.
 
+### `src/rt/websocket.cpp`
+
+Reviewed live and teardown ownership for client and server sockets, synchronous emitter reentrancy, and the native gateway upgrade caller. This file contains no coroutine bodies.
+
+- **SAFE** `25, 31, 32, 36, 38, 40, 43, 44, 50, 51, 54, 59, 61, 62, 63, 448, 449` (c/d), Weak registry and listener teardown. The Asio service tracks weak identities. Shutdown moves the registry before promotion and pins each WebSocket locally while clearing listener cycles.
+- **DEFECT (A-WEBSOCKET-CONTEXT)** `35, 42, 44, 47, 49, 50, 51, 480, 481, 482` (b/c), A retained WebSocket outlives its Asio socket service. The service closes native handles and clears callbacks during shutdown, while the public WebSocket and its Sender still own the Asio socket object.
+- **SAFE** `75, 77, 79, 80, 138, 140, 146, 150, 154, 156, 158, 167, 168, 240, 242, 245, 251, 643, 647, 651, 654, 656, 657, 659, 660, 662, 669, 678, 679, 713, 722, 723, 732, 738` (b/d), HTTP handshake and byte or string views. Header lookup and protocol parsing consume borrowed storage synchronously and copy it into owning results before an upgrade or deferred operation.
+- **SAFE** `172, 173, 177, 178, 182, 183, 185, 187, 193, 198, 202, 203, 207, 208, 209, 215, 217, 218, 219, 221` (c/d), Listener identity under mutation during delivery. The snapshot retains callbacks and fired flags while once removal and ordinary registration mutations affect only the live registry. Native delivery pins the receiver separately.
+- **DEFECT (A-WEBSOCKET-EMIT-OWNER)** `206, 208, 215, 219, 221, 586, 587, 588, 589, 607, 608, 612` (c/d), Public event delivery can lose its WebSocket receiver. Direct emit through the public EventEmitter API has no owner to pin the derived WebSocket throughout snapshot iteration.
+- **SAFE** `66, 68, 73, 233, 234, 258, 259, 265, 266, 267, 276, 277, 287, 288, 296, 297, 301, 303, 305, 306` (b/c), Synchronous dispatch adapters and deferred post-close send result. Native event dispatch is reached through an owning WebSocket handle, stack event arguments stay local, and the posted send result captures its callback and reason by value.
+- **SAFE** `271, 272, 273, 309, 310, 312, 314, 315, 316, 319, 323, 325, 326, 327, 330, 332, 334, 389, 391, 396, 399, 400, 403, 409, 410` (c), Close timer and receiver finish ownership. The close timer owns its native socket, and close detaches the timer and drains the receiver finish callback. Final delivery or registry teardown clears the remaining listener owners.
+- **SAFE** `339, 342, 343, 344, 345, 347, 348, 351, 354, 362, 365, 372, 373, 375, 376, 377, 378, 379, 381, 382, 384, 386` (c/d), Receiver and transport callback graph. Receiver hooks promote weak WebSocket links. Native transport hooks keep the public socket alive until close or loop teardown, and each dispatched onData consumes its bytes while the handler owns the buffer.
+- **SAFE** `413, 418, 419, 420, 421, 424, 427, 428, 429, 430, 431, 434, 436, 437, 452, 453, 454, 456, 458, 459, 467, 468` (b/c), Handshake abort and construction ownership. The connecting caller pins the WebSocket, abort clears request registrations synchronously, and pending close/error notifications own the WebSocket through dispatch.
+- **UNCLEAR** `473, 474, 475, 478` (c), Injected buffered-amount getter replaces itself. The production getter is stable. The supported test override would need an explicit receiver/callable ownership rule or confirmation for reentrant self-replacement.
+- **SAFE** `489, 492, 497, 500, 504, 508, 512, 513, 517, 519, 521, 523, 526, 529, 533, 536, 539, 543, 546, 550, 555` (b/c), Public writes and close-frame completion. The Sender materializes write bytes synchronously. Close's completion promotes a weak socket before accessing state, and native close is scheduled with an owning Socket handler.
+- **SAFE** `565, 566, 568, 570, 573, 574, 577, 578, 579, 586, 587, 588, 590, 595, 596, 597, 601, 606, 607, 608, 612, 614, 619, 620, 621, 626, 631, 632, 633, 634` (c/d), Attribute wrapper capture and replacement in native dispatch. The listener snapshot owns the callable while the native dispatch retains its WebSocket target. Direct public emit has the separate receiver pinning issue.
+- **SAFE** `684, 685, 688, 690, 692, 693, 694, 696, 697, 704, 709, 710` (b/c), Rejected upgrade response ownership. The native Socket takes the moved stream and owns pending writes, while the finish hook uses a weak backedge and the response bytes leave their local string before dispatch.
+- **DEFECT (A-WEBSOCKET-UPGRADE-OWNER)** `741, 750, 752, 759, 762, 768, 769, 770, 771, 781` (c), Upgrade hooks can release the last WebSocketServer owner. The server method calls external factory, protocol and headers hooks before reusing its own options and client list. The gateway's named upgradeServer retains it, while the public method borrows its receiver.
+- **SAFE** `750, 752, 759, 760, 761, 762, 763, 765, 768, 769, 770, 771, 772, 773, 774, 775, 776, 777, 778, 781, 784, 786, 791, 792, 794, 795, 798, 801, 805, 808` (b/c/d), Upgrade inputs and tracked-client close. The gateway owns request and socket inputs through synchronous delivery. The tracking callback uses weak links, erases a client before posting the retained server's close notification, and leaves no client iterator suspended.
+
 ## Ranked defects and counts
 
-Reviewed **25/30 files** and **139 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **26/30 files** and **154 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 5 | 20 | 0 |
-| b. Borrowed coroutine parameter or receiver | 11 | 90 | 3 |
-| c. Callback ownership or cycle | 16 | 82 | 4 |
-| d. Container invalidation | 3 | 58 | 0 |
+| b. Borrowed coroutine parameter or receiver | 12 | 96 | 3 |
+| c. Callback ownership or cycle | 19 | 92 | 5 |
+| d. Container invalidation | 4 | 64 | 0 |
 | e. GCC 12 await-expression rule | 5 | 13 | 1 |
-| **Unique site groups** | 23 | 111 | 5 |
+| **Unique site groups** | 26 | 122 | 6 |
 
 ### 1. A-FETCH-ABORT-TRANSPORT (memory safety in the injectable transport path) — Abort can outlive the owning virtual transport frame
 
@@ -711,7 +731,51 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +    LoopScope scope(owner);
 ```
 
-### 16. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
+### 16. A-WEBSOCKET-EMIT-OWNER (memory safety in explicit WebSocket event delivery) — Public event delivery can lose its WebSocket receiver
+
+`src/rt/websocket.cpp:206, 208, 215, 219, 221, 586, 587, 588, 589, 607, 608, 612`
+
+- Invoke public emit on a shared WebSocket and let its first listener reset the last external owner. The dispatch snapshot keeps callable identities alive.
+- The next once registration accesses the destroyed registry, or an attribute wrapper uses the deleted WebSocket as its target.
+
+```diff
+--- a/cpp/gateway/include/uos/rt/websocket.hpp
++++ b/cpp/gateway/include/uos/rt/websocket.hpp
+@@ -165,2 +165,3 @@
+   protected:
++    virtual std::shared_ptr<const void> pinEventReceiver() const { return {}; }
+     std::vector<Registration> registrations_;
+@@ -339,1 +340,2 @@
+   private:
++    std::shared_ptr<const void> pinEventReceiver() const override { return weak_from_this().lock(); }
+@@ -441,1 +443,2 @@
+   private:
++    std::shared_ptr<const void> pinEventReceiver() const override { return weak_from_this().lock(); }
+--- a/cpp/gateway/src/rt/websocket.cpp
++++ b/cpp/gateway/src/rt/websocket.cpp
+@@ -206,2 +206,3 @@
+   bool EventEmitter::emit(std::string_view event, const EventArgs& args) {
++    const auto receiver = pinEventReceiver();
+     std::vector<Registration> listeners;
+```
+
+### 17. A-WEBSOCKET-UPGRADE-OWNER (memory safety in the public server upgrade API) — Upgrade hooks can release the last WebSocketServer owner
+
+`src/rt/websocket.cpp:741, 750, 752, 759, 762, 768, 769, 770, 771, 781`
+
+- Call handleUpgrade using the last shared Server handle. A synchronous configured hook or headers listener drops that handle before returning.
+- completeUpgrade resumes and reads options_ or mutates clients_ after the server was destroyed.
+
+```diff
+--- a/cpp/gateway/src/rt/websocket.cpp
++++ b/cpp/gateway/src/rt/websocket.cpp
+@@ -741,2 +741,3 @@
+   void WebSocketServer::completeUpgrade(const std::string& key, const std::vector<std::string>& protocols, const UpgradeRequest& request, UpgradeSocket& socket, Bytes head, UpgradeCallback cb) {
++    const auto self = weak_from_this().lock();
+     // Destroy the socket if the client has already sent a FIN packet.
+```
+
+### 18. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
 
 `include/uos/rt/async.hpp:219, 375`
 
@@ -731,7 +795,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +      co_await std::move(ready);
 ```
 
-### 17. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
+### 19. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
 
 `include/uos/rt/async.hpp:1073, 1123, 1124`
 
@@ -753,7 +817,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +        else co_await std::move(handling);
 ```
 
-### 18. A-STREAM-GCC-AWAIT (GCC 12 portability rule) — Stream callback and yield arguments materialized inside awaits
+### 20. A-STREAM-GCC-AWAIT (GCC 12 portability rule) — Stream callback and yield arguments materialized inside awaits
 
 `include/uos/rt/stream.hpp:72, 540`
 
@@ -781,7 +845,31 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +          co_await std::move(yielding);
 ```
 
-### 19. A-FETCH-NET-GCC-AWAIT (GCC 12 portability rule) — Inline Asio buffer construction in native awaits
+### 21. A-WEBSOCKET-CONTEXT (memory safety when a socket survives a scoped Loop) — A retained WebSocket outlives its Asio socket service
+
+`src/rt/websocket.cpp:35, 42, 44, 47, 49, 50, 51, 480, 481, 482`
+
+- Retain an opened or already-closed client WebSocket outside a scoped Loop. During context shutdown the registry closes its descriptor, while state.socket and Sender still hold the Asio object.
+- Destroy the last public WebSocket after the Loop. Its Asio socket destructor reaches the service destroyed with the old io_context.
+
+```diff
+--- a/cpp/gateway/src/rt/websocket.cpp
++++ b/cpp/gateway/src/rt/websocket.cpp
+@@ -49,3 +49,10 @@
+-          if (state.socket) state.socket->shutdown();
++          if (state.socket) {
++            state.socket->shutdown();
++            state.bufferedAmount = static_cast<double>(state.socket->writableLength()) + state.sender->bufferedBytes;
++          }
++          state.sender.reset();
++          state.socket.reset();
++          state.socketAttached = false;
++          state.readyState = WebSocket::CLOSED;
+           if (state.receiver) state.receiver->removeAllListeners();
+           websocket->removeAllListeners();
+```
+
+### 22. A-FETCH-NET-GCC-AWAIT (GCC 12 portability rule) — Inline Asio buffer construction in native awaits
 
 `src/rt/fetch_transport_net.cpp:111, 151, 178, 193, 224`
 
