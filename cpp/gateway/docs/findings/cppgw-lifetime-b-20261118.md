@@ -81,7 +81,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/cache/prompt_analytics.hpp`
 - [x] `include/uos/cache/prompt_analytics_core.hpp`
 - [x] `include/uos/cache/prompt_analytics_queue.hpp`
-- [ ] `include/uos/cache/prompt_analytics_read.hpp`
+- [x] `include/uos/cache/prompt_analytics_read.hpp`
 - [ ] `include/uos/cache/scope_experiment.hpp`
 - [ ] `include/uos/cache/scope_experiment_model.hpp`
 - [ ] `include/uos/cache/scope_experiment_targets.hpp`
@@ -526,6 +526,10 @@ Exports types and APIs defined by the related cache headers. No inline coroutine
 | --- | --- | --- | --- |
 | 15-35,46-71,79-94 | Optional telemetry payload and queue options | **SAFE** | Queue values own event metadata and any injected store; no request frame borrow is stored. An injected queue is a copied handle over state and the sink takes its entry by value. |
 
+### `include/uos/cache/prompt_analytics_read.hpp`
+
+Public reads own their options. Group-by validation borrows JSON only in a synchronous check. Read suspension points are reviewed in the source.
+
 
 ## Ranked defects and counts
 
@@ -731,4 +735,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-58/97 files reviewed. **DEFECT 8, SAFE 111, UNCLEAR 3.**
+59/97 files reviewed. **DEFECT 8, SAFE 111, UNCLEAR 3.**

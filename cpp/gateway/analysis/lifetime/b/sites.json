@@ -1534,8 +1534,9 @@
       ]
     },
     "include/uos/cache/prompt_analytics_read.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "Public reads own their options. Group-by validation borrows JSON only in a synchronous check. Read suspension points are reviewed in the source."
     },
     "include/uos/cache/scope_experiment.hpp": {
       "reviewed": false,
