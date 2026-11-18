@@ -2536,7 +2536,8 @@
       "sites": []
     },
     "src/authority/native_kernel.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed usage arithmetic, terminal accounting and synchronous storage plan helpers. Plans own records and traversals use local inputs without suspension.",
       "sites": []
     },
     "src/authority/native_kernel_contracts.cpp": {
