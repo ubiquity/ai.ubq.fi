@@ -9,8 +9,9 @@ Differences in diagnostic wording are expected. [TypeScript source](../../src/) 
 
 ## Where it stands
 
-- **Linux ARM64.** The integrated Release suite passed **450/450 binaries and 5,104/5,104 cases** across four shards.
-  [Final integration](docs/findings/cppgw-integrate-f1-20261118.md)
+- **Linux ARM64.** The portable package seals and runs on Debian 12 and 13. It agreed with Bun on all 186 paired
+  conformance cases, including two validation failures shared by both gateways.
+  [Final integration](docs/findings/cppgw-integrate-f2-20261118.md)
 - **Linux x64.** The pre-integration comparison built 441 binaries and passed **438/441 binaries and 5,007/5,031 cases**.
   The three failures are detailed below. [Runner verification](docs/findings/cppgw-docs-readme-20261118.md)
 - **Apple Silicon.** The recorded macOS 26.7.2 development run passed **441/441 binaries and 5,029/5,029 cases**
@@ -76,8 +77,8 @@ env -i PATH="$PATH" LC_ALL=C LD_LIBRARY_PATH=/usr/local/lib CXX=clang++ UOS_CI_J
 ```
 
 The build directory holds `driver.log`, and the compiler-specific `release/` directory holds `receipt.json`,
-`results.tsv` and each test's build and run logs. Its outputs are for testing. Package construction uses the native
-build profile. [Build and test entry points](docs/BUILD.md) · [Verification report](docs/findings/cppgw-docs-readme-20261118.md)
+`results.tsv` and each test's build and run logs. Build the portable package separately with Docker Buildx.
+[Build and test entry points](docs/BUILD.md) · [Portable packages](docs/RELEASES.md)
 
 The full x64 run exited `1`. `permissions_linux_test` and `runtime_native_startup_test` check Linux ARM64
 contracts and accounted for 23 failed cases on this host. One case in `native_addon_differential_test`
@@ -117,8 +118,8 @@ to `127.0.0.1` and refuses service ports `7999` and `8000`. [Launch probe](docs/
 
 The launch manifest selects package, state and listener. The process reads the existing gateway environment for
 authentication, provider settings and identity, including `UOS_AI_TOKEN`, `CODEX_AUTH_JSON_B64` and `DENO_TIMELINE`.
-`DENO_TIMELINE=production` disables the legacy localhost authentication bypass. The binary does no implicit
-`.env` loading. The draft service supplies an explicit operator-owned environment file, and its use needs cutover
+`DENO_TIMELINE=production` disables the legacy localhost authentication bypass. The binary reads the process
+environment. Set `EnvironmentFile=` to the operator-owned `.env` in the service unit. Its use needs cutover
 review. [Configuration source](src/config.cpp) · [Auth policy](src/auth/index.cpp) · [Environment inventory](docs/RUNTIME.md) ·
 [Draft unit](ops/uos-gateway-native.service)
 
@@ -134,18 +135,20 @@ review. [Configuration source](src/config.cpp) · [Auth policy](src/auth/index.c
 
 The table lists the release build pins and the shared libraries supplied by the target OS. [Release packages](docs/RELEASES.md) · [Vendor registry](cmake/vendors.json)
 
-| Library            | Release version | Responsibility                                                                                                                                                                                                                                      |
-| ------------------ | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| simdjson           | 5.2.0, vendored | Bounded On-Demand JSON parsing into owned Boost.JSON values. [Parser](src/rt/json_simdjson.hpp)                                                                                                                                                     |
-| simdutf            | 9.4.0, vendored | Base64, UTF validation and text conversion. [Provenance](third_party/simdutf/PROVENANCE.md)                                                                                                                                                         |
-| llhttp             | 9.4.4, vendored | HTTP server request parsing and outbound Fetch and WebSocket response parsing. [Provenance](third_party/llhttp/PROVENANCE.md)                                                                                                                       |
-| Ada                | 4.0.0, vendored | URL parsing, IDNA and URL search parameters. [URL adapter](src/rt/url.cpp)                                                                                                                                                                          |
-| QCBOR              | 1.6.1, vendored | CBOR encoding and strict decoding for passkeys. [Passkeys](src/auth/passkeys.cpp)                                                                                                                                                                   |
-| Boost              | 1.92.0          | Asio for I/O and coroutines, Beast for WebSocket handshake and frame primitives, JSON and Container for values, and Multiprecision for BigInt. [Async](include/uos/rt/async.hpp) · [WebSocket](docs/rt/websocket.md) · [Numbers](src/rt/number.cpp) |
-| ICU                | 78.3            | Unicode casing and collation. [Text implementation](src/rt/string.cpp)                                                                                                                                                                              |
-| OpenSSL            | 3, OS library   | TLS, crypto and passkey ASN.1, X.509 and CRL decoding. [TLS](src/rt/tls.cpp) · [Passkeys](src/auth/passkeys.cpp)                                                                                                                                    |
-| SQLite             | 3.54.0          | Database engine for the KV backend. [KV backend](src/rt/kv_sqlite.cpp)                                                                                                                                                                              |
-| zlib, Brotli, Zstd | OS libraries    | Gzip streams and HTTP content decoding. [Gzip](src/rt/gzip.cpp) · [Fetch decoding](src/rt/fetch_transport_codec.cpp)                                                                                                                                |
+| Library              | Release version    | Responsibility                                                                                                                                                                                                                                      |
+| -------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| simdjson             | 5.2.0, vendored    | Bounded On-Demand JSON parsing into owned Boost.JSON values. [Parser](src/rt/json_simdjson.hpp)                                                                                                                                                     |
+| simdutf              | 9.4.0, vendored    | Base64, UTF validation and text conversion. [Provenance](third_party/simdutf/PROVENANCE.md)                                                                                                                                                         |
+| llhttp               | 9.4.4, vendored    | HTTP server request parsing and outbound Fetch and WebSocket response parsing. [Provenance](third_party/llhttp/PROVENANCE.md)                                                                                                                       |
+| Ada                  | 4.0.0, vendored    | URL parsing, IDNA and URL search parameters. [URL adapter](src/rt/url.cpp)                                                                                                                                                                          |
+| QCBOR                | 1.6.1, vendored    | CBOR encoding and strict decoding for passkeys. [Passkeys](src/auth/passkeys.cpp)                                                                                                                                                                   |
+| QuickJS-ng libregexp | 0.18.0, vendored   | Bounded ECMAScript matching and Unicode sets. [Regex adapter](docs/rt/regex.md)                                                                                                                                                                     |
+| Boost                | 1.92.0             | Asio for I/O and coroutines, Beast for WebSocket handshake and frame primitives, JSON and Container for values, and Multiprecision for BigInt. [Async](include/uos/rt/async.hpp) · [WebSocket](docs/rt/websocket.md) · [Numbers](src/rt/number.cpp) |
+| ICU                  | 78.3               | Unicode casing and collation. [Text implementation](src/rt/string.cpp)                                                                                                                                                                              |
+| OpenSSL              | 3, OS library      | TLS, crypto and passkey ASN.1, X.509 and CRL decoding. [TLS](src/rt/tls.cpp) · [Passkeys](src/auth/passkeys.cpp)                                                                                                                                    |
+| SQLite               | 3.54.0             | Database engine for the KV backend. [KV backend](src/rt/kv_sqlite.cpp)                                                                                                                                                                              |
+| zlib, Brotli, Zstd   | OS libraries       | Gzip streams and HTTP content decoding. [Gzip](src/rt/gzip.cpp) · [Fetch decoding](src/rt/fetch_transport_codec.cpp)                                                                                                                                |
+| C++20 and POSIX      | Standard libraries | Dates, filesystem paths, numeric conversion, collections and process environment. [Completed replacements](docs/OSS-REPLACEMENT-PLAN.md#ranked-component-inventory)                                                                                 |
 
 The package also carries and verifies the pinned `@deno/kv` 0.14.0 artifact for provenance. The linked C++ SQLite
 backend handles the actual database operations. [Architecture](docs/ARCHITECTURE.md) ·
@@ -153,6 +156,10 @@ backend handles the actual database operations. [Architecture](docs/ARCHITECTURE
 
 ## Open items
 
+- `chat-invalid-role` and `responses-invalid-tool-type` should return HTTP 400 without dispatch. The packaged
+  gateway and Bun both returned HTTP 200 and dispatched in conformance. [Final integration](docs/findings/cppgw-integrate-f2-20261118.md)
+- The coroutine lifetime audit and rollout of the tighter input limits are in progress.
+  [Coroutine audit](docs/findings/local-coroutine-lifetime-audit.md) · [Input limits](docs/RUNTIME.md#input-limits)
 - The storage reader preserves sparse entries, references and cycles in the typed graph. Projection to dense JSON
   can materialize holes. Cutover still needs complete decoding on a stopped copy, verified reverse conversion of
   the latest writes, and durability evidence. [Storage cutover](docs/OPEN-STAGES.md) ·
@@ -205,7 +212,7 @@ backend handles the actual database operations. [Architecture](docs/ARCHITECTURE
 ### Findings and benchmark instructions
 
 - [Guide verification](docs/findings/cppgw-docs-readme-20261118.md) records the commands, x64 results and documentation discrepancies.
-- [Final integration](docs/findings/cppgw-integrate-f1-20261118.md) has the merged ARM64 Release and sanitizer counts.
+- [Final integration](docs/findings/cppgw-integrate-f2-20261118.md) has the merged ARM64 Release, sanitizer, robustness and package evidence.
 - [CI workflow](docs/findings/cppgw-ci-workflow-20261118.md) gives earlier shard diagnostics and artifact handling.
 - [Portable x64 build](docs/findings/cppgw-ci-build-x86-20261117.md) traces the original driver qualification.
 - [Native macOS](docs/findings/cppgw-macos-native-20261117.md) has the exact development run and dependency decisions.

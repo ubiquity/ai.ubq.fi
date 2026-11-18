@@ -18,9 +18,11 @@ summarizes platform evidence and how to try it. [TypeScript modules](../../../sr
 Asio handles asynchronous I/O. llhttp parses incoming HTTP and outbound response heads. Beast provides WebSocket
 handshake and frame primitives, with llhttp supplying the client's HTTP response parsing. Ada handles URL, IDNA
 and URL search parameters. simdjson parses JSON into owned Boost.JSON values, simdutf handles Base64 and bulk
-text conversion, and ICU supplies Unicode casing and collation. QCBOR decodes and encodes passkey CBOR. OpenSSL
-supplies TLS, crypto and typed passkey ASN.1 decoding. Boost.Multiprecision supplies BigInt arithmetic. The runtime
-adapters retain input bounds, request body ownership, backpressure, UTF-16 offsets and storage value encoding.
+text conversion, and ICU supplies Unicode casing and collation. QuickJS-ng libregexp compiles and matches ECMAScript
+patterns, including Unicode sets. QCBOR decodes and encodes passkey CBOR, and OpenSSL supplies TLS, crypto and typed
+passkey ASN.1 decoding. Boost.Multiprecision supplies BigInt arithmetic. SQLite stores the KV rows, zlib, Brotli and
+Zstd handle HTTP content decoding, and C++20 and POSIX supply filesystem paths, numeric conversion, dates and
+collections. The adapters retain input bounds, backpressure, UTF-16 offsets, storage value encoding and delivery receipts.
 [Library versions and provenance](../README.md#libraries-in-use) · [Vendor selection](../cmake/vendors.json)
 
 ## From client socket to provider and back
@@ -107,7 +109,9 @@ handle, SQLite transactions and write-ahead logging on writable stores. [Storage
 The database uses Deno KV's SQLite schema and ordered tuple keys. It preserves versionstamps, atomic checks and
 writes, absolute expiration times and queue records. Row encodings distinguish raw bytes, unsigned 64-bit values and
 structured values. Structured values use Bun's JavaScriptCore serialization in this database. The legacy Deno
-database uses V8 serialization for that part of the format. [Tuple keys](../src/rt/kv_key.cpp) ·
+database uses V8 serialization for that part of the format. Typed regular expressions preserve their source and
+flags in both codecs, including `v`. Bundled assets and tool inputs use native filesystem paths from the configured
+resource root. [Tuple keys](../src/rt/kv_key.cpp) ·
 [JavaScriptCore reader](../src/rt/kv_jsc_deserialize.cpp) · [Durable KV format and interop](rt/kv-durable.md)
 
 Conversion is a separate offline operation with a stopped, consistent source, a new destination and a verified
@@ -133,6 +137,7 @@ environment supplies an empty home, fresh temp space and loopback-only networkin
 log and a receipt with the exact inputs and counts. [Link resolver](../tools/links.py) ·
 [Registry](../tests/LINKS.txt) · [Portable driver](CI.md) · [Test conventions](TESTING.md)
 
-Linux ARM64 Release passed 450 binaries and 5,104 cases across the four shards. The paired package conformance
-runner launches the native and Bun gateways against the same loopback mocks and checks wire responses and durable
-readback across restart. [Final integration](findings/cppgw-integrate-f1-20261118.md) · [Conformance](CONFORMANCE.md)
+The paired package conformance runner launches the native and Bun gateways against the same loopback mocks and checks
+wire responses and durable readback across restart. It found agreement on all 186 cases and two failures of the
+independent validation assertions on both runtimes. [Final integration](findings/cppgw-integrate-f2-20261118.md) ·
+[Conformance](CONFORMANCE.md)
