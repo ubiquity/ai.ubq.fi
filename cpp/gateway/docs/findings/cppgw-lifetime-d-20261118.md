@@ -91,7 +91,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/auth/passport.cpp`
 - [x] `src/auth/passport_sessions.cpp`
 - [x] `src/auth/relay.cpp`
-- [ ] `src/authority/admission_state.cpp`
+- [x] `src/authority/admission_state.cpp`
 - [ ] `src/authority/authority_rpc.cpp`
 - [ ] `src/authority/contracts.cpp`
 - [ ] `src/authority/credential_publication.cpp`
@@ -600,6 +600,14 @@ Reviewed session creation, replacement, introspection and revocation including s
 
 Reviewed the synchronous origin parser, trusted host lookup and slash normalization. The static table uses literal storage, derived labels are local, and the result is an owning string. No lifetime site crosses a suspension or escapes as a callback.
 
+### `src/authority/admission_state.cpp`
+
+Reviewed the portable authority CAS loop and every admission mutation. The operation callbacks synchronously modify one private snapshot per retry. The RPC server and delivery outbox retain their shared AuthorityOperations receivers, and direct fixtures await with a named owner.
+
+- L171, 178, 184 **SAFE** · The awaited transaction owns its action and mutable snapshot, and each CAS accepts its own state value. All current caller paths retain the PortableAuthority and therefore its store across both waits.
+- L198, 250, 251, 257, 276, 280, 305, 310, 315, 320, 326, 350 **SAFE** · These normal lambdas borrow member coroutine arguments that remain live in the direct awaiting caller. The nested selectors consume snapshot pointers synchronously before the next wait.
+- L355, 367, 371, 381, 387, 410, 415, 440, 444, 450, 455, 472, 476, 485, 490, 512, 517, 532, 534 **SAFE** · Mutations use references only inside synchronous actions held by the transaction frame. Outer arguments and receiver remain in the direct awaiting ownership chain, including cancel followed by settle.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -705,4 +713,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-26/286 files reviewed. 114 sites: 105 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+27/286 files reviewed. 117 sites: 108 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

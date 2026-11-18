@@ -1977,8 +1977,79 @@
       "sites": []
     },
     "src/authority/admission_state.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the portable authority CAS loop and every admission mutation. The operation callbacks synchronously modify one private snapshot per retry. The RPC server and delivery outbox retain their shared AuthorityOperations receivers, and direct fixtures await with a named owner.",
+      "sites": [
+        {
+          "lines": [
+            171,
+            178,
+            184
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The awaited transaction owns its action and mutable snapshot, and each CAS accepts its own state value. All current caller paths retain the PortableAuthority and therefore its store across both waits."
+        },
+        {
+          "lines": [
+            198,
+            250,
+            251,
+            257,
+            276,
+            280,
+            305,
+            310,
+            315,
+            320,
+            326,
+            350
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "These normal lambdas borrow member coroutine arguments that remain live in the direct awaiting caller. The nested selectors consume snapshot pointers synchronously before the next wait."
+        },
+        {
+          "lines": [
+            355,
+            367,
+            371,
+            381,
+            387,
+            410,
+            415,
+            440,
+            444,
+            450,
+            455,
+            472,
+            476,
+            485,
+            490,
+            512,
+            517,
+            532,
+            534
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Mutations use references only inside synchronous actions held by the transaction frame. Outer arguments and receiver remain in the direct awaiting ownership chain, including cancel followed by settle."
+        }
+      ]
     },
     "src/authority/authority_rpc.cpp": {
       "reviewed": false,
