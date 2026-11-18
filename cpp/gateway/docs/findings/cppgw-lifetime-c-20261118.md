@@ -200,7 +200,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/external_auth.cpp`
 - [x] `src/codex/index.cpp`
 - [x] `src/codex/manual_reset.cpp`
-- [ ] `src/codex/manual_reset_state.cpp`
+- [x] `src/codex/manual_reset_state.cpp`
 - [ ] `src/codex/native_auth.cpp`
 - [ ] `src/codex/native_auth_transport.cpp`
 - [ ] `src/codex/overage_settings.cpp`
@@ -1291,3 +1291,7 @@ Manual reset keeps request, billing proof and selection data in local snapshots.
 - 88,161-162,199-201 · KV receiver lifetime after fail-fast all · **DEFECT** · readEntry is a forwarding function and releases its KV copy before the returned virtual get finishes. If an injected KV's coroutine get loses to a rejected sibling and the caller supplied the last owner, the pending method can resume with a dead receiver. Make readEntry an owning coroutine. Guarded production KV and MemoryKv take their own inner store ownership.
 - 129-153,155-184,192-208,220-229 · validated promotion and reset joins · **SAFE** · The target, intent, observation and operation handles belong to the parent frames, and every nested step after fan-out is joined.
 - 209-219 · durable fence predicate closures · **SAFE** · Predicates copy target, selection, intent and clock into the candidate and are only invoked synchronously with row values.
+
+### `src/codex/manual_reset_state.cpp`
+
+Manual reset state comparison, JSON conversion and key construction are synchronous. Each literal-backed view is consumed in its loop iteration.
