@@ -2232,8 +2232,16 @@
       ]
     },
     "src/codex/responses_state.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Creation reads and packages one request-local state. State reset and decision helpers are synchronous.",
+      "sites": [
+        {
+          "lines": "13-94",
+          "kind": "response context construction and callbacks",
+          "verdict": "SAFE",
+          "reason": "The input, strong pool, route result and coordinator live in the frame. The stored reload callback owns its config or is copied from options."
+        }
+      ]
     },
     "src/codex/routing_evaluation.cpp": {
       "status": "pending",
