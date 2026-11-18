@@ -45,7 +45,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/rt/kv_sqlite.hpp`
 - [x] `include/uos/rt/process.hpp`
 - [x] `include/uos/rt/sqlite.hpp`
-- [ ] `src/rt/fs.cpp`
+- [x] `src/rt/fs.cpp`
 - [ ] `src/rt/kv.cpp`
 - [ ] `src/rt/kv_internal.hpp`
 - [ ] `src/rt/kv_js.cpp`
@@ -299,6 +299,13 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 97-106,241-299,309-354 | SQLite bindings and synchronous row iterator | **SAFE** | Bindings own their bytes and row iterator owns its statement and bindings. Its input iterator borrows the named RowIterator only for synchronous production iteration, and a result row references the current iterator element only until advance. |
 | 425,449-482 | SQLite transaction callable | **SAFE** | Transaction owns the functor, connection and controller. Its reference-capturing invocation lambda runs synchronously inside runTransaction and all traced production transaction bodies are synchronous. |
 
+### `src/rt/fs.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 349-376,502-535,607-655 | File wrappers and read/write buffers | **SAFE** | Filesystem operations use borrowed buffers only inside synchronous syscalls. Scoped descriptors close on error or on return, and FileHandle moves invalidate the source descriptor. |
+| 675-716 | Path helper views | **SAFE** | The call resolves and normalizes the input pieces synchronously and produces owning path strings. |
+
 
 ## Ranked defects and counts
 
@@ -464,4 +471,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-22/97 files reviewed. **DEFECT 7, SAFE 57, UNCLEAR 2.**
+23/97 files reviewed. **DEFECT 7, SAFE 59, UNCLEAR 2.**

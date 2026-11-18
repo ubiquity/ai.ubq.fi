@@ -777,8 +777,29 @@
       ]
     },
     "src/rt/fs.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "349-376,502-535,607-655",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "File wrappers and read/write buffers",
+          "evidence": "Filesystem operations use borrowed buffers only inside synchronous syscalls. Scoped descriptors close on error or on return, and FileHandle moves invalidate the source descriptor."
+        },
+        {
+          "lines": "675-716",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Path helper views",
+          "evidence": "The call resolves and normalizes the input pieces synchronously and produces owning path strings."
+        }
+      ]
     },
     "src/rt/kv.cpp": {
       "reviewed": false,
