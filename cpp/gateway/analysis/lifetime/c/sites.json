@@ -2909,7 +2909,8 @@
       ]
     },
     "src/live/routes.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Route matching is synchronous and returns owned route fields.",
       "sites": []
     },
     "src/live/sideband.cpp": {

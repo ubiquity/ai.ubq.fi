@@ -265,7 +265,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/harmony/types.cpp`
 - [x] `src/live/calls.cpp`
 - [x] `src/live/handler.cpp`
-- [ ] `src/live/routes.cpp`
+- [x] `src/live/routes.cpp`
 - [ ] `src/live/sideband.cpp`
 - [ ] `src/live/upstream.cpp`
 - [ ] `src/paid_fallback/claude_code_route.cpp`
@@ -1670,3 +1670,7 @@ Call creation buffers and validates local multipart data, then joins account sel
 HTTP and upgrade handlers own the incoming Request and principal snapshots.
 
 - 27-45,47-65 · authentication, principal, and upgrade waits · **SAFE** · Auth/route decisions and the presentation callback are local values. UpgradeResult owns the returned accept function separately.
+
+### `src/live/routes.cpp`
+
+Route matching is synchronous and returns owned route fields.
