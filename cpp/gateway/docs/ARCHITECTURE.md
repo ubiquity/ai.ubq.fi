@@ -1,9 +1,9 @@
 # Native gateway architecture
 
-The C++20 gateway ports the application in [src/](../../../src/) and [serve.ts](../../../serve.ts). It uses native
-libraries for generic operations and keeps the gateway's wire formats, authentication, validation, accounting and
-storage contracts. This guide follows the source in this checkout. The [owner guide](../README.md) summarizes
-platform evidence and how to try it.
+The C++20 gateway ports the repository's TypeScript application. It uses native libraries for generic operations
+and keeps the gateway's wire formats, authentication, validation, accounting and storage contracts. The owner guide
+summarizes platform evidence and how to try it. [TypeScript modules](../../../src/) ·
+[TypeScript entry point](../../../serve.ts) · [Owner guide](../README.md)
 
 ## Layers
 

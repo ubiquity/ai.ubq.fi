@@ -48,6 +48,47 @@ env -i PATH="$PATH" LC_ALL=C LD_LIBRARY_PATH=/usr/local/lib CXX=clang++ UOS_CI_J
 The build directory was `/tmp/uos-gateway-build.SuKRVT`, with the driver receipt and logs under
 `clang++-4ab551e14be2/release/`. The driver digest covers the compiled sources, tests and driver inputs.
 
+## Release results
+
+The cold Release run compiled all **369 production objects**, including 44 runtime objects, and built all **441**
+test binaries. It returned exit 1 with **438 passing binaries and 5,007/5,031 passing cases**, zero build failures
+and zero timeouts. Object compilation took 2,192.057 seconds, linking and tests took 72.128 seconds, and total wall
+time was 2,264.564 seconds. The SQLite fixture passed 29/29 and the URL IDNA fixture passed 2/2 with the library
+versions above.
+
+The receipt binds commit `3950d08d36f0633bbf61bf8c2c784614ff36c697`, tree
+`02528c993ad5876b03a77de7cfdac650e74498c2` and unchanged input SHA-256
+`9629fe15f1187dd6309599aef3c46f242b0ed2f9f137ee6fd045d375b710e461`. This is the same driver input digest as the
+passing ARM64 suite-repair receipt. Subsequent task commits only change the three Markdown paths. The full local
+receipt was saved before the focused reruns as `/tmp/uos-gateway-build.SuKRVT/full-release-receipt.json`, SHA-256
+`daa05d7075ac8c7549190684207cb192d2612da463acd29c7d1447df955f698a`. [ARM64 receipt](cppgw-suite-repair-20261118.md)
+
+| Fixture                          | Passed / run | Outcome                                                           |
+| -------------------------------- | -----------: | ----------------------------------------------------------------- |
+| `permissions_linux_test`         |          0/5 | `Linux confinement requires Linux ARM64`                          |
+| `runtime_native_startup_test`    |         0/18 | `Native KV development platform is unsupported`                   |
+| `native_addon_differential_test` |          3/4 | The x64 vector set still expects Bun's older JSON error messages. |
+
+The extra x64 failure is one harness case covering three vectors with invalid native-artifact metadata. Malformed
+inputs, BOM-prefixed inputs and malformed provenance all return the intended `SyntaxError("Invalid JSON")`. The
+Linux x64 branch uses `native_addon_linux_x64_vectors.inc`, which retains the older detailed error strings while
+the suite-repair commit updated the embedded vector set. This is fixture drift outside the owned paths. The
+isolated rerun reproduced 3/4 with exit 1. [Fixture selection](../../tests/native_addon_differential_test.cpp) ·
+[Linux x64 vectors](../../tests/native_addon_linux_x64_vectors.inc) · [Current parser](../../src/rt/json_simdjson.hpp)
+
+The focused loopback HTTP fixture passed **5/5** in 6.063 seconds with exit 0. It exercised the real HTTP handler
+against a scripted local upstream. Both focused runs reused the full-run objects. [Fixture](../../tests/oss_gateway_http_test.cpp)
+
+```sh
+build_dir=/tmp/uos-gateway-build.SuKRVT
+env -i PATH="$PATH" LC_ALL=C LD_LIBRARY_PATH=/usr/local/lib CXX=clang++ UOS_CI_JOBS=4 \
+  UOS_CI_BUILD_DIR="$build_dir" bash cpp/gateway/tools/ci-build.sh --config release native_addon_differential_test \
+  >"$build_dir/native-addon-driver.log" 2>&1
+env -i PATH="$PATH" LC_ALL=C LD_LIBRARY_PATH=/usr/local/lib CXX=clang++ UOS_CI_JOBS=4 \
+  UOS_CI_BUILD_DIR="$build_dir" bash cpp/gateway/tools/ci-build.sh --config release oss_gateway_http_test \
+  >"$build_dir/loopback-driver.log" 2>&1
+```
+
 ## Launch command check
 
 The portable driver compiles the service modules and builds standalone tests. For a separate launch preflight,
@@ -120,3 +161,42 @@ request, reopen and shutdown evidence. [Launcher](../../ops/launch-native.sh) ·
 The pre-existing storage limitations, ARM64 confinement requirement and Ubuntu multiarch host-library lookup
 finding remain outside the owned paths. The request benchmark report documents its local workaround for the last
 one. [Storage blockers](../OPEN-STAGES.md) · [Benchmark finding](cppgw-perf-request-path-20261117.md)
+
+## Document checks and publication
+
+The three changed Markdown paths passed the repository's Prettier gate with pinned Bun 1.4.0 and frozen dependencies
+installed in scratch. The link script rendered GitHub-flavored Markdown with `cmark-gfm`, checked each rendered
+relative link against the checkout and ran `bash -n` on the README command blocks. The document map covers all
+43 gateway docs and porting rules. `git diff --check` passed and the branch diff contains only the three owned paths.
+
+```sh
+repo_root=$PWD
+format_dir=/tmp/cppgw-guide-format.8FaOcD
+(
+  cd "$format_dir/repo" &&
+  env -i PATH="$PATH" HOME="$format_dir/home" TMPDIR="$format_dir/tmp" \
+    bun --no-env-file run format:check "$repo_root/cpp/gateway/README.md" \
+    "$repo_root/cpp/gateway/docs/ARCHITECTURE.md" "$repo_root/cpp/gateway/docs/findings/cppgw-docs-readme-20261118.md"
+)
+python3 -B "$format_dir/check-links.py" cpp/gateway/README.md cpp/gateway/docs/ARCHITECTURE.md \
+  cpp/gateway/docs/findings/cppgw-docs-readme-20261118.md
+git diff --check 33ea9b20d1f02b96bb86a24c0530641ccd4fd525 HEAD
+```
+
+The publication preflight returned exit 128 with `could not read Username for 'https://github.com': terminal prompts disabled`.
+The suite-repair base is outside the refreshed `origin/development` ancestry. The guide commits remain on the clean
+task branch for integration with the port.
+
+```sh
+GIT_TERMINAL_PROMPT=0 git -c credential.helper= push --dry-run origin HEAD:refs/heads/agent-jobs/cppgw-docs-readme-20261118
+git fetch --no-tags origin refs/heads/development:refs/remotes/origin/development
+git merge-base --is-ancestor 33ea9b20d1f02b96bb86a24c0530641ccd4fd525 origin/development
+```
+
+## Summary
+
+On Linux x64, all 441 Release binaries built. **438 binaries and 5,007 of 5,031 cases passed.** Two ARM64
+checks and one stale x64 JSON diagnostic expectation account for the failures. The loopback HTTP fixture passed
+5/5 cases, and the launch preflight rejected a bad package hash. Both guides passed formatting, Markdown rendering
+and relative-link checks. The report records stale documentation and open storage and deployment work. GitHub
+authentication blocked publication from this runner.

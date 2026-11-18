@@ -9,12 +9,14 @@ Differences in diagnostic wording are expected. [TypeScript source](../../src/) 
 
 ## Where it stands
 
-| Platform      | Recorded result                                                                                                                                                                                                                                                            |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Linux ARM64   | **441/441 Release binaries and 5,031/5,031 cases passed** at the suite-repair source and test commit `380a9b0a`. Both ARM64 startup fixtures passed. A scoped sanitizer run passed 19 binaries and 347 cases. [Suite repair](docs/findings/cppgw-suite-repair-20261118.md) |
-| Linux x64     | The portable driver lists 441 binaries. `permissions_linux_test` and `runtime_native_startup_test` exercise Linux ARM64 contracts. [This guide's verification](docs/findings/cppgw-docs-readme-20261118.md)                                                                |
-| Apple Silicon | **441/441 binaries and 5,029/5,029 cases passed** in the recorded macOS 26.7.2 development build at `c6cd29f9`. Packaging and service startup still need qualification. [macOS results](docs/MACOS.md)                                                                     |
-| Raspberry Pi  | A target for a 64-bit ARM build. The OS, loader, kernel confinement and memory headroom still need checking on the device. [Platform requirements](docs/BUILD.md)                                                                                                          |
+- **Linux ARM64.** Release passed **441/441 binaries and 5,031/5,031 cases** at source and test commit `380a9b0a`.
+  A scoped sanitizer run passed 19 binaries and 347 cases. [Suite repair](docs/findings/cppgw-suite-repair-20261118.md)
+- **Linux x64.** This guide's Release run built all 441 binaries and passed **438/441 binaries and 5,007/5,031 cases**.
+  The three failures are detailed below. [Runner verification](docs/findings/cppgw-docs-readme-20261118.md)
+- **Apple Silicon.** The recorded macOS 26.7.2 development run passed **441/441 binaries and 5,029/5,029 cases**
+  at `c6cd29f9`. Packaging and service startup still need qualification. [macOS results](docs/MACOS.md)
+- **Raspberry Pi.** This is a 64-bit ARM target. Its OS, loader, kernel confinement and memory headroom
+  still need checking on the device. [Platform requirements](docs/BUILD.md)
 
 The Linux ARM64 suite-repair result is the latest full suite recorded for this source. The older **5,024-case**
 result belongs to the separately packaged GCC release. For current JSON, Base64 and input limits, this guide
@@ -80,13 +82,28 @@ The build directory holds `driver.log`, and the compiler-specific `release/` dir
 `results.tsv` and each test's build and run logs. Its outputs are for testing. Package construction uses the native
 build profile. [Build and test entry points](docs/BUILD.md) · [Verification report](docs/findings/cppgw-docs-readme-20261118.md)
 
+The full x64 run exited `1`. `permissions_linux_test` and `runtime_native_startup_test` check Linux ARM64
+contracts and accounted for 23 failed cases on this host. One case in `native_addon_differential_test`
+also failed. Its Linux x64 vectors still expect older Bun error wording for malformed JSON. The parser
+rejected the inputs. [Failure details](docs/findings/cppgw-docs-readme-20261118.md)
+
+For a focused local HTTP check, reuse the build directory. This fixture started the gateway handler and a scripted
+upstream on loopback and passed all **5 cases** on this runner. [HTTP fixture](tests/oss_gateway_http_test.cpp)
+
+```sh
+env -i PATH="$PATH" LC_ALL=C LD_LIBRARY_PATH=/usr/local/lib CXX=clang++ UOS_CI_JOBS=4 \
+  UOS_CI_BUILD_DIR="$build_dir" bash cpp/gateway/tools/ci-build.sh --config release oss_gateway_http_test \
+  >"$build_dir/loopback-driver.log" 2>&1
+```
+
 ## Run a sealed Linux ARM64 package
 
 Prepare the ARM64 package for the target's host libraries using the native build and packaging instructions. Set
 `package_root` to its absolute path and `launch_manifest` to the absolute path of the owner-private JSON. The
 manifest binds the package and native KV provenance hashes, the private state root and the loopback listener.
-Normal startup needs an existing private `.data/kv-bun.sqlite3` with the Bun codec marker in that state root. The isolated package smoke guide
-describes the separate fixture mode with fresh state and a scripted upstream. [Package instructions](docs/RUNTIME.md) ·
+Normal startup needs an existing private `.data/kv-bun.sqlite3` with the Bun codec marker in that state root.
+The isolated package smoke guide describes the separate fixture mode with fresh state and a scripted upstream.
+[Package instructions](docs/RUNTIME.md) ·
 [Launch schema](runtime/launch-schema.json) · [Package smoke](tests/production_smoke/README.md)
 
 ```sh
@@ -132,6 +149,10 @@ uses installed versions of the host libraries. [Release toolchain](docs/BUILD.md
 | zlib     | 1.3.2           | Gzip streams and gzip/deflate decoding for Fetch. [Gzip](src/rt/gzip.cpp) · [Fetch decoding](src/rt/fetch_transport_codec.cpp)                                                                                                                                                                 |
 | Brotli   | 1.2.0           | Brotli decoding for Fetch. [Fetch decoding](src/rt/fetch_transport_codec.cpp)                                                                                                                                                                                                                  |
 | Zstd     | 1.5.7           | Zstandard decoding for Fetch. [Fetch decoding](src/rt/fetch_transport_codec.cpp)                                                                                                                                                                                                               |
+
+The package also carries and verifies the pinned `@deno/kv` 0.14.0 artifact for provenance. The linked C++ SQLite
+backend handles the actual database operations. [Architecture](docs/ARCHITECTURE.md) ·
+[Artifact pin](../../tools/native-kv/inputs.json)
 
 ## Open items
 
