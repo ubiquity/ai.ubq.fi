@@ -236,7 +236,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/deepseek/stream.cpp`
 - [x] `src/deepseek/waterfall.cpp`
 - [x] `src/deepseek/waterfall_handler.cpp`
-- [ ] `src/embeddings/handlers.cpp`
+- [x] `src/embeddings/handlers.cpp`
 - [ ] `src/embeddings/jobs.cpp`
 - [ ] `src/embeddings/ledger.cpp`
 - [ ] `src/embeddings/voyage.cpp`
@@ -1512,3 +1512,11 @@ Waterfall hops are joined serially, and the replay pump owns its iterator indepe
 
 - 33-52,81-95,104-129 · dispatch callback, borrowed telemetry and hop iteration · **SAFE** · The dispatcher owns its paid tail and all child calls are joined by frames retaining the input and context. The plan vector is immutable during iteration.
 - 54-78 · stream replay and detached iterator operations · **SAFE** · The pump owns its iterator and has a weak controller. Stream cancel invokes the synchronous return_ factory before the captured iterator is released, handing the queued request state to the detached task.
+
+### `src/embeddings/handlers.cpp`
+
+The buffered handler joins member operations while its request and telemetry owners are live. Its optional KV seam admits implementations with a borrowed async receiver.
+
+- 80-130,150-231,237-342 · request-state members and retries · **SAFE** · handleEmbeddingsRequest owns the RequestState object. Nested tasks are joined serially, and Voyage parameters and chunk slices are copied before sending.
+- 137-140 · cache fan-out virtual receiver · **DEFECT** · One cache get can reject while another injected KV get is still awaiting. The request unwinds the last shared store owner, leaving the pending virtual coroutine with a dead receiver. Wrap each get in an owning child as jobs.cpp does.
+- 343-398 · handler context, hash fan-out and callback · **SAFE** · The terminal route retains its context during entry, runTelemetry owns its copy, and the telemetry wrapper retains the callback. Each hash child owns its input text.

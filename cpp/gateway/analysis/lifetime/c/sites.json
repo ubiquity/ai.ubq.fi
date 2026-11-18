@@ -2572,8 +2572,28 @@
       ]
     },
     "src/embeddings/handlers.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The buffered handler joins member operations while its request and telemetry owners are live. Its optional KV seam admits implementations with a borrowed async receiver.",
+      "sites": [
+        {
+          "lines": "80-130,150-231,237-342",
+          "kind": "request-state members and retries",
+          "verdict": "SAFE",
+          "reason": "handleEmbeddingsRequest owns the RequestState object. Nested tasks are joined serially, and Voyage parameters and chunk slices are copied before sending."
+        },
+        {
+          "lines": "137-140",
+          "kind": "cache fan-out virtual receiver",
+          "verdict": "DEFECT",
+          "reason": "One cache get can reject while another injected KV get is still awaiting. The request unwinds the last shared store owner, leaving the pending virtual coroutine with a dead receiver. Wrap each get in an owning child as jobs.cpp does."
+        },
+        {
+          "lines": "343-398",
+          "kind": "handler context, hash fan-out and callback",
+          "verdict": "SAFE",
+          "reason": "The terminal route retains its context during entry, runTelemetry owns its copy, and the telemetry wrapper retains the callback. Each hash child owns its input text."
+        }
+      ]
     },
     "src/embeddings/jobs.cpp": {
       "status": "pending",
