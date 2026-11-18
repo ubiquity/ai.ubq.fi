@@ -701,7 +701,8 @@
       "sites": []
     },
     "include/uos/harmony/parse.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous wire parsing API with call-local views.",
       "sites": []
     },
     "include/uos/harmony/probe_scenarios.hpp": {

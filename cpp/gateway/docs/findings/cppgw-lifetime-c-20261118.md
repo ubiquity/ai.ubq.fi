@@ -97,7 +97,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/adapter.hpp`
 - [x] `include/uos/harmony/classifier.hpp`
 - [x] `include/uos/harmony/conversation.hpp`
-- [ ] `include/uos/harmony/parse.hpp`
+- [x] `include/uos/harmony/parse.hpp`
 - [ ] `include/uos/harmony/probe_scenarios.hpp`
 - [ ] `include/uos/harmony/probes.hpp`
 - [ ] `include/uos/harmony/reliability/context.hpp`
@@ -675,3 +675,7 @@ Synchronous classifier request/projection declarations. No async registration or
 ### `include/uos/harmony/conversation.hpp`
 
 Synchronous conversation construction and JSON values. No deferred borrowing.
+
+### `include/uos/harmony/parse.hpp`
+
+Synchronous wire parsing API with call-local views.
