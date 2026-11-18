@@ -19,6 +19,10 @@ target_compile_options(uos_gateway_settings INTERFACE -Wall -Wextra -Wshadow -Wc
 target_compile_definitions(uos_gateway_settings INTERFACE BOOST_JSON_NO_LIB BOOST_CONTAINER_NO_LIB BOOST_SYSTEM_NO_LIB)
 include(cmake/Profile.cmake)
 include(cmake/Vendors.cmake)
+if(TARGET uos_vendor_qcbor AND DEFINED ENV{UOS_GATEWAY_TOOL_VIEW})
+  set_property(TARGET uos_vendor_qcbor PROPERTY C_COMPILER_LAUNCHER
+    /usr/bin/python3 "${CMAKE_CURRENT_SOURCE_DIR}/tools/compiler-limit.py")
+endif()
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/PORT-MANIFEST.json")
 file(GLOB UOS_RT_DISCOVERY CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/rt/*.cpp")
