@@ -305,8 +305,16 @@
       ]
     },
     "include/uos/codex/reset_settings.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Usage settings and legacy migration API.",
+      "sites": [
+        {
+          "lines": "45,53",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The migration and usage read retain their stores and any account hash in their frames."
+        }
+      ]
     },
     "include/uos/codex/responses_error.hpp": {
       "status": "pending",

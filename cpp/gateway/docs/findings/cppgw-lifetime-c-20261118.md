@@ -60,7 +60,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/overage_settings.hpp`
 - [x] `include/uos/codex/quota.hpp`
 - [x] `include/uos/codex/rate_limit_429.hpp`
-- [ ] `include/uos/codex/reset_settings.hpp`
+- [x] `include/uos/codex/reset_settings.hpp`
 - [ ] `include/uos/codex/responses_error.hpp`
 - [ ] `include/uos/codex/responses_operations.hpp`
 - [ ] `include/uos/codex/responses_runners.hpp`
@@ -471,3 +471,9 @@ Synchronous quota parsing and record declarations. No suspendable body or regist
 429 classification and routing updater API.
 
 - 16-26 · owning task parameters · **SAFE** · Response and routing account handles are copied or moved to the receiving tasks before suspension.
+
+### `include/uos/codex/reset_settings.hpp`
+
+Usage settings and legacy migration API.
+
+- 45,53 · owning task parameters · **SAFE** · The migration and usage read retain their stores and any account hash in their frames.
