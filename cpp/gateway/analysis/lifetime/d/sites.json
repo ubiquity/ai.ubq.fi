@@ -4874,7 +4874,8 @@
       "sites": []
     },
     "src/release.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed release identifier declarations. The constants use static storage and there is no asynchronous operation.",
       "sites": []
     },
     "src/request.cpp": {

@@ -220,7 +220,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/optional_telemetry_queue.cpp`
 - [x] `src/quota_projection.cpp`
 - [x] `src/recent_model_context.cpp`
-- [ ] `src/release.cpp`
+- [x] `src/release.cpp`
 - [ ] `src/request.cpp`
 - [ ] `src/request_policy.cpp`
 - [ ] `src/responses_attempts.cpp`
@@ -1148,6 +1148,10 @@ Reviewed synchronous balance/history projections and time-bin aggregators. Sort 
 
 Reviewed synchronous context-window selection, source precedence and calculations. Views and pointers are used within each call, and projected results own their values.
 
+### `src/release.cpp`
+
+Reviewed release identifier declarations. The constants use static storage and there is no asynchronous operation.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1396,4 +1400,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-113/286 files reviewed. 224 sites: 207 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+114/286 files reviewed. 224 sites: 207 SAFE, 17 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
