@@ -287,7 +287,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/capacity.cpp`
 - [x] `src/provider/capacity_analytics.cpp`
 - [x] `src/provider/capacity_contract.cpp`
-- [ ] `src/provider/capacity_events.cpp`
+- [x] `src/provider/capacity_events.cpp`
 - [ ] `src/provider/capacity_history.cpp`
 - [ ] `src/provider/capacity_parse.cpp`
 - [ ] `src/provider/capacity_rollups.cpp`
@@ -1826,3 +1826,11 @@ Capacity analytics read and write via local snapshots.
 ### `src/provider/capacity_contract.cpp`
 
 Contract parsing and JSON conversion are synchronous. Variant visitor references are confined to each call.
+
+### `src/provider/capacity_events.cpp`
+
+Event persistence and scans retain their store and cursor owners. Event sampling receives a copied timestamp.
+
+- 54-64,79-144,152-204 · KV write and list awaits · **SAFE** · The task owns KV, the candidate event and any iterator or AtomicOperation through its awaited use.
+- 212-221 · event-triggered deferred sampling · **SAFE** · The reaction owns its timestamp and returns a task with owned sampling options. The rejection reaction is stateless.
+- 296-451 · record and event-list driver awaits · **SAFE** · Each list owns its cursor and result vector. Historical backfill writes and separate root reads keep their argument copies and store live.

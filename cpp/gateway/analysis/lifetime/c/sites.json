@@ -3337,8 +3337,28 @@
       "sites": []
     },
     "src/provider/capacity_events.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Event persistence and scans retain their store and cursor owners. Event sampling receives a copied timestamp.",
+      "sites": [
+        {
+          "lines": "54-64,79-144,152-204",
+          "kind": "KV write and list awaits",
+          "verdict": "SAFE",
+          "reason": "The task owns KV, the candidate event and any iterator or AtomicOperation through its awaited use."
+        },
+        {
+          "lines": "212-221",
+          "kind": "event-triggered deferred sampling",
+          "verdict": "SAFE",
+          "reason": "The reaction owns its timestamp and returns a task with owned sampling options. The rejection reaction is stateless."
+        },
+        {
+          "lines": "296-451",
+          "kind": "record and event-list driver awaits",
+          "verdict": "SAFE",
+          "reason": "Each list owns its cursor and result vector. Historical backfill writes and separate root reads keep their argument copies and store live."
+        }
+      ]
     },
     "src/provider/capacity_history.cpp": {
       "status": "pending",
