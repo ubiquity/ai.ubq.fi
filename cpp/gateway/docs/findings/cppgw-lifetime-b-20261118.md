@@ -55,7 +55,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/rt/kv_memory.cpp`
 - [x] `src/rt/kv_sdk.cpp`
 - [x] `src/rt/kv_sdk.hpp`
-- [ ] `src/rt/kv_sqlite.cpp`
+- [x] `src/rt/kv_sqlite.cpp`
 - [ ] `src/rt/kv_value.cpp`
 - [ ] `src/rt/process.cpp`
 - [ ] `src/rt/sqlite.cpp`
@@ -368,6 +368,16 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | 95,105-124,133-143 | Native request and codec interfaces | **SAFE** | Native ranges/messages are owning value parameters. Store owns codecs and the native target, and callback input views are for synchronous use only. |
 | 157-191 | List stream owner contract | **SAFE** | GenericListIterator owns its stream, which in turn owns StorePtr and batch storage. The traced callers retain the iterator through every next/return task. |
 
+### `src/rt/kv_sqlite.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 500-634,798-823,846-849 | SQLite Worker thread and backend ownership | **SAFE** | Worker captures this only in its owned thread, which shutdown and destruction join before members die. Jobs move into a local under lock and run unlocked over Worker-owned Backend. |
+| 649-678 | Worker result and normal completion handoff | **SAFE** | The coroutine and initiation own Worker, the queued job owns its body, handler, result and work guard, and the worker publishes the copied result to the event loop before resume. Orderly close drains or fails jobs and joins. |
+| 651-674 | SQLite completion after forced event-loop teardown | **UNCLEAR** | Worker jobs use an io_context reference. A work guard keeps a run alive but does not own the context. Establish a supported exit path that destroys the context before KV close joins the worker. |
+| 682-685,700-739 | SQLite native snapshot/write and refusal | **SAFE** | SDK StorePtr keeps the native target alive. Native inputs and queued write state are owned, and no worker uses references to the request frame's inputs. |
+| 749-788,825-844 | SQLite SDK operations and queue delegation | **SAFE** | Free SDK coroutines own StorePtr and applicable arguments. Named operations or tasks cover suspension. The actual paid enqueue path keeps its shared KV wrapper alive until completion. |
+
 
 ## Ranked defects and counts
 
@@ -533,4 +543,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-32/97 files reviewed. **DEFECT 8, SAFE 77, UNCLEAR 2.**
+33/97 files reviewed. **DEFECT 8, SAFE 81, UNCLEAR 3.**

@@ -1043,8 +1043,61 @@
       ]
     },
     "src/rt/kv_sqlite.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "500-634,798-823,846-849",
+          "verdict": "SAFE",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "SQLite Worker thread and backend ownership",
+          "evidence": "Worker captures this only in its owned thread, which shutdown and destruction join before members die. Jobs move into a local under lock and run unlocked over Worker-owned Backend."
+        },
+        {
+          "lines": "649-678",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "Worker result and normal completion handoff",
+          "evidence": "The coroutine and initiation own Worker, the queued job owns its body, handler, result and work guard, and the worker publishes the copied result to the event loop before resume. Orderly close drains or fails jobs and joins."
+        },
+        {
+          "lines": "651-674",
+          "verdict": "UNCLEAR",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "SQLite completion after forced event-loop teardown",
+          "evidence": "Worker jobs use an io_context reference. A work guard keeps a run alive but does not own the context. Establish a supported exit path that destroys the context before KV close joins the worker."
+        },
+        {
+          "lines": "682-685,700-739",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "SQLite native snapshot/write and refusal",
+          "evidence": "SDK StorePtr keeps the native target alive. Native inputs and queued write state are owned, and no worker uses references to the request frame's inputs."
+        },
+        {
+          "lines": "749-788,825-844",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "e"
+          ],
+          "symbol": "SQLite SDK operations and queue delegation",
+          "evidence": "Free SDK coroutines own StorePtr and applicable arguments. Named operations or tasks cover suspension. The actual paid enqueue path keeps its shared KV wrapper alive until completion."
+        }
+      ]
     },
     "src/rt/kv_value.cpp": {
       "reviewed": false,
