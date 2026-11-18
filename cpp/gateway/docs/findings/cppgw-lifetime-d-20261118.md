@@ -834,12 +834,12 @@ Reviewed the scoped metadata promotion and atomic updates.
 
 Reviewed all KV reference parameters, catalog memo and chunk ownership, storage lifecycle and lease heartbeat.
 
-- L86, 95, 101, 103, 117, 130, 134, 141, 147 **SAFE** · Catalog callers retain KV while these tasks run. Pruning traverses its private vector and keeps each list/atomic receiver live through its await. Compression helpers transfer or copy input into their child tasks.
-- L237, 242, 244, 260, 263 **SAFE** · The key factory is a frame value and native KV reads hold storage after a failed join. Chunk spans point into the owned entry vector, and gzip receives an owned byte copy.
+- L82, 86, 90, 95, 99, 101, 103, 108, 117, 130, 134, 141, 147 **SAFE** · Catalog callers retain KV while these tasks run. Pruning traverses its private vector and keeps each list/atomic receiver live through its await. Compression helpers transfer or copy input into their child tasks.
+- L237, 242, 243, 244, 260, 263 **SAFE** · The key factory is a frame value and native KV reads hold storage after a failed join. Chunk spans point into the owned entry vector, and gzip receives an owned byte copy.
 - L274, 276, 289, 291, 301, 306 **SAFE** · The caller retains the KV. Memo hits are moved into private storage before insertion and no memo pointer crosses suspension. Chunk-key callbacks own version and generation.
 - L550, 553, 560, 564, 575, 576, 578, 581, 585, 586, 587, 590, 595, 596, 759, 760, 763, 765, 767, 768 **SAFE** · The catalog context holds KV under the documented heartbeat precondition until stop has synchronously cleared the timer and awaited the last renewal. Renewal callbacks own state and clear the temporary renewal chain on settlement.
-- L625, 627, 637, 639, 656, 663, 667, 669, 689, 691, 694, 696, 702, 705, 707, 714, 719 **SAFE** · The context or named caller retains the borrowed KV. Writes, compression, digest and pruning use frame-owned inputs and named atomic receivers across waits.
-- L727, 730, 736, 740, 748, 755, 773, 777, 782, 789, 791, 797, 800, 807, 809, 812 **SAFE** · Generation and lease callers hold the KV through each directly awaited task. Each loop or retry uses copied rows and result values before the next await.
+- L625, 627, 631, 637, 639, 656, 663, 667, 669, 689, 691, 694, 696, 702, 705, 707, 714, 719 **SAFE** · The context or named caller retains the borrowed KV. Writes, compression, digest and pruning use frame-owned inputs and named atomic receivers across waits.
+- L727, 730, 736, 740, 745, 748, 755, 773, 777, 782, 789, 791, 795, 797, 800, 804, 807, 809, 812 **SAFE** · Generation and lease callers hold the KV through each directly awaited task. Each loop or retry uses copied rows and result values before the next await.
 
 ### `src/catalog/types.cpp`
 
@@ -918,7 +918,7 @@ Reviewed passive fan-out, provider bindings and the active-probe timeout race.
 - L125, 134, 138, 140, 145, 154, 169, 202, 203, 210, 211, 213, 218, 220 **SAFE** · Auth hash children take a whole account or string copy, and independent health and quota operations own their arguments. Cache and endpoint bodies are named frame values.
 - L229, 231, 243, 246, 249, 258, 270, 271, 275, 277, 283, 286, 288, 296 **SAFE** · Active probe tasks own account or credential, optional KV, signal and shared progress. Aggregation reads copies or uses shared progress on the same loop after child completion.
 - L306, 311, 312, 313, 316, 317, 319 **DEFECT** · The probe or its failure can win, then finalization clears the only timer that settles the private timeout Promise. That pending source retains the combined outcome and the active result until the process loop ends. Use withResolvers and settle the timeout loser after clearing its timer.
-- L306, 324, 326, 329, 332, 343, 344, 350, 364, 373 **SAFE** · Coalescing copies the in-flight promise before waiting. Passive joins use independent tasks and subsequent views point into the named tuple or immutable frame snapshots.
+- L306, 324, 326, 329, 332, 343, 344, 349, 350, 364, 373 **SAFE** · Coalescing copies the in-flight promise before waiting. Passive joins use independent tasks and subsequent views point into the named tuple or immutable frame snapshots.
 
 ### `src/http.cpp`
 
@@ -935,7 +935,7 @@ Reviewed release callbacks, fair queue updates and queued abort/timer ownership.
 
 Reviewed the three stream/paid timer factories and request-deadline signal composition.
 
-- L15, 16, 24, 25, 32, 35, 38, 51, 52, 59, 62, 65, 83, 84, 91, 94, 97 **SAFE** · Timer callbacks copy the abort controller and active flag, and returned handles use timer identity. The timer owns no callback that retains its returned deadline handle, and clear or expiry releases the registration.
+- L15, 16, 24, 25, 32, 35, 38, 51, 52, 55, 59, 62, 65, 83, 84, 89, 91, 94, 97 **SAFE** · Timer callbacks copy the abort controller and active flag, and returned handles use timer identity. The timer owns no callback that retains its returned deadline handle, and clear or expiry releases the registration.
 
 ### `src/input_normalization.cpp`
 
@@ -994,7 +994,7 @@ Reviewed synchronous packing, cursor migration and direction/key parsing. Input 
 Reviewed the offline codec subprocess, stdout/stderr streams, callback lifetime, transfer and close paths.
 
 - L75, 78, 80, 82, 84, 101, 111, 191, 200, 201 **SAFE** · The public facade transfers its shared codec State to the exchange tasks. Buffer scans happen synchronously after owned reads, with the process reader and file reader retained in their awaiting frames.
-- L120, 123, 137, 144, 155, 158, 159, 160, 162, 174, 175, 176, 179, 202, 203 **SAFE** · The abort callback owns only the subprocess and is unregistered by close or abort. The subprocess read tasks capture stream state before being joined, and conversion serializes codec calls while retaining the codec owner.
+- L120, 122, 123, 136, 137, 144, 155, 158, 159, 160, 161, 162, 174, 175, 176, 179, 202, 203 **SAFE** · The abort callback owns only the subprocess and is unregistered by close or abort. The subprocess read tasks capture stream state before being joined, and conversion serializes codec calls while retaining the codec owner.
 
 ### `src/kv_conversion/native_schema.cpp`
 
@@ -1010,9 +1010,9 @@ Reviewed entry/profile codecs and the asynchronous KV export stream.
 
 Reviewed offline proof fixtures, subprocess output joins, typed KV writes and the command entry point.
 
-- L456, 506, 509, 510, 511, 513, 567 **SAFE** · The subprocess and output responses create independent owning read operations. The result tuple is named before taking references and hashing takes an owning path.
+- L456, 506, 509, 510, 511, 512, 513, 567 **SAFE** · The subprocess and output responses create independent owning read operations. The result tuple is named before taking references and hashing takes an owning path.
 - L593, 600, 604, 609, 614, 620, 625, 627, 629, 633, 637, 639 **SAFE** · The latest-state proof holds shared KV and output cells and owns all snapshots, atomic receivers and iteration state through writes and reads.
-- L673, 676, 699, 701, 706, 708, 714, 720, 729, 732, 734, 744, 753, 757, 763, 769, 771, 790, 797 **SAFE** · The outer proof owns all paths and fixture configuration and starts one named task at a time. Result and error views are local to the corresponding frame.
+- L673, 676, 699, 701, 706, 708, 714, 720, 729, 732, 734, 744, 748, 753, 757, 763, 769, 771, 790, 797 **SAFE** · The outer proof owns all paths and fixture configuration and starts one named task at a time. Result and error views are local to the corresponding frame.
 
 ### `src/kv_conversion/typed_value.cpp`
 
@@ -1071,9 +1071,9 @@ Reviewed synchronous representation codecs and error translation. No retained ca
 Reviewed provider fetch and decoding, quota cache, CAS and lease refresh, balance writes and history traversal.
 
 - L132, 138, 139, 146, 594, 612 **SAFE** · The request frame and Fetch each retain their callable and owning network arguments. The Response is named, and parsed JSON pointers or credential views are consumed from owned values.
-- L314, 322, 323, 338, 347, 355, 360, 371, 373, 392, 414 **SAFE** · Cache and lease tasks retain their shared KV and snapshots. The synchronous invalidation wrapper immediately dispatches an independently owned native read before the join.
-- L433, 434, 435, 441, 443, 448, 457, 461, 467, 472, 476, 487 **SAFE** · Refresh holds its named tuple and atomic receiver. Owned option, signal and credential values remain live through provider observation, and hash and history children own their inputs.
-- L684, 687, 690, 691, 701, 704, 712, 727, 741, 751, 776, 786, 799, 805, 831, 872, 883, 893 **SAFE** · Quota callbacks and stale cache state live in the directly awaiting frame. History lists retain their iterator and use fresh owned entries, while control operations transfer owning values.
+- L314, 322, 323, 338, 347, 355, 360, 371, 373, 392, 413, 414 **SAFE** · Cache and lease tasks retain their shared KV and snapshots. The synchronous invalidation wrapper immediately dispatches an independently owned native read before the join.
+- L432, 433, 434, 435, 441, 443, 448, 457, 461, 467, 472, 476, 487 **SAFE** · Refresh holds its named tuple and atomic receiver. Owned option, signal and credential values remain live through provider observation, and hash and history children own their inputs.
+- L684, 687, 690, 691, 701, 704, 712, 727, 741, 750, 751, 776, 786, 799, 805, 831, 872, 883, 893 **SAFE** · Quota callbacks and stale cache state live in the directly awaiting frame. History lists retain their iterator and use fresh owned entries, while control operations transfer owning values.
 
 ### `src/models/catalog.cpp`
 
@@ -1100,7 +1100,7 @@ Reviewed single and union account discovery, bounded response handling, snapshot
 - L49, 51, 53, 57, 60, 62, 64, 143, 156, 169, 175, 180, 182, 196 **SAFE** · The iteration borrows only from owned immutable account entries. Each auth/provider child receives copied values and its signal. Any shared-auth task continuing after abort owns its own input. The shared wrapper's loser retention is recorded under out-of-area observations.
 - L210, 233, 235, 258, 274, 276, 292, 300, 302 **SAFE** · Validation and response readers own their Response and optional stream through reads and cancellation. Refresh inputs and parse outputs are values and no body receiver is a temporary.
 - L330, 335, 342, 347, 381, 387, 442, 451, 467, 481, 493, 499 **SAFE** · Pool and URL collections are frame-owned and immutable while iterating. Callback and options snapshots stay live and failures are reported synchronously. Retried tasks own account, URL and response inputs.
-- L544, 554, 555, 556, 582, 591, 592, 593, 617 **SAFE** · The KV owner and copied reads outlive their awaits. Promise reactions return copies and the two named rows remain live through the atomic transaction.
+- L544, 554, 555, 556, 582, 590, 591, 592, 593, 617 **SAFE** · The KV owner and copied reads outlive their awaits. Promise reactions return copies and the two named rows remain live through the atomic transaction.
 - L712, 715, 730, 743, 756 **SAFE** · The validation frame retains copied auth, response and options, and starts separate named tasks for read and retry.
 
 ### `src/models/codex_models_whitelist.cpp`
@@ -1268,7 +1268,7 @@ Reviewed encrypted listing and lookup, stale references, manifest and ledger rea
 Reviewed all persistence and dedupe stages, chunk ownership, cryptographic byte cleanup, KV lookups and environment adapters.
 
 - L82, 86, 93, 99, 105, 119, 129, 133, 141, 208, 214, 220, 235, 251, 265, 267, 278, 290, 297, 309, 316, 320, 324 **SAFE** · The shared persistence dependency or awaiting caller retains borrowed KV. Stages own copied manifests, fingerprints and keys, and compression/encryption frames hold their own byte buffers through waits.
-- L422, 424, 458, 463, 466, 472, 478, 484, 485, 486, 487, 497, 503, 516, 519, 544, 547, 551, 568, 572, 573, 576, 595, 615, 621 **SAFE** · A shared immutable envelope retains store and chunks. Deletion starts independent storage-owning tasks, which may finish after a failed join. Atomic operations remain named through stage and publication commits.
+- L422, 424, 458, 463, 465, 466, 472, 478, 484, 485, 486, 487, 497, 503, 516, 519, 544, 547, 551, 568, 572, 573, 576, 595, 615, 621 **SAFE** · A shared immutable envelope retains store and chunks. Deletion starts independent storage-owning tasks, which may finish after a failed join. Atomic operations remain named through stage and publication commits.
 - L661, 679, 714, 716, 725, 729, 740, 751, 788, 798, 799, 821, 841, 845, 853, 860, 865, 868 **SAFE** · Dedupe and persistence retain their dependency and metadata snapshots. In-frame zeroing guards run after reads and publication finish. The reference-taking API is a plain wrapper that copies before creating a Task.
 - L905, 918, 926, 951, 959, 972, 980, 994, 999, 1009, 1015, 1020, 1024 **SAFE** · The environment wrapper constructs a Task with copied inputs. Its frame owns secret bytes, the store, incident entries and guards through ordered durable writes and settlement.
 
