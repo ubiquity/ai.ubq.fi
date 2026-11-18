@@ -129,7 +129,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/paid_fallback/ledger_backfill.hpp`
 - [x] `include/uos/paid_fallback/ledger_settlement.hpp`
 - [x] `include/uos/paid_fallback/ledger_state.hpp`
-- [ ] `include/uos/paid_fallback/ledger_stats.hpp`
+- [x] `include/uos/paid_fallback/ledger_stats.hpp`
 - [ ] `include/uos/paid_fallback/removed_provider.hpp`
 - [ ] `include/uos/paid_fallback/rollups.hpp`
 - [ ] `include/uos/paid_fallback/routing.hpp`
@@ -837,3 +837,9 @@ Settlement and lease APIs.
 KV read and pending-gate APIs.
 
 - 53,61-65,80-86,104-115 · owning task parameters · **SAFE** · Tasks own their store or override and all query keys, time bounds or limit values.
+
+### `include/uos/paid_fallback/ledger_stats.hpp`
+
+Ledger statistics API.
+
+- 118,132,202 · owning task parameters · **SAFE** · The task frames own statistics inputs, options and store handles.

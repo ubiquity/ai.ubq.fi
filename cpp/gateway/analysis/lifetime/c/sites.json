@@ -980,8 +980,16 @@
       ]
     },
     "include/uos/paid_fallback/ledger_stats.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Ledger statistics API.",
+      "sites": [
+        {
+          "lines": "118,132,202",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The task frames own statistics inputs, options and store handles."
+        }
+      ]
     },
     "include/uos/paid_fallback/removed_provider.hpp": {
       "status": "pending",
