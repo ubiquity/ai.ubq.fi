@@ -6,11 +6,11 @@ Merge the reviewed release integration and then the regex and runtime cleanup as
 The starting checkout is `45118332b287b7ba9534bb66ab1518f1990a9d9e` on `agent-job`, at the published port branch tip.
 Ubuntu 24.04.5 on Linux ARM64 supplies four cores, 15 GiB of RAM, Bun 1.4.0 and passwordless namespace setup.
 
-| Surface | Required behavior |
-| --- | --- |
-| JSON, HTTP and WebSocket | Retain simdjson, the 128-container JSON limit, llhttp and Beast. Preserve request and response formats, statuses, delivery and durable settlement. |
-| Regex and both KV codecs | Use QuickJS-ng libregexp. Preserve malformed-value rejection, stored bytes, graph bounds and the typed values offered by Bun. |
-| Filesystem and numbers | Use standard filesystem paths for trusted resources. Retain request path validation and authorization, numeric formatting, quota and paid accounting. |
+| Surface                          | Required behavior                                                                                                                                                                                            |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| JSON, HTTP and WebSocket         | Retain simdjson, the 128-container JSON limit, llhttp and Beast. Preserve request and response formats, statuses, delivery and durable settlement.                                                           |
+| Regex and both KV codecs         | Use QuickJS-ng libregexp. Preserve malformed-value rejection, stored bytes, graph bounds and the typed values offered by Bun.                                                                                |
+| Filesystem and numbers           | Use standard filesystem paths for trusted resources. Retain request path validation and authorization, numeric formatting, quota and paid accounting.                                                        |
 | Vendors, workflows and packaging | Use a single registry for dependencies and a single workflow for Release, sanitizers and robustness. Preserve vendor bytes, tests from both sides, target-specific packaging, and default Linux confinement. |
 
 The integration owns `cpp/gateway/` and the C++ gateway workflows. TypeScript, the other C++ projects, production
@@ -25,16 +25,16 @@ incoming merge tips, current guides, exact receipts and a record of any remainin
 
 ## Incoming history
 
-| Input | Fetched tip | Prior Linux ARM64 Release result |
-| --- | --- | ---: |
-| Release integration and packaging | `2b23fb6837e2b5c0dc9ffa50771f52d322dd413a` | 450 binaries, 5,104 cases |
-| Filesystem, numeric and QuickJS-ng integration | `9acb016ae9900ffac255b7f3cec02c735f6ddeda` | 448 binaries, 5,095 cases |
+| Input                                          | Fetched tip                                | Prior Linux ARM64 Release result |
+| ---------------------------------------------- | ------------------------------------------ | -------------------------------: |
+| Release integration and packaging              | `2b23fb6837e2b5c0dc9ffa50771f52d322dd413a` |        450 binaries, 5,104 cases |
+| Filesystem, numeric and QuickJS-ng integration | `9acb016ae9900ffac255b7f3cec02c735f6ddeda` |        448 binaries, 5,095 cases |
 
 Both inputs include `af7a0036b823ef2357c26b9b5f03f2677796b775`. The first input descends from the starting tip.
 
-| Merge | Commit |
-| --- | --- |
-| Release integration into the port branch | `fbbfef06689d0b1bd82abecae638062a8c19d5c8` |
+| Merge                                                   | Commit                                     |
+| ------------------------------------------------------- | ------------------------------------------ |
+| Release integration into the port branch                | `fbbfef06689d0b1bd82abecae638062a8c19d5c8` |
 | QuickJS-ng and runtime cleanup into the integrated tree | `ecce29dc92c627b669680b557a5dec3cd7124dea` |
 
 The regex merge keeps both sets of deviation notes, combines the vendor registrations and fuzz targets, and uses the
@@ -45,3 +45,175 @@ from these two committed merges and the package build that was already running a
 
 Runner scratch is `/var/tmp/cppgw-integrate-f2.zcCiN79E`. Dependency preparation, compilation and verification use
 persistent execution handles. Logs and receipts remain in scratch.
+
+## Merge checks
+
+- The 450 executable test files are the union of both parents. Both edits to
+  `kv_conversion_legacy_codec_differential_test.cpp` and `native_addon_differential_test.cpp` survived. They exercise
+  paths containing spaces and URL punctuation and retain the JSON rejection expectations.
+- The six linked vendors and 25 fuzz targets are the exact, duplicate-free union of both branches. The unified
+  workflow selects every test for Release and sanitizers, including the regex and stored-value cases. Its fuzz jobs
+  discover both regex harnesses and `kv_jsc` from the registry. The regex source filenames now hold the adapter
+  instead of the former engine. The retired numeric helpers have no production, test or build references.
+- The QuickJS-ng directory byte-compares with the incoming regex branch. The other vendor directories byte-compare
+  with the first merge. Linux package versions and notices, and the macOS package's vendor archive list and licenses,
+  resolve from that same registry.
+
+```bash
+git merge-base --is-ancestor 2b23fb68 HEAD
+git merge-base --is-ancestor 9acb016a HEAD
+git diff --exit-code fbbfef06 ecce29dc -- cpp/gateway/third_party \
+  ':(exclude)cpp/gateway/third_party/quickjs-libregexp/**'
+git diff --exit-code 9acb016a HEAD -- cpp/gateway/third_party/quickjs-libregexp
+python3 -B cpp/gateway/tools/vendor_sources.py cmake
+python3 -B cpp/gateway/tools/links.py --check
+```
+
+Links resolved all 450 binaries. Both surviving C++ workflows passed actionlint 1.7.12 with shellcheck and this
+scratch configuration. GitHub lists `ubuntu-26.04-arm` as a hosted label. This actionlint release's built-in list
+predates that label, and the first lint invocation reported it at all three uses.
+[Runner image list](https://github.com/actions/runner-images#available-images)
+
+```bash
+cat > "$scratch/actionlint/github-runner-labels.yml" <<'YML'
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04-arm
+YML
+"$scratch/actionlint/bin/actionlint" -config-file "$scratch/actionlint/github-runner-labels.yml" \
+  .github/workflows/cpp-gateway-ci.yml .github/workflows/cpp-gateway-release.yml
+```
+
+## First-party size
+
+Physical line counts come from tracked Git blobs. The baseline is `55afcc8b13b2ddd10747355745da19e5264f7b76`,
+tree `5514adb01452ecaa20719fef73b6bf16c7e84b1a`. The integrated source is
+`ecce29dc92c627b669680b557a5dec3cd7124dea`, tree `f5de80d2c409570ff2b817a55f910137cef826e9`. C++ totals take
+the `.cpp` and `.hpp` files in `src/`, `include/`, `runtime/` and `entrypoints/`, plus
+`packaging/macos/gateway-version.cpp`. They exclude vendors, tests, the two runtime assertion headers, benchmarks,
+build tooling and the launch schema JSON. The broad directory count from the preceding integration includes the
+two assertion headers and two schema files, and goes from 191,526 to 179,638.
+
+| First-party production C++ path |      Before |       After |
+| ------------------------------- | ----------: | ----------: |
+| `src/`                          |     151,419 |     139,530 |
+| `include/`                      |      39,201 |      39,170 |
+| `runtime/`                      |         489 |         508 |
+| `entrypoints/`                  |          67 |          69 |
+| macOS version entry point       |           0 |          11 |
+| **Total**                       | **191,176** | **179,288** |
+
+The file groups include the retained policy and adapters. The HTTP measurements include the session code that
+shares the parser's file and the outbound connection adapter. [Replacement plan](../OSS-REPLACEMENT-PLAN.md)
+
+| Replaced or slimmed module                  | Library or standard facility                             | Before | After |
+| ------------------------------------------- | -------------------------------------------------------- | -----: | ----: |
+| ECMAScript regex engine                     | QuickJS-ng libregexp                                     |  6,318 |   901 |
+| URL, IDNA and query handling                | Ada with gateway validation                              |  2,018 |   662 |
+| Unicode, UTF and Base64                     | ICU and simdutf                                          |  3,261 | 1,701 |
+| JSON parser and writer                      | simdjson and Boost.JSON                                  |  1,928 | 1,189 |
+| Passkey CBOR and certificate decoding       | QCBOR and OpenSSL                                        |  5,072 | 4,197 |
+| HTTP request and Fetch response parsing     | llhttp                                                   |  2,748 | 2,763 |
+| WebSocket handshake and framing             | Boost.Beast and llhttp                                   |  2,987 | 2,880 |
+| BigInt and numeric helpers                  | Boost.Multiprecision and C++20                           |  1,253 |   884 |
+| Dates and lexical paths                     | C++20                                                    |  2,106 | 1,411 |
+| Environment, ordered containers and console | POSIX, C++20 and shared Boost.JSON serialization         |  1,497 |   915 |
+| Gzip, headers and request bodies            | Shared zlib adapter and C++20 string and byte operations |  2,524 | 2,061 |
+
+```bash
+python3 -B "$scratch/production-lines.py" 55afcc8b1 ecce29dc
+```
+
+The counter reads each blob from `git ls-tree -rz` using `git cat-file --batch` and counts newlines. Group paths
+use the `src/rt/` and `include/uos/rt/` implementation families for regex, URL, string/text_codec/base64,
+json/json_simdjson/json_document, websocket and number. The passkeys row is `src/auth/passkeys.cpp`. The HTTP row
+counts `src/runtime/http.cpp` and `src/rt/fetch_transport_{http.cpp,internal.hpp}`. The final three rows use files
+named for the listed modules under `src/rt/` and `include/uos/rt/`, including `fs`, `env`, `ordered.hpp`, and `http`.
+
+## Runner and dependencies
+
+The runner uses Ubuntu 24.04.5 with kernel `7.0.0-1017-azure`, Clang 21.1.8 from apt.llvm.org, OpenSSL 3.0.13,
+zlib 1.3, Brotli 1.1.0 and Zstd 1.5.5. The compiled upstream libraries below stay outside the checkout.
+
+| Upstream archive | SHA-256                                                            |
+| ---------------- | ------------------------------------------------------------------ |
+| Boost 1.92.0     | `5c1d40cb8e19adbf740a4ec2da35b3e58f3f5804b1dce44deb53df72193cbc6c` |
+| ICU4C 78.3       | `3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0` |
+| SQLite 3.54.0    | `134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed` |
+
+Boost staged static JSON and Container archives. ICU configured in `$scratch/icu-build` with
+`../icu/source/configure --prefix="$scratch/icu78" --disable-tests --disable-samples --disable-extras --disable-static`.
+SQLite configured with `./configure --prefix="$scratch/sqlite" --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'`.
+The portable driver independently checks the SQLite headers and loaded version in the isolated fixture.
+[Preparation guide](../CI.md#ubuntu-prerequisites) · [Upstream Boost and ICU build commands](../CONFORMANCE.md#run-on-linux-arm64)
+
+## Package and conformance
+
+The portable build was already running at the merge commit when the first connection dropped. Docker Buildx finished
+its 396-edge CMake/Ninja phase in 1,167.4 seconds and exported the 83,740,809-byte ARM64 archive. The original outer time
+file is empty. The archive SHA-256 is `c4e2bd76ba5b049b47e2c033a4fff4d146c3c6711d6798eae7591dd6d3aec4e7`.
+The version record contains the merge commit and tree, and all six vendor licenses match their tracked originals.
+
+```bash
+work="$scratch/portable"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$work/home" TMPDIR="$work/tmp" \
+  DOCKER_CONFIG="$scratch/docker-config" PORTABLE_JOBS=2 \
+  bash cpp/gateway/packaging/portable/build.sh "$work/uos-gateway-linux-arm64.tar.gz"
+gate=$(mktemp -d "$work/gate.XXXXXXXX")
+mkdir "$gate/home" "$gate/tmp"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$gate/home" TMPDIR="$gate/tmp" \
+  DOCKER_CONFIG="$scratch/docker-config" \
+  /usr/bin/time -o "$work/verify.time" -f 'wall_s=%e peak_process_kib=%M exit=%x' \
+  timeout -k 20s 900s bash cpp/gateway/packaging/portable/verify.sh \
+  "$work/uos-gateway-linux-arm64.tar.gz" "$work/verify"
+```
+
+The 80.81-second verifier exited 0 on Debian 12 and 13. All four proofs used two CPUs, default Landlock ABI 8
+and two seccomp filters. Each returned 401 for unauthenticated Chat, completed 1,161 authenticated mock requests
+with 1,161 matching records after reopening the store, and reported zero OOM events.
+
+| Runtime   | Memory cap | Peak cgroup memory |
+| --------- | ---------: | -----------------: |
+| Debian 12 |    512 MiB |       42,946,560 B |
+| Debian 12 |    256 MiB |       37,806,080 B |
+| Debian 13 |    512 MiB |       38,621,184 B |
+| Debian 13 |    256 MiB |       38,227,968 B |
+
+The conformance wrapper verified 400 oracle and fixture blobs against the merge commit, sealed the exported archive,
+and bound Bun 1.4.0 to its package-verified native KV artifact. The oracle's root and lint dependencies came from the
+frozen lockfiles in scratch. All nine comparator controls passed. The driver used the unchanged
+`bench/request_path/isolated.sh` and `conformance/run.py`, with fresh state for each gateway and IPv4 and IPv6
+outside-route probes returning `ENETUNREACH`.
+
+```bash
+gate=$(mktemp -d "$scratch/conformance/gate.XXXXXXXX")
+mkdir "$gate/home" "$gate/tmp"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC HOME="$gate/home" TMPDIR="$gate/tmp" \
+  /usr/bin/time -o "$scratch/conformance/run-portable.time" -f 'wall_s=%e peak_process_kib=%M exit=%x' \
+  bash "$scratch/run-portable-conformance.sh" ecce29dc92c627b669680b557a5dec3cd7124dea
+```
+
+The wrapper verifies the release `VERSION`, extracts and seals the bundle with `python3 -B "$run/bundle/seal.py" "$run/package"`,
+and runs the following command next to a symlink to the conformance driver. The package binding supplies the independent
+provenance hash. The copied isolation wrapper prepares loopback and drops to the runner uid.
+
+```bash
+timeout -k 10s 180s bash "$run/isolated.sh" --bench "$bench" --benchmark-revision "$revision" \
+  --source "$source" --source-revision "$revision" --suite-revision "$revision" --suite-tree "$tree" \
+  --bun /home/runner/.bun/bin/bun --binding "$run/bun-kv-binding.json" --package "$run/package" --out "$run/output"
+```
+
+Native and Bun agreed on all 186 cases, 162 before restart and 24 after it. There were 184 passing assertions,
+zero differential functional or cosmetic differences, and two shared validation failures. Both gateways returned
+HTTP 200 and dispatched `chat-invalid-role` and `responses-invalid-tool-type`. Both cases require HTTP 400 without
+dispatch. The comparator exited 1 for those same defects present in the preceding integration. The paired phase took
+8.426 seconds. The wrapper took 16.72 seconds with 141,660 KiB peak process RSS.
+[Validation findings](cppgw-conformance-e2e-20261118.md#functional-findings)
+
+| Evidence in `conformance/run.HbFCxvyB/` | SHA-256                                                            |
+| --------------------------------------- | ------------------------------------------------------------------ |
+| Native executable                       | `2ab18f43e04268e9ab2d275b5c76ae05cfbe369297bce0204eb525c4d348c7b3` |
+| Bun executable                          | `086c4121c8738a8e0f5ed730e8a461bc3973b4444e372ddb77aef9a747fa2ae9` |
+| Sealed package manifest                 | `dc0c7d6cd2a69902d0dfeb0ffd73e0da8e5e2d81fb26ab548499f774f0698646` |
+| `output/results.json`                   | `18e5bd70f81f5ee6a7f6c101694b17b455dfaddba8787edfeb820a6ca7948893` |
+| `output/table.md`                       | `2bea47a8a0cf89edca4f79f7da9b007578c6d65da0bc1e3028399fec1918de8e` |
