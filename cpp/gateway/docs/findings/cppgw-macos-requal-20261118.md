@@ -34,3 +34,14 @@ the clean full result and any exact remaining failures have been recorded.
 
 Read the current CI, build, runtime, OSS replacement, porting and macOS instructions. Starting
 from a clean checkout. Build outputs, logs and dependency downloads are external to the checkout.
+
+The first native invocation at `3ea476b30eda57a7607aef841368fd3ecddf4e44` was stopped
+after Apple Clang diagnosed three signedness errors inside Homebrew ICU 78.3 headers reached
+through `src/rt/string.cpp:10`. It reached no tests. The first diagnostic was:
+
+```text
+/opt/homebrew/opt/icu4c@78/include/unicode/uset.h:1498:49: error: implicit conversion changes signedness: 'int' to 'size_t' (aka 'unsigned long') [-Werror,-Wsign-conversion]
+```
+
+The other two were in `unicode/unistr.h:358`. The Darwin driver now adds native dependency
+headers as system includes. The port sources retain fatal conversion warnings.

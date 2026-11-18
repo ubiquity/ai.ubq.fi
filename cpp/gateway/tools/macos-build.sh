@@ -90,7 +90,9 @@ if not compiler:
     parser.error("CXX must name an available compiler")
 env["SDKROOT"] = capture(["xcrun", "--show-sdk-path"])
 packages = ["openssl", "zlib", "libbrotlidec", "libzstd", "icu-uc", "icu-i18n"]
-cflags = shlex.split(capture(["pkg-config", "--cflags", *packages]))
+cflags = shlex.split(capture(["pkg-config", "--cflags-only-other", *packages]))
+for include in shlex.split(capture(["pkg-config", "--cflags-only-I", *packages])):
+    cflags.extend(["-isystem", str(Path(include.removeprefix("-I")).resolve())])
 libs = shlex.split(capture(["pkg-config", "--libs", *packages]))
 sqlite = prefixes["sqlite"]
 flags = [compiler, "-std=c++20", "-stdlib=libc++", "-O0", "-g0", "-Wall", "-Wextra", "-Wshadow",
