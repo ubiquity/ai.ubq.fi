@@ -176,6 +176,11 @@ def write_ninja(build, sources, compiler, flags, vendors=()):
     # Ninja's depfiles track transitive headers; a failed rebuild removes stale output.
     lines = ["ninja_required_version = 1.10", *ninja_compile_rule("cxx", compiler + flags, "CXX")]
     json_sources = vendor_sources.simdjson_consumers(vendors)
+    vendor_headers = {}
+    for library in vendors:
+        header = ninja_escape((GATEWAY / library.source).with_suffix(".h"))
+        for source in library.consumers:
+            vendor_headers.setdefault(source, []).append(header)
     if json_sources:
         lines += ninja_compile_rule("selected_json", compiler + flags + vendor_sources.simdjson_flags(), "CXX")
     if vendors:
@@ -188,7 +193,9 @@ def write_ninja(build, sources, compiler, flags, vendors=()):
         target = object_path(build, source)
         target.parent.mkdir(parents=True, exist_ok=True)
         rule = "selected_json" if source in json_sources else "cxx"
-        dependency = " | " + ninja_escape(GATEWAY / vendor_sources.SIMDJSON_HEADER) if source in json_sources else ""
+        # -MMD omits system headers. Keep the selected vendor headers as Ninja inputs.
+        headers = vendor_headers.get(source)
+        dependency = " | " + " ".join(headers) if headers else ""
         lines.append("build " + ninja_escape(target) + ": " + rule + " " + ninja_escape(GATEWAY / source) + dependency)
     for library in vendors:
         target = object_path(build, library.source)
@@ -301,7 +308,8 @@ def main():
         parser.error("CXX compiler not found")
     compiler[0] = shutil.which(compiler[0])
     version = subprocess.check_output(compiler + ["--version"], text=True)
-    if "clang" not in version.lower():
+    clang = "clang" in version.lower()
+    if not clang:
         major = int(subprocess.check_output(compiler + ["-dumpversion"], text=True).split(".")[0])
         if major < 14:
             parser.error("GCC >=14 required: GCC 12 has a known coroutine miscompile")
@@ -312,6 +320,9 @@ def main():
     flags = ["-std=c++20", "-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror",
              "-DBOOST_JSON_NO_LIB", "-DBOOST_CONTAINER_NO_LIB", "-DBOOST_SYSTEM_NO_LIB",
              "-DUOS_GATEWAY_NATIVE_LIBRARIES=1", "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY)]
+    if clang:
+        # Some consumers include vendor headers relative to the gateway root.
+        flags.append("--system-header-prefix=third_party/")
     flags += CONFIGS[options.config] + [flag for flag in package_flags if flag.startswith(("-I", "-D"))]
     flags += shlex.split(os.environ.get("UOS_CI_CXXFLAGS", ""))
     libraries = ["-lboost_json", "-lboost_container"] + [flag for flag in package_flags if not flag.startswith(("-I", "-D"))] + ["-pthread"]
