@@ -33,7 +33,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/admin/codex_reset.cpp`
 - [x] `src/admin/defaults.cpp`
 - [x] `src/admin/error_log.cpp`
-- [ ] `src/admin/index.cpp`
+- [x] `src/admin/index.cpp`
 - [ ] `src/admin/kernel.cpp`
 - [ ] `src/admin/sentinel_incident.cpp`
 - [ ] `src/agent_messages.cpp`
@@ -411,6 +411,10 @@ Reviewed error persistence, host log sizes, history iteration and replay retenti
 - L299, 314, 328, 333, 335, 337 **SAFE** · The history frame retains the iterator, KV and its copied result entries; the sorting callable runs synchronously.
 - L432, 435, 443, 448, 462 **SAFE** · The request and history are values and the named store owner outlives the directly awaited maintenance borrowing it.
 
+### `src/admin/index.cpp`
+
+Include-only translation unit. The admin public interfaces are audited in the header.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -419,4 +423,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-10/286 files reviewed. 47 sites: 42 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+11/286 files reviewed. 47 sites: 42 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

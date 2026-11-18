@@ -818,7 +818,8 @@
       ]
     },
     "src/admin/index.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Include-only translation unit. The admin public interfaces are audited in the header.",
       "sites": []
     },
     "src/admin/kernel.cpp": {
