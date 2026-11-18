@@ -3426,8 +3426,16 @@
       "sites": []
     },
     "src/provider/cerebras_responses.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Responses uses a joined buffered Chat result with synchronous projection.",
+      "sites": [
+        {
+          "lines": "91-117,119-170",
+          "kind": "borrowed telemetry and buffered dispatch",
+          "verdict": "SAFE",
+          "reason": "The route joins dispatch while its context remains alive, and upstream response, bytes and translated values belong to their frames."
+        }
+      ]
     },
     "src/provider/claude_capacity_history.cpp": {
       "status": "pending",
