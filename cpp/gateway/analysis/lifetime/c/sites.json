@@ -2497,8 +2497,16 @@
       ]
     },
     "src/deepseek/index.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "DeepSeek preparation, validation and envelope checks operate synchronously on the current payload. Fetch transfers argument copies across transport.",
+      "sites": [
+        {
+          "lines": "620-696",
+          "kind": "deadline, admission and fetch callbacks",
+          "verdict": "SAFE",
+          "reason": "Options and fetcher own their callables across the joins. The deadline callback owns a controller copy and is cleared by ScopeExit, and projected body observation is synchronous."
+        }
+      ]
     },
     "src/deepseek/responses.cpp": {
       "status": "pending",
