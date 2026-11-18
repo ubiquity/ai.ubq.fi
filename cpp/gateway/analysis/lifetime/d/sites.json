@@ -1509,6 +1509,17 @@
           ],
           "verdict": "SAFE",
           "detail": "Report generation holds auth and KV snapshots in the awaiting frame. JSON value-copying references a local stored record and invokes its helper synchronously."
+        },
+        {
+          "lines": [
+            137,
+            195
+          ],
+          "kinds": [
+            "e"
+          ],
+          "verdict": "DEFECT",
+          "detail": "GitHub bearer verification and queue recording construct owning concatenation or path results in the awaited call. The GCC 12.2 porting rule requires naming each input or Task before suspension."
         }
       ]
     },

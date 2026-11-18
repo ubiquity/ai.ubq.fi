@@ -568,6 +568,7 @@ Reviewed client and admin auth, external token verification, cache use, and meth
 - L544, 547, 563, 567, 574, 584, 588, 597, 610, 622, 647 **SAFE** · Deploy-token fetches and loops retain token, URL and response in their frames, and the cache iterator dies before the remote verification await.
 - L705, 737, 748, 750, 753, 757, 767, 772 **SAFE** · Admin auth owns its request, credentials and logger as values, and the cookie wrapper transfers its copied request to the called coroutine.
 - L811, 841, 851, 864, 885, 890, 895, 902, 925 **SAFE** · Report generation holds auth and KV snapshots in the awaiting frame. JSON value-copying references a local stored record and invokes its helper synchronously.
+- L137, 195 **DEFECT** · GitHub bearer verification and queue recording construct owning concatenation or path results in the awaited call. The GCC 12.2 porting rule requires naming each input or Task before suspension.
 
 ### `src/auth/local_admin.cpp`
 
@@ -2501,4 +2502,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-286/286 files reviewed. 479 sites: 452 SAFE, 27 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+286/286 files reviewed. 480 sites: 452 SAFE, 28 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
