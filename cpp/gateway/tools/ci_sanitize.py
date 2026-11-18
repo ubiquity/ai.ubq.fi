@@ -53,15 +53,15 @@ def third_party():
     return flags, sources
 
 
-def compile_one(compiler, source, objects):
+def compile_one(compiler, c_compiler, source, objects):
     output = objects / (hashlib.sha256(source.encode()).hexdigest()[:16] + ".o")
     flags = FLAGS + LIBRARY_FLAGS
     if source.startswith("third_party/"):
         # Vendored code is not held to the port's warning set; C sources use the C driver.
         flags = [flag for flag in flags if not flag.startswith("-W")]
         if source.endswith(".c"):
-            compiler = "clang" if compiler.endswith("clang++") else compiler.replace("g++", "gcc")
-            flags = [flag for flag in flags if not flag.startswith("-std=c++")]
+            compiler = c_compiler
+            flags = ["-std=c11", *[flag for flag in flags if not flag.startswith("-std=c++")]]
     done = subprocess.run([compiler, *flags, "-c", str(GATEWAY / source), "-o", str(output)],
                           capture_output=True, text=True)
     return source, output, done.returncode, done.stderr[-4000:]
@@ -74,7 +74,11 @@ def main():
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 2)
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--compiler", default=os.environ.get("CXX", "clang++"))
+    parser.add_argument("--cc", default=os.environ.get("CC"), help="C compiler for vendor C sources")
     args = parser.parse_args()
+    cxx = Path(args.compiler)
+    c_name = cxx.name.replace("clang++", "clang").replace("g++", "gcc")
+    c_compiler = args.cc or (str(cxx.with_name(c_name)) if c_name != cxx.name else "cc")
     tests = [line.strip() for line in args.list.read_text().splitlines()
              if line.strip() and not line.startswith("#")]
     out = args.out.resolve()
@@ -98,7 +102,7 @@ def main():
     print("tests: %d, distinct translation units: %d" % (len(tests), len(sources)), flush=True)
     built, failed = {}, []
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        for source, output, code, stderr in pool.map(lambda item: compile_one(args.compiler, item, objects), sources):
+        for source, output, code, stderr in pool.map(lambda item: compile_one(args.compiler, c_compiler, item, objects), sources):
             if code:
                 failed.append(source)
                 print("COMPILE FAILED " + source + "\n" + stderr, file=sys.stderr, flush=True)
