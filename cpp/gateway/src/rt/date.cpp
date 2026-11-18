@@ -83,20 +83,20 @@ namespace uos::rt {
               DoubleDays{static_cast<double>(dayCount)}, DoubleMilliseconds{timeInDay}};
     }
 
-    // ---- Formatting -------------------------------------------------------------------------
-    constexpr const char* WEEK_DAYS[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-    constexpr const char* MONTHS[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    constexpr std::string_view WEEK_DAYS[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    constexpr std::string_view MONTHS[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
-    void appendPadded(std::string& out, std::int64_t value, int width) {
-      const std::string digits = std::to_string(value);
-      for (int index = static_cast<int>(digits.size()); index < width; ++index) out.push_back('0');
+    void appendPadded(std::string& out, std::int64_t value, std::size_t width) {
+      const auto digits = std::to_string(value);
+      if (digits.size() < width) out.append(width - digits.size(), '0');
       out += digits;
     }
-    // Year as toUTCString/toString print it: a sign for negative years, four digits at least.
-    void appendDisplayYear(std::string& out, std::int64_t year) {
-      if (year < 0) out.push_back('-');
-      appendPadded(out, year < 0 ? -year : year, 4);
+
+    void appendYear(std::string& out, int year, bool expanded = false) {
+      if (year < 0 || expanded) out.push_back(year < 0 ? '-' : '+');
+      appendPadded(out, std::abs(year), expanded ? 6 : 4);
     }
+
     void appendClock(std::string& out, const Fields& fields) {
       appendPadded(out, fields.hour, 2);
       out.push_back(':');
@@ -276,12 +276,8 @@ namespace uos::rt {
     if (std::isnan(time_)) throw RangeError("Invalid Date");
     const Fields fields = fieldsOf(time_);
     std::string out;
-    if (fields.year >= 0 && fields.year <= 9999) {
-      appendPadded(out, fields.year, 4);
-    } else {
-      out.push_back(fields.year < 0 ? '-' : '+');
-      appendPadded(out, fields.year < 0 ? -fields.year : fields.year, 6);
-    }
+    out.reserve(27);
+    appendYear(out, fields.year, fields.year < 0 || fields.year > 9999);
     out.push_back('-');
     appendPadded(out, fields.month + 1, 2);
     out.push_back('-');
@@ -302,13 +298,13 @@ namespace uos::rt {
   std::string Date::toUTCString() const {
     if (std::isnan(time_)) return "Invalid Date";
     const Fields fields = fieldsOf(time_);
-    std::string out = WEEK_DAYS[fields.weekDay];
+    std::string out{WEEK_DAYS[fields.weekDay]};
     out += ", ";
     appendPadded(out, fields.day, 2);
     out.push_back(' ');
     out += MONTHS[fields.month];
     out.push_back(' ');
-    appendDisplayYear(out, fields.year);
+    appendYear(out, fields.year);
     out.push_back(' ');
     appendClock(out, fields);
     out += " GMT";
@@ -318,13 +314,13 @@ namespace uos::rt {
   std::string Date::toString() const {
     if (std::isnan(time_)) return "Invalid Date";
     const Fields fields = fieldsOf(time_);
-    std::string out = WEEK_DAYS[fields.weekDay];
+    std::string out{WEEK_DAYS[fields.weekDay]};
     out.push_back(' ');
     out += MONTHS[fields.month];
     out.push_back(' ');
     appendPadded(out, fields.day, 2);
     out.push_back(' ');
-    appendDisplayYear(out, fields.year);
+    appendYear(out, fields.year);
     out.push_back(' ');
     appendClock(out, fields);
     out += " GMT+0000 (Coordinated Universal Time)";

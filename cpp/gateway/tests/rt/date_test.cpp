@@ -1337,14 +1337,14 @@ namespace {
     {-62198755200000.0, -62198755200000.0, "-1-01-01"sv},
   };
   // src/authority/native-codex-429.ts: Date.parse(value) round-trips through toUTCString.
-  struct RetryRow { std::string_view value; bool stable; };
+  struct RetryRow { std::string_view value; double deadline; bool stable; };
   constexpr RetryRow RETRY_AFTER[] = {
-    {"Wed, 21 Oct 2015 07:28:00 GMT"sv, true},
-    {"Wed, 21 Oct 2015 7:28:00 GMT"sv, false},
-    {"Thu, 21 Oct 2015 07:28:00 GMT"sv, false},
-    {"Wed, 21 Oct 2015 07:28:00 UTC"sv, false},
-    {"Mon, 16 Nov 2026 03:44:37 GMT"sv, true},
-    {"Sun, 06 Nov 1994 08:49:37 GMT"sv, false},
+    {"Wed, 21 Oct 2015 07:28:00 GMT"sv, 1445412480000.0, true},
+    {"Wed, 21 Oct 2015 7:28:00 GMT"sv, NaN, false},
+    {"Thu, 21 Oct 2015 07:28:00 GMT"sv, NaN, false},
+    {"Wed, 21 Oct 2015 07:28:00 UTC"sv, NaN, false},
+    {"Mon, 16 Nov 2026 03:44:37 GMT"sv, 1794800677000.0, true},
+    {"Sun, 06 Nov 1994 08:49:37 GMT"sv, 784111777000.0, false},
   };
 }
 // @end-generated-vectors
@@ -1393,6 +1393,39 @@ TEST("Date.UTC") {
   }
 }
 
+TEST("UTC arithmetic and formatting across chrono's calendar bounds") {
+  struct Row {
+    double year, month, day, hour, minute, expected;
+    std::string_view iso, http;
+  };
+  constexpr Row rows[] = {
+    {32'767, 11, 31, 0, 0, 971890876800000.0, "+032767-12-31T00:00:00.000Z", "Sun, 31 Dec 32767 00:00:00 GMT"},
+    {32'767, 11, 31, 24, 0, 971890963200000.0, "+032768-01-01T00:00:00.000Z", "Mon, 01 Jan 32768 00:00:00 GMT"},
+    {32'767, 11, 32, 0, 0, 971890963200000.0, "+032768-01-01T00:00:00.000Z", "Mon, 01 Jan 32768 00:00:00 GMT"},
+    {32'767, 12, 1, 0, 0, 971890963200000.0, "+032768-01-01T00:00:00.000Z", "Mon, 01 Jan 32768 00:00:00 GMT"},
+    {-32'767, 0, 1, 0, 0, -1096193779200000.0, "-032767-01-01T00:00:00.000Z", "Sat, 01 Jan -32767 00:00:00 GMT"},
+    {-32'767, 0, 1, 0, -1, -1096193779260000.0, "-032768-12-31T23:59:00.000Z", "Fri, 31 Dec -32768 23:59:00 GMT"},
+    {-32'767, -1, 31, 0, 0, -1096193865600000.0, "-032768-12-31T00:00:00.000Z", "Fri, 31 Dec -32768 00:00:00 GMT"},
+    {1970, 0, 100'000'001, 0, 0, 8640000000000000.0, "+275760-09-13T00:00:00.000Z", "Sat, 13 Sep 275760 00:00:00 GMT"},
+    {1970, 0, -99'999'999, 0, 0, -8640000000000000.0, "-271821-04-20T00:00:00.000Z", "Tue, 20 Apr -271821 00:00:00 GMT"},
+    {-10'000'000'000'000'000.0, 120'000'000'000'000'016.0, 1, 0, 0, -62125228800000.0, "0001-05-01T00:00:00.000Z", "Tue, 01 May 0001 00:00:00 GMT"},
+  };
+  for (std::size_t row = 0; row < std::size(rows); ++row) {
+    const auto& entry = rows[row];
+    const rt::Date date(rt::Date::UTC(entry.year, entry.month, entry.day, entry.hour, entry.minute));
+    ROW_NUMBER(row, date.getTime(), entry.expected);
+    ROW_EQ(row, date.toISOString(), entry.iso);
+    ROW_EQ(row, date.toUTCString(), entry.http);
+    ROW_NUMBER(row, rt::Date::parse(entry.iso), entry.expected);
+  }
+
+  EXPECT_EQ(rt::Date::parse("+275760-09-13T00:01:00.000+00:01"), 8640000000000000.0);
+  EXPECT_EQ(rt::Date::parse("-271821-04-19T23:59:00.000-00:01"), -8640000000000000.0);
+  EXPECT(std::isnan(rt::Date::UTC(1970, 0, 100'000'002)));
+  EXPECT(std::isnan(rt::Date::UTC(1970, 0, -100'000'000)));
+  EXPECT(std::isnan(rt::Date::UTC(1e308, 1e308)));
+}
+
 TEST("UTC setters and setTime") {
   for (std::size_t row = 0; row < std::size(SETTERS); ++row) {
     const SetterRow& entry = SETTERS[row];
@@ -1429,6 +1462,7 @@ TEST("the gateway's Date expressions") {
   // src/authority/native-codex-429.ts: a stable Retry-After round-trips through toUTCString.
   for (std::size_t row = 0; row < std::size(RETRY_AFTER); ++row) {
     const double deadline = rt::Date::parse(RETRY_AFTER[row].value);
+    ROW_NUMBER(row, deadline, RETRY_AFTER[row].deadline);
     const bool safe = std::isfinite(deadline) && std::trunc(deadline) == deadline && std::fabs(deadline) <= 9007199254740991.0;
     ROW_EQ(row, safe && deadline > 1445412479000.0 && rt::Date(deadline).toUTCString() == RETRY_AFTER[row].value, RETRY_AFTER[row].stable);
   }
