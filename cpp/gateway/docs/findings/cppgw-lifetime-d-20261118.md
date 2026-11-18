@@ -208,7 +208,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/lib/jev_compaction/types.cpp`
 - [x] `src/metered_quota.cpp`
 - [x] `src/models/catalog.cpp`
-- [ ] `src/models/codex_models.cpp`
+- [x] `src/models/codex_models.cpp`
 - [ ] `src/models/codex_models_availability.cpp`
 - [ ] `src/models/codex_models_fetch.cpp`
 - [ ] `src/models/codex_models_whitelist.cpp`
@@ -1081,6 +1081,10 @@ Reviewed public and native model catalog projection, provider fan-out and capabi
 - L44, 170, 173, 175, 182, 190, 198, 203, 205 **SAFE** · Each fetch or runtime snapshot child owns its options and arguments. Joining may fail early with independent siblings, and the results and KV are named value owners.
 - L237, 238, 239, 246, 251, 257 **SAFE** · Local tuple values hold catalog and selection through later KV awaits. Merge algorithms execute synchronously, and no child shares a mutable projection container.
 
+### `src/models/codex_models.cpp`
+
+Reviewed model snapshots, capability hints, context limits and record transformation. String and JSON views are synchronous, and materialized snapshots own their contents. No suspension or escaping callback.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1329,4 +1333,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-101/286 files reviewed. 211 sites: 195 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+102/286 files reviewed. 211 sites: 195 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

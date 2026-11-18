@@ -4561,7 +4561,8 @@
       ]
     },
     "src/models/codex_models.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed model snapshots, capability hints, context limits and record transformation. String and JSON views are synchronous, and materialized snapshots own their contents. No suspension or escaping callback.",
       "sites": []
     },
     "src/models/codex_models_availability.cpp": {
