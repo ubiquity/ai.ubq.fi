@@ -32,3 +32,21 @@ For example, appending a value containing a newline to `Content-Type` throws
 the field identity without printing untrusted value bytes. All 170 affected
 vectors still require rejection. HTTP field validation and serialization
 continue to use the original name and value rules.
+
+## Explicit environment files
+
+The parser accepts a bounded flat INI file using Boost.PropertyTree and
+C++ quoted strings. Single-line assignments, leading BOM, CRLF, inline
+hash comments and literal dollar references remain supported. Existing
+environment variables still take precedence when an explicit file is loaded.
+
+| Changed behavior | Example | Effect |
+| ---------------- | ------- | ------ |
+| Duplicate keys, sections, invalid keys and incomplete lines fail the whole file | `A=1\nA=2` | A malformed file cannot partially populate the environment. |
+| Colon assignments, `export` prefixes and split assignments are rejected | `export A=1` | The accepted grammar is a flat assignment file. |
+| Quotes must end on the same line and may be followed by whitespace or a hash comment | `A="x" junk` | Incomplete and ambiguous values fail atomically. |
+| C++ quoted extraction consumes the backslash before the next character | `A="a\nb"` gives `anb` | The format has no escape-to-control conversion or expansion. Unquoted backslashes remain literal. |
+| ASCII control bytes other than tab and line endings, interior bare CR, and input over 256 KiB are rejected | `A=x\x00y` | Values cannot introduce embedded NUL or line boundaries, and parser allocation has an input bound. |
+
+Sixty-eight of the original 124 inputs now reject the whole file. Nine
+retain valid assignments with changed quoted values.

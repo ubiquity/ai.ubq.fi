@@ -64,6 +64,12 @@
       "max_len": 16384,
       "extra_sources": ["src/rt/headers.cpp"]
     },
+    "env_file": {
+      "harness": "fuzz/env_file.cpp",
+      "entry": "uos::rt::env::parseEnvFile",
+      "max_len": 16384,
+      "extra_sources": ["src/rt/env.cpp"]
+    },
     "url": {
       "harness": "fuzz/url.cpp",
       "entry": "uos::rt::URL / URLSearchParams",

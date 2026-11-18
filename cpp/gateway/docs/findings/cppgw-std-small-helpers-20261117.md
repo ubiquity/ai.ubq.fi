@@ -161,3 +161,46 @@ HTTP wire spellings are covered by the existing fixtures.
 | Custom field          |        245.5 |       109.2 |               2 |              2 |
 | Two Cookie fields     |        362.0 |       140.5 |               2 |              2 |
 | Rejected Content-Type |      6,878.9 |     5,125.0 |               2 |              4 |
+
+## Environment files
+
+Replaced the Bun dialect parser with Boost.PropertyTree `read_ini` and
+`std::quoted`. The adapter enforces a 256 KiB input limit, classic locale,
+flat assignments, original key characters and safe line boundaries. It
+maps all grammar failures to a generic `SyntaxError`. Existing values win
+in `loadEnvFile`, which reads the complete result before applying it. The
+application sources have no explicit environment-file caller. The old
+dialect descriptions in `include/uos/rt/env.hpp` and
+`docs/rt/platform.md` are outside the assigned paths.
+
+- Production diff was **120 removed, 55 added**, a net reduction of 65
+  lines. The additional adapter lines cover the flat-file and control-byte
+  restrictions, inline comments, quotes and the allocation bound.
+- `python3 -B /tmp/uos-small-r1/env-probe.py` classified the original 124
+  inputs before expectations were edited. It identified 68 atomic rejects,
+  9 changed quote values and 47 unchanged results. The tests also exercise
+  empty INI sections, DEL, the size limit and pre-existing precedence.
+- For each of `release` and `asan`,
+  `python3 -B /tmp/uos-small-r1/gate.py PROFILE quick environment 2 env_test,runtime_native_startup_test,codex_auth_parse_differential_test`
+  exited 0 with **3/3 binaries, 26/26 cases** and stable source inputs.
+- `python3 -B /tmp/uos-small-r1/bench.py environment env` measured the
+  cold explicit-parser path. PropertyTree allocates tree nodes and indexes
+  during parsing. The benchmark inputs were synthetic assignments.
+
+| Input               | Before ns/op | After ns/op | Before alloc/op | After alloc/op |
+| ------------------- | -----------: | ----------: | --------------: | -------------: |
+| Three assignments   |        329.8 |     1,220.3 |               4 |             42 |
+| Quotes and comments |        359.8 |     1,671.1 |               3 |             42 |
+| 128 assignments     |     43,545.5 |   121,544.3 |             136 |          2,185 |
+
+`python3 -B /tmp/uos-small-r1/gate.py asan fuzz env_file 1` ran
+**1,113,329 inputs in 121 seconds**, exit 0, with no finding. The local
+link uses the cached ASan runtime objects for the parser translation
+unit's existing `loadEnvFile` dependency; coverage instrumentation is on
+the harness and parser unit.
+
+The additional release run of `tests/rt/http_test.cpp` passed five of six
+cases. Two assertions in the same test case still require the previous
+`Response.redirect` wording and the malformed value bytes. The same
+invalid redirects still throw `TypeError`. That diagnostic snapshot is
+outside this job's test paths.
