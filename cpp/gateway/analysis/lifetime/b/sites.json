@@ -2908,8 +2908,30 @@
       ]
     },
     "include/uos/worker/transport.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "19-42",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "symbol": "Worker transport task arguments",
+          "evidence": "Input, attempt, abort signal and dispatch callback are passed by value. The worker task holds the shared interface receiver while directly awaiting each virtual operation."
+        },
+        {
+          "lines": "44-65",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Fixed capability callbacks",
+          "evidence": "The transport stores an immutable owning capability containing its callables. The actual worker and direct fixture call sites retain that receiver across the child's waits."
+        }
+      ]
     },
     "src/worker/entrypoint.cpp": {
       "reviewed": false,

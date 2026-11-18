@@ -117,7 +117,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/kernel/quota_write.cpp`
 - [x] `src/kernel/usage.cpp`
 - [x] `include/uos/worker/entrypoint.hpp`
-- [ ] `include/uos/worker/transport.hpp`
+- [x] `include/uos/worker/transport.hpp`
 - [ ] `src/worker/entrypoint.cpp`
 - [ ] `src/worker/transport.cpp`
 
@@ -811,6 +811,13 @@ Usage read methods own identities and options, with a shared store or a resolved
 | --- | --- | --- | --- |
 | 25-37,41-53 | Worker dependencies and host lifetime handles | **SAFE** | Fetch wrappers synchronously copy the shared dependency holder into owning task arguments. WaitUntil takes a promise handle by value. The deferred registrations are reviewed in entrypoint.cpp. |
 
+### `include/uos/worker/transport.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 19-42 | Worker transport task arguments | **SAFE** | Input, attempt, abort signal and dispatch callback are passed by value. The worker task holds the shared interface receiver while directly awaiting each virtual operation. |
+| 44-65 | Fixed capability callbacks | **SAFE** | The transport stores an immutable owning capability containing its callables. The actual worker and direct fixture call sites retain that receiver across the child's waits. |
+
 
 ## Ranked defects and counts
 
@@ -1082,4 +1089,4 @@ removes the registrations on frame destruction as well as on normal return.
 +  const auto bindingHash = co_await std::move(bindingHashing);
 ```
 
-94/97 files reviewed. **DEFECT 10, SAFE 223, UNCLEAR 4.**
+95/97 files reviewed. **DEFECT 10, SAFE 225, UNCLEAR 4.**
