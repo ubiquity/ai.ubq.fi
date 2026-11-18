@@ -273,3 +273,47 @@ cases. ASan, UBSan and leak detection were active for every run. The JSC
 corpus and sparse allocation guard also passed in the cold sanitizer run,
 with 9/9 cases combined. Production sources and test inputs remained
 identical across the continuation commits.
+
+### Terminal sanitizer results
+
+The cold `-O0` run compiled in 1,776.247 seconds and finished with
+438/442 passing binaries and 4,982/4,984 reported passing cases. The
+native Sentinel retention fixture was the fourth exception. It hit the
+300-second runner limit before emitting its case summary. The fixture
+passed 10/10 cases in 64.813 seconds at `-O1`.
+
+```sh
+python3 -B /tmp/kv-graph/verify.py asan --optimize --jobs 3 --timeout 600 \
+  sentinel_replay_retention_metadata_test.cpp
+```
+
+The cold run and four focused reruns together cover 442/442 binaries and
+5,029/5,029 passing cases under the sanitizers. The receipts share the
+source input SHA-256 `fd7c32392981195072e11050a659abd289331588331ce15b3b5f6aa806fd7ebb`.
+Only the report changed between the verified trees.
+
+| Receipt                             | SHA-256                                                            |
+| ----------------------------------- | ------------------------------------------------------------------ |
+| Cold sanitizer sweep                | `9b38cdadc80d35aae0dff43964ba01942d2b8ed93a304fa285e23378b9f46dfe` |
+| Supervisor secret, `-O1`            | `c83f3b463d1259c4a6ba2d44751294cdf284029e46b92f398aaa6a5d973faf75` |
+| Typed value, `-O1`                  | `185404f34f6a5563615e052dc7c7bb97ec34c2dcf9a03f0ab49a7529e65c3abb` |
+| JSON, `-O1`                         | `7ac6745bb52ae4fa3ac732c56508267d7a6580209e7499f70cb2a2204565dbe3` |
+| Sentinel retention, `-O1`           | `fc984f20be4fc45f4c76a48d413b1ee6ec4a565204dda270091fbaff59a84757` |
+| Baseline typed-value control, `-O0` | `a69b718d31d702fcd7c4df4113faa97b40ef43f6cdbdf652203bf1035472bca2` |
+
+### Handoff
+
+The storage and interchange implementation preserves sparse lengths and
+graph references in the existing wire formats. The 15 Bun array vectors,
+the 2 MiB allocation guard, and the unchanged cyclic conversion proof
+passed. The supplied sparse value used 1,000 bytes of C++ heap requests
+for a read and write. The ordinary-value benchmarks above show faster
+reads in each group, with the usage-record write within 0.1% of baseline.
+
+`docs/PORT-NOTES.md` and `docs/rt/kv-durable.md` still describe the earlier
+cycle refusal. Those documents and the dense JSON projection are outside
+this lane's owned paths.
+
+The local task branch is `agent-job`. The refreshed
+`origin/development` at `6bd78fc5e3b0783809691c6bd45d25ac45e9696e` lacks the
+task commits. Publishing and integration require authenticated GitHub write access.
