@@ -68,7 +68,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/storage/value_compatibility.hpp`
 - [x] `src/storage/key_compatibility.cpp`
 - [x] `src/storage/kv.cpp`
-- [ ] `src/storage/native_addon.cpp`
+- [x] `src/storage/native_addon.cpp`
 - [ ] `src/storage/native_kv.cpp`
 - [ ] `src/storage/sqlite_readonly.cpp`
 - [ ] `src/storage/value_compatibility.cpp`
@@ -453,6 +453,13 @@ A declaration alias to the synchronous KV value walk. No separate lifetime site.
 | 80-109,112-120 | Linked native KV opener and codec hooks | **SAFE** | The default opener is a free coroutine owning path/options. It uses references to members of its own frame, and the default decoder returns an owning value synchronously. |
 | 124-143 | Open and retry coroutine closure | **SAFE** | retrySqliteBusy owns the capturing open closure by value and immediately awaits each invocation. Its copied target/NAPI and the child opener's moved options remain live through the waits. |
 
+### `src/storage/native_addon.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 39-75,92-134 | Artifact verification views | **SAFE** | Named input and provenance JSON retain all field views and file bytes through synchronous verification. The returned artifact owns its strings. |
+| 137-179,187-210 | Prepared export callback owners | **SAFE** | Prepared stores owning NAPI callback copies, the require call consumes its path synchronously, and linked export stubs own copied error messages. |
+
 
 ## Ranked defects and counts
 
@@ -658,4 +665,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-45/97 files reviewed. **DEFECT 8, SAFE 98, UNCLEAR 3.**
+46/97 files reviewed. **DEFECT 8, SAFE 100, UNCLEAR 3.**

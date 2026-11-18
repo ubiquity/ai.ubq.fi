@@ -1335,8 +1335,30 @@
       ]
     },
     "src/storage/native_addon.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "39-75,92-134",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Artifact verification views",
+          "evidence": "Named input and provenance JSON retain all field views and file bytes through synchronous verification. The returned artifact owns its strings."
+        },
+        {
+          "lines": "137-179,187-210",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Prepared export callback owners",
+          "evidence": "Prepared stores owning NAPI callback copies, the require call consumes its path synchronously, and linked export stubs own copied error messages."
+        }
+      ]
     },
     "src/storage/native_kv.cpp": {
       "reviewed": false,
