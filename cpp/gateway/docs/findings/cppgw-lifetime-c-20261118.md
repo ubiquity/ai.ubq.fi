@@ -59,7 +59,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/native_auth_transport.hpp`
 - [x] `include/uos/codex/overage_settings.hpp`
 - [x] `include/uos/codex/quota.hpp`
-- [ ] `include/uos/codex/rate_limit_429.hpp`
+- [x] `include/uos/codex/rate_limit_429.hpp`
 - [ ] `include/uos/codex/reset_settings.hpp`
 - [ ] `include/uos/codex/responses_error.hpp`
 - [ ] `include/uos/codex/responses_operations.hpp`
@@ -465,3 +465,9 @@ Overage usage persistence and pool-loading API.
 ### `include/uos/codex/quota.hpp`
 
 Synchronous quota parsing and record declarations. No suspendable body or registration.
+
+### `include/uos/codex/rate_limit_429.hpp`
+
+429 classification and routing updater API.
+
+- 16-26 · owning task parameters · **SAFE** · Response and routing account handles are copied or moved to the receiving tasks before suspension.
