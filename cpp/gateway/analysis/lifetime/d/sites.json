@@ -8265,7 +8265,8 @@
       ]
     },
     "include/uos/authority/native_paid_policy.hpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous validators and paid-field projection. Input pointers are borrowed only during validation and the projection returns owned fields.",
       "sites": []
     },
     "include/uos/authority/native_principal_contracts.hpp": {
