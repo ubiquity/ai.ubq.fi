@@ -514,6 +514,7 @@ Rechecked the previously reported queue-list defect and both usage fan-outs agai
 - L324, 332, 335, 340, 342, 345, 346, 351, 368, 372, 373 **SAFE** · The projection children own their KV and configuration values, and the rejection adapters borrow nothing. References into the named result tuple remain valid across stats recording.
 - L379, 380, 384, 386, 389, 390, 397, 398, 399, 403, 406, 407, 408 **SAFE** · Diagnostics use by-value account and signal state, stable local body and request owners, and runtime combined signals whose dependents are weak.
 - L413, 414, 415, 416, 418, 421, 422, 426, 427, 430, 431, 432, 433, 435, 438, 439, 443, 444, 445 **SAFE** · Each row or identity Promise is built from owned copies before the join. The lookups capture by reference only during synchronous none_of calls, and PATCH views refer to the immutable local JSON.
+- L380, 384, 406, 439 **DEFECT** · Account diagnostics and the overage update construct owning cohort or account strings in direct await calls. The GCC 12.2 profile requires those strings or each Task to be constructed in an earlier statement.
 
 ### `src/admin/sentinel_incident.cpp`
 
@@ -2500,4 +2501,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-286/286 files reviewed. 478 sites: 452 SAFE, 26 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+286/286 files reviewed. 479 sites: 452 SAFE, 27 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

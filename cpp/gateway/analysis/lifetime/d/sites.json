@@ -1030,6 +1030,19 @@
           ],
           "verdict": "SAFE",
           "detail": "Each row or identity Promise is built from owned copies before the join. The lookups capture by reference only during synchronous none_of calls, and PATCH views refer to the immutable local JSON."
+        },
+        {
+          "lines": [
+            380,
+            384,
+            406,
+            439
+          ],
+          "kinds": [
+            "e"
+          ],
+          "verdict": "DEFECT",
+          "detail": "Account diagnostics and the overage update construct owning cohort or account strings in direct await calls. The GCC 12.2 profile requires those strings or each Task to be constructed in an earlier statement."
         }
       ]
     },
