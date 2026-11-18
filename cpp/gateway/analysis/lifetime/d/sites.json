@@ -8770,8 +8770,27 @@
       ]
     },
     "include/uos/inference_admission.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed released permits and controller interfaces. The queue abandonment cycle is classified at its listener registration in the implementation.",
+      "sites": [
+        {
+          "lines": [
+            71,
+            76,
+            83,
+            103,
+            104,
+            123
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The release and controller callbacks carry shared State. Each acquire takes a request value, and literal kind tags have static storage."
+        }
+      ]
     },
     "include/uos/inference_deadline.hpp": {
       "reviewed": false,

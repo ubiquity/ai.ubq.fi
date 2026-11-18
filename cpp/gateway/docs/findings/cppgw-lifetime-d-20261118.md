@@ -327,7 +327,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/health.hpp`
 - [x] `include/uos/http.hpp`
 - [x] `include/uos/images.hpp`
-- [ ] `include/uos/inference_admission.hpp`
+- [x] `include/uos/inference_admission.hpp`
 - [ ] `include/uos/inference_deadline.hpp`
 - [ ] `include/uos/input_normalization.hpp`
 - [ ] `include/uos/jev_compaction/compaction.hpp`
@@ -1836,6 +1836,12 @@ Reviewed image dispatch injection, fan-out coordination and usage-context pointe
 
 - L16, 21, 22, 23, 25, 26, 29, 31 **SAFE** · The adapters copy the context and options before suspending, and fan-out callbacks share a coordinator whose children retain independent ownership through settlement.
 
+### `include/uos/inference_admission.hpp`
+
+Reviewed released permits and controller interfaces. The queue abandonment cycle is classified at its listener registration in the implementation.
+
+- L71, 76, 83, 103, 104, 123 **SAFE** · The release and controller callbacks carry shared State. Each acquire takes a request value, and literal kind tags have static storage.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2084,4 +2090,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-219/286 files reviewed. 393 sites: 371 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+220/286 files reviewed. 394 sites: 372 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
