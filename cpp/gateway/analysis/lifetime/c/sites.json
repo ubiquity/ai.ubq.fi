@@ -464,8 +464,16 @@
       ]
     },
     "include/uos/codex/supervisor_follow.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Follow selection borrows only synchronously; polling owns its inputs.",
+      "sites": [
+        {
+          "lines": "66,81-82",
+          "kind": "container and task ownership",
+          "verdict": "SAFE",
+          "reason": "The selection helper finishes before returning, while readFollowUpdate retains a shared revision map and owns source, cursor and signal."
+        }
+      ]
     },
     "include/uos/codex/supervisor_inventory.hpp": {
       "status": "pending",

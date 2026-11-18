@@ -73,7 +73,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/supervisor.hpp`
 - [x] `include/uos/codex/supervisor_brief.hpp`
 - [x] `include/uos/codex/supervisor_config.hpp`
-- [ ] `include/uos/codex/supervisor_follow.hpp`
+- [x] `include/uos/codex/supervisor_follow.hpp`
 - [ ] `include/uos/codex/supervisor_inventory.hpp`
 - [ ] `include/uos/codex/supervisor_log.hpp`
 - [ ] `include/uos/codex/supervisor_secret.hpp`
@@ -547,3 +547,9 @@ The concurrency helper is executable template code; config and poll implementati
 - 226 · poll interface · **SAFE** · The poll function consumes its signal handle by value; registration ownership is reviewed in supervisor_config.cpp.
 - 243-270 · coroutine capture and fail-fast all · **SAFE** · Each rt::async worker owns its closure and shared State across sibling rejection; fixed-size input/result vectors stay alive and call sites supply value-capturing workers or free functions.
 - 283-297 · callback and task interface · **SAFE** · Configuration resolution retains the options and the environment reader callable until its reads finish.
+
+### `include/uos/codex/supervisor_follow.hpp`
+
+Follow selection borrows only synchronously; polling owns its inputs.
+
+- 66,81-82 · container and task ownership · **SAFE** · The selection helper finishes before returning, while readFollowUpdate retains a shared revision map and owns source, cursor and signal.
