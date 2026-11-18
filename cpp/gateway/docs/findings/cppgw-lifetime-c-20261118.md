@@ -152,7 +152,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/claude_capacity_history.hpp`
 - [x] `include/uos/provider/claude_capacity_rollups.hpp`
 - [x] `include/uos/provider/claude_code.hpp`
-- [ ] `include/uos/provider/claude_code_access.hpp`
+- [x] `include/uos/provider/claude_code_access.hpp`
 - [ ] `include/uos/provider/claude_code_accounts.hpp`
 - [ ] `include/uos/provider/claude_code_credentials.hpp`
 - [ ] `include/uos/provider/claude_code_fwd.hpp`
@@ -970,3 +970,9 @@ Claude capacity rollup and usage scan API.
 Claude Code transport and workspace interfaces own their option records.
 
 - 205-206,296,300-301 · task and callback interface · **SAFE** · Each dispatch or discovery task retains its option values, including its transport and dispatch callbacks.
+
+### `include/uos/provider/claude_code_access.hpp`
+
+Stores borrow an existing KV while owning the policy payload.
+
+- 24-27 · borrowed store · **SAFE** · The forwarding overloads copy or convert the supplied IDs into the store task, and the admin caller retains its owning store handle through the await.

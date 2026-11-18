@@ -1241,8 +1241,16 @@
       ]
     },
     "include/uos/provider/claude_code_access.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Stores borrow an existing KV while owning the policy payload.",
+      "sites": [
+        {
+          "lines": "24-27",
+          "kind": "borrowed store",
+          "verdict": "SAFE",
+          "reason": "The forwarding overloads copy or convert the supplied IDs into the store task, and the admin caller retains its owning store handle through the await."
+        }
+      ]
     },
     "include/uos/provider/claude_code_accounts.hpp": {
       "status": "pending",
