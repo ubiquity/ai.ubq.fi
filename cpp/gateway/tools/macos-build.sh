@@ -199,7 +199,8 @@ for library in vendor_sources.required(vendors, runtime + modules):
     for source in library.sources:
         relative = Path(source)
         compiler_flags = vendor_c_flags if relative.suffix == ".c" else vendor_cxx_flags
-        compiled = compile_one(relative, compiler_flags + vendor_sources.include_flags(library, gateway))
+        compiled = compile_one(relative, compiler_flags + vendor_sources.c_dialect_flags(source) +
+                               vendor_sources.include_flags(library, gateway))
         if compiled["status"]:
             raise SystemExit("Vendor compile failed: " + compiled["log"])
         members.append(obj(relative))

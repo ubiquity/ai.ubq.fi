@@ -1,5 +1,5 @@
 #pragma once
-// rt::Regex: ECMAScript regular expressions with JavaScriptCore (Bun) semantics.
+// rt::Regex: ECMAScript regular expressions using QuickJS-ng libregexp.
 // Subjects and results are std::string in WTF-8 (docs/rt/text.md). Indices are reported both
 // as UTF-16 code units (what JavaScript reports) and as byte offsets into the subject.
 // See docs/rt/regex.md for the TypeScript-to-C++ mapping.
@@ -20,7 +20,7 @@ namespace uos::rt {
   }
 
   // Where one capture lies: [start, end) in UTF-16 code units (JS `indices`) and in bytes.
-  // A boundary inside a surrogate pair (possible only without the u flag) has its byte offset
+  // A boundary inside a surrogate pair (possible without u or v) has its byte offset
   // rounded down to the start of that four-byte sequence; use the UTF-16 indices there.
   struct RegexSpan {
     std::size_t start = 0;
@@ -76,15 +76,15 @@ namespace uos::rt {
 
   class Regex {
   public:
-    // new RegExp(pattern, flags). Throws rt::SyntaxError with JavaScriptCore's message. The
-    // compiled program is immutable and shared by copies; hoist literals into `static const`.
+    // new RegExp(pattern, flags). Throws rt::SyntaxError for invalid patterns or flags. The
+    // immutable bytecode is shared by copies. Matching may throw rt::RangeError at a resource limit.
     explicit Regex(std::string_view pattern, std::string_view flags = "");
 
     // RegExp.prototype.lastIndex, in UTF-16 code units. Read and written only by the non-const
     // members and overloads, exactly where JS reads and writes it for global/sticky regexes.
     std::size_t lastIndex = 0;
 
-    const std::string& source() const;  // RegExp.prototype.source (escaped as JSC does)
+    const std::string& source() const;  // RegExp.prototype.source (escaped for a regex literal)
     const std::string& flags() const;   // RegExp.prototype.flags, canonical order "dgimsuvy"
     std::string toString() const;       // String(re): "/" + source + "/" + flags
     bool hasIndices() const;

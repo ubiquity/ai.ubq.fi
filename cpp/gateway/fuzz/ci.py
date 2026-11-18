@@ -20,6 +20,10 @@ import subprocess
 import sys
 
 GATEWAY = Path(__file__).resolve().parents[1]
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(GATEWAY / "tools"))
+import vendor_sources
+
 DEFINES = ["BOOST_JSON_NO_LIB", "BOOST_CONTAINER_NO_LIB", "BOOST_SYSTEM_NO_LIB",
            "BOOST_ASIO_DISABLE_AWAITABLE_FRAME_RECYCLING", "UOS_GATEWAY_NATIVE_LIBRARIES=1"]
 # Harnesses that include an application source need that source's own link list;
@@ -64,7 +68,8 @@ def compile_one(compiler, c_compiler, flags, source, objects):
     if source.endswith(".c"):
         # Use the matching C frontend and retain the same sanitizer options.
         compiler = c_compiler
-        flags = ["-std=c11", *[flag for flag in flags if not flag.startswith("-std=c++")]]
+        flags = ["-std=c11", *vendor_sources.c_dialect_flags(source),
+                 *[flag for flag in flags if not flag.startswith("-std=c++")]]
     done = subprocess.run([compiler, *flags, "-c", str(GATEWAY / source), "-o", str(output)],
                           capture_output=True, text=True)
     return source, output, done.returncode, done.stderr[-6000:]

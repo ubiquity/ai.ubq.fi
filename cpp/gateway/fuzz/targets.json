@@ -104,6 +104,12 @@
       "entry": "uos::rt::Regex compile / exec / test",
       "max_len": 1024
     },
+    "regex_library": {
+      "harness": "fuzz/regex_library.cpp",
+      "entry": "uos::rt::Regex compile / exec / test / matchAll / replace / split",
+      "max_len": 1024,
+      "extra_sources": ["third_party/quickjs-libregexp/libregexp.c", "third_party/quickjs-libregexp/libunicode.c"]
+    },
     "sse": {
       "harness": "fuzz/sse.cpp",
       "included_implementation": "src/responses_stream.cpp",

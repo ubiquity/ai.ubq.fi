@@ -9,10 +9,12 @@ VENDOR_C_FLAGS := $(filter-out -std=c++%, $(VENDOR_FLAGS)) -std=c11
 QCBOR_INCLUDE := $(if $(filter qcbor,$(VENDOR_NAMES)),-isystem $(ROOT)/third_party/qcbor/inc)
 ICU_LIBS := $(if $(filter src/rt/string.cpp,$(SOURCES)),-licui18n -licuuc)
 .SECONDARY:
+$(OUT)/obj/src/rt/regex_%.o: QUICKJS_INCLUDE := -isystem $(ROOT)/third_party/quickjs-libregexp
+$(OUT)/vendor/third_party/quickjs-libregexp/%.c.o: VENDOR_C_FLAGS += -std=gnu11
 $(OUT)/obj/%.o: $(ROOT)/%.cpp
 	@mkdir -p $(@D)
 	@echo "compile $*.cpp"
-	@$(CXX_WRAPPER) $(CXXFLAGS) $(QCBOR_INCLUDE) $(if $(filter $*.cpp,$(SIMDJSON_SOURCES)),-DUOS_GATEWAY_SIMDJSON -isystem $(ROOT)/third_party/simdjson) -MMD -MP -MT $@ -MF $@.$(TOKEN).d -c $< -o $@.$(TOKEN).tmp && mv -f $@.$(TOKEN).d $(@:.o=.d) && mv -f $@.$(TOKEN).tmp $@
+	@$(CXX_WRAPPER) $(CXXFLAGS) $(QCBOR_INCLUDE) $(QUICKJS_INCLUDE) $(if $(filter $*.cpp,$(SIMDJSON_SOURCES)),-DUOS_GATEWAY_SIMDJSON -isystem $(ROOT)/third_party/simdjson) -MMD -MP -MT $@ -MF $@.$(TOKEN).d -c $< -o $@.$(TOKEN).tmp && mv -f $@.$(TOKEN).d $(@:.o=.d) && mv -f $@.$(TOKEN).tmp $@
 $(OUT)/vendor/%.cpp.o: $(ROOT)/%.cpp
 	@mkdir -p $(@D)
 	@$(CXX_WRAPPER) $(VENDOR_FLAGS) -MMD -MP -MT $@ -MF $@.$(TOKEN).d -c $< -o $@.$(TOKEN).tmp && mv -f $@.$(TOKEN).d $(@:.o=.d) && mv -f $@.$(TOKEN).tmp $@

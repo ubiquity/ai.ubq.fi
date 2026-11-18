@@ -137,6 +137,10 @@ namespace {
   std::optional<json::value> divergence(const std::string& name, const json::value& recorded) {
     const auto reencoded = [&](std::string text) { return std::optional<json::value>(json::object{{"ok", rt::jsonParse(text)}}); };
     const auto failure = [](std::string message) { return std::optional<json::value>(json::object{{"error", "TypeError"}, {"message", json::string(message)}}); };
+    if (name == "regexp bad pattern") return json::object{{"error", "SyntaxError"}, {"message", "expecting ')'"}};
+    if (name == "regexp dup flags" || name == "regexp flags number" || name == "regexp flags undefined atom" ||
+        name == "regexp flags empty set" || name == "regexp flags bigint")
+      return json::object{{"error", "SyntaxError"}, {"message", "invalid regular expression flags"}};
     if (name == "error type key") return reencoded(R"({"root":{"type":"ref","ref":0},"nodes":[{"type":"TypeError","entries":[["message",{"type":"string","value":"m"}],["stack",{"type":"undefined"}]]}]})");
     if (name == "error no entries") return reencoded(R"({"root":{"type":"ref","ref":0},"nodes":[{"type":"RangeError","entries":[["message",{"type":"string","value":""}],["stack",{"type":"undefined"}]]}]})");
     if (name == "array entry named") return failure("Typed-value interchange array property \"foo\" has no KvValue representation");
@@ -186,13 +190,6 @@ TEST("differential: decodeTypedValue round-trips every recorded graph") {
   for (const EncodeVector& vector : ENCODE_VECTORS) {
     if (*vector.message) continue;
     const json::value graph = rt::jsonParse(vector.graph);
-    if (std::string_view(vector.name) == "regexps") {
-      // rt gap: rt::Regex rejects the v flag that JavaScriptCore accepts (/a/v in this vector).
-      EXPECT_THROWS_MESSAGE(decodeTypedValue(graph), rt::SyntaxError, "Invalid regular expression: rt::Regex does not support the v flag");
-      const KvValue supported = KvValue::array({rt::KvRegExp{"a\\/b", "giu"}, rt::KvRegExp{"x\\ny", "dmsy"}});
-      EXPECT(decodeTypedValue(encodeTypedValue(supported)) == supported);
-      continue;
-    }
     const KvValue decoded = decodeTypedValue(graph);
     if (std::string_view(vector.name) == "errors") {
       // As in JavaScript: the inherited message decodes to an own "", an unknown name to Error.

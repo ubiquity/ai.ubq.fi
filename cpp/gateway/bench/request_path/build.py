@@ -97,6 +97,7 @@ def main():
         return path
 
     include_flags = tools.get("include_flags", lambda _library, _gateway: [])
+    c_dialect_flags = tools.get("c_dialect_flags", lambda _source: [])
     app = [object_file(source, flags + (tools["simdjson_flags"](gateway) if source in simdjson else []) +
                        [flag for lib in tools["required"](vendors, [source]) for flag in include_flags(lib, gateway)])
            for source in sources]
@@ -104,7 +105,8 @@ def main():
     for library in vendors:
         # Benchmark snapshots predating multi-file vendors still use `source`.
         members = library.sources if hasattr(library, "sources") else (library.source,)
-        objects = [ninja_path(object_file(source, include_flags(library, gateway))) for source in members]
+        objects = [ninja_path(object_file(source, include_flags(library, gateway) + c_dialect_flags(source)))
+                   for source in members]
         lines.append(f"build {library.archive}: archive " + " ".join(objects))
         archives.append(library.archive)
     startup = object_file("runtime/startup.cpp", flags)

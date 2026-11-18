@@ -19,6 +19,9 @@ import subprocess
 import sys
 import time
 
+sys.dont_write_bytecode = True
+import vendor_sources
+
 GATEWAY = Path(__file__).resolve().parents[1]
 FLAGS = ["-std=c++20", "-pthread", "-O1", "-g", "-fno-omit-frame-pointer",
          "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined",
@@ -61,7 +64,8 @@ def compile_one(compiler, c_compiler, source, objects):
         flags = [flag for flag in flags if not flag.startswith("-W")]
         if source.endswith(".c"):
             compiler = c_compiler
-            flags = ["-std=c11", *[flag for flag in flags if not flag.startswith("-std=c++")]]
+            flags = ["-std=c11", *vendor_sources.c_dialect_flags(source),
+                     *[flag for flag in flags if not flag.startswith("-std=c++")]]
     done = subprocess.run([compiler, *flags, "-c", str(GATEWAY / source), "-o", str(output)],
                           capture_output=True, text=True)
     return source, output, done.returncode, done.stderr[-4000:]
