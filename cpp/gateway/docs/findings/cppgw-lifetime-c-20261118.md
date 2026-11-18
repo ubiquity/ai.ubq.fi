@@ -286,7 +286,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/anthropic_responses.cpp`
 - [x] `src/provider/capacity.cpp`
 - [x] `src/provider/capacity_analytics.cpp`
-- [ ] `src/provider/capacity_contract.cpp`
+- [x] `src/provider/capacity_contract.cpp`
 - [ ] `src/provider/capacity_events.cpp`
 - [ ] `src/provider/capacity_history.cpp`
 - [ ] `src/provider/capacity_parse.cpp`
@@ -1822,3 +1822,7 @@ Capacity refresh uses value snapshots, leases and independently owned sampling w
 Capacity analytics read and write via local snapshots.
 
 - 139-187 · CAS and remote row iteration · **SAFE** · KV, the AtomicOperation and list cursor remain in the waiting frames, and sorting follows the scan.
+
+### `src/provider/capacity_contract.cpp`
+
+Contract parsing and JSON conversion are synchronous. Variant visitor references are confined to each call.

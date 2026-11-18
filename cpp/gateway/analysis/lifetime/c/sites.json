@@ -3332,7 +3332,8 @@
       ]
     },
     "src/provider/capacity_contract.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Contract parsing and JSON conversion are synchronous. Variant visitor references are confined to each call.",
       "sites": []
     },
     "src/provider/capacity_events.cpp": {
