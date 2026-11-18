@@ -311,7 +311,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/bounded_response_body.hpp`
 - [x] `include/uos/catalog/index.hpp`
 - [x] `include/uos/catalog/models.hpp`
-- [ ] `include/uos/catalog/promotion.hpp`
+- [x] `include/uos/catalog/promotion.hpp`
 - [ ] `include/uos/catalog/store.hpp`
 - [ ] `include/uos/catalog/types.hpp`
 - [ ] `include/uos/config.hpp`
@@ -1741,6 +1741,12 @@ Reviewed borrowed KV updates and the inline response model filter.
 - L16 **SAFE** · The refresh context keeps the store alive throughout the awaited update, and the Task owns its remaining arguments.
 - L19, 21, 24, 26 **SAFE** · The model filter walks caller-owned data synchronously and returns copied models.
 
+### `include/uos/catalog/promotion.hpp`
+
+Reviewed the catalog promotion boundary.
+
+- L20 **SAFE** · The promotion Task owns its shared KV and promotion input from creation through commit.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1989,4 +1995,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-203/286 files reviewed. 375 sites: 354 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+204/286 files reviewed. 376 sites: 355 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
