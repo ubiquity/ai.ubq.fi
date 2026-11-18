@@ -1401,8 +1401,16 @@
       ]
     },
     "include/uos/provider/lithos_rate_limits.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Retry wait factory interface.",
+      "sites": [
+        {
+          "lines": "97-98",
+          "kind": "callback interface",
+          "verdict": "SAFE",
+          "reason": "The timer wait owns its signal and elapsed callback; its listener cleanup is reviewed in lithos_rate_limits.cpp."
+        }
+      ]
     },
     "include/uos/provider/lithos_streams.hpp": {
       "status": "pending",

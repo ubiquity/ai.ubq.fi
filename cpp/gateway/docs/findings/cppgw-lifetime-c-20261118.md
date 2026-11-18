@@ -166,7 +166,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/lithos.hpp`
 - [x] `include/uos/provider/lithos_handlers.hpp`
 - [x] `include/uos/provider/lithos_models.hpp`
-- [ ] `include/uos/provider/lithos_rate_limits.hpp`
+- [x] `include/uos/provider/lithos_rate_limits.hpp`
 - [ ] `include/uos/provider/lithos_streams.hpp`
 - [ ] `include/uos/provider/metered.hpp`
 - [ ] `include/uos/provider/openrouter.hpp`
@@ -1051,3 +1051,9 @@ Lithos handler interface with borrowed telemetry and an observer seam.
 Lithos catalog API.
 
 - 17-18 · owning task parameters · **SAFE** · Catalog tasks retain any supplied options as a value.
+
+### `include/uos/provider/lithos_rate_limits.hpp`
+
+Retry wait factory interface.
+
+- 97-98 · callback interface · **SAFE** · The timer wait owns its signal and elapsed callback; its listener cleanup is reviewed in lithos_rate_limits.cpp.
