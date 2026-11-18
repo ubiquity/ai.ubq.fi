@@ -5,6 +5,7 @@
 #include <boost/asio/local/connect_pair.hpp>
 #include <boost/asio/local/stream_protocol.hpp>
 #include <boost/asio/redirect_error.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 #include <algorithm>
 #include <array>
