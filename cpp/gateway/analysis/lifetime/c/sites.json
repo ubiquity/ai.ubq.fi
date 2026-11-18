@@ -3438,8 +3438,28 @@
       ]
     },
     "src/provider/claude_capacity_history.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Capacity history has separate owning per-rollup reads and a local list cursor.",
+      "sites": [
+        {
+          "lines": "229-259,413-427",
+          "kind": "hash and rollup-key arithmetic",
+          "verdict": "SAFE",
+          "reason": "The event, window selector, KV and point are owned values. The local projection sees only the frame-owned event."
+        },
+        {
+          "lines": "493-527",
+          "kind": "fail-fast rollup fan-outs and commit",
+          "verdict": "SAFE",
+          "reason": "Each reader owns KV and the point/meter input, so a failed sibling does not release its receiver. AtomicOperation joins its commit."
+        },
+        {
+          "lines": "530-586",
+          "kind": "history iterator and close",
+          "verdict": "SAFE",
+          "reason": "The owning cursor and frame-local points remain live across next or return, and sorting takes place after iteration."
+        }
+      ]
     },
     "src/provider/claude_capacity_rollups.cpp": {
       "status": "pending",
