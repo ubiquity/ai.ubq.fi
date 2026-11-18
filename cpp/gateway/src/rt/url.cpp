@@ -3,7 +3,16 @@
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
+
+// Ada 4.0.0's amalgamated header triggers Clang's signedness diagnostics.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#endif
 #include "third_party/ada/ada.h"
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
 #include <algorithm>
 #include <array>
