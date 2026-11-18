@@ -33,8 +33,28 @@
       ]
     },
     "include/uos/chat/stream_translation.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Translation and accumulator methods are synchronous except for the completion recorder.",
+      "sites": [
+        {
+          "lines": "56-75",
+          "kind": "container ownership",
+          "verdict": "SAFE",
+          "reason": "Accumulator results own shared call records. Consumers read the exposed calls vector synchronously or copy its size before suspending."
+        },
+        {
+          "lines": "83-84",
+          "kind": "stream factory",
+          "verdict": "SAFE",
+          "reason": "The replay iterator owns its generator body and prepared state, and the returned cancel function captures copies of the source and iterator."
+        },
+        {
+          "lines": "90-92",
+          "kind": "borrowed context",
+          "verdict": "SAFE",
+          "reason": "Stream or buffered completion state retains its copied context through the awaited recorder."
+        }
+      ]
     },
     "include/uos/codex/account_routing.hpp": {
       "status": "pending",

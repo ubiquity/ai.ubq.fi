@@ -38,7 +38,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 
 - [x] `include/uos/chat/completions.hpp`
 - [x] `include/uos/chat/envelope.hpp`
-- [ ] `include/uos/chat/stream_translation.hpp`
+- [x] `include/uos/chat/stream_translation.hpp`
 - [ ] `include/uos/codex/account_routing.hpp`
 - [ ] `include/uos/codex/auth.hpp`
 - [ ] `include/uos/codex/auth_refresh.hpp`
@@ -341,3 +341,11 @@ The stream and buffered entry points have separate ownership of telemetry.
 Both public entry points are synchronous task factories despite their Task return types.
 
 - 6-7 · task factories · **SAFE** · The wrappers copy the optional context into the coroutine arguments before returning, and the telemetry dispatcher owns its request callback.
+
+### `include/uos/chat/stream_translation.hpp`
+
+Translation and accumulator methods are synchronous except for the completion recorder.
+
+- 56-75 · container ownership · **SAFE** · Accumulator results own shared call records. Consumers read the exposed calls vector synchronously or copy its size before suspending.
+- 83-84 · stream factory · **SAFE** · The replay iterator owns its generator body and prepared state, and the returned cancel function captures copies of the source and iterator.
+- 90-92 · borrowed context · **SAFE** · Stream or buffered completion state retains its copied context through the awaited recorder.
