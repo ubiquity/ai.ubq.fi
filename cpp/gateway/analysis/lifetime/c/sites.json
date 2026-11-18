@@ -87,8 +87,16 @@
       ]
     },
     "include/uos/codex/auth_refresh.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Refresh helper interfaces transfer owned task inputs.",
+      "sites": [
+        {
+          "lines": "18,23,30,43-49",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Account data, promises and optional signals are copied or moved into the task frames."
+        }
+      ]
     },
     "include/uos/codex/auth_repair.hpp": {
       "status": "pending",

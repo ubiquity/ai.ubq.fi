@@ -41,7 +41,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/chat/stream_translation.hpp`
 - [x] `include/uos/codex/account_routing.hpp`
 - [x] `include/uos/codex/auth.hpp`
-- [ ] `include/uos/codex/auth_refresh.hpp`
+- [x] `include/uos/codex/auth_refresh.hpp`
 - [ ] `include/uos/codex/auth_repair.hpp`
 - [ ] `include/uos/codex/banked_reset.hpp`
 - [ ] `include/uos/codex/banked_reset_claim.hpp`
@@ -362,3 +362,9 @@ The async API owns response handles, while the shared caches are reviewed at mut
 
 - 203-208 · shared registries · **SAFE** · The namespace owns the promise maps and uses weak response identities; consumers copy results or handles before awaiting.
 - 230,238-244,250 · owning task parameters · **SAFE** · Each probe or lookup coroutine owns its response or scalar lookup inputs.
+
+### `include/uos/codex/auth_refresh.hpp`
+
+Refresh helper interfaces transfer owned task inputs.
+
+- 18,23,30,43-49 · owning task parameters · **SAFE** · Account data, promises and optional signals are copied or moved into the task frames.
