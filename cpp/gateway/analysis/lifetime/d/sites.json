@@ -2196,8 +2196,68 @@
       "sites": []
     },
     "src/authority/native_authority.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed native State ownership, control/runtime execution, routing, and synchronous SQLite callbacks.",
+      "sites": [
+        {
+          "lines": [
+            48,
+            59,
+            67,
+            74,
+            75
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The public rt::async factory holds a shared State until the control task finishes. Initialization and command transaction callbacks run inline while their frame or constructor arguments are live."
+        },
+        {
+          "lines": [
+            115,
+            116,
+            118,
+            119,
+            214,
+            215,
+            219,
+            221,
+            231,
+            234
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The bound port captures State into the rt::async frame before entering a member coroutine. Routing and classification use named copied inputs, and SQL runs every capture synchronously after or between waits."
+        },
+        {
+          "lines": [
+            298,
+            299,
+            304,
+            305,
+            315,
+            321,
+            322,
+            323
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Every port or runner closure owns the shared State or a by-value facade. Task-factory callbacks put their own State owner in the child, and State does not own the port callbacks."
+        }
+      ]
     },
     "src/authority/native_authority_api.cpp": {
       "reviewed": false,

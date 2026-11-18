@@ -100,7 +100,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/authority/native_api_key.cpp`
 - [x] `src/authority/native_api_key_audit.cpp`
 - [x] `src/authority/native_api_key_policy.cpp`
-- [ ] `src/authority/native_authority.cpp`
+- [x] `src/authority/native_authority.cpp`
 - [ ] `src/authority/native_authority_api.cpp`
 - [ ] `src/authority/native_authority_codex.cpp`
 - [ ] `src/authority/native_authority_contracts.cpp`
@@ -649,6 +649,14 @@ Reviewed API-key event field selection, cursor decoding and key construction. Th
 
 Reviewed verification, policy mutation planning, paid input normalization and key generation. JSON and string views are synchronous inputs, and output records contain copied values. No suspension or escaping callback.
 
+### `src/authority/native_authority.cpp`
+
+Reviewed native State ownership, control/runtime execution, routing, and synchronous SQLite callbacks.
+
+- L48, 59, 67, 74, 75 **SAFE** · The public rt::async factory holds a shared State until the control task finishes. Initialization and command transaction callbacks run inline while their frame or constructor arguments are live.
+- L115, 116, 118, 119, 214, 215, 219, 221, 231, 234 **SAFE** · The bound port captures State into the rt::async frame before entering a member coroutine. Routing and classification use named copied inputs, and SQL runs every capture synchronously after or between waits.
+- L298, 299, 304, 305, 315, 321, 322, 323 **SAFE** · Every port or runner closure owns the shared State or a by-value facade. Task-factory callbacks put their own State owner in the child, and State does not own the port callbacks.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -754,4 +762,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-35/286 files reviewed. 122 sites: 113 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+36/286 files reviewed. 125 sites: 116 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
