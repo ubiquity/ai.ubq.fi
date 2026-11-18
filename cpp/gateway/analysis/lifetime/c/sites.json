@@ -3991,8 +3991,16 @@
       ]
     },
     "src/provider/surplus_claude_request.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Native Messages projection copies JSON and names. Its reference and view parameters are synchronous.",
+      "sites": [
+        {
+          "lines": "452-505,632-672",
+          "kind": "cache block and token bounds borrows",
+          "verdict": "SAFE",
+          "reason": "Cache pointers refer to frame-local inputs while the synchronous call runs, and the local catalog token value stays in scope until its numeric value is copied."
+        }
+      ]
     }
   }
 }

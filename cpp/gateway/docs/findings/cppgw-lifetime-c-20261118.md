@@ -325,7 +325,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/stream_relay.cpp`
 - [x] `src/provider/surplus.cpp`
 - [x] `src/provider/surplus_claude_chat_request.cpp`
-- [ ] `src/provider/surplus_claude_request.cpp`
+- [x] `src/provider/surplus_claude_request.cpp`
 
 ## Per-file verdicts
 
@@ -2082,3 +2082,9 @@ The Surplus stream projection owns its event and body state. Its header abort ra
 Native Chat projection, replay lookups and cache policy transforms are synchronous. Returned values own JSON and tool names.
 
 - 357-405,512-545 · cache block projections · **SAFE** · The temporary pointer lists refer into the caller's private message and tool containers, which stay structurally unchanged while the selected inner object is updated.
+
+### `src/provider/surplus_claude_request.cpp`
+
+Native Messages projection copies JSON and names. Its reference and view parameters are synchronous.
+
+- 452-505,632-672 · cache block and token bounds borrows · **SAFE** · Cache pointers refer to frame-local inputs while the synchronous call runs, and the local catalog token value stays in scope until its numeric value is copied.
