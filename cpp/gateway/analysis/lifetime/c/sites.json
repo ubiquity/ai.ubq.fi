@@ -3136,8 +3136,22 @@
       ]
     },
     "src/paid_fallback/ledger_stats.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Stats merges keep their transform closure and snapshot data in the writer frame.",
+      "sites": [
+        {
+          "lines": "86-107,246-295",
+          "kind": "joined merge closure and commit",
+          "verdict": "SAFE",
+          "reason": "The transform owns scalar/string captures and consumes each local row synchronously. KV and the AtomicOperation live through each commit."
+        },
+        {
+          "lines": "346-430",
+          "kind": "growth scan and iterator",
+          "verdict": "SAFE",
+          "reason": "Growth reads retain the list iterator, store handle and result accumulators while stepping."
+        }
+      ]
     },
     "src/paid_fallback/removed_provider.cpp": {
       "status": "pending",

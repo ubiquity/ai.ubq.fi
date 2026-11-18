@@ -275,7 +275,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/paid_fallback/ledger_backfill.cpp`
 - [x] `src/paid_fallback/ledger_settlement.cpp`
 - [x] `src/paid_fallback/ledger_state.cpp`
-- [ ] `src/paid_fallback/ledger_stats.cpp`
+- [x] `src/paid_fallback/ledger_stats.cpp`
 - [ ] `src/paid_fallback/removed_provider.cpp`
 - [ ] `src/paid_fallback/rollups.cpp`
 - [ ] `src/paid_fallback/routing.cpp`
@@ -1747,3 +1747,10 @@ The ledger view functions retain a store and each reader/queue receiver through 
 
 - 64-128 · store, pending iterator, and enqueue owner · **SAFE** · The frame retains KV and the list handle while stepping. The borrowed KvEnqueue interface is obtained from the KV it owns through send completion.
 - 129-219,221-320 · ledger projections and cursor storage · **SAFE** · Each scan owns its iterator and accumulators. Awaited row values and readable request/pending snapshots remain local.
+
+### `src/paid_fallback/ledger_stats.cpp`
+
+Stats merges keep their transform closure and snapshot data in the writer frame.
+
+- 86-107,246-295 · joined merge closure and commit · **SAFE** · The transform owns scalar/string captures and consumes each local row synchronously. KV and the AtomicOperation live through each commit.
+- 346-430 · growth scan and iterator · **SAFE** · Growth reads retain the list iterator, store handle and result accumulators while stepping.
