@@ -6192,8 +6192,102 @@
       ]
     },
     "src/sentinel/replay_retention_schema.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed synchronous serialization and test injection, ledger snapshots, chunk iteration, and atomic mutation callbacks.",
+      "sites": [
+        {
+          "lines": [
+            37,
+            39,
+            78,
+            83,
+            86,
+            234,
+            236,
+            245
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Text views and schema field lists are consumed synchronously. Parsed rows and preserved KV objects own their stored content."
+        },
+        {
+          "lines": [
+            326,
+            328
+          ],
+          "kinds": [
+            "c"
+          ],
+          "verdict": "SAFE",
+          "detail": "The test injector is stored by value and invoked synchronously; current fixtures reset it after their awaited work."
+        },
+        {
+          "lines": [
+            417,
+            418,
+            432,
+            435,
+            439,
+            441
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The ledger helper's only use of its KV borrow starts a get that owns the native storage. The result and converted ledger are values local to the coroutine."
+        },
+        {
+          "lines": [
+            446,
+            454,
+            460,
+            465,
+            472,
+            476
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The two chunk helpers own their cursor and private key snapshots; each caller directly awaits them while retaining the store."
+        },
+        {
+          "lines": [
+            483,
+            485,
+            495
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The coroutine owns both synchronous mutation callbacks. Current callers return the same atomic operation covered by the frame's owning pointer through commit."
+        },
+        {
+          "lines": [
+            499,
+            501,
+            505,
+            509
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The awaiting caller retains KV; retention status construction uses only the frame-owned ledger snapshot after the read."
+        }
+      ]
     },
     "src/sentinel/replay_store.cpp": {
       "reviewed": true,

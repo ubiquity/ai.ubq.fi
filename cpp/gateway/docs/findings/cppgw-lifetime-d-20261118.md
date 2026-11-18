@@ -242,7 +242,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/sentinel/replay_retention.cpp`
 - [x] `src/sentinel/replay_retention_bootstrap.cpp`
 - [x] `src/sentinel/replay_retention_metadata.cpp`
-- [ ] `src/sentinel/replay_retention_schema.cpp`
+- [x] `src/sentinel/replay_retention_schema.cpp`
 - [x] `src/sentinel/replay_store.cpp`
 - [x] `src/sentinel/upstream_capture.cpp`
 - [ ] `src/serve.cpp`
@@ -1314,6 +1314,17 @@ Reviewed prefix scanning, status reconciliation and marker/failure reads and wri
 - L145, 147, 151, 153, 156, 160, 183, 193, 200 **SAFE** · The reconciliation chain directly awaits the scan and writes. It copies maintenance inputs, and each atomic operation remains frame-owned across its commit.
 - L214, 219, 232 **SAFE** · Marker references point into the frame's immutable getMany result and end before the next suspension. The reconciliation child owns its options.
 
+### `src/sentinel/replay_retention_schema.cpp`
+
+Reviewed synchronous serialization and test injection, ledger snapshots, chunk iteration, and atomic mutation callbacks.
+
+- L37, 39, 78, 83, 86, 234, 236, 245 **SAFE** · Text views and schema field lists are consumed synchronously. Parsed rows and preserved KV objects own their stored content.
+- L326, 328 **SAFE** · The test injector is stored by value and invoked synchronously; current fixtures reset it after their awaited work.
+- L417, 418, 432, 435, 439, 441 **SAFE** · The ledger helper's only use of its KV borrow starts a get that owns the native storage. The result and converted ledger are values local to the coroutine.
+- L446, 454, 460, 465, 472, 476 **SAFE** · The two chunk helpers own their cursor and private key snapshots; each caller directly awaits them while retaining the store.
+- L483, 485, 495 **SAFE** · The coroutine owns both synchronous mutation callbacks. Current callers return the same atomic operation covered by the frame's owning pointer through commit.
+- L499, 501, 505, 509 **SAFE** · The awaiting caller retains KV; retention status construction uses only the frame-owned ledger snapshot after the read.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1562,4 +1573,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-136/286 files reviewed. 279 sites: 260 SAFE, 19 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+137/286 files reviewed. 285 sites: 266 SAFE, 19 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
