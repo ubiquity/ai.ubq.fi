@@ -368,7 +368,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/request_policy.hpp`
 - [x] `include/uos/responses_attempts.hpp`
 - [x] `include/uos/responses_buffered.hpp`
-- [ ] `include/uos/responses_failover_stream.hpp`
+- [x] `include/uos/responses_failover_stream.hpp`
 - [ ] `include/uos/responses_handler.hpp`
 - [ ] `include/uos/responses_native_headers.hpp`
 - [ ] `include/uos/responses_request.hpp`
@@ -2087,6 +2087,13 @@ Reviewed buffered result callbacks and collection interfaces.
 
 - L8, 9, 10, 11, 13, 14 **SAFE** · The collector owns its attempt and options through its awaited iterator. Event and failure borrows are passed only to synchronous callbacks.
 
+### `include/uos/responses_failover_stream.hpp`
+
+Reviewed precommit options, event constructors, and stream lifecycle callbacks.
+
+- L45, 46, 51, 53, 63, 81, 95 **SAFE** · Precommit owns its iterator and options, and invokes event and progress callbacks synchronously. Event builders consume their string views within the call.
+- L114, 115, 116, 117, 118 **SAFE** · The streamed options are copied into State, async callback work retains the exact callable and event values, and synchronous controls run with State live. The GCC await-expression issue is recorded at each affected implementation call.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2336,4 +2343,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-260/286 files reviewed. 442 sites: 418 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+261/286 files reviewed. 444 sites: 420 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

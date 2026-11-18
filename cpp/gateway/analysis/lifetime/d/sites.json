@@ -9822,8 +9822,45 @@
       ]
     },
     "include/uos/responses_failover_stream.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed precommit options, event constructors, and stream lifecycle callbacks.",
+      "sites": [
+        {
+          "lines": [
+            45,
+            46,
+            51,
+            53,
+            63,
+            81,
+            95
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Precommit owns its iterator and options, and invokes event and progress callbacks synchronously. Event builders consume their string views within the call."
+        },
+        {
+          "lines": [
+            114,
+            115,
+            116,
+            117,
+            118
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The streamed options are copied into State, async callback work retains the exact callable and event values, and synchronous controls run with State live. The GCC await-expression issue is recorded at each affected implementation call."
+        }
+      ]
     },
     "include/uos/responses_handler.hpp": {
       "reviewed": false,
