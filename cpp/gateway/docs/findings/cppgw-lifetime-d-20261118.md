@@ -182,7 +182,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/kv_conversion/proof.cpp`
 - [x] `src/kv_conversion/typed_value.cpp`
 - [x] `src/lib/jev_compaction/client.cpp`
-- [ ] `src/lib/jev_compaction/codex_items.cpp`
+- [x] `src/lib/jev_compaction/codex_items.cpp`
 - [ ] `src/lib/jev_compaction/compact.cpp`
 - [ ] `src/lib/jev_compaction/jev_codex_smoke.cpp`
 - [ ] `src/lib/jev_compaction/jev_compaction_smoke.cpp`
@@ -1006,6 +1006,10 @@ Reviewed Jev client's request assembly and response consumption.
 
 - L24, 35, 36, 39 **SAFE** · The shared asker in askBatch retains the JevClient through ask, Fetch retains its own callable, and the response has a named owner during body parsing.
 
+### `src/lib/jev_compaction/codex_items.cpp`
+
+Reviewed synchronous incremental-input, last-turn and history conversions. Temporary views and variant borrows remain inside each call and results own their contents.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1219,4 +1223,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-92/286 files reviewed. 194 sites: 179 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+93/286 files reviewed. 194 sites: 179 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

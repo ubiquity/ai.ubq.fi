@@ -4125,7 +4125,8 @@
       ]
     },
     "src/lib/jev_compaction/codex_items.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous incremental-input, last-turn and history conversions. Temporary views and variant borrows remain inside each call and results own their contents.",
       "sites": []
     },
     "src/lib/jev_compaction/compact.cpp": {
