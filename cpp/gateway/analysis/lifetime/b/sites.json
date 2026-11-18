@@ -2867,8 +2867,29 @@
       ]
     },
     "src/kernel/usage.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "266-308",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Point usage and optional daily reads",
+          "evidence": "The task owns request identities and options, uses a shared store and normalizes each independent result into an owned record."
+        },
+        {
+          "lines": "318-373",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Usage scans and daily lookups",
+          "evidence": "Each cursor and current row are frame-owned. Keys and daily buckets are copied, and the sort callbacks run synchronously on a completed local vector."
+        }
+      ]
     },
     "include/uos/worker/entrypoint.hpp": {
       "reviewed": false,

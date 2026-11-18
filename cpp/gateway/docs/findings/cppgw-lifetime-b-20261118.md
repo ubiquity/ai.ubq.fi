@@ -115,7 +115,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/kernel/quota_reserve.cpp`
 - [x] `src/kernel/quota_v2.cpp`
 - [x] `src/kernel/quota_write.cpp`
-- [ ] `src/kernel/usage.cpp`
+- [x] `src/kernel/usage.cpp`
 - [ ] `include/uos/worker/entrypoint.hpp`
 - [ ] `include/uos/worker/transport.hpp`
 - [ ] `src/worker/entrypoint.cpp`
@@ -798,6 +798,13 @@ Usage read methods own identities and options, with a shared store or a resolved
 | 177-199,275-296 | Capturing quota write and delete lock operations | **SAFE** | Both closures capture values and move into the lock frame. That frame directly awaits the invoked coroutine and keeps the callable alive on success or exception. |
 | 208-228,305-315 | Public policy write and delete adapters | **SAFE** | Both wrapper and child own identities and options, and returned variants are projected into owning values. |
 
+### `src/kernel/usage.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 266-308 | Point usage and optional daily reads | **SAFE** | The task owns request identities and options, uses a shared store and normalizes each independent result into an owned record. |
+| 318-373 | Usage scans and daily lookups | **SAFE** | Each cursor and current row are frame-owned. Keys and daily buckets are copied, and the sort callbacks run synchronously on a completed local vector. |
+
 
 ## Ranked defects and counts
 
@@ -1069,4 +1076,4 @@ removes the registrations on frame destruction as well as on normal return.
 +  const auto bindingHash = co_await std::move(bindingHashing);
 ```
 
-92/97 files reviewed. **DEFECT 10, SAFE 220, UNCLEAR 4.**
+93/97 files reviewed. **DEFECT 10, SAFE 222, UNCLEAR 4.**
