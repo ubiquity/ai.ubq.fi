@@ -833,7 +833,8 @@
       ]
     },
     "include/uos/harmony/tools/schemas.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous tool schema declarations.",
       "sites": []
     },
     "include/uos/harmony/types.hpp": {

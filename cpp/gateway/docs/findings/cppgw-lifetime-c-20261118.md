@@ -115,7 +115,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/tools/fakes.hpp`
 - [x] `include/uos/harmony/tools/result.hpp`
 - [x] `include/uos/harmony/tools/router.hpp`
-- [ ] `include/uos/harmony/tools/schemas.hpp`
+- [x] `include/uos/harmony/tools/schemas.hpp`
 - [ ] `include/uos/harmony/types.hpp`
 - [ ] `include/uos/live/calls.hpp`
 - [ ] `include/uos/live/handler.hpp`
@@ -759,3 +759,7 @@ Synchronous tool result types and construction helpers.
 Four overloads route owned tool work.
 
 - 30-34 · task factories · **SAFE** · The pointer overload copies or converts the JSON argument synchronously before returning the implementation task, whose backend bundle is owning.
+
+### `include/uos/harmony/tools/schemas.hpp`
+
+Synchronous tool schema declarations.
