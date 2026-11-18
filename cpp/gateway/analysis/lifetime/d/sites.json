@@ -10145,8 +10145,44 @@
       "sites": []
     },
     "include/uos/sentinel/replay_model.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed view-backed literals, shared capture buffers and synchronous byte helpers.",
+      "sites": [
+        {
+          "lines": [
+            100,
+            122,
+            147,
+            207,
+            277,
+            278,
+            294,
+            297,
+            300,
+            301
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Body buffers are explicitly shared. Constant views refer to literals, and the salt is an owning byte vector built by an immediately invoked lambda."
+        },
+        {
+          "lines": [
+            321,
+            323,
+            324
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Clone and concat consume input spans synchronously and return owned byte copies."
+        }
+      ]
     },
     "include/uos/sentinel/replay_observation.hpp": {
       "reviewed": false,
