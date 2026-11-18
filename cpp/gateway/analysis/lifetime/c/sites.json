@@ -1176,8 +1176,16 @@
       ]
     },
     "include/uos/provider/cerebras_handlers.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Buffered Cerebras Chat APIs use the route telemetry context while joined.",
+      "sites": [
+        {
+          "lines": "10-24",
+          "kind": "borrowed context",
+          "verdict": "SAFE",
+          "reason": "The awaiting route or adapter keeps the UsageContext live through all joined status and completion helpers."
+        }
+      ]
     },
     "include/uos/provider/cerebras_rate_limits.hpp": {
       "status": "pending",
