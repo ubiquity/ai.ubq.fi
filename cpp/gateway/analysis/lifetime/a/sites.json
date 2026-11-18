@@ -3881,8 +3881,126 @@
       ]
     },
     "src/rt/tls.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Read the trust-store setup, native ASN.1 ownership, hostname matching and C API callers. These routines do not suspend.",
+      "sites": [
+        {
+          "lines": [
+            21,
+            22,
+            24,
+            27,
+            28,
+            31,
+            32,
+            33,
+            36,
+            41,
+            44,
+            48,
+            51,
+            56,
+            57,
+            61,
+            65,
+            67,
+            69,
+            76,
+            79,
+            80,
+            81,
+            86,
+            87,
+            90
+          ],
+          "classes": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "File, ASN.1 and certificate-name views",
+          "reason": "The file stays open for the iterator copy, the certificate owner outlives synchronous extraction, and hostname matching reads unchanged local string vectors."
+        },
+        {
+          "lines": [
+            94,
+            95,
+            96,
+            97,
+            98,
+            99,
+            102,
+            105,
+            106,
+            108,
+            109,
+            112,
+            113,
+            119,
+            120,
+            121,
+            122,
+            123,
+            125,
+            126,
+            127,
+            132,
+            133,
+            136,
+            138
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "Trust store and in-memory PEM ownership",
+          "reason": "The caller's PEM string stays alive until BIO_free, the store retains its certificate references, and the default context and its trust store are process-owned."
+        },
+        {
+          "lines": [
+            142,
+            171,
+            172,
+            173,
+            179,
+            180,
+            181,
+            182,
+            188,
+            189,
+            192,
+            198,
+            202,
+            203,
+            204,
+            207,
+            208,
+            210,
+            211,
+            213,
+            215,
+            219,
+            221,
+            224,
+            225,
+            226,
+            231,
+            235,
+            239,
+            241,
+            242,
+            246
+          ],
+          "classes": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "OpenSSL name extraction and result copies",
+          "reason": "The names list and caller-owned certificate support the synchronous reads, while DNS names, IP addresses, error text and the returned reason are copied into owning strings or vectors."
+        }
+      ]
     },
     "src/rt/tls_internal.hpp": {
       "status": "pending",

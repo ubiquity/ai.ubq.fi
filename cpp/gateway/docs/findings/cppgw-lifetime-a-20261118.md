@@ -55,7 +55,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/fetch_transport_internal.hpp`
 - [x] `src/rt/fetch_transport_net.cpp`
 - [x] `src/rt/gzip.cpp`
-- [ ] `src/rt/tls.cpp`
+- [x] `src/rt/tls.cpp`
 - [ ] `src/rt/tls_internal.hpp`
 - [ ] `src/rt/websocket.cpp`
 - [ ] `src/rt/websocket_client.cpp`
@@ -320,18 +320,26 @@ Reviewed the native and dynamically loaded zlib paths, incremental borrowed buff
 - **SAFE** `386, 387, 389, 390, 391, 395, 396, 399, 401, 406, 407, 410, 411, 415, 418, 419, 422, 424, 426, 429, 431, 432` (b/c/d), Synchronous compressor cleanup and piece visitor. The scope guard runs with its stream and static API still alive. The visitor runs synchronously, and the production and fixture callbacks copy each piece before the next inflater read.
 - **SAFE** `437, 438, 439, 440, 441, 444, 445, 446, 447, 448` (a/b/c/e), Compression and decompression Task frames. Each frame owns the input and result. Its noncoroutine scrub guard borrows the frame's input, and only the captureless zero-argument microtask runs after the codec work.
 
+### `src/rt/tls.cpp`
+
+Read the trust-store setup, native ASN.1 ownership, hostname matching and C API callers. These routines do not suspend.
+
+- **SAFE** `21, 22, 24, 27, 28, 31, 32, 33, 36, 41, 44, 48, 51, 56, 57, 61, 65, 67, 69, 76, 79, 80, 81, 86, 87, 90` (b/d), File, ASN.1 and certificate-name views. The file stays open for the iterator copy, the certificate owner outlives synchronous extraction, and hostname matching reads unchanged local string vectors.
+- **SAFE** `94, 95, 96, 97, 98, 99, 102, 105, 106, 108, 109, 112, 113, 119, 120, 121, 122, 123, 125, 126, 127, 132, 133, 136, 138` (b/c), Trust store and in-memory PEM ownership. The caller's PEM string stays alive until BIO_free, the store retains its certificate references, and the default context and its trust store are process-owned.
+- **SAFE** `142, 171, 172, 173, 179, 180, 181, 182, 188, 189, 192, 198, 202, 203, 204, 207, 208, 210, 211, 213, 215, 219, 221, 224, 225, 226, 231, 235, 239, 241, 242, 246` (b/d), OpenSSL name extraction and result copies. The names list and caller-owned certificate support the synchronous reads, while DNS names, IP addresses, error text and the returned reason are copied into owning strings or vectors.
+
 ## Ranked defects and counts
 
-Reviewed **23/30 files** and **135 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **24/30 files** and **138 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 5 | 20 | 0 |
-| b. Borrowed coroutine parameter or receiver | 11 | 86 | 3 |
-| c. Callback ownership or cycle | 16 | 80 | 4 |
-| d. Container invalidation | 3 | 56 | 0 |
+| b. Borrowed coroutine parameter or receiver | 11 | 89 | 3 |
+| c. Callback ownership or cycle | 16 | 81 | 4 |
+| d. Container invalidation | 3 | 58 | 0 |
 | e. GCC 12 await-expression rule | 5 | 13 | 1 |
-| **Unique site groups** | 23 | 107 | 5 |
+| **Unique site groups** | 23 | 110 | 5 |
 
 ### 1. A-FETCH-ABORT-TRANSPORT (memory safety in the injectable transport path) — Abort can outlive the owning virtual transport frame
 
