@@ -3132,8 +3132,155 @@
       ]
     },
     "src/rt/fetch_transport_http.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed the complete HTTP wire helpers, including incomplete and malformed parser returns. These helpers operate synchronously on caller-owned buffers.",
+      "sites": [
+        {
+          "lines": [
+            18,
+            26,
+            32,
+            37,
+            44,
+            47,
+            71,
+            90,
+            102,
+            107,
+            121,
+            122,
+            125,
+            144,
+            148,
+            152,
+            154,
+            155,
+            158
+          ],
+          "classes": [
+            "b"
+          ],
+          "verdict": "SAFE",
+          "label": "Header token views and error construction",
+          "reason": "Trim, token and line-parser views are consumed within the active caller, and FetchError takes value copies of the code and URL."
+        },
+        {
+          "lines": [
+            164,
+            165,
+            167,
+            168,
+            172,
+            173,
+            179,
+            181,
+            183,
+            184,
+            185,
+            186,
+            200
+          ],
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Request field visits and sorting comparator",
+          "reason": "The header read, local vector sort and output assembly all run synchronously. The captureless comparator uses its arguments only within the sort."
+        },
+        {
+          "lines": [
+            205,
+            207,
+            208,
+            213,
+            214,
+            216,
+            217,
+            221,
+            222,
+            223,
+            224
+          ],
+          "classes": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Connection token views into copied field strings",
+          "reason": "The outer range-for owns the temporary values vector for the loop's lifetime, and the inner token views are read before its current string can disappear."
+        },
+        {
+          "lines": [
+            230,
+            234,
+            257,
+            258,
+            263,
+            265,
+            289,
+            292,
+            293,
+            296,
+            297,
+            299,
+            300,
+            301
+          ],
+          "classes": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Response head parser input and output",
+          "reason": "Reason, name and value views borrow the caller's unmodified buffer during parsing; returned fields and reason own their strings."
+        },
+        {
+          "lines": [
+            306,
+            310,
+            311,
+            313,
+            320,
+            321,
+            324,
+            327,
+            344,
+            347,
+            352,
+            374,
+            375,
+            376
+          ],
+          "classes": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Framing token traversal and incremental chunk decode",
+          "reason": "Transfer-coding views borrow the immutable head during a synchronous scan, and the chunk decoder copies payload bytes before returning its status and offset."
+        },
+        {
+          "lines": [
+            411,
+            412,
+            413,
+            414,
+            417,
+            422,
+            424,
+            425
+          ],
+          "classes": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Byte queue compaction and caller views",
+          "reason": "Current exchange and pull callers consume or copy views before queue mutation or native I/O, and the native append sources are separate owned read buffers."
+        }
+      ]
     },
     "src/rt/fetch_transport_internal.hpp": {
       "status": "pending",

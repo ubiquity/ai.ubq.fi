@@ -51,7 +51,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/fetch.cpp`
 - [x] `src/rt/fetch_transport.cpp`
 - [x] `src/rt/fetch_transport_codec.cpp`
-- [ ] `src/rt/fetch_transport_http.cpp`
+- [x] `src/rt/fetch_transport_http.cpp`
 - [ ] `src/rt/fetch_transport_internal.hpp`
 - [ ] `src/rt/fetch_transport_net.cpp`
 - [ ] `src/rt/gzip.cpp`
@@ -277,18 +277,29 @@ Reviewed native and dynamically resolved codec branches. Decoder operations and 
 - **SAFE** `222, 224, 227, 229, 231, 234, 235, 238, 241, 248, 250, 252, 256, 259, 261, 262, 263, 265, 271, 276, 278` (b/c), Zstd function table and streaming buffer ownership. Each decoder frees its C stream through the static API table; its input view and output buffer descriptors are used entirely in one synchronous write.
 - **SAFE** `285, 287, 288, 300, 301, 302, 303, 304, 309, 311, 314, 315, 316, 320, 321, 323, 324, 327, 329, 332, 334, 339, 340, 345, 346` (b/d), Decoder selection and coding-name views. The code copies each view into its local vector before taking the selected reference, performs no later mutation of that vector and passes the URL into an owning string.
 
+### `src/rt/fetch_transport_http.cpp`
+
+Reviewed the complete HTTP wire helpers, including incomplete and malformed parser returns. These helpers operate synchronously on caller-owned buffers.
+
+- **SAFE** `18, 26, 32, 37, 44, 47, 71, 90, 102, 107, 121, 122, 125, 144, 148, 152, 154, 155, 158` (b), Header token views and error construction. Trim, token and line-parser views are consumed within the active caller, and FetchError takes value copies of the code and URL.
+- **SAFE** `164, 165, 167, 168, 172, 173, 179, 181, 183, 184, 185, 186, 200` (b/c/d), Request field visits and sorting comparator. The header read, local vector sort and output assembly all run synchronously. The captureless comparator uses its arguments only within the sort.
+- **SAFE** `205, 207, 208, 213, 214, 216, 217, 221, 222, 223, 224` (b/d), Connection token views into copied field strings. The outer range-for owns the temporary values vector for the loop's lifetime, and the inner token views are read before its current string can disappear.
+- **SAFE** `230, 234, 257, 258, 263, 265, 289, 292, 293, 296, 297, 299, 300, 301` (b/d), Response head parser input and output. Reason, name and value views borrow the caller's unmodified buffer during parsing; returned fields and reason own their strings.
+- **SAFE** `306, 310, 311, 313, 320, 321, 324, 327, 344, 347, 352, 374, 375, 376` (b/d), Framing token traversal and incremental chunk decode. Transfer-coding views borrow the immutable head during a synchronous scan, and the chunk decoder copies payload bytes before returning its status and offset.
+- **SAFE** `411, 412, 413, 414, 417, 422, 424, 425` (b/d), Byte queue compaction and caller views. Current exchange and pull callers consume or copy views before queue mutation or native I/O, and the native append sources are separate owned read buffers.
+
 ## Ranked defects and counts
 
-Reviewed **19/30 files** and **112 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **20/30 files** and **118 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 5 | 19 | 0 |
-| b. Borrowed coroutine parameter or receiver | 11 | 65 | 3 |
-| c. Callback ownership or cycle | 16 | 66 | 4 |
-| d. Container invalidation | 3 | 38 | 0 |
+| b. Borrowed coroutine parameter or receiver | 11 | 71 | 3 |
+| c. Callback ownership or cycle | 16 | 67 | 4 |
+| d. Container invalidation | 3 | 43 | 0 |
 | e. GCC 12 await-expression rule | 4 | 12 | 1 |
-| **Unique site groups** | 22 | 85 | 5 |
+| **Unique site groups** | 22 | 91 | 5 |
 
 ### 1. A-FETCH-ABORT-TRANSPORT (memory safety in the injectable transport path) — Abort can outlive the owning virtual transport frame
 
