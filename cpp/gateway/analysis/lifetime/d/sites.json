@@ -9413,8 +9413,46 @@
       ]
     },
     "include/uos/models/openrouter_models.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the non-owning match index and catalog fetch options. The partial publication defect is recorded at the publisher in src/models/openrouter_models.cpp.",
+      "sites": [
+        {
+          "lines": [
+            85,
+            86,
+            87,
+            88,
+            89,
+            90,
+            92,
+            107,
+            108
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The synchronous search borrows model rows only while their snapshot and the matching index are alive. The caller's cache publication must keep those paired."
+        },
+        {
+          "lines": [
+            113,
+            117,
+            124,
+            131,
+            134,
+            136
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Refresh holds its fetch and signal by value; cache snapshot access returns a shared owner that can survive cache replacement."
+        }
+      ]
     },
     "include/uos/openai.hpp": {
       "reviewed": false,

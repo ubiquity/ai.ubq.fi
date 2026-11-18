@@ -356,7 +356,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/models/codex_models_fetch.hpp`
 - [x] `include/uos/models/codex_models_whitelist.hpp`
 - [x] `include/uos/models/metadata.hpp`
-- [ ] `include/uos/models/openrouter_models.hpp`
+- [x] `include/uos/models/openrouter_models.hpp`
 - [ ] `include/uos/openai.hpp`
 - [ ] `include/uos/openai_schema.hpp`
 - [ ] `include/uos/openai_telemetry.hpp`
@@ -2010,6 +2010,13 @@ Reviewed model metadata source and match functions.
 
 - L111, 112 **SAFE** · The lookup consumes model and source views synchronously and returns owning metadata fields.
 
+### `include/uos/models/openrouter_models.hpp`
+
+Reviewed the non-owning match index and catalog fetch options. The partial publication defect is recorded at the publisher in src/models/openrouter_models.cpp.
+
+- L85, 86, 87, 88, 89, 90, 92, 107, 108 **SAFE** · The synchronous search borrows model rows only while their snapshot and the matching index are alive. The caller's cache publication must keep those paired.
+- L113, 117, 124, 131, 134, 136 **SAFE** · Refresh holds its fetch and signal by value; cache snapshot access returns a shared owner that can survive cache replacement.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2258,4 +2265,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-248/286 files reviewed. 423 sites: 401 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+249/286 files reviewed. 425 sites: 403 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
