@@ -60,3 +60,42 @@ single-member `library.source` view when building archives. The legacy SDK
 `tools/unit.mk` has a vendor object rule for C++ inputs only. These build
 drivers are outside the assigned files. The local verifier uses
 `library.sources` and the C compiler for the three llhttp inputs.
+
+## Adapter and production line count
+
+llhttp owns method, target, header, transfer-coding, chunk extension and
+trailer syntax. Its length and pause positions determine where the next
+request or upgrade bytes start. The adapter projects ordered Latin-1
+`rawHeaders` and keeps the existing Host requirement, strict request-line
+spacing, byte and field budgets, `Expect: 100-continue`, fixed-length body
+delivery and request and upgrade dispatch. The connection still controls
+when the body flows and when the response settles. A `Proxy-Connection`
+token can affect llhttp's keep-alive decision. Only an actual `Connection`
+header can authorize the upgrade handoff.
+
+`git diff --numstat 093a9e05..971bd53a -- cpp/gateway/src/runtime/http.cpp`
+reports 185 physical lines removed and 223 added. The removed code split and
+validated request lines and header fields, recognized methods and transfer
+codings, and ran a manual chunk decoding state machine. The added lines
+include the callback adapter and the retained bounds and dispatch glue.
+The count excludes tests, registration and vendored code.
+
+## Benchmark
+
+Both binaries call `ConnectionState::parseHead` and, for chunked requests,
+`decodeChunked`. The baseline includes `http.cpp` from `093a9e05`. Both
+link the same optimized runtime and application dependencies. Each binary
+reuses a connection and a warmed input buffer, consumes the same bytes in
+the indicated segment size and resets the request and response after each
+operation. The chunked case has two 4,096-byte data chunks, one extension and
+one trailer. Clang 21.1.8 `-O2 -g0` on ARM64 Neoverse N2, pinned to CPU 0.
+Timing is median thread CPU time over seven runs of 50,000 operations after
+1,000 warmups. A separate 1,000-operation run counts C++ allocations via
+regular, array and aligned `operator new`.
+
+| Request | Wire bytes | Bytes per segment | Before ns/op | llhttp ns/op | Before allocations/op | llhttp allocations/op |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| GET /health | 54 | 54 | 666.24 | 334.04 | 13 | 4 |
+| POST /v1/responses head | 320 | 320 | 2706.33 | 891.54 | 50 | 12 |
+| POST /v1/responses head, fragmented | 320 | 16 | 4111.17 | 1233.41 | 50 | 12 |
+| Chunked POST | 8355 | 1024 | 1646.92 | 1392.00 | 33 | 17 |
