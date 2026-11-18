@@ -126,3 +126,29 @@ ar t "$q/profile-after/libuos_vendor_qcbor.a"
 The direct Clang ASan/UBSan configure retained all compiler commands after sorting by input. The focused rerun passed 13 codec cases and reproduced the same nine fixture differences without sanitizer diagnostics.
 
 The scratch fixture patch at `/tmp/qcbor-c1/passkeys-canonical-fixtures.patch` (SHA-256 `fc9e9dc8c522c4ec56e6fb170381b185ba673f42e0a754755d7ea0abf9e474d6`) updates 12 vectors and adds two canonical COSE controls. It preserves all signed TPM data and every unaffected fixture. Rebuilding just the replay translation unit against that scratch data passed all 157 vectors in GCC release and Clang ASan/UBSan. The repository fixture path is outside the assigned scope, so this receipt applies to the scratch data.
+
+## ARM64 release sweep
+
+The final CMake release configuration used the same compiler commands as the inherited direct GCC 14 configuration after sorting both compilation databases. It built `uos_gateway`, `uos_kv_convert`, `uos_kv_proof` and 230 test binaries. Of the 230 binaries, 229 passed with 2,773 of 2,774 harness cases. The differential replay was the sole failure. The initial aggregate build reached 559 of 1,221 build steps before the 18-minute runner budget. The follow-up batch linked every test whose compile objects were ready, then the complement resumed only the remaining binaries.
+
+```sh
+q=/tmp/qcbor-c1
+export UOS_GATEWAY_TOOL_ROOT="$q/cmake-sdk" UOS_GATEWAY_BUILD_EVIDENCE=qcbor-c1-runner
+cmake -S cpp/gateway -B "$q/release" -G Ninja \
+  -DCMAKE_C_COMPILER=/usr/bin/gcc-14 -DCMAKE_CXX_COMPILER=/usr/bin/g++-14 \
+  -DCMAKE_C_FLAGS='-O2 -g0' -DCMAKE_CXX_FLAGS='-O2 -g0' \
+  -DCMAKE_EXE_LINKER_FLAGS="-L$q/sqlite/lib" \
+  -DUOS_GATEWAY_FRAME_RECYCLING_DISABLED=ON -DUOS_GATEWAY_TESTS=ON
+cmake -S cpp/gateway -B "$q/asan" -G Ninja \
+  -DCMAKE_C_COMPILER=/usr/bin/clang-21 -DCMAKE_CXX_COMPILER=/usr/bin/clang++-21 \
+  -DCMAKE_C_FLAGS='-O1 -gline-tables-only' -DCMAKE_CXX_FLAGS='-O1 -gline-tables-only' \
+  -DCMAKE_EXE_LINKER_FLAGS="-L$q/sqlite/lib" -DCMAKE_PROJECT_INCLUDE="$q/sanitizer-vendor-headers.cmake" \
+  -DUOS_GATEWAY_FRAME_RECYCLING_DISABLED=ON -DUOS_GATEWAY_SANITIZER=address,undefined -DUOS_GATEWAY_TESTS=ON
+xargs -r cmake --build "$q/asan" -j 2 --target < "$q/asan-focus-targets"
+python3 -B "$q/run-tests.py" "$PWD/cpp/gateway" "$q/asan" focused "$q/run-asan-postfix" --asan
+timeout --signal=INT --kill-after=20s 18m cmake --build "$q/release" -j 4 \
+  --target uos_gateway uos_kv_convert uos_kv_proof uos_gateway_tests -- -k 0
+bash "$q/finish-release.sh" 124
+```
+
+The release build used four compile slots in its scratch Ninja file. The Python runner used `cmake/ci/isolate.py` for each executable with a fresh private tmpfs home and temporary directory, loopback-only fixture networking and a credential-free environment. `run-release-final/results.tsv` records case counts per binary. The CMake source fix is commit `110ed4761ca568dca2218a22b13fd1127b3a2d7d`, tree `3cf1aaa1c71044fc961ee9ca05cffe04b45a6f95`.
