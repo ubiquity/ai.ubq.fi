@@ -77,7 +77,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/cache/kv_migration_paid_fallback.hpp`
 - [x] `include/uos/cache/kv_migration_projection.hpp`
 - [x] `include/uos/cache/kv_migration_usage.hpp`
-- [ ] `include/uos/cache/kv_migration_validation.hpp`
+- [x] `include/uos/cache/kv_migration_validation.hpp`
 - [ ] `include/uos/cache/prompt_analytics.hpp`
 - [ ] `include/uos/cache/prompt_analytics_core.hpp`
 - [ ] `include/uos/cache/prompt_analytics_queue.hpp`
@@ -504,6 +504,12 @@ Both projection entries own their KV and pair vector. Private borrows and snapsh
 | --- | --- | --- | --- |
 | 69-70 | Bounded counter handoff policy borrow | **SAFE** | The caller owns the normalized policy in its frame and awaits the handoff through settlement. The handoff is not raced with sibling work. |
 
+### `include/uos/cache/kv_migration_validation.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 18-20 | Validation error accumulator borrow | **SAFE** | The validation frame owns the error vector and directly awaits both helpers before returning or continuing. |
+
 
 ## Ranked defects and counts
 
@@ -709,4 +715,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-54/97 files reviewed. **DEFECT 8, SAFE 108, UNCLEAR 3.**
+55/97 files reviewed. **DEFECT 8, SAFE 109, UNCLEAR 3.**

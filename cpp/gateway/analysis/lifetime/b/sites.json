@@ -1483,8 +1483,18 @@
       ]
     },
     "include/uos/cache/kv_migration_validation.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "18-20",
+          "verdict": "SAFE",
+          "kinds": [
+            "b"
+          ],
+          "symbol": "Validation error accumulator borrow",
+          "evidence": "The validation frame owns the error vector and directly awaits both helpers before returning or continuing."
+        }
+      ]
     },
     "include/uos/cache/prompt_analytics.hpp": {
       "reviewed": false,
