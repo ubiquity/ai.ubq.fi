@@ -9,6 +9,7 @@
 #include "uos/rt/date.hpp"
 #include "uos/rt/error.hpp"
 #include <fcntl.h>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -131,8 +132,7 @@ namespace uos::rt::fs {
   std::string readFileSync(std::string_view path, std::string_view encoding);
   Bytes readFileSync(int fd);
   std::string readFileSync(int fd, std::string_view encoding);
-  // writeFileSync(path, data, { flag, mode }). Strings are written as UTF-8;
-  // lone surrogates (WTF-8) become U+FFFD as in Bun.
+  // Text writes combine surrogate pairs and replace lone surrogates with U+FFFD.
   void writeFileSync(std::string_view path, std::string_view data, const WriteFileOptions& options = {});
   void writeFileSync(std::string_view path, std::span<const std::uint8_t> data, const WriteFileOptions& options = {});
   // openSync(path, flags = "r", mode = 0o666). String flags follow Node
@@ -250,37 +250,22 @@ namespace uos::rt::path {
   inline constexpr std::string_view sep = "/";
   inline constexpr std::string_view delimiter = ":";
 
-  std::string normalize(std::string_view path);
-  bool isAbsolute(std::string_view path) noexcept;
+  bool isAbsolute(std::string_view path);
   std::string dirname(std::string_view path);
-  std::string basename(std::string_view path);
-  std::string basename(std::string_view path, std::string_view suffix);
-  std::string extname(std::string_view path);
   // path.relative(from, to): both resolved against the current directory first.
   std::string relative(std::string_view from, std::string_view to);
 
-  // path.join(...parts) / path.resolve(...parts) over a list.
-  std::string joinAll(std::span<const std::string_view> parts);
-  std::string resolveAll(std::span<const std::string_view> parts);
-  // path.join(a, b, ...): `rt::path::join(a, b, ...)`; no arguments is ".".
+  // Join preserves the first segment's root. Resolve restarts at an absolute segment.
+  std::string join(std::span<const std::string_view> parts);
+  std::string resolve(std::span<const std::string_view> parts);
   template <class... Parts>
     requires(std::is_convertible_v<const Parts&, std::string_view> && ...)
   std::string join(const Parts&... parts) {
-    if constexpr (sizeof...(Parts) == 0) return ".";
-    else {
-      const std::string_view list[] = {std::string_view(parts)...};
-      return joinAll(list);
-    }
+    return join(std::array<std::string_view, sizeof...(Parts)>{std::string_view(parts)...});
   }
-  // path.resolve(a, b, ...): right to left until absolute, then the current
-  // directory; no arguments is the current directory.
   template <class... Parts>
     requires(std::is_convertible_v<const Parts&, std::string_view> && ...)
   std::string resolve(const Parts&... parts) {
-    if constexpr (sizeof...(Parts) == 0) return resolveAll({});
-    else {
-      const std::string_view list[] = {std::string_view(parts)...};
-      return resolveAll(list);
-    }
+    return resolve(std::array<std::string_view, sizeof...(Parts)>{std::string_view(parts)...});
   }
 }

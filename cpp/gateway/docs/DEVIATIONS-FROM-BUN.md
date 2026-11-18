@@ -123,3 +123,23 @@ errno fields when present. Structured projection remains bounded to
 depth 16, 100 array elements and a 32 KiB budget for text and nodes, with
 the 256 KiB cap on the combined text. Captures retain independent text
 arguments and the original event prefix and payload.
+
+## Process environment snapshot
+
+The native runtime takes its first-use snapshot from the OS environment.
+This replaces the explicit file parser described above. The native service
+receives operator-selected values through its launcher environment. A `.env`
+file in the working directory or home has no effect on the C++ view. An
+explicit empty value remains present, and scoped overrides affect only the
+view. Subprocesses without an explicit environment inherit the OS values.
+[Launch and offline tools](RUNTIME.md#launch-and-offline-tools)
+
+## Native lexical path adapters
+
+The gateway retains `join`, `resolve`, `relative`, `dirname` and `isAbsolute`.
+Single-segment `join` covers the former normalization helper. The filename and
+extension vectors exercise `std::filesystem::path` directly. Resolve restarts at
+the last absolute segment, drops terminal separators except at the root, and
+uses the current directory for relative inputs. Relative comparisons return an
+empty string for equal paths and reject a comparison without absolute endpoints.
+Percent-encoded and backslash bytes stay literal in these operations.

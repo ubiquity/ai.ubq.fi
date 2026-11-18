@@ -1,9 +1,6 @@
 #pragma once
-// `process.env` / `Bun.env` (the same object in Bun) and node:process
-// `loadEnvFile`. The JS view is a copy of the OS environment taken at first
-// use; writes and deletes change only the view (as in Bun they never reach
-// libc's environ, so a child spawned without an `env` option still gets the
-// original variables). Single-threaded, like the JS it replaces.
+// A single-threaded view of the OS environment, copied at first use.
+// Children without an explicit environment inherit the OS environment.
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -28,23 +25,6 @@ namespace uos::rt::env {
   // the others in insertion order (the OS order, then later additions).
   std::vector<std::string> keys();
   std::vector<std::pair<std::string, std::string>> entries();
-
-  // `process.loadEnvFile(path)` (default ".env", against the current directory):
-  // parses the file with Bun's .env rules (see parseEnvFile) and adds each
-  // variable that process.env does not already have; existing values win.
-  // Errors are the readFileSync ones (rt::fs::ErrnoError: ENOENT "open" with the
-  // path, EISDIR "read", an empty path names no path).
-  void loadEnvFile(std::string_view path = ".env");
-  // Bun's .env parser on its own: the assignments in order of first appearance,
-  // a later duplicate replacing the value. Lines are `KEY=value`, `KEY: value`
-  // (a colon needs one whitespace after it) or `export KEY=value`; keys use
-  // [A-Za-z0-9_.-]. Unquoted values end at '#', CR or LF and are trimmed of
-  // spaces, tabs, VT and FF. "...", '...' and `...` values may span lines (CRLF
-  // and a lone CR become LF); in double quotes only \n and \r are escapes (other
-  // backslash pairs stay as written); the rest of the line after a closing quote
-  // is ignored; a quote that never closes leaves the raw line text. No $
-  // expansion. A leading UTF-8 BOM is skipped.
-  std::vector<std::pair<std::string, std::string>> parseEnvFile(std::string_view contents);
 
   // Test hook: the whole view replaced by `variables` (in that order) for the
   // scope, then restored. Nested scopes restore in reverse order.
