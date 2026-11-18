@@ -9102,8 +9102,24 @@
       ]
     },
     "include/uos/lib/jev_compaction/codex_items.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed Codex item alternatives, summary label, and synchronous conversion interfaces.",
+      "sites": [
+        {
+          "lines": [
+            27,
+            35,
+            43,
+            52
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Summary and kind views refer to static string literals. Converted item records own their contents."
+        }
+      ]
     },
     "include/uos/lib/jev_compaction/compact.hpp": {
       "reviewed": false,
