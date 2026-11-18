@@ -310,7 +310,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_runtime_contracts.hpp`
 - [x] `include/uos/bounded_response_body.hpp`
 - [x] `include/uos/catalog/index.hpp`
-- [ ] `include/uos/catalog/models.hpp`
+- [x] `include/uos/catalog/models.hpp`
 - [ ] `include/uos/catalog/promotion.hpp`
 - [ ] `include/uos/catalog/store.hpp`
 - [ ] `include/uos/catalog/types.hpp`
@@ -1734,6 +1734,13 @@ Reviewed catalog handler dependencies and by-value request routing.
 
 - L10, 11, 13, 14 **SAFE** · The handler and degradation wrapper copy their callbacks. The clock runs inline and the awaited degradation child holds the exact invoked callable.
 
+### `include/uos/catalog/models.hpp`
+
+Reviewed borrowed KV updates and the inline response model filter.
+
+- L16 **SAFE** · The refresh context keeps the store alive throughout the awaited update, and the Task owns its remaining arguments.
+- L19, 21, 24, 26 **SAFE** · The model filter walks caller-owned data synchronously and returns copied models.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1982,4 +1989,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-202/286 files reviewed. 373 sites: 352 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+203/286 files reviewed. 375 sites: 354 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
