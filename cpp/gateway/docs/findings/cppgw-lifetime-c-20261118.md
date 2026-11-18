@@ -205,7 +205,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/native_auth_transport.cpp`
 - [x] `src/codex/overage_settings.cpp`
 - [x] `src/codex/quota.cpp`
-- [ ] `src/codex/rate_limit_429.cpp`
+- [x] `src/codex/rate_limit_429.cpp`
 - [ ] `src/codex/reset_settings.cpp`
 - [ ] `src/codex/responses_error.cpp`
 - [ ] `src/codex/responses_operations.cpp`
@@ -1322,3 +1322,9 @@ The refresh builds fresh overage rows before replacing shared state.
 ### `src/codex/quota.cpp`
 
 Header classification and redaction are synchronous. Header iteration uses keys owned for the loop and each suffix view refers to static storage.
+
+### `src/codex/rate_limit_429.cpp`
+
+Quota classification and probe updates use owned response and account state.
+
+- 16-25,28-65 · routing transformations and classifier awaits · **SAFE** · The account values remain in joined parent frames through updateRoutingState's calls. The parse result is a frame-owned value and response decoding takes its own handle.

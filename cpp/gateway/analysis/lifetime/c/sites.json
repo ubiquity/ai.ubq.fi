@@ -2131,8 +2131,16 @@
       "sites": []
     },
     "src/codex/rate_limit_429.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Quota classification and probe updates use owned response and account state.",
+      "sites": [
+        {
+          "lines": "16-25,28-65",
+          "kind": "routing transformations and classifier awaits",
+          "verdict": "SAFE",
+          "reason": "The account values remain in joined parent frames through updateRoutingState's calls. The parse result is a frame-owned value and response decoding takes its own handle."
+        }
+      ]
     },
     "src/codex/reset_settings.cpp": {
       "status": "pending",
