@@ -2632,8 +2632,22 @@
       ]
     },
     "src/embeddings/ledger.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Ledger records, chunk assembly and transaction state are per invocation. The replay fetch batch needs ownership for each virtual KV read.",
+      "sites": [
+        {
+          "lines": "161-168",
+          "kind": "idempotency replay fan-out receiver",
+          "verdict": "DEFECT",
+          "reason": "A rejected chunk read can lead to an unavailable response while another injected virtual get remains pending. When the acquisition unwinds the last shared KV owner, that coroutine can resume with a dead receiver. Keep the store in each child frame."
+        },
+        {
+          "lines": "156-160,169-180,197-347,534-618,621-714",
+          "kind": "response hash, acquisition and settlement joins",
+          "verdict": "SAFE",
+          "reason": "Named results, owned lease and params, per-attempt rows and local atomic handles retain their resources through joined reads and writes. Hash children own the combined text."
+        }
+      ]
     },
     "src/embeddings/voyage.cpp": {
       "status": "pending",

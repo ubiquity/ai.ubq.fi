@@ -238,7 +238,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/deepseek/waterfall_handler.cpp`
 - [x] `src/embeddings/handlers.cpp`
 - [x] `src/embeddings/jobs.cpp`
-- [ ] `src/embeddings/ledger.cpp`
+- [x] `src/embeddings/ledger.cpp`
 - [ ] `src/embeddings/voyage.cpp`
 - [ ] `src/harmony/adapter.cpp`
 - [ ] `src/harmony/classifier.cpp`
@@ -1530,3 +1530,10 @@ Jobs keep their attempt state in the request coroutine and pass owned KV into pe
 - 146-211,237-302 · job member awaits and state mutation · **SAFE** · The attempt frame owns JobState and joins its members. Chunk inputs and response results are local values, and nested updates preserve their transaction owners.
 - 305-385,387-448 · create/get, encrypt writes and telemetry · **SAFE** · Each input write owns KV, key components and plaintext input. The handler awaits job execution and the telemetry adapters retain their own context copies.
 - 451-498 · job attempt and public entry joins · **SAFE** · The parent retains the optional borrowed telemetry during joined operation. Job state and atomic operations are frame-owned, and wrappers retain request arguments by value.
+
+### `src/embeddings/ledger.cpp`
+
+Ledger records, chunk assembly and transaction state are per invocation. The replay fetch batch needs ownership for each virtual KV read.
+
+- 161-168 · idempotency replay fan-out receiver · **DEFECT** · A rejected chunk read can lead to an unavailable response while another injected virtual get remains pending. When the acquisition unwinds the last shared KV owner, that coroutine can resume with a dead receiver. Keep the store in each child frame.
+- 156-160,169-180,197-347,534-618,621-714 · response hash, acquisition and settlement joins · **SAFE** · Named results, owned lease and params, per-attempt rows and local atomic handles retain their resources through joined reads and writes. Hash children own the combined text.
