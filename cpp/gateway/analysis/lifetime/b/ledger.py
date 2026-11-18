@@ -19,8 +19,8 @@ SCOPE = re.compile(
     r"(?:src|include/uos)/"
     r"(?:(?:runtime|storage|cache|kernel|worker)/.+|rt/(?:kv[^/]*|sqlite[^/]*|fs|process)\.[^/]+)"
 )
-VERDICT_START = "\n## File verdicts\n"
-RANKING_START = "\n## Ranked defects and counts\n"
+VERDICT_START = "\n## File verdicts\n\n<!-- prettier-ignore-start -->\n\n"
+RANKING_START = "\n<!-- prettier-ignore-end -->\n\n## Ranked defects and counts\n"
 COUNT_LINE = re.compile(
     r"^\d+/\d+ files reviewed. \*\*DEFECT \d+, SAFE \d+, UNCLEAR \d+\.\*\*$",
     re.MULTILINE,

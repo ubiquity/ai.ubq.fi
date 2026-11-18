@@ -135,7 +135,7 @@
       "reviewed": true,
       "sites": [
         {
-          "lines": "35-74,1151-1177,1273-1277",
+          "lines": "35-74,1151-1177,1273-1277,1393-1396,1578-1582",
           "verdict": "SAFE",
           "kinds": [
             "c",
@@ -389,6 +389,15 @@
           ],
           "symbol": "Listen callback, abort cleanup and public handles",
           "evidence": "Listening and terminal callbacks weakly lock state. The finished reaction removes the external abort registration and clears the state-held listener; returned handles own state for their use."
+        },
+        {
+          "lines": "1964-1966",
+          "verdict": "SAFE",
+          "kinds": [
+            "c"
+          ],
+          "symbol": "Startup rejection observers",
+          "evidence": "Both handlers are captureless and promise-owned through settlement. Neither reaction holds ServeState or the server."
         }
       ]
     },
@@ -1096,6 +1105,15 @@
           ],
           "symbol": "SQLite SDK operations and queue delegation",
           "evidence": "Free SDK coroutines own StorePtr and applicable arguments. Named operations or tasks cover suspension. The actual paid enqueue path keeps its shared KV wrapper alive until completion."
+        },
+        {
+          "lines": "262,307,318",
+          "verdict": "SAFE",
+          "kinds": [
+            "d"
+          ],
+          "symbol": "Synchronous SQLite result scans",
+          "evidence": "Statement::all returns a vector of owning rows synchronously; the range-for extends the returned vector through its nonsuspending body."
         }
       ]
     },
@@ -1190,6 +1208,16 @@
           ],
           "symbol": "Synchronous database transaction dispatcher",
           "evidence": "The database and controller are owned by Transaction during invocation; runTransaction calls body inline before commit or rollback."
+        },
+        {
+          "lines": "375-383,804-809",
+          "verdict": "SAFE",
+          "kinds": [
+            "c",
+            "d"
+          ],
+          "symbol": "Synchronous binding visitor and all adapters",
+          "evidence": "The this-capturing visitor runs inline during construction. Statement::all copies each row before returning and retains no external callback."
         }
       ]
     },
@@ -2730,6 +2758,16 @@
           ],
           "symbol": "Default window scan and cutover guard",
           "evidence": "The frame keeps each scan, task and optional guard. Releasing the guard copies its row and key, and iteration over the two static scopes carries no borrow of a mutable container."
+        },
+        {
+          "lines": "552-553",
+          "verdict": "DEFECT",
+          "kinds": [
+            "e"
+          ],
+          "symbol": "Policy lookup with an inline key factory",
+          "evidence": "A factory creates an owning KvKey inside the awaited expression. The comparison profile only exempts the direct variadic construction form from the temporary rule.",
+          "defect": "D14"
         }
       ]
     },
@@ -2772,7 +2810,7 @@
           "evidence": "The lock frame owns the by-value closure through the direct await. Each attempt owns its options and moved target, and the retry alias is consumed synchronously."
         },
         {
-          "lines": "270-314",
+          "lines": "270-314,228-240",
           "verdict": "SAFE",
           "kinds": [
             "b"
@@ -2816,6 +2854,16 @@
           ],
           "symbol": "Public snapshot and list projections",
           "evidence": "Child scope or identity arguments are owning values and all variant/vector projections are into local results after the last wait."
+        },
+        {
+          "lines": "109-113",
+          "verdict": "DEFECT",
+          "kinds": [
+            "e"
+          ],
+          "symbol": "Window lookup with an inline key factory",
+          "evidence": "A factory creates an owning KvKey inside the awaited expression. The comparison profile only exempts the direct variadic construction form from the temporary rule.",
+          "defect": "D14"
         }
       ]
     },
@@ -2888,6 +2936,16 @@
           ],
           "symbol": "Usage scans and daily lookups",
           "evidence": "Each cursor and current row are frame-owned. Keys and daily buckets are copied, and the sort callbacks run synchronously on a completed local vector."
+        },
+        {
+          "lines": "277,281,301,305,332,366",
+          "verdict": "DEFECT",
+          "kinds": [
+            "e"
+          ],
+          "symbol": "Six usage lookups with inline key factories",
+          "evidence": "A factory creates an owning KvKey inside the awaited expression. The comparison profile only exempts the direct variadic construction form from the temporary rule.",
+          "defect": "D14"
         }
       ]
     },

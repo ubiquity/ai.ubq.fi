@@ -126,6 +126,9 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 Initial checkpoint. Manual review and tool verification are pending.
 
 ## File verdicts
+
+<!-- prettier-ignore-start -->
+
 ### `include/uos/runtime/http.hpp`
 
 | Lines | Site | Verdict | Ownership or failure |
@@ -176,7 +179,7 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 
 | Lines | Site | Verdict | Ownership or failure |
 | --- | --- | --- | --- |
-| 35-74,1151-1177,1273-1277 | Emitter and server listener dispatch | **SAFE** | Dispatch snapshots registrations and weak or strong target handles are acquired by the callback. A reentrant removal leaves the callable alive through the copied registration. |
+| 35-74,1151-1177,1273-1277,1393-1396,1578-1582 | Emitter and server listener dispatch | **SAFE** | Dispatch snapshots registrations and weak or strong target handles are acquired by the callback. A reentrant removal leaves the callable alive through the copied registration. |
 | 323-453,621-695,739-773 | llhttp callbacks and parser views | **SAFE** | The parser is immovable inside ConnectionState, runs llhttp callbacks synchronously, uses offsets across reads, and copies target, headers and payload before erasing or growing input. |
 | 514-559 | ConnectionState::startRead | **SAFE** | The async completion owns ConnectionState and its fixed readBuffer. Destruction closes the stream but the queued completion still owns the storage. |
 | 689-733,796-807,987-1031,1133-1143,1236-1255 | Connection, socket and request links on ordinary completion | **SAFE** | Server map owns attached connections, which own socket and active HTTP objects. Normal close or ws handoff drops the return edges; finish or dump releases the current request and response. |
@@ -202,6 +205,7 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 1901-1933 | Request finish, close and error listeners | **SAFE** | Listeners own the controller, resolver and one shared settlement bit. The raw response pointer is stored on that same response and both emitting paths keep the response alive in a local owning snapshot. |
 | 1935-1944,2022-2039 | Shutdown coroutine and lingering close timer | **SAFE** | Shutdown takes state and close callback by value; the timer holds the callable for each scheduled invocation and its self-reference and state reference are weak. |
 | 1992-2015,2040-2062 | Listen callback, abort cleanup and public handles | **SAFE** | Listening and terminal callbacks weakly lock state. The finished reaction removes the external abort registration and clears the state-held listener; returned handles own state for their use. |
+| 1964-1966 | Startup rejection observers | **SAFE** | Both handlers are captureless and promise-owned through settlement. Neither reaction holds ServeState or the server. |
 
 ### `src/runtime/http_body.cpp`
 
@@ -377,6 +381,7 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | 651-674 | SQLite completion after forced event-loop teardown | **UNCLEAR** | Worker jobs use an io_context reference. A work guard keeps a run alive but does not own the context. Establish a supported exit path that destroys the context before KV close joins the worker. |
 | 682-685,700-739 | SQLite native snapshot/write and refusal | **SAFE** | SDK StorePtr keeps the native target alive. Native inputs and queued write state are owned, and no worker uses references to the request frame's inputs. |
 | 749-788,825-844 | SQLite SDK operations and queue delegation | **SAFE** | Free SDK coroutines own StorePtr and applicable arguments. Named operations or tasks cover suspension. The actual paid enqueue path keeps its shared KV wrapper alive until completion. |
+| 262,307,318 | Synchronous SQLite result scans | **SAFE** | Statement::all returns a vector of owning rows synchronously; the range-for extends the returned vector through its nonsuspending body. |
 
 ### `src/rt/kv_value.cpp`
 
@@ -400,6 +405,7 @@ The input span is borrowed only during the synchronous Decoder call. Local strin
 | 412-445,528-564,584-628 | SQLite binding and result storage | **SAFE** | SQLITE_TRANSIENT copies text/binary while their owners are live. Column names and values are copied before stepping or resetting the statement. |
 | 811-832,866-886 | SQLite lazy RowIterator | **SAFE** | The iterator owns a statement handle and a copy of positional or named bindings. next uses them synchronously and returns an owning Row. |
 | 1002-1031 | Synchronous database transaction dispatcher | **SAFE** | The database and controller are owned by Transaction during invocation; runTransaction calls body inline before commit or rollback. |
+| 375-383,804-809 | Synchronous binding visitor and all adapters | **SAFE** | The this-capturing visitor runs inline during construction. Statement::all copies each row before returning and retains no external callback. |
 
 ### `src/rt/sqlite_darwin.hpp`
 
@@ -771,6 +777,7 @@ Usage read methods own identities and options, with a shared store or a resolved
 | 380-404,406-420,487-505 | Lease renewal after all reservation handles are dropped | **DEFECT** ([D09](#d09)) | The interval and context own each other. If the last commit/release handle is discarded without recording intent, successful renewals keep moving expiry and retain both the abandoned admission and KV. |
 | 406-445,448-483 | In-flight renewal and settlement reactions | **SAFE** | Each relay takes immutable copies or shared context. Promise completion moves reactions out of their source state, compares an owned identity token, and clears the matching slot. |
 | 550-603,606-666 | Default window scan and cutover guard | **SAFE** | The frame keeps each scan, task and optional guard. Releasing the guard copies its row and key, and iteration over the two static scopes carries no borrow of a mutable container. |
+| 552-553 | Policy lookup with an inline key factory | **DEFECT** ([D14](#d14)) | A factory creates an owning KvKey inside the awaited expression. The comparison profile only exempts the direct variadic construction form from the temporary rule. |
 
 ### `src/kernel/quota_reserve.cpp`
 
@@ -779,7 +786,7 @@ Usage read methods own identities and options, with a shared store or a resolved
 | 88-116 | Reservation read fan-out | **SAFE** | Each eager read owns its own key and KV receiver; the fail-fast aggregate retains its children, and the result tuple is named before decomposition or moving members. |
 | 123-167,169-208 | Eligibility, capacity reclaim and durable reservation | **SAFE** | Each frame owns the policy snapshots and atomic builder. The window and reservation references point into that frame's const plan and remain valid when commit resumes. |
 | 211-225,241-260 | Reservation attempts and capturing lock operation | **SAFE** | The lock frame owns the by-value closure through the direct await. Each attempt owns its options and moved target, and the retry alias is consumed synchronously. |
-| 270-314 | Public org and effective reservation entries | **SAFE** | Each coroutine retains the selected KV owner and copies or moves all strings and options into independently owned tasks. |
+| 270-314,228-240 | Public org and effective reservation entries | **SAFE** | Each coroutine retains the selected KV owner and copies or moves all strings and options into independently owned tasks. |
 
 ### `src/kernel/quota_v2.cpp`
 
@@ -788,6 +795,7 @@ Usage read methods own identities and options, with a shared store or a resolved
 | 56-77,170-183 | Snapshot and default policy fan-outs | **SAFE** | Child reads own their KV handles and keys across early rejection. Each aggregate tuple is a named local before any reference binding or move. |
 | 99-135 | Read projected policy rows | **SAFE** | The scan frame owns its iterator and moves each row into an owning child. Each key projection is copied into strings and sort runs synchronously on the completed vector. |
 | 213-247 | Public snapshot and list projections | **SAFE** | Child scope or identity arguments are owning values and all variant/vector projections are into local results after the last wait. |
+| 109-113 | Window lookup with an inline key factory | **DEFECT** ([D14](#d14)) | A factory creates an owning KvKey inside the awaited expression. The comparison profile only exempts the direct variadic construction form from the temporary rule. |
 
 ### `src/kernel/quota_write.cpp`
 
@@ -804,6 +812,7 @@ Usage read methods own identities and options, with a shared store or a resolved
 | --- | --- | --- | --- |
 | 266-308 | Point usage and optional daily reads | **SAFE** | The task owns request identities and options, uses a shared store and normalizes each independent result into an owned record. |
 | 318-373 | Usage scans and daily lookups | **SAFE** | Each cursor and current row are frame-owned. Keys and daily buckets are copied, and the sort callbacks run synchronously on a completed local vector. |
+| 277,281,301,305,332,366 | Six usage lookups with inline key factories | **DEFECT** ([D14](#d14)) | A factory creates an owning KvKey inside the awaited expression. The comparison profile only exempts the direct variadic construction form from the temporary rule. |
 
 ### `include/uos/worker/entrypoint.hpp`
 
@@ -839,11 +848,12 @@ Usage read methods own identities and options, with a shared store or a resolved
 | 31-38 | Upstream attempt adapter | **SAFE** | The synchronous method reads capability fields immediately and puts independent values in the returned task. |
 | 40-70 | Dispatch marker, upstream request, redirect cancel and observation | **SAFE** | The calling boundary or fixture retains the transport, the coroutine owns its signal and dispatch callback, and the local fetch callable is retained until its task completes. |
 
+<!-- prettier-ignore-end -->
 
 ## Ranked defects and counts
 
-The ranking is provisional while the checklist is open. D01 is a native buffer
-lifetime contract violation. D02–D05 are retention failures under the stated exit paths.
+D01 is the highest-ranked native lifetime contract violation. The rank separates
+request-path buffer ownership from retained resources and comparison-profile portability.
 
 <a id="d01"></a>
 
@@ -1100,10 +1110,6 @@ removes the registrations on frame destruction as well as on normal return.
 ```diff
 --- a/cpp/gateway/src/worker/entrypoint.cpp
 +++ b/cpp/gateway/src/worker/entrypoint.cpp
-@@ Delivery, after signalCancellation
-+      ~Delivery() {
-+        request.signal().removeEventListener("abort", abortFromRequest);
-+      }
 @@ boundaryFetch, before registering the abort bridge
 -      const rt::EventListener abortFromRequest([abort, request] { abort.abort(request.signal().reason()); });
 +      const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = request.signal().state();
@@ -1118,10 +1124,7 @@ removes the registrations on frame destruction as well as on normal return.
 +        co_return response;
 ```
 
-In that proposal, construct Delivery directly in make_shared before assigning its fields or
-give it a constructor. A destructor on the current temporary aggregate passed to make_shared
-would unregister the live bridge as soon as the temporary is destroyed. D13 shows the
-direct-in-place construction using the smaller owner.
+D13 includes destructor cleanup for the handed-off bridge in the shared settlement state.
 
 <a id="d10"></a>
 
@@ -1276,4 +1279,38 @@ registration owner used together with D11.
 +  const auto bindingHash = co_await std::move(bindingHashing);
 ```
 
-97/97 files reviewed. **DEFECT 14, SAFE 232, UNCLEAR 4.**
+<a id="d14"></a>
+
+### D14. Inline key factories in quota and usage awaits, P3 comparison-profile rule
+
+- Two quota reads and six usage reads construct an owning key from a factory within the
+  awaited expression. These are function-returned temporaries containing key parts.
+- Apply the same split to the quota policy read at `quota_reservations.cpp:553`, window read
+  at `quota_v2.cpp:111`, and usage reads at `usage.cpp:277,281,301,305,332,366`. The
+  documented comparison-profile exception covers direct variadic key construction.
+
+```diff
+--- a/cpp/gateway/src/kernel/quota_reservations.cpp
++++ b/cpp/gateway/src/kernel/quota_reservations.cpp
+@@ kernelScopeHasPolicy
+-      const rt::KvEntryMaybe<> policyEntry = co_await kv->get(native_kernel::kernelScopedPolicyKey(scope, owner, repo), STRONG);
++      auto key = native_kernel::kernelScopedPolicyKey(scope, owner, repo);
++      auto reading = kv->get(std::move(key), STRONG);
++      const rt::KvEntryMaybe<> policyEntry = co_await std::move(reading);
+--- a/cpp/gateway/src/kernel/quota_v2.cpp
++++ b/cpp/gateway/src/kernel/quota_v2.cpp
+@@ kernelPolicyRow
+-      const rt::KvEntryMaybe<> windowEntry = co_await kv->get(kernelScopedWindowKey(scope, owner, repo), STRONG);
++      auto key = kernelScopedWindowKey(scope, owner, repo);
++      auto reading = kv->get(std::move(key), STRONG);
++      const rt::KvEntryMaybe<> windowEntry = co_await std::move(reading);
+--- a/cpp/gateway/src/kernel/usage.cpp
++++ b/cpp/gateway/src/kernel/usage.cpp
+@@ getKernelUsage, repeat for the other five key factories
+-      const rt::KvEntryMaybe<> entry = co_await kv->get(kernelUsageKey(owner, repo));
++      auto key = kernelUsageKey(owner, repo);
++      auto reading = kv->get(std::move(key));
++      const rt::KvEntryMaybe<> entry = co_await std::move(reading);
+```
+
+97/97 files reviewed. **DEFECT 17, SAFE 235, UNCLEAR 4.**
