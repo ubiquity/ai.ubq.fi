@@ -1,0 +1,395 @@
+{
+  "schema_version": 1,
+  "contract_version": 1,
+  "source_commit": "6d28e858e7ab8b8b1036db4a4adfdade0465ed40",
+  "files": {
+    "include/uos/runtime/http.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/runtime/http_body.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/runtime/http_early_sse.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/runtime/http_tasks.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/runtime/http_upgrade.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/runtime/native_kv_bootstrap.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/runtime/permissions_linux.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/runtime/websocket.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/runtime/http.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/runtime/http_body.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/runtime/http_early_sse.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/runtime/http_tasks.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/runtime/http_upgrade.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/runtime/native_kv_bootstrap.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/runtime/permissions_linux.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/runtime/websocket.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/rt/fs.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/rt/kv.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/rt/kv_js.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/rt/kv_sqlite.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/rt/process.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/rt/sqlite.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/fs.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/kv.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/kv_internal.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/kv_js.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/kv_jsc.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/kv_jsc_deserialize.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/kv_key.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/kv_memory.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/kv_sdk.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/kv_sdk.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/kv_sqlite.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/kv_value.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/process.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/sqlite.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/rt/sqlite_darwin.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/storage/key_compatibility.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/storage/kv.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/storage/native_addon.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/storage/native_kv.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/storage/sqlite_readonly.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/storage/value_compatibility.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/storage/key_compatibility.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/storage/kv.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/storage/native_addon.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/storage/native_kv.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/storage/sqlite_readonly.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/storage/value_compatibility.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/kv_migration.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/kv_migration_base.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/kv_migration_paid_fallback.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/kv_migration_projection.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/kv_migration_usage.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/kv_migration_validation.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/prompt_analytics.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/prompt_analytics_core.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/prompt_analytics_queue.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/prompt_analytics_read.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/scope_experiment.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/scope_experiment_model.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/scope_experiment_targets.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/scope_targets.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/cache/telemetry_gate.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/kv_migration.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/kv_migration_base.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/kv_migration_paid_fallback.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/kv_migration_projection.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/kv_migration_usage.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/kv_migration_validation.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/prompt_analytics.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/prompt_analytics_core.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/prompt_analytics_queue.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/prompt_analytics_read.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/scope_experiment.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/scope_experiment_model.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/scope_experiment_targets.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/scope_targets.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/cache/telemetry_gate.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kernel/attestation.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kernel/policy_queue.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kernel/quota_reservations.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kernel/quota_reserve.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kernel/quota_v2.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kernel/quota_write.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/kernel/usage.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kernel/attestation.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kernel/policy_queue.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kernel/quota_reservations.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kernel/quota_reserve.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kernel/quota_v2.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kernel/quota_write.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/kernel/usage.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/worker/entrypoint.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "include/uos/worker/transport.hpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/worker/entrypoint.cpp": {
+      "reviewed": false,
+      "sites": []
+    },
+    "src/worker/transport.cpp": {
+      "reviewed": false,
+      "sites": []
+    }
+  }
+}
