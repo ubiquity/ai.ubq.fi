@@ -2203,8 +2203,51 @@
       ]
     },
     "include/uos/rt/gzip.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "The incremental codec interface exposes synchronous borrows with explicit validity windows. The coroutine wrappers take Bytes by value.",
+      "sites": [
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "d"
+          ],
+          "lines": [
+            100,
+            101,
+            102,
+            103,
+            106,
+            108,
+            109,
+            110,
+            111,
+            113,
+            115,
+            121
+          ],
+          "label": "Inflater input and output spans in gateway callers",
+          "reason": "The fetch decoder drains and copies each inflater piece synchronously while the calling buffer and unique codec state remain alive."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "a",
+            "b",
+            "c"
+          ],
+          "lines": [
+            129,
+            135,
+            138,
+            146,
+            149,
+            153
+          ],
+          "label": "One-shot, callback and coroutine codec APIs",
+          "reason": "The piece callback runs synchronously before the borrowed span changes and both Task APIs own their bytes across the microtask."
+        }
+      ]
     },
     "include/uos/rt/websocket.hpp": {
       "status": "pending",

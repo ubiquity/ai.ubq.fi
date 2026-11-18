@@ -46,7 +46,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `include/uos/rt/http.hpp`
 - [x] `include/uos/rt/fetch.hpp`
 - [x] `include/uos/rt/fetch_transport.hpp`
-- [ ] `include/uos/rt/gzip.hpp`
+- [x] `include/uos/rt/gzip.hpp`
 - [ ] `include/uos/rt/websocket.hpp`
 - [ ] `src/rt/fetch.cpp`
 - [ ] `src/rt/fetch_transport.cpp`
@@ -223,18 +223,25 @@ Reviewed the options and transport interface. The implementation copies the shar
 
 - **SAFE** `28, 31, 34, 36, 40, 43, 46, 58, 59, 60, 64, 66, 68, 71, 76, 77` (b/c), Client options, send wrapper and installation. Options and requests cross entry points by value, deferred send takes a shared ClientState, and synchronous pool access and global installation use owning transport handles.
 
+### `include/uos/rt/gzip.hpp`
+
+The incremental codec interface exposes synchronous borrows with explicit validity windows. The coroutine wrappers take Bytes by value.
+
+- **SAFE** `100, 101, 102, 103, 106, 108, 109, 110, 111, 113, 115, 121` (b/d), Inflater input and output spans in gateway callers. The fetch decoder drains and copies each inflater piece synchronously while the calling buffer and unique codec state remain alive.
+- **SAFE** `129, 135, 138, 146, 149, 153` (a/b/c), One-shot, callback and coroutine codec APIs. The piece callback runs synchronously before the borrowed span changes and both Task APIs own their bytes across the microtask.
+
 ## Ranked defects and counts
 
-Reviewed **14/30 files** and **83 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **15/30 files** and **85 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
-| a. Capturing coroutine closure | 2 | 15 | 0 |
-| b. Borrowed coroutine parameter or receiver | 5 | 45 | 3 |
-| c. Callback ownership or cycle | 10 | 54 | 3 |
-| d. Container invalidation | 3 | 23 | 0 |
+| a. Capturing coroutine closure | 2 | 16 | 0 |
+| b. Borrowed coroutine parameter or receiver | 5 | 47 | 3 |
+| c. Callback ownership or cycle | 10 | 55 | 3 |
+| d. Container invalidation | 3 | 24 | 0 |
 | e. GCC 12 await-expression rule | 4 | 7 | 1 |
-| **Unique site groups** | 15 | 64 | 4 |
+| **Unique site groups** | 15 | 66 | 4 |
 
 ### 1. A-STREAM-CANCEL-OWNER (memory safety in stream cancellation) — Stream cancel borrows the owner slot through callback invocation
 
