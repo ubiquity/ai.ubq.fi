@@ -1509,8 +1509,84 @@
       ]
     },
     "src/auth/local_development_key.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the provisioning timer and abort race, retained initializer, deletion guard and policy read.",
+      "sites": [
+        {
+          "lines": [
+            97,
+            98,
+            102,
+            106,
+            107,
+            111
+          ],
+          "kinds": [
+            "c",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "Orphaned provisioning abort race. Pricing settles first and the listener is removed, so nobody can settle the abort-only Promise. Its pending race reaction owns that same state and the winning key material until loop teardown. After registration succeeds, remove the listener and settle the unused private Promise during cleanup."
+        },
+        {
+          "lines": [
+            121,
+            132,
+            256,
+            257,
+            266,
+            269,
+            274,
+            275,
+            276,
+            280
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The initializer frame owns its callable and pricing signal even if the abort wins. The timer holds its controller by value, and normal completion clears the timer."
+        },
+        {
+          "lines": [
+            187,
+            191,
+            201,
+            208,
+            228,
+            236,
+            239,
+            243,
+            290,
+            303
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Provisioning and deletion checks retain the KV and each iterator or atomic operation. Their prefix and record collections are private frame storage."
+        },
+        {
+          "lines": [
+            310,
+            318,
+            321,
+            325
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The hash view is copied into an owning string and key before the second KV await, with the original JSON still live."
+        }
+      ]
     },
     "src/auth/passkeys.cpp": {
       "reviewed": false,

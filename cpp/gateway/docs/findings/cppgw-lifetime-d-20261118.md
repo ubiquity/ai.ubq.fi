@@ -42,7 +42,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/api_keys.cpp`
 - [x] `src/auth/index.cpp`
 - [x] `src/auth/local_admin.cpp`
-- [ ] `src/auth/local_development_key.cpp`
+- [x] `src/auth/local_development_key.cpp`
 - [ ] `src/auth/passkeys.cpp`
 - [ ] `src/auth/passport.cpp`
 - [ ] `src/auth/passport_sessions.cpp`
@@ -488,6 +488,15 @@ Reviewed listener configuration, request-scoped peer binding, and URL-origin ins
 
 - L112, 126, 171, 172 **SAFE** · The WeakMap key is request identity and its value is an owned address. The lookup pointer is immediately copied in a synchronous function.
 
+### `src/auth/local_development_key.cpp`
+
+Reviewed the provisioning timer and abort race, retained initializer, deletion guard and policy read.
+
+- L97, 98, 102, 106, 107, 111 **DEFECT** · Orphaned provisioning abort race. Pricing settles first and the listener is removed, so nobody can settle the abort-only Promise. Its pending race reaction owns that same state and the winning key material until loop teardown. After registration succeeds, remove the listener and settle the unused private Promise during cleanup.
+- L121, 132, 256, 257, 266, 269, 274, 275, 276, 280 **SAFE** · The initializer frame owns its callable and pricing signal even if the abort wins. The timer holds its controller by value, and normal completion clears the timer.
+- L187, 191, 201, 208, 228, 236, 239, 243, 290, 303 **SAFE** · Provisioning and deletion checks retain the KV and each iterator or atomic operation. Their prefix and record collections are private frame storage.
+- L310, 318, 321, 325 **SAFE** · The hash view is copied into an owning string and key before the second KV await, with the original JSON still live.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -496,4 +505,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-19/286 files reviewed. 80 sites: 75 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+20/286 files reviewed. 84 sites: 78 SAFE, 6 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
