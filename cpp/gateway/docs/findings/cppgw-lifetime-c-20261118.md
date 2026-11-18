@@ -62,7 +62,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/rate_limit_429.hpp`
 - [x] `include/uos/codex/reset_settings.hpp`
 - [x] `include/uos/codex/responses_error.hpp`
-- [ ] `include/uos/codex/responses_operations.hpp`
+- [x] `include/uos/codex/responses_operations.hpp`
 - [ ] `include/uos/codex/responses_runners.hpp`
 - [ ] `include/uos/codex/responses_state.hpp`
 - [ ] `include/uos/codex/routing_evaluation.hpp`
@@ -481,3 +481,9 @@ Usage settings and legacy migration API.
 ### `include/uos/codex/responses_error.hpp`
 
 The synchronous error translation API takes borrowed event views and returns an owned event.
+
+### `include/uos/codex/responses_operations.hpp`
+
+Synchronous installer for dispatch operations.
+
+- 9-11 · callback ownership · **SAFE** · The installer receives an owning handle during registration; index.cpp holds the request context while the registered operations are joined.
