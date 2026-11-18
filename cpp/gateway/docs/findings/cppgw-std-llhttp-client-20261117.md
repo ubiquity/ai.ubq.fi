@@ -134,3 +134,74 @@ python3 -B "$scratch/icu-control.py" asan
 The release gateway entry point also linked as an ARM64 ELF executable from the 369 production objects, the startup and entrypoint objects, and the three selected vendor archives. The release and sanitizer test evidence applies to the source tree recorded above. Subsequent commits append documentation only.
 
 The remaining work requires the separately owned fetch response-read and body-pump blocks and the Bun-era expectation table. The client lane can be handed off on its clean local branch. The GitHub write and C++ integration receipts are pending.
+
+## Follow-up implementation and ARM64 release gate
+
+The follow-up resumed at `93b8c4fbd3b360a8ac290cc0dc7f634b9996825e`, tree
+`d44de1068c23675c3cfea5099b31af054044652a`. This tree already contains the implementation, updated fetch expectations, SSE
+profile, and GET and HEAD fuzz coverage. The verification scope remains the fetch response parser, the live pump,
+fetch expectations, and the library harness. All 442 registered binaries link the fetch transport through the common
+runtime. [Follow-up work contract and profile commands](cppgw-std-llhttp-client-fu-20261118.md)
+
+The exchange now feeds head fragments and body bytes into one llhttp parser. The message-complete callback and
+`llhttp_finish` at orderly EOF determine delivery boundaries for fixed lengths, chunked bodies, EOF-delimited
+bodies, HEAD, and bodyless statuses.
+Interim responses reset the parser for the next head. The pump moves the fetched byte buffer into the stream and
+discards redirect payload directly from the parser callbacks. It preserves head limits, truncation errors,
+backpressure, and connection reuse after clean completion.
+
+The inherited baseline's one failing fetch binary was `tests/rt/fetch_transport_test.cpp`, with one grouped case
+covering 15 changed expectations. The other failure was `tests/rt/url_idna_test.cpp` with ICU 74.2. The fetch
+assertions retain the wire cases and check status, headers, payload, and the stage, type, and code of a failure.
+A valid TRACE response delivers its framed payload. Malformed lengths, conflicting framing, and nonstandard
+delimiters are rejected. [Recorded Bun differences](../DEVIATIONS-FROM-BUN.md)
+
+The three owned production files add 181 and remove 206 lines since `de4ff431` for a net reduction of 25.
+The live `fetch_transport.cpp` pump accounts for 140 removed lines and 83 added lines. The standalone parser
+entry points remain in use by the earlier library test and fuzz targets.
+
+The matched GCC 14.2 short SSE benchmark measures thread CPU time per response, including the parser output
+buffer and excluding sockets, TLS, compression, and stream scheduling. Four nine-byte events took **351.3 ns/op**
+when coalesced and **447.9 ns/op** when fed separately. The earlier parser benchmark was 461.8 ns/op before llhttp
+and 661.1 ns/op with the initial llhttp adapter. The matched control on the follow-up runner was 411.8 ns/op before
+llhttp and 597.5 ns/op with the inherited adapter for coalesced input. That workload fell from nine to four
+allocations per response by retaining the head parser, writing into the stream buffer, and avoiding temporary
+header storage. The matched pre-llhttp fragmented control was 438.2 ns/op, about 10 ns/op faster than the final
+fragmented measurement. [SSE inputs, allocation counts, and cycle samples](cppgw-std-llhttp-client-fu-20261118.md#sse-profile)
+
+The resumed build reused the preceding attempt's Boost 1.92.0 static archives, SQLite 3.54.0, ICU 78.3, GCC 14.2,
+and Clang 21.1.8. The external `gate` wrapper below executes `bash cpp/gateway/tools/ci-build.sh --config <profile>`.
+Its compiler and archiver adapters build all three llhttp units as C11 because the checked-in driver creates each
+vendor archive from one C++ source. The adapters also embed an ELF `DT_RPATH` pointing to the external ICU and
+SQLite directories. The repository driver still selects, builds, and runs the complete registry in its Linux
+network, mount, and PID namespaces with a fresh temporary directory and an empty home for each binary.
+
+```sh
+scratch=/var/tmp/cppgw-llhttp-final.cIfMo7
+"$scratch/gate" release 4
+"$scratch/gate" release 3
+"$scratch/gate" asan 4
+python3 -B cpp/gateway/tools/links.py --check
+git diff --check de4ff431
+```
+
+Loading ICU through `LD_LIBRARY_PATH` passed the initial process and failed in five binaries whose test children
+clear their environment. The first release invocation compiled 369/369 production objects and passed 437/442
+binaries and 5,010/5,015 cases in 797.959 seconds. The five child-loading failures were
+`config_differential_test`, `kv_durable_interop_test`, `local_admin_auth_test`, `rt/kv_sqlite_test`, and
+`storage_bun_kv_test`. The second invocation relinked the cached objects with the embedded path and passed
+**442/442 binaries and 5,032/5,032 cases** in 122.712 seconds, with no build failures or timeouts. It used the
+unfiltered driver selection in a single shard. The source digest matched before and after both runs
+(`c476cfb902971d23bf50fa0930adb407f03a171186a90534d1552a17adf8ac29`).
+
+The focused Clang ASan/UBSan receipt on the same source passes 5/5 fetch-named binaries and 57/57 cases.
+The full Clang run is in progress. The build integration issue remains outside this lane's owned paths.
+
+The resumed library fuzz harness exercised both GET and HEAD with fragmented input, standalone chunked bodies,
+and WebSocket response heads. Clang 21 compiled the fetch and WebSocket adapters, supporting string and async
+translation units, the harness, and the three llhttp units with libFuzzer, ASan, and UBSan. The link reused the
+remaining 40 sanitizer runtime objects. From the seven checked-in seeds, `bash "$scratch/fuzz-final/link-run" "$scratch"`
+ran 391,994 inputs in 121 seconds, exit 0, with no sanitizer diagnostics or finding artifacts. The script ran the
+binary with `-max_len=16384 -timeout=3 -rss_limit_mb=768 -max_total_time=120 -print_final_stats=1` in a private
+network namespace with an empty home and fresh temporary directory. The binary's SHA-256 was
+`1ca5c39015844cb27cb1bc1e580f4905779c684d333d3efbd5d5059f7e65219f`.
