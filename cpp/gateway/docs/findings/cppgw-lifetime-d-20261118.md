@@ -130,7 +130,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/catalog/promotion.cpp`
 - [x] `src/catalog/store.cpp`
 - [x] `src/catalog/types.cpp`
-- [ ] `src/config.cpp`
+- [x] `src/config.cpp`
 - [ ] `src/debug_routing.cpp`
 - [ ] `src/decisions/handlers.cpp`
 - [ ] `src/defaults.cpp`
@@ -804,6 +804,10 @@ Reviewed all KV reference parameters, catalog memo and chunk ownership, storage 
 
 Reviewed metadata, lease and protocol constants and record conversion. The synchronous codecs return owned values and register no callbacks.
 
+### `src/config.cpp`
+
+Reviewed synchronous model and transport environment configuration. Views and regex inputs are consumed during parsing and derived configuration owns its values. No suspension or escaping callback.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -909,4 +913,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-64/286 files reviewed. 148 sites: 139 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+65/286 files reviewed. 148 sites: 139 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

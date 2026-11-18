@@ -2954,7 +2954,8 @@
       "sites": []
     },
     "src/config.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous model and transport environment configuration. Views and regex inputs are consumed during parsing and derived configuration owns its values. No suspension or escaping callback.",
       "sites": []
     },
     "src/debug_routing.cpp": {
