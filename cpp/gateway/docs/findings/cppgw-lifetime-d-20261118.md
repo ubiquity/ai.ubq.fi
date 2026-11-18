@@ -391,7 +391,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/serve.hpp`
 - [x] `include/uos/static.hpp`
 - [x] `include/uos/systemone/handlers.hpp`
-- [ ] `include/uos/types.hpp`
+- [x] `include/uos/types.hpp`
 - [ ] `include/uos/upstream_wire.hpp`
 - [ ] `include/uos/utils.hpp`
 
@@ -2230,6 +2230,12 @@ Reviewed the model literal and injected provider interface.
 
 - L13, 19, 20, 24, 25 **SAFE** · The model view refers to a literal. The wrapper copies options and context values, the provider invocation retains its fetch callable, and the key supplier runs inline.
 
+### `include/uos/types.hpp`
+
+Reviewed value codecs, enum conversion and message content type tags.
+
+- L54, 56, 400, 407, 413, 422, 435 **SAFE** · Stringified enum and type tag views point to static literals. The parser uses its input view synchronously and record codecs produce owned results.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2479,4 +2485,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-283/286 files reviewed. 472 sites: 447 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+284/286 files reviewed. 473 sites: 448 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

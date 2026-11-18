@@ -10484,8 +10484,27 @@
       ]
     },
     "include/uos/types.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed value codecs, enum conversion and message content type tags.",
+      "sites": [
+        {
+          "lines": [
+            54,
+            56,
+            400,
+            407,
+            413,
+            422,
+            435
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Stringified enum and type tag views point to static literals. The parser uses its input view synchronously and record codecs produce owned results."
+        }
+      ]
     },
     "include/uos/upstream_wire.hpp": {
       "reviewed": false,
