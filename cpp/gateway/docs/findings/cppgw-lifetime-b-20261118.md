@@ -36,7 +36,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/runtime/http_early_sse.cpp`
 - [x] `src/runtime/http_tasks.cpp`
 - [x] `src/runtime/http_upgrade.cpp`
-- [ ] `src/runtime/native_kv_bootstrap.cpp`
+- [x] `src/runtime/native_kv_bootstrap.cpp`
 - [ ] `src/runtime/permissions_linux.cpp`
 - [ ] `src/runtime/websocket.cpp`
 - [ ] `include/uos/rt/fs.hpp`
@@ -236,6 +236,13 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 176-195 | WebSocket shutdown timer and aggregate ownership | **SAFE** | The loop traverses an owning socket snapshot. newPromise immediately consumes its socket reference; the timer target is weak and close owns only the timer and resolver. Sibling operations remain independently owned if all rejects. |
 | 199-208 | Returned WebSocketUpgrades wrappers | **SAFE** | Both wrappers are synchronous closures that pass an owning copy of Upgrades into free coroutine frames. |
 
+### `src/runtime/native_kv_bootstrap.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 70-89 | Receipt string views | **SAFE** | The parsed JSON is alive for the synchronous call and fields are copied into the returned binding. |
+| 143-148 | Deferred native KV preparation | **SAFE** | then owns the callback, which copies repositoryRoot and does synchronous receipt verification and preparation. |
+
 
 ## Ranked defects and counts
 
@@ -401,4 +408,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-13/97 files reviewed. **DEFECT 7, SAFE 39, UNCLEAR 2.**
+14/97 files reviewed. **DEFECT 7, SAFE 41, UNCLEAR 2.**

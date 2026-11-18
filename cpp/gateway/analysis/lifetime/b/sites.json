@@ -549,8 +549,30 @@
       ]
     },
     "src/runtime/native_kv_bootstrap.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "70-89",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Receipt string views",
+          "evidence": "The parsed JSON is alive for the synchronous call and fields are copied into the returned binding."
+        },
+        {
+          "lines": "143-148",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Deferred native KV preparation",
+          "evidence": "then owns the callback, which copies repositoryRoot and does synchronous receipt verification and preparation."
+        }
+      ]
     },
     "src/runtime/permissions_linux.cpp": {
       "reviewed": false,
