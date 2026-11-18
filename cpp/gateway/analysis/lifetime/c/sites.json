@@ -104,8 +104,16 @@
       "sites": []
     },
     "include/uos/codex/banked_reset.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Reset records own their data and hook callables.",
+      "sites": [
+        {
+          "lines": "84-86,151-166",
+          "kind": "task and callback interfaces",
+          "verdict": "SAFE",
+          "reason": "The usage gate owns the store and candidate authorization; dependencies copied into reset operations keep the provider and telemetry/hash functions alive."
+        }
+      ]
     },
     "include/uos/codex/banked_reset_claim.hpp": {
       "status": "pending",

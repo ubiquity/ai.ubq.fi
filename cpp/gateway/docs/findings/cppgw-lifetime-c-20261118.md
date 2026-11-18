@@ -43,7 +43,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/auth.hpp`
 - [x] `include/uos/codex/auth_refresh.hpp`
 - [x] `include/uos/codex/auth_repair.hpp`
-- [ ] `include/uos/codex/banked_reset.hpp`
+- [x] `include/uos/codex/banked_reset.hpp`
 - [ ] `include/uos/codex/banked_reset_claim.hpp`
 - [ ] `include/uos/codex/banked_reset_pool.hpp`
 - [ ] `include/uos/codex/banked_reset_provider.hpp`
@@ -372,3 +372,9 @@ Refresh helper interfaces transfer owned task inputs.
 ### `include/uos/codex/auth_repair.hpp`
 
 Synchronous repair planning, token metadata and JSON conversion declarations. Their reference and view parameters have call-local use.
+
+### `include/uos/codex/banked_reset.hpp`
+
+Reset records own their data and hook callables.
+
+- 84-86,151-166 · task and callback interfaces · **SAFE** · The usage gate owns the store and candidate authorization; dependencies copied into reset operations keep the provider and telemetry/hash functions alive.
