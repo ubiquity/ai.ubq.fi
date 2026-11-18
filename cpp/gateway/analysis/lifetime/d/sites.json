@@ -3998,8 +3998,28 @@
       "sites": []
     },
     "src/kv_conversion/profile_json.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed entry/profile codecs and the asynchronous KV export stream.",
+      "sites": [
+        {
+          "lines": [
+            370,
+            371,
+            373,
+            375,
+            383,
+            385
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Both capturing coroutine lambdas are stored by SourceAlgorithm, whose runAsync retains the exact closure through completion even after stream close clears registered callbacks. The closure shares the list iterator and native lists own storage."
+        }
+      ]
     },
     "src/kv_conversion/proof.cpp": {
       "reviewed": false,

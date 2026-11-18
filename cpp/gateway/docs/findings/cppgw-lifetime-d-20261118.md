@@ -178,7 +178,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/kv_conversion/cursors.cpp`
 - [x] `src/kv_conversion/legacy_codec.cpp`
 - [x] `src/kv_conversion/native_schema.cpp`
-- [ ] `src/kv_conversion/profile_json.cpp`
+- [x] `src/kv_conversion/profile_json.cpp`
 - [ ] `src/kv_conversion/proof.cpp`
 - [ ] `src/kv_conversion/typed_value.cpp`
 - [ ] `src/lib/jev_compaction/client.cpp`
@@ -982,6 +982,12 @@ Reviewed the offline codec subprocess, stdout/stderr streams, callback lifetime,
 
 Reviewed SQLite adapters, schema and row metadata materialization. Live statements and iterators have shared database handles and synchronous callbacks consume local validation views.
 
+### `src/kv_conversion/profile_json.cpp`
+
+Reviewed entry/profile codecs and the asynchronous KV export stream.
+
+- L370, 371, 373, 375, 383, 385 **SAFE** · Both capturing coroutine lambdas are stored by SourceAlgorithm, whose runAsync retains the exact closure through completion even after stream close clears registered callbacks. The closure shares the list iterator and native lists own storage.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1195,4 +1201,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-88/286 files reviewed. 189 sites: 174 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+89/286 files reviewed. 190 sites: 175 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
