@@ -208,7 +208,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/rate_limit_429.cpp`
 - [x] `src/codex/reset_settings.cpp`
 - [x] `src/codex/responses_error.cpp`
-- [ ] `src/codex/responses_operations.cpp`
+- [x] `src/codex/responses_operations.cpp`
 - [ ] `src/codex/responses_runners.cpp`
 - [ ] `src/codex/responses_state.cpp`
 - [ ] `src/codex/routing_evaluation.cpp`
@@ -1339,3 +1339,13 @@ Native migration reads normally own their backing store. The public shared-KV ov
 ### `src/codex/responses_error.cpp`
 
 All error event projection is synchronous. Output item iteration and key/value pointers refer to live local or caller-owned JSON for the duration of the call.
+
+### `src/codex/responses_operations.cpp`
+
+Per-request callbacks lock a weak context before returning an owning coroutine. The dispatch loop serializes mutable request state.
+
+- 191-218,253-387,453-476 · admission, proof, and banked candidate awaits · **SAFE** · Coroutine arguments own context and routing state, and fences snapshot account or row values before installation. Local KV remains live through each read.
+- 483-506 · candidate map references across two awaits · **SAFE** · The only production caller is the serial runner waiting for reportHealthyFallback. The other map mutators run in separate, sequentially joined phases of that same request, so this loop has exclusive access to this context's map.
+- 511-594,600-714,718-763 · cohort, inventory, and overage awaits · **SAFE** · Loops borrow from local candidate, observation and selection snapshots. Options, provider handles, fences and context stay owned through their joins.
+- 767-853,867-907,944-988 · transport callbacks, spawn, and auth refresh · **SAFE** · Installed preTransport/onDispatch callbacks travel by value in the awaited transport. Health children receive their own response and error data. The auth race's refreshing child takes auth by value.
+- 993-1055 · weak context dispatch table · **SAFE** · Context owns the callbacks without owning itself through them. Each noncoroutine wrapper locks before handing a strong context value to the async implementation.

@@ -2166,8 +2166,40 @@
       "sites": []
     },
     "src/codex/responses_operations.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Per-request callbacks lock a weak context before returning an owning coroutine. The dispatch loop serializes mutable request state.",
+      "sites": [
+        {
+          "lines": "191-218,253-387,453-476",
+          "kind": "admission, proof, and banked candidate awaits",
+          "verdict": "SAFE",
+          "reason": "Coroutine arguments own context and routing state, and fences snapshot account or row values before installation. Local KV remains live through each read."
+        },
+        {
+          "lines": "483-506",
+          "kind": "candidate map references across two awaits",
+          "verdict": "SAFE",
+          "reason": "The only production caller is the serial runner waiting for reportHealthyFallback. The other map mutators run in separate, sequentially joined phases of that same request, so this loop has exclusive access to this context's map."
+        },
+        {
+          "lines": "511-594,600-714,718-763",
+          "kind": "cohort, inventory, and overage awaits",
+          "verdict": "SAFE",
+          "reason": "Loops borrow from local candidate, observation and selection snapshots. Options, provider handles, fences and context stay owned through their joins."
+        },
+        {
+          "lines": "767-853,867-907,944-988",
+          "kind": "transport callbacks, spawn, and auth refresh",
+          "verdict": "SAFE",
+          "reason": "Installed preTransport/onDispatch callbacks travel by value in the awaited transport. Health children receive their own response and error data. The auth race's refreshing child takes auth by value."
+        },
+        {
+          "lines": "993-1055",
+          "kind": "weak context dispatch table",
+          "verdict": "SAFE",
+          "reason": "Context owns the callbacks without owning itself through them. Each noncoroutine wrapper locks before handing a strong context value to the async implementation."
+        }
+      ]
     },
     "src/codex/responses_runners.cpp": {
       "status": "pending",
