@@ -3237,7 +3237,8 @@
       ]
     },
     "src/provider/anthropic_replay.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Replay validation, identity and cache maintenance are synchronous. Borrowed JSON blocks and cache iterators are consumed in the corresponding call.",
       "sites": []
     },
     "src/provider/anthropic_response_wire.cpp": {

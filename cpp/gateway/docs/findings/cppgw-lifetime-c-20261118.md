@@ -281,7 +281,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/paid_fallback/routing.cpp`
 - [x] `src/provider/anthropic_chat_responses.cpp`
 - [x] `src/provider/anthropic_chat_stream.cpp`
-- [ ] `src/provider/anthropic_replay.cpp`
+- [x] `src/provider/anthropic_replay.cpp`
 - [ ] `src/provider/anthropic_response_wire.cpp`
 - [ ] `src/provider/anthropic_responses.cpp`
 - [ ] `src/provider/capacity.cpp`
@@ -1787,3 +1787,7 @@ Framing and response bytes live in the generator, with owned watchdog and reader
 
 - 114-138 · read/abort race · **SAFE** · The executor is synchronous, the installed listener locks weak signal state and reader.readPromise owns its I/O state even when it loses the race.
 - 156-220 · generator, watchdog and cancellation · **SAFE** · The generator owns its reader and input response. Its chunk borrow points into the local read result across the yield. Abort and timeout callbacks copy their handles and normal cleanup or timer-queue teardown drops the ownership edges.
+
+### `src/provider/anthropic_replay.cpp`
+
+Replay validation, identity and cache maintenance are synchronous. Borrowed JSON blocks and cache iterators are consumed in the corresponding call.
