@@ -58,7 +58,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/tls.cpp`
 - [x] `src/rt/tls_internal.hpp`
 - [x] `src/rt/websocket.cpp`
-- [ ] `src/rt/websocket_client.cpp`
+- [x] `src/rt/websocket_client.cpp`
 - [ ] `src/rt/websocket_frame.cpp`
 - [ ] `src/rt/websocket_internal.hpp`
 - [ ] `src/rt/websocket_socket.cpp`
@@ -354,18 +354,31 @@ Reviewed live and teardown ownership for client and server sockets, synchronous 
 - **DEFECT (A-WEBSOCKET-UPGRADE-OWNER)** `741, 750, 752, 759, 762, 768, 769, 770, 771, 781` (c), Upgrade hooks can release the last WebSocketServer owner. The server method calls external factory, protocol and headers hooks before reusing its own options and client list. The gateway's named upgradeServer retains it, while the public method borrows its receiver.
 - **SAFE** `750, 752, 759, 760, 761, 762, 763, 765, 768, 769, 770, 771, 772, 773, 774, 775, 776, 777, 778, 781, 784, 786, 791, 792, 794, 795, 798, 801, 805, 808` (b/c/d), Upgrade inputs and tracked-client close. The gateway owns request and socket inputs through synchronous delivery. The tracking callback uses weak links, erases a client before posting the retained server's close notification, and leaves no client iterator suspended.
 
+### `src/rt/websocket_client.cpp`
+
+Reviewed Unix and TCP resolve/connect paths, TLS callbacks, HTTP response parsing, and the opening handshake's success, failure, cancellation and unexpected-response branches. This translation unit has no coroutine bodies.
+
+- **SAFE** `59, 61, 66, 67, 71, 73, 77, 78, 97, 107, 109, 113, 115, 117, 121, 126, 128, 131, 140, 142, 152, 153, 156, 158, 162, 169, 170` (b/d), Synchronous header and response parser borrows. All input views and container iterators remain inside the parser or builder. ParsedResponse owns the copied header values passed to callbacks.
+- **SAFE** `177, 179, 181, 183, 184, 185, 186, 188, 189, 194, 195, 196` (c), Opening timeout registration. The timer hook promotes a weak request and copies the current listener for its call. The request clears its timer on abort, error and completion.
+- **SAFE** `197, 198, 199, 201, 203, 204, 205, 206, 207, 208, 209` (b/c), Unix-domain connect and cancellation. The Asio completion owns the request and Unix socket, and the independent cancellation hook owns the same socket until completion or abort clears it.
+- **SAFE** `214, 215, 216, 217, 219, 220, 225, 227, 229, 233, 234, 237, 238, 244, 246, 249, 250, 251, 253, 255, 259, 266, 267, 268` (b/c/d), TCP resolve, retry and socket handoff. Each operation holds the request and its socket or resolver, endpoints are copied into its completion, and the retry callable has a weak self-edge cleared on terminal completion.
+- **SAFE** `273, 274, 275, 276, 277, 278, 281, 282, 284, 285, 287, 288, 289, 292, 293, 295, 296, 303, 304, 305, 306, 308, 309, 312, 313, 314` (b/c), Connected socket and TLS callback ownership. The request owns its socket and each hook promotes a weak request for the synchronous call. The TLS handoff and socket write transfer values before their callbacks can run.
+- **SAFE** `321, 323, 326, 332, 333, 334, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348, 361, 364, 365, 366, 367, 368, 371, 373, 374, 375, 376, 378, 381, 382, 383, 384, 385` (b/c/d), Response upgrade, failure and abort cleanup. The parser copies any surplus bytes, then copies the active callback before clearing the registration. Abort moves the cancellation callable out before calling it.
+- **UNCLEAR** `284, 289, 351, 353, 354, 357, 358, 492, 498, 499, 503` (c), Unfinished ownership after a handled unexpected response. A registered unexpected-response listener takes the path that leaves request listeners installed until the connection closes. The listener contract needs to establish who must close a persistent response, including a listener that throws or retains no client handle.
+- **SAFE** `390, 391, 395, 399, 412, 414, 421, 422, 423, 429, 431, 443, 444, 449, 451, 464, 467, 473, 475, 476, 477, 481, 482, 483, 486, 488, 489, 490, 492, 493, 495, 498, 505, 507, 508, 511, 512, 513, 515, 517, 521, 523` (b/c/d), Client initialization and handshake listener arguments. Request construction copies local options and headers. Handshake callbacks own response, socket and key values, and their public WebSocket backedge is released on normal abort, close, error or upgrade, or registry shutdown.
+
 ## Ranked defects and counts
 
-Reviewed **26/30 files** and **154 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **27/30 files** and **162 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 5 | 20 | 0 |
-| b. Borrowed coroutine parameter or receiver | 12 | 96 | 3 |
-| c. Callback ownership or cycle | 19 | 92 | 5 |
-| d. Container invalidation | 4 | 64 | 0 |
+| b. Borrowed coroutine parameter or receiver | 12 | 102 | 3 |
+| c. Callback ownership or cycle | 19 | 98 | 6 |
+| d. Container invalidation | 4 | 68 | 0 |
 | e. GCC 12 await-expression rule | 5 | 13 | 1 |
-| **Unique site groups** | 26 | 122 | 6 |
+| **Unique site groups** | 26 | 129 | 7 |
 
 ### 1. A-FETCH-ABORT-TRANSPORT (memory safety in the injectable transport path) — Abort can outlive the owning virtual transport frame
 
