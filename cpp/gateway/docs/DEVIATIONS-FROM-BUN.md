@@ -24,3 +24,9 @@ sweep accepts 313,410 observations, 144 fewer than Bun. Every observation that b
 The old SDK comparison limited IDNA to Latin-1. Ada now applies the same Unicode validation in both build profiles.
 
 [Ada 4.0.0](https://github.com/ada-url/ada/releases/tag/v4.0.0) · [WHATWG URL Standard](https://url.spec.whatwg.org/)
+
+## Trusted resources use filesystem paths
+
+The C++ gateway joins the static asset and V8 helper names to the configured package resource root. Unconfigured fixtures use the working directory as that root. Development startup finds the native KV checkout and tracked inputs from the compiled source location. The default Linux permissions manifest and artifact live in `.uos-permissions` beside the running executable. Each location can contain literal space, `%`, `?`, and `#` bytes.
+
+POSIX file URL conversion serves SQLite URI encoding and explicit URL inputs such as native KV `PathLike` bindings. Decoding requires `file:` and a local host, rejects `%2f` and `%2F`, and decodes valid percent escapes once. Incomplete and nonhex escapes stay literal. Invalid decoded UTF-8 yields an empty path. SQLite conversion snapshots use `immutable=1` with explicit read-only URI flags.

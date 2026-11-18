@@ -5001,6 +5001,14 @@ TEST("URLSearchParams, URL linkage and POSIX file conversion") {
   EXPECT_EQ(mismatches, 0);
 }
 
+TEST("POSIX file conversion decodes once and rejects invalid UTF-8 bytes") {
+  using uos::rt::fileURLToPath;
+  EXPECT_EQ(fileURLToPath(URL("file:///literal%/%2/%GG/%252F")), "/literal%/%2/%GG/%2F");
+  for (const auto url : {"file:///%C0%AF"sv, "file:///%ED%A0%80"sv, "file:///%E2%82"sv}) {
+    EXPECT_EQ(fileURLToPath(url), "");
+  }
+}
+
 namespace {
   // Grid inputs from gen_url_grids.ts. Changed blocks use Ada results, with the same FNV-1a encoding.
   constexpr std::string_view kGridSchemes[] = {"sc://"sv, "http://"sv, "file://"sv, "ws://"sv, "ftps://"sv};

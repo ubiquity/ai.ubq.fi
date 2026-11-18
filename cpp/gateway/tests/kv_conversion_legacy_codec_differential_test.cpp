@@ -4,6 +4,7 @@
 // child's environment is only DENO_DIR, so they use shell builtins). The same scripts were run
 // by the TypeScript module under Bun 1.4.0, which recorded every expected value below.
 #include "uos/kv_conversion/legacy_codec.hpp"
+#include "runtime/paths.hpp"
 
 #include "uos/rt/clock.hpp"
 #include "uos/rt/fs.hpp"
@@ -309,5 +310,34 @@ ASYNC_TEST("differential: fileDigest hashes files of any size like Bun") {
     EXPECT_EQ(digest, std::string(row.as_array()[2].as_string()));
   }
   EXPECT_EQ(LEGACY_DENO_VERSION, std::string_view(recorded.as_object().at("LEGACY_DENO_VERSION").as_string()));
+  removeTree(root);
+}
+
+ASYNC_TEST("both codec invocations receive the helper path from the configured resource root") {
+  const std::string root = rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "codec-package %?#-"));
+  const std::string helperDirectory = rt::path::join(root, "src", "kv-conversion");
+  const std::string helper = rt::path::join(helperDirectory, "v8-helper.mjs");
+  rt::fs::mkdirSync(helperDirectory, {.recursive = true});
+  rt::fs::writeFileSync(helper, "// codec fixture\n");
+
+  const std::string binary = rt::path::join(root, "fake-deno");
+  rt::fs::writeFileSync(binary, R"SH(#!/bin/sh
+[ -f "$5" ] || exit 9
+if [ "$6" = --identity ]; then
+  printf '%s' "$5" > identity-helper
+  printf '2.9.7\n'
+else
+  printf '%s' "$5" > stream-helper
+  while IFS= read -r line; do :; done
+fi
+)SH", {.mode = 0700});
+  const std::string digest = co_await fileDigest(binary);
+  uos::runtime::paths::setResourceRoot(root);
+  auto opening = openLegacyCodec(binary, digest, root);
+  const LegacyCodec codec = co_await std::move(opening);
+  auto closing = codec.close();
+  co_await std::move(closing);
+  EXPECT_EQ(rt::fs::readFileSync(rt::path::join(root, "identity-helper"), "utf8"), helper);
+  EXPECT_EQ(rt::fs::readFileSync(rt::path::join(root, "stream-helper"), "utf8"), helper);
   removeTree(root);
 }

@@ -8,6 +8,7 @@
 #include "uos/config.hpp"
 #include "uos/kv.hpp"
 #include "uos/static.hpp"
+#include "runtime/paths.hpp"
 
 #include "uos/rt/base64.hpp"
 #include "uos/rt/crypto.hpp"
@@ -15,8 +16,6 @@
 #include "uos/rt/http.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/test_async.hpp"
-
-#include <unistd.h>
 
 #include <optional>
 #include <string>
@@ -27,9 +26,7 @@ namespace {
   namespace rt = uos::rt;
   namespace json = uos::json;
 
-  // The module resolves static/ against the working directory (the release root).
   const std::string ROOT = rt::path::resolve(rt::path::dirname(__FILE__), "../../..");
-  [[maybe_unused]] const bool ROOT_IS_CWD = ::chdir(ROOT.c_str()) == 0;
 
   const json::value& vectors() {
     static const json::value parsed = [] {
@@ -62,6 +59,7 @@ namespace {
 }
 
 ASYNC_TEST("homepage negotiation and asset responses match Bun") {
+  uos::runtime::paths::setResourceRoot(ROOT);
   const json::value& data = vectors();
   // The recording environment: not a deploy, no client tokens, no KV.
   uos::config::config.isDeploy = rt::get(data, "isDeploy")->as_bool();

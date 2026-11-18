@@ -66,6 +66,40 @@ TEST("the default artifact comes from the release manifest beside the executable
 #endif
 }
 
+TEST("default confinement inputs resolve beside an executable under a reserved-byte directory") {
+#if defined(__linux__) && defined(__aarch64__)
+  const std::string self = rt::process::execPath();
+  if (rt::path::basename(self) == "permissions-path-probe") {
+    EXPECT_EQ(getLinuxPermissionsSupport().architecture, "arm64");
+    return;
+  }
+  // A direct executable re-launch requires the native fixture profile.
+  if (rt::path::basename(self).starts_with("ld-linux")) return;
+
+  const Fixture fixture;
+  const std::string bin = fixture.root + "/bin %?#";
+  const std::string directory = bin + "/.uos-permissions";
+  rt::fs::mkdirSync(directory, {.recursive = true});
+  rt::fs::copyFileSync(fixture.artifactPath, directory + "/linux-arm64.node");
+  rt::fs::writeFileSync(directory + "/manifest.json",
+                        R"({"path":"linux-arm64.node","architecture":"arm64","sha256":")" + fixture.artifact.sha256 + "\"}");
+  const std::string executable = bin + "/permissions-path-probe";
+  rt::fs::copyFileSync(self, executable);
+  rt::fs::chmodSync(executable, 0700);
+  std::fflush(nullptr);
+  const pid_t child = ::fork();
+  ASSERT(child >= 0);
+  if (child == 0) {
+    ::execl(executable.c_str(), executable.c_str(), "default confinement inputs resolve", static_cast<char*>(nullptr));
+    ::_exit(127);
+  }
+  int status = 0;
+  ASSERT(::waitpid(child, &status, 0) == child);
+  ASSERT(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+#endif
+}
+
 TEST("the artifact must be a regular file whose sha256 matches") {
   const Fixture fixture;
 #if defined(__APPLE__)
