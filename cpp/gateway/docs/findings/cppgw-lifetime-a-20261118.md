@@ -49,7 +49,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `include/uos/rt/gzip.hpp`
 - [x] `include/uos/rt/websocket.hpp`
 - [x] `src/rt/fetch.cpp`
-- [ ] `src/rt/fetch_transport.cpp`
+- [x] `src/rt/fetch_transport.cpp`
 - [ ] `src/rt/fetch_transport_codec.cpp`
 - [ ] `src/rt/fetch_transport_http.cpp`
 - [ ] `src/rt/fetch_transport_internal.hpp`
@@ -253,18 +253,33 @@ Reviewed both request-init paths, both abort windows, the transport seam and the
 - **DEFECT (A-FETCH-CALLBACK-INPUT)** `176, 178, 181, 183` (a/b), Injected async Fetch arguments cross the erasure lifetime boundary. The wrapper retains the callable but the by-value std::function invocation owns its arguments only within that call expression.
 - **DEFECT (A-MOCK-HANDLER-OWNER)** `204, 205, 206` (a/b/c), Mock transport returns a callback task without its handler owner. The ordinary send method records a copy but passes a separate erased Request to its handler and returns the child task directly.
 
+### `src/rt/fetch_transport.cpp`
+
+Reviewed DNS, both connection branches, concurrent upload/download, stale retry, redirects, EOF/error/cancel and pooling handoff. The writer starts independently so an early response can be delivered before upload completion.
+
+- **SAFE** `55, 57, 58, 60, 61, 63, 66, 69, 81, 93, 94, 95, 96, 103, 104, 105, 106, 109, 110, 111` (b/d/e), Owned request body and DNS inputs. The request frame owns both handles and copies bytes. The resolver frame owns host, service, resolver, error token and the final endpoint copy.
+- **SAFE** `95, 97, 98, 99, 100, 106, 107` (b/c), DNS cancellation closure. The cancellation slot retains only a weak resolver reference, and the active resolution keeps the resolver and slot context alive until completion or teardown.
+- **SAFE** `117, 118, 124, 125, 130, 131, 133, 134, 139, 143, 144, 146, 147, 155, 156, 157, 161, 162` (b/d/e), TCP connection, TLS receiver and pool acquisition. The private endpoint vector cannot be mutated by other work, and the connecting frame owns the client, TLS context owner and Connection across the handshake.
+- **SAFE** `182, 184, 186, 188, 189, 193, 194, 197, 198, 203, 204, 209, 210, 219, 222, 223, 225, 226, 229, 230, 231, 270, 274, 275, 279` (a/b/c/d), Detached write task, dynamic buffers and local cleanup. The writer owns connection, reader, upload inputs and each write owner. The synchronous scope-exit reference is to a local declared before its guard.
+- **DEFECT (A-FETCH-UPLOAD-STRANDED)** `173, 182, 203, 204, 209, 210, 215, 216, 274, 276, 277, 279, 296, 298, 299, 349, 350, 368, 372, 378, 475, 478, 479, 530, 537, 555` (b/c), Terminal connection close can strand a detached upload reader. Closing the socket wakes its native operations. A writeRequest frame waiting on a JavaScript-style reader Promise also needs its reader released or cancelled.
+- **SAFE** `264, 265, 269, 271, 280, 282, 284, 288, 293, 294, 302, 306, 307, 308, 314, 316, 318, 319, 320, 323, 328` (b/d), Exchange head parse, retry and connection handoff. Response head fields are owned and the input view ends before fill; retry passes owned configuration and connection into the exchange frame.
+- **SAFE** `334, 335, 336, 341, 349, 354, 355, 357, 360, 368, 370, 373, 383, 384, 389, 390, 396, 397, 402, 409, 410, 464, 466, 467, 470, 471, 474, 475, 476, 478, 479, 483, 488` (b/c/d), Response pump, parser views and source closures. The stream owns the pump while active, pool backedges are weak, and parser views are consumed before queue mutation or suspension. Scope-bound loop ownership is required by docs/rt/async.md.
+- **SAFE** `413, 416, 417, 419, 421, 422, 426, 427, 428, 429, 436, 437, 438, 440, 445, 446, 447, 455, 457, 458` (a/b/c/d/e), Native fill receiver during response cancellation. The named fill Task pins the Connection through the native read. Cancellation sets the shared flag before dropping the pump's slot, and the continuation checks it before using that slot.
+- **DEFECT (A-FETCH-RESPONSE-STRANDED)** `135, 214, 215, 216, 236, 237, 238, 416, 436, 437, 438, 440, 441, 452, 455, 474` (b/c), Post-head upload failure leaves a response read parked. The detached upload writer can close the Connection with a body failure after the response exists. The response pull treats the resulting aborted read as a silent successful pull.
+- **SAFE** `492, 493, 496, 497, 498, 501, 502, 503, 504, 513, 514, 515, 518, 519, 520, 521, 522, 523, 526, 527, 533, 535, 549, 552, 553, 559, 561, 562, 563, 567, 568, 581, 584, 589, 595, 596` (b/d/e), Redirect drain, header edits and public send owner. The redirect frame owns request metadata, next URL and exchange. Header iteration is synchronous, and the public ordinary wrapper copies ClientState into the deferred operation.
+
 ## Ranked defects and counts
 
-Reviewed **17/30 files** and **98 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **18/30 files** and **108 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
-| a. Capturing coroutine closure | 5 | 17 | 0 |
-| b. Borrowed coroutine parameter or receiver | 9 | 53 | 3 |
-| c. Callback ownership or cycle | 14 | 60 | 4 |
-| d. Container invalidation | 3 | 29 | 0 |
-| e. GCC 12 await-expression rule | 4 | 8 | 1 |
-| **Unique site groups** | 20 | 73 | 5 |
+| a. Capturing coroutine closure | 5 | 19 | 0 |
+| b. Borrowed coroutine parameter or receiver | 11 | 61 | 3 |
+| c. Callback ownership or cycle | 16 | 64 | 4 |
+| d. Container invalidation | 3 | 36 | 0 |
+| e. GCC 12 await-expression rule | 4 | 12 | 1 |
+| **Unique site groups** | 22 | 81 | 5 |
 
 ### 1. A-FETCH-ABORT-TRANSPORT (memory safety in the injectable transport path) — Abort can outlive the owning virtual transport frame
 
@@ -462,7 +477,52 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +      response.setBodyStream(std::move(stream));
 ```
 
-### 9. A-PROCESS-SIGNAL-CONTEXT (memory safety with scoped runtime loops) — Static process signal registry retains a scoped Asio context
+### 9. A-FETCH-UPLOAD-STRANDED (request-path retention after a failed or early response) — Terminal connection close can strand a detached upload reader
+
+`src/rt/fetch_transport.cpp:173, 182, 203, 204, 209, 210, 215, 216, 274, 276, 277, 279, 296, 298, 299, 349, 350, 368, 372, 378, 475, 478, 479, 530, 537, 555`
+
+- The client sends the upload head and parks its detached writer in reader.read(). The peer closes before the response head, or the early response finishes before the upload source produces another chunk.
+- The terminal exchange closes the socket with an unaborted signal. The upload Promise never settles and retains the writer, stream and closed connection on the process loop.
+
+```diff
+--- a/cpp/gateway/src/rt/fetch_transport.cpp
++++ b/cpp/gateway/src/rt/fetch_transport.cpp
+@@ -173 +173,6 @@
+       std::optional<ReadableStreamDefaultReader<ByteChunk>> reader;
++      void releaseReader() {
++        auto active = std::exchange(reader, std::nullopt);
++        if (active) active->releaseLock();
++      }
+@@ -276,2 +281,3 @@
+         connection->close();
+         if (writer->reader && signal.aborted()) spawn(writer->reader->cancel(signal.reason()), ignoreRejection);
++        writer->releaseReader();
+@@ -377,2 +383,3 @@
+       }
+       connection->close();
++      pump.writer->releaseReader();
+```
+
+### 10. A-FETCH-RESPONSE-STRANDED (request-path pending response read) — Post-head upload failure leaves a response read parked
+
+`src/rt/fetch_transport.cpp:135, 214, 215, 216, 236, 237, 238, 416, 436, 437, 438, 440, 441, 452, 455, 474`
+
+- The response head arrives while an upload and a response body read are both pending. The upload reader rejects and writeRequest records the failure and closes the connection.
+- The body fill reports aborted with pump.cancelled false. pullBody returns without closing or erroring the stream, leaving the downstream reader Promise and its continuation parked.
+
+```diff
+--- a/cpp/gateway/src/rt/fetch_transport.cpp
++++ b/cpp/gateway/src/rt/fetch_transport.cpp
+@@ -439,4 +439,5 @@
+           if (status == ReadStatus::data) continue;
+           if (pump->connection->timedOut()) rethrow(timeoutErrorReason());
+-          if (status == ReadStatus::aborted) co_return;
++          if (pump->writer->bodyFailure) rethrow(pump->writer->bodyFailure);
++          if (status == ReadStatus::aborted) throw closedError(pump->url);
+           if (status == ReadStatus::eof && pump->framing == Framing::close) {
+```
+
+### 11. A-PROCESS-SIGNAL-CONTEXT (memory safety with scoped runtime loops) — Static process signal registry retains a scoped Asio context
 
 `src/rt/process_loop.cpp:100, 102, 107, 108, 119, 124, 125, 134, 136, 142, 148`
 
@@ -490,7 +550,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
      }
 ```
 
-### 10. A-STREAM-TEE-READ-CYCLE (retention on cloned streaming bodies) — In-flight tee read keeps abandoned branches' source alive
+### 12. A-STREAM-TEE-READ-CYCLE (retention on cloned streaming bodies) — In-flight tee read keeps abandoned branches' source alive
 
 `include/uos/rt/stream.hpp:444, 445, 446, 453, 454, 458, 460, 464, 469, 475, 479, 485, 486, 493, 496, 502, 554, 557, 558, 559, 561, 562, 567, 568`
 
@@ -523,7 +583,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +      start(currentLoop(), teeRead<T>(std::weak_ptr<TeeState<T>>(tee)));
 ```
 
-### 11. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
+### 13. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
 
 `src/rt/async.cpp:485, 490, 491, 492, 494, 497`
 
@@ -549,7 +609,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +      source->react([source = source.get(), out, remaining] {
 ```
 
-### 12. A-GENERATOR-STEP-OWNER (public runtime liveness) — Pending generator step does not keep its generator alive
+### 14. A-GENERATOR-STEP-OWNER (public runtime liveness) — Pending generator step does not keep its generator alive
 
 `include/uos/rt/async.hpp:1041, 1058, 1061, 1062, 1063, 1064, 1099, 1101`
 
@@ -570,7 +630,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
      }
 ```
 
-### 13. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
+### 15. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
 
 `src/rt/async.cpp:252, 257, 258, 261, 263, 266, 268, 367, 368, 396, 397, 400, 401, 443, 445`
 
@@ -585,7 +645,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +    LoopScope scope(owner);
 ```
 
-### 14. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
+### 16. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
 
 `include/uos/rt/async.hpp:219, 375`
 
@@ -605,7 +665,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +      co_await std::move(ready);
 ```
 
-### 15. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
+### 17. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
 
 `include/uos/rt/async.hpp:1073, 1123, 1124`
 
@@ -627,7 +687,7 @@ diff --git a/cpp/gateway/src/rt/fetch.cpp b/cpp/gateway/src/rt/fetch.cpp
 +        else co_await std::move(handling);
 ```
 
-### 16. A-STREAM-GCC-AWAIT (GCC 12 portability rule) — Stream callback and yield arguments materialized inside awaits
+### 18. A-STREAM-GCC-AWAIT (GCC 12 portability rule) — Stream callback and yield arguments materialized inside awaits
 
 `include/uos/rt/stream.hpp:72, 540`
 

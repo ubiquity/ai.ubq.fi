@@ -2630,8 +2630,371 @@
       ]
     },
     "src/rt/fetch_transport.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed DNS, both connection branches, concurrent upload/download, stale retry, redirects, EOF/error/cancel and pooling handoff. The writer starts independently so an early response can be delivered before upload completion.",
+      "sites": [
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "d",
+            "e"
+          ],
+          "lines": [
+            55,
+            57,
+            58,
+            60,
+            61,
+            63,
+            66,
+            69,
+            81,
+            93,
+            94,
+            95,
+            96,
+            103,
+            104,
+            105,
+            106,
+            109,
+            110,
+            111
+          ],
+          "label": "Owned request body and DNS inputs",
+          "reason": "The request frame owns both handles and copies bytes. The resolver frame owns host, service, resolver, error token and the final endpoint copy."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            95,
+            97,
+            98,
+            99,
+            100,
+            106,
+            107
+          ],
+          "label": "DNS cancellation closure",
+          "reason": "The cancellation slot retains only a weak resolver reference, and the active resolution keeps the resolver and slot context alive until completion or teardown."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "d",
+            "e"
+          ],
+          "lines": [
+            117,
+            118,
+            124,
+            125,
+            130,
+            131,
+            133,
+            134,
+            139,
+            143,
+            144,
+            146,
+            147,
+            155,
+            156,
+            157,
+            161,
+            162
+          ],
+          "label": "TCP connection, TLS receiver and pool acquisition",
+          "reason": "The private endpoint vector cannot be mutated by other work, and the connecting frame owns the client, TLS context owner and Connection across the handshake."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "lines": [
+            182,
+            184,
+            186,
+            188,
+            189,
+            193,
+            194,
+            197,
+            198,
+            203,
+            204,
+            209,
+            210,
+            219,
+            222,
+            223,
+            225,
+            226,
+            229,
+            230,
+            231,
+            270,
+            274,
+            275,
+            279
+          ],
+          "label": "Detached write task, dynamic buffers and local cleanup",
+          "reason": "The writer owns connection, reader, upload inputs and each write owner. The synchronous scope-exit reference is to a local declared before its guard."
+        },
+        {
+          "verdict": "DEFECT",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            173,
+            182,
+            203,
+            204,
+            209,
+            210,
+            215,
+            216,
+            274,
+            276,
+            277,
+            279,
+            296,
+            298,
+            299,
+            349,
+            350,
+            368,
+            372,
+            378,
+            475,
+            478,
+            479,
+            530,
+            537,
+            555
+          ],
+          "label": "Terminal connection close can strand a detached upload reader",
+          "reason": "Closing the socket wakes its native operations. A writeRequest frame waiting on a JavaScript-style reader Promise also needs its reader released or cancelled.",
+          "defect": {
+            "id": "A-FETCH-UPLOAD-STRANDED",
+            "priority": 32,
+            "severity": "request-path retention after a failed or early response",
+            "interleaving": [
+              "The client sends the upload head and parks its detached writer in reader.read(). The peer closes before the response head, or the early response finishes before the upload source produces another chunk.",
+              "The terminal exchange closes the socket with an unaborted signal. The upload Promise never settles and retains the writer, stream and closed connection on the process loop."
+            ],
+            "diff": "--- a/cpp/gateway/src/rt/fetch_transport.cpp\n+++ b/cpp/gateway/src/rt/fetch_transport.cpp\n@@ -173 +173,6 @@\n       std::optional<ReadableStreamDefaultReader<ByteChunk>> reader;\n+      void releaseReader() {\n+        auto active = std::exchange(reader, std::nullopt);\n+        if (active) active->releaseLock();\n+      }\n@@ -276,2 +281,3 @@\n         connection->close();\n         if (writer->reader && signal.aborted()) spawn(writer->reader->cancel(signal.reason()), ignoreRejection);\n+        writer->releaseReader();\n@@ -377,2 +383,3 @@\n       }\n       connection->close();\n+      pump.writer->releaseReader();"
+          }
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "d"
+          ],
+          "lines": [
+            264,
+            265,
+            269,
+            271,
+            280,
+            282,
+            284,
+            288,
+            293,
+            294,
+            302,
+            306,
+            307,
+            308,
+            314,
+            316,
+            318,
+            319,
+            320,
+            323,
+            328
+          ],
+          "label": "Exchange head parse, retry and connection handoff",
+          "reason": "Response head fields are owned and the input view ends before fill; retry passes owned configuration and connection into the exchange frame."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c",
+            "d"
+          ],
+          "lines": [
+            334,
+            335,
+            336,
+            341,
+            349,
+            354,
+            355,
+            357,
+            360,
+            368,
+            370,
+            373,
+            383,
+            384,
+            389,
+            390,
+            396,
+            397,
+            402,
+            409,
+            410,
+            464,
+            466,
+            467,
+            470,
+            471,
+            474,
+            475,
+            476,
+            478,
+            479,
+            483,
+            488
+          ],
+          "label": "Response pump, parser views and source closures",
+          "reason": "The stream owns the pump while active, pool backedges are weak, and parser views are consumed before queue mutation or suspension. Scope-bound loop ownership is required by docs/rt/async.md."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e"
+          ],
+          "lines": [
+            413,
+            416,
+            417,
+            419,
+            421,
+            422,
+            426,
+            427,
+            428,
+            429,
+            436,
+            437,
+            438,
+            440,
+            445,
+            446,
+            447,
+            455,
+            457,
+            458
+          ],
+          "label": "Native fill receiver during response cancellation",
+          "reason": "The named fill Task pins the Connection through the native read. Cancellation sets the shared flag before dropping the pump's slot, and the continuation checks it before using that slot."
+        },
+        {
+          "verdict": "DEFECT",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            135,
+            214,
+            215,
+            216,
+            236,
+            237,
+            238,
+            416,
+            436,
+            437,
+            438,
+            440,
+            441,
+            452,
+            455,
+            474
+          ],
+          "label": "Post-head upload failure leaves a response read parked",
+          "reason": "The detached upload writer can close the Connection with a body failure after the response exists. The response pull treats the resulting aborted read as a silent successful pull.",
+          "defect": {
+            "id": "A-FETCH-RESPONSE-STRANDED",
+            "priority": 33,
+            "severity": "request-path pending response read",
+            "interleaving": [
+              "The response head arrives while an upload and a response body read are both pending. The upload reader rejects and writeRequest records the failure and closes the connection.",
+              "The body fill reports aborted with pump.cancelled false. pullBody returns without closing or erroring the stream, leaving the downstream reader Promise and its continuation parked."
+            ],
+            "diff": "--- a/cpp/gateway/src/rt/fetch_transport.cpp\n+++ b/cpp/gateway/src/rt/fetch_transport.cpp\n@@ -439,4 +439,5 @@\n           if (status == ReadStatus::data) continue;\n           if (pump->connection->timedOut()) rethrow(timeoutErrorReason());\n-          if (status == ReadStatus::aborted) co_return;\n+          if (pump->writer->bodyFailure) rethrow(pump->writer->bodyFailure);\n+          if (status == ReadStatus::aborted) throw closedError(pump->url);\n           if (status == ReadStatus::eof && pump->framing == Framing::close) {"
+          }
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "d",
+            "e"
+          ],
+          "lines": [
+            492,
+            493,
+            496,
+            497,
+            498,
+            501,
+            502,
+            503,
+            504,
+            513,
+            514,
+            515,
+            518,
+            519,
+            520,
+            521,
+            522,
+            523,
+            526,
+            527,
+            533,
+            535,
+            549,
+            552,
+            553,
+            559,
+            561,
+            562,
+            563,
+            567,
+            568,
+            581,
+            584,
+            589,
+            595,
+            596
+          ],
+          "label": "Redirect drain, header edits and public send owner",
+          "reason": "The redirect frame owns request metadata, next URL and exchange. Header iteration is synchronous, and the public ordinary wrapper copies ClientState into the deferred operation."
+        }
+      ]
     },
     "src/rt/fetch_transport_codec.cpp": {
       "status": "pending",
