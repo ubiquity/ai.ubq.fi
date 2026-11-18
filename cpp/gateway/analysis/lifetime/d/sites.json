@@ -10002,8 +10002,24 @@
       ]
     },
     "include/uos/runtime_config.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the runtime configuration loader and cache override interface.",
+      "sites": [
+        {
+          "lines": [
+            92,
+            93,
+            94
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Refresh takes an optional shared store by value, and returns an owning configuration snapshot."
+        }
+      ]
     },
     "include/uos/sentinel/incident_outbox.hpp": {
       "reviewed": false,

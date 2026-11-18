@@ -373,7 +373,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/responses_native_headers.hpp`
 - [x] `include/uos/responses_request.hpp`
 - [x] `include/uos/responses_stream.hpp`
-- [ ] `include/uos/runtime_config.hpp`
+- [x] `include/uos/runtime_config.hpp`
 - [ ] `include/uos/sentinel/incident_outbox.hpp`
 - [ ] `include/uos/sentinel/replay_admin.hpp`
 - [ ] `include/uos/sentinel/replay_capture.hpp`
@@ -2121,6 +2121,12 @@ Reviewed event identity, generator cancellation, the stored callback wrapper, an
 - L125 **DEFECT** · The callback wrapper passes an owning ResponsesStreamEvent or OwnedResponsesStreamFailureDetails aggregate by value inside the await expression. The GCC 12.2 profile forbids this form. Construct the returned Task in a named statement and then await it.
 - L135, 138, 142, 147, 149, 150, 156, 157, 158, 165, 168 **SAFE** · Stream and preflight wrappers copy their signals, source and options. Escaping callbacks retain their own callable and arguments through asynchronous use.
 
+### `include/uos/runtime_config.hpp`
+
+Reviewed the runtime configuration loader and cache override interface.
+
+- L92, 93, 94 **SAFE** · Refresh takes an optional shared store by value, and returns an owning configuration snapshot.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2370,4 +2376,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-265/286 files reviewed. 451 sites: 426 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+266/286 files reviewed. 452 sites: 427 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
