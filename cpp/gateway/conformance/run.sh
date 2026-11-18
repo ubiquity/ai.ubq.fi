@@ -48,7 +48,7 @@ if [[ ! -d $bench ]]; then
     if ! git -C "$root" cat-file -e "$bench_revision^{commit}"; then
       archive_source="$work/bench-git"
       "${prep[@]}" git init --bare -q "$archive_source"
-      "${prep[@]}" GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 git -C "$archive_source" fetch --no-tags \
+      "${prep[@]}" GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 git -C "$archive_source" fetch --no-tags --depth=1 \
         https://github.com/ubiquity/ai.ubq.fi.git "$bench_revision"
     fi
     mkdir -p "$work/bench"
