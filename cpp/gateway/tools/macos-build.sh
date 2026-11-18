@@ -23,7 +23,7 @@ import tempfile
 import time
 
 sys.dont_write_bytecode = True
-parser = argparse.ArgumentParser(description="Build all production sources once; run isolated Darwin tests, runtime first")
+parser = argparse.ArgumentParser(description="Build native gateway executables; run isolated Darwin tests, runtime first")
 parser.add_argument("--build-root", type=Path, default=Path(tempfile.gettempdir()) / "cppgw-macos-native")
 parser.add_argument("--jobs", type=int, default=4)
 parser.add_argument("--suite", choices=["all", "rt", "none"], default="all")
@@ -73,7 +73,7 @@ source_identity = identity()
 if args.require_clean and not source_identity["worktree_clean"]:
     parser.error("--require-clean requires a committed, clean checkout")
 inputs = {str(p.relative_to(gateway)): hashlib.sha256(p.read_bytes()).hexdigest()
-          for directory in ["include", "src", "tests", "tools"]
+          for directory in ["entrypoints", "include", "runtime", "src", "tests", "tools"]
           for p in sorted((gateway / directory).rglob("*")) if p.is_file()}
 for relative in [vendor_sources.REGISTRY, *(relative for library in vendors for relative in library.inputs)]:
     inputs[str(relative)] = hashlib.sha256((gateway / relative).read_bytes()).hexdigest()
@@ -84,18 +84,21 @@ prefixes = {name: Path(capture([brew, "--prefix", name])) for name in
             ["boost", "openssl@3", "sqlite", "zlib", "icu4c@78", "brotli", "zstd"]}
 if args.sqlite_prefix:
     prefixes["sqlite"] = args.sqlite_prefix.resolve()
-env["PKG_CONFIG_PATH"] = ":".join(str(p / "lib/pkgconfig") for p in prefixes.values())
+env["PKG_CONFIG_LIBDIR"] = ":".join(str(p / "lib/pkgconfig") for p in prefixes.values())
 compiler = shutil.which(os.environ["CXX"]) if os.environ.get("CXX") else capture(["xcrun", "--find", "clang++"])
 if not compiler:
     parser.error("CXX must name an available compiler")
 env["SDKROOT"] = capture(["xcrun", "--show-sdk-path"])
 packages = ["openssl", "zlib", "libbrotlidec", "libzstd", "icu-uc", "icu-i18n"]
-cflags = shlex.split(capture(["pkg-config", "--cflags", *packages]))
+cflags = shlex.split(capture(["pkg-config", "--cflags-only-other", *packages]))
+for include in shlex.split(capture(["pkg-config", "--cflags-only-I", *packages])):
+    cflags.extend(["-isystem", str(Path(include.removeprefix("-I")).resolve())])
 libs = shlex.split(capture(["pkg-config", "--libs", *packages]))
 sqlite = prefixes["sqlite"]
 flags = [compiler, "-std=c++20", "-stdlib=libc++", "-O0", "-g0", "-Wall", "-Wextra", "-Wshadow",
          "-Wconversion", "-Werror", "-DBOOST_JSON_NO_LIB", "-DBOOST_CONTAINER_NO_LIB", "-DBOOST_SYSTEM_NO_LIB",
          "-I", str(gateway / "include"), "-I", str(gateway), "-isystem", str(prefixes["boost"] / "include"),
+         "--system-header-prefix=third_party/",
          "-isystem", str(sqlite / "include"), "-pthread", *cflags]
 flags.append("-DUOS_GATEWAY_NATIVE_LIBRARIES")
 libs += [str(sqlite / "lib/libsqlite3.dylib"), "-L" + str(prefixes["boost"] / "lib"), "-lboost_json", "-lboost_container"]
@@ -154,8 +157,8 @@ def compile_one(source, selected_flags=None):
     result["source"] = str(source)
     if result["status"] == 0:
         deps = shlex.split(target.with_suffix(".d").read_text().replace("\\\n", " ").split(":", 1)[1])
-        if str(source) in simdjson_sources:
-            deps.append(str(gateway / vendor_sources.SIMDJSON_HEADER))
+        for library in vendor_sources.required(vendors, [source]):
+            deps.append(str(gateway / Path(library.source).with_suffix(".h")))
         result["inputs"] = {p: digest(p) for p in deps}
     receipt.write_text(json.dumps(result, indent=2) + "\n")
     return result
@@ -176,7 +179,14 @@ def compile_phase(name, sources):
 
 runtime = sorted(p.relative_to(gateway) for p in (gateway / "src/rt").glob("*.cpp"))
 modules = [p.relative_to(gateway) for p in sorted((gateway / "src").rglob("*.cpp")) if p.relative_to(gateway) not in runtime]
-production = compile_phase("production", runtime + modules)
+startup = Path("runtime/startup.cpp")
+entrypoints = {
+    "uos-gateway": Path("entrypoints/gateway.cpp"),
+    "uos-kv-convert": Path("entrypoints/kv-convert.cpp"),
+    "uos-kv-proof": Path("entrypoints/kv-proof.cpp"),
+}
+production_sources = runtime + modules + [startup, *entrypoints.values()]
+production = compile_phase("production", production_sources)
 if any(r["status"] for r in production):
     raise SystemExit(1)
 archive_path = run / "libuos_gateway.a"
@@ -186,9 +196,10 @@ if archive["status"]:
 members = [name for name in capture(["/usr/bin/ar", "-t", archive_path]).splitlines() if not name.startswith("__.SYMDEF")]
 if len(members) != len(runtime + modules):
     raise SystemExit("Archive member census does not match production sources")
-archive_path.replace(build / "libuos_gateway.a")
+gateway_archive = build / archive_path.name
+archive_path.replace(gateway_archive)
 vendor_archives = {}
-for library in vendor_sources.required(vendors, runtime + modules):
+for library in vendor_sources.required(vendors, production_sources):
     relative = Path(library.source)
     compiled = compile_one(relative, vendor_sources.vendor_flags(flags))
     if compiled["status"]:
@@ -201,13 +212,33 @@ for library in vendor_sources.required(vendors, runtime + modules):
     archive_path.replace(target)
     vendor_archives[library.archive] = target
 provenance["vendor_archives"] = {name: digest(path) for name, path in vendor_archives.items()}
-if args.suite == "none":
-    provenance["archive_sha256"] = digest(build / "libuos_gateway.a")
+link_flags = [compiler, "-stdlib=libc++", "-pthread"]
+executables = {}
+for name, source in entrypoints.items():
+    binary = run / name
+    command = [*link_flags, obj(source), obj(startup), "-Xlinker", "-force_load", "-Xlinker", gateway_archive,
+               *vendor_archives.values(), *libs, "-o", binary]
+    result = invoke(command, run / (name + ".link.log"))
+    if result["status"] == 0:
+        result["sha256"] = digest(binary)
+    else:
+        print("LINK_FAIL", name, "log:", result["log"], flush=True)
+    executables[name] = result
+provenance["executables"] = executables
+print("executables:", sum(r["status"] == 0 for r in executables.values()), "/", len(executables), "linked", flush=True)
+
+def finalize():
     provenance["identity_unchanged"] = identity() == source_identity
     provenance["inputs_unchanged"] = all((gateway / p).is_file() and digest(gateway / p) == h for p, h in inputs.items())
+    provenance["archive_sha256"] = digest(gateway_archive)
     (run / "provenance.json").write_text(json.dumps(provenance, indent=2, default=str) + "\n")
-    print("production archive complete; tests intentionally not selected", flush=True)
-    raise SystemExit(not provenance["inputs_unchanged"] or not provenance["identity_unchanged"])
+    print("receipt:", run, flush=True)
+    return provenance["inputs_unchanged"] and provenance["identity_unchanged"] and all(
+        r["status"] == 0 for r in executables.values())
+
+if args.suite == "none":
+    print("tests intentionally not selected", flush=True)
+    raise SystemExit(not finalize())
 
 spec = importlib.util.spec_from_file_location("uos_links", gateway / "tools/links.py")
 links = importlib.util.module_from_spec(spec)
@@ -233,6 +264,7 @@ if boundary["status"]:
     raise SystemExit("Darwin fixture sandbox unavailable: " + boundary["log"])
 
 results = []
+test_compile_failed = False
 for phase, selected in [("runtime", [t for t in tests if t.parent == Path("tests/rt")]),
                         ("gateway", [t for t in tests if t.parent != Path("tests/rt")])]:
     resolutions = {t: links.resolve(str(t), registry) for t in selected}
@@ -243,18 +275,19 @@ for phase, selected in [("runtime", [t for t in tests if t.parent == Path("tests
         sources = sorted(set(sources) | {p.relative_to(gateway) for p in (gateway / "tests").rglob("*.cpp")
                                         if p.relative_to(gateway) not in all_tests})
     compiled = compile_phase(phase, sources)
-    failures = {r["source"] for r in compiled if r["status"]}
+    failures = {r["source"]: r["log"] for r in compiled if r["status"]}
+    test_compile_failed |= bool(failures)
     for test in selected:
         label = str(test.relative_to("tests").with_suffix("")).replace("/", "__")
         log = run / (label + ".log")
         binary = build / (label + ".bin")
         resolution = resolutions[test]
         source_list = list(dict.fromkeys([test, *map(Path, resolution.sources), *runtime]))
-        if any(str(s) in failures for s in source_list):
-            row = dict(test=str(test), status="BUILD_FAIL", log=str(log))
+        if failed_logs := [failures[str(s)] for s in source_list if str(s) in failures]:
+            row = dict(test=str(test), status="BUILD_FAIL", log=failed_logs[0])
         else:
             selected_archives = [vendor_archives[library.archive] for library in vendor_sources.required(vendors, source_list)]
-            linked = invoke([compiler, "-stdlib=libc++", "-pthread", *map(obj, source_list), *selected_archives, *libs, "-o", binary], log)
+            linked = invoke([*link_flags, *map(obj, source_list), *selected_archives, *libs, "-o", binary], log)
             if linked["status"]:
                 row = dict(test=str(test), status="LINK_FAIL", **{k: v for k, v in linked.items() if k != "status"})
             else:
@@ -294,16 +327,12 @@ for phase, selected in [("runtime", [t for t in tests if t.parent == Path("tests
             binary.unlink(missing_ok=True)
         results.append(row)
         if row["status"] != "PASS" or len(results) % 25 == 0:
-            print(row["status"], test, row.get("cases", []), "log:", log, flush=True)
+            print(row["status"], test, row.get("cases", []), "log:", row["log"], flush=True)
         (run / "results.json").write_text(json.dumps(results, indent=2) + "\n")
     subset = [r for r in results if (Path(r["test"]).parent == Path("tests/rt")) == (phase == "runtime")]
     print(phase, "binaries:", len(subset), "passed:", sum(r["status"] == "PASS" for r in subset),
           "cases:", [sum(r.get("cases", [0, 0, 0])[i] for r in subset) for i in range(3)], flush=True)
 
-provenance["identity_unchanged"] = identity() == source_identity
-provenance["inputs_unchanged"] = all((gateway / p).is_file() and digest(gateway / p) == h for p, h in inputs.items())
-provenance["archive_sha256"] = digest(build / "libuos_gateway.a")
-(run / "provenance.json").write_text(json.dumps(provenance, indent=2, default=str) + "\n")
-print("receipt:", run, flush=True)
-raise SystemExit(any(r["status"] != "PASS" for r in results) or not provenance["inputs_unchanged"] or not provenance["identity_unchanged"])
+verified = finalize()
+raise SystemExit(not verified or test_compile_failed or any(r["status"] != "PASS" for r in results))
 PYTHON
