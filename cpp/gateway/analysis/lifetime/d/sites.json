@@ -4869,7 +4869,8 @@
       "sites": []
     },
     "src/recent_model_context.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed synchronous context-window selection, source precedence and calculations. Views and pointers are used within each call, and projected results own their values.",
       "sites": []
     },
     "src/release.cpp": {
