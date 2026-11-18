@@ -3462,8 +3462,16 @@
       ]
     },
     "src/provider/claude_capacity_rollups.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Capacity and usage lists use local cursors and typed point snapshots.",
+      "sites": [
+        {
+          "lines": "236-267,269-278,355-397",
+          "kind": "list iteration, keying and cursor cleanup",
+          "verdict": "SAFE",
+          "reason": "KV, list cursor, each row and the hash task's point stay live through next, return and joined validation."
+        }
+      ]
     },
     "src/provider/claude_code.cpp": {
       "status": "pending",

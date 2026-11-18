@@ -296,7 +296,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/cerebras_rate_limits.cpp`
 - [x] `src/provider/cerebras_responses.cpp`
 - [x] `src/provider/claude_capacity_history.cpp`
-- [ ] `src/provider/claude_capacity_rollups.cpp`
+- [x] `src/provider/claude_capacity_rollups.cpp`
 - [ ] `src/provider/claude_code.cpp`
 - [ ] `src/provider/claude_code_access.cpp`
 - [ ] `src/provider/claude_code_accounts.cpp`
@@ -1882,3 +1882,9 @@ Capacity history has separate owning per-rollup reads and a local list cursor.
 - 229-259,413-427 · hash and rollup-key arithmetic · **SAFE** · The event, window selector, KV and point are owned values. The local projection sees only the frame-owned event.
 - 493-527 · fail-fast rollup fan-outs and commit · **SAFE** · Each reader owns KV and the point/meter input, so a failed sibling does not release its receiver. AtomicOperation joins its commit.
 - 530-586 · history iterator and close · **SAFE** · The owning cursor and frame-local points remain live across next or return, and sorting takes place after iteration.
+
+### `src/provider/claude_capacity_rollups.cpp`
+
+Capacity and usage lists use local cursors and typed point snapshots.
+
+- 236-267,269-278,355-397 · list iteration, keying and cursor cleanup · **SAFE** · KV, list cursor, each row and the hash task's point stay live through next, return and joined validation.
