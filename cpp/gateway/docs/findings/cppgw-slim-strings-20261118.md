@@ -139,6 +139,32 @@ passed prefix, suffix and substring checks across all 65,536 two-byte inputs
 around `input_`. The full baseline release, candidate release and sanitizer
 receipts are pending.
 
+The focused release preview passed the 20-case string binary and all nine
+Responses conformance cases, including the new prefix fixture. The isolated
+string benchmark pinned the process to CPU 3 and alternated five runs per
+revision. Each number is median nanoseconds per call, followed by the range.
+
+| Operation                                    |              Before |               After |
+| -------------------------------------------- | ------------------: | ------------------: |
+| UTF-8 `indexOf`, 300,000 calls               | 1,287 [1,283–1,335] | 1,300 [1,297–1,341] |
+| UTF-16 conversion plus `find`, 300,000 calls |       571 [568–591] |       573 [571–592] |
+| UTF-8 `slice`, 300,000 calls                 |       740 [736–758] |       737 [735–738] |
+| Short ASCII `trim`, 1,800,000 calls          |    24.2 [24.0–26.8] |    27.9 [27.9–28.0] |
+
+The two indexing paths were measured on strings of 86–590 UTF-8 bytes
+containing alternating two-byte and supplementary characters. The direct
+UTF-16 reference assumes valid UTF-8 and a bounded integer position. The
+retained UTF-8 search and slice had overlapping before-and-after ranges.
+The simplified trim loop added about 3.8 ns per call on its short ASCII mix.
+The string object's `.text` section shrank from 32,256 to 31,560 bytes
+under Clang 21 at `-O2`.
+
+```bash
+bash "$scratch/measure/run-isolated-priority.sh" before-strings
+bash "$scratch/measure/run-isolated-priority.sh" after-strings
+llvm-size-21 -A "$scratch/measure/before-string.o" "$scratch/measure/after-string.o"
+```
+
 The runtime's general text guide still lists the retired APIs. The two
 packaged-validation defects in the starting receipt remain outside this
 lane. Both `chat-invalid-role` and `responses-invalid-tool-type` returned 200
