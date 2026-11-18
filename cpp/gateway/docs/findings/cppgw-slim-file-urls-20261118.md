@@ -131,10 +131,63 @@ env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 TZ=UTC HOME="$job/early/ho
 
 Strict Clang syntax checks passed for all six changed production units and eight changed test units. The resolved test link lists reach `url.cpp` in all 441 tests, `static.cpp` in 45, `native_addon.cpp` in 237, `legacy_codec.cpp` in six, `native_kv_bootstrap.cpp` in eight, and `permissions_linux.cpp` in one. Both complete driver profiles cover the union.
 
+The same focused command with `$job/early-asan` as the scratch directory, `clang++-21-a66524841dec/asan` as the baseline object directory, and the ASan/UBSan flags above passed 98 of 98 cases. That run reused 299 objects and spent 100.421 seconds preparing the selected link closures.
+
 ## Full suite receipts
 
-| Tree and profile         | Passing binaries | Passing cases | Object phase | Link and test phase |       Total |
-| ------------------------ | ---------------: | ------------: | -----------: | ------------------: | ----------: |
-| Starting commit, release |          441/441 |   5,025/5,025 |  3,285.848 s |            98.021 s | 3,384.424 s |
+| Tree and profile              | Passing binaries | Passing cases | Object phase | Link and test phase |       Total |
+| ----------------------------- | ---------------: | ------------: | -----------: | ------------------: | ----------: |
+| Starting commit, release      |          441/441 |   5,025/5,025 |  3,285.848 s |            98.021 s | 3,384.424 s |
+| Starting commit, ASan + UBSan |          441/441 |   5,025/5,025 |  4,560.389 s |           286.714 s | 4,847.657 s |
+| Refactor, release             |          441/441 |   5,030/5,030 |     36.416 s |           102.979 s |   139.940 s |
+| Refactor, ASan + UBSan        |          441/441 |   5,030/5,030 |     46.835 s |           290.504 s |   337.884 s |
 
-The release baseline compiled 369 of 369 production units and exited zero. Its input digest is `4bd325660dc76265ad6be1aacdc394632848f6173771523e04e9bec41fb2e6a2`. The receipt at `$job/receipts/baseline-release.json` has SHA-256 `857715ec74a32e2ba1ed2e10eeec27489a1966dd2b44b7feda5355f4bd2648b5`. The cold sanitizer baseline and both final profiles are pending.
+Both baselines exited zero at the starting commit and retained input digest `4bd325660dc76265ad6be1aacdc394632848f6173771523e04e9bec41fb2e6a2`. I then ran both profiles again from the same worktree at commit `fb6d30097d3cf4168d63f92769eeaa86eb63dfb5`, tree `a72ffea61f1611060eff193d2719a171ac7c86a4`. Each final profile rebuilt 14 changed C++ units, accounted for 369 production objects, and exited zero with input digest `fd5ab28cf92db09639c668ad87c131a4050125623fbb7dddf1733e11123b540f`. Subsequent report commits carry the same code and tests.
+
+```bash
+# In the qualification worktree, with run_ci defined above:
+git checkout --detach fb6d30097d3cf4168d63f92769eeaa86eb63dfb5
+run_ci release &
+release_pid=$!
+run_ci asan &
+asan_pid=$!
+wait "$release_pid"
+wait "$asan_pid"
+```
+
+| Receipt under `$job/receipts` | SHA-256                                                            |
+| ----------------------------- | ------------------------------------------------------------------ |
+| `baseline-release.json`       | `857715ec74a32e2ba1ed2e10eeec27489a1966dd2b44b7feda5355f4bd2648b5` |
+| `baseline-asan.json`          | `30f0edc4de623336808f390d70cde50b97b4c806090d62f6c42cdf704da64071` |
+| `final-release.json`          | `790cdd7fac0099e3003c49655349454f3627359d369a94c13893b4653acb7cd5` |
+| `final-asan.json`             | `d66430566641142deaba8e352f2196fa947d0c24c70f8ef5d6fb17786791284c` |
+
+| Named test                                         | Baseline cases passed in each profile | Final cases passed in each profile |
+| -------------------------------------------------- | ------------------------------------: | ---------------------------------: |
+| `rt/url_test.cpp`                                  |                                     6 |                                  7 |
+| `static_assets_test.cpp`                           |                                    38 |                                 38 |
+| `static_differential_test.cpp`                     |                                     1 |                                  1 |
+| `native_addon_differential_test.cpp`               |                                     4 |                                  4 |
+| `sqlite_readonly_test.cpp`                         |                                     5 |                                  6 |
+| `kv_conversion_legacy_codec_differential_test.cpp` |                                     3 |                                  4 |
+| `kv_conversion_convert_differential_test.cpp`      |                                    13 |                                 13 |
+| `permissions_linux_test.cpp`                       |                                     5 |                                  6 |
+| `runtime_native_startup_test.cpp`                  |                                    18 |                                 19 |
+
+The per-binary comparison found zero regressions and five additional cases in each profile. The startup and static fixtures accessed source inputs beneath the reserved-byte directory. The permissions fixture re-executed its binary beneath a separate reserved-byte directory and loaded the manifest and artifact beside it. The final sanitizer logs contain zero ASan, LeakSanitizer, and UBSan diagnostics. The supervisor timing, JSON recursion, and retention cases named in the incoming findings each passed on the baseline and refactor with this runner's sanitizer flags.
+
+Both Markdown files passed `bun --no-env-file --no-install run format:check` with the pinned Bun 1.4.0 toolchain and the frozen root and lint installs in scratch. `git diff --check 7bde4d44 HEAD` passed. The patch stays within the six production sources, eight test sources and two documents.
+
+## Findings outside the owned code
+
+- Clang 21 requires the vendored simdutf header flag documented above for the strict portable build. The diagnostics concern signedness in the existing dependency.
+- The Linux Bun-compatible SQLite options wrapper treats a `file:` URI as a literal filename and returns `SQLITE_CANTOPEN` in its existing differential case. Snapshot conversion uses explicit native SQLite URI flags. The new reserved-byte test exercises those flags and the immutable query parameter.
+- The filesystem wrappers pass paths to POSIX as C strings, which terminate at embedded NUL bytes. The existing file URL corpus records the decoded NUL byte at the URL boundary.
+
+## Handoff and summary
+
+The GitHub publication probe `GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false git push --dry-run origin HEAD:refs/heads/agent-jobs/cppgw-slim-file-urls-20261118` exited 128 while requesting HTTPS credentials. The refreshed `origin/development` at `2ac5aae69b0f0bac77cf1c6f329995cf1187616c` predates integration of `cpp/gateway`. The port maintainer owns the integration with the companion lanes once branch publication is available.
+
+- Trusted resource lookups now use filesystem paths. The refactor removed 37 production lines, from 1,753 to 1,716 across six files.
+- Linux ARM64 release and ASan/UBSan each passed 441 of 441 binaries and 5,030 of 5,030 cases, up from 5,025 baseline cases. The reserved-byte fixtures covered asset bytes, codec helper paths, startup confinement, and immutable read-only SQLite without sidecars.
+- GitHub write authentication blocked publication. The work is committed on clean local branch `agent-job`.
