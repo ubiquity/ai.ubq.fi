@@ -66,59 +66,12 @@ namespace uos::rt::crypto {
 
     // ---- small codecs
 
-    std::string toBase64(BytesView bytes, bool url) {
-      const char* alphabet = url ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-      std::string out;
-      out.reserve((bytes.size() + 2) / 3 * 4);
-      std::size_t index = 0;
-      for (; index + 3 <= bytes.size(); index += 3) {
-        const std::uint32_t triple = (std::uint32_t(bytes[index]) << 16) | (std::uint32_t(bytes[index + 1]) << 8) | bytes[index + 2];
-        out += alphabet[(triple >> 18) & 63];
-        out += alphabet[(triple >> 12) & 63];
-        out += alphabet[(triple >> 6) & 63];
-        out += alphabet[triple & 63];
-      }
-      const std::size_t rest = bytes.size() - index;
-      if (rest == 1) {
-        const std::uint32_t triple = std::uint32_t(bytes[index]) << 16;
-        out += alphabet[(triple >> 18) & 63];
-        out += alphabet[(triple >> 12) & 63];
-        if (!url) out += "==";
-      } else if (rest == 2) {
-        const std::uint32_t triple = (std::uint32_t(bytes[index]) << 16) | (std::uint32_t(bytes[index + 1]) << 8);
-        out += alphabet[(triple >> 18) & 63];
-        out += alphabet[(triple >> 12) & 63];
-        out += alphabet[(triple >> 6) & 63];
-        if (!url) out += '=';
-      }
-      return out;
-    }
-
-    // WTF's base64URLDecode as used for JWK members: the URL alphabet only, with
-    // optional trailing '=' padding; anything else is a decode failure.
+    // JWK members allow the URL alphabet and optional trailing padding.
     std::optional<Bytes> fromBase64Url(std::string_view text) {
       while (!text.empty() && text.back() == '=') text.remove_suffix(1);
-      if (text.size() % 4 == 1) return std::nullopt;
-      Bytes out;
-      out.reserve(text.size() * 3 / 4);
-      std::uint32_t buffer = 0;
-      int bits = 0;
-      for (char c : text) {
-        int value;
-        if (c >= 'A' && c <= 'Z') value = c - 'A';
-        else if (c >= 'a' && c <= 'z') value = c - 'a' + 26;
-        else if (c >= '0' && c <= '9') value = c - '0' + 52;
-        else if (c == '-') value = 62;
-        else if (c == '_') value = 63;
-        else return std::nullopt;
-        buffer = (buffer << 6) | static_cast<std::uint32_t>(value);
-        bits += 6;
-        if (bits >= 8) {
-          bits -= 8;
-          out.push_back(static_cast<std::uint8_t>((buffer >> bits) & 0xff));
-        }
-      }
-      return out;
+      if (text.size() % 4 == 1 || text.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_") != std::string_view::npos)
+        return std::nullopt;
+      return rt::fromBase64(text);
     }
 
     std::string lowerAscii(std::string_view text) {
@@ -832,13 +785,9 @@ namespace uos::rt::crypto {
     fillRandom(bytes);
     bytes[6] = static_cast<std::uint8_t>((bytes[6] & 0x0f) | 0x40);
     bytes[8] = static_cast<std::uint8_t>((bytes[8] & 0x3f) | 0x80);
-    std::string out;
+    std::string out = rt::toHex(bytes);
     out.reserve(36);
-    for (std::size_t index = 0; index < bytes.size(); ++index) {
-      if (index == 4 || index == 6 || index == 8 || index == 10) out += '-';
-      out += HEX[bytes[index] >> 4];
-      out += HEX[bytes[index] & 15];
-    }
+    for (const std::size_t position : {20u, 16u, 12u, 8u}) out.insert(position, 1, '-');
     return out;
   }
 
@@ -924,19 +873,19 @@ namespace uos::rt::crypto {
         const bool isPrivate = impl.type == "private";
         out["alg"] = rsaJwkAlg(*impl.hash);
         if (isPrivate) {
-          out["d"] = toBase64(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_D), true);
-          out["dp"] = toBase64(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_EXPONENT1), true);
-          out["dq"] = toBase64(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_EXPONENT2), true);
+          out["d"] = rt::toBase64Url(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_D));
+          out["dp"] = rt::toBase64Url(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_EXPONENT1));
+          out["dq"] = rt::toBase64Url(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_EXPONENT2));
         }
-        out["e"] = toBase64(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_E), true);
+        out["e"] = rt::toBase64Url(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_E));
         out["ext"] = true;
         out["key_ops"] = std::move(keyOps);
         out["kty"] = "RSA";
-        out["n"] = toBase64(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_N), true);
+        out["n"] = rt::toBase64Url(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_N));
         if (isPrivate) {
-          out["p"] = toBase64(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_FACTOR1), true);
-          out["q"] = toBase64(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_FACTOR2), true);
-          out["qi"] = toBase64(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_COEFFICIENT1), true);
+          out["p"] = rt::toBase64Url(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_FACTOR1));
+          out["q"] = rt::toBase64Url(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_FACTOR2));
+          out["qi"] = rt::toBase64Url(rsaComponent(pkey, OSSL_PKEY_PARAM_RSA_COEFFICIENT1));
         }
         return out;
       }
@@ -944,7 +893,7 @@ namespace uos::rt::crypto {
       else if (impl.id == Id::hmac) out["alg"] = hmacJwkAlg(*impl.hash);
       else notSupported(ALGORITHM_NOT_SUPPORTED);
       out["ext"] = true;
-      out["k"] = toBase64(impl.secret, true);
+      out["k"] = rt::toBase64Url(impl.secret);
       out["key_ops"] = std::move(keyOps);
       out["kty"] = "oct";
       return out;
@@ -1107,17 +1056,9 @@ namespace uos::rt::crypto {
       throw std::invalid_argument("uos::rt::crypto::Hash::digest: unsupported encoding " + std::string(encoding));
     const Bytes bytes = digest();
     if (name == "hex") return rt::toHex(bytes);
-    if (name == "base64") return toBase64(bytes, false);
-    if (name == "base64url") return toBase64(bytes, true);
-    std::string out;
-    for (std::uint8_t byte : bytes) {
-      if (byte < 0x80) out += static_cast<char>(byte);
-      else {
-        out += static_cast<char>(0xc0 | (byte >> 6));
-        out += static_cast<char>(0x80 | (byte & 0x3f));
-      }
-    }
-    return out;
+    if (name == "base64") return rt::toBase64(bytes);
+    if (name == "base64url") return rt::toBase64Url(bytes);
+    return rt::binaryString(bytes);
   }
 
   namespace {
