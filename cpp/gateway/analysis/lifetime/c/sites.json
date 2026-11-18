@@ -1045,8 +1045,16 @@
       "sites": []
     },
     "include/uos/provider/anthropic_replay.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Replay metadata transformation is synchronous.",
+      "sites": [
+        {
+          "lines": "58",
+          "kind": "clock callback",
+          "verdict": "SAFE",
+          "reason": "Replay options hold a callable value used by synchronous normalization."
+        }
+      ]
     },
     "include/uos/provider/anthropic_response_wire.hpp": {
       "status": "pending",
