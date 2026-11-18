@@ -314,7 +314,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/catalog/promotion.hpp`
 - [x] `include/uos/catalog/store.hpp`
 - [x] `include/uos/catalog/types.hpp`
-- [ ] `include/uos/config.hpp`
+- [x] `include/uos/config.hpp`
 - [ ] `include/uos/debug_routing.hpp`
 - [ ] `include/uos/decisions/handlers.hpp`
 - [ ] `include/uos/defaults.hpp`
@@ -1759,6 +1759,10 @@ Reviewed catalog KV borrows, refresh lease callbacks and parser views.
 
 Reviewed the catalog snapshot types. They own stored chunks, tags and parsed JSON and declare no asynchronous callback.
 
+### `include/uos/config.hpp`
+
+Reviewed process configuration storage. Configuration values and returned build identity strings have owners, and this interface declares no suspension or escaping callback.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2007,4 +2011,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-206/286 files reviewed. 379 sites: 358 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+207/286 files reviewed. 379 sites: 358 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

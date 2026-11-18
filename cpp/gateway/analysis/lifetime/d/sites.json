@@ -8463,7 +8463,8 @@
       "sites": []
     },
     "include/uos/config.hpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed process configuration storage. Configuration values and returned build identity strings have owners, and this interface declares no suspension or escaping callback.",
       "sites": []
     },
     "include/uos/debug_routing.hpp": {
