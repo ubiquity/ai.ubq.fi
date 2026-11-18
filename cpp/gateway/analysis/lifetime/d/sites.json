@@ -9350,8 +9350,31 @@
       ]
     },
     "include/uos/models/codex_models_fetch.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed model fetch and validation options, transport failure callback, and catalog persistence declarations.",
+      "sites": [
+        {
+          "lines": [
+            28,
+            32,
+            33,
+            35,
+            42,
+            43,
+            45,
+            84,
+            85
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The fetch and validation Tasks own option, credential and KV values. The on-failure callable is stored by value and invoked synchronously."
+        }
+      ]
     },
     "include/uos/models/codex_models_whitelist.hpp": {
       "reviewed": false,

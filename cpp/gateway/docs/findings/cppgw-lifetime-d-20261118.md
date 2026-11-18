@@ -353,7 +353,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/models/catalog.hpp`
 - [x] `include/uos/models/codex_models.hpp`
 - [x] `include/uos/models/codex_models_availability.hpp`
-- [ ] `include/uos/models/codex_models_fetch.hpp`
+- [x] `include/uos/models/codex_models_fetch.hpp`
 - [ ] `include/uos/models/codex_models_whitelist.hpp`
 - [ ] `include/uos/models/metadata.hpp`
 - [ ] `include/uos/models/openrouter_models.hpp`
@@ -1992,6 +1992,12 @@ Reviewed account refresh, unsupported evidence and cache interfaces.
 
 - L80, 81, 84, 85, 93, 98, 99, 131 **SAFE** · Read and mutation Tasks receive owning entries, IDs and options. Each copies its shared store or pending Promise before suspension.
 
+### `include/uos/models/codex_models_fetch.hpp`
+
+Reviewed model fetch and validation options, transport failure callback, and catalog persistence declarations.
+
+- L28, 32, 33, 35, 42, 43, 45, 84, 85 **SAFE** · The fetch and validation Tasks own option, credential and KV values. The on-failure callable is stored by value and invoked synchronously.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2240,4 +2246,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-245/286 files reviewed. 420 sites: 398 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+246/286 files reviewed. 421 sites: 399 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
