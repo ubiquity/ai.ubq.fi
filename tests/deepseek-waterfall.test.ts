@@ -1,7 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 
-import { buildDeepSeekWaterfallCodexRecord } from "../src/catalog/models.ts";
+import { buildDeepSeekWaterfallCodexRecord, withDeepSeekWaterfallModel } from "../src/catalog/models.ts";
 import { handleDeepSeekWaterfallResponses, type DeepSeekWaterfallDispatch, type DeepSeekWaterfallPaidTail } from "../src/deepseek/waterfall-handler.ts";
 import { resolvePaidRoutingState } from "../src/paid-fallback/health.ts";
 import {
@@ -229,6 +229,23 @@ test("waterfall: the Codex catalogue record carries the advertised contract", ()
   assert.equal(row.context_window, 800_000);
   assert.equal(row.max_context_window, 800_000);
   assert.equal(row.auto_compact_token_limit, 720_000);
+});
+
+test("waterfall: the gateway row replaces an upstream same-id row instead of inheriting its window", () => {
+  const upstream = {
+    slug: DEEPSEEK_WATERFALL_MODEL_ID,
+    context_window: 1_048_576,
+    max_context_window: 1_048_576,
+    auto_compact_token_limit: 943_718,
+  };
+  const models = withDeepSeekWaterfallModel([{ slug: "upstream-before" }, upstream, { slug: "upstream-after" }]);
+  assert.deepEqual(
+    models.map((model) => model.slug),
+    ["upstream-before", DEEPSEEK_WATERFALL_MODEL_ID, "upstream-after"]
+  );
+  assert.equal(models[1]?.context_window, 800_000);
+  assert.equal(models[1]?.max_context_window, 800_000);
+  assert.equal(models[1]?.auto_compact_token_limit, 720_000);
 });
 
 const sseBody = (events: readonly Record<string, unknown>[]): string =>

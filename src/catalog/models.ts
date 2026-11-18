@@ -343,11 +343,17 @@ export const buildDeepSeekWaterfallCodexRecord = (): Record<string, unknown> => 
   experimental_supported_tools: [],
 });
 
-/** Appends the waterfall record when the stored catalogue does not list it. */
+/**
+ * Ensures the gateway-owned waterfall row is present with its advertised
+ * contract. The stored Codex catalogue is an upstream document, so a same-id
+ * row there must not outrank the gateway's admission-safe window; replace it in
+ * place to preserve catalogue order.
+ */
 export const withDeepSeekWaterfallModel = (models: readonly Record<string, unknown>[]): Record<string, unknown>[] => {
+  const record = buildDeepSeekWaterfallCodexRecord();
   const present = new Set(models.map((model) => getString(model.slug) ?? getString(model.id) ?? ""));
-  if (present.has(DEEPSEEK_WATERFALL_MODEL_ID)) return [...models];
-  return [...models, buildDeepSeekWaterfallCodexRecord()];
+  if (!present.has(DEEPSEEK_WATERFALL_MODEL_ID)) return [...models, record];
+  return models.map((model) => ((getString(model.slug) ?? getString(model.id) ?? "") === DEEPSEEK_WATERFALL_MODEL_ID ? record : model));
 };
 
 /**
