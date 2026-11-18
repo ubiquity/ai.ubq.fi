@@ -8239,8 +8239,30 @@
       ]
     },
     "include/uos/authority/native_paid_contracts.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed paid authority's row and outcome records and synchronous codecs.",
+      "sites": [
+        {
+          "lines": [
+            227,
+            232,
+            237,
+            244,
+            285,
+            290,
+            321,
+            325,
+            329,
+            333
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Kind views refer to static literals and payment evidence travels in owning outcome records."
+        }
+      ]
     },
     "include/uos/authority/native_paid_policy.hpp": {
       "reviewed": false,

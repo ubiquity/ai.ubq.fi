@@ -304,7 +304,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/authority/native_kernel.hpp`
 - [x] `include/uos/authority/native_kernel_contracts.hpp`
 - [x] `include/uos/authority/native_paid.hpp`
-- [ ] `include/uos/authority/native_paid_contracts.hpp`
+- [x] `include/uos/authority/native_paid_contracts.hpp`
 - [ ] `include/uos/authority/native_paid_policy.hpp`
 - [ ] `include/uos/authority/native_principal_contracts.hpp`
 - [ ] `include/uos/authority/native_runtime_contracts.hpp`
@@ -1700,6 +1700,12 @@ Reviewed synchronous paid usage, lease and rollup helpers, including borrowed ke
 
 - L53, 54, 55, 56, 57, 62, 66, 71, 105, 123, 163, 174, 209, 213, 218, 235, 236, 245 **SAFE** · Paid views are consumed within synchronous key or settlement planning. Key and plan values retain their own data, and static labels refer to literals.
 
+### `include/uos/authority/native_paid_contracts.hpp`
+
+Reviewed paid authority's row and outcome records and synchronous codecs.
+
+- L227, 232, 237, 244, 285, 290, 321, 325, 329, 333 **SAFE** · Kind views refer to static literals and payment evidence travels in owning outcome records.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1948,4 +1954,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-196/286 files reviewed. 368 sites: 347 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+197/286 files reviewed. 369 sites: 348 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
