@@ -908,8 +908,16 @@
       ]
     },
     "include/uos/paid_fallback/health.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Health reads, catalog operations and fallback routing API.",
+      "sites": [
+        {
+          "lines": "23,27-39,69-70,87-88",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "Each task owns its response, signal or option data; bookkeeping awaits its owned callable before releasing it."
+        }
+      ]
     },
     "include/uos/paid_fallback/index.hpp": {
       "status": "pending",

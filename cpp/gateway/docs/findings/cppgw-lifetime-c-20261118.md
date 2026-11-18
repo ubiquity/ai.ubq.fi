@@ -123,7 +123,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/live/sideband.hpp`
 - [x] `include/uos/live/upstream.hpp`
 - [x] `include/uos/paid_fallback/claude_code_route.hpp`
-- [ ] `include/uos/paid_fallback/health.hpp`
+- [x] `include/uos/paid_fallback/health.hpp`
 - [ ] `include/uos/paid_fallback/index.hpp`
 - [ ] `include/uos/paid_fallback/ledger_admission.hpp`
 - [ ] `include/uos/paid_fallback/ledger_backfill.hpp`
@@ -801,3 +801,9 @@ Live upstream helpers and mapping API.
 The subscription attempt receives its body and options as values.
 
 - 21 · owning task parameters · **SAFE** · The attempt owns the body and options while dispatching; telemetry referents are retained by its joined caller.
+
+### `include/uos/paid_fallback/health.hpp`
+
+Health reads, catalog operations and fallback routing API.
+
+- 23,27-39,69-70,87-88 · task and callback interface · **SAFE** · Each task owns its response, signal or option data; bookkeeping awaits its owned callable before releasing it.
