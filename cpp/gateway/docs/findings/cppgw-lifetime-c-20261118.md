@@ -314,7 +314,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/lithos_streams.cpp`
 - [x] `src/provider/metered.cpp`
 - [x] `src/provider/openrouter.cpp`
-- [ ] `src/provider/openrouter_handlers.cpp`
+- [x] `src/provider/openrouter_handlers.cpp`
 - [ ] `src/provider/openrouter_request_controls.cpp`
 - [ ] `src/provider/openrouter_streams.cpp`
 - [ ] `src/provider/openrouter_web_tools.cpp`
@@ -2012,3 +2012,11 @@ Catalog and transport requests own their parameters, and the public reference-ta
 - 18-32,177-185 · model lookup refresh and rejection continuation · **SAFE** · The child owns the model string and a resolver function pointer. The rejection reaction has no captures, and warm resolution uses fresh snapshots.
 - 34-79,81-147 · dispatch hooks, deadline and body tasks · **SAFE** · Options own the hooks through invocation. Fetch and body operations retain their own state, and detached error-body cancellation keeps its stream state and a stateless rejection reaction.
 - 151-175,187-207 · catalog snapshots and reference-taking factories · **SAFE** · Catalog scans retain a shared snapshot during synchronous iteration. The reference-taking entry points construct owned body and options arguments before returning the child task.
+
+### `src/provider/openrouter_handlers.cpp`
+
+Both handlers await dispatch and buffered reads in the request lifetime. The stream adapters take over copied telemetry.
+
+- 25-60 · borrowed JSON walk · **SAFE** · Every pending pointer refers to the immutable local JSON root and is consumed before the synchronous helper returns.
+- 74-97,125-134,157-166 · transport closure and telemetry borrow · **SAFE** · The dispatch frame owns the attempt callable through its awaited result. Handler locals and the request owner's UsageContext survive dispatch and the buffered capture, and stream factories copy telemetry.
+- 110-140,142-176 · buffered body, status views and usage joins · **SAFE** · The handlers retain request snapshots and buffered payloads. The status view refers to the local payload, and bounded reads use a named task.

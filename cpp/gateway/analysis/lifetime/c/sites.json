@@ -3815,8 +3815,28 @@
       ]
     },
     "src/provider/openrouter_handlers.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Both handlers await dispatch and buffered reads in the request lifetime. The stream adapters take over copied telemetry.",
+      "sites": [
+        {
+          "lines": "25-60",
+          "kind": "borrowed JSON walk",
+          "verdict": "SAFE",
+          "reason": "Every pending pointer refers to the immutable local JSON root and is consumed before the synchronous helper returns."
+        },
+        {
+          "lines": "74-97,125-134,157-166",
+          "kind": "transport closure and telemetry borrow",
+          "verdict": "SAFE",
+          "reason": "The dispatch frame owns the attempt callable through its awaited result. Handler locals and the request owner's UsageContext survive dispatch and the buffered capture, and stream factories copy telemetry."
+        },
+        {
+          "lines": "110-140,142-176",
+          "kind": "buffered body, status views and usage joins",
+          "verdict": "SAFE",
+          "reason": "The handlers retain request snapshots and buffered payloads. The status view refers to the local payload, and bounded reads use a named task."
+        }
+      ]
     },
     "src/provider/openrouter_request_controls.cpp": {
       "status": "pending",
