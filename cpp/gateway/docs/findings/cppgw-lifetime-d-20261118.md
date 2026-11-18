@@ -34,7 +34,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/admin/defaults.cpp`
 - [x] `src/admin/error_log.cpp`
 - [x] `src/admin/index.cpp`
-- [ ] `src/admin/kernel.cpp`
+- [x] `src/admin/kernel.cpp`
 - [ ] `src/admin/sentinel_incident.cpp`
 - [ ] `src/agent_messages.cpp`
 - [ ] `src/analytics.cpp`
@@ -415,6 +415,20 @@ Reviewed error persistence, host log sizes, history iteration and replay retenti
 
 Include-only translation unit. The admin public interfaces are audited in the header.
 
+### `src/admin/kernel.cpp`
+
+Rechecked the previously reported queue-list defect and both usage fan-outs against the integrated source, then traced the admin writes and diagnostics.
+
+- L50, 56, 90, 92 **SAFE** · The database Promise yields an owning handle. The nullable adapter callbacks are captureless and transform outcomes by value.
+- L96, 98, 105, 112, 114, 118, 123, 129, 131 **SAFE** · Public-key writes await an atomic operation held by the same coroutine and retain the request, KV and copied records.
+- L79, 85, 135, 138, 143, 144, 146, 147 **SAFE** · The fixed queue workers receive copied KV, shared output and owner or record parameters. Both fail-fast joins may outlive the parent without losing child owners.
+- L159, 166, 181, 187, 188, 195, 201, 202 **SAFE** · Usage workers likewise hold their output maps and input records in frame parameters. Their safety survives exceptional sibling failure.
+- L172, 176, 209, 212, 215, 220, 223, 229, 235, 236, 239, 242 **SAFE** · Inventory and usage snapshots are named values. Direct delegation keeps the query strings and options in the caller or copies them into the child.
+- L270, 277, 279, 284, 286, 293, 300, 308, 310, 314, 315 **SAFE** · Policy mutations use named options and await each child while the request and resolved input variants remain live.
+- L324, 332, 335, 340, 342, 345, 346, 351, 368, 372, 373 **SAFE** · The projection children own their KV and configuration values, and the rejection adapters borrow nothing. References into the named result tuple remain valid across stats recording.
+- L379, 380, 384, 386, 389, 390, 397, 398, 399, 403, 406, 407, 408 **SAFE** · Diagnostics use by-value account and signal state, stable local body and request owners, and runtime combined signals whose dependents are weak.
+- L413, 414, 415, 416, 418, 421, 422, 426, 427, 430, 431, 432, 433, 435, 438, 439, 443, 444, 445 **SAFE** · Each row or identity Promise is built from owned copies before the join. The lookups capture by reference only during synchronous none_of calls, and PATCH views refer to the immutable local JSON.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -423,4 +437,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-11/286 files reviewed. 47 sites: 42 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+12/286 files reviewed. 56 sites: 51 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

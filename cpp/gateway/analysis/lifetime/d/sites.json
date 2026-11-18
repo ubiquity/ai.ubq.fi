@@ -823,8 +823,205 @@
       "sites": []
     },
     "src/admin/kernel.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Rechecked the previously reported queue-list defect and both usage fan-outs against the integrated source, then traced the admin writes and diagnostics.",
+      "sites": [
+        {
+          "lines": [
+            50,
+            56,
+            90,
+            92
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The database Promise yields an owning handle. The nullable adapter callbacks are captureless and transform outcomes by value."
+        },
+        {
+          "lines": [
+            96,
+            98,
+            105,
+            112,
+            114,
+            118,
+            123,
+            129,
+            131
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Public-key writes await an atomic operation held by the same coroutine and retain the request, KV and copied records."
+        },
+        {
+          "lines": [
+            79,
+            85,
+            135,
+            138,
+            143,
+            144,
+            146,
+            147
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The fixed queue workers receive copied KV, shared output and owner or record parameters. Both fail-fast joins may outlive the parent without losing child owners."
+        },
+        {
+          "lines": [
+            159,
+            166,
+            181,
+            187,
+            188,
+            195,
+            201,
+            202
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Usage workers likewise hold their output maps and input records in frame parameters. Their safety survives exceptional sibling failure."
+        },
+        {
+          "lines": [
+            172,
+            176,
+            209,
+            212,
+            215,
+            220,
+            223,
+            229,
+            235,
+            236,
+            239,
+            242
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Inventory and usage snapshots are named values. Direct delegation keeps the query strings and options in the caller or copies them into the child."
+        },
+        {
+          "lines": [
+            270,
+            277,
+            279,
+            284,
+            286,
+            293,
+            300,
+            308,
+            310,
+            314,
+            315
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Policy mutations use named options and await each child while the request and resolved input variants remain live."
+        },
+        {
+          "lines": [
+            324,
+            332,
+            335,
+            340,
+            342,
+            345,
+            346,
+            351,
+            368,
+            372,
+            373
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The projection children own their KV and configuration values, and the rejection adapters borrow nothing. References into the named result tuple remain valid across stats recording."
+        },
+        {
+          "lines": [
+            379,
+            380,
+            384,
+            386,
+            389,
+            390,
+            397,
+            398,
+            399,
+            403,
+            406,
+            407,
+            408
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Diagnostics use by-value account and signal state, stable local body and request owners, and runtime combined signals whose dependents are weak."
+        },
+        {
+          "lines": [
+            413,
+            414,
+            415,
+            416,
+            418,
+            421,
+            422,
+            426,
+            427,
+            430,
+            431,
+            432,
+            433,
+            435,
+            438,
+            439,
+            443,
+            444,
+            445
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each row or identity Promise is built from owned copies before the join. The lookups capture by reference only during synchronous none_of calls, and PATCH views refer to the immutable local JSON."
+        }
+      ]
     },
     "src/admin/sentinel_incident.cpp": {
       "reviewed": false,
