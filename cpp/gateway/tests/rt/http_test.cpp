@@ -16,6 +16,22 @@ using namespace std::string_view_literals;
 using namespace uos::rt;
 namespace json = uos::json;
 
+ASYNC_TEST("a rejected response body read releases the original stream lock") {
+  std::optional<ReadableStreamDefaultController<ByteChunk>> controller;
+  UnderlyingSource<ByteChunk> source;
+  source.start = [&controller](ReadableStreamDefaultController<ByteChunk> active) { controller.emplace(std::move(active)); };
+  const ByteStream stream(std::move(source), QueuingStrategy{0});
+  const Response response{BodyInit(stream)};
+  auto reading = response.text();
+  EXPECT(stream.locked());
+
+  const auto failure = makeReason(JsError("fixture"));
+  controller->error(failure);
+  EXPECT_REJECTS_REASON(std::move(reading), failure);
+  EXPECT(!stream.locked());
+  EXPECT(response.bodyUsed());
+}
+
 namespace {
   struct HttpStep {
     int scenario;

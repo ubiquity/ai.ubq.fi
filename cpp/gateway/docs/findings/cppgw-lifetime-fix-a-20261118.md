@@ -74,7 +74,7 @@ completes, or record the precise pending work and last passing tree.
 | `src/rt/clock.cpp` | Self-replacement of injected global hooks | LEFT. Current-tree re-verification pending. |
 | `src/rt/async.cpp` | Parked awaiter and pending Promise ownership | LEFT. Current-tree re-verification pending. |
 | `include/uos/rt/stream.hpp` | Borrowing callback parameters through the by-value erased signature | FIXED with A-STREAM-GCC-AWAIT. A reference-taking coroutine used to point into the by-value function invocation. Forward the frame-owned argument. |
-| `src/rt/http.cpp` | Abandoned streamed-body reader lock | LEFT. Current-tree re-verification pending. |
+| `src/rt/http.cpp` | Abandoned streamed-body reader lock | FIXED for a started read rejecting or unwinding. A Bun 1.4.0 probe gave `locked=false` after rejection and after success. `finishConsume` now releases on either path, covered by `rt/http_test`. LEFT for a Task discarded before start. Bun consumes eagerly even if its Promise is ignored. Matching that behavior for dropped lazy Tasks requires a separate ownership decision. |
 | `include/uos/rt/websocket.hpp` | Self-replacement of injected buffered-amount getter | LEFT. Current-tree re-verification pending. |
 | `src/rt/websocket.cpp` | Injected buffered-amount getter replaces itself | LEFT. Current-tree re-verification pending. |
 | `src/rt/websocket_client.cpp` | Unfinished ownership after a handled unexpected response | LEFT. Current-tree re-verification pending. |
