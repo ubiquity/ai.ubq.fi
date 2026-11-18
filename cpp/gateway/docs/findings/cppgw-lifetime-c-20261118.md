@@ -307,7 +307,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/claude_code_usage_refresh.cpp`
 - [x] `src/provider/claude_code_usage_schema.cpp`
 - [x] `src/provider/health.cpp`
-- [ ] `src/provider/lithos.cpp`
+- [x] `src/provider/lithos.cpp`
 - [ ] `src/provider/lithos_handlers.cpp`
 - [ ] `src/provider/lithos_models.cpp`
 - [ ] `src/provider/lithos_rate_limits.cpp`
@@ -1957,3 +1957,12 @@ Provider observations are serialized per identity. Clock injection and the injec
 - 158-172 · reentrant clock callback and queue entry · **DEFECT** · With a pending distinct transition, an injected clock can synchronously clear the transition map via the test reset hook. The call then reads current->tail through a freed node. Re-find the entry after invoking the clock.
 - 254-266 · KV receiver in fail-fast read fan-out · **DEFECT** · One virtual get can reject and drop the reader's KV owner while a sibling waits. If the fixture replaces the global KV and the sibling borrows its receiver, resumption reads a dead object. Give each read an owning child; the production guard and native store retain their own receiver state.
 - 333-369 · forwarded view reads and binding lifetime · **SAFE** · Factories copy their inputs before returning. The Claude reader retains its binding and local KV while waiting on the owning health-view and account-entry lookups.
+
+### `src/provider/lithos.cpp`
+
+Wire normalization uses synchronous views. The stream generator and transport own separate read and dispatch state.
+
+- 405-459,607-615 · borrowed parser projections · **SAFE** · Each message field pointer and frame substring is consumed in the synchronous caller before the source object or buffer changes.
+- 636-666 · read/abort race callbacks · **SAFE** · The installed listener captures only a Promise rejector and a weak signal. The racing read uses reader-owned request state, and normal and error returns remove the listener.
+- 680-711,722-756,975-982 · generator session, pending read and detached finish · **SAFE** · The generator and each pending nextFrame own the stream session. The constructor callback forwards copies into the frame, and reader.cancel obtains its own stream state before the reader lock is released.
+- 809-876 · admission and fetch hooks, deadline callback · **SAFE** · The by-value options hold the hooks through their joined calls. Fetch retains its callable, and the deadline timer owns its controller until the frame guard clears it.

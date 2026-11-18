@@ -3653,8 +3653,34 @@
       ]
     },
     "src/provider/lithos.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Wire normalization uses synchronous views. The stream generator and transport own separate read and dispatch state.",
+      "sites": [
+        {
+          "lines": "405-459,607-615",
+          "kind": "borrowed parser projections",
+          "verdict": "SAFE",
+          "reason": "Each message field pointer and frame substring is consumed in the synchronous caller before the source object or buffer changes."
+        },
+        {
+          "lines": "636-666",
+          "kind": "read/abort race callbacks",
+          "verdict": "SAFE",
+          "reason": "The installed listener captures only a Promise rejector and a weak signal. The racing read uses reader-owned request state, and normal and error returns remove the listener."
+        },
+        {
+          "lines": "680-711,722-756,975-982",
+          "kind": "generator session, pending read and detached finish",
+          "verdict": "SAFE",
+          "reason": "The generator and each pending nextFrame own the stream session. The constructor callback forwards copies into the frame, and reader.cancel obtains its own stream state before the reader lock is released."
+        },
+        {
+          "lines": "809-876",
+          "kind": "admission and fetch hooks, deadline callback",
+          "verdict": "SAFE",
+          "reason": "The by-value options hold the hooks through their joined calls. Fetch retains its callable, and the deadline timer owns its controller until the frame guard clears it."
+        }
+      ]
     },
     "src/provider/lithos_handlers.cpp": {
       "status": "pending",
