@@ -371,7 +371,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/responses_failover_stream.hpp`
 - [x] `include/uos/responses_handler.hpp`
 - [x] `include/uos/responses_native_headers.hpp`
-- [ ] `include/uos/responses_request.hpp`
+- [x] `include/uos/responses_request.hpp`
 - [ ] `include/uos/responses_stream.hpp`
 - [ ] `include/uos/runtime_config.hpp`
 - [ ] `include/uos/sentinel/incident_outbox.hpp`
@@ -2106,6 +2106,12 @@ Reviewed the early-header error Task and associated request metadata declaration
 
 - L11 **SAFE** · The early-header recovery takes its request, response and telemetry context by value.
 
+### `include/uos/responses_request.hpp`
+
+Reviewed request parsing, metadata and reasoning interfaces.
+
+- L62, 65, 72, 73, 78 **SAFE** · Current callers directly await with their parsed body and usage context alive. The result owns its metadata and deadline controls.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2355,4 +2361,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-263/286 files reviewed. 446 sites: 422 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+264/286 files reviewed. 447 sites: 423 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

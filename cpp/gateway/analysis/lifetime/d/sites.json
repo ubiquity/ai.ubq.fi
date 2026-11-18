@@ -9901,8 +9901,26 @@
       ]
     },
     "include/uos/responses_request.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed request parsing, metadata and reasoning interfaces.",
+      "sites": [
+        {
+          "lines": [
+            62,
+            65,
+            72,
+            73,
+            78
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Current callers directly await with their parsed body and usage context alive. The result owns its metadata and deadline controls."
+        }
+      ]
     },
     "include/uos/responses_stream.hpp": {
       "reviewed": false,
