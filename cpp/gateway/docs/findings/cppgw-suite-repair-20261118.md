@@ -2,7 +2,7 @@
 
 ## Work contract v1
 
-Restore the C++ port's Release suite at starting commit `1769741ee6d408f214c9c9dd4d8bcc7f5180a904`, using the CI workflow qualification as the starting failure inventory. [Prior failure inventory](cppgw-ci-workflow-20261118.md) Use simdjson 5.2.0, simdutf 9.4.0 and Boost 1.92.0 for generic JSON and encoding behavior. Preserve the gateway's wire formats, status codes, stored data, authentication, validation, accounting, input limits and OS fixture isolation.
+Restore the C++ port's Release suite at starting commit `1769741ee6d408f214c9c9dd4d8bcc7f5180a904`, using the CI workflow qualification as the starting failure inventory. Use simdjson 5.2.0, simdutf 9.4.0 and Boost 1.92.0 for generic JSON and encoding behavior. Preserve the gateway's wire formats, status codes, stored data, authentication, validation, accounting, input limits and OS fixture isolation. [Prior failure inventory](cppgw-ci-workflow-20261118.md)
 
 The repair covers C++ sources, fixtures and documentation under `cpp/gateway/`. The workflow, TypeScript, vendored code, parallel library replacements, and deployment are outside the repair scope. All build data stays in runner scratch space. The malformed-input tests must still exercise their rejection branches. Valid JSON used in production and persisted data must still reach the same semantic checks. Any changes to serialized fixture bytes must be traced to their consumers before updating assertions.
 
@@ -42,7 +42,7 @@ The larger allowances apply to repository fixtures. Production keeps its default
 
 ## Quota projection timing
 
-A final rerun at 02:00 UTC also exposed an intermittent failure in `quota_projection_test`. Its balance-history fixture placed the newest sample one second after the hour began and read through the wall clock. During that first second, the reader correctly excluded the future sample. The fixture now uses fixed timestamps and checks the same bounded read one millisecond before the observation and at the observation. The production range selector retains its inclusive cutoff.
+An exact-tree rerun at 02:00 UTC also exposed an intermittent failure in `quota_projection_test`. Its balance-history fixture placed the newest sample one second after the hour began and read through the wall clock. During that first second, the reader correctly excluded the future sample. The fixture now uses fixed timestamps and checks the same bounded read one millisecond before the observation and at the observation. The production range selector retains its inclusive cutoff.
 
 ## Release and sanitizer receipts
 
@@ -52,7 +52,7 @@ The first Release links succeeded. The fixture mount namespace hid the Boost bui
 
 The first complete shard 4 exposed two more dependency mismatches on Ubuntu 24.04. The loader selected SQLite 3.45.1 for `rt/sqlite_test` despite the pinned CLI, and ICU 74.2 changed the `rt/url_idna_test` Unicode vectors. Selecting `/usr/local/lib` through the driver's `LD_LIBRARY_PATH` runs the suite against the pinned SQLite library. ICU was rebuilt at the port's pin, 78.3, from the official source archive (SHA-256 `3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0`). Its headers and versioned libraries were installed under `/usr/local`, and the URL object was rebuilt against the new headers. Runner-local pkg-config metadata retains the driver's existing explicit ICU data-library link. Both tests passed with the pinned libraries.
 
-The C++ source and test receipts identify commit `8a1f039bdf83e971bd4c92ff4d03cfc1682dbbdb`, tree `a95dbbd37eb481ce012542ee79d7ceffb1695356` and driver input SHA-256 `d3621bdfbca283623d8029fa28398bdc7682ca4d8eeef84994f9742a3e85ea60`. The Release receipts cover 441 distinct binaries, each selected once, and each shard reported 369/369 production objects. Both ARM64-only binaries, `permissions_linux_test` and `runtime_native_startup_test`, passed.
+The C++ source and test receipts identify commit `380a9b0a19fca261c910967ee24078f1b22aec9a`, tree `abe280afaefb730fc669cb7df50c2214cc605381` and driver input SHA-256 `9629fe15f1187dd6309599aef3c46f242b0ed2f9f137ee6fd045d375b710e461`. The Release receipts cover 441 distinct binaries, each selected once, and each shard reported 369/369 production objects. Both ARM64-only binaries, `permissions_linux_test` and `runtime_native_startup_test`, passed.
 
 | Release shard | Binaries passed | Binaries failed | Cases passed | Cases failed |
 | ------------- | --------------: | --------------: | -----------: | -----------: |
@@ -62,7 +62,7 @@ The C++ source and test receipts identify commit `8a1f039bdf83e971bd4c92ff4d03cf
 | 4/4           |             110 |               0 |         1334 |            0 |
 | Total         |             441 |               0 |         5031 |            0 |
 
-The `asan` configuration passed 18/18 binaries and 317/317 cases with AddressSanitizer, UndefinedBehaviorSanitizer and leak detection. The selection covers the 15 repaired failures and the runtime Base64, crypto and JSON binaries.
+The `asan` configuration passed 19/19 binaries and 347/347 cases with AddressSanitizer, UndefinedBehaviorSanitizer and leak detection. The selection covers the 15 original failures, the quota projection fixture and the runtime Base64, crypto and JSON binaries.
 
 ```sh
 for shard in 1 2 3 4; do
