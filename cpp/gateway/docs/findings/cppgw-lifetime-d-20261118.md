@@ -237,7 +237,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/sentinel/replay_envelope.cpp`
 - [x] `src/sentinel/replay_limits.cpp`
 - [x] `src/sentinel/replay_model.cpp`
-- [ ] `src/sentinel/replay_observation.cpp`
+- [x] `src/sentinel/replay_observation.cpp`
 - [ ] `src/sentinel/replay_read.cpp`
 - [ ] `src/sentinel/replay_retention.cpp`
 - [ ] `src/sentinel/replay_retention_bootstrap.cpp`
@@ -1246,6 +1246,13 @@ Reviewed synchronous replay capacity arithmetic. No deferred operation or retain
 
 Reviewed replay key creation, value conversion, list shape validation and byte helpers. Spans and references are consumed synchronously and outputs own their data.
 
+### `src/sentinel/replay_observation.cpp`
+
+Reviewed bounded response cloning, SSE inspection, one-shot raw-body observation and retained replay inputs.
+
+- L192, 196, 206, 207, 751 **SAFE** · The frame owns its cloned stream, reader and chunk buffers. The synchronous cancel wrapper copies its own stream owner before releasing the lock, and the response inspection retains its Response through cloning.
+- L374, 595, 596, 597, 709, 764, 765 **SAFE** · The inline parser guard lives in the same frame as its receiver and index. Request observers own the candidate without a back-reference to Request and inspector callbacks own shared parser State, consuming passed spans synchronously.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1494,4 +1501,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-129/286 files reviewed. 246 sites: 228 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+130/286 files reviewed. 248 sites: 230 SAFE, 18 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

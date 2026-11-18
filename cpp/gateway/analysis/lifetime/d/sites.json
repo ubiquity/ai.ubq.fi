@@ -5586,8 +5586,44 @@
       "sites": []
     },
     "src/sentinel/replay_observation.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed bounded response cloning, SSE inspection, one-shot raw-body observation and retained replay inputs.",
+      "sites": [
+        {
+          "lines": [
+            192,
+            196,
+            206,
+            207,
+            751
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The frame owns its cloned stream, reader and chunk buffers. The synchronous cancel wrapper copies its own stream owner before releasing the lock, and the response inspection retains its Response through cloning."
+        },
+        {
+          "lines": [
+            374,
+            595,
+            596,
+            597,
+            709,
+            764,
+            765
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "The inline parser guard lives in the same frame as its receiver and index. Request observers own the candidate without a back-reference to Request and inspector callbacks own shared parser State, consuming passed spans synchronously."
+        }
+      ]
     },
     "src/sentinel/replay_read.cpp": {
       "reviewed": false,
