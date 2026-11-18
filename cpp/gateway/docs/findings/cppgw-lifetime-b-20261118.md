@@ -79,7 +79,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/cache/kv_migration_usage.hpp`
 - [x] `include/uos/cache/kv_migration_validation.hpp`
 - [x] `include/uos/cache/prompt_analytics.hpp`
-- [ ] `include/uos/cache/prompt_analytics_core.hpp`
+- [x] `include/uos/cache/prompt_analytics_core.hpp`
 - [ ] `include/uos/cache/prompt_analytics_queue.hpp`
 - [ ] `include/uos/cache/prompt_analytics_read.hpp`
 - [ ] `include/uos/cache/scope_experiment.hpp`
@@ -514,6 +514,12 @@ Both projection entries own their KV and pair vector. Private borrows and snapsh
 
 Exports types and APIs defined by the related cache headers. No inline coroutine or independent callback registration.
 
+### `include/uos/cache/prompt_analytics_core.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 88-89,141-151,229-237 | Counter and options storage | **SAFE** | Counter member accessors borrow the named counter object synchronously. Async options carry an owning KV handle and store the optional clock as an owning function. |
+
 
 ## Ranked defects and counts
 
@@ -719,4 +725,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-56/97 files reviewed. **DEFECT 8, SAFE 109, UNCLEAR 3.**
+57/97 files reviewed. **DEFECT 8, SAFE 110, UNCLEAR 3.**

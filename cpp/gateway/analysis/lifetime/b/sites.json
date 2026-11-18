@@ -1502,8 +1502,20 @@
       "note": "Exports types and APIs defined by the related cache headers. No inline coroutine or independent callback registration."
     },
     "include/uos/cache/prompt_analytics_core.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "88-89,141-151,229-237",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "c",
+            "d"
+          ],
+          "symbol": "Counter and options storage",
+          "evidence": "Counter member accessors borrow the named counter object synchronously. Async options carry an owning KV handle and store the optional clock as an owning function."
+        }
+      ]
     },
     "include/uos/cache/prompt_analytics_queue.hpp": {
       "reviewed": false,
