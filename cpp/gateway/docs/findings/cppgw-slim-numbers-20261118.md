@@ -59,6 +59,8 @@ The first full baseline release compiled all 369 production objects and ran 442 
 
 The qualified baseline rerun is `env -i PATH="$scratch/tool-bin:/usr/local/bin:/usr/bin:/bin" HOME="$scratch/home" TMPDIR="$scratch/tmp" LANG=C.UTF-8 TZ=UTC python3 -B "$scratch/recover-baseline.py" "$scratch"`. It verifies the exact original input SHA-256 `173c881ddb9a3698a4387278b11f2c247ddcf3cb161a0cf038f1087d0be05416`, reuses original objects by timestamp bound to the first receipt, rebuilds objects from the interrupted candidate build, and links and runs all 442 fixtures with the portable driver's test functions. Recovery script SHA-256 is `6fd3c5bff6316739e27ea9a7fbf8aa3934a86473df8f0636314850f3e6269706`. The queued release command uses the same read-only mount. The sanitizer command runs from the repository-root checkout, which is outside `/tmp`.
 
+The corrected baseline reused 770 objects, rebuilt 62 in 161.809 seconds, and linked and tested in 87.482 seconds. It passed **441/442 binaries and 5,027/5,028 cases** with zero build failures and timeouts. The inherited BigInt parser assertion is the sole failure. Its receipt SHA-256 is `6d66c1ea36ddb2fc8e5578840fcbb1e11c99c01ae8d24c5cff0fb79cf976d0a3`.
+
 `docs/rt/values.md` still lists the retired C++ APIs and needs the shared runtime documentation update after integration.
 
 `GIT_TERMINAL_PROMPT=0 git push --dry-run --porcelain origin HEAD:refs/heads/agent-jobs/cppgw-slim-numbers-20261118` failed because GitHub write authentication is unavailable. The fetched `origin/development` at `2ac5aae69b0f0bac77cf1c6f329995cf1187616c` lacks the implementation in its ancestry and has no `cpp/gateway` tree.
