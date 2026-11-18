@@ -180,7 +180,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/selection.hpp`
 - [x] `include/uos/provider/stream_relay.hpp`
 - [x] `include/uos/provider/surplus.hpp`
-- [ ] `include/uos/provider/surplus_claude_chat_request.hpp`
+- [x] `include/uos/provider/surplus_claude_chat_request.hpp`
 - [ ] `include/uos/provider/surplus_claude_request.hpp`
 - [ ] `src/chat/completions.cpp`
 - [ ] `src/chat/envelope.cpp`
@@ -1130,3 +1130,7 @@ Relay factories copy per-request inputs into their state.
 Surplus catalog and Responses transport API.
 
 - 88-89,116-117,124-125 · task and callback interface · **SAFE** · Request/catalog frames own option inputs, including the dispatch hook objects.
+
+### `include/uos/provider/surplus_claude_chat_request.hpp`
+
+Synchronous Chat projection and result type declarations.

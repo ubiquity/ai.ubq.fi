@@ -1554,7 +1554,8 @@
       ]
     },
     "include/uos/provider/surplus_claude_chat_request.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous Chat projection and result type declarations.",
       "sites": []
     },
     "include/uos/provider/surplus_claude_request.hpp": {
