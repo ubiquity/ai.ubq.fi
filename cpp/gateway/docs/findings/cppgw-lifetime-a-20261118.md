@@ -42,7 +42,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `include/uos/rt/process.hpp`
 - [x] `src/rt/stream.cpp`
 - [x] `include/uos/rt/stream.hpp`
-- [ ] `src/rt/http.cpp`
+- [x] `src/rt/http.cpp`
 - [ ] `include/uos/rt/http.hpp`
 - [ ] `include/uos/rt/fetch.hpp`
 - [ ] `include/uos/rt/fetch_transport.hpp`
@@ -189,18 +189,29 @@ Reviewed eager reader registration, source callback type erasure, reentrant canc
 - **DEFECT (A-PROMISE-GCC-AWAIT)** `516` (e), Tee cancellation converts the shared Promise state inside the await. The typed shared_ptr is converted to a base shared_ptr in the co_await full expression. Use the same named Task as for awaitOwned.
 - **SAFE** `461, 472, 473, 488, 489, 491, 520, 522, 525, 529, 531, 535, 540, 545, 546, 547, 581, 582, 583` (a/b/d), Tee delivery and stream iterator step storage. The current step belongs to the coroutine, promoted branch handles are local, and the iteration frame owns its reader while it awaits the stored read or cancel.
 
+### `src/rt/http.cpp`
+
+Read the body readers and stream adapters, clone/transfer paths, synchronous FormData parsing and static MIME data. This file models Fetch values. The server transport lives outside Area A.
+
+- **SAFE** `101, 106, 108, 109, 110, 113, 114, 115, 989, 990, 991, 1006, 1008, 1010, 1012` (b/c), Blob data and temporary Blob handles. The ordinary member wrappers copy the shared immutable bytes into the coroutine or stream before the receiver can die.
+- **SAFE** `145, 146, 148, 150, 155, 156, 158, 160, 747, 752, 754, 757` (c/d), Buffered body streams and their source callbacks. The source owns bytes and offset without a stream backedge, and the copied pull algorithm owns both for synchronous iteration and close.
+- **SAFE** `203, 205, 217, 555, 558, 578, 585, 601, 607, 617, 652, 661, 670, 683, 685, 1034, 1054, 1059, 1065` (b/d), FormData parse, serialize and entry mutation views. All parser views and entry iterators are consumed synchronously under the owned body or FormData and the products own their bytes and strings.
+- **SAFE** `696, 698, 699, 700, 704, 708, 713, 718, 724, 730, 733, 894, 912, 913, 918, 925, 931, 1097, 1147, 1157, 1166, 1173, 1188, 1195, 1204, 1217, 1240, 1247, 1256` (b/c), Body extraction, clone, header and transfer wrappers. The reference captures are invoked immediately by visit and body cloning transfers owning stream handles synchronously. Tee retention is tracked at its implementation.
+- **SAFE** `777, 789, 790, 797, 803, 806, 809, 810, 812, 813, 815, 817, 833, 834, 835, 839, 841, 847, 849, 857, 859, 862, 865, 867, 869, 872, 878, 879, 883, 1141, 1145, 1234, 1238` (b/c/d/e), Request and Response read tasks and their inputs. The wrappers snapshot owned data or a reader before returning, and each frame owns the read operation, complete step, accumulated bytes and form boundary during later awaits.
+- **UNCLEAR** `771, 797, 803, 809, 812, 813, 817, 1141, 1234` (b/c), Abandoned streamed-body reader lock. The eager wrapper locks the body before the lazy Task starts and release is reached on success. Decide the required lock and cancellation behavior when a caller discards an unstarted Task or a stream read rejects, then exercise that behavior with an independently retained body handle.
+
 ## Ranked defects and counts
 
-Reviewed **10/30 files** and **69 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **11/30 files** and **75 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
 | a. Capturing coroutine closure | 1 | 14 | 0 |
-| b. Borrowed coroutine parameter or receiver | 4 | 34 | 2 |
-| c. Callback ownership or cycle | 10 | 46 | 2 |
-| d. Container invalidation | 3 | 18 | 0 |
-| e. GCC 12 await-expression rule | 4 | 6 | 1 |
-| **Unique site groups** | 14 | 52 | 3 |
+| b. Borrowed coroutine parameter or receiver | 4 | 38 | 3 |
+| c. Callback ownership or cycle | 10 | 50 | 3 |
+| d. Container invalidation | 3 | 21 | 0 |
+| e. GCC 12 await-expression rule | 4 | 7 | 1 |
+| **Unique site groups** | 14 | 57 | 4 |
 
 ### 1. A-STREAM-CANCEL-OWNER (memory safety in stream cancellation) — Stream cancel borrows the owner slot through callback invocation
 

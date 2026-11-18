@@ -1761,8 +1761,195 @@
       ]
     },
     "src/rt/http.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Read the body readers and stream adapters, clone/transfer paths, synchronous FormData parsing and static MIME data. This file models Fetch values. The server transport lives outside Area A.",
+      "sites": [
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            101,
+            106,
+            108,
+            109,
+            110,
+            113,
+            114,
+            115,
+            989,
+            990,
+            991,
+            1006,
+            1008,
+            1010,
+            1012
+          ],
+          "label": "Blob data and temporary Blob handles",
+          "reason": "The ordinary member wrappers copy the shared immutable bytes into the coroutine or stream before the receiver can die."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "c",
+            "d"
+          ],
+          "lines": [
+            145,
+            146,
+            148,
+            150,
+            155,
+            156,
+            158,
+            160,
+            747,
+            752,
+            754,
+            757
+          ],
+          "label": "Buffered body streams and their source callbacks",
+          "reason": "The source owns bytes and offset without a stream backedge, and the copied pull algorithm owns both for synchronous iteration and close."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "d"
+          ],
+          "lines": [
+            203,
+            205,
+            217,
+            555,
+            558,
+            578,
+            585,
+            601,
+            607,
+            617,
+            652,
+            661,
+            670,
+            683,
+            685,
+            1034,
+            1054,
+            1059,
+            1065
+          ],
+          "label": "FormData parse, serialize and entry mutation views",
+          "reason": "All parser views and entry iterators are consumed synchronously under the owned body or FormData and the products own their bytes and strings."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            696,
+            698,
+            699,
+            700,
+            704,
+            708,
+            713,
+            718,
+            724,
+            730,
+            733,
+            894,
+            912,
+            913,
+            918,
+            925,
+            931,
+            1097,
+            1147,
+            1157,
+            1166,
+            1173,
+            1188,
+            1195,
+            1204,
+            1217,
+            1240,
+            1247,
+            1256
+          ],
+          "label": "Body extraction, clone, header and transfer wrappers",
+          "reason": "The reference captures are invoked immediately by visit and body cloning transfers owning stream handles synchronously. Tee retention is tracked at its implementation."
+        },
+        {
+          "verdict": "SAFE",
+          "classes": [
+            "b",
+            "c",
+            "d",
+            "e"
+          ],
+          "lines": [
+            777,
+            789,
+            790,
+            797,
+            803,
+            806,
+            809,
+            810,
+            812,
+            813,
+            815,
+            817,
+            833,
+            834,
+            835,
+            839,
+            841,
+            847,
+            849,
+            857,
+            859,
+            862,
+            865,
+            867,
+            869,
+            872,
+            878,
+            879,
+            883,
+            1141,
+            1145,
+            1234,
+            1238
+          ],
+          "label": "Request and Response read tasks and their inputs",
+          "reason": "The wrappers snapshot owned data or a reader before returning, and each frame owns the read operation, complete step, accumulated bytes and form boundary during later awaits."
+        },
+        {
+          "verdict": "UNCLEAR",
+          "classes": [
+            "b",
+            "c"
+          ],
+          "lines": [
+            771,
+            797,
+            803,
+            809,
+            812,
+            813,
+            817,
+            1141,
+            1234
+          ],
+          "label": "Abandoned streamed-body reader lock",
+          "reason": "The eager wrapper locks the body before the lazy Task starts and release is reached on success. Decide the required lock and cancellation behavior when a caller discards an unstarted Task or a stream read rejects, then exercise that behavior with an independently retained body handle."
+        }
+      ]
     },
     "include/uos/rt/http.hpp": {
       "status": "pending",
