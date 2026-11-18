@@ -129,7 +129,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/catalog/models.cpp`
 - [x] `src/catalog/promotion.cpp`
 - [x] `src/catalog/store.cpp`
-- [ ] `src/catalog/types.cpp`
+- [x] `src/catalog/types.cpp`
 - [ ] `src/config.cpp`
 - [ ] `src/debug_routing.cpp`
 - [ ] `src/decisions/handlers.cpp`
@@ -800,6 +800,10 @@ Reviewed all KV reference parameters, catalog memo and chunk ownership, storage 
 - L625, 627, 637, 639, 656, 663, 667, 669, 689, 691, 694, 696, 702, 705, 707, 714, 719 **SAFE** · The context or named caller retains the borrowed KV. Writes, compression, digest and pruning use frame-owned inputs and named atomic receivers across waits.
 - L727, 730, 736, 740, 748, 755, 773, 777, 782, 789, 791, 797, 800, 807, 809, 812 **SAFE** · Generation and lease callers hold the KV through each directly awaited task. Each loop or retry uses copied rows and result values before the next await.
 
+### `src/catalog/types.cpp`
+
+Reviewed metadata, lease and protocol constants and record conversion. The synchronous codecs return owned values and register no callbacks.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -905,4 +909,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-63/286 files reviewed. 148 sites: 139 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+64/286 files reviewed. 148 sites: 139 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

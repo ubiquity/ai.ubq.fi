@@ -2949,7 +2949,8 @@
       ]
     },
     "src/catalog/types.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed metadata, lease and protocol constants and record conversion. The synchronous codecs return owned values and register no callbacks.",
       "sites": []
     },
     "src/config.cpp": {
