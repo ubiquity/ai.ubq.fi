@@ -8727,8 +8727,21 @@
       ]
     },
     "include/uos/http.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed synchronous HTTP helpers and the response rate-limit constants.",
+      "sites": [
+        {
+          "lines": [
+            13
+          ],
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "detail": "Header views refer to static literals. The HTTP response helpers consume borrowed inputs synchronously and return owning response handles."
+        }
+      ]
     },
     "include/uos/images.hpp": {
       "reviewed": false,

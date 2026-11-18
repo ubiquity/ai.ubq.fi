@@ -325,7 +325,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/handler/terminal_log.hpp`
 - [x] `include/uos/handler/terminal_route.hpp`
 - [x] `include/uos/health.hpp`
-- [ ] `include/uos/http.hpp`
+- [x] `include/uos/http.hpp`
 - [ ] `include/uos/images.hpp`
 - [ ] `include/uos/inference_admission.hpp`
 - [ ] `include/uos/inference_deadline.hpp`
@@ -1824,6 +1824,12 @@ Reviewed passive and active health entry points. The active probe's abandoned ti
 
 - L9, 11, 12, 13, 14, 16 **SAFE** · The public health operations receive options by value or take no inputs.
 
+### `include/uos/http.hpp`
+
+Reviewed synchronous HTTP helpers and the response rate-limit constants.
+
+- L13 **SAFE** · Header views refer to static literals. The HTTP response helpers consume borrowed inputs synchronously and return owning response handles.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2072,4 +2078,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-217/286 files reviewed. 391 sites: 369 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+218/286 files reviewed. 392 sites: 370 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
