@@ -89,7 +89,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/auth/local_development_key.cpp`
 - [x] `src/auth/passkeys.cpp`
 - [x] `src/auth/passport.cpp`
-- [ ] `src/auth/passport_sessions.cpp`
+- [x] `src/auth/passport_sessions.cpp`
 - [ ] `src/auth/relay.cpp`
 - [ ] `src/authority/admission_state.cpp`
 - [ ] `src/authority/authority_rpc.cpp`
@@ -587,6 +587,15 @@ Reviewed JWT verification, JWKS caching, OAuth callback and persistent-session r
 - L367, 369, 373, 378 **SAFE** · The callback owns request, state and exchange response. It copies token and grant into downstream tasks before suspending.
 - L445, 465, 498, 513, 526, 548 **SAFE** · Route frames own request, path, cookies and verifier state, and every authentication, revocation or callback Task receives its required values before the parent suspends.
 
+### `src/auth/passport_sessions.cpp`
+
+Reviewed session creation, replacement, introspection and revocation including stream and transaction owners.
+
+- L92, 120, 132, 149, 157 **SAFE** · The token, response, reader, optional stream and timed request are values retained through the delegated operation.
+- L185, 190, 191, 196, 202, 214, 219, 226, 231, 233 **SAFE** · Grant string views remain backed by the unchanged by-value grant JSON. Key, transaction and the optional replaced session are all owned in the creating frame or the called task.
+- L248, 254, 256, 261, 265, 269, 274, 278, 282 **SAFE** · Introspection owns the KV, session record, response and parsed JSON through cancel or reread. Its copied record does not borrow the persistent store.
+- L297, 303, 305, 308, 318, 320 **SAFE** · Revocation keeps KV and key through delete and passes the copied record and Response to the fetch and cancel tasks.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -692,4 +701,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-24/286 files reviewed. 110 sites: 101 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+25/286 files reviewed. 114 sites: 105 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

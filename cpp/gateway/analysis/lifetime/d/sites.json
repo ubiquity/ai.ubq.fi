@@ -1893,8 +1893,83 @@
       ]
     },
     "src/auth/passport_sessions.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed session creation, replacement, introspection and revocation including stream and transaction owners.",
+      "sites": [
+        {
+          "lines": [
+            92,
+            120,
+            132,
+            149,
+            157
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The token, response, reader, optional stream and timed request are values retained through the delegated operation."
+        },
+        {
+          "lines": [
+            185,
+            190,
+            191,
+            196,
+            202,
+            214,
+            219,
+            226,
+            231,
+            233
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Grant string views remain backed by the unchanged by-value grant JSON. Key, transaction and the optional replaced session are all owned in the creating frame or the called task."
+        },
+        {
+          "lines": [
+            248,
+            254,
+            256,
+            261,
+            265,
+            269,
+            274,
+            278,
+            282
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Introspection owns the KV, session record, response and parsed JSON through cancel or reread. Its copied record does not borrow the persistent store."
+        },
+        {
+          "lines": [
+            297,
+            303,
+            305,
+            308,
+            318,
+            320
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Revocation keeps KV and key through delete and passes the copied record and Response to the fetch and cancel tasks."
+        }
+      ]
     },
     "src/auth/relay.cpp": {
       "reviewed": false,
