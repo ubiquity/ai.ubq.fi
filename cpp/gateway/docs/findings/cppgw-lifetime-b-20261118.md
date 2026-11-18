@@ -93,7 +93,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/cache/kv_migration_projection.cpp`
 - [x] `src/cache/kv_migration_usage.cpp`
 - [x] `src/cache/kv_migration_validation.cpp`
-- [ ] `src/cache/prompt_analytics.cpp`
+- [x] `src/cache/prompt_analytics.cpp`
 - [ ] `src/cache/prompt_analytics_core.cpp`
 - [ ] `src/cache/prompt_analytics_queue.cpp`
 - [ ] `src/cache/prompt_analytics_read.cpp`
@@ -628,6 +628,10 @@ Inputs, configured bindings and an injected store are supplied by value to the i
 | 267-355 | End-to-end migration validation | **SAFE** | The parent owns scan state, pair inventory and errors, awaits every borrowed audit sequentially and combines owning scan results afterward. |
 | 358-373,375-390 | Redemption and manual intent scans | **SAFE** | The validation frame retains errors; a named iterator and owned entry cover each scan step. No sibling uses these references. |
 
+### `src/cache/prompt_analytics.cpp`
+
+This facade does not define a coroutine or register callbacks. Its exported implementation modules are reviewed individually.
+
 
 ## Ranked defects and counts
 
@@ -833,4 +837,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-70/97 files reviewed. **DEFECT 8, SAFE 157, UNCLEAR 3.**
+71/97 files reviewed. **DEFECT 8, SAFE 157, UNCLEAR 3.**

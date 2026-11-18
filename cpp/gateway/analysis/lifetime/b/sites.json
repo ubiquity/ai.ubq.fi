@@ -2063,8 +2063,9 @@
       ]
     },
     "src/cache/prompt_analytics.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [],
+      "note": "This facade does not define a coroutine or register callbacks. Its exported implementation modules are reviewed individually."
     },
     "src/cache/prompt_analytics_core.cpp": {
       "reviewed": false,
