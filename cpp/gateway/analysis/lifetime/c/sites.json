@@ -2368,8 +2368,16 @@
       ]
     },
     "src/codex/supervisor_follow.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Each poll owns its revisions state and goes through one joined connection read and close.",
+      "sites": [
+        {
+          "lines": "143-199",
+          "kind": "RPC and revisions map ownership",
+          "verdict": "SAFE",
+          "reason": "The connection and shared revisions are task parameters. The awaited RPCs consume local result values and revisions are accessed synchronously at the end."
+        }
+      ]
     },
     "src/codex/supervisor_inventory.cpp": {
       "status": "pending",

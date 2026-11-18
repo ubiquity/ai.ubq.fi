@@ -219,7 +219,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/supervisor.cpp`
 - [x] `src/codex/supervisor_brief.cpp`
 - [x] `src/codex/supervisor_config.cpp`
-- [ ] `src/codex/supervisor_follow.cpp`
+- [x] `src/codex/supervisor_follow.cpp`
 - [ ] `src/codex/supervisor_inventory.cpp`
 - [ ] `src/codex/supervisor_log.cpp`
 - [ ] `src/codex/supervisor_secret.cpp`
@@ -1415,3 +1415,9 @@ Supervisor configuration copies its env reader before the file-read boundary.
 
 - 104-119 · poll timer and abort listener · **SAFE** · The timer completion removes the listener and abort clears the timer. Loop::clearAllTimers clears the timer callback on teardown, breaking the callback ownership chain.
 - 199-250 · config read and parser await · **SAFE** · Options, env function, path and file contents stay in the frame. The environment reader is invoked synchronously.
+
+### `src/codex/supervisor_follow.cpp`
+
+Each poll owns its revisions state and goes through one joined connection read and close.
+
+- 143-199 · RPC and revisions map ownership · **SAFE** · The connection and shared revisions are task parameters. The awaited RPCs consume local result values and revisions are accessed synchronously at the end.
