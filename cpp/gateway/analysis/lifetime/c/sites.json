@@ -57,8 +57,16 @@
       ]
     },
     "include/uos/codex/account_routing.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Routing decisions accept snapshots and keys by value.",
+      "sites": [
+        {
+          "lines": "46-48,57,68-83,90",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The election, refresh, selection and slot recheck frames own their account, pool, model and time inputs."
+        }
+      ]
     },
     "include/uos/codex/auth.hpp": {
       "status": "pending",

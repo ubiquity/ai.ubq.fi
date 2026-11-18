@@ -39,7 +39,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/chat/completions.hpp`
 - [x] `include/uos/chat/envelope.hpp`
 - [x] `include/uos/chat/stream_translation.hpp`
-- [ ] `include/uos/codex/account_routing.hpp`
+- [x] `include/uos/codex/account_routing.hpp`
 - [ ] `include/uos/codex/auth.hpp`
 - [ ] `include/uos/codex/auth_refresh.hpp`
 - [ ] `include/uos/codex/auth_repair.hpp`
@@ -349,3 +349,9 @@ Translation and accumulator methods are synchronous except for the completion re
 - 56-75 · container ownership · **SAFE** · Accumulator results own shared call records. Consumers read the exposed calls vector synchronously or copy its size before suspending.
 - 83-84 · stream factory · **SAFE** · The replay iterator owns its generator body and prepared state, and the returned cancel function captures copies of the source and iterator.
 - 90-92 · borrowed context · **SAFE** · Stream or buffered completion state retains its copied context through the awaited recorder.
+
+### `include/uos/codex/account_routing.hpp`
+
+Routing decisions accept snapshots and keys by value.
+
+- 46-48,57,68-83,90 · owning task parameters · **SAFE** · The election, refresh, selection and slot recheck frames own their account, pool, model and time inputs.
