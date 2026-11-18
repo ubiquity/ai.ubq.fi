@@ -361,7 +361,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/openai_schema.hpp`
 - [x] `include/uos/openai_telemetry.hpp`
 - [x] `include/uos/optional_telemetry_queue.hpp`
-- [ ] `include/uos/quota_projection.hpp`
+- [x] `include/uos/quota_projection.hpp`
 - [ ] `include/uos/recent_model_context.hpp`
 - [ ] `include/uos/release.hpp`
 - [ ] `include/uos/request.hpp`
@@ -2048,6 +2048,10 @@ Reviewed the complete inline queue, clock and writer hooks, wait races, in-fligh
 - L258, 262, 263, 264, 266, 267, 271, 275 **DEFECT** · A normal writer completion wins, then cancelTimeout clears the only settlement callback for the timeout Promise. Its self-owning race reaction and combined outcome stay on the process loop for each successful drain wait. Clear the timer and settle the private timeout Promise during cleanup.
 - L307, 318, 319, 328, 332, 342, 343, 356, 358, 360, 364, 399, 403, 409, 410 **SAFE** · Drain frames own State and use fresh queue lookups across waits. The detached completion holds the matching drain Promise and State until it retires and settles that slot.
 
+### `include/uos/quota_projection.hpp`
+
+Reviewed projection constants, output records, and synchronous aggregation APIs. Result rows own their data and there is no Task or retained callback.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2297,4 +2301,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-253/286 files reviewed. 436 sites: 412 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+254/286 files reviewed. 436 sites: 412 SAFE, 24 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

@@ -9689,7 +9689,8 @@
       ]
     },
     "include/uos/quota_projection.hpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed projection constants, output records, and synchronous aggregation APIs. Result rows own their data and there is no Task or retained callback.",
       "sites": []
     },
     "include/uos/recent_model_context.hpp": {
