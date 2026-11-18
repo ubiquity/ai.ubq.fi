@@ -174,7 +174,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/openrouter_request_controls.hpp`
 - [x] `include/uos/provider/openrouter_streams.hpp`
 - [x] `include/uos/provider/openrouter_web_tools.hpp`
-- [ ] `include/uos/provider/presentation.hpp`
+- [x] `include/uos/provider/presentation.hpp`
 - [ ] `include/uos/provider/removed_provider_circuit.hpp`
 - [ ] `include/uos/provider/removed_provider_telemetry.hpp`
 - [ ] `include/uos/provider/selection.hpp`
@@ -1095,3 +1095,7 @@ The public stream iterator factory is synchronous. Its generator owns response a
 ### `include/uos/provider/openrouter_web_tools.hpp`
 
 Synchronous request projection and web-tool handling declarations. No deferred borrowing.
+
+### `include/uos/provider/presentation.hpp`
+
+Synchronous provider ID/display declarations. Returned literals have static storage.

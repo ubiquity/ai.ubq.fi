@@ -1483,7 +1483,8 @@
       "sites": []
     },
     "include/uos/provider/presentation.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous provider ID/display declarations. Returned literals have static storage.",
       "sites": []
     },
     "include/uos/provider/removed_provider_circuit.hpp": {
