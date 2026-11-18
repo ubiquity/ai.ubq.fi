@@ -250,7 +250,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/systemone/handlers.cpp`
 - [x] `src/types.cpp`
 - [x] `src/upstream_wire.cpp`
-- [ ] `src/utils.cpp`
+- [x] `src/utils.cpp`
 - [ ] `include/uos/admin/api_key_audit.hpp`
 - [ ] `include/uos/admin/api_key_mutations.hpp`
 - [ ] `include/uos/admin/api_keys.hpp`
@@ -1372,6 +1372,13 @@ Reviewed response provenance, error conversion, cancellation and buffered provid
 - L286, 289, 395, 397, 411, 414, 428, 430, 461, 463 **SAFE** · Error converters own their response, signal and diagnostic values. They await the bounded capture Task before reading frame-owned bytes and headers.
 - L408, 409 **SAFE** · Stream cancellation synchronously captures the stream state or an owning rejection before returning the detached Task. The local stream wrapper can leave scope.
 
+### `src/utils.cpp`
+
+Reviewed byte and string views and both digest coroutines.
+
+- L12, 32, 38, 40, 50, 74, 76 **SAFE** · Base64 and hex operations consume temporary or borrowed views during a synchronous call and return owning strings or byte vectors.
+- L60, 63, 67, 70 **SAFE** · The digest frames own their input strings and digest buffers through their microtask yield.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1620,4 +1627,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-142/286 files reviewed. 307 sites: 286 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+143/286 files reviewed. 309 sites: 288 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
