@@ -217,3 +217,31 @@ done
 `git merge-tree --write-tree --name-only origin/claude/cpp-gateway-port HEAD` against port tip `45118332b287b7ba9534bb66ab1518f1990a9d9e` reported a single add/add conflict in `DEVIATIONS-FROM-BUN.md`. Appending the WebSocket section to the port branch's existing ledger resolved it in a temporary index, and the upstream ledger bytes before the appended section matched exactly. The preview left both branches intact. The fetched `origin/development` at `6bd78fc5e3b0783809691c6bd45d25ac45e9696e` predates the gateway port and has no `cpp/gateway` tree. The authenticated push check for the existing task branch failed because the runner lacked GitHub credentials.
 
 The inherited local Codex review attempt failed before it could inspect the diff. Its sandbox could not start commands under the runner's approval policy. The socket reference at `docs/rt/websocket.md` also still describes the original 8 KiB random pool and `ScopedRandomSource` override. Beast now generates nonces and masking keys in its secure ChaCha20 mode. That reference is outside this task's document ownership.
+
+## Registry replay and dependency control
+
+The first complete strict release sweep used the runner's ICU 74.2. All 369 production objects compiled and 441/442 binaries passed, for 5,027/5,029 cases. The sole failure was `tests/rt/url_idna_test.cpp`, with eight curated rows and 43 scalar blocks differing from its fixture. The command exited 1 in 1,111.785 seconds. Receipt SHA-256 is `5b9945033f55134052f77b78e5b12bb22dca69ed89c98158484b746865763546`.
+
+Relinking the fixture with all four pre-adoption WebSocket objects reproduced the same two failed cases and identical test diagnostics. The URL implementation SHA-256 is `1ad477bba4c8b1a8e70eae45daddb9434af88027931b96a3cdc3af6242e41af5` in both trees. The mismatch belongs to the runner's older ICU. Recompiling the sole ICU header consumer, `src/rt/url.cpp`, against the port's ICU 78.3 and relinking the fixture passed both cases. Receipt SHA-256 is `82fd20724673c0903c919d32067666722f1f41a1ddb7133638e130626994caf9`. The full release registry is replaying with that dependency. [Native build profiles](../BUILD.md#build-profiles)
+
+A separate release control drove `WebSocketServer::handleUpgrade` against the baseline and candidate over Unix socket pairs. It enumerated all strings up to four bytes over a 14-byte subprotocol alphabet with separators, whitespace and invalid bytes, and all single-byte substitutions in the RFC example key. Both sides made the same 47,515 decisions, accepted 1,938, and selected the same protocol for each accepted request. The decision outputs both hashed to `e674b32eba8fcd3bc4642fda7ce37d292074fa3c30e586ffe1c31e2437c6d322`.
+
+The commands below used the existing strict caches. The baseline replay used the repository driver's `run_test` with a temporary object tree containing the four baseline WebSocket objects. The ICU replay used the same driver to link and run each test under the same namespace fixture boundary. It added `-isystem "$icu/usr/include"` only to the strict `url.cpp` compile and replaced the three ICU link flags with the extracted AArch64 static archives `libicui18n.a`, `libicuuc.a` and `libicudata.a`. All other objects, flags and expected values came from the original build. The package remained in scratch.
+
+```sh
+python3 -B "$work/replay_idna_baseline.py" "$work" "$PWD"
+nice -n 7 python3 -B "$work/run_validation.py" "$work"
+icu="$work/icu78"
+mkdir -p "$icu"
+curl --fail --location --silent --show-error --max-time 40 \
+  https://ports.ubuntu.com/ubuntu-ports/pool/main/i/icu/libicu-dev_78.3-2ubuntu1_arm64.deb \
+  -o "$icu/libicu-dev_78.3-2ubuntu1_arm64.deb"
+printf '%s  %s\n' 73e2d33adb9d36dd1cce51577b13f67c823fd0d7de7bdea2491bc8cccd08f06a \
+  "$icu/libicu-dev_78.3-2ubuntu1_arm64.deb" | sha256sum --check
+dpkg-deb -x "$icu/libicu-dev_78.3-2ubuntu1_arm64.deb" "$icu"
+nice -n 7 python3 -B "$work/relink_icu78.py" "$work" "$PWD" release idna 1
+nice -n 7 python3 -B "$work/relink_icu78.py" "$work" "$PWD" release all 2
+UOS_CI_JOBS=4 bash "$work/qualify.sh" "$work" "$PWD" asan
+```
+
+The second sanitizer command took over the same cache after the two-worker registry build stopped at 162/517 object actions. The driver retained the completed objects and scheduled 355 remaining actions on four workers. The focused 10-binary sanitizer receipt above covers the component and its direct transport callers.
