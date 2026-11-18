@@ -6,12 +6,12 @@ Audit the C++20 sources directly under `src/`, the twelve assigned trees and the
 
 The owned deliverables are this report, `analysis/lifetime/d/sites.json`, and audit scripts in that directory. Source fixes, production and test edits, TypeScript, workflow changes, deployment, credential handling and live provider probes are outside this audit. Rejected and selected promises retain the existing no-sibling-cancellation semantics. Use only local or in-memory fixtures with a clean environment, empty home and fresh temp directory. Put toolchains, dependencies and outputs outside the checkout.
 
-| Surface | Ownership traced |
-| --- | --- |
-| HTTP and inference handlers | Request and response frames, detached jobs, stream and delivery callbacks, and shutdown |
-| Admin, auth, catalog and Sentinel | Awaited versus escaping KV or fetch work, shared caches, abort and replay callbacks |
-| Authority and KV conversion | Local and RPC modes, queued work, SQLite and file handles, conversion streams |
-| Models, compaction and other helpers | Owning arguments, views, iterators, generator and callback holders |
+| Surface                              | Ownership traced                                                                        |
+| ------------------------------------ | --------------------------------------------------------------------------------------- |
+| HTTP and inference handlers          | Request and response frames, detached jobs, stream and delivery callbacks, and shutdown |
+| Admin, auth, catalog and Sentinel    | Awaited versus escaping KV or fetch work, shared caches, abort and replay callbacks     |
+| Authority and KV conversion          | Local and RPC modes, queued work, SQLite and file handles, conversion streams           |
+| Models, compaction and other helpers | Owning arguments, views, iterators, generator and callback holders                      |
 
 Read the coroutine rules in `PORTING.md`, the portable driver in `docs/CI.md`, and the prior kernel-failure report in `docs/findings/cppgw-clang-tidy-audit-20261117.md`. Use the five requested clang-tidy checks, lexical finders, and direct reading. A grep or tidy hit is a candidate. A site is a distinct lifetime operation or a repeated sequence with identical ownership in one function. Header declarations record the interface owners where relevant. Fixes and out-of-area findings are reported for dispatch.
 
@@ -37,11 +37,11 @@ sudo -n apt-get -o Acquire::Retries=1 -o Acquire::https::Timeout=30 install -y c
 
 The signing-key fingerprint was `6084F3CF814B57C1CF12EFD515CF4D18AF4F7421`. OpenSSL 3.0.13, zlib 1.3, Brotli 1.1.0 and Zstd 1.5.5 came from Ubuntu. All three upstream archives passed SHA-256 checks before extraction.
 
-| Archive | SHA-256 | Command run in an external scratch directory |
-| --- | --- | --- |
-| [Boost 1.92.0](https://archives.boost.io/release/1.92.0/source/boost_1_92_0.tar.bz2) | `5c1d40cb8e19adbf740a4ec2da35b3e58f3f5804b1dce44deb53df72193cbc6c` | `./bootstrap.sh --with-libraries=json,container` then `./b2 -j2 --with-json --with-container variant=release link=static runtime-link=shared cxxstd=20 stage`. Produced 869,382-byte JSON and 163,406-byte Container archives. |
-| [SQLite 3.54.0](https://www.sqlite.org/2026/sqlite-autoconf-3540000.tar.gz) | `134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed` | `./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'`, `make -j1`, `sudo -n make install`, `sudo -n ldconfig`. `pkg-config --modversion sqlite3` returned 3.54.0. |
-| [ICU 78.3](https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz) | `3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0` | `../icu/source/configure --prefix="$icu/prefix" --disable-tests --disable-samples --disable-extras --disable-static`, then `make -j1`, `make install`. The staged pkg-config returned 78.3. |
+| Archive                                                                                              | SHA-256                                                            | Command run in an external scratch directory                                                                                                                                                                                   |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Boost 1.92.0](https://archives.boost.io/release/1.92.0/source/boost_1_92_0.tar.bz2)                 | `5c1d40cb8e19adbf740a4ec2da35b3e58f3f5804b1dce44deb53df72193cbc6c` | `./bootstrap.sh --with-libraries=json,container` then `./b2 -j2 --with-json --with-container variant=release link=static runtime-link=shared cxxstd=20 stage`. Produced 869,382-byte JSON and 163,406-byte Container archives. |
+| [SQLite 3.54.0](https://www.sqlite.org/2026/sqlite-autoconf-3540000.tar.gz)                          | `134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed` | `./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'`, `make -j1`, `sudo -n make install`, `sudo -n ldconfig`. `pkg-config --modversion sqlite3` returned 3.54.0.                  |
+| [ICU 78.3](https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz) | `3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0` | `../icu/source/configure --prefix="$icu/prefix" --disable-tests --disable-samples --disable-extras --disable-static`, then `make -j1`, `make install`. The staged pkg-config returned 78.3.                                    |
 
 The repository's `tools/tidy.sh` verifies the entire routine configuration before running a selected check. LLVM 21 reported 11 unrelated check names from the earlier LLVM 24 snapshot as unknown during `--verify-config`. The area runner uses the original `.clang-tidy` options and header filter with an exact check override. Its `--list-checks` inventory showed all five requested checks. The first run used Ubuntu ICU 74.2 headers and completed 143/143 translation units in 209.645 seconds with zero failures or timeouts. It emitted 100 deduplicated diagnostics including transitive headers, 9 capturing-lambda and 91 reference-parameter. The ICU 78.3 rerun completed 143/143 translation units in 208.652 seconds with the same 100 diagnostics and zero failures or timeouts. The audit scripts and exact bound are reproducible with the following commands.
 
@@ -2292,6 +2292,23 @@ Reviewed the byte and string views and digest declarations.
 
 The baseline is `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb54014cf79ba7c64b24be4d28dde250c40ccf`. All 143 owned source and 143 owned header blobs matched that baseline. The changed paths are this report, `analysis/lifetime/d/sites.json`, `analysis/lifetime/d/audit.py`, and `analysis/lifetime/d/tidy.py`. The selected gates are ledger reconciliation against the baseline and the pinned Clang receipt, Python parsing, changed-file formatting and `git diff --check`. The three focused controls used separate scratch builds on the prepared runner. The full native ASan shards and the qualified GCC 12.2 SDK are outside the measured evidence.
 
+Formatting used Bun 1.4.0 and Prettier 3.9.6 through the repository task. The scratch tree holds the checked-in formatter scripts, manifests and lockfiles. Both dependency installs used `bun --no-env-file install --frozen-lockfile --ignore-scripts --cache-dir "$format_dir/cache" --no-summary`, once in the root and once in `tools/lint`.
+
+```sh
+repo=$PWD
+format_dir=/tmp/cppgw-lifetime-d-format.LCMtG1kE
+format_run=$(mktemp -d "$format_dir/run.XXXXXXXX")
+mkdir "$format_run/home" "$format_run/tmp"
+(
+  cd "$format_dir/tree"
+  env -i PATH=/home/runner/.bun/bin:/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$format_run/home" TMPDIR="$format_run/tmp" \
+    bun --no-env-file run format:check "$repo/cpp/gateway/docs/findings/cppgw-lifetime-d-20261118.md" \
+    "$repo/cpp/gateway/analysis/lifetime/d/sites.json"
+)
+python3 -B -c 'import ast; from pathlib import Path; paths = sorted(Path("cpp/gateway/analysis/lifetime/d").glob("*.py")); [ast.parse(path.read_text(), filename=str(path)) for path in paths]; print(f"{len(paths)} Python scripts parse")'
+git diff --check 6d28e858e7ab8b8b1036db4a4adfdade0465ed40
+```
+
 Audit commits are on the job branch. The configured GitHub remote permitted anonymous fetch, while `GIT_TERMINAL_PROMPT=0 timeout 20 git push --dry-run origin HEAD:refs/heads/agent-jobs/cppgw-lifetime-d-20261118` returned `fatal: could not read Username for 'https://github.com': terminal prompts disabled`. The refreshed `origin/development` was `a3a96bc5fe96ba383936746fae23e64daa69562f`, which excludes both the integration baseline and the audit branch. Publication and integration are pending in the enclosing job. The proposed source fixes and their regression coverage are pending maintainer dispatch.
 
 ## Ranked defects and counts
@@ -2651,7 +2668,7 @@ Remove the replaced combined-signal construction. The module already includes `u
 
 ### P3 · GCC 12.2 await-expression violations
 
-These eight sites cover the mandatory comparison-profile rule. Clang diagnostics and source inspection established the expression forms. A qualified GCC 12.2 execution result is unavailable.
+Manual inspection identified eight sites covered by the mandatory comparison-profile rule. A qualified GCC 12.2 execution result is unavailable.
 
 `src/admin/defaults.cpp:99`. The commit result's member is accessed within the await expression. Bind the commit result before reading it.
 
@@ -2743,14 +2760,14 @@ These eight sites cover the mandatory comparison-profile rule. Clang diagnostics
 +    }
 ```
 
-| Defect class | Sites |
-| --- | ---: |
-| Catalog index invalidation | 1 |
-| Abandoned private race sources | 6 |
-| Suspended callbacks whose owners can be released | 7 |
-| Other callback and resource lifecycle failures | 7 |
-| GCC 12.2 await-expression violations | 8 |
-| **Total** | **29** |
+| Defect class                                     |  Sites |
+| ------------------------------------------------ | -----: |
+| Catalog index invalidation                       |      1 |
+| Abandoned private race sources                   |      6 |
+| Suspended callbacks whose owners can be released |      7 |
+| Other callback and resource lifecycle failures   |      7 |
+| GCC 12.2 await-expression violations             |      8 |
+| **Total**                                        | **29** |
 
 Severity totals are 4 P1, 8 P2 and 17 P3 sites. Site counts group repeated calls with the same mechanism in one file or operation.
 
