@@ -1161,7 +1161,7 @@ const renderGeminiQuota = (snapshot) => {
   geminiQuotaStatus.textContent = "";
   geminiQuotaDetails.textContent = "";
   geminiQuotaBuckets.replaceChildren();
-  if (geminiQuotaCard.hidden) {
+  if (buckets.length === 0) {
     const message =
       {
         missing: "No local Antigravity CLI snapshot",
