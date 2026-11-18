@@ -754,8 +754,68 @@
       ]
     },
     "src/admin/error_log.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed error persistence, host log sizes, history iteration and replay retention reporting.",
+      "sites": [
+        {
+          "lines": [
+            143,
+            172,
+            176,
+            178
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The public wrappers copy all input into the owning recorder before returning. The record, key, options and store remain frame-local until the write ends."
+        },
+        {
+          "lines": [
+            269,
+            277
+          ],
+          "kinds": [
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The immutable path vector is owned by the frame throughout the microtask turn and the current path reference remains valid."
+        },
+        {
+          "lines": [
+            299,
+            314,
+            328,
+            333,
+            335,
+            337
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The history frame retains the iterator, KV and its copied result entries; the sorting callable runs synchronously."
+        },
+        {
+          "lines": [
+            432,
+            435,
+            443,
+            448,
+            462
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The request and history are values and the named store owner outlives the directly awaited maintenance borrowing it."
+        }
+      ]
     },
     "src/admin/index.cpp": {
       "reviewed": false,

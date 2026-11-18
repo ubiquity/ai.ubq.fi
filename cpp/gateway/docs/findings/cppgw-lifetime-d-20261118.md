@@ -32,7 +32,7 @@ The initial unknowns are current ownership after the integration refactors, avai
 - [x] `src/admin/codex.cpp`
 - [x] `src/admin/codex_reset.cpp`
 - [x] `src/admin/defaults.cpp`
-- [ ] `src/admin/error_log.cpp`
+- [x] `src/admin/error_log.cpp`
 - [ ] `src/admin/index.cpp`
 - [ ] `src/admin/kernel.cpp`
 - [ ] `src/admin/sentinel_incident.cpp`
@@ -402,6 +402,15 @@ Reviewed defaults reads and cutover writes, and the migration admin handlers.
 - L61, 70, 85, 100, 107, 113 **SAFE** · The update attempt owns the fetched tuple, cutover guard and options across awaits. The public POST retries with copied arguments and keeps each child within its own await.
 - L99 **DEFECT** · GCC 12.2 coroutine-rule violation in the defaults write. Atomic commit suspends and returns a temporary, and the enclosing expression immediately accesses its member. Bind const auto result = co_await atomic->commit(), then assign committed = result.ok.
 
+### `src/admin/error_log.cpp`
+
+Reviewed error persistence, host log sizes, history iteration and replay retention reporting.
+
+- L143, 172, 176, 178 **SAFE** · The public wrappers copy all input into the owning recorder before returning. The record, key, options and store remain frame-local until the write ends.
+- L269, 277 **SAFE** · The immutable path vector is owned by the frame throughout the microtask turn and the current path reference remains valid.
+- L299, 314, 328, 333, 335, 337 **SAFE** · The history frame retains the iterator, KV and its copied result entries; the sorting callable runs synchronously.
+- L432, 435, 443, 448, 462 **SAFE** · The request and history are values and the named store owner outlives the directly awaited maintenance borrowing it.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -410,4 +419,4 @@ Pending caller and runtime-helper tracing.
 
 ## Ranked defects and counts
 
-9/286 files reviewed. 43 sites: 38 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+10/286 files reviewed. 47 sites: 42 SAFE, 5 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
