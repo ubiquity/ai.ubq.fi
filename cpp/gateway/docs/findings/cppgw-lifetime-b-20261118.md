@@ -27,7 +27,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `include/uos/runtime/http_body.hpp`
 - [x] `include/uos/runtime/http_early_sse.hpp`
 - [x] `include/uos/runtime/http_tasks.hpp`
-- [ ] `include/uos/runtime/http_upgrade.hpp`
+- [x] `include/uos/runtime/http_upgrade.hpp`
 - [ ] `include/uos/runtime/native_kv_bootstrap.hpp`
 - [ ] `include/uos/runtime/permissions_linux.hpp`
 - [ ] `include/uos/runtime/websocket.hpp`
@@ -154,7 +154,13 @@ Initial checkpoint. Manual review and tool verification are pending.
 | --- | --- | --- | --- |
 | 8-11 | Request task receipt API | **SAFE** | Receipts and tasks are copied shared-state handles. An owning drain callback is returned from the implementation. |
 
+### `include/uos/runtime/http_upgrade.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 31-36,44-64 | Upgrade callback interfaces | **SAFE** | Handler and upgrade Task inputs are by value, and returned function wrappers are synchronous bridges into owning free coroutines. Socket-close ownership is reviewed at the registration site. |
+
 
 ## Ranked defects and counts
 
-4/97 files reviewed. **DEFECT 0, SAFE 8, UNCLEAR 0.**
+5/97 files reviewed. **DEFECT 0, SAFE 9, UNCLEAR 0.**

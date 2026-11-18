@@ -101,8 +101,20 @@
       ]
     },
     "include/uos/runtime/http_upgrade.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "31-36,44-64",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Upgrade callback interfaces",
+          "evidence": "Handler and upgrade Task inputs are by value, and returned function wrappers are synchronous bridges into owning free coroutines. Socket-close ownership is reviewed at the registration site."
+        }
+      ]
     },
     "include/uos/runtime/native_kv_bootstrap.hpp": {
       "reviewed": false,
