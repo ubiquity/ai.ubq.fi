@@ -687,8 +687,19 @@
       ]
     },
     "include/uos/rt/kv_js.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "104-106",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Uint8Array byte view contract",
+          "evidence": "The span borrows its input value explicitly. Implemented use in key conversion copies the bytes immediately and replay deserialization consumes them synchronously from a named entry."
+        }
+      ]
     },
     "include/uos/rt/kv_sqlite.hpp": {
       "reviewed": false,

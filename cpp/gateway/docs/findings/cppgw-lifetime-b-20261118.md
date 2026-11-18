@@ -41,7 +41,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/runtime/websocket.cpp`
 - [x] `include/uos/rt/fs.hpp`
 - [x] `include/uos/rt/kv.hpp`
-- [ ] `include/uos/rt/kv_js.hpp`
+- [x] `include/uos/rt/kv_js.hpp`
 - [ ] `include/uos/rt/kv_sqlite.hpp`
 - [ ] `include/uos/rt/process.hpp`
 - [ ] `include/uos/rt/sqlite.hpp`
@@ -272,6 +272,12 @@ Declaration of the memoized module promise. Constructor call and cache lifetime 
 | 730-771 | Typed KV lookup coroutines | **SAFE** | Keys and options are copied into the frame. Current typed callers retain their store through the initial virtual call and await; result conversions read only the frame-local entry or vector. |
 | 847,860-882,899-917 | Memory KV clock and database owners | **SAFE** | The database owns the copied clock and version callbacks or their static defaults. The handle owns its database and the database tracks native handles weakly. |
 
+### `include/uos/rt/kv_js.hpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 104-106 | Uint8Array byte view contract | **SAFE** | The span borrows its input value explicitly. Implemented use in key conversion copies the bytes immediately and replay deserialization consumes them synchronously from a named entry. |
+
 
 ## Ranked defects and counts
 
@@ -437,4 +443,4 @@ removes the registrations on frame destruction as well as on normal return.
 ```
 
 
-18/97 files reviewed. **DEFECT 7, SAFE 50, UNCLEAR 2.**
+19/97 files reviewed. **DEFECT 7, SAFE 51, UNCLEAR 2.**
