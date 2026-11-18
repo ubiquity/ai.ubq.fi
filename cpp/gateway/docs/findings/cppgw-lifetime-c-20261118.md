@@ -189,7 +189,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/auth.cpp`
 - [x] `src/codex/auth_refresh.cpp`
 - [x] `src/codex/auth_repair.cpp`
-- [ ] `src/codex/banked_reset.cpp`
+- [x] `src/codex/banked_reset.cpp`
 - [ ] `src/codex/banked_reset_claim.cpp`
 - [ ] `src/codex/banked_reset_pool.cpp`
 - [ ] `src/codex/banked_reset_provider.cpp`
@@ -1200,3 +1200,10 @@ Refresh routing uses owned account snapshots and shares work while aborting only
 Repair plans and records are built synchronously.
 
 - 25,30-48,286-316 · synchronous view and callbacks · **SAFE** · The result outcome view refers to a static literal, and the sort and expiry predicates finish before their captured or pointed-to inputs leave scope.
+
+### `src/codex/banked_reset.cpp`
+
+The usage gate performs one asynchronous read. Record conversion and observers run synchronously.
+
+- 44-69 · usage gate read · **SAFE** · The coroutine owns KV, account hash, and authorization until readCodexResetUsage settles and the decision is made.
+- 381-403 · telemetry invocation · **SAFE** · Observer and metric arguments are consumed synchronously under the caller's live telemetry and field owners.

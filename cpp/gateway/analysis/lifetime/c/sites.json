@@ -1768,8 +1768,22 @@
       ]
     },
     "src/codex/banked_reset.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The usage gate performs one asynchronous read. Record conversion and observers run synchronously.",
+      "sites": [
+        {
+          "lines": "44-69",
+          "kind": "usage gate read",
+          "verdict": "SAFE",
+          "reason": "The coroutine owns KV, account hash, and authorization until readCodexResetUsage settles and the decision is made."
+        },
+        {
+          "lines": "381-403",
+          "kind": "telemetry invocation",
+          "verdict": "SAFE",
+          "reason": "Observer and metric arguments are consumed synchronously under the caller's live telemetry and field owners."
+        }
+      ]
     },
     "src/codex/banked_reset_claim.cpp": {
       "status": "pending",
