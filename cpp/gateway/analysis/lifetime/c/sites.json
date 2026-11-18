@@ -956,8 +956,16 @@
       ]
     },
     "include/uos/paid_fallback/ledger_settlement.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Settlement and lease APIs.",
+      "sites": [
+        {
+          "lines": "19-33,46-53,76",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Settlement/lease tasks retain the store and their request, result, lease and provider-log values throughout awaits."
+        }
+      ]
     },
     "include/uos/paid_fallback/ledger_state.hpp": {
       "status": "pending",
