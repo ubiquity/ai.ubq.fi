@@ -13,6 +13,7 @@
 
 #include <array>
 #include <fcntl.h>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -114,7 +115,7 @@ namespace uos::admin::gemini_quota {
     }
 
     void requireDirectory(const std::string& directory) {
-      if (!rt::path::isAbsolute(directory) || rt::path::basename(directory) != ".data") {
+      if (!rt::path::isAbsolute(directory) || std::filesystem::path(directory).filename() != ".data") {
         throw rt::JsError("Gemini quota requires an absolute gateway state directory.");
       }
       const auto info = rt::fs::lstatSync(directory);
