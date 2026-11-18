@@ -1095,8 +1095,245 @@
       ]
     },
     "src/rt/process_loop.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "complete",
+      "note": "Reviewed both pidfd and SIGCHLD branches, subprocess pipe streams, process listeners and BunFile stream adapters. The production server registers process signals on the process loop.",
+      "sites": [
+        {
+          "lines": [
+            45,
+            51,
+            53,
+            73,
+            76,
+            79,
+            84,
+            87
+          ],
+          "classes": [
+            "b",
+            "c",
+            "e"
+          ],
+          "verdict": "SAFE",
+          "label": "POSIX child exit wait and signal names",
+          "reason": "The watcher owns its signal_set and PID throughout the wait, the error token is named, and Darwin's string views point into static storage."
+        },
+        {
+          "lines": [
+            100,
+            102,
+            107,
+            108,
+            119,
+            124,
+            125,
+            134,
+            136,
+            142,
+            148
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "DEFECT",
+          "label": "Static process signal registry retains a scoped Asio context",
+          "reason": "A listener registered on a scoped Loop can leave a static signal_set whose service and executor have already died.",
+          "defect": {
+            "id": "A-PROCESS-SIGNAL-CONTEXT",
+            "priority": 40,
+            "severity": "memory safety with scoped runtime loops",
+            "interleaving": [
+              "Register process::on inside a local LoopScope. The static signal registry constructs its Asio signal_set on that loop.",
+              "Destroy the loop before explicitly removing the listener. Later registry use or destruction still uses the old Asio service and executor."
+            ],
+            "diff": "--- a/cpp/gateway/src/rt/process_loop.cpp\n+++ b/cpp/gateway/src/rt/process_loop.cpp\n@@ -106,5 +106,13 @@\n+    struct SignalRegistry final : asio::execution_context::service {\n+      inline static asio::execution_context::id id;\n+      Signals state;\n+      explicit SignalRegistry(asio::execution_context& context) : asio::execution_context::service(context) {}\n+      void shutdown() override {\n+        state.set.reset();\n+        state.listeners.clear();\n+      }\n+    };\n+\n     Signals& signals() {\n-      static Signals state;\n-      return state;\n+      return asio::use_service<SignalRegistry>(rt::loop().context()).state;\n     }"
+          }
+        },
+        {
+          "lines": [
+            123,
+            124,
+            126,
+            129,
+            130,
+            150,
+            154,
+            156,
+            158,
+            159,
+            161,
+            165,
+            168,
+            174,
+            263,
+            264,
+            266,
+            271,
+            272,
+            274,
+            279,
+            281
+          ],
+          "classes": [
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Signal wait generation and synchronous listener dispatch",
+          "reason": "The wait callback captures a generation by value; listener delivery snapshots owning identities and erases once entries before invoking any callback."
+        },
+        {
+          "lines": [
+            231,
+            232,
+            234,
+            235,
+            236,
+            239,
+            240,
+            244,
+            248,
+            251,
+            252,
+            254,
+            255,
+            257,
+            259
+          ],
+          "classes": [
+            "a",
+            "b",
+            "c",
+            "e"
+          ],
+          "verdict": "SAFE",
+          "label": "Subprocess pipe read and cancellation",
+          "reason": "The source closures own the descriptor, the forwarding pull moves an owned controller into the child frame, and the frame owns its I/O buffer and token through completion."
+        },
+        {
+          "lines": [
+            287,
+            288,
+            295,
+            296,
+            299,
+            300,
+            305,
+            306,
+            307,
+            308,
+            310,
+            311,
+            312,
+            313,
+            318,
+            319,
+            320,
+            323,
+            327,
+            328
+          ],
+          "classes": [
+            "b",
+            "d",
+            "e"
+          ],
+          "verdict": "SAFE",
+          "label": "FileSink input views and suspended flush",
+          "reason": "write synchronously copies incoming views, and each flush owns the stable descriptor via its state and the moved chunk independently of later changes to pending."
+        },
+        {
+          "lines": [
+            330,
+            333,
+            344,
+            345,
+            346,
+            362,
+            363,
+            366,
+            367,
+            369,
+            370,
+            385,
+            386,
+            391,
+            395,
+            400,
+            405,
+            410,
+            415,
+            417,
+            430
+          ],
+          "classes": [
+            "b",
+            "c",
+            "e"
+          ],
+          "verdict": "SAFE",
+          "label": "Child-exit observers and public subprocess accessors",
+          "reason": "The watchers own state and native descriptors across waits, while accessors synchronously copy owning handles and kill consumes its view before returning."
+        },
+        {
+          "lines": [
+            433,
+            437,
+            446,
+            448,
+            451,
+            459,
+            465,
+            474,
+            513,
+            524,
+            527,
+            528,
+            531,
+            533,
+            534,
+            536,
+            538,
+            540,
+            543,
+            545
+          ],
+          "classes": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ],
+          "verdict": "SAFE",
+          "label": "Spawn setup and watcher detachment",
+          "reason": "The borrowing lambdas and argv or env pointers are synchronous, and the detached watchers receive state and their native wait inputs by value."
+        },
+        {
+          "lines": [
+            551,
+            555,
+            560,
+            561,
+            570,
+            581,
+            591,
+            600,
+            602,
+            604,
+            605,
+            606,
+            608
+          ],
+          "classes": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "label": "BunFile stream callbacks and descriptor lifetime",
+          "reason": "The source owns its pathname and descriptor, the synchronous pull and cancel closures own that source, and close clears the fd before teardown."
+        }
+      ]
     },
     "include/uos/rt/process.hpp": {
       "status": "pending",

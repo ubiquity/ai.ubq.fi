@@ -38,7 +38,7 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `include/uos/rt/clock.hpp`
 - [x] `src/rt/async.cpp`
 - [x] `include/uos/rt/async.hpp`
-- [ ] `src/rt/process_loop.cpp`
+- [x] `src/rt/process_loop.cpp`
 - [ ] `include/uos/rt/process.hpp`
 - [ ] `src/rt/stream.cpp`
 - [ ] `include/uos/rt/stream.hpp`
@@ -145,18 +145,31 @@ Reviewed the lazy Task adapters, eager Promise combinators, callback return-type
 - **SAFE** `1067, 1069, 1073, 1078, 1082, 1114, 1118, 1123, 1124, 1130, 1136` (a/b/d), Delegate and forAwait ownership. The frames own both generator handles or callback and the complete current IteratorResult through the body await and return cleanup.
 - **DEFECT (A-GENERATOR-GCC-AWAIT)** `1073, 1123, 1124` (e), Forwarded generator values constructed within await expressions. delegateTo moves a yielded T into a by-value adapter and forAwait may move it into a by-value coroutine callback in the await full expression.
 
+### `src/rt/process_loop.cpp`
+
+Reviewed both pidfd and SIGCHLD branches, subprocess pipe streams, process listeners and BunFile stream adapters. The production server registers process signals on the process loop.
+
+- **SAFE** `45, 51, 53, 73, 76, 79, 84, 87` (b/c/e), POSIX child exit wait and signal names. The watcher owns its signal_set and PID throughout the wait, the error token is named, and Darwin's string views point into static storage.
+- **DEFECT (A-PROCESS-SIGNAL-CONTEXT)** `100, 102, 107, 108, 119, 124, 125, 134, 136, 142, 148` (b/c), Static process signal registry retains a scoped Asio context. A listener registered on a scoped Loop can leave a static signal_set whose service and executor have already died.
+- **SAFE** `123, 124, 126, 129, 130, 150, 154, 156, 158, 159, 161, 165, 168, 174, 263, 264, 266, 271, 272, 274, 279, 281` (c/d), Signal wait generation and synchronous listener dispatch. The wait callback captures a generation by value; listener delivery snapshots owning identities and erases once entries before invoking any callback.
+- **SAFE** `231, 232, 234, 235, 236, 239, 240, 244, 248, 251, 252, 254, 255, 257, 259` (a/b/c/e), Subprocess pipe read and cancellation. The source closures own the descriptor, the forwarding pull moves an owned controller into the child frame, and the frame owns its I/O buffer and token through completion.
+- **SAFE** `287, 288, 295, 296, 299, 300, 305, 306, 307, 308, 310, 311, 312, 313, 318, 319, 320, 323, 327, 328` (b/d/e), FileSink input views and suspended flush. write synchronously copies incoming views, and each flush owns the stable descriptor via its state and the moved chunk independently of later changes to pending.
+- **SAFE** `330, 333, 344, 345, 346, 362, 363, 366, 367, 369, 370, 385, 386, 391, 395, 400, 405, 410, 415, 417, 430` (b/c/e), Child-exit observers and public subprocess accessors. The watchers own state and native descriptors across waits, while accessors synchronously copy owning handles and kill consumes its view before returning.
+- **SAFE** `433, 437, 446, 448, 451, 459, 465, 474, 513, 524, 527, 528, 531, 533, 534, 536, 538, 540, 543, 545` (a/b/c/d), Spawn setup and watcher detachment. The borrowing lambdas and argv or env pointers are synchronous, and the detached watchers receive state and their native wait inputs by value.
+- **SAFE** `551, 555, 560, 561, 570, 581, 591, 600, 602, 604, 605, 606, 608` (b/c), BunFile stream callbacks and descriptor lifetime. The source owns its pathname and descriptor, the synchronous pull and cancel closures own that source, and close clears the fd before teardown.
+
 ## Ranked defects and counts
 
-Reviewed **6/30 files** and **45 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
+Reviewed **7/30 files** and **53 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
 | Hazard class | DEFECT | SAFE | UNCLEAR |
 | --- | ---: | ---: | ---: |
-| a. Capturing coroutine closure | 1 | 10 | 0 |
-| b. Borrowed coroutine parameter or receiver | 2 | 20 | 1 |
-| c. Callback ownership or cycle | 6 | 32 | 2 |
-| d. Container invalidation | 2 | 12 | 0 |
-| e. GCC 12 await-expression rule | 2 | 2 | 1 |
-| **Unique site groups** | 8 | 35 | 2 |
+| a. Capturing coroutine closure | 1 | 12 | 0 |
+| b. Borrowed coroutine parameter or receiver | 3 | 26 | 1 |
+| c. Callback ownership or cycle | 7 | 38 | 2 |
+| d. Container invalidation | 2 | 15 | 0 |
+| e. GCC 12 await-expression rule | 2 | 6 | 1 |
+| **Unique site groups** | 9 | 42 | 2 |
 
 ### 1. A-PROMISE-CALLBACK-INPUT (memory safety in the public runtime API) — Task-returning Promise callbacks can borrow a destroyed outcome
 
@@ -204,7 +217,35 @@ Reviewed **6/30 files** and **45 site groups**. A site group can have multiple l
 +    void signalAbort(std::shared_ptr<State> signal, Reason reason) {
 ```
 
-### 3. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
+### 3. A-PROCESS-SIGNAL-CONTEXT (memory safety with scoped runtime loops) — Static process signal registry retains a scoped Asio context
+
+`src/rt/process_loop.cpp:100, 102, 107, 108, 119, 124, 125, 134, 136, 142, 148`
+
+- Register process::on inside a local LoopScope. The static signal registry constructs its Asio signal_set on that loop.
+- Destroy the loop before explicitly removing the listener. Later registry use or destruction still uses the old Asio service and executor.
+
+```diff
+--- a/cpp/gateway/src/rt/process_loop.cpp
++++ b/cpp/gateway/src/rt/process_loop.cpp
+@@ -106,5 +106,13 @@
++    struct SignalRegistry final : asio::execution_context::service {
++      inline static asio::execution_context::id id;
++      Signals state;
++      explicit SignalRegistry(asio::execution_context& context) : asio::execution_context::service(context) {}
++      void shutdown() override {
++        state.set.reset();
++        state.listeners.clear();
++      }
++    };
++
+     Signals& signals() {
+-      static Signals state;
+-      return state;
++      return asio::use_service<SignalRegistry>(rt::loop().context()).state;
+     }
+```
+
+### 4. A-PROMISE-REACTION-CYCLE (retention on long-running loops) — Pending Promise reactions self-own their source
 
 `src/rt/async.cpp:485, 490, 491, 492, 494, 497`
 
@@ -230,7 +271,7 @@ Reviewed **6/30 files** and **45 site groups**. A site group can have multiple l
 +      source->react([source = source.get(), out, remaining] {
 ```
 
-### 4. A-GENERATOR-STEP-OWNER (public runtime liveness) — Pending generator step does not keep its generator alive
+### 5. A-GENERATOR-STEP-OWNER (public runtime liveness) — Pending generator step does not keep its generator alive
 
 `include/uos/rt/async.hpp:1041, 1058, 1061, 1062, 1063, 1064, 1099, 1101`
 
@@ -251,7 +292,7 @@ Reviewed **6/30 files** and **45 site groups**. A site group can have multiple l
      }
 ```
 
-### 5. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
+### 6. A-LOOP-TEARDOWN-OWNER (wrong-loop teardown and retention) — Scoped Loop teardown runs callbacks under the ambient loop
 
 `src/rt/async.cpp:252, 257, 258, 261, 263, 266, 268, 367, 368, 396, 397, 400, 401, 443, 445`
 
@@ -266,7 +307,7 @@ Reviewed **6/30 files** and **45 site groups**. A site group can have multiple l
 +    LoopScope scope(owner);
 ```
 
-### 6. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
+### 7. A-PROMISE-GCC-AWAIT (GCC 12 portability rule) — Implicit shared_ptr conversion in Promise await expressions
 
 `include/uos/rt/async.hpp:219, 375`
 
@@ -286,7 +327,7 @@ Reviewed **6/30 files** and **45 site groups**. A site group can have multiple l
 +      co_await std::move(ready);
 ```
 
-### 7. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
+### 8. A-GENERATOR-GCC-AWAIT (GCC 12 portability rule) — Forwarded generator values constructed within await expressions
 
 `include/uos/rt/async.hpp:1073, 1123, 1124`
 
