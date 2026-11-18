@@ -54,7 +54,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/codex/external_auth.hpp`
 - [x] `include/uos/codex/index.hpp`
 - [x] `include/uos/codex/manual_reset.hpp`
-- [ ] `include/uos/codex/manual_reset_state.hpp`
+- [x] `include/uos/codex/manual_reset_state.hpp`
 - [ ] `include/uos/codex/native_auth.hpp`
 - [ ] `include/uos/codex/native_auth_transport.hpp`
 - [ ] `include/uos/codex/overage_settings.hpp`
@@ -438,3 +438,7 @@ Codex Responses entry point overloads.
 Manual reset owns its dependency bundle through the operation.
 
 - 23-26,35-37 · task parameters and callbacks · **SAFE** · Reset frames own the hash, dependencies, provider factory and signal used for the awaited operation.
+
+### `include/uos/codex/manual_reset_state.hpp`
+
+Synchronous manual reset state and serialization declarations. No suspendable body or registration.

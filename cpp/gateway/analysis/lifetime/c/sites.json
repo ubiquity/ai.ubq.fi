@@ -241,7 +241,8 @@
       ]
     },
     "include/uos/codex/manual_reset_state.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous manual reset state and serialization declarations. No suspendable body or registration.",
       "sites": []
     },
     "include/uos/codex/native_auth.hpp": {
