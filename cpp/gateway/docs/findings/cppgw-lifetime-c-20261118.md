@@ -302,7 +302,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/claude_code_accounts.cpp`
 - [x] `src/provider/claude_code_credentials.cpp`
 - [x] `src/provider/claude_code_models.cpp`
-- [ ] `src/provider/claude_code_quota.cpp`
+- [x] `src/provider/claude_code_quota.cpp`
 - [ ] `src/provider/claude_code_usage.cpp`
 - [ ] `src/provider/claude_code_usage_refresh.cpp`
 - [ ] `src/provider/claude_code_usage_schema.cpp`
@@ -1923,3 +1923,10 @@ Catalog fetch keeps the active task and its cache object alive independently of 
 - 123-166,188-249 · bounded page read, credential and workspace resolution · **SAFE** · Response, reader, scoped account and payload values live in each joined frame. The identity hash owns its material.
 - 252-290,353-399,403-425 · single-flight cache and publication · **SAFE** · Refresh owns a shared cache object and re-finds registry membership after suspension. The caller waits on a copied promise, and Loop teardown clears pending reactions and their frame owners.
 - 301-351 · catalog pagination and fetch · **SAFE** · The discovery frame owns the fetch callable and parsed page, and each body cancel is joined under its live handle.
+
+### `src/provider/claude_code_quota.cpp`
+
+Quota rows and health observations keep independent store and snapshot owners.
+
+- 400-425 · accepted observation recorder · **SAFE** · The joined recorder receives KV and the observation by value and the function pointer is copied before invoking.
+- 544-555,624-715 · quota CAS, retry, and completion · **SAFE** · Each state and row is a local snapshot. Receiver, keys and AtomicOperation stay live through joined reads, recursion and writes.

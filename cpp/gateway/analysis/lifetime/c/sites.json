@@ -3564,8 +3564,22 @@
       ]
     },
     "src/provider/claude_code_quota.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Quota rows and health observations keep independent store and snapshot owners.",
+      "sites": [
+        {
+          "lines": "400-425",
+          "kind": "accepted observation recorder",
+          "verdict": "SAFE",
+          "reason": "The joined recorder receives KV and the observation by value and the function pointer is copied before invoking."
+        },
+        {
+          "lines": "544-555,624-715",
+          "kind": "quota CAS, retry, and completion",
+          "verdict": "SAFE",
+          "reason": "Each state and row is a local snapshot. Receiver, keys and AtomicOperation stay live through joined reads, recursion and writes."
+        }
+      ]
     },
     "src/provider/claude_code_usage.cpp": {
       "status": "pending",
