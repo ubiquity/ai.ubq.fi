@@ -88,7 +88,7 @@ The unmodified driver classified `third_party/simdutf/simdutf.h` as a first-part
 
 ## Verification in progress
 
-Focused isolated release and forced-SIGCHLD ASan/UBSan runs passed 15 of 15 process cases. The forced backend uses `-DBOOST_PROCESS_V2_DISABLE_PIDFD_OPEN` on Linux. GCC 14.2.0 compiled `process_loop.cpp` with the same strict warnings at `-O2`. Both full Linux ARM64 profiles are running on the frozen C++ sources and tests.
+Focused isolated release and ASan/UBSan runs passed 15 of 15 process cases. A separate ASan/UBSan run forced the SIGCHLD backend with `-DBOOST_PROCESS_V2_DISABLE_PIDFD_OPEN` and passed 15 of 15. GCC 14.2.0 compiled `process_loop.cpp` with the same strict warnings at `-O2`. Both full Linux ARM64 profiles are running on the frozen C++ sources and tests.
 
 The two process implementation objects and the process test cross-compiled as Mach-O ARM64 with Clang 21.1.8, libc++, the macOS 15.5 SDK and Boost 1.92.0. This compile check exposed the SDK's signal-set macros and verified the correction. The SDK archive `MacOSX15.5.sdk.tar.xz` had SHA-256 `c15cf0f3f17d714d1aa5a642da8e118db53d79429eb015771ba816aa7c6c1cbd`. [SDK archive](https://github.com/joseluisq/macosx-sdks/releases/tag/15.5)
 
@@ -102,3 +102,14 @@ done
 ```
 
 A standalone launcher cross-linked for macOS with `ld64.lld-21 -arch arm64 -platform_version macos 15.5 15.5` after adding the archive built from the matching upstream Process sources. Omitting the archive produced unresolved symbols. The Linux fault-injection launcher likewise linked with `-lboost_process` and failed linkage without it. Darwin runtime execution requires a Mac.
+
+## Helper launch timing
+
+An isolated Clang 21.1.8 `-O2` scratch benchmark compared the original and migrated process objects with the same supporting runtime objects. Each process warmed up 20 launches, then timed 128 sequential `/usr/bin/true` launches through `spawn` and `exited()` with all stdio ignored. It alternated order over seven pairs on CPU 3 via `taskset`, while the full builds ran. The executable and launcher configurations were the same apart from the process implementation.
+
+| Implementation | Median wall time per child | Median parent peak RSS |
+| -------------- | -------------------------: | ---------------------: |
+| Original       |                   1.045 ms |             13,276 KiB |
+| Boost.Process  |                   1.589 ms |             13,276 KiB |
+
+The median launch took 0.544 ms longer in this fixture. The direct application spawn callers are the offline KV tools and the Codex smoke tool.
