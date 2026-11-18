@@ -607,8 +607,16 @@
       ]
     },
     "include/uos/deepseek/waterfall_handler.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The waterfall awaits each provider and paid-tail callback before attempting another hop.",
+      "sites": [
+        {
+          "lines": "16-30",
+          "kind": "borrowed arguments and context",
+          "verdict": "SAFE",
+          "reason": "The hop frame holds dispatch data and callback; the paid-tail implementation copies forward or joins the invoked task with its source values live."
+        }
+      ]
     },
     "include/uos/embeddings/handlers.hpp": {
       "status": "pending",

@@ -89,7 +89,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/deepseek/responses_stream.hpp`
 - [x] `include/uos/deepseek/stream.hpp`
 - [x] `include/uos/deepseek/waterfall.hpp`
-- [ ] `include/uos/deepseek/waterfall_handler.hpp`
+- [x] `include/uos/deepseek/waterfall_handler.hpp`
 - [ ] `include/uos/embeddings/handlers.hpp`
 - [ ] `include/uos/embeddings/jobs.hpp`
 - [ ] `include/uos/embeddings/ledger.hpp`
@@ -629,3 +629,9 @@ Synchronous stream event parsing declarations with owned delta results.
 Planning callbacks are synchronous predicates.
 
 - 38-39 · predicate interface · **SAFE** · The plan builder invokes each callback while its input and current provider string are live.
+
+### `include/uos/deepseek/waterfall_handler.hpp`
+
+The waterfall awaits each provider and paid-tail callback before attempting another hop.
+
+- 16-30 · borrowed arguments and context · **SAFE** · The hop frame holds dispatch data and callback; the paid-tail implementation copies forward or joins the invoked task with its source values live.
