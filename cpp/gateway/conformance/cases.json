@@ -1,0 +1,2579 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "health-get",
+      "path": "/health",
+      "auth": "none",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/headers/content-type": ["application/json"],
+          "/body/status": "available",
+          "/headers/cache-control": ["no-store"]
+        }
+      }
+    },
+    {
+      "id": "health-head",
+      "path": "/health",
+      "auth": "none",
+      "method": "HEAD",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body": null
+        }
+      }
+    },
+    {
+      "id": "unknown-public-route",
+      "path": "/conformance-nonexistent",
+      "auth": "none",
+      "expect": {
+        "status": 404,
+        "routes": [],
+        "values": {
+          "/body/error/code": "not_found"
+        }
+      }
+    },
+    {
+      "id": "unknown-v1-no-auth",
+      "path": "/v1/conformance-nonexistent",
+      "auth": "none",
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "unknown-v1-authenticated",
+      "path": "/v1/conformance-nonexistent",
+      "auth": "reader",
+      "expect": {
+        "status": 404,
+        "routes": [],
+        "values": {
+          "/body/error/code": "not_found"
+        }
+      }
+    },
+    {
+      "id": "openapi-document",
+      "path": "/openapi.json",
+      "auth": "none",
+      "expect": {
+        "status": 200,
+        "routes": []
+      }
+    },
+    {
+      "id": "home-head",
+      "path": "/",
+      "auth": "none",
+      "method": "HEAD",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body": null
+        },
+        "media_type": "text/html"
+      }
+    },
+    {
+      "id": "options-untrusted",
+      "path": "/v1/chat/completions",
+      "auth": "none",
+      "method": "OPTIONS",
+      "headers": {
+        "Origin": "https://untrusted.invalid",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type"
+      },
+      "expect": {
+        "status": 204,
+        "routes": [],
+        "values": {
+          "/headers/access-control-allow-origin": ["*"],
+          "/body": null
+        },
+        "absent": ["/headers/access-control-allow-credentials"]
+      }
+    },
+    {
+      "id": "options-trusted",
+      "path": "/v1/chat/completions",
+      "auth": "none",
+      "method": "OPTIONS",
+      "headers": {
+        "Origin": "https://ai.ubq.fi"
+      },
+      "expect": {
+        "status": 204,
+        "routes": [],
+        "values": {
+          "/headers/access-control-allow-origin": ["https://ai.ubq.fi"],
+          "/headers/access-control-allow-credentials": ["true"]
+        }
+      }
+    },
+    {
+      "id": "options-unknown-route",
+      "path": "/conformance-nonexistent",
+      "auth": "none",
+      "method": "OPTIONS",
+      "expect": {
+        "status": 204,
+        "routes": []
+      }
+    },
+    {
+      "id": "cors-trusted-query",
+      "path": "/health?cors_origin=https%3A%2F%2Fai.ubq.fi",
+      "auth": "none",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/headers/access-control-allow-origin": ["https://ai.ubq.fi"],
+          "/headers/access-control-allow-credentials": ["true"]
+        }
+      }
+    },
+    {
+      "id": "cors-origin-priority",
+      "path": "/health?cors_origin=https%3A%2F%2Fai.ubq.fi",
+      "auth": "none",
+      "headers": {
+        "Origin": "https://untrusted.invalid"
+      },
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/headers/access-control-allow-origin": ["*"]
+        }
+      }
+    },
+    {
+      "id": "admin-no-auth",
+      "path": "/admin/api-keys",
+      "auth": "none",
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "admin-client-token-denied",
+      "path": "/admin/api-keys",
+      "auth": "reader",
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "health-providers-no-auth",
+      "path": "/health/providers",
+      "auth": "none",
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "health-upstream-client-denied",
+      "path": "/health/upstream",
+      "auth": "reader",
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "auth-missing",
+      "path": "/uos/auth",
+      "auth": "none",
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "auth-unknown",
+      "path": "/uos/auth",
+      "auth": "unknown",
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "passkey-session-empty",
+      "path": "/api/auth/session",
+      "auth": "none",
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "passkey-login-malformed",
+      "path": "/api/auth/login/start",
+      "auth": "none",
+      "method": "POST",
+      "raw": "{",
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "passkey-login-body-too-large",
+      "path": "/api/auth/login/start",
+      "auth": "none",
+      "method": "POST",
+      "raw": "{}",
+      "pad_to_bytes": 65537,
+      "expect": {
+        "status": 413,
+        "routes": []
+      }
+    },
+    {
+      "id": "passkey-register-admin-required",
+      "path": "/api/auth/register/start",
+      "auth": "none",
+      "method": "POST",
+      "json": {},
+      "expect": {
+        "status": 401,
+        "routes": []
+      }
+    },
+    {
+      "id": "admin-keys-before-create",
+      "path": "/admin/api-keys?include_usage=true",
+      "auth": "admin",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/data": []
+        }
+      }
+    },
+    {
+      "id": "key-create-primary",
+      "path": "/admin/api-keys",
+      "auth": "admin",
+      "method": "POST",
+      "json": {
+        "name": "Conformance primary",
+        "token": "$token_primary",
+        "usage_limit_requests": 1000,
+        "window_ms": 3600000,
+        "paid_fallback_enabled": false
+      },
+      "capture": {
+        "primary_id": "/body/id"
+      },
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/name": "Conformance primary",
+          "/body/token": "$token_primary",
+          "/body/usage_limit_requests": 1000,
+          "/body/usage_requests": 0,
+          "/body/paid_fallback_enabled": false
+        }
+      }
+    },
+    {
+      "id": "key-create-other",
+      "path": "/admin/api-keys",
+      "auth": "admin",
+      "method": "POST",
+      "json": {
+        "name": "Conformance other",
+        "token": "$token_other",
+        "usage_limit_requests": 1000,
+        "window_ms": 3600000,
+        "paid_fallback_enabled": false
+      },
+      "capture": {
+        "other_id": "/body/id"
+      },
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/name": "Conformance other",
+          "/body/token": "$token_other",
+          "/body/usage_limit_requests": 1000,
+          "/body/usage_requests": 0,
+          "/body/paid_fallback_enabled": false
+        }
+      }
+    },
+    {
+      "id": "key-create-quota",
+      "path": "/admin/api-keys",
+      "auth": "admin",
+      "method": "POST",
+      "json": {
+        "name": "Conformance quota",
+        "token": "$token_quota",
+        "usage_limit_requests": 1,
+        "window_ms": 3600000,
+        "paid_fallback_enabled": false
+      },
+      "capture": {
+        "quota_id": "/body/id"
+      },
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/name": "Conformance quota",
+          "/body/token": "$token_quota",
+          "/body/usage_limit_requests": 1,
+          "/body/usage_requests": 0,
+          "/body/paid_fallback_enabled": false
+        }
+      }
+    },
+    {
+      "id": "key-duplicate",
+      "path": "/admin/api-keys",
+      "auth": "admin",
+      "method": "POST",
+      "json": {
+        "name": "Conformance duplicate",
+        "token": "$token_primary",
+        "paid_fallback_enabled": false
+      },
+      "expect": {
+        "status": 409,
+        "routes": []
+      }
+    },
+    {
+      "id": "key-invalid-token",
+      "path": "/admin/api-keys",
+      "auth": "admin",
+      "method": "POST",
+      "json": {
+        "name": "Conformance invalid",
+        "token": "bad-fixture-token"
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "key-no-name",
+      "path": "/admin/api-keys",
+      "auth": "admin",
+      "method": "POST",
+      "json": {},
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "auth-primary",
+      "path": "/uos/auth",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/auth/mode": "required",
+          "/body/auth/method/kind": "kv_api_key",
+          "/body/auth/is_admin": false,
+          "/body/auth/method/key/id": "$primary_id",
+          "/body/auth/method/key/usage_requests": 0
+        }
+      }
+    },
+    {
+      "id": "auth-operator",
+      "path": "/uos/auth",
+      "auth": "admin",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/auth/is_admin": true
+        }
+      }
+    },
+    {
+      "id": "auth-reader",
+      "path": "/uos/auth",
+      "auth": "reader",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/auth/is_admin": false
+        }
+      }
+    },
+    {
+      "id": "keys-list-with-usage",
+      "path": "/admin/api-keys?include_usage=true",
+      "auth": "admin",
+      "unordered": {
+        "/body/data": "name"
+      },
+      "expect": {
+        "status": 200,
+        "routes": []
+      }
+    },
+    {
+      "id": "keys-list-omit-usage",
+      "path": "/admin/api-keys",
+      "auth": "admin",
+      "unordered": {
+        "/body/data": "name"
+      },
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "absent": ["/body/data/0/usage_requests", "/body/data/0/token"]
+      }
+    },
+    {
+      "id": "paid-fallback-empty",
+      "path": "/admin/api-keys/$primary_id/paid-fallbacks",
+      "auth": "admin",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/data": []
+        }
+      }
+    },
+    {
+      "id": "paid-fallback-bad-limit",
+      "path": "/admin/api-keys/$primary_id/paid-fallbacks?limit=-1",
+      "auth": "admin",
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "keys-audit-seed",
+      "path": "/admin/api-keys/changes?limit=10",
+      "auth": "admin",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/retention_days": 90,
+          "/body/data/0/action": "create",
+          "/body/data/0/target_key_id": "$quota_id"
+        }
+      }
+    },
+    {
+      "id": "read-defaults",
+      "path": "/admin/defaults",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-passkey-users",
+      "path": "/admin/passkey-users",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-codex-catalog",
+      "path": "/admin/codex/models",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-models-whitelist",
+      "path": "/admin/models/whitelist",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-models-catalog",
+      "path": "/admin/models/catalog",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-provider-selection",
+      "path": "/admin/providers/selection",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-banked-resets",
+      "path": "/admin/providers/codex/banked-resets",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-codex-overage",
+      "path": "/admin/providers/codex/overage-usage",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-kernel-policy-queue",
+      "path": "/admin/kernel-policy-queue",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-kernel-pubkeys",
+      "path": "/admin/kernel-pubkeys",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-claude-access",
+      "path": "/admin/providers/claude-code/access",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-claude-auth-state",
+      "path": "/admin/providers/claude-code/auth",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-debug-routing",
+      "path": "/admin/debug/routing",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-health-providers",
+      "path": "/health/providers",
+      "auth": "admin",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "read-providers",
+      "path": "/admin/providers",
+      "auth": "admin",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/deepseek/configured": true,
+          "/body/cerebras/configured": false,
+          "/body/claude_code/configured": false,
+          "/body/lithos/configured": false,
+          "/body/metered/configured": false,
+          "/body/openrouter/configured": false,
+          "/body/surplus/configured": false
+        }
+      }
+    },
+    {
+      "id": "health-upstream-loopback",
+      "path": "/health/upstream",
+      "auth": "admin",
+      "expect": {
+        "status": 200,
+        "routes": ["codex.models"]
+      }
+    },
+    {
+      "id": "models-no-auth",
+      "path": "/v1/models",
+      "auth": "none",
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "models-unknown-token",
+      "path": "/v1/models",
+      "auth": "unknown",
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "models-openai",
+      "path": "/v1/models",
+      "unordered": {
+        "/body/data": "id"
+      },
+      "expect": {
+        "status": 200,
+        "values": {
+          "/body/object": "list"
+        },
+        "absent": ["/body/models"]
+      }
+    },
+    {
+      "id": "models-codex-versioned",
+      "path": "/v1/models?client_version=0.163.0",
+      "expect": {
+        "status": 200,
+        "values": {
+          "/body/models/0/slug": "gpt-smoke-fixture",
+          "/dispatches/0/target": "/codex/models?client_version=0.163.0",
+          "/body/models/0/supported_reasoning_levels/0/effort": "none"
+        },
+        "absent": ["/body/data"],
+        "routes": ["codex.models"]
+      }
+    },
+    {
+      "id": "models-codex-repeat-version",
+      "path": "/v1/models?client_version=0.163.0",
+      "expect": {
+        "status": 200,
+        "values": {
+          "/body/models/0/slug": "gpt-smoke-fixture"
+        },
+        "routes": []
+      }
+    },
+    {
+      "id": "models-codex-new-version",
+      "path": "/v1/models?client_version=0.164.0",
+      "expect": {
+        "status": 200,
+        "values": {
+          "/body/models/0/slug": "gpt-smoke-fixture",
+          "/dispatches/0/target": "/codex/models?client_version=0.164.0"
+        },
+        "routes": ["codex.models"]
+      }
+    },
+    {
+      "id": "models-codex-invalid-version",
+      "path": "/v1/models?client_version=banana",
+      "expect": {
+        "status": 400,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_client_version"
+        }
+      }
+    },
+    {
+      "id": "models-public-catalog",
+      "path": "/uos/models/catalog",
+      "auth": "none",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "models-capabilities-no-auth",
+      "path": "/uos/models/capabilities",
+      "auth": "none",
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "models-capabilities",
+      "path": "/uos/models/capabilities",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "chat-no-auth",
+      "path": "/v1/chat/completions",
+      "auth": "none",
+      "method": "POST",
+      "fixture": "small",
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "chat-unknown-api-key",
+      "path": "/v1/chat/completions",
+      "auth": "unknown",
+      "method": "POST",
+      "fixture": "small",
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "chat-wrong-auth-scheme",
+      "path": "/v1/chat/completions",
+      "auth": "none",
+      "method": "POST",
+      "fixture": "small",
+      "headers": {
+        "Authorization": "Basic fixture"
+      },
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "chat-invalid-json",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "raw": "{\"model\":",
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "chat-empty-body",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "raw": "",
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "chat-wrong-body-type",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": [],
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "chat-default-model",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Synthetic request path chat."
+          }
+        ]
+      },
+      "expect": {
+        "status": 200,
+        "routes": ["codex.responses"],
+        "values": {
+          "/body/model": "gpt-smoke-fixture"
+        }
+      }
+    },
+    {
+      "id": "codex-chat-stream",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "mock": "codex-success",
+      "json": {
+        "model": "gpt-smoke-fixture",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Use the synthetic provider."
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        }
+      },
+      "expect": {
+        "status": 200,
+        "routes": ["codex.responses"],
+        "values": {
+          "/terminal": "[DONE]"
+        },
+        "media_type": "text/event-stream"
+      }
+    },
+    {
+      "id": "chat-missing-messages",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash"
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "chat-invalid-role",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "messages": [
+          {
+            "role": "operator",
+            "content": "hi"
+          }
+        ],
+        "max_completion_tokens": 64
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      },
+      "mock": "success"
+    },
+    {
+      "id": "chat-invalid-stream-type",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Synthetic request path chat."
+          }
+        ],
+        "max_completion_tokens": 64,
+        "stream": "true"
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "chat-invalid-max-tokens",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Synthetic request path chat."
+          }
+        ],
+        "max_completion_tokens": -1
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "chat-unknown-field",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Synthetic request path chat."
+          }
+        ],
+        "max_completion_tokens": 64,
+        "conformance_extra": true
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "chat-body-too-large",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "raw": "{}",
+      "expect": {
+        "status": 400,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_request_error"
+        }
+      },
+      "pad_to_bytes": 33554433
+    },
+    {
+      "id": "chat-buffered",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "fixture": "small",
+      "log": true,
+      "expect": {
+        "status": 200,
+        "routes": ["deepseek.small"],
+        "values": {
+          "/telemetry/0/delivery_outcome": "delivered",
+          "/telemetry/0/total_tokens": 16,
+          "/telemetry/0/stream_terminal_type": "response.completed",
+          "/body/object": "chat.completion",
+          "/body/choices/0/message/content": "fixture-wire-ok",
+          "/body/choices/0/finish_reason": "stop",
+          "/body/usage/total_tokens": 16
+        },
+        "absent": ["/telemetry/1"]
+      }
+    },
+    {
+      "id": "chat-large-buffered",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "fixture": "large",
+      "expect": {
+        "status": 200,
+        "routes": ["deepseek.large"],
+        "values": {
+          "/body/choices/0/message/content": "fixture-wire-ok"
+        }
+      }
+    },
+    {
+      "id": "chat-stream",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "fixture": "stream",
+      "log": true,
+      "expect": {
+        "status": 200,
+        "routes": ["deepseek.stream"],
+        "values": {
+          "/telemetry/0/delivery_outcome": "delivered",
+          "/telemetry/0/total_tokens": 16,
+          "/telemetry/0/stream_terminal_type": "response.completed",
+          "/terminal": "[DONE]",
+          "/event_types": [
+            "chat.content",
+            "chat.content",
+            "chat.content",
+            "chat.content",
+            "chat.content",
+            "chat.content",
+            "chat.content",
+            "chat.content",
+            "finish:stop",
+            "usage",
+            "[DONE]"
+          ]
+        },
+        "absent": ["/telemetry/1"],
+        "media_type": "text/event-stream"
+      }
+    },
+    {
+      "id": "chat-stream-with-usage",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Synthetic request path chat."
+          }
+        ],
+        "max_completion_tokens": 64,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        }
+      },
+      "mock": "success",
+      "progressive": true,
+      "expect": {
+        "status": 200,
+        "routes": ["deepseek.success"],
+        "values": {
+          "/terminal": "[DONE]",
+          "/event_types": [
+            "chat.content",
+            "chat.content",
+            "chat.content",
+            "chat.content",
+            "chat.content",
+            "chat.content",
+            "chat.content",
+            "chat.content",
+            "finish:stop",
+            "usage",
+            "[DONE]"
+          ]
+        },
+        "media_type": "text/event-stream"
+      }
+    },
+    {
+      "id": "chat-upstream-unavailable",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Synthetic request path chat."
+          }
+        ],
+        "max_completion_tokens": 64
+      },
+      "mock": "unavailable",
+      "expect": {
+        "status": 503,
+        "routes": ["deepseek.unavailable"]
+      }
+    },
+    {
+      "id": "chat-upstream-rate-limit",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Synthetic request path chat."
+          }
+        ],
+        "max_completion_tokens": 64
+      },
+      "mock": "rate-limit",
+      "expect": {
+        "status": 429,
+        "routes": ["deepseek.rate-limit"]
+      }
+    },
+    {
+      "id": "responses-no-auth",
+      "path": "/v1/responses",
+      "auth": "none",
+      "method": "POST",
+      "fixture": "responses",
+      "expect": {
+        "status": 401,
+        "routes": []
+      }
+    },
+    {
+      "id": "responses-invalid-json",
+      "path": "/v1/responses",
+      "method": "POST",
+      "raw": "{\"input\":",
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "responses-missing-input",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash"
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "responses-wrong-input-type",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "input": 42,
+        "max_output_tokens": 64
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "responses-invalid-stream-type",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "input": "Synthetic conformance prompt.",
+        "max_output_tokens": 64,
+        "stream": 1
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "responses-invalid-max-output",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "input": "Synthetic conformance prompt.",
+        "max_output_tokens": 0
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "responses-unknown-field",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "input": "Synthetic conformance prompt.",
+        "max_output_tokens": 64,
+        "conformance_extra": 1
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "responses-unsupported-reasoning-type",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "input": "Synthetic conformance prompt.",
+        "max_output_tokens": 64,
+        "reasoning": "high"
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "responses-invalid-tool-type",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "input": "Synthetic conformance prompt.",
+        "max_output_tokens": 64,
+        "tools": [
+          {
+            "type": "bad"
+          }
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      },
+      "mock": "success"
+    },
+    {
+      "id": "responses-buffered",
+      "path": "/v1/responses",
+      "method": "POST",
+      "fixture": "responses",
+      "log": true,
+      "expect": {
+        "status": 200,
+        "routes": ["deepseek.responses"],
+        "values": {
+          "/telemetry/0/delivery_outcome": "delivered",
+          "/telemetry/0/total_tokens": 16,
+          "/telemetry/0/stream_terminal_type": "response.completed",
+          "/body/object": "response",
+          "/body/status": "completed",
+          "/body/output/0/content/0/text": "fixture-wire-ok",
+          "/body/usage/total_tokens": 16
+        },
+        "absent": ["/telemetry/1"]
+      }
+    },
+    {
+      "id": "deepseek-waterfall-first-hop",
+      "path": "/v1/responses",
+      "method": "POST",
+      "mock": "success",
+      "json": {
+        "model": "ubiquity/deepseek-flash",
+        "input": "Use the local first hop."
+      },
+      "expect": {
+        "status": 200,
+        "routes": ["deepseek.success"],
+        "values": {
+          "/body/status": "completed",
+          "/body/usage/total_tokens": 16
+        }
+      }
+    },
+    {
+      "id": "responses-stream",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "input": "Synthetic conformance prompt.",
+        "max_output_tokens": 64,
+        "stream": true
+      },
+      "mock": "success",
+      "progressive": true,
+      "log": true,
+      "expect": {
+        "status": 200,
+        "routes": ["deepseek.success"],
+        "values": {
+          "/telemetry/0/delivery_outcome": "delivered",
+          "/telemetry/0/total_tokens": 16,
+          "/telemetry/0/stream_terminal_type": "response.completed",
+          "/terminal": "response.completed",
+          "/events/0/data/type": "response.created"
+        },
+        "absent": ["/telemetry/1"],
+        "media_type": "text/event-stream"
+      }
+    },
+    {
+      "id": "responses-tool-buffered",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "input": "Synthetic conformance prompt.",
+        "max_output_tokens": 64,
+        "reasoning": {
+          "effort": "none"
+        },
+        "tools": [
+          {
+            "type": "function",
+            "name": "lookup",
+            "description": "Look up a city",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": ["city"],
+              "additionalProperties": false
+            },
+            "strict": true
+          }
+        ],
+        "tool_choice": "required",
+        "stream": false
+      },
+      "mock": "tool",
+      "expect": {
+        "status": 200,
+        "routes": ["deepseek.tool"],
+        "values": {
+          "/body/status": "completed",
+          "/body/output/0/type": "function_call",
+          "/body/output/0/name": "lookup",
+          "/body/output/0/arguments": "{\"city\":\"Oslo\"}",
+          "/dispatches/0/body/tools/0/function/name": "lookup"
+        }
+      }
+    },
+    {
+      "id": "responses-tool-stream",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "input": "Synthetic conformance prompt.",
+        "max_output_tokens": 64,
+        "reasoning": {
+          "effort": "none"
+        },
+        "tools": [
+          {
+            "type": "function",
+            "name": "lookup",
+            "description": "Look up a city",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": ["city"],
+              "additionalProperties": false
+            },
+            "strict": true
+          }
+        ],
+        "tool_choice": "required",
+        "stream": true
+      },
+      "mock": "tool",
+      "expect": {
+        "status": 200,
+        "routes": ["deepseek.tool"],
+        "values": {
+          "/terminal": "response.completed",
+          "/dispatches/0/body/tools/0/function/name": "lookup",
+          "/events/3/data/delta": "{\"city\":\"Oslo\"}",
+          "/events/6/data/response/output/0/name": "lookup"
+        },
+        "media_type": "text/event-stream"
+      }
+    },
+    {
+      "id": "responses-error-after-delta",
+      "path": "/v1/responses",
+      "auth": "other",
+      "method": "POST",
+      "json": {
+        "model": "deepseek-flash",
+        "input": "Synthetic conformance prompt.",
+        "max_output_tokens": 64,
+        "stream": true
+      },
+      "mock": "broken",
+      "progressive": true,
+      "log": true,
+      "expect": {
+        "status": 200,
+        "routes": ["deepseek.broken"],
+        "values": {
+          "/terminal": "response.failed",
+          "/telemetry/0/delivery_outcome": "delivered",
+          "/telemetry/0/stream_terminal_type": "error",
+          "/events/4/data/delta": "fixture-",
+          "/events/5/data/response/status": "failed"
+        },
+        "absent": ["/telemetry/1"],
+        "media_type": "text/event-stream"
+      }
+    },
+    {
+      "id": "responses-error-usage-readback",
+      "path": "/uos/auth",
+      "auth": "other",
+      "settle": true,
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/auth/method/key/usage_requests": 1
+        }
+      }
+    },
+    {
+      "id": "codex-responses-buffered",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "gpt-smoke-fixture",
+        "input": "Use the synthetic provider.",
+        "max_output_tokens": 64,
+        "stream": false
+      },
+      "mock": "codex-success",
+      "expect": {
+        "status": 200,
+        "routes": ["codex.responses"],
+        "values": {
+          "/body/output/0/content/0/text": "codex fixture answer",
+          "/body/status": "completed",
+          "/body/usage/total_tokens": 16,
+          "/dispatches/0/body/model": "gpt-smoke-fixture"
+        }
+      }
+    },
+    {
+      "id": "codex-responses-stream",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "gpt-smoke-fixture",
+        "input": "Use the synthetic provider.",
+        "max_output_tokens": 64,
+        "stream": true
+      },
+      "mock": "codex-success",
+      "expect": {
+        "status": 200,
+        "routes": ["codex.responses"],
+        "values": {
+          "/terminal": "response.completed"
+        },
+        "media_type": "text/event-stream"
+      }
+    },
+    {
+      "id": "codex-responses-tool",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "gpt-smoke-fixture",
+        "input": "Use the synthetic provider.",
+        "max_output_tokens": 64,
+        "tools": [
+          {
+            "type": "function",
+            "name": "lookup",
+            "description": "Look up a city",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": ["city"],
+              "additionalProperties": false
+            },
+            "strict": true
+          }
+        ],
+        "stream": true
+      },
+      "mock": "codex-tool",
+      "expect": {
+        "status": 200,
+        "routes": ["codex.responses"],
+        "values": {
+          "/terminal": "response.completed",
+          "/events/2/data/delta": "{\"city\":\"Oslo\"}",
+          "/events/5/data/response/output/0/arguments": "{\"city\":\"Oslo\"}"
+        },
+        "media_type": "text/event-stream"
+      }
+    },
+    {
+      "id": "codex-error-after-delta",
+      "path": "/v1/responses",
+      "method": "POST",
+      "json": {
+        "model": "gpt-smoke-fixture",
+        "input": "Use the synthetic provider.",
+        "max_output_tokens": 64,
+        "stream": true
+      },
+      "mock": "codex-error",
+      "progressive": true,
+      "expect": {
+        "status": 200,
+        "routes": ["codex.responses"],
+        "values": {
+          "/terminal": "response.failed",
+          "/events/3/data/delta": "codex fixture answer"
+        },
+        "media_type": "text/event-stream"
+      }
+    },
+    {
+      "id": "cerebras-unconfigured",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": {
+        "model": "gpt-oss-120b",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Synthetic request path chat."
+          }
+        ],
+        "max_completion_tokens": 64
+      },
+      "expect": {
+        "status": 503,
+        "routes": []
+      }
+    },
+    {
+      "id": "lithos-unconfigured",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": {
+        "model": "moonshotai/Kimi-K3",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Synthetic request path chat."
+          }
+        ],
+        "max_completion_tokens": 64
+      },
+      "expect": {
+        "status": 503,
+        "routes": []
+      }
+    },
+    {
+      "id": "openrouter-unconfigured",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": {
+        "model": "anthropic/claude-opus-4.6",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Synthetic request path chat."
+          }
+        ],
+        "max_completion_tokens": 64
+      },
+      "expect": {
+        "status": 404,
+        "routes": [],
+        "values": {
+          "/body/error/code": "model_not_found"
+        }
+      }
+    },
+    {
+      "id": "unknown-model",
+      "path": "/v1/chat/completions",
+      "method": "POST",
+      "json": {
+        "model": "fixture-unknown-model",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Synthetic request path chat."
+          }
+        ],
+        "max_completion_tokens": 64
+      },
+      "expect": {
+        "status": 404,
+        "routes": [],
+        "values": {
+          "/body/error/code": "model_not_found"
+        }
+      }
+    },
+    {
+      "id": "images-upstream-without-image",
+      "path": "/v1/images/generations",
+      "method": "POST",
+      "json": {
+        "model": "fixture-no-image-model",
+        "prompt": "fixture"
+      },
+      "expect": {
+        "status": 502,
+        "routes": ["codex.responses"],
+        "values": {
+          "/body/error/code": "image_generation_failed"
+        }
+      }
+    },
+    {
+      "id": "decisions-invalid-body",
+      "path": "/v1/decisions",
+      "method": "POST",
+      "raw": "{",
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "systemone-invalid-body",
+      "path": "/v1/systemone",
+      "method": "POST",
+      "raw": "{",
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "embeddings-openai-route-absent",
+      "path": "/v1/embeddings",
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": ["conformance sample"],
+        "input_type": "query",
+        "dimensions": 256
+      },
+      "expect": {
+        "status": 404,
+        "routes": [],
+        "values": {
+          "/body/error/code": "not_found"
+        }
+      }
+    },
+    {
+      "id": "embeddings-auth-required",
+      "path": "/uos/embeddings",
+      "auth": "none",
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": ["conformance sample"],
+        "input_type": "query",
+        "dimensions": 256
+      },
+      "expect": {
+        "status": 401,
+        "routes": [],
+        "values": {
+          "/body/error/code": "invalid_api_key"
+        }
+      }
+    },
+    {
+      "id": "embeddings-invalid-json",
+      "path": "/uos/embeddings",
+      "method": "POST",
+      "raw": "null",
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "embeddings-invalid-model",
+      "path": "/uos/embeddings",
+      "method": "POST",
+      "json": {
+        "model": "text-embedding-3-small",
+        "input": ["conformance sample"],
+        "input_type": "query",
+        "dimensions": 256
+      },
+      "expect": {
+        "status": 400,
+        "routes": [],
+        "values": {
+          "/body/error/code": "model_not_found"
+        }
+      }
+    },
+    {
+      "id": "embeddings-empty-input",
+      "path": "/uos/embeddings",
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": [],
+        "input_type": "query",
+        "dimensions": 256
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "embeddings-token-array",
+      "path": "/uos/embeddings",
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": [23, 42],
+        "input_type": "query",
+        "dimensions": 256
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "embeddings-invalid-dimension",
+      "path": "/uos/embeddings",
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": ["conformance sample"],
+        "input_type": "query",
+        "dimensions": 257
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "embeddings-invalid-encoding",
+      "path": "/uos/embeddings",
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": ["conformance sample"],
+        "input_type": "query",
+        "dimensions": 256,
+        "encoding_format": "hex"
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "embeddings-extra-field",
+      "path": "/uos/embeddings",
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": ["conformance sample"],
+        "input_type": "query",
+        "dimensions": 256,
+        "temperature": 1
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "embeddings-voyage-unconfigured",
+      "path": "/uos/embeddings",
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": ["conformance sample"],
+        "input_type": "query",
+        "dimensions": 256
+      },
+      "expect": {
+        "status": 503,
+        "routes": []
+      }
+    },
+    {
+      "id": "embeddings-base64-unconfigured",
+      "path": "/uos/embeddings",
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": ["conformance sample"],
+        "input_type": "query",
+        "dimensions": 256,
+        "encoding_format": "base64"
+      },
+      "expect": {
+        "status": 503,
+        "routes": []
+      }
+    },
+    {
+      "id": "embedding-job-no-input-type",
+      "path": "/uos/embedding-jobs",
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": ["conformance sample"]
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "embedding-job-no-provider",
+      "path": "/uos/embedding-jobs",
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": ["conformance sample"],
+        "input_type": "query",
+        "dimensions": 256
+      },
+      "expect": {
+        "status": 503,
+        "routes": []
+      }
+    },
+    {
+      "id": "embedding-job-unknown",
+      "path": "/uos/embedding-jobs/unseen-fixture-job",
+      "expect": {
+        "status": 404,
+        "routes": []
+      }
+    },
+    {
+      "id": "live-auth-required",
+      "path": "/v1/live",
+      "auth": "none",
+      "method": "POST",
+      "json": {},
+      "expect": {
+        "status": 401,
+        "routes": []
+      }
+    },
+    {
+      "id": "live-not-multipart",
+      "path": "/v1/live",
+      "method": "POST",
+      "json": {},
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "live-body-too-large",
+      "path": "/v1/live",
+      "method": "POST",
+      "raw": "x",
+      "headers": {
+        "Content-Type": "multipart/form-data; boundary=uos-conformance"
+      },
+      "expect": {
+        "status": 413,
+        "routes": []
+      },
+      "pad_to_bytes": 1048577
+    },
+    {
+      "id": "live-multipart-missing-sdp",
+      "path": "/v1/live",
+      "method": "POST",
+      "multipart": {
+        "session": {
+          "model": "gpt-smoke-fixture"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "websocket-unknown-route",
+      "path": "/conformance-nonexistent",
+      "auth": "none",
+      "transport": "ws",
+      "expect": {
+        "status": 404,
+        "routes": []
+      }
+    },
+    {
+      "id": "websocket-no-auth",
+      "path": "/v1/live/rtc_fixture",
+      "auth": "none",
+      "transport": "ws",
+      "expect": {
+        "status": 401,
+        "routes": []
+      }
+    },
+    {
+      "id": "websocket-no-call",
+      "path": "/v1/live/rtc_missing",
+      "transport": "ws",
+      "expect": {
+        "status": 404,
+        "routes": []
+      }
+    },
+    {
+      "id": "live-create",
+      "path": "/v1/live",
+      "method": "POST",
+      "multipart": {
+        "sdp": "v=0\nfixture-offer\n",
+        "session": {
+          "model": "gpt-smoke-fixture"
+        }
+      },
+      "capture": {
+        "live_location": "/headers/location/0"
+      },
+      "expect": {
+        "status": 201,
+        "routes": ["codex.realtime"],
+        "values": {
+          "/headers/location": ["/v1/live/rtc_fixture"],
+          "/body": "v=0\r\ns=synthetic-smoke-answer\r\n"
+        },
+        "media_type": "application/sdp"
+      }
+    },
+    {
+      "id": "live-wrong-principal",
+      "path": "$live_location",
+      "auth": "other",
+      "transport": "ws",
+      "expect": {
+        "status": 403,
+        "routes": []
+      }
+    },
+    {
+      "id": "live-requires-upgrade",
+      "path": "$live_location",
+      "expect": {
+        "status": 426,
+        "routes": []
+      }
+    },
+    {
+      "id": "websocket-relay",
+      "path": "$live_location",
+      "transport": "ws",
+      "relay": true,
+      "expect": {
+        "status": 101,
+        "routes": ["codex.websocket"],
+        "values": {
+          "/body/opcode": 1,
+          "/body/echo": "{\"type\":\"smoke.echo\",\"value\":\"fixture-wire-ok\"}",
+          "/dispatches/0/frame/utf8": "{\"type\":\"smoke.echo\",\"value\":\"fixture-wire-ok\"}"
+        }
+      }
+    },
+    {
+      "id": "quota-readback-empty",
+      "path": "/uos/auth",
+      "auth": "quota",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/auth/method/key/usage_requests": 0
+        }
+      }
+    },
+    {
+      "id": "quota-first-request",
+      "path": "/v1/chat/completions",
+      "auth": "quota",
+      "method": "POST",
+      "fixture": "small",
+      "log": true,
+      "expect": {
+        "status": 200,
+        "routes": ["deepseek.small"],
+        "values": {
+          "/telemetry/0/delivery_outcome": "delivered",
+          "/telemetry/0/total_tokens": 16,
+          "/telemetry/0/stream_terminal_type": "response.completed",
+          "/headers/ratelimit-policy": ["\"api-key\";q=1;w=3600"]
+        },
+        "absent": ["/telemetry/1"]
+      }
+    },
+    {
+      "id": "quota-readback-one-settlement",
+      "path": "/uos/auth",
+      "auth": "quota",
+      "settle": true,
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/auth/method/key/usage_requests": 1
+        }
+      }
+    },
+    {
+      "id": "quota-rejects-second-dispatch",
+      "path": "/v1/chat/completions",
+      "auth": "quota",
+      "method": "POST",
+      "fixture": "small",
+      "expect": {
+        "status": 429,
+        "routes": [],
+        "values": {
+          "/headers/ratelimit-limit": ["1"],
+          "/headers/ratelimit-remaining": ["0"],
+          "/body/error/code": "rate_limit_exceeded",
+          "/headers/ratelimit-policy": ["\"api-key\";q=1;w=3600"]
+        },
+        "positive_headers": ["retry-after", "ratelimit-reset"]
+      }
+    },
+    {
+      "id": "quota-readback-after-rejection",
+      "path": "/uos/auth",
+      "auth": "quota",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/auth/method/key/usage_requests": 1
+        }
+      }
+    },
+    {
+      "id": "quota-paid-accounting-empty",
+      "path": "/admin/api-keys/$quota_id/paid-fallbacks",
+      "auth": "admin",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/data": []
+        }
+      }
+    },
+    {
+      "id": "key-rename",
+      "path": "/admin/api-keys",
+      "auth": "admin",
+      "method": "PATCH",
+      "json": {
+        "id": "$other_id",
+        "name": "Conformance renamed"
+      },
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/name": "Conformance renamed"
+        }
+      }
+    },
+    {
+      "id": "key-read-renamed",
+      "path": "/uos/auth",
+      "auth": "other",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/auth/method/key/name": "Conformance renamed"
+        }
+      }
+    },
+    {
+      "id": "key-delete-active-denied",
+      "path": "/admin/api-keys",
+      "auth": "admin",
+      "method": "DELETE",
+      "json": {
+        "id": "$other_id"
+      },
+      "expect": {
+        "status": 400,
+        "routes": []
+      }
+    },
+    {
+      "id": "key-revoke",
+      "path": "/admin/api-keys/revoke",
+      "auth": "admin",
+      "method": "POST",
+      "json": {
+        "id": "$other_id"
+      },
+      "expect": {
+        "status": 200,
+        "routes": []
+      }
+    },
+    {
+      "id": "key-revoked-inference-denied",
+      "path": "/v1/chat/completions",
+      "auth": "other",
+      "method": "POST",
+      "fixture": "small",
+      "expect": {
+        "status": 401,
+        "routes": []
+      }
+    },
+    {
+      "id": "key-unrevoke",
+      "path": "/admin/api-keys/unrevoke",
+      "auth": "admin",
+      "method": "POST",
+      "json": {
+        "id": "$other_id"
+      },
+      "expect": {
+        "status": 200,
+        "routes": []
+      }
+    },
+    {
+      "id": "key-unrevoked-access-restored",
+      "path": "/uos/auth",
+      "auth": "other",
+      "expect": {
+        "status": 200,
+        "routes": []
+      }
+    },
+    {
+      "id": "key-revoke-again",
+      "path": "/admin/api-keys/revoke",
+      "auth": "admin",
+      "method": "POST",
+      "json": {
+        "id": "$other_id"
+      },
+      "expect": {
+        "status": 200,
+        "routes": []
+      }
+    },
+    {
+      "id": "keys-and-usage-before-restart",
+      "path": "/admin/api-keys?include_usage=true",
+      "auth": "admin",
+      "unordered": {
+        "/body/data": "name"
+      },
+      "expect": {
+        "status": 200,
+        "routes": []
+      }
+    },
+    {
+      "id": "keys-audit-before-restart",
+      "path": "/admin/api-keys/changes?limit=20",
+      "auth": "admin",
+      "expect": {
+        "status": 200,
+        "routes": []
+      }
+    },
+    {
+      "id": "restart-health",
+      "path": "/health",
+      "auth": "none",
+      "phase": 2,
+      "expect": {
+        "status": 200,
+        "routes": []
+      }
+    },
+    {
+      "id": "restart-keys-and-usage",
+      "path": "/admin/api-keys?include_usage=true",
+      "auth": "admin",
+      "phase": 2,
+      "unordered": {
+        "/body/data": "name"
+      },
+      "expect": {
+        "status": 200,
+        "routes": []
+      }
+    },
+    {
+      "id": "restart-quota-count",
+      "path": "/uos/auth",
+      "auth": "quota",
+      "phase": 2,
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/auth/method/key/usage_requests": 1,
+          "/body/auth/method/key/id": "$quota_id"
+        }
+      }
+    },
+    {
+      "id": "restart-quota-rejection",
+      "path": "/v1/chat/completions",
+      "auth": "quota",
+      "method": "POST",
+      "phase": 2,
+      "fixture": "small",
+      "expect": {
+        "status": 429,
+        "routes": [],
+        "values": {
+          "/headers/ratelimit-remaining": ["0"],
+          "/body/error/code": "rate_limit_exceeded",
+          "/headers/ratelimit-policy": ["\"api-key\";q=1;w=3600"]
+        },
+        "positive_headers": ["retry-after", "ratelimit-reset"]
+      }
+    },
+    {
+      "id": "restart-key-still-revoked",
+      "path": "/v1/chat/completions",
+      "auth": "other",
+      "method": "POST",
+      "phase": 2,
+      "fixture": "small",
+      "expect": {
+        "status": 401,
+        "routes": []
+      }
+    },
+    {
+      "id": "restart-key-delete-revoked",
+      "path": "/admin/api-keys",
+      "auth": "admin",
+      "method": "DELETE",
+      "phase": 2,
+      "json": {
+        "id": "$other_id"
+      },
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/id": "$other_id"
+        }
+      }
+    },
+    {
+      "id": "restart-deleted-key-denied",
+      "path": "/uos/auth",
+      "auth": "other",
+      "phase": 2,
+      "expect": {
+        "status": 401,
+        "routes": []
+      }
+    },
+    {
+      "id": "restart-deleted-key-not-listed",
+      "path": "/admin/api-keys?include_usage=true",
+      "auth": "admin",
+      "phase": 2,
+      "unordered": {
+        "/body/data": "name"
+      },
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "absent": ["/body/data/2"]
+      }
+    },
+    {
+      "id": "restart-paid-accounting-empty",
+      "path": "/admin/api-keys/$quota_id/paid-fallbacks",
+      "auth": "admin",
+      "phase": 2,
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/data": []
+        }
+      }
+    },
+    {
+      "id": "restart-audit",
+      "path": "/admin/api-keys/changes?limit=20",
+      "auth": "admin",
+      "phase": 2,
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/data/0/action": "delete",
+          "/body/data/0/target_key_id": "$other_id",
+          "/body/data/1/action": "revoke",
+          "/body/data/2/action": "unrevoke",
+          "/body/data/3/action": "revoke",
+          "/body/data/4/action": "update"
+        }
+      }
+    },
+    {
+      "id": "embeddings-cache-dry-run",
+      "path": "/admin/kv-migration/import?profile=local&include_cache=true",
+      "phase": 2,
+      "auth": "admin",
+      "method": "POST",
+      "ndjson": "embeddings-cache.ndjson",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/total": 2,
+          "/body/imported": 2,
+          "/body/errors": 0,
+          "/body/dry_run": true
+        }
+      }
+    },
+    {
+      "id": "embeddings-cache-seed",
+      "path": "/admin/kv-migration/import?profile=local&include_cache=true&write=true",
+      "phase": 2,
+      "auth": "admin",
+      "method": "POST",
+      "ndjson": "embeddings-cache.ndjson",
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/total": 2,
+          "/body/imported": 2,
+          "/body/errors": 0,
+          "/body/dry_run": false
+        }
+      }
+    },
+    {
+      "id": "embeddings-cached-float",
+      "path": "/uos/embeddings",
+      "phase": 2,
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": ["conformance cached sample", "conformance cached sample"],
+        "input_type": "query",
+        "dimensions": 256
+      },
+      "headers": {
+        "Idempotency-Key": "conformance-cached-embedding"
+      },
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/object": "list",
+          "/body/model": "voyage-4-large",
+          "/body/usage/total_tokens": 0,
+          "/body/data/0/index": 0,
+          "/body/data/1/index": 1,
+          "/body/data/0/embedding/0": 0.5,
+          "/body/data/0/embedding/1": -1.0,
+          "/body/data/1/embedding/2": 2.0,
+          "/headers/x-uos-upstream": ["voyage"]
+        },
+        "lengths": {
+          "/body/data": 2,
+          "/body/data/0/embedding": 256,
+          "/body/data/1/embedding": 256
+        }
+      }
+    },
+    {
+      "id": "embeddings-cached-idempotent-replay",
+      "path": "/uos/embeddings",
+      "phase": 2,
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": ["conformance cached sample", "conformance cached sample"],
+        "input_type": "query",
+        "dimensions": 256
+      },
+      "headers": {
+        "Idempotency-Key": "conformance-cached-embedding"
+      },
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/object": "list",
+          "/body/model": "voyage-4-large",
+          "/body/usage/total_tokens": 0,
+          "/body/data/0/index": 0,
+          "/body/data/1/index": 1,
+          "/body/data/0/embedding/0": 0.5,
+          "/body/data/0/embedding/1": -1.0,
+          "/body/data/1/embedding/2": 2.0,
+          "/headers/x-uos-upstream": ["voyage"],
+          "/headers/x-uos-idempotency-replayed": ["true"]
+        },
+        "lengths": {
+          "/body/data": 2,
+          "/body/data/0/embedding": 256,
+          "/body/data/1/embedding": 256
+        }
+      }
+    },
+    {
+      "id": "embeddings-idempotent-conflict",
+      "path": "/uos/embeddings",
+      "phase": 2,
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": ["conformance cached sample"],
+        "input_type": "query",
+        "dimensions": 256
+      },
+      "headers": {
+        "Idempotency-Key": "conformance-cached-embedding"
+      },
+      "expect": {
+        "status": 409,
+        "routes": [],
+        "values": {
+          "/body/error/code": "embedding_idempotency_conflict"
+        }
+      }
+    },
+    {
+      "id": "embeddings-cached-base64",
+      "path": "/uos/embeddings",
+      "phase": 2,
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": "conformance cached sample",
+        "input_type": "query",
+        "dimensions": 256,
+        "encoding_format": "base64"
+      },
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/data/0/embedding": "AAAAPwAAgL8AAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+          "/body/usage/total_tokens": 0
+        },
+        "lengths": {
+          "/body/data": 1
+        }
+      }
+    },
+    {
+      "id": "embedding-job-cached",
+      "path": "/uos/embedding-jobs",
+      "phase": 2,
+      "method": "POST",
+      "json": {
+        "model": "voyage-4-large",
+        "input": ["conformance cached sample", "conformance cached sample"],
+        "input_type": "query",
+        "dimensions": 256
+      },
+      "capture": {
+        "job_id": "/body/id"
+      },
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/object": "embeddings.job",
+          "/body/status": "succeeded",
+          "/body/result/data/0/embedding/0": 0.5
+        }
+      }
+    },
+    {
+      "id": "embedding-job-cached-readback",
+      "path": "/uos/embedding-jobs/$job_id",
+      "phase": 2,
+      "expect": {
+        "status": 200,
+        "routes": [],
+        "values": {
+          "/body/id": "$job_id",
+          "/body/status": "succeeded",
+          "/body/result/data/1/embedding/2": 2.0
+        }
+      }
+    },
+    {
+      "id": "embedding-job-other-principal",
+      "path": "/uos/embedding-jobs/$job_id",
+      "phase": 2,
+      "auth": "reader",
+      "expect": {
+        "status": 404,
+        "routes": []
+      }
+    }
+  ]
+}
