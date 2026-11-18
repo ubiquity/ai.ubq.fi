@@ -4183,8 +4183,144 @@
       ]
     },
     "src/lib/jev_compaction/jev_codex_smoke.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the offline smoke tool's fake server, subprocess output pumps, RPC timeouts, transport callbacks and shutdown. Reviewed CLI code by reading and did not invoke it.",
+      "sites": [
+        {
+          "lines": [
+            180,
+            182,
+            183,
+            184,
+            188,
+            202
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "DEFECT",
+          "detail": "FakeChatUpstream owns its HttpServer handle, whose serving-state handle owns the callback capturing fake. Shutdown leaves both handles stored, and a startup rejection can also abandon the cycle. Capture a weak fake in the server function and retain a locked owner in each actual request Task."
+        },
+        {
+          "lines": [
+            315,
+            317,
+            318,
+            323,
+            328,
+            340,
+            361,
+            382,
+            384,
+            385
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "AppServer startup or the two main owners explicitly keep the receiver through shutdown and all pump waits. The synchronous packet handler copies the pending-map entry before erasing it."
+        },
+        {
+          "lines": [
+            402,
+            404,
+            405,
+            408,
+            418,
+            436,
+            439,
+            440
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "RPC waits keep their AppServer receiver and callables alive. The timeout always fires and a late RPC response or stdout close settles the reply, while process stop waits for exit and both pumps."
+        },
+        {
+          "lines": [
+            479,
+            480,
+            485,
+            496,
+            522,
+            537,
+            539
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Thread callbacks copy the RPC owner and ID into owned Tasks. Notification scans use fresh indexing and consume each borrow before yielding."
+        },
+        {
+          "lines": [
+            557,
+            562,
+            565,
+            583,
+            584,
+            586,
+            587,
+            592,
+            593,
+            596,
+            649,
+            654,
+            658,
+            663,
+            665,
+            667,
+            670,
+            675,
+            681,
+            684,
+            686,
+            696,
+            698,
+            702,
+            704,
+            722,
+            724,
+            733,
+            746,
+            779,
+            781,
+            785,
+            790,
+            807,
+            809,
+            811,
+            820,
+            835,
+            854,
+            855,
+            857,
+            861,
+            863,
+            864,
+            876
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Smoke startup, gateway stop and thread work keep copied fixture children and paths through each wait. Fetch owns its callable through use and normal teardown replaces it after subprocess waits."
+        }
+      ]
     },
     "src/lib/jev_compaction/jev_compaction_smoke.cpp": {
       "reviewed": false,

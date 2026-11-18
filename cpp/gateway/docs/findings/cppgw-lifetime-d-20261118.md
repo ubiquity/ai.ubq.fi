@@ -184,7 +184,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/lib/jev_compaction/client.cpp`
 - [x] `src/lib/jev_compaction/codex_items.cpp`
 - [x] `src/lib/jev_compaction/compact.cpp`
-- [ ] `src/lib/jev_compaction/jev_codex_smoke.cpp`
+- [x] `src/lib/jev_compaction/jev_codex_smoke.cpp`
 - [ ] `src/lib/jev_compaction/jev_compaction_smoke.cpp`
 - [ ] `src/lib/jev_compaction/request.cpp`
 - [ ] `src/lib/jev_compaction/state.cpp`
@@ -1018,6 +1018,16 @@ Reviewed batch and window fan-out, state traversal and compaction result assembl
 - L334, 346, 353, 357, 374, 377, 378 **SAFE** · An escaping worker owns WindowWork. Its task vector never changes after launch, and each worker's batch traversal is private. Answer writes use no shared iterators across a wait.
 - L419, 430, 431, 432 **SAFE** · Window and ordinary batch children receive owning values and the shared asker. Named results are traversed only after joining.
 
+### `src/lib/jev_compaction/jev_codex_smoke.cpp`
+
+Reviewed the offline smoke tool's fake server, subprocess output pumps, RPC timeouts, transport callbacks and shutdown. Reviewed CLI code by reading and did not invoke it.
+
+- L180, 182, 183, 184, 188, 202 **DEFECT** · FakeChatUpstream owns its HttpServer handle, whose serving-state handle owns the callback capturing fake. Shutdown leaves both handles stored, and a startup rejection can also abandon the cycle. Capture a weak fake in the server function and retain a locked owner in each actual request Task.
+- L315, 317, 318, 323, 328, 340, 361, 382, 384, 385 **SAFE** · AppServer startup or the two main owners explicitly keep the receiver through shutdown and all pump waits. The synchronous packet handler copies the pending-map entry before erasing it.
+- L402, 404, 405, 408, 418, 436, 439, 440 **SAFE** · RPC waits keep their AppServer receiver and callables alive. The timeout always fires and a late RPC response or stdout close settles the reply, while process stop waits for exit and both pumps.
+- L479, 480, 485, 496, 522, 537, 539 **SAFE** · Thread callbacks copy the RPC owner and ID into owned Tasks. Notification scans use fresh indexing and consume each borrow before yielding.
+- L557, 562, 565, 583, 584, 586, 587, 592, 593, 596, 649, 654, 658, 663, 665, 667, 670, 675, 681, 684, 686, 696, 698, 702, 704, 722, 724, 733, 746, 779, 781, 785, 790, 807, 809, 811, 820, 835, 854, 855, 857, 861, 863, 864, 876 **SAFE** · Smoke startup, gateway stop and thread work keep copied fixture children and paths through each wait. Fetch owns its callable through use and normal teardown replaces it after subprocess waits.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1231,4 +1241,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-94/286 files reviewed. 197 sites: 182 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+95/286 files reviewed. 202 sites: 186 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
