@@ -1524,8 +1524,22 @@
       ]
     },
     "include/uos/provider/stream_relay.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Relay factories copy per-request inputs into their state.",
+      "sites": [
+        {
+          "lines": "20-25,32-40",
+          "kind": "iterator and adapter callbacks",
+          "verdict": "SAFE",
+          "reason": "The production iterator factories own generator handles and the relay state owns its callback bundle."
+        },
+        {
+          "lines": "48-71",
+          "kind": "borrowed context copy",
+          "verdict": "SAFE",
+          "reason": "The synchronous factories copy telemetry into relay state and copy or move the stream, signals and cancel callback before returning a response."
+        }
+      ]
     },
     "include/uos/provider/surplus.hpp": {
       "status": "pending",

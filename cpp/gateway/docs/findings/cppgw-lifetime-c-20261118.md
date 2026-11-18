@@ -178,7 +178,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/removed_provider_circuit.hpp`
 - [x] `include/uos/provider/removed_provider_telemetry.hpp`
 - [x] `include/uos/provider/selection.hpp`
-- [ ] `include/uos/provider/stream_relay.hpp`
+- [x] `include/uos/provider/stream_relay.hpp`
 - [ ] `include/uos/provider/surplus.hpp`
 - [ ] `include/uos/provider/surplus_claude_chat_request.hpp`
 - [ ] `include/uos/provider/surplus_claude_request.hpp`
@@ -1117,3 +1117,10 @@ Retired telemetry compatibility API.
 Provider selection read/store and hash API.
 
 - 75,123,130,217-218 · owning task parameters · **SAFE** · Lookup and store frames own their store/options/selection data, and hash owns its account string.
+
+### `include/uos/provider/stream_relay.hpp`
+
+Relay factories copy per-request inputs into their state.
+
+- 20-25,32-40 · iterator and adapter callbacks · **SAFE** · The production iterator factories own generator handles and the relay state owns its callback bundle.
+- 48-71 · borrowed context copy · **SAFE** · The synchronous factories copy telemetry into relay state and copy or move the stream, signals and cancel callback before returning a response.
