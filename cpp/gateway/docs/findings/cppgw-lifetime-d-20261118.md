@@ -334,7 +334,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/jev_compaction/hybrid.hpp`
 - [x] `include/uos/kv.hpp`
 - [x] `include/uos/kv_conversion/cli.hpp`
-- [ ] `include/uos/kv_conversion/convert.hpp`
+- [x] `include/uos/kv_conversion/convert.hpp`
 - [ ] `include/uos/kv_conversion/cursors.hpp`
 - [ ] `include/uos/kv_conversion/legacy_codec.hpp`
 - [ ] `include/uos/kv_conversion/native_schema.hpp`
@@ -1878,6 +1878,13 @@ Reviewed the offline conversion command declaration.
 
 - L11 **SAFE** · The argumentless entry Task constructs its own CLI options before awaiting conversion.
 
+### `include/uos/kv_conversion/convert.hpp`
+
+Reviewed snapshot callback type erasure and the conversion entry point.
+
+- L51, 53, 65, 66, 67, 68, 69, 70, 71, 73, 74, 75 **SAFE** · The erased coroutine closure is moved into the snapshot Task that awaits it, retaining the original read callback, output cell and reader until completion.
+- L154 **SAFE** · Options and paths enter the conversion Task by value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2126,4 +2133,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-226/286 files reviewed. 400 sites: 378 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+227/286 files reviewed. 402 sites: 380 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

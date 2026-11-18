@@ -8922,8 +8922,45 @@
       ]
     },
     "include/uos/kv_conversion/convert.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed snapshot callback type erasure and the conversion entry point.",
+      "sites": [
+        {
+          "lines": [
+            51,
+            53,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            73,
+            74,
+            75
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The erased coroutine closure is moved into the snapshot Task that awaits it, retaining the original read callback, output cell and reader until completion."
+        },
+        {
+          "lines": [
+            154
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Options and paths enter the conversion Task by value."
+        }
+      ]
     },
     "include/uos/kv_conversion/cursors.hpp": {
       "reviewed": false,
