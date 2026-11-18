@@ -792,8 +792,16 @@
       "sites": []
     },
     "include/uos/harmony/tools/backend.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Backend interfaces include a member task for shell work.",
+      "sites": [
+        {
+          "lines": "81",
+          "kind": "member task",
+          "verdict": "SAFE",
+          "reason": "The awaited router frame retains the owning backend bundle until shell work finishes; the task's command and options are owned."
+        }
+      ]
     },
     "include/uos/harmony/tools/fakes.hpp": {
       "status": "pending",

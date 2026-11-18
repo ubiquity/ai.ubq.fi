@@ -111,7 +111,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/harmony/reliability/surfaces.hpp`
 - [x] `include/uos/harmony/reliability/verify.hpp`
 - [x] `include/uos/harmony/render.hpp`
-- [ ] `include/uos/harmony/tools/backend.hpp`
+- [x] `include/uos/harmony/tools/backend.hpp`
 - [ ] `include/uos/harmony/tools/fakes.hpp`
 - [ ] `include/uos/harmony/tools/result.hpp`
 - [ ] `include/uos/harmony/tools/router.hpp`
@@ -737,3 +737,9 @@ Synchronous reliability verification predicates and records.
 ### `include/uos/harmony/render.hpp`
 
 Synchronous Harmony text rendering declaration. The returned text owns its bytes.
+
+### `include/uos/harmony/tools/backend.hpp`
+
+Backend interfaces include a member task for shell work.
+
+- 81 · member task · **SAFE** · The awaited router frame retains the owning backend bundle until shell work finishes; the task's command and options are owned.
