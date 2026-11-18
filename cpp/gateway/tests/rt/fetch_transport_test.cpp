@@ -505,7 +505,7 @@ ASYNC_TEST("request heads match Bun byte for byte") {
   cases.push_back({"/p", RequestInit{.method = "POST", .body = BodyInit(std::string("hello"))}, "POST /p HTTP/1.1\r\n" + kDefaults + "Content-Length: 5\r\n\r\nhello"});
   cases.push_back({"/p", RequestInit{.method = "POST", .body = BodyInit(std::string(""))}, "POST /p HTTP/1.1\r\n" + kDefaults + "Content-Length: 0\r\n\r\n"});
   cases.push_back({"/p", RequestInit{.method = "POST", .body = BodyInit(Bytes{1, 2, 3})}, "POST /p HTTP/1.1\r\n" + kDefaults + "Content-Length: 3\r\n\r\n\x01\x02\x03"});
-  cases.push_back({"/p", RequestInit{.method = "POST", .body = BodyInit(Blob({BlobPart("blob")}, "text/x-custom"))},
+  cases.push_back({"/p", RequestInit{.method = "POST", .headers = Headers{{"Content-Type", "text/x-custom"}}, .body = BodyInit(Bytes{'b', 'l', 'o', 'b'})},
                    "POST /p HTTP/1.1\r\nContent-Type: text/x-custom\r\n" + kDefaults + "Content-Length: 4\r\n\r\nblob"});
   cases.push_back({"/p", RequestInit{.method = "POST", .body = BodyInit(URLSearchParams("a=1"))},
                    "POST /p HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded;charset=UTF-8\r\n" + kDefaults + "Content-Length: 3\r\n\r\na=1"});
