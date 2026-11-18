@@ -1600,8 +1600,40 @@
       ]
     },
     "src/chat/envelope.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The handler owns its telemetry copy through joined models and preflight, and response construction transfers semantically complete state into the stream.",
+      "sites": [
+        {
+          "lines": "48-69,72-96,120-129,199-214",
+          "kind": "parse, model, and command awaits",
+          "verdict": "SAFE",
+          "reason": "Requests and options are owned by the relevant frames. The envelope reference points into handleInternal's own result variant and stays within that frame. Borrowed telemetry is supplied by that same frame."
+        },
+        {
+          "lines": "139-155,157-167,175-177,186-197",
+          "kind": "borrowed context and deadline cleanup",
+          "verdict": "SAFE",
+          "reason": "handleInternal waits for dispatch and its nested failure paths while the context lives. The cleanup callable owns a deadline copy and clears it on the reached paths."
+        },
+        {
+          "lines": "168-174",
+          "kind": "probe termination callback and spawn",
+          "verdict": "SAFE",
+          "reason": "The callback owns an upstream response handle and the once flag. Detached probe tasks receive their own response handle."
+        },
+        {
+          "lines": "180-189",
+          "kind": "capturing coroutine generator",
+          "verdict": "SAFE",
+          "reason": "AsyncGenerator transfers the first-event closure into runGenerator, whose frame owns both the closure and the upstream iterator across yields and return."
+        },
+        {
+          "lines": "204-207,215-225",
+          "kind": "provider dispatch and handler wrappers",
+          "verdict": "SAFE",
+          "reason": "Handler request tasks are joined and returned stream construction copies the telemetry. The public wrappers copy the context synchronously and the telemetry wrapper owns its callable."
+        }
+      ]
     },
     "src/chat/stream_translation.cpp": {
       "status": "pending",

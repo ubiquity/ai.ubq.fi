@@ -183,7 +183,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/surplus_claude_chat_request.hpp`
 - [x] `include/uos/provider/surplus_claude_request.hpp`
 - [x] `src/chat/completions.cpp`
-- [ ] `src/chat/envelope.cpp`
+- [x] `src/chat/envelope.cpp`
 - [ ] `src/chat/stream_translation.cpp`
 - [ ] `src/codex/account_routing.cpp`
 - [ ] `src/codex/auth.cpp`
@@ -1148,3 +1148,13 @@ Chat SSE and buffered completion use separate state owners. Stream cancellation 
 - 179-199,207-254,256-285,364-374 · stream member tasks and registered algorithms · **SAFE** · SourceAlgorithm::runAsync owns the callable capturing shared StreamState during both pull and cancel, including nested joins after controller close. Events and usage retained over suspension are local values and the queue is accessed anew.
 - 190,275,318,398 · telemetry awaits · **SAFE** · The await chain keeps the state containing the copied UsageContext alive and the terminal callback is a value.
 - 312-335,376-403 · buffered member tasks and borrowed context · **SAFE** · The only caller joins completion with its telemetry live. The buffered frame copies the context before its first suspension and waits for each state method before destroying the state.
+
+### `src/chat/envelope.cpp`
+
+The handler owns its telemetry copy through joined models and preflight, and response construction transfers semantically complete state into the stream.
+
+- 48-69,72-96,120-129,199-214 · parse, model, and command awaits · **SAFE** · Requests and options are owned by the relevant frames. The envelope reference points into handleInternal's own result variant and stays within that frame. Borrowed telemetry is supplied by that same frame.
+- 139-155,157-167,175-177,186-197 · borrowed context and deadline cleanup · **SAFE** · handleInternal waits for dispatch and its nested failure paths while the context lives. The cleanup callable owns a deadline copy and clears it on the reached paths.
+- 168-174 · probe termination callback and spawn · **SAFE** · The callback owns an upstream response handle and the once flag. Detached probe tasks receive their own response handle.
+- 180-189 · capturing coroutine generator · **SAFE** · AsyncGenerator transfers the first-event closure into runGenerator, whose frame owns both the closure and the upstream iterator across yields and return.
+- 204-207,215-225 · provider dispatch and handler wrappers · **SAFE** · Handler request tasks are joined and returned stream construction copies the telemetry. The public wrappers copy the context synchronously and the telemetry wrapper owns its callable.
