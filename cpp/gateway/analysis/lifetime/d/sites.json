@@ -4130,8 +4130,57 @@
       "sites": []
     },
     "src/lib/jev_compaction/compact.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed batch and window fan-out, state traversal and compaction result assembly.",
+      "sites": [
+        {
+          "lines": [
+            138,
+            142,
+            143
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Each batch owns its shared asker, state JSON and calls while its virtual member Task runs. The parsed answers are read from a named owned response."
+        },
+        {
+          "lines": [
+            334,
+            346,
+            353,
+            357,
+            374,
+            377,
+            378
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "An escaping worker owns WindowWork. Its task vector never changes after launch, and each worker's batch traversal is private. Answer writes use no shared iterators across a wait."
+        },
+        {
+          "lines": [
+            419,
+            430,
+            431,
+            432
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Window and ordinary batch children receive owning values and the shared asker. Named results are traversed only after joining."
+        }
+      ]
     },
     "src/lib/jev_compaction/jev_codex_smoke.cpp": {
       "reviewed": false,

@@ -183,7 +183,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/kv_conversion/typed_value.cpp`
 - [x] `src/lib/jev_compaction/client.cpp`
 - [x] `src/lib/jev_compaction/codex_items.cpp`
-- [ ] `src/lib/jev_compaction/compact.cpp`
+- [x] `src/lib/jev_compaction/compact.cpp`
 - [ ] `src/lib/jev_compaction/jev_codex_smoke.cpp`
 - [ ] `src/lib/jev_compaction/jev_compaction_smoke.cpp`
 - [ ] `src/lib/jev_compaction/request.cpp`
@@ -1010,6 +1010,14 @@ Reviewed Jev client's request assembly and response consumption.
 
 Reviewed synchronous incremental-input, last-turn and history conversions. Temporary views and variant borrows remain inside each call and results own their contents.
 
+### `src/lib/jev_compaction/compact.cpp`
+
+Reviewed batch and window fan-out, state traversal and compaction result assembly.
+
+- L138, 142, 143 **SAFE** · Each batch owns its shared asker, state JSON and calls while its virtual member Task runs. The parsed answers are read from a named owned response.
+- L334, 346, 353, 357, 374, 377, 378 **SAFE** · An escaping worker owns WindowWork. Its task vector never changes after launch, and each worker's batch traversal is private. Answer writes use no shared iterators across a wait.
+- L419, 430, 431, 432 **SAFE** · Window and ordinary batch children receive owning values and the shared asker. Named results are traversed only after joining.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1223,4 +1231,4 @@ Remove the replaced combined-signal construction and add the corresponding `uos/
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-93/286 files reviewed. 194 sites: 179 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+94/286 files reviewed. 197 sites: 182 SAFE, 15 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
