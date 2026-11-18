@@ -3032,8 +3032,34 @@
       "sites": []
     },
     "src/handler/http.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed background registrar invocation, idempotency principal, normalization, request IDs and response decorators.",
+      "sites": [
+        {
+          "lines": [
+            29,
+            32
+          ],
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "detail": "The waitUntil registrar is copied and called synchronously with a Promise value. A registered operation has to own its own inputs through settlement."
+        },
+        {
+          "lines": [
+            65,
+            83
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The coroutine retains its owning auth variant and the named principal lives through child construction. Hashing takes a string value."
+        }
+      ]
     },
     "src/handler/index.cpp": {
       "reviewed": false,

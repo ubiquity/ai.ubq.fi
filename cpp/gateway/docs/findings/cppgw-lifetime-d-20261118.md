@@ -135,7 +135,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/decisions/handlers.cpp`
 - [x] `src/defaults.cpp`
 - [x] `src/handler/admission.cpp`
-- [ ] `src/handler/http.cpp`
+- [x] `src/handler/http.cpp`
 - [ ] `src/handler/index.cpp`
 - [ ] `src/handler/serve_handler.cpp`
 - [ ] `src/handler/terminal_log.cpp`
@@ -829,6 +829,13 @@ Reviewed the default key constants and synchronous key construction. No suspensi
 
 Reviewed process-controller initialization, route classifications and synchronous overload responses. The controller lives in static storage and response details are copied.
 
+### `src/handler/http.cpp`
+
+Reviewed background registrar invocation, idempotency principal, normalization, request IDs and response decorators.
+
+- L29, 32 **SAFE** · The waitUntil registrar is copied and called synchronously with a Promise value. A registered operation has to own its own inputs through settlement.
+- L65, 83 **SAFE** · The coroutine retains its owning auth variant and the named principal lives through child construction. Hashing takes a string value.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -934,4 +941,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-69/286 files reviewed. 151 sites: 142 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+70/286 files reviewed. 153 sites: 144 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
