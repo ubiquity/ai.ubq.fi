@@ -440,8 +440,28 @@
       ]
     },
     "include/uos/codex/supervisor_config.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The concurrency helper is executable template code; config and poll implementations are reviewed separately.",
+      "sites": [
+        {
+          "lines": "226",
+          "kind": "poll interface",
+          "verdict": "SAFE",
+          "reason": "The poll function consumes its signal handle by value; registration ownership is reviewed in supervisor_config.cpp."
+        },
+        {
+          "lines": "243-270",
+          "kind": "coroutine capture and fail-fast all",
+          "verdict": "SAFE",
+          "reason": "Each rt::async worker owns its closure and shared State across sibling rejection; fixed-size input/result vectors stay alive and call sites supply value-capturing workers or free functions."
+        },
+        {
+          "lines": "283-297",
+          "kind": "callback and task interface",
+          "verdict": "SAFE",
+          "reason": "Configuration resolution retains the options and the environment reader callable until its reads finish."
+        }
+      ]
     },
     "include/uos/codex/supervisor_follow.hpp": {
       "status": "pending",
