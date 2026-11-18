@@ -9230,8 +9230,55 @@
       ]
     },
     "include/uos/metered_quota.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed quota cache options, callbacks and KV/history API boundaries.",
+      "sites": [
+        {
+          "lines": [
+            150,
+            152,
+            156,
+            162,
+            163,
+            175,
+            180,
+            184,
+            185,
+            198,
+            199,
+            201,
+            202,
+            204,
+            205
+          ],
+          "kinds": [
+            "a",
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The quota Tasks own credential and option snapshots. Fetch and KV are retained handles, and injected time and lease callbacks are invoked synchronously."
+        },
+        {
+          "lines": [
+            214,
+            225,
+            234,
+            235,
+            237,
+            238,
+            240,
+            241
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "History and diagnostics Tasks own their options, state and any shared KV handles through settlement."
+        }
+      ]
     },
     "include/uos/models/catalog.hpp": {
       "reviewed": false,
