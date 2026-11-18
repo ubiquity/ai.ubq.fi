@@ -95,7 +95,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/embeddings/ledger.hpp`
 - [x] `include/uos/embeddings/voyage.hpp`
 - [x] `include/uos/harmony/adapter.hpp`
-- [ ] `include/uos/harmony/classifier.hpp`
+- [x] `include/uos/harmony/classifier.hpp`
 - [ ] `include/uos/harmony/conversation.hpp`
 - [ ] `include/uos/harmony/parse.hpp`
 - [ ] `include/uos/harmony/probe_scenarios.hpp`
@@ -667,3 +667,7 @@ HarmonyTransport implements an owning erased transport wrapper.
 
 - 87-107 · callback lifetime · **SAFE** · The outer callable only forwards; keepAlive retains the function and its shared target until the returned coroutine completes.
 - 133 · owning task parameters · **SAFE** · The turn task owns options and a transport handle while dispatching and normalizing the response.
+
+### `include/uos/harmony/classifier.hpp`
+
+Synchronous classifier request/projection declarations. No async registration or suspended borrowing.

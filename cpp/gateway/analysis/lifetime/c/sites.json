@@ -691,7 +691,8 @@
       ]
     },
     "include/uos/harmony/classifier.hpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Synchronous classifier request/projection declarations. No async registration or suspended borrowing.",
       "sites": []
     },
     "include/uos/harmony/conversation.hpp": {
