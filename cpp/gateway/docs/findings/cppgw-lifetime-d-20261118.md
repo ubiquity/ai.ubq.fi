@@ -144,7 +144,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/http.cpp`
 - [ ] `src/images.cpp`
 - [x] `src/inference_admission.cpp`
-- [ ] `src/inference_deadline.cpp`
+- [x] `src/inference_deadline.cpp`
 - [ ] `src/input_normalization.cpp`
 - [ ] `src/jev_compaction/compaction.cpp`
 - [ ] `src/jev_compaction/hybrid.cpp`
@@ -889,6 +889,12 @@ Reviewed release callbacks, fair queue updates and queued abort/timer ownership.
 - L56, 57, 58, 84, 88, 149, 158, 178, 179, 205 **SAFE** · All queue and map mutations execute synchronously. Permit release owns the controller and normal grant, caller abort and timeout remove the waiter and its event listener before resolving.
 - L170, 172, 176, 177 **DEFECT** · A queued waiter owns its listener and the listener strongly captures both that waiter and its controller. Dropping an isolated loop before the unreferenced wait timer fires drops the timer without invoking abort, so the controller, entries and signal remain in a cycle. Let registered waits use weak listener captures and put the lease of controller ownership in an external clearable timer.
 
+### `src/inference_deadline.cpp`
+
+Reviewed the three stream/paid timer factories and request-deadline signal composition.
+
+- L15, 16, 24, 25, 32, 35, 38, 51, 52, 59, 62, 65, 83, 84, 91, 94, 97 **SAFE** · Timer callbacks copy the abort controller and active flag, and returned handles use timer identity. The timer owns no callback that retains its returned deadline handle, and clear or expiry releases the registration.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -994,4 +1000,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-77/286 files reviewed. 172 sites: 159 SAFE, 13 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+78/286 files reviewed. 173 sites: 160 SAFE, 13 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

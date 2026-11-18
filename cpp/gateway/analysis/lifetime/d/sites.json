@@ -3589,8 +3589,37 @@
       ]
     },
     "src/inference_deadline.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the three stream/paid timer factories and request-deadline signal composition.",
+      "sites": [
+        {
+          "lines": [
+            15,
+            16,
+            24,
+            25,
+            32,
+            35,
+            38,
+            51,
+            52,
+            59,
+            62,
+            65,
+            83,
+            84,
+            91,
+            94,
+            97
+          ],
+          "kinds": [
+            "b",
+            "c"
+          ],
+          "verdict": "SAFE",
+          "detail": "Timer callbacks copy the abort controller and active flag, and returned handles use timer identity. The timer owns no callback that retains its returned deadline handle, and clear or expiry releases the registration."
+        }
+      ]
     },
     "src/input_normalization.cpp": {
       "reviewed": false,
