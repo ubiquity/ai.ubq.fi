@@ -16,6 +16,8 @@ set(CMAKE_JOB_POOL_LINK gateway_link)
 add_library(uos_gateway_settings INTERFACE)
 target_include_directories(uos_gateway_settings INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_options(uos_gateway_settings INTERFACE -Wall -Wextra -Wshadow -Wconversion -Werror)
+# Tree-relative includes reach vendored headers outside the system include directories.
+target_compile_options(uos_gateway_settings INTERFACE "$<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:--system-header-prefix=third_party/>")
 target_compile_definitions(uos_gateway_settings INTERFACE BOOST_JSON_NO_LIB BOOST_CONTAINER_NO_LIB BOOST_SYSTEM_NO_LIB)
 include(cmake/Profile.cmake)
 if(UOS_GATEWAY_IS_SDK)
