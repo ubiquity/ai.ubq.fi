@@ -511,10 +511,31 @@ namespace {
 #define RUN_QUOTA(expression) do { auto runningTask = (expression); co_await std::move(runningTask); } while (false)
 #define AWAIT_QUOTA(name, expression) auto name##Task = (expression); auto name = co_await std::move(name##Task)
 ASYNC_TEST("balance history listing uses a valid bounded KV range selector") {
-  const auto store = isolatedKv(); const std::string fingerprint = "quota-projection-account"; const double now = rt::dateNow(); const double hour = rt::Math::floor(now / HOUR_MS) * HOUR_MS;
-  const std::vector<metered::MeteredQuotaBalanceSample> samples{sample(hour - 2 * HOUR_MS, hour - 2 * HOUR_MS + 1'000), sample(hour - HOUR_MS, hour - HOUR_MS + 45 * 60'000), sample(hour, hour + 1'000)};
-  for (const auto& value : samples) { const rt::KvValue row(json::value_from(value)); co_await store->set(rt::KvKey{metered::METERED_QUOTA_BALANCE_HISTORY_PREFIX, fingerprint, value.bucket_start_at_ms}, row); }
-  const metered::ReadMeteredQuotaBalanceHistoryOptions options{.sinceMs = hour - HOUR_MS + 30 * 60'000, .nowMs = now, .accountFingerprint = fingerprint}; AWAIT_QUOTA(rows, metered::readMeteredQuotaBalanceHistory(store, options)); EXPECT_EQ(rows.size(), 2u); ASSERT(rows.size() == 2); EXPECT_EQ(rows[0].bucket_start_at_ms, hour - HOUR_MS); EXPECT_EQ(rows[1].bucket_start_at_ms, hour);
+  constexpr double hour = 1'800'000'000'000;
+  constexpr double observedAt = hour + 1'000;
+  const auto store = std::make_shared<rt::MemoryKv>([] { return observedAt; });
+  const std::string fingerprint = "quota-projection-account";
+  const std::vector<metered::MeteredQuotaBalanceSample> samples{
+    sample(hour - 2 * HOUR_MS, hour - 2 * HOUR_MS + 1'000),
+    sample(hour - HOUR_MS, hour - HOUR_MS + 45 * 60'000),
+    sample(hour, observedAt),
+  };
+  for (const auto& value : samples) {
+    const rt::KvValue row(json::value_from(value));
+    co_await store->set(rt::KvKey{metered::METERED_QUOTA_BALANCE_HISTORY_PREFIX, fingerprint, value.bucket_start_at_ms}, row);
+  }
+  metered::ReadMeteredQuotaBalanceHistoryOptions options{
+    .sinceMs = hour - HOUR_MS + 30 * 60'000, .nowMs = observedAt - 1, .accountFingerprint = fingerprint,
+  };
+  AWAIT_QUOTA(earlierRows, metered::readMeteredQuotaBalanceHistory(store, options));
+  ASSERT_EQ(earlierRows.size(), 1u);
+  EXPECT_EQ(earlierRows[0].bucket_start_at_ms, hour - HOUR_MS);
+
+  options.nowMs = observedAt;
+  AWAIT_QUOTA(rows, metered::readMeteredQuotaBalanceHistory(store, options));
+  ASSERT_EQ(rows.size(), 2u);
+  EXPECT_EQ(rows[0].bucket_start_at_ms, hour - HOUR_MS);
+  EXPECT_EQ(rows[1].bucket_start_at_ms, hour);
 }
 TEST("365-day balance history is deterministically resampled to UTC days") {
   const double day = rt::Math::floor(rt::dateNow() / DAY_MS) * DAY_MS; const std::vector<metered::MeteredQuotaBalanceSample> source{sample(day - DAY_MS, day - DAY_MS + HOUR_MS, 1'200), sample(day + HOUR_MS, day + HOUR_MS + 1, 1'100), sample(day + 2 * HOUR_MS, day + 2 * HOUR_MS + 1, 1'000)};
