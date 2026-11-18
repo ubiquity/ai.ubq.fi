@@ -1666,8 +1666,34 @@
       ]
     },
     "src/codex/account_routing.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Election and admission use frame-local snapshots and optimistic KV commits. Concurrent routing changes replace the stored values without mutating those snapshots.",
+      "sites": [
+        {
+          "lines": "70-117,148-192",
+          "kind": "account and slot borrows",
+          "verdict": "SAFE",
+          "reason": "Pool, row, slot, and evaluation data come from owned snapshots. Account and slot values needed after awaits are copied."
+        },
+        {
+          "lines": "122-143,218-240,264-295,346-390",
+          "kind": "election, recheck, and route awaits",
+          "verdict": "SAFE",
+          "reason": "Each frame retains its account, row and pool values and the KV owner. A commit's AtomicOperation remains in scope through completion."
+        },
+        {
+          "lines": "194-214",
+          "kind": "fail-fast all",
+          "verdict": "SAFE",
+          "reason": "routingAccountIdentity receives a CodexAuthState value, so a pending hash child survives the parent result or rejection independently."
+        },
+        {
+          "lines": "297-329",
+          "kind": "admission coroutine closure",
+          "verdict": "SAFE",
+          "reason": "withCodexAdmission retains the moved action in its frame and waits for it. The action captures KV and account by value."
+        }
+      ]
     },
     "src/codex/auth.cpp": {
       "status": "pending",

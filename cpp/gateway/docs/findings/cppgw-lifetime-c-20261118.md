@@ -185,7 +185,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/chat/completions.cpp`
 - [x] `src/chat/envelope.cpp`
 - [x] `src/chat/stream_translation.cpp`
-- [ ] `src/codex/account_routing.cpp`
+- [x] `src/codex/account_routing.cpp`
 - [ ] `src/codex/auth.cpp`
 - [ ] `src/codex/auth_refresh.cpp`
 - [ ] `src/codex/auth_repair.cpp`
@@ -1167,3 +1167,12 @@ Event reconciliation mutates frame-owned output state synchronously. Replay and 
 - 354-368 · capturing coroutine generator · **SAFE** · runGenerator owns the closure and its shared prepared state. The replay buffer is immutable and each yield uses an owned event value.
 - 369-374 · capturing cancel coroutine · **SAFE** · The returned cancel closure owns both iterator copies. Live callers invoke it through a SourceAlgorithm-owned StreamState and await it before that state can be released.
 - 386-393 · borrowed context recorder · **SAFE** · Stream and buffered callers retain their context owners across the join and this task uses the context only to start the completion write.
+
+### `src/codex/account_routing.cpp`
+
+Election and admission use frame-local snapshots and optimistic KV commits. Concurrent routing changes replace the stored values without mutating those snapshots.
+
+- 70-117,148-192 · account and slot borrows · **SAFE** · Pool, row, slot, and evaluation data come from owned snapshots. Account and slot values needed after awaits are copied.
+- 122-143,218-240,264-295,346-390 · election, recheck, and route awaits · **SAFE** · Each frame retains its account, row and pool values and the KV owner. A commit's AtomicOperation remains in scope through completion.
+- 194-214 · fail-fast all · **SAFE** · routingAccountIdentity receives a CodexAuthState value, so a pending hash child survives the parent result or rejection independently.
+- 297-329 · admission coroutine closure · **SAFE** · withCodexAdmission retains the moved action in its frame and waits for it. The action captures KV and account by value.
