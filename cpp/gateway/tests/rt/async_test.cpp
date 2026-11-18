@@ -896,6 +896,35 @@ ASYNC_TEST("resolving functions: resolve(promise) locks the promise so a later r
   EXPECT(voidPromise.fulfilled());
 }
 
+ASYNC_TEST("Promise callback Tasks retain the borrowed fulfillment or rejection") {
+  auto gate = rt::withResolvers();
+  const auto failure = rt::makeReason(rt::TypeError("early rejection"));
+  auto late = [ready = gate.promise](const std::string& value) -> rt::Task<std::string> {
+    co_await ready.wait();
+    co_return value;
+  };
+  const std::string payload(128, 'x');
+  auto pending = rt::Promise<std::string>::resolve(payload).then(late);
+  std::vector inputs{rt::Promise<std::string>::reject(failure), pending};
+  auto combined = rt::all(std::move(inputs));
+  EXPECT_REJECTS_REASON(combined.wait(), failure);
+  EXPECT(pending.pending());
+  gate.resolve();
+  const auto value = co_await pending.wait();
+  EXPECT_EQ(value, payload);
+
+  auto onRejected = [](const rt::Reason& reason) -> rt::Task<std::string> {
+    co_await rt::microtask();
+    co_return rt::reasonToString(reason);
+  };
+  auto rejected = rt::Promise<std::string>::reject(failure).then(late, onRejected);
+  auto recovered = rt::Promise<std::string>::reject(failure).catch_(onRejected);
+  const auto fromThen = co_await rejected.wait();
+  const auto fromCatch = co_await recovered.wait();
+  EXPECT_EQ(fromThen, "TypeError: early rejection");
+  EXPECT_EQ(fromCatch, fromThen);
+}
+
 ASYNC_TEST("then(onFulfilled, onRejected), catch_ returning a value, and rejections passing through then") {
   auto log = makeLog();
   auto onValue = [log](int value) { return "value=" + std::to_string(value); };

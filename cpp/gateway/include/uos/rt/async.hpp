@@ -676,7 +676,7 @@ namespace uos::rt {
     // Suspends forever: the coroutine is destroyed without resuming.
     Task<void> abandon();
 
-    template <class T> Task<T> keepAlive(std::shared_ptr<void> keep, Task<T> task) {
+    template <class T, class Owner> Task<T> keepAlive(Owner keep, Task<T> task) {
       (void)keep;
       if constexpr (std::is_void_v<T>) {
         co_await std::move(task);
@@ -688,8 +688,9 @@ namespace uos::rt {
 
     // Settles `target` with the result of `call()`: a value, void, a Task (an
     // async callback, whose promise `target` adopts) or a Promise (adopted).
-    // `keep` owns the callback for as long as a Task it returned runs.
-    template <class U, class Call> void settleWith(const std::shared_ptr<PromiseState<U>>& target, std::shared_ptr<void> keep, Call&& call) {
+    // A callback Task may borrow both the callable and the source outcome.
+    template <class U, class T, class Call>
+    void settleWith(const std::shared_ptr<PromiseState<U>>& target, std::shared_ptr<void> keep, const std::shared_ptr<PromiseState<T>>& source, Call&& call) {
       using R = std::invoke_result_t<Call&>;
       try {
         if constexpr (std::is_void_v<R>) {
@@ -698,7 +699,9 @@ namespace uos::rt {
           target->fulfill();
         } else if constexpr (IsTask<R>::value) {
           auto inner = std::make_shared<PromiseState<U>>();
-          start(currentLoop(), keepAlive<void>(std::move(keep), runInto(inner, call())));
+          auto task = call();
+          auto owners = std::pair{std::move(keep), source};
+          start(currentLoop(), keepAlive<void>(std::move(owners), runInto(inner, std::move(task))));
           adopt(target, std::move(inner));
         } else if constexpr (IsPromise<R>::value) {
           adopt(target, call().state());
@@ -728,7 +731,7 @@ namespace uos::rt {
         target->reject(source->error);
         return;
       }
-      detail::settleWith(target, callback, [&] { return detail::invokeWithValue<T>(*callback, *source); });
+      detail::settleWith(target, callback, source, [&] { return detail::invokeWithValue<T>(*callback, *source); });
     });
     return out;
   }
@@ -742,8 +745,8 @@ namespace uos::rt {
     auto fulfilled = std::make_shared<F>(std::move(onFulfilled));
     auto rejected = std::make_shared<G>(std::move(onRejected));
     source->react([source, target, fulfilled, rejected] {
-      if (source->status == detail::PromiseCore::Status::rejected) detail::settleWith(target, rejected, [&] { return (*rejected)(source->error); });
-      else detail::settleWith(target, fulfilled, [&] { return detail::invokeWithValue<T>(*fulfilled, *source); });
+      if (source->status == detail::PromiseCore::Status::rejected) detail::settleWith(target, rejected, source, [&] { return (*rejected)(source->error); });
+      else detail::settleWith(target, fulfilled, source, [&] { return detail::invokeWithValue<T>(*fulfilled, *source); });
     });
     return out;
   }
@@ -757,7 +760,7 @@ namespace uos::rt {
     auto callback = std::make_shared<G>(std::move(onRejected));
     source->react([source, target, callback] {
       if (source->status == detail::PromiseCore::Status::rejected) {
-        detail::settleWith(target, callback, [&] { return (*callback)(source->error); });
+        detail::settleWith(target, callback, source, [&] { return (*callback)(source->error); });
       } else if constexpr (std::is_void_v<U>) {
         target->fulfill();
       } else {

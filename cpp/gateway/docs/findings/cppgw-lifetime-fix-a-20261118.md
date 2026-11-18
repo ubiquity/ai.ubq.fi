@@ -41,7 +41,7 @@ completes, or record the precise pending work and last passing tree.
 | A-LOOP-TEARDOWN-OWNER (`src/rt/async.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-PROMISE-REACTION-CYCLE (`src/rt/async.cpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-PROMISE-GCC-AWAIT (`include/uos/rt/async.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
-| A-PROMISE-CALLBACK-INPUT (`include/uos/rt/async.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
+| A-PROMISE-CALLBACK-INPUT (`include/uos/rt/async.hpp`) | FIXED. The reaction was the last owner of the outcome passed by reference to a Task-returning callback. Its child now owns both the callable and the outcome through completion. Value and Promise callbacks use the same settlement path as before. | This commit | `rt/async_test`, a pending sibling reads the value after early rejection, and `then` and `catch_` read rejection reasons after suspension. |
 | A-PROMISE-REACTION-CYCLE (`include/uos/rt/async.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
 | A-GENERATOR-STEP-OWNER (`include/uos/rt/async.hpp`) | FIXED. `requestStep` eagerly enqueues the result, but the generator body deliberately keeps only a weak link. Keep the core in the returned Task so either step can still settle after the last generator handle is dropped. | This commit | `rt/async_test`, checks `next` and a queued `return_` before a timer. The baseline failure is liveness. |
 | A-GENERATOR-GCC-AWAIT (`include/uos/rt/async.hpp`) | LEFT. Current-tree re-verification pending. | — | — |
