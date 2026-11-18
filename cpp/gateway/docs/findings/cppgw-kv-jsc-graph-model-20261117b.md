@@ -230,3 +230,22 @@ totals. Test processes have an empty home and private tmpfs and run in
 network, mount, and PID namespaces. Compilation progress is recorded in
 `/tmp/kv-graph/verify-asan/compile-*.log`. The planned follow-up is the
 optimized rerun of the plain supervisor test.
+
+### Plain sweep closure
+
+Clang 21.1.8 at `-O2` passed 37/37 cases in
+`codex_supervisor_brief_test` and 41/41 in `codex_supervisor_secret_test`
+on commit `e6262ddd3c13f628304acc0bf83aa3a05b97777f`, tree
+`f9c29ea7644ac888584e994f461670d2b5f65afe`. The earlier 439 passing binaries,
+the two library-version reruns, and the optimized supervisor reruns provide
+passing plain evidence for all 442 binaries and 5,029 cases across runs.
+
+```sh
+nice -n 7 python3 -B /tmp/kv-graph/verify.py release --jobs 3 codex_supervisor_brief_test.cpp
+python3 -B /tmp/kv-graph/verify.py release --jobs 2 codex_supervisor_secret_test.cpp
+```
+
+The plain brief and secret receipts have SHA-256
+`864911e8f66225471f73e1d49b03dcffc053a9f6f3e4fb0c467d177e638ae5c1` and
+`5714e841ce36c09cf85cb71186775008c64518e90dbd6adcf274efc8354e5f3d`, respectively. The source, input vectors, and fixtures
+are identical to those used in the earlier plain sweep.
