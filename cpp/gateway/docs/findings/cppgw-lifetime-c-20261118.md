@@ -142,7 +142,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/capacity_analytics.hpp`
 - [x] `include/uos/provider/capacity_contract.hpp`
 - [x] `include/uos/provider/capacity_events.hpp`
-- [ ] `include/uos/provider/capacity_history.hpp`
+- [x] `include/uos/provider/capacity_history.hpp`
 - [ ] `include/uos/provider/capacity_parse.hpp`
 - [ ] `include/uos/provider/capacity_rollups.hpp`
 - [ ] `include/uos/provider/cerebras.hpp`
@@ -912,3 +912,9 @@ Event tasks and sample-trigger callback declarations.
 
 - 76-115 · owning task parameters · **SAFE** · Event records/options and any overridden store are owned across the reads/writes.
 - 120-124 · synchronous trigger · **SAFE** · The installed trigger consumes options on the call and dispatches a task constructed with its own values.
+
+### `include/uos/provider/capacity_history.hpp`
+
+Capacity history and recovery APIs.
+
+- 33,59-61,71-72 · owning task parameters · **SAFE** · The reader/merger tasks retain their store and point/event input values.

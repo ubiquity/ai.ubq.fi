@@ -1128,8 +1128,16 @@
       ]
     },
     "include/uos/provider/capacity_history.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Capacity history and recovery APIs.",
+      "sites": [
+        {
+          "lines": "33,59-61,71-72",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The reader/merger tasks retain their store and point/event input values."
+        }
+      ]
     },
     "include/uos/provider/capacity_parse.hpp": {
       "status": "pending",
