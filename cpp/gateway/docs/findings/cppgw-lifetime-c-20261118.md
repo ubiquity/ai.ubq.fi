@@ -327,6 +327,170 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/surplus_claude_chat_request.cpp`
 - [x] `src/provider/surplus_claude_request.cpp`
 
+## Audit method and retained evidence
+
+The inventory covers 144 implementations and 146 headers. Each row records a site or one group of
+sites with the same ownership proof. Diffs in the final ranked list are maintainer proposals.
+
+The manual review followed task factories and virtual implementations in addition to coroutine
+bodies. It checked the runtime implementations of Promise reactions and loop teardown,
+`rt::async`, `rt::Fetch`, stream source algorithms, generator operations, and abort listeners.
+This distinguishes a closure retained by its adapter from a frame or referent an escaping child
+merely borrows. The fail-fast review includes an independently pending sibling.
+
+From `cpp/gateway`, the initial discovery probes were equivalent to these searches. A
+coroutine can span several lines or arrive through an interface, so the search output was
+supplemented by source and caller review.
+
+```bash
+area=({src,include/uos}/{provider,codex,deepseek,paid_fallback,harmony,chat,embeddings,live})
+rg -n 'co_(await|return|yield)' "${area[@]}"
+rg -n 'rt::(all|allSettled|race|any|spawn|async)|\.then\(|\.catch_\(|\.finally_\(' "${area[@]}"
+rg -n 'addEventListener|set(On|Timeout|Interval)|\.pull\s*=|\.cancel\s*=|\[this|weak_from_this' "${area[@]}"
+rg -n -U '(?:auto|const auto)\s*(?:&&?\s*)?\[[^
+\]]+\]\s*=\s*co_await' "${area[@]}"
+rg -n -U '\(\s*co_await [^;]+\)\s*[.\[]|[a-zA-Z_]\w*\(\s*co_await' "${area[@]}"
+rg -n 'co_await [^;]*\{' "${area[@]}"
+```
+
+Both searches for direct structured bindings and direct use of an awaited result returned
+zero matches. The braced-expression search also finds loop bodies that open on the same line.
+Those are distinct from an aggregate supplied to a coroutine inside an await expression.
+
+### Toolchain and clang-tidy
+
+Environment was Ubuntu 24.04.5 ARM64 with four CPUs. The retained evidence root is
+`/var/tmp/cppgw-lifetime-c.O1ER9aAI`. The saved `setup.sh` records the package and source
+build commands and verifies archive hashes before extraction. It used the apt.llvm.org Noble
+LLVM 21 repository and installed Clang/clang-tidy 21.1.8, the matching sanitizer runtime, mold,
+PyYAML and the system development libraries. OpenSSL was 3.0.13, zlib 1.3, Brotli 1.1.0 and
+Zstd 1.5.5. The staged ICU was 78.3. All downloaded sources and binaries were staged outside
+the checkout.
+
+```sh
+# Download and extraction destinations are under the evidence root.
+sudo -n apt-get install -y libssl-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev pkg-config python3-yaml
+sudo -n apt-get install -y clang-21 clang-tidy-21 libclang-rt-21-dev mold
+# https://archives.boost.io/release/1.92.0/source/boost_1_92_0.tar.bz2
+./bootstrap.sh --with-libraries=json,container
+./b2 -j2 --with-json --with-container variant=release link=static runtime-link=shared cxxstd=20 stage
+# https://www.sqlite.org/2026/sqlite-autoconf-3540000.tar.gz
+./configure --prefix="$PWD/../sqlite" --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'
+make -j1
+make install
+# https://github.com/unicode-org/icu/releases/download/release-78.3/icu4c-78.3-sources.tgz
+../icu/source/configure --prefix="$PWD/../icu78" --disable-tests --disable-samples --disable-extras --disable-static
+make -j1
+make install
+```
+
+Boost JSON and Container static libraries were present. The setup measured 29.22 s for
+LLVM/system packages, 96.64 s for Boost, 63.43 s for SQLite, and 268.51 s for ICU. These
+component measurements overlap. The SQLite probe inside the fixture boundary printed 3.54.0.
+
+The analyzer used a focused copy of the repository configuration with the five requested
+checks, a first-party header filter, and no fix application. The external clang-tidy wrapper
+appends `--extra-arg=-isystem<dir>` for the staged Boost, ICU and SQLite headers.
+`tidy-c/manifest.json` records the configuration, C++ inputs and exact tool identity.
+The selected-source invocation can be reproduced from the repository root.
+
+```bash
+evidence=/var/tmp/cppgw-lifetime-c.O1ER9aAI
+launch=$(mktemp -d "$evidence/launch-tidy.XXXXXXXX")
+mkdir "$launch/home" "$launch/tmp"
+mapfile -t files < <(cd cpp/gateway && rg --files src/{provider,codex,deepseek,paid_fallback,harmony,chat,embeddings,live} -g '*.cpp' | sort)
+arguments=()
+for path in "${files[@]}"; do arguments+=(--source "$path"); done
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC   HOME="$launch/home" TMPDIR="$launch/tmp"   bash cpp/gateway/tools/tidy.sh --compiler /usr/bin/clang++-21   --clang-tidy "$evidence/bin/clang-tidy-21" --config "$evidence/area-c.clang-tidy"   --jobs 3 --timeout 90 --build-dir "$launch/tidy-c" "${arguments[@]}"
+```
+
+Retained run `tidy-c/tidy-baseline.json` names commit
+`9e335787a113208beb1b7a9e5193c13ece6d927c` and tree
+`498811f1a546f663547e1bd9efc2e5057ca8d95a`. Its SHA-256 is
+`62f11eae4d2dd996f52b7cdc9075d24fc34f2a12dcf65f66d841726cf114f8e0`.
+All 144 selected TUs completed, with zero frontend failures and timeouts, in 279.301 s
+using three workers. Maximum TU RSS was 761,036 KiB. Sixteen TUs emitted findings,
+47 emissions and 43 unique diagnostics. The scope is all Area C implementation TUs.
+The wrapper marks whole-gateway completion false because its database also contains
+the unselected modules and tests.
+
+| Check | Unique diagnostics |
+| --- | ---: |
+| `cppcoreguidelines-avoid-capturing-lambda-coroutines` | 9 |
+| `cppcoreguidelines-avoid-reference-coroutine-parameters` | 34 |
+| `misc-coroutine-hostile-raii` | 0 |
+| `bugprone-dangling-handle` | 0 |
+| `bugprone-use-after-move` | 0 |
+
+Every unique diagnostic is covered by a ledger row. The nine visible capturing coroutine
+lambdas have owners in their current call chains. The reference warning on the Voyage
+eviction helper is covered by the fail-fast KV finding. Several warnings share a line when
+different parameters are declared there. The remaining request-path defects came from
+manual caller, combinator or callback tracing.
+
+### Focused ASan/UBSan evidence
+
+The portable driver used Clang 21.1.8 with bundled ASan, UBSan and LSan, four build/test workers,
+and local fixtures behind real Linux network, mount and PID namespaces. The fixture entry
+proved loopback and outside route denial, created per-run empty HOME and fresh TMPDIR, and
+passed an allowlisted environment. The four prior-run receipts are incremental builds and
+have unchanged native input digests. Cold and interrupted runs did not yield test receipts.
+
+| Driver filter | Build s | Test wall s | Elapsed s | Passed cases |
+| --- | ---: | ---: | ---: | ---: |
+| `live_sideband_http_test` | 52.826 | 4.852 | 58.127 | 21/21 |
+| `codex_dispatch_differential` | 28.149 | 0.980 | 29.579 | 13/13 |
+| `codex_supervisor_test` | 13.642 | 2.365 | 16.459 | 15/15 |
+| `paid_fallback_test` | 38.778 | 2.888 | 42.113 | 25/25 |
+
+The live receipt is from commit `4a308e48d62f24f6a1b99598e79279a4f5f5816a`
+and tree `cc835dd1e8394cec6aa60cb41e992fb80f019192`. The other three are from commit
+`947c56a50007becf0be87267b265e93c801eec25` and tree
+`ea98c25be2f6662c16ebd329a77bd96fdb9a9d9d`. Native source digest
+`4487834eff106fc599066c9688b3f5231e9a6df888d521efe898af1aac6d3aa0`
+is shared across the four receipts. The Area C source is identical to the audited tree.
+
+```bash
+evidence=/var/tmp/cppgw-lifetime-c.O1ER9aAI
+for target in live_sideband_http_test codex_dispatch_differential codex_supervisor_test paid_fallback_test; do
+  launch=$(mktemp -d "$evidence/launch-asan.XXXXXXXX")
+  mkdir "$launch/home" "$launch/tmp"
+  env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC     HOME="$launch/home" TMPDIR="$launch/tmp" CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4     UOS_CI_BUILD_DIR="$evidence/asan" UOS_CI_SQLITE_PREFIX="$evidence/sqlite"     PKG_CONFIG_PATH="$evidence/icu78/lib/pkgconfig" UOS_CI_CXXFLAGS="-isystem $evidence/boost_1_92_0"     UOS_CI_LDFLAGS="-L$evidence/boost_1_92_0/stage/lib -L$evidence/icu78/lib -Wl,-rpath,$evidence/icu78/lib -licudata"     bash cpp/gateway/tools/ci-build.sh --config asan "$target"
+done
+```
+
+### Local lifetime witnesses
+
+The off-tree `witness/ownership.cpp` (SHA-256
+`d4b1abf4b86ea21be38f3e1957b3e8a355f433d30c7538c079173833efbc75f7`) uses mocked
+pending promises and invokes the two Codex wait APIs directly. `witness/build.log`
+retains the exact Clang 21 command that compiled this file and linked the sanitized
+`codex_dispatch_differential_test` production dependency closure. It operated on the
+same native sources as the driver receipts. The executable takes the `retry` argument for
+the retry observation. The saved `witness/bin/retry` wrapper supplies that argument. The
+Linux namespace helper runs both commands with clean environment and verifies isolation.
+
+```bash
+evidence=/var/tmp/cppgw-lifetime-c.O1ER9aAI
+for target in ownership retry; do
+  scratch=$(mktemp -d /tmp/cppgw-witness.XXXXXXXX)
+  parent_namespace=$(readlink /proc/self/ns/net)
+  sudo -n unshare --net --mount --pid --fork --mount-proc --propagation private --kill-child=SIGKILL --     /usr/bin/python3 -B cpp/gateway/cmake/ci/isolate.py "$scratch" "$evidence/witness/bin" "$target"     "$parent_namespace" "$(id -u)" "$(id -g)"     '{"PATH":"/usr/bin:/bin","LANG":"C.UTF-8","ASAN_OPTIONS":"detect_leaks=1:abort_on_error=1","UBSAN_OPTIONS":"halt_on_error=1"}'
+  rmdir "$scratch"
+done
+```
+
+- Shared refresh. A weak observer of the registering signal remains live after the
+  scoped Loop is destroyed with shared work pending. LeakSanitizer reported 776 bytes
+  in seven allocations and the trace includes `auth_refresh.cpp:539`.
+  Receipt `witness/ownership.log` has SHA-256
+  `b1be2862fb7bd0d5756acba34a14556dfe4d43cc53e26bf3c6af091ad7fbf7aa`.
+- Retry wait. After abort rejects the raced wait, a capture's weak owner count shows
+  the injected sleeper closure has been released while its gate is still pending.
+  The witness exits successfully after observing the ownership failure and leaves the
+  losing task suspended. Receipt `witness/retry.log` has SHA-256
+  `e81b7b7647464f575a0677749e1248b6954caeb6aa10111d581a51d0f7956b3a`.
+
 ## Per-file verdicts
 
 ### `include/uos/chat/completions.hpp`
