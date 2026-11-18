@@ -384,7 +384,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/sentinel/replay_read.hpp`
 - [x] `include/uos/sentinel/replay_retention.hpp`
 - [x] `include/uos/sentinel/replay_retention_bootstrap.hpp`
-- [ ] `include/uos/sentinel/replay_retention_metadata.hpp`
+- [x] `include/uos/sentinel/replay_retention_metadata.hpp`
 - [ ] `include/uos/sentinel/replay_retention_schema.hpp`
 - [ ] `include/uos/sentinel/replay_store.hpp`
 - [ ] `include/uos/sentinel/upstream_capture.hpp`
@@ -2187,6 +2187,12 @@ Reviewed legacy release, resumable sweep and bootstrap mutation interfaces. The 
 
 - L39, 53, 57, 70, 72 **SAFE** · The foreground bootstrap path keeps the store through its direct await and gives each Task owning keys, ledger values or numeric options.
 
+### `include/uos/sentinel/replay_retention_metadata.hpp`
+
+Reviewed metadata matching, recount and throttle interfaces.
+
+- L54, 55, 69 **SAFE** · The recount Tasks take maintenance inputs by value and run within an awaiting caller that retains its KV.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2436,4 +2442,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-276/286 files reviewed. 464 sites: 439 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+277/286 files reviewed. 465 sites: 440 SAFE, 25 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
