@@ -36,7 +36,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 
 ## File checklist (290)
 
-- [ ] `include/uos/chat/completions.hpp`
+- [x] `include/uos/chat/completions.hpp`
 - [ ] `include/uos/chat/envelope.hpp`
 - [ ] `include/uos/chat/stream_translation.hpp`
 - [ ] `include/uos/codex/account_routing.hpp`
@@ -328,3 +328,10 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [ ] `src/provider/surplus_claude_request.cpp`
 
 ## Per-file verdicts
+
+### `include/uos/chat/completions.hpp`
+
+The stream and buffered entry points have separate ownership of telemetry.
+
+- 14-17 · stream construction · **SAFE** · The synchronous entry point copies the pointed-to context and retains its terminal callback in shared stream state.
+- 18-22 · borrowed context · **SAFE** · The buffered caller in envelope.cpp awaits the task with its context live, and the task copies that context before processing events.

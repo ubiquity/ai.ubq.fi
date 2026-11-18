@@ -3,8 +3,22 @@
   "audited_tree": "6abb54014cf79ba7c64b24be4d28dde250c40ccf",
   "files": {
     "include/uos/chat/completions.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The stream and buffered entry points have separate ownership of telemetry.",
+      "sites": [
+        {
+          "lines": "14-17",
+          "kind": "stream construction",
+          "verdict": "SAFE",
+          "reason": "The synchronous entry point copies the pointed-to context and retains its terminal callback in shared stream state."
+        },
+        {
+          "lines": "18-22",
+          "kind": "borrowed context",
+          "verdict": "SAFE",
+          "reason": "The buffered caller in envelope.cpp awaits the task with its context live, and the task copies that context before processing events."
+        }
+      ]
     },
     "include/uos/chat/envelope.hpp": {
       "status": "pending",
