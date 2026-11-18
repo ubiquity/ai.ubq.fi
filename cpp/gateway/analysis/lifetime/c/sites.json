@@ -2851,8 +2851,22 @@
       "sites": []
     },
     "src/harmony/tools/router.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "The tool router owns its backend and validated argument snapshots.",
+      "sites": [
+        {
+          "lines": "68-87,163-200",
+          "kind": "shell receiver and tool dispatch await",
+          "verdict": "SAFE",
+          "reason": "execShell retains a shared workspace while the virtual shell task runs, and runToolImpl awaits it with its other inputs live."
+        },
+        {
+          "lines": "203-217",
+          "kind": "borrowed JSON task factories",
+          "verdict": "SAFE",
+          "reason": "The pointer overloads copy optional JSON into runToolImpl before returning its task."
+        }
+      ]
     },
     "src/harmony/tools/schemas.cpp": {
       "status": "pending",
