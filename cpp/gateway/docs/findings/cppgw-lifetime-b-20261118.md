@@ -70,7 +70,7 @@ of coroutine bodies are indexed by their definitions unless the declaration itse
 - [x] `src/storage/kv.cpp`
 - [x] `src/storage/native_addon.cpp`
 - [x] `src/storage/native_kv.cpp`
-- [ ] `src/storage/sqlite_readonly.cpp`
+- [x] `src/storage/sqlite_readonly.cpp`
 - [ ] `src/storage/value_compatibility.cpp`
 - [ ] `include/uos/cache/kv_migration.hpp`
 - [ ] `include/uos/cache/kv_migration_base.hpp`
@@ -469,6 +469,13 @@ A declaration alias to the synchronous KV value walk. No separate lifetime site.
 | 118-126 | Guarded reads across retry/fail-fast aggregate | **SAFE** | Read wrappers immediately copy native, key vectors and options into the by-value retry callback. A rejecting sibling can unwind its caller without dropping these owners. |
 | 128-141,155-170 | Guarded writes and queue receiver | **SAFE** | Current callers retain the wrapper until the initial member resume. The write frame owns an independent atomic builder after starting, and the awaited enqueue retains the same owning store in its caller. |
 
+### `src/storage/sqlite_readonly.cpp`
+
+| Lines | Site | Verdict | Ownership or failure |
+| --- | --- | --- | --- |
+| 19-29,36-52 | Read-only SQL adapters | **SAFE** | Statements copy the shared native statement handle and row conversion returns owned JSON. SQL views do not escape the synchronous calls. |
+| 75-107 | Read-only inspection lifetime | **SAFE** | The passed callback is invoked inline against a database opened and closed within that attempt, including the fallback. The caller's callback owner is live throughout both calls. |
+
 
 ## Ranked defects and counts
 
@@ -674,4 +681,4 @@ removes the registrations on frame destruction as well as on normal return.
 +      if (!result.ok) throw JsError("Unconditional KV delete failed");
 ```
 
-47/97 files reviewed. **DEFECT 8, SAFE 104, UNCLEAR 3.**
+48/97 files reviewed. **DEFECT 8, SAFE 106, UNCLEAR 3.**

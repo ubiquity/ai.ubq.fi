@@ -1409,8 +1409,30 @@
       ]
     },
     "src/storage/sqlite_readonly.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "sites": [
+        {
+          "lines": "19-29,36-52",
+          "verdict": "SAFE",
+          "kinds": [
+            "b",
+            "d"
+          ],
+          "symbol": "Read-only SQL adapters",
+          "evidence": "Statements copy the shared native statement handle and row conversion returns owned JSON. SQL views do not escape the synchronous calls."
+        },
+        {
+          "lines": "75-107",
+          "verdict": "SAFE",
+          "kinds": [
+            "a",
+            "b",
+            "c"
+          ],
+          "symbol": "Read-only inspection lifetime",
+          "evidence": "The passed callback is invoked inline against a database opened and closed within that attempt, including the fallback. The caller's callback owner is live throughout both calls."
+        }
+      ]
     },
     "src/storage/value_compatibility.cpp": {
       "reviewed": false,
