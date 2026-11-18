@@ -206,7 +206,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `src/lib/jev_compaction/request.cpp`
 - [x] `src/lib/jev_compaction/state.cpp`
 - [x] `src/lib/jev_compaction/types.cpp`
-- [ ] `src/metered_quota.cpp`
+- [x] `src/metered_quota.cpp`
 - [ ] `src/models/catalog.cpp`
 - [ ] `src/models/codex_models.cpp`
 - [ ] `src/models/codex_models_availability.cpp`
@@ -1065,6 +1065,15 @@ Reviewed synchronous token estimation, tool-call matching, history reduction and
 
 Reviewed synchronous representation codecs and error translation. No retained callback or suspension.
 
+### `src/metered_quota.cpp`
+
+Reviewed provider fetch and decoding, quota cache, CAS and lease refresh, balance writes and history traversal.
+
+- L132, 138, 139, 146, 594, 612 **SAFE** · The request frame and Fetch each retain their callable and owning network arguments. The Response is named, and parsed JSON pointers or credential views are consumed from owned values.
+- L314, 322, 323, 338, 347, 355, 360, 371, 373, 392, 414 **SAFE** · Cache and lease tasks retain their shared KV and snapshots. The synchronous invalidation wrapper immediately dispatches an independently owned native read before the join.
+- L433, 434, 435, 441, 443, 448, 457, 461, 467, 472, 476, 487 **SAFE** · Refresh holds its named tuple and atomic receiver. Owned option, signal and credential values remain live through provider observation, and hash and history children own their inputs.
+- L684, 687, 690, 691, 701, 704, 712, 727, 741, 751, 776, 786, 799, 805, 831, 872, 883, 893 **SAFE** · Quota callbacks and stale cache state live in the directly awaiting frame. History lists retain their iterator and use fresh owned entries, while control operations transfer owning values.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1313,4 +1322,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-99/286 files reviewed. 205 sites: 189 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+100/286 files reviewed. 209 sites: 193 SAFE, 16 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

@@ -4420,8 +4420,102 @@
       "sites": []
     },
     "src/metered_quota.cpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed provider fetch and decoding, quota cache, CAS and lease refresh, balance writes and history traversal.",
+      "sites": [
+        {
+          "lines": [
+            132,
+            138,
+            139,
+            146,
+            594,
+            612
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "The request frame and Fetch each retain their callable and owning network arguments. The Response is named, and parsed JSON pointers or credential views are consumed from owned values."
+        },
+        {
+          "lines": [
+            314,
+            322,
+            323,
+            338,
+            347,
+            355,
+            360,
+            371,
+            373,
+            392,
+            414
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Cache and lease tasks retain their shared KV and snapshots. The synchronous invalidation wrapper immediately dispatches an independently owned native read before the join."
+        },
+        {
+          "lines": [
+            433,
+            434,
+            435,
+            441,
+            443,
+            448,
+            457,
+            461,
+            467,
+            472,
+            476,
+            487
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Refresh holds its named tuple and atomic receiver. Owned option, signal and credential values remain live through provider observation, and hash and history children own their inputs."
+        },
+        {
+          "lines": [
+            684,
+            687,
+            690,
+            691,
+            701,
+            704,
+            712,
+            727,
+            741,
+            751,
+            776,
+            786,
+            799,
+            805,
+            831,
+            872,
+            883,
+            893
+          ],
+          "kinds": [
+            "b",
+            "c",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Quota callbacks and stale cache state live in the directly awaiting frame. History lists retain their iterator and use fresh owned entries, while control operations transfer owning values."
+        }
+      ]
     },
     "src/models/catalog.cpp": {
       "reviewed": false,
