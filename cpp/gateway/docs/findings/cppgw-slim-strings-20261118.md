@@ -278,8 +278,8 @@ bash "$scratch/measure/run-comparison.sh"
 
 ## Handoff
 
-The GitHub HTTPS push preflight exited 128 because write authentication was
-unavailable. The fetched `origin/development` tip is
+Both the GitHub HTTPS preflight and the push of `bba6a0fc` exited 128 because
+write authentication was unavailable. The fetched `origin/development` tip is
 `a3a96bc5fe96ba383936746fae23e64daa69562f` and predates the C++ gateway.
 Publication and integration into `development` are pending. The verified
 commits are on the clean local `agent-job` branch. The handoff bundle is
