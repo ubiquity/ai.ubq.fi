@@ -273,7 +273,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/auth/local_development_key.hpp`
 - [x] `include/uos/auth/passkeys.hpp`
 - [x] `include/uos/auth/passport.hpp`
-- [ ] `include/uos/auth/passport_sessions.hpp`
+- [x] `include/uos/auth/passport_sessions.hpp`
 - [ ] `include/uos/auth/relay.hpp`
 - [ ] `include/uos/authority/admission_state.hpp`
 - [ ] `include/uos/authority/authority_rpc.hpp`
@@ -1515,6 +1515,12 @@ Reviewed passport principal records and route interfaces.
 
 - L16, 68, 71, 75 **SAFE** · The kind view points to a literal. Passport authentication and routing frames receive owning request and path values.
 
+### `include/uos/auth/passport_sessions.hpp`
+
+Reviewed the session lifecycle entry points.
+
+- L34, 35, 37, 41 **SAFE** · Create, read and revoke operations own the grant or token and any replacement input throughout their asynchronous work.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -1763,4 +1769,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-165/286 files reviewed. 336 sites: 315 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+166/286 files reviewed. 337 sites: 316 SAFE, 21 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

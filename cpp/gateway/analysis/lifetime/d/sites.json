@@ -7496,8 +7496,24 @@
       ]
     },
     "include/uos/auth/passport_sessions.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed the session lifecycle entry points.",
+      "sites": [
+        {
+          "lines": [
+            34,
+            35,
+            37,
+            41
+          ],
+          "kinds": [
+            "b",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Create, read and revoke operations own the grant or token and any replacement input throughout their asynchronous work."
+        }
+      ]
     },
     "include/uos/auth/relay.hpp": {
       "reviewed": false,
