@@ -176,7 +176,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `include/uos/provider/openrouter_web_tools.hpp`
 - [x] `include/uos/provider/presentation.hpp`
 - [x] `include/uos/provider/removed_provider_circuit.hpp`
-- [ ] `include/uos/provider/removed_provider_telemetry.hpp`
+- [x] `include/uos/provider/removed_provider_telemetry.hpp`
 - [ ] `include/uos/provider/selection.hpp`
 - [ ] `include/uos/provider/stream_relay.hpp`
 - [ ] `include/uos/provider/surplus.hpp`
@@ -1105,3 +1105,9 @@ Synchronous provider ID/display declarations. Returned literals have static stor
 Retired circuit compatibility API.
 
 - 21-26 · settled promise factory · **SAFE** · The factories return settled values with no callbacks retaining inputs.
+
+### `include/uos/provider/removed_provider_telemetry.hpp`
+
+Retired telemetry compatibility API.
+
+- 6 · settled promise factory · **SAFE** · The synchronous wrapper returns a resolved promise and retains no reference to the supplied JSON.

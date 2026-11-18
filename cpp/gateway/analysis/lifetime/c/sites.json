@@ -1500,8 +1500,16 @@
       ]
     },
     "include/uos/provider/removed_provider_telemetry.hpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Retired telemetry compatibility API.",
+      "sites": [
+        {
+          "lines": "6",
+          "kind": "settled promise factory",
+          "verdict": "SAFE",
+          "reason": "The synchronous wrapper returns a resolved promise and retains no reference to the supplied JSON."
+        }
+      ]
     },
     "include/uos/provider/selection.hpp": {
       "status": "pending",
