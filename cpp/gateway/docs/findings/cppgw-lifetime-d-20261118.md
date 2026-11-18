@@ -90,7 +90,7 @@ Each audit entry binds its source coordinates to the baseline Git blobs. `audit.
 - [x] `src/auth/passkeys.cpp`
 - [x] `src/auth/passport.cpp`
 - [x] `src/auth/passport_sessions.cpp`
-- [ ] `src/auth/relay.cpp`
+- [x] `src/auth/relay.cpp`
 - [ ] `src/authority/admission_state.cpp`
 - [ ] `src/authority/authority_rpc.cpp`
 - [ ] `src/authority/contracts.cpp`
@@ -596,6 +596,10 @@ Reviewed session creation, replacement, introspection and revocation including s
 - L248, 254, 256, 261, 265, 269, 274, 278, 282 **SAFE** · Introspection owns the KV, session record, response and parsed JSON through cancel or reread. Its copied record does not borrow the persistent store.
 - L297, 303, 305, 308, 318, 320 **SAFE** · Revocation keeps KV and key through delete and passes the copied record and Response to the fetch and cancel tasks.
 
+### `src/auth/relay.cpp`
+
+Reviewed the synchronous origin parser, trusted host lookup and slash normalization. The static table uses literal storage, derived labels are local, and the result is an owning string. No lifetime site crosses a suspension or escapes as a callback.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -701,4 +705,4 @@ Apply the `refreshOpenlux` form to `refreshSurplus`, `refreshLithos` and `refres
 +    bool committed = false; rt::Reason failure; try { const auto result = co_await atomic->commit(); committed = result.ok; } catch (...) { failure = std::current_exception(); }
 ```
 
-25/286 files reviewed. 114 sites: 105 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+26/286 files reviewed. 114 sites: 105 SAFE, 9 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->

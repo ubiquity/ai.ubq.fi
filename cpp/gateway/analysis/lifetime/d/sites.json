@@ -1972,7 +1972,8 @@
       ]
     },
     "src/auth/relay.cpp": {
-      "reviewed": false,
+      "reviewed": true,
+      "note": "Reviewed the synchronous origin parser, trusted host lookup and slash normalization. The static table uses literal storage, derived labels are local, and the result is an owning string. No lifetime site crosses a suspension or escapes as a callback.",
       "sites": []
     },
     "src/authority/admission_state.cpp": {
