@@ -15,7 +15,6 @@
 #include <boost/asio/write.hpp>
 // The child only execs. It never runs or mutates the parent's Asio context.
 #define BOOST_PROCESS_V2_DISABLE_NOTIFY_FORK
-#include <boost/process/v2/environment.hpp>
 #include <boost/process/v2/process.hpp>
 #include <boost/process/v2/start_dir.hpp>
 #include <boost/process/v2/stdio.hpp>
@@ -347,18 +346,18 @@ namespace uos::rt::process {
       for (const auto& argument : cmd) argv.push_back(argument.c_str());
       argv.push_back(nullptr);
 
-      std::vector<std::string> entries;
-      if (options.env) {
-        entries.reserve(options.env->size());
-        for (const auto& [name, value] : *options.env) entries.push_back(name + "=" + value);
-      }
       bp::default_process_launcher launcher;
-      const bp::filesystem::path executable(file);
-      bp::process_environment environment(entries);
+      std::vector<std::string> environment;
+      std::vector<const char*> envp;
       if (options.env) {
-        const auto error = environment.on_setup(launcher, executable, argv.data());
-        if (error) throw fs::errnoError(error.value(), "spawn", file);
+        environment.reserve(options.env->size());
+        for (const auto& [name, value] : *options.env) environment.push_back(name + "=" + value);
+        envp.reserve(environment.size() + 1);
+        for (const auto& entry : environment) envp.push_back(entry.c_str());
+        envp.push_back(nullptr);
+        launcher.env = envp.data();
       }
+      const bp::filesystem::path executable(file);
 
       // An inherited handler could otherwise run in the child before exec setup.
       sigset_t all, previous;
