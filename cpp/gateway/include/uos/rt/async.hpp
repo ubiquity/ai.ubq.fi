@@ -630,7 +630,7 @@ namespace uos::rt {
   // destroys its frame without running further code, as JS garbage-collects it.
   template <class T, class TReturn = void> class AsyncGenerator {
   public:
-    using Body = std::function<Task<TReturn>(Yield<T>)>;
+    using Body = std::function<Task<TReturn>(Yield<T>&&)>;
     explicit AsyncGenerator(Body body);
     // `iterator.next()`
     [[nodiscard]] Task<IteratorResult<T>> next() const;
@@ -1043,15 +1043,16 @@ namespace uos::rt {
     }
 
     template <class T, class TReturn>
-    Task<void> runGenerator(std::weak_ptr<GeneratorCore<T>> weak, std::function<Task<TReturn>(Yield<T>)> body, std::shared_ptr<std::optional<Slot<TReturn>>> returned) {
+    Task<void> runGenerator(std::weak_ptr<GeneratorCore<T>> weak, typename AsyncGenerator<T, TReturn>::Body body, std::shared_ptr<std::optional<Slot<TReturn>>> returned) {
       Reason failure;
       Yield<T> yield(weak);
       try {
+        auto running = body(std::move(yield));
         if constexpr (std::is_void_v<TReturn>) {
-          co_await body(yield);
+          co_await std::move(running);
           returned->emplace();
         } else {
-          auto value = co_await body(yield);
+          auto value = co_await std::move(running);
           // `return value` in an async generator awaits the value first.
           co_await microtask();
           returned->emplace(std::move(value));
@@ -1076,7 +1077,8 @@ namespace uos::rt {
         if (step.done) break;
         bool forwardReturn = false;
         try {
-          co_await outer(std::move(*step.value));
+          auto passing = outer(std::move(*step.value));
+          co_await std::move(passing);
         } catch (const GeneratorReturn&) {
           forwardReturn = true;
         }
@@ -1126,8 +1128,9 @@ namespace uos::rt {
       Reason failure;
       bool proceed = true;
       try {
-        if constexpr (std::is_same_v<Result, Task<bool>>) proceed = co_await body(std::move(*step.value));
-        else co_await body(std::move(*step.value));
+        auto handling = body(std::move(*step.value));
+        if constexpr (std::is_same_v<Result, Task<bool>>) proceed = co_await std::move(handling);
+        else co_await std::move(handling);
       } catch (...) {
         failure = std::current_exception();
       }

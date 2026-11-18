@@ -869,6 +869,19 @@ ASYNC_TEST("aggregate values pass through Promise, async, withFinally and genera
   EXPECT_EQ(token.use_count(), 1);
 }
 
+ASYNC_TEST("a generator body can borrow its yield handle across suspension") {
+  rt::AsyncGenerator<std::string> generator([](const rt::Yield<std::string>& yield) -> rt::Task<void> {
+    co_await rt::microtask();
+    auto yielding = yield("value");
+    co_await std::move(yielding);
+  });
+  const auto first = co_await generator.next();
+  ASSERT(first.value.has_value());
+  EXPECT_EQ(*first.value, "value");
+  const auto last = co_await generator.next();
+  EXPECT(last.done);
+}
+
 ASYNC_TEST("generator steps keep the generator alive until their results settle") {
   auto makeGenerator = [] {
     return rt::AsyncGenerator<int>([](rt::Yield<int> yield) -> rt::Task<void> {
