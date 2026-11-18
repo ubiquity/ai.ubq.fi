@@ -83,13 +83,13 @@ class DriverTests(unittest.TestCase):
         self.assertEqual((row["status"], row["run"]), ("BUILD_FAIL", 0))
 
     def test_shards_cover_selection_once(self):
-        script = driver.GATEWAY / "tools/ci-build.sh"
-        all_tests = subprocess.check_output([str(script), "--list"], text=True, cwd=self.build).splitlines()
-        shards = [subprocess.check_output([str(script), "--list", "--shard", str(index) + "/3"], text=True).splitlines()
+        command = ["bash", str(driver.GATEWAY / "tools/ci-build.sh"), "--list"]
+        all_tests = subprocess.check_output(command, text=True, cwd=self.build).splitlines()
+        shards = [subprocess.check_output(command + ["--shard", str(index) + "/3"], text=True).splitlines()
                   for index in range(1, 4)]
         self.assertEqual(sorted(test for shard in shards for test in shard), all_tests)
         self.assertFalse(set(shards[0]) & set(shards[1]))
-        self.assertEqual(subprocess.run([str(script), "--list", "--shard", "0/2"], capture_output=True).returncode, 2)
+        self.assertEqual(subprocess.run(command + ["--shard", "0/2"], capture_output=True).returncode, 2)
 
     def test_inventory_excludes_unpublished_staging_sources(self):
         with tempfile.TemporaryDirectory(dir="/tmp", prefix="uos-inventory-") as directory:
