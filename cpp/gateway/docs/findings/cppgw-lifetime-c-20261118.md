@@ -305,7 +305,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/provider/claude_code_quota.cpp`
 - [x] `src/provider/claude_code_usage.cpp`
 - [x] `src/provider/claude_code_usage_refresh.cpp`
-- [ ] `src/provider/claude_code_usage_schema.cpp`
+- [x] `src/provider/claude_code_usage_schema.cpp`
 - [ ] `src/provider/health.cpp`
 - [ ] `src/provider/lithos.cpp`
 - [ ] `src/provider/lithos_handlers.cpp`
@@ -1944,3 +1944,7 @@ The work and cleanup closures are owned correctly. Two KV await expressions cont
 - 22-34,36-72 · usage refresh task and capturing work coroutine · **SAFE** · rt::async retains the work closure and its KV, binding, clock and options captures through the refreshed usage write.
 - 35,75 · braced read options in co_await · **DEFECT** · Each virtual get is awaited with an inline KvGetOptions aggregate. The port forbids that form in its GCC 12 comparison profile, even with this trivial value. Name the options and get task before the await.
 - 74,76-83 · cleanup coroutine closure · **SAFE** · withFinally owns the cleanup callback throughout the final read/commit, including when the main work rejects.
+
+### `src/provider/claude_code_usage_schema.cpp`
+
+Usage and rate-limit schemas parse and serialize synchronously. Field views do not escape their source rows.

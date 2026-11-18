@@ -3618,7 +3618,8 @@
       ]
     },
     "src/provider/claude_code_usage_schema.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "Usage and rate-limit schemas parse and serialize synchronously. Field views do not escape their source rows.",
       "sites": []
     },
     "src/provider/health.cpp": {
