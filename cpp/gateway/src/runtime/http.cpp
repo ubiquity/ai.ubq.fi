@@ -408,7 +408,11 @@ namespace uos::runtime::http {
         const ChunkPart part = chunkPart;
         const std::size_t limit = part == ChunkPart::size ? MAX_CHUNK_LINE_BYTES : MAX_HEAD_BYTES;
         const bool metadata = part == ChunkPart::size || part == ChunkPart::trailers;
-        const std::size_t end = metadata ? std::min(text.size(), limit) : text.size();
+        std::size_t end = metadata ? std::min(text.size(), limit) : text.size();
+        // Deliver payload before validating its delimiter, regardless of how the
+        // socket split the input. llhttp tracks the bytes left in this chunk.
+        if (part == ChunkPart::data && wire.content_length != 0)
+          end = static_cast<std::size_t>(std::min<std::uint64_t>(end, wire.content_length));
         if (end == buffered || part == ChunkPart::done) return 0;
 
         llhttp_resume(&wire);

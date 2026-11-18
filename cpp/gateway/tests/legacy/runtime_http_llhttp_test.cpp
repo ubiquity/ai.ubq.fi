@@ -74,7 +74,13 @@ TEST("llhttp decodes split chunk metadata and stops before the next head") {
 }
 
 TEST("llhttp refuses ambiguous request framing before dispatch") {
-  for (const std::string_view fields : {"Content-Length: 3\r\nContent-Length: 3\r\n", "Transfer-Encoding: identity\r\n"}) {
+  for (const std::string_view fields : {
+         "Content-Length: 3\r\nContent-Length: 3\r\n",
+         "Content-Length: 3\r\nTransfer-Encoding: chunked\r\n",
+         "Transfer-Encoding: chunked\r\nContent-Length: 3\r\n",
+         "Transfer-Encoding: identity\r\n",
+         "Transfer-Encoding: chunked\r\nTransfer-Encoding: gzip\r\n",
+       }) {
     Fixture fixture;
     fixture.append("POST / HTTP/1.1\r\nHost: local\r\n");
     fixture.append(fields);
@@ -83,6 +89,26 @@ TEST("llhttp refuses ambiguous request framing before dispatch") {
     EXPECT(!fixture.connection->request);
     EXPECT(fixture.connection->phase == ConnectionState::Phase::lingering);
   }
+}
+
+TEST("llhttp delivers payload before reporting a malformed chunk delimiter") {
+  Fixture fixture;
+  auto& connection = *fixture.connection;
+  fixture.append("POST / HTTP/1.1\r\nHost: local\r\nTransfer-Encoding: chunked\r\n\r\n");
+  ASSERT(connection.parseHead());
+  fixture.append("3\r\nabcX\n");
+
+  rt::ByteChunk chunk;
+  auto progress = connection.decodeChunked(chunk);
+  ASSERT(progress && *progress);
+  EXPECT(chunk.empty());
+  progress = connection.decodeChunked(chunk);
+  ASSERT(progress && *progress);
+  EXPECT_EQ(std::string(chunk.begin(), chunk.end()), "abc");
+  EXPECT(!connection.bodyComplete);
+  chunk.clear();
+  EXPECT(!connection.decodeChunked(chunk));
+  EXPECT(chunk.empty());
 }
 
 TEST("llhttp bounds a fragmented header and chunk extension") {

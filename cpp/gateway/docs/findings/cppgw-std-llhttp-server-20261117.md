@@ -14,3 +14,20 @@ Replace row 6 of the C++ OSS replacement plan on base `093a9e05`. llhttp supplie
 Writes are confined to the assigned parser and its immediate glue, the versioned llhttp vendor drop and its three registration files, the report and deviations, and the assigned fuzz and test paths. The fetch client, HTTP session and writer, socket handoff implementation, TypeScript, hosted workflows and deployment are outside this change.
 
 Verify the archive hash and static library registration, use the Links resolver to select every consumer of `src/runtime/http.cpp`, and run those closures with the strict ARM64 flags in release and ASan/UBSan configurations. Run the new libFuzzer harness for 120 seconds and measure old and new request parsing at `-O2` with identical inputs. Record exact case counts and remaining defects. Stop after verifying the committed parser tree and preserving the bounded task commits for the parallel C++ integration. The measured standard-parser deviations and the scope of the existing Bun-recorded fixtures require discovery.
+
+## Continuation checkpoint
+
+Resumed at `d0d2ed8b15725c8005671a4155abe216f727051a`, tree
+`fb45fadc7f20371ed9016f47a480abb8eff6059d`. Strict Clang 21.1.8 on Linux ARM64
+built the inherited closure and passed all four standalone parser cases. CMake
+3.31.6 built the three-member `uos_vendor_llhttp` C archive, and its test
+registry resolved all 442 binaries. The retained real-socket wire run passed
+102 of 106 comparisons and four of five harness cases. The four differences
+are strict parser refusals for an undelimited transfer coding, duplicate
+Content-Length, an ASCII DEL in a header and raw UTF-8 in a request target.
+
+The adapter now limits a data call to the remaining payload bytes reported by
+llhttp. This preserves delivery of the payload fragment before a delimiter
+error, including when both arrive in the same socket read. The parser test
+covers this boundary and verifies both orders of the length/transfer-coding
+conflict.
