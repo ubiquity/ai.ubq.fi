@@ -2554,8 +2554,22 @@
       "sites": []
     },
     "src/deepseek/waterfall_handler.cpp": {
-      "status": "pending",
-      "sites": []
+      "status": "reviewed",
+      "note": "Waterfall hops are joined serially, and the replay pump owns its iterator independently of the processing frame.",
+      "sites": [
+        {
+          "lines": "33-52,81-95,104-129",
+          "kind": "dispatch callback, borrowed telemetry and hop iteration",
+          "verdict": "SAFE",
+          "reason": "The dispatcher owns its paid tail and all child calls are joined by frames retaining the input and context. The plan vector is immutable during iteration."
+        },
+        {
+          "lines": "54-78",
+          "kind": "stream replay and detached iterator operations",
+          "verdict": "SAFE",
+          "reason": "The pump owns its iterator and has a weak controller. Stream cancel invokes the synchronous return_ factory before the captured iterator is released, handing the queued request state to the detached task."
+        }
+      ]
     },
     "src/embeddings/handlers.cpp": {
       "status": "pending",

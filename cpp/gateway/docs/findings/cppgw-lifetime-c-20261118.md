@@ -235,7 +235,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/deepseek/responses_stream.cpp`
 - [x] `src/deepseek/stream.cpp`
 - [x] `src/deepseek/waterfall.cpp`
-- [ ] `src/deepseek/waterfall_handler.cpp`
+- [x] `src/deepseek/waterfall_handler.cpp`
 - [ ] `src/embeddings/handlers.cpp`
 - [ ] `src/embeddings/jobs.cpp`
 - [ ] `src/embeddings/ledger.cpp`
@@ -1505,3 +1505,10 @@ The generator owns its reader session and watchdog. The individual read race use
 ### `src/deepseek/waterfall.cpp`
 
 Provider waterfall order, status classification and callback decisions are synchronous. The enabled/configured predicates execute during plan construction.
+
+### `src/deepseek/waterfall_handler.cpp`
+
+Waterfall hops are joined serially, and the replay pump owns its iterator independently of the processing frame.
+
+- 33-52,81-95,104-129 · dispatch callback, borrowed telemetry and hop iteration · **SAFE** · The dispatcher owns its paid tail and all child calls are joined by frames retaining the input and context. The plan vector is immutable during iteration.
+- 54-78 · stream replay and detached iterator operations · **SAFE** · The pump owns its iterator and has a weak controller. Stream cancel invokes the synchronous return_ factory before the captured iterator is released, handing the queued request state to the detached task.
