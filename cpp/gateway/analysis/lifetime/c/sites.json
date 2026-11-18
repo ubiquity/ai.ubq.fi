@@ -2291,7 +2291,8 @@
       ]
     },
     "src/codex/routing_state.cpp": {
-      "status": "pending",
+      "status": "reviewed",
+      "note": "KV key constants and routing row serialization are synchronous. Reference-taking converters do their work within the call.",
       "sites": []
     },
     "src/codex/session.cpp": {

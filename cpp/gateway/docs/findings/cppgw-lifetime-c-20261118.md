@@ -214,7 +214,7 @@ Audited source commit `6d28e858e7ab8b8b1036db4a4adfdade0465ed40`, tree `6abb5401
 - [x] `src/codex/routing_evaluation.cpp`
 - [x] `src/codex/routing_mutations.cpp`
 - [x] `src/codex/routing_serial.cpp`
-- [ ] `src/codex/routing_state.cpp`
+- [x] `src/codex/routing_state.cpp`
 - [ ] `src/codex/session.cpp`
 - [ ] `src/codex/supervisor.cpp`
 - [ ] `src/codex/supervisor_brief.cpp`
@@ -1383,3 +1383,7 @@ The serial admission lock chains copied promises and invokes a frame-owned actio
 - 96-159,232-263 · strong row, commit, and selected pool awaits · **SAFE** · Row and pool snapshots plus the transaction owner remain local. The account hash loop uses the unchanged by-value pool.
 - 177-228 · fail-fast account identity children · **SAFE** · Each child copies the particular auth record from the slot pool and can outlive a sibling rejection without a borrow into that vector.
 - 266-285,295-325 · admission lock and coroutine closure · **SAFE** · withCodexAdmission keeps both the action and KV in its own frame through the wait and release. The action closure owns its account inputs and every result is joined.
+
+### `src/codex/routing_state.cpp`
+
+KV key constants and routing row serialization are synchronous. Reference-taking converters do their work within the call.
