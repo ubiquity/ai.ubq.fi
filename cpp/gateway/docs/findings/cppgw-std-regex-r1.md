@@ -144,3 +144,28 @@ the two KV differential binaries. It reproduced both URL IDNA failures on the
 runner's ICU 74.2. The image failure is a VM memory regression on the existing
 whole-payload character-class repeat. The KV differences are support for the
 recorded `v` expression and new syntax diagnostics.
+
+## Continuation work contract v4
+
+The inherited release build at `549fa65dea484d71642998baecc40a35d3ac9b9f`
+(tree `2dc2c66f037d50946b18b393991b08e074240b94`) was current in Ninja.
+The focused isolated rerun passed all 19 regex cases and reproduced the three
+image and three KV case failures. The existing image expression must match the
+documented upload size with unchanged validation and capture spans. Its compiled
+form can use fixed-size blocks and an atomic suffix, both executed by libregexp,
+without touching the image caller or vendor source. The earlier scratch probes
+showed why both parts are needed: chunking alone still exhausts the execution
+budget on malformed long payloads.
+
+The matrix in v1 still applies. The remaining owned source changes are confined
+to the regex adapter and its tests. Application and shared test-driver changes
+are outside scope. Run focused image, compaction and regex tests, then both
+CMake Links sweeps and the 120-second sanitizer fuzz campaign. Use the existing
+same-runner comparison harness for timing and allocation counts. Finish when the
+source and evidence are committed and any remaining out-of-scope failures are
+identified by test and cause.
+
+The optimized and ASan/UBSan focused runs each passed 80/80 cases across the
+regex (20), image (37), and compaction (23) binaries. The added regex case checks
+a large Base64 capture and its spans, then verifies that a malformed suffix
+returns no match. The adapter preserves the original source and public flags.

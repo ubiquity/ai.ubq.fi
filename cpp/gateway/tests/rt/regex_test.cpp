@@ -877,3 +877,20 @@ TEST("embedded NUL remains part of the compiled pattern and subject") {
   EXPECT(!pattern.test("a"));
   EXPECT(!pattern.test("ab"));
 }
+
+TEST("image data URL captures survive large Base64 payloads") {
+  constexpr std::string_view source = R"(^data:([^;,]+);base64,([a-z0-9+/]*={0,2})$)";
+  constexpr std::string_view prefix = "DATA:IMAGE/PNG;BASE64,";
+  const rt::Regex pattern(source, "iu");
+  std::string subject = std::string(prefix) + std::string(4 * 1024 * 1024 + 2, 'A') + "==";
+  const auto match = pattern.exec(subject);
+  ASSERT(match.has_value());
+  EXPECT_EQ(pattern.source(), source);
+  EXPECT(!pattern.sticky());
+  EXPECT_EQ(match->captures.size(), 3u);
+  EXPECT_EQ(match->captures[1], std::optional<std::string>("IMAGE/PNG"));
+  EXPECT_EQ(match->spans[2], (std::optional<rt::RegexSpan>{{prefix.size(), subject.size(), prefix.size(), subject.size()}}));
+  EXPECT(std::string_view(*match->captures[2]) == std::string_view(subject).substr(prefix.size()));
+  subject.back() = '!';
+  EXPECT(!pattern.test(subject));
+}

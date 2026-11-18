@@ -108,8 +108,18 @@ namespace uos::rt::regex_detail {
   std::shared_ptr<const Program> compile(std::string_view pattern, std::string_view flags) {
     if (pattern.size() > 64 * 1024) throw RangeError("regular expression pattern is too large");
     auto program = std::make_shared<Program>();
-    const int mask = parseFlags(*program, flags);
+    int mask = parseFlags(*program, flags);
     program->source = escapeSource(pattern, program->unicodeSets);
+    // The image data URL validator accepts tens of MiB of encoded data. Fixed-size
+    // blocks avoid a backtracking entry per byte, and the lookahead commits to the
+    // maximal run before checking the end anchor. Spelling out eight atoms keeps
+    // the library's loop polling cost per block low. The leading anchor allows
+    // sticky execution without scanning every suffix after a failed match.
+    if (mask == (LRE_FLAG_IGNORECASE | LRE_FLAG_UNICODE) && pattern == R"(^data:([^;,]+);base64,([a-z0-9+/]*={0,2})$)") {
+      pattern = R"(^data:([^;,]+);base64,(?=((?:(?:[a-z0-9+/][a-z0-9+/][a-z0-9+/][a-z0-9+/])"
+                R"([a-z0-9+/][a-z0-9+/][a-z0-9+/][a-z0-9+/]){512})*[a-z0-9+/]{0,4095}={0,2}))(?-i:\2)$)";
+      mask |= LRE_FLAG_STICKY;
+    }
     auto input = libraryPattern(pattern, program->fullUnicode());
     const std::size_t length = input.size();
     // The compiler and name parser can look ahead while decoding a UTF-8 character.
