@@ -9122,8 +9122,24 @@
       ]
     },
     "include/uos/lib/jev_compaction/compact.hpp": {
-      "reviewed": false,
-      "sites": []
+      "reviewed": true,
+      "note": "Reviewed synchronous planning helpers and the asynchronous compaction interface.",
+      "sites": [
+        {
+          "lines": [
+            22,
+            40,
+            41
+          ],
+          "kinds": [
+            "b",
+            "d",
+            "s"
+          ],
+          "verdict": "SAFE",
+          "detail": "Text truncation uses a synchronous view. Compaction owns the transcript, options and shared asker across all batch waits."
+        }
+      ]
     },
     "include/uos/lib/jev_compaction/jev_codex_smoke.hpp": {
       "reviewed": false,

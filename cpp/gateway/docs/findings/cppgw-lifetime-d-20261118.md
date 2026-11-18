@@ -343,7 +343,7 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
 - [x] `include/uos/kv_conversion/typed_value.hpp`
 - [x] `include/uos/lib/jev_compaction/client.hpp`
 - [x] `include/uos/lib/jev_compaction/codex_items.hpp`
-- [ ] `include/uos/lib/jev_compaction/compact.hpp`
+- [x] `include/uos/lib/jev_compaction/compact.hpp`
 - [ ] `include/uos/lib/jev_compaction/jev_codex_smoke.hpp`
 - [ ] `include/uos/lib/jev_compaction/jev_compaction_smoke.hpp`
 - [ ] `include/uos/lib/jev_compaction/request.hpp`
@@ -1931,6 +1931,12 @@ Reviewed Codex item alternatives, summary label, and synchronous conversion inte
 
 - L27, 35, 43, 52 **SAFE** · Summary and kind views refer to static string literals. Converted item records own their contents.
 
+### `include/uos/lib/jev_compaction/compact.hpp`
+
+Reviewed synchronous planning helpers and the asynchronous compaction interface.
+
+- L22, 40, 41 **SAFE** · Text truncation uses a synchronous view. Compaction owns the transcript, options and shared asker across all batch waits.
+
 <!-- SITE-LEDGER-END -->
 
 ## Out-of-area observations
@@ -2179,4 +2185,4 @@ Remove the replaced combined-signal construction. The module already includes `u
 +      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
 ```
 
-235/286 files reviewed. 409 sites: 387 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
+236/286 files reviewed. 410 sites: 388 SAFE, 22 DEFECT, 0 UNCLEAR. <!-- AUDIT-COUNTS -->
