@@ -106,7 +106,30 @@ bash "$scratch/run-shards.sh" asan 2
 
 The smoke wrapper uses the driver with only the registered test closures and every runtime object. `run-shards.sh` invokes `bash "$scratch/run-gate.sh" "$profile" 2 --shard "$shard/4"` for shards 1 through 4 in each profile. It keeps each `driver.log`, `results.tsv` and `receipt.json` in `final-<profile>-<shard>`.
 
-The first full Release shard observed 112 of 113 binaries and 1,197 of 1,198 cases passing. The sole failure was the stored Sentinel base64 compatibility case described above. The matrix restarted after that fix. The new code commit is `36fc3ddaf898ee0573cbd88a5b00a15da5543753`, tree `4bc704e799797a1fa77f3f7087f584d7d02b4169`. Its Release shard 1 passed **113 binaries and 1,199 cases**, with unchanged source SHA-256 `68b151c9a6e7cdb80860d0df9e01b563a1caa6809d048d19e72d9a10d7a397f6`. Compile took 12.066 s and link and test took 29.744 s. The other shards are in progress.
+The first full Release shard observed 112 of 113 binaries and 1,197 of 1,198 cases passing. The sole failure was the stored Sentinel base64 compatibility case described above. Commit `36fc3ddaf898ee0573cbd88a5b00a15da5543753`, tree `4bc704e799797a1fa77f3f7087f584d7d02b4169`, passed that shard with **113 binaries and 1,199 cases**, source SHA-256 `68b151c9a6e7cdb80860d0df9e01b563a1caa6809d048d19e72d9a10d7a397f6`. The later base64url normalization, trusted replay loader and supervisor redaction fixes led to the final matrix below.
+
+All eight final receipts recorded code commit `b26c9e4c606bd4a7fcdb1340b62da76784528b57`, tree `44a34e3b2996987b115bdc5d8c4f5344e1d31f1d`, and source SHA-256 `4720db1121dade35e9b215019b0b8d5650987c0b4319faaa816cc854f503066e` before and after each run. Both profiles passed **451 binaries and 5,222 cases**. The compaction forwarding fixture passed 17 cases, the image fixture 38, Jev compaction 24, supervisor brief 37, and both Sentinel upstream capture fixtures 15 each in each profile.
+
+```sh
+bash "$scratch/run-selected-shards.sh" asan 4 3 4 1 2
+bash "$scratch/run-selected-shards.sh" release 4
+python3 -B "$scratch/read-final-receipts.py" "$scratch"
+python3 -B cpp/gateway/tools/links.py --check
+git diff --check origin/agent-jobs/cppgw-combine-1-20261119-44443689630-1 HEAD
+```
+
+The final shard wrapper invokes `bash "$scratch/run-gate.sh" "$profile" 4 --shard "$shard/4"` in the specified order, using the environment above. The Release pass used shard order 1, 2, 3, 4. All final measurements are incremental. The receipt check verified identical input digests, the exact commit and tree, zero compile failures, zero failing or timed-out binaries and non-overlapping selections of 451 tests per profile.
+
+| Profile and shard | Passing binaries | Passing cases | Compile (s) | Link and test (s) | Driver wall (s) |
+| ----------------- | ---------------: | ------------: | ----------: | ----------------: | --------------: |
+| Release 1/4       |              113 |         1,200 |       8.625 |            16.655 |          25.803 |
+| Release 2/4       |              113 |         1,339 |       0.009 |            34.644 |          35.177 |
+| Release 3/4       |              113 |         1,493 |       0.009 |            23.248 |          23.795 |
+| Release 4/4       |              112 |         1,190 |       0.009 |            11.794 |          12.336 |
+| ASan 1/4          |              113 |         1,200 |      11.791 |            96.750 |         109.120 |
+| ASan 2/4          |              113 |         1,339 |      10.937 |           109.069 |         120.535 |
+| ASan 3/4          |              113 |         1,493 |       2.297 |            44.285 |          47.169 |
+| ASan 4/4          |              112 |         1,190 |     102.334 |            31.489 |         134.410 |
 
 ## Committed review
 
@@ -132,8 +155,18 @@ The 10 ms declaration was unused on the base. The revision adopts the suggested 
 
 Lowering the enforced deadline is an explicit requirement. The revised full-image case passed the uninstrumented sanitizer check. The compaction allowance follows the recorded 1,375 ms operation plus scheduling margin.
 
+On final code commit `b26c9e4c606bd4a7fcdb1340b62da76784528b57`, `timeout -k 5s 90s codex review --base origin/agent-jobs/cppgw-combine-1-20261119-44443689630-1` reproduced the sandbox failure with `ubiquity/deepseek-flash`. The earlier stdin retry for `36fc3ddaf898ee0573cbd88a5b00a15da5543753` exited 124 after reconnects. The final stdin fallback sent the committed follow-up diff from `577ada6b3463f6cd3c9a181877c8f13ff6ff39fa` using `git diff --no-ext-diff --no-color "$review_base" "$review_head" -- cpp/gateway/src cpp/gateway/include cpp/gateway/tests` and `timeout -k 5s 120s codex review -`. It also exited 124. The final review remains incomplete.
+
 ## Outside the owned paths
 
 - `docs/RUNTIME.md` and `docs/rt/regex.md` still describe several limits from the combined base, including the 2.5-second regex deadline. The current inventory lives in `SECURITY-LIMITS.md`.
 - Some provider parsers search a growing SSE buffer from the beginning on each read. The transport and runtime regex checks now bound that buffer and its lines. Changes to the provider parsing loops were outside the assigned paths.
 - The admin default-model normalizer runs its whitespace regex before validating against the catalog. A model field above the generic regex subject ceiling can therefore reach the generic HTTP 500 handler instead of the route’s usual validation response. This path was identified by source inspection. [Normalizer](../../src/admin/api_keys.cpp#L260) · [Admin defaults caller](../../src/admin/defaults.cpp#L70)
+
+## Summary
+
+The native gateway applies shared input limits to HTTP, WebSocket, decompression, parsing and stored encodings. Existing image, compaction and Sentinel fixtures retain their bounded allowances.
+
+Regex compilation uses 10 ms and ordinary matches use 250 ms. Measured exceptions are 1.25 seconds for the fixed credential-redaction pattern and 1.8 seconds for fixed patterns on larger inputs.
+
+All four Release and all four ASan, UBSan and LSan shards passed on ARM64, with 451 binaries and 5,222 cases per profile. Registration and formatting passed. The final committed-diff review remains incomplete. An oversized admin default-model field can still reach HTTP 500 in the out-of-scope caller.
