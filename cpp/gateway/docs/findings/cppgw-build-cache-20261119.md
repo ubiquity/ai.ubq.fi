@@ -11,7 +11,7 @@ Base commit `f92b14a9` on `agent-jobs/cppgw-cpp-only-20261119-44610457899-1`.
 - [x] Wire the portable Linux packager and its dependency builds to the launcher.
 - [x] Set up the CI caches and keep the published Linux build fresh.
 - [x] Measure cold, warm and cross-checkout release builds.
-- [ ] Measure cold and warm sanitizer builds.
+- [x] Measure cold and warm sanitizer builds.
 - [ ] Compare header invalidation with Ninja's dependency records and restore the header.
 - [x] Document the cache.
 - [ ] Run the final change-scoped checks.
@@ -51,11 +51,13 @@ private Linux namespaces with loopback mocks.
 | Release cold | 877.091 | 856.232 | 0 | 509 | 0% |
 | Release warm | 21.731 | 1.291 | 509 | 0 | 100% |
 | Release warm, second checkout | 21.805 | 1.385 | 509 | 0 | 100% |
+| ASan/UBSan cold | 1471.818 | 1426.423 | 0 | 509 | 0% |
+| ASan/UBSan warm | 48.322 | 4.606 | 509 | 0 | 100% |
 
-All three release runs passed 113 tests and 1,314 cases. Each built 366
+All five runs passed 113 tests and 1,314 cases. Each built 366
 production objects. The object phase includes vendor archives, and the cache
 counts also include the SQLite probe compilation. All 509 compiler calls were
-cacheable. The three receipts reported the same input SHA-256
+cacheable in each run. The receipts reported the same input SHA-256
 `aa3911ae438220586dad38f37f3c61ddf59397c565e92e01ffaf6411d9b6ceea`
 before and after execution.
 
