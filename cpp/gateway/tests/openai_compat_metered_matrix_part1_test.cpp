@@ -1,4 +1,5 @@
 // Links: tests/openai_compat_metered_matrix_part1_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/auth/index.cpp src/kernel/attestation.cpp tests/helpers/openai_compat_harness.cpp src/agent_messages.cpp src/codex/banked_reset_submission.cpp src/kv.cpp src/codex/banked_reset_claim.cpp src/codex/banked_reset.cpp
 // src/auth/passkeys.cpp src/models/catalog.cpp src/provider/surplus.cpp src/provider/openrouter.cpp src/types.cpp src/kernel/policy_queue.cpp src/paid_fallback/ledger_backfill.cpp src/utils.cpp
 // src/provider/claude_code_models.cpp src/authority/native_paid_contracts.cpp src/models/openrouter_models.cpp src/auth/passport.cpp src/authority/native_paid.cpp src/provider/selection.cpp src/codex/routing_mutations.cpp src/provider/surplus_claude_request.cpp

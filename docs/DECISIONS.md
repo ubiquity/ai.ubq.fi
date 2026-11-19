@@ -2680,3 +2680,27 @@ The requested GPT Pro recommendation selects the existing clang-tidy/Clang Stati
 Representative known defects must produce their exact marked diagnostics, and clean ownership/cancellation-pattern controls must pass separately. Existing ASan/UBSan/leak and six real CTests remain required where relevant. Static heap checks do not prove descriptor lifetime, shared-owner cycles or coroutine/cancellation safety. Extra analyzers, alpha checks, annotation rollout and SDK changes are deferred; this tooling changes no runtime/provider behavior or production authority. See `cpp/docs/static-analysis.md` for commands, measured development evidence and pending canonical acceptance.
 
 The first complete scan's four pinned Beast `bugprone-use-after-move` findings remain preserved as a failed receipt. Source inspection and a real reduced static probe proved the Asio stackless yield/reentry path-sensitivity limitation, with equivalent explicit-return code clean and genuine same-invocation misuse fatal. A finite checked-in baseline may classify only those four exact Session-TU SDK fingerprints and move/loop notes under matching tool/frontend/header/policy identities, preserving raw exit1 and explicit classified/new counts. New, changed, missing or first-party findings and identity drift remain fatal; no checker, SDK directory or runtime source is suppressed or changed.
+
+## Antigravity Gemini uses an explicit off-by-default confinement opt-in - 2026-11-18
+
+The owner authorized the project-specific use of the existing Antigravity Starter subscription. The C++ gateway exposes the installed Gemini 3.8 Flash high, medium, and low model IDs only when `UOS_GATEWAY_ENABLE_ANTIGRAVITY=1` and the owner-private `agy` executable and CLI state pass validation. Without the exact opt-in, Gemini is not discoverable or callable, its admin meter fails closed, and the gateway keeps its existing no-child-process seccomp and file-read boundary.
+
+Reason: the official CLI is the supported programmatic subscription surface, but it requires child execution, its dynamic loader, and read/write access to CLI state that contains the OAuth credential. The opt-in makes that process-wide security tradeoff explicit instead of enabling it whenever files exist. Landlock gates loader execution, not the ELF selected by the loader, so the launcher does not grant `/usr/bin` and the permission regression invokes the loader against an unreadable binary.
+
+Reversal risk: enabling the opt-in permits process creation for the gateway lifetime and grants the gateway access to the CLI state directory. Removing the opt-in and restarting restores the stronger default and disables Gemini. Credential renewal, account switching, overage settings, model availability, and quota units remain CLI-owned and can drift independently.
+
+## Antigravity quota is refreshed through the official usage command - 2026-11-18
+
+Admin Analytics reads `.data/antigravity-quota.json` and can explicitly refresh it through `POST /admin/providers/gemini/quota/refresh`. Refresh runs the documented CLI `/usage` command, projects only bucket IDs, remaining fractions or amounts, reset instants and disabled state, and atomically replaces an owner-private `0600` snapshot. Successful gateway inference schedules the same best-effort refresh. The file uses the same strict schema accepted by the Bun reader while HTTP-only age and stale presentation fields remain response-only.
+
+Reason: `/usage` returns the exact subscription buckets without spending inference quota, while a status-line-only snapshot can remain stale. Treating those buckets as a routing cooldown would couple a presentation meter to inference denial, which this decision does not authorize.
+
+Reversal risk: removing refresh returns the panel to the last local observation. Credential renewal, account switching, overage settings, and banked credits remain outside the gateway adapter.
+
+## DeepSeek compacts at 75% before gateway admission - 2026-11-18
+
+The synthetic `ubiquity/deepseek-flash` catalog row advertises `auto_compact_token_limit=747110`, 75% of its 996,147-token usable window. DeepSeek's calibrated aggregate-admission estimate can reject a request while the client's last reported input usage remains near 792k, so the generic 85% derived limit is too late. The lower trigger is model-specific; GPT and other models retain their existing cadence.
+
+Reason: the C++ port must carry the development decision that protects long DeepSeek turns before gateway admission.
+
+Reversal risk: restoring the old limit lets clients reach a known rejection range. Compaction remains fail-closed when even the summary request exceeds admission.

@@ -1,5 +1,6 @@
 // Port of all five original tests/admin-auth-part2.test.ts registrations, in source order.
 // Links: tests/admin_auth_part2_test.cpp tests/helpers/admin_auth_harness.cpp src/agent_messages.cpp src/analytics.cpp src/admin/api_keys.cpp src/api_keys.cpp src/admin/api_key_mutations.cpp src/authority/native_paid_policy.cpp src/authority/native_api_key_policy.cpp src/types.cpp src/api_key_policy.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/paid_fallback/index.cpp src/config.cpp src/models/catalog.cpp src/input_normalization.cpp src/models/codex_models.cpp src/release.cpp src/handler/index.cpp src/admin/claude_code.cpp src/provider/cerebras.cpp src/static.cpp src/health.cpp src/deepseek/waterfall.cpp src/admin/codex.cpp
 // src/models/openrouter_models.cpp src/codex/auth.cpp src/admin/codex_reset.cpp src/runtime_config.cpp src/live/handler.cpp src/admin/kernel.cpp src/handler/http.cpp src/provider/capacity_parse.cpp src/provider/presentation.cpp src/auth/passkeys.cpp src/request.cpp src/http.cpp src/quota_projection.cpp
 // src/utils.cpp src/provider/health.cpp src/catalog/store.cpp src/provider/claude_code_accounts.cpp src/catalog/types.cpp src/paid_fallback/ledger_state.cpp src/kv_conversion/profile_json.cpp src/authority/native_paid_contracts.cpp src/codex/reset_settings.cpp src/provider/selection.cpp

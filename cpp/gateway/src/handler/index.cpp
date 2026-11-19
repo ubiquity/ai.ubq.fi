@@ -4,6 +4,7 @@
 #include "uos/admin/api_key_audit.hpp"
 #include "uos/admin/codex_reset.hpp"
 #include "uos/admin/error_log.hpp"
+#include "uos/admin/gemini_quota.hpp"
 #include "uos/admin/chart_source_proxy.hpp"
 #include "uos/admin/capacity_observation_sync.hpp"
 #include "uos/admin/sentinel_incident.hpp"
@@ -97,6 +98,8 @@ namespace uos::handler::index {
         {{"GET", "POST", "DELETE"}, "/admin/debug/routing", [](rt::Request req, AdminRouteContext) { return ::uos::admin::index::handleAdminDebugRouting(req); }},
         {{"GET"}, "/admin/providers", [](rt::Request, AdminRouteContext) { health::PassiveProviderHealthOptions options; options.includeQuota = true; return health::handleHealthProviders(options); }},
         {{"POST"}, "/admin/providers/codex/banked-resets/consume", [](rt::Request req, AdminRouteContext) { return ::uos::admin::codex_reset::handleAdminCodexResetConsume(req); }},
+        {{"GET"}, "/admin/providers/gemini/quota", [](rt::Request, AdminRouteContext) { return ::uos::admin::gemini_quota::handleAdminGeminiQuota(); }},
+        {{"POST"}, "/admin/providers/gemini/quota/refresh", [](rt::Request req, AdminRouteContext) { return ::uos::admin::gemini_quota::handleAdminGeminiQuotaRefresh(req); }},
         {{"GET"}, "/admin/providers/selection", [](rt::Request, AdminRouteContext) { return ::uos::admin::index::handleAdminProviderSelectionGet(); }},
         {{"POST"}, "/admin/providers/selection", [](rt::Request req, AdminRouteContext) { return ::uos::admin::index::handleAdminProviderSelectionSet(req); }},
         {{"GET"}, "/admin/providers/capacity", [](rt::Request req, AdminRouteContext) { return ::uos::admin::chart_source_proxy::proxyAdminChartSource(req, rt::Promise<rt::Response>(::uos::provider::capacity::handleProviderCapacity(req))); }},

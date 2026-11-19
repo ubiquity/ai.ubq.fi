@@ -547,3 +547,19 @@ Mock transport regressions cover streamed and buffered native requests, explicit
 usage counters. These tests verify payload preservation and cache accounting; they do not establish production cache
 hits or cost savings. Live cache acceptance remains a separate validation step. Removing the default leaves caching
 dependent on client controls; overriding explicit breakpoints could change the selected cache behavior.
+
+## 2026-11-18 - Antigravity subscription is an opt-in C++ Gemini provider
+
+### Decision
+
+When `UOS_GATEWAY_ENABLE_ANTIGRAVITY=1`, the C++ gateway exposes the installed `gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, and `gemini-3.8-flash-low` IDs on Responses and Chat Completions. It invokes the owner-private official `agy` headless stream-json command with a minimal environment, preserves cancellation and deadline behavior, and maps the CLI's measured token counts into the normal provider terminal and API-key usage lifecycle. Text is the complete surface; caller tools, tool replay, images, and files are rejected.
+
+Without the exact opt-in, Gemini is not advertised, direct inference returns a closed 503, and its admin endpoints return closed 404 responses. Startup leaves the existing seccomp process-creation denial and Linux read grants unchanged.
+
+### Why
+
+The owner supplied project-specific authorization for the normal subscription and required parity with the mature Codex route. The installed CLI is the supported surface for this account. The opt-in is required because the adapter needs process creation, the dynamic loader, and access to CLI state containing its OAuth credential.
+
+### Status and reversal risk
+
+The branch carries focused handler, process-environment, usage-accounting, permissions, and live subscription acceptance coverage. Native package acceptance binds the candidate SHA and quota change. Removing the opt-in and restarting disables Gemini and restores the strict default boundary, at the cost of the subscription route. CLI entitlements, arguments, models, and quota units can change independently.

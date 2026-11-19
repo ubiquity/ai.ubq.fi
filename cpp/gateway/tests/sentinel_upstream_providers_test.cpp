@@ -1,4 +1,5 @@
 // Links: tests/sentinel_upstream_providers_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 //        src/utils.cpp src/provider/cerebras.cpp src/handler/index.cpp src/api_keys.cpp src/sentinel/upstream_capture.cpp src/admin/codex.cpp src/auth/index.cpp src/auth/passkeys.cpp src/admin/kernel.cpp src/codex/supervisor.cpp src/codex/banked_reset_provider.cpp src/admin/api_keys.cpp src/sentinel/replay_admin.cpp src/quota_projection.cpp
 //        src/types.cpp src/provider/openrouter.cpp src/admin/api_key_mutations.cpp src/authority/native_api_key_policy.cpp src/config.cpp src/kernel/policy_queue.cpp src/metered_quota.cpp src/release.cpp src/api_key_policy.cpp src/codex/auth.cpp src/codex/overage_settings.cpp src/sentinel/replay_observation.cpp src/cache/scope_experiment.cpp
 //        src/authority/native_api_key.cpp src/http.cpp src/kernel/attestation.cpp src/codex/supervisor_config.cpp src/codex/external_auth.cpp src/provider/capacity.cpp src/models/codex_models_fetch.cpp src/kernel/usage.cpp src/admin/claude_code.cpp src/paid_fallback/ledger_backfill.cpp src/cache/scope_experiment_targets.cpp

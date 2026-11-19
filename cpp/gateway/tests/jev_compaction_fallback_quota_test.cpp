@@ -1,4 +1,5 @@
 // Links: tests/jev_compaction_fallback_quota_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // tests/helpers/kv_budget_harness.cpp src/agent_messages.cpp src/api_key_policy.cpp src/authority/native_api_key.cpp src/jev_compaction/compaction.cpp src/provider/selection.cpp src/paid_fallback/index.cpp tests/helpers/loopback_http.cpp
 // src/handler/serve_handler.cpp src/api_keys.cpp src/config.cpp src/kv.cpp src/paid_fallback/ledger_backfill.cpp src/authority/native_api_key_policy.cpp src/authority/native_paid.cpp src/provider/capacity_events.cpp
 // src/jev_compaction/hybrid.cpp src/lib/jev_compaction/codex_items.cpp src/codex/banked_reset.cpp src/authority/native_paid_contracts.cpp src/lib/jev_compaction/state.cpp src/lib/jev_compaction/compact.cpp src/handler/index.cpp src/admin/claude_code.cpp

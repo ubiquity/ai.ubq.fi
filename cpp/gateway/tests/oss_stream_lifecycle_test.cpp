@@ -1,5 +1,6 @@
 // Port of tests/oss-stream-lifecycle.test.ts. All eighteen source cases are callable; source398 uses both real public relays.
 // Links: tests/oss_stream_lifecycle_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/responses_failover_stream.cpp src/provider/stream_relay.cpp src/chat/stream_translation.cpp src/openai_telemetry.cpp src/upstream_wire.cpp
 // src/deepseek/index.cpp src/provider/lithos.cpp src/provider/cerebras_rate_limits.cpp src/utils.cpp src/provider/removed_provider_telemetry.cpp
 // src/codex/responses_error.cpp src/deepseek/stream.cpp src/deepseek/responses.cpp src/responses_stream.cpp src/config.cpp

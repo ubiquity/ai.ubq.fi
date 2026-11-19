@@ -1,4 +1,5 @@
 // Links: tests/oss_gateway_http_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 //   src/runtime_config.cpp src/provider/capacity_events.cpp src/api_key_policy.cpp src/models/codex_models.cpp src/storage/native_kv.cpp tests/helpers/loopback_http.cpp src/utils.cpp src/defaults.cpp src/codex/banked_reset.cpp
 //   src/handler/serve_handler.cpp src/handler/index.cpp src/provider/capacity.cpp src/provider/capacity_contract.cpp src/provider/claude_capacity_rollups.cpp src/provider/claude_code_accounts.cpp src/authority/native_api_key.cpp src/auth/passkeys.cpp src/admin/defaults.cpp
 //   src/api_keys.cpp src/admin/api_keys.cpp src/provider/health.cpp src/paid_fallback/ledger_state.cpp src/admin/codex.cpp src/health.cpp src/authority/native_paid_contracts.cpp src/admin/kernel.cpp src/provider/capacity_history.cpp

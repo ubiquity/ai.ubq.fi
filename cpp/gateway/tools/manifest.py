@@ -4,10 +4,16 @@ module, its line count, direct imports, the bun tests that import it directly, a
 whether it is recorded as ported in cpp/gateway/PORTED.txt
 (one TS path per line, maintained by the orchestrator once a chunk reports tests passing). Run from the repository root."""
 import json, os, re, subprocess
+from pathlib import Path
 
 ALIAS = {"#http": "src/runtime/http.ts", "#kv": "src/storage/kv.ts"}
 PORTED = {line.strip() for line in open("cpp/gateway/PORTED.txt", encoding="utf-8") if line.strip()} if os.path.exists("cpp/gateway/PORTED.txt") else set()
 IMPORT = re.compile(r'''(?:from|import)\s*\(?\s*["']([^"']+)["']''')
+ROOT = Path(__file__).resolve().parents[1]
+CUSTOM_MODULE_KEYS = {
+    "cpp/gateway/src/admin/gemini_quota.cpp",
+    "cpp/gateway/src/provider/gemini.cpp",
+}
 
 
 def tracked(*roots):
@@ -43,6 +49,7 @@ def cpp_paths(ts):
 
 
 def main():
+    existing = json.loads((ROOT / "PORT-MANIFEST.json").read_text())
     sources = [f for f in tracked("src", "serve.ts", "lib") if not f.startswith("lib/codex/")]
     known = set(sources)
     modules = {}
@@ -57,6 +64,11 @@ def main():
         _, deps = imports(test, known)
         for dep in deps:
             modules[dep]["tests"].append(test)
+    missing_custom = CUSTOM_MODULE_KEYS - set(existing["modules"])
+    if missing_custom:
+        raise RuntimeError("Existing C++ adapter modules are missing: " + ", ".join(sorted(missing_custom)))
+    for key in CUSTOM_MODULE_KEYS:
+        modules[key] = existing["modules"][key]
     total = sum(m["loc"] for m in modules.values())
     done = sum(m["loc"] for m in modules.values() if m["ported"])
     summary = {"modules": len(modules), "loc": total, "ported_modules": sum(m["ported"] for m in modules.values()), "ported_loc": done}
