@@ -31,3 +31,18 @@ The runtime receipt at `build/runs/1795130862276180000` records a clean, unchang
 unchanged inputs. The SHA-256 values for `provenance.json` and `results.json` are
 `d9ea1350d1472e222a094ccd8f15e046e4b2ac9a06c6deabd6a129e9667428b7` and
 `9a52c0e2b05a8fa207c5ccb4cbb83a8f8b9c0a268a8edc28d98bb05d84358a76`, respectively.
+
+## Gemini fixture path
+
+A focused reproduction using the driver's link inputs and Seatbelt profile failed on the delivered source.
+The first assertion failure in `gemini-reproduction.log` was:
+
+```text
+tests/gemini_subscription_test.cpp:276: expected captured.find("TMPDIR=" + root + "/.data/antigravity-run-") != std::string::npos
+FAIL Gemini CLI receives only the minimal environment required for the owner CLI
+1 run, 0 passed, 1 failed
+```
+
+The fixture creates its root through `/tmp`. Darwin's `getcwd` returns `/private/tmp`, so the real child
+workspace has that prefix. The test now derives its expected data directory with `realpathSync` on Darwin
+and checks the same `antigravity-run-` path prefix. The Linux expectation continues to use the original path.
