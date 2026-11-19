@@ -37,7 +37,7 @@ A commit listed as “this commit” is the commit that introduced that verdict 
 
 | ID | Verdict | Commit | Test |
 | --- | --- | --- | --- |
-| D01 | LEFT — Reverification and backpressured disconnect regression pending. | — | Pending |
+| D01 | FIXED — Closing clears queued writes and keeps the active buffer through Asio's completion callback. | `fix(cpp): retain HTTP write buffer through cancellation` | `runtime_http_lifetime_test`: ASan baseline failed the buffer-liveness assertion, then 5/5 passed under ASan and release. |
 | D02 | LEFT — Failed-bind ownership reverification pending. | — | Pending |
 | D03 | LEFT — Drain waiter abandonment reverification pending. | — | Pending |
 | D04 | LEFT — Early SSE registry ownership reverification pending. | — | Pending |
@@ -55,6 +55,30 @@ A commit listed as “this commit” is the commit that introduced that verdict 
 ## Verification and open questions
 
 The audit merged cleanly and added four files under its findings and analysis
-paths. Dependency preparation and the first driver build are pending.
+paths. The ARM64 runner uses Clang 21.1.8, Boost 1.92.0 static libraries, ICU 78.3,
+and SQLite 3.54.0 with double-quoted-string support.
+
+`ConnectionState::flush` handed Asio a pointer into `output.front()`.
+`ConnectionState::destroy` could clear the deque before Asio dispatched the
+cancelled completion. The regression sends an 8 MiB response to a loopback peer
+that does not read, verifies pending output, and closes the socket in the write
+turn. The ASan allocator hook observes the connection's payload copy so the test
+can check its liveness even when the OS cancels without dereferencing the buffer.
+
+Focused commands used the CI driver's namespace and test runner with the test's
+registered link sources and all 44 RT translation units. A scratch selector
+limited compilation to those sources for the pre/post-fix regression.
+
+```sh
+scratch=/tmp/cppgw-lifetime-fix-b.03wOF6
+bash "$scratch/run.sh" 4 python3 -B "$scratch/focused.py" tests/runtime_http_lifetime_test.cpp --config asan
+bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" tests/runtime_http_lifetime_test.cpp --config asan
+bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" tests/runtime_http_lifetime_test.cpp --config release
+```
+
+The corrected baseline fixture reported 4/5 cases in 9.709 s. Its sole failure
+was the ASan buffer-liveness assertion. The fixed tree reported 5/5 cases in
+27.917 s with ASan/UBSan/LSan and 5/5 cases in 125.103 s on a cold focused release
+build. Full linked-test verification remains open.
 
 [Area B audit](cppgw-lifetime-b-20261118.md)

@@ -869,7 +869,11 @@ namespace uos::runtime::http {
         const rt::Bytes& front = output.front();
         upgrade.stream.async_write_some(asio::buffer(front.data() + outputOffset, front.size() - outputOffset), [self](const boost::system::error_code& failure, std::size_t written) {
           self->writing = false;
-          if (self->destroyed || failure == asio::error::operation_aborted) return;
+          if (self->destroyed) {
+            self->output.clear();
+            return;
+          }
+          if (failure == asio::error::operation_aborted) return;
           if (failure) {
             self->destroy(errnoReason(failure, "write"));
             return;
@@ -996,7 +1000,12 @@ namespace uos::runtime::http {
           boost::system::error_code ignored;
           upgrade.stream.close(ignored);
         }
-        output.clear();
+        if (writing) {
+          // Asio still borrows the front buffer until the write callback runs.
+          while (output.size() > 1) output.pop_back();
+        } else {
+          output.clear();
+        }
         outputBytes = 0;
         auto self = shared_from_this();
         auto incoming = request;
