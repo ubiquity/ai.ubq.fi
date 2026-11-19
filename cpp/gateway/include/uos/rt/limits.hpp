@@ -28,6 +28,9 @@ namespace uos::rt::limits {
   inline constexpr std::size_t kImageEditInputBytes = 50 * 1024 * 1024;
   inline constexpr std::size_t kImageEditJsonBytes = ((kImageEditInputBytes + 2) / 3) * 4 + 1024 * 1024;
   inline constexpr std::size_t kImageEditMultipartBytes = 64 * 1024 * 1024;
+  inline constexpr std::size_t kMultipartBoundaryBytes = 72;
+  inline constexpr std::size_t kMultipartParts = 256;
+  inline constexpr std::size_t kMultipartPartBytes = kImageEditInputBytes;
   // Stored replay envelopes can exceed the ordinary HTTP body limit.
   inline constexpr std::size_t kStoredGzipBytes = 64 * 1024 * 1024;
 
