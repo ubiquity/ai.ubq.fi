@@ -12,8 +12,10 @@
 #include "uos/rt/crypto.hpp"
 #include "uos/rt/error.hpp"
 #include "uos/rt/fetch.hpp"
+#include "uos/rt/fetch_transport.hpp"
 #include "uos/rt/headers.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/record.hpp"
 #include "uos/rt/regex.hpp"
@@ -105,6 +107,7 @@ namespace uos::auth::passkeys {
       // reads as 0, the buffer length is `data.length * 0.75` minus the padding, truncated, and
       // writes past it are dropped.
       Bytes toArrayBuffer(std::string_view data, bool urlMode) {
+        if (data.size() > rt::limits::kCborBytes) fail("Passkey base64 input exceeds limit");
         static const std::array<std::uint8_t, 256> lookup = genLookup(CHARS);
         static const std::array<std::uint8_t, 256> lookupUrl = genLookup(CHARS_URL);
         const std::array<std::uint8_t, 256>& target = urlMode ? lookupUrl : lookup;
@@ -280,8 +283,6 @@ namespace uos::auth::passkeys {
     std::string jsString(const Cbor* value) { return value == nullptr ? "undefined" : jsString(*value); }
 
     namespace isoCBOR {
-      constexpr std::size_t maxInput = 1024 * 1024;
-      constexpr int maxDepth = 8;
       constexpr std::int64_t maxInteger = 9007199254740991;
       constexpr std::int64_t minInteger = -maxInteger - 1;
 
@@ -297,7 +298,7 @@ namespace uos::auth::passkeys {
         if (additional >= 24 && argument < minimum[additional - 24]) invalid("non-minimal argument");
       }
 
-      Cbor readValue(QCBORDecodeContext& decoder, BytesView input, bool mapKey = false) {
+      Cbor readValue(QCBORDecodeContext& decoder, BytesView input, std::size_t depth = 0, bool mapKey = false) {
         const std::size_t start = QCBORDecode_Tell(&decoder);
         if (start >= input.size()) invalid("truncated item");
         const unsigned head = input[start];
@@ -305,6 +306,7 @@ namespace uos::auth::passkeys {
         const unsigned additional = head & 31;
         if (additional >= 28 || major == 6 || (major == 7 && head != 0xf4 && head != 0xf5)) invalid("unsupported type");
         if (mapKey && major != 0 && major != 1 && major != 3) invalid("unsupported map key");
+        if ((major == 4 || major == 5) && depth >= rt::limits::kCborDepth) invalid("nesting limit");
 
         QCBORItem item;
         if (QCBORDecode_GetNext(&decoder, &item) != QCBOR_SUCCESS) invalid("malformed item");
@@ -334,7 +336,6 @@ namespace uos::auth::passkeys {
           }
           case QCBOR_TYPE_ARRAY:
           case QCBOR_TYPE_MAP_AS_ARRAY: {
-            if (item.uNestingLevel >= maxDepth) invalid("nesting limit");
             const bool isMap = item.uDataType == QCBOR_TYPE_MAP_AS_ARRAY;
             const std::size_t count = item.val.uCount;
             checkWidth(additional, isMap ? count / 2 : count);
@@ -342,7 +343,7 @@ namespace uos::auth::passkeys {
             if (!isMap) {
               Cbor::Array values;
               values.reserve(count);
-              for (std::size_t i = 0; i < count; ++i) values.push_back(readValue(decoder, input));
+              for (std::size_t i = 0; i < count; ++i) values.push_back(readValue(decoder, input, depth + 1));
               return Cbor{std::move(values)};
             }
 
@@ -351,7 +352,7 @@ namespace uos::auth::passkeys {
             BytesView previous;
             for (std::size_t i = 0; i < count / 2; ++i) {
               const std::size_t keyStart = QCBORDecode_Tell(&decoder);
-              Cbor key = readValue(decoder, input, true);
+              Cbor key = readValue(decoder, input, depth + 1, true);
               const BytesView encodedKey = input.subspan(keyStart, QCBORDecode_Tell(&decoder) - keyStart);
               // For the admitted key types, CTAP2 order is lexicographic over canonical encodings.
               if (!previous.empty() && !std::lexicographical_compare(previous.begin(), previous.end(), encodedKey.begin(), encodedKey.end()))
@@ -359,7 +360,7 @@ namespace uos::auth::passkeys {
               previous = encodedKey;
               CborKey label = key.kind() == Cbor::Kind::number ? CborKey{static_cast<std::int64_t>(key.number())} :
                                                                CborKey{std::get<std::string>(std::move(key.data))};
-              entries.push_back(CborEntry{std::move(label), readValue(decoder, input)});
+              entries.push_back(CborEntry{std::move(label), readValue(decoder, input, depth + 1)});
             }
             return Cbor{std::move(entries)};
           }
@@ -368,7 +369,7 @@ namespace uos::auth::passkeys {
       }
 
       Decoded decodeItem(BytesView input, bool requireComplete = false) {
-        if (input.size() > maxInput) invalid("input limit");
+        if (input.size() > rt::limits::kCborBytes) invalid("input limit");
         QCBORDecodeContext decoder;
         QCBORDecode_Init(&decoder, {input.data(), input.size()}, QCBOR_DECODE_MODE_MAP_AS_ARRAY);
         Cbor value = readValue(decoder, input);
@@ -437,10 +438,6 @@ namespace uos::auth::passkeys {
     // ---- ASN.1 and X.509 decoding (OpenSSL 3) ---------------------------------------------
 
     namespace asn1 {
-      constexpr std::size_t maxInput = 16 * 1024 * 1024;
-      constexpr int maxDepth = 100;
-      constexpr int maxElements = 10'000;
-
       [[noreturn]] void invalid(std::string_view structure) { fail("Invalid DER " + std::string(structure)); }
 
       struct ErrorScope {
@@ -472,7 +469,7 @@ namespace uos::auth::passkeys {
       };
 
       DerElement takeDer(BytesView& remaining, std::string_view structure) {
-        if (remaining.empty()) invalid(structure);
+        if (remaining.empty() || remaining.size() > rt::limits::kAsn1Bytes) invalid(structure);
         const unsigned char* cursor = remaining.data();
         int tag = 0, tagClass = 0;
         long size = 0;
@@ -490,7 +487,7 @@ namespace uos::auth::passkeys {
       // d2i accepts BER and can flatten constructed strings or mask unused bits. Check framing
       // and the existing resource ceilings before typed decoding can normalize the input.
       void checkDerElement(const DerElement& element, int depth, int& elements, std::string_view structure) {
-        if (depth > maxDepth || --elements < 0) invalid(structure);
+        if (depth > rt::limits::kAsn1Depth || --elements < 0) invalid(structure);
         if (element.tagClass == V_ASN1_UNIVERSAL) {
           const int tag = element.tag;
           const bool container = tag == V_ASN1_SEQUENCE || tag == V_ASN1_SET;
@@ -508,8 +505,7 @@ namespace uos::auth::passkeys {
       }
 
       void checkDer(BytesView bytes, std::string_view structure) {
-        if (bytes.size() > maxInput) invalid(structure);
-        int elements = maxElements;
+        int elements = rt::limits::kAsn1Elements;
         checkDerElement(takeDer(bytes, structure), 0, elements, structure);
         if (!bytes.empty()) invalid(structure);
       }
@@ -628,7 +624,7 @@ namespace uos::auth::passkeys {
       // X509_NAME's flat entry list drops empty RDNs. Reject them before comparing names.
       const unsigned char* der = nullptr;
       std::size_t derSize = 0;
-      if (X509_NAME_get0_der(name, &der, &derSize) != 1 || derSize > asn1::maxInput) asn1::invalid("X.509 distinguished name");
+      if (X509_NAME_get0_der(name, &der, &derSize) != 1 || derSize > rt::limits::kCertificateBytes) asn1::invalid("X.509 distinguished name");
       BytesView encoded(der, derSize);
       BytesView rdns = asn1::takeDer(encoded, "X.509 distinguished name").contents;
       while (!rdns.empty()) {
@@ -698,6 +694,7 @@ namespace uos::auth::passkeys {
     }
 
     Certificate parseCertificate(BytesView bytes) {
+      if (bytes.size() > rt::limits::kCertificateBytes) asn1::invalid("X.509 certificate exceeds limit");
       auto x509 = asn1::decode<X509_free>(bytes, d2i_X509, "X.509 certificate");
       const long version = X509_get_version(x509.get());
       if (version < 0 || version > 2 || ASN1_STRING_type(X509_get0_serialNumber(x509.get())) != V_ASN1_INTEGER)
@@ -1465,10 +1462,42 @@ namespace uos::auth::passkeys {
       return value->bytes();
     }
 
+    std::size_t encodedCertificateSize(std::string_view encoded) {
+      if (encoded.size() > rt::limits::kCertificateBase64Bytes) fail("Attestation certificate exceeds limit");
+      const auto bytes = encoded.size() * 3 / 4;
+      const std::size_t padding = encoded.ends_with("==") ? 2 : encoded.ends_with('=') ? 1 : 0;
+      return bytes - std::min(bytes, padding);
+    }
+
+    std::size_t certificateSize(const Cbor& value) {
+      switch (value.kind()) {
+        case Cbor::Kind::string: return encodedCertificateSize(value.text());
+        case Cbor::Kind::bytes: return value.bytes().size();
+        case Cbor::Kind::array: return value.items().size();
+        case Cbor::Kind::map: return value.entries().size();
+        case Cbor::Kind::number: return typedArrayLength(value.number());
+        case Cbor::Kind::boolean: return value.boolean() ? 1 : 0;
+        default: return 0;
+      }
+    }
+
+    void chargeCertificate(std::size_t bytes, std::size_t& remaining) {
+      if (bytes > rt::limits::kCertificateBytes) fail("Attestation certificate exceeds limit");
+      if (bytes > remaining) fail("Attestation certificate chain exceeds limit");
+      remaining -= bytes;
+    }
+
+    void checkCertificateChain(const Cbor::Array& chain) {
+      std::size_t remaining = rt::limits::kCertificateChainBytes;
+      for (const auto& certificate : chain) chargeCertificate(certificateSize(certificate), remaining);
+    }
+
     // `value[0]` of an attestation statement's x5c, which must be a Uint8Array for the parsers.
     const Bytes& firstCertificate(const Cbor* x5c) {
       if (x5c == nullptr || x5c->kind() != Cbor::Kind::array || x5c->items().empty()) throw rt::TypeError("x5c[0] is not a certificate");
-      return requireBytes(&x5c->items().front(), "x5c[0]");
+      const Bytes& leaf = requireBytes(&x5c->items().front(), "x5c[0]");
+      checkCertificateChain(x5c->items());
+      return leaf;
     }
 
     /**
@@ -1492,6 +1521,7 @@ namespace uos::auth::passkeys {
      * Convert buffer to an OpenSSL-compatible PEM text format.
      */
     std::string convertCertBufferToPEM(const Cbor& certBuffer) {
+      if (certificateSize(certBuffer) > rt::limits::kCertificateBytes) fail("Attestation certificate exceeds limit");
       std::string b64cert;
       /**
        * Get certBuffer to a base64 representation
@@ -1504,14 +1534,17 @@ namespace uos::auth::passkeys {
         b64cert = isoBase64URL::fromBuffer(cborToUint8Array(certBuffer), false);
       }
       std::string PEMKey;
-      const double length = static_cast<double>(rt::length(b64cert));
-      for (double i = 0; i < std::ceil(length / 64); i += 1) PEMKey += rt::substr(b64cert, 64 * i, 64) + "\n";
+      for (std::size_t i = 0; i < b64cert.size(); i += 64) {
+        PEMKey.append(std::string_view(b64cert).substr(i, 64));
+        PEMKey.push_back('\n');
+      }
       return "-----BEGIN CERTIFICATE-----\n" + PEMKey + "-----END CERTIFICATE-----\n";
     }
 
     // `x5c.map(convertCertBufferToPEM)` on a decoded attestation statement member.
     std::vector<std::string> mapCertsToPEM(const Cbor* x5c) {
       if (x5c == nullptr || x5c->kind() != Cbor::Kind::array) throw rt::TypeError("x5c.map is not a function");
+      checkCertificateChain(x5c->items());
       std::vector<std::string> out;
       for (const Cbor& certBuffer : x5c->items()) out.push_back(convertCertBufferToPEM(certBuffer));
       return out;
@@ -1771,8 +1804,8 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
 
     // ---- X.509 certificate path and revocation inputs -------------------------------------
 
-    Certificate parsePemCertificate(std::string_view pem) {
-      if (pem.empty() || pem.size() > 2 * asn1::maxInput) fail("Invalid PEM certificate");
+    Certificate parsePemCertificate(std::string_view pem, std::size_t* remaining = nullptr) {
+      if (pem.empty() || pem.size() > rt::limits::kCertificatePemBytes) fail("Invalid PEM certificate");
       unsigned char* data = nullptr;
       long size = 0;
       {
@@ -1783,6 +1816,7 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       }
       const asn1::Buffer der(data);
       if (size <= 0) fail("Invalid PEM certificate");
+      if (remaining) chargeCertificate(static_cast<std::size_t>(size), *remaining);
       return parseCertificate(BytesView(der.get(), static_cast<std::size_t>(size)));
     }
 
@@ -1884,7 +1918,7 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       const unsigned char* cursor = bytes.data();
       long size = 0;
       int tag = 0, tagClass = 0;
-      const int flags = ASN1_get_object(&cursor, &size, &tag, &tagClass, static_cast<long>(std::min(bytes.size(), asn1::maxInput)));
+      const int flags = ASN1_get_object(&cursor, &size, &tag, &tagClass, static_cast<long>(std::min(bytes.size(), rt::limits::kAsn1Bytes)));
       return (flags & V_ASN1_CONSTRUCTED) != 0 && tagClass == V_ASN1_UNIVERSAL && tag == V_ASN1_SEQUENCE;
     }
 
@@ -1949,6 +1983,8 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
         certListBytes = co_await std::move(reading);
         downloaded = true;
         published = respCRL.ok();
+      } catch (const rt::FetchError& error) {
+        if (error.code == "ResponseBodyTooLarge" || error.code == "ResponseHeadersTooLarge") throw;
       } catch (...) {
       }
       if (!downloaded) co_return false;
@@ -1982,7 +2018,8 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       }
       // Prepare to work with x5c certs
       std::vector<Certificate> x5cCertsParsed;
-      for (const std::string& certPEM : x5cCertsPEM) x5cCertsParsed.push_back(parsePemCertificate(certPEM));
+      std::size_t remaining = rt::limits::kCertificateChainBytes;
+      for (const std::string& certPEM : x5cCertsPEM) x5cCertsParsed.push_back(parsePemCertificate(certPEM, &remaining));
       // Check for any expired or temporally invalid certs in x5c
       for (std::size_t i = 0; i < x5cCertsParsed.size(); i++) {
         const Certificate& cert = x5cCertsParsed[i];
@@ -2231,6 +2268,12 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       const json::value* headerX5c = rt::get(HEADER, "x5c");
       const json::value* leafCert = headerX5c != nullptr && headerX5c->is_array() ? rt::get(headerX5c->as_array(), 0) : nullptr;
       if (leafCert == nullptr || !leafCert->is_string()) throw rt::TypeError("HEADER.x5c[0] is not a base64 string");
+      std::size_t remaining = rt::limits::kCertificateChainBytes;
+      for (const auto& item : headerX5c->as_array()) {
+        if (item.is_string()) chargeCertificate(encodedCertificateSize(item.as_string()), remaining);
+        else if (rt::isNumber(item)) chargeCertificate(typedArrayLength(rt::toNumber(item)), remaining);
+        else if (item.is_bool() && item.as_bool()) chargeCertificate(1, remaining);
+      }
       const Bytes leafCertBuffer = isoBase64URL::toBuffer(leafCert->as_string(), false);
       const CertificateInfo leafCertInfo = getCertificateInfo(leafCertBuffer);
       // Ensure the certificate was issued to this hostname

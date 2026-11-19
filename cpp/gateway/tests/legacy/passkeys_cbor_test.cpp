@@ -3,6 +3,7 @@
 //   src/utils.cpp src/kv.cpp src/storage/kv.cpp src/release.cpp src/storage/sqlite_readonly.cpp
 //   src/storage/native_kv.cpp src/storage/native_addon.cpp src/config.cpp src/provider/cerebras_rate_limits.cpp
 #include "uos/rt/base64.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/test.hpp"
 
 #include <cstddef>
@@ -116,7 +117,7 @@ TEST("accepts eight nested containers and rejects nine") {
 
 TEST("bounds the input before a partial or full decode") {
   auto atLimit = rt::fromHex("5a000ffffb");
-  atLimit.resize(1024 * 1024);
+  atLimit.resize(rt::limits::kCborBytes);
   EXPECT_EQ(cbor::reencode(atLimit, true).first, atLimit);
   atLimit.push_back(0);
   EXPECT_THROWS(cbor::reencode(atLimit, false), rt::JsError);
