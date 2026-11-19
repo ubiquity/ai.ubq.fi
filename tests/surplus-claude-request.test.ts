@@ -1,6 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { buildSurplusClaudeRequest } from "../src/provider/surplus-claude-request.ts";
+import { buildClaudeCodeRequest } from "../src/provider/claude-code.ts";
 
 const base = (): Record<string, unknown> => ({ model: "claude-opus-5.5", input: "hello", max_output_tokens: 128, stream: true, store: false });
 
@@ -248,6 +249,26 @@ test("Surplus Claude carries JSON-schema structured output with adaptive reasoni
     effort: "high",
     format: { type: "json_schema", schema },
   });
+});
+
+test("Surplus Claude treats the default OpenAI text format as no structured output", () => {
+  const options = { supportsNativeReasoningEffort: true };
+  const withFormat = buildSurplusClaudeRequest({ ...base(), reasoning: { effort: "high" }, text: { format: { type: "text" } } }, undefined, options);
+  const withoutText = buildSurplusClaudeRequest({ ...base(), reasoning: { effort: "high" } }, undefined, options);
+  assert.ok(withFormat);
+  assert.deepEqual(withFormat.body.output_config, { effort: "high" });
+  assert.deepEqual(withFormat.body, withoutText?.body);
+  for (const text of [{ format: { type: "json_object" } }, { format: { type: "grammar" } }, { format: { type: "text", schema: { type: "object" } } }]) {
+    assert.equal(buildSurplusClaudeRequest({ ...base(), text }, undefined, options), null, JSON.stringify(text));
+  }
+});
+
+test("the direct Claude Code lane accepts the default text format with effort-only output config", () => {
+  const body = { model: "claude-opus-5-5", input: "hello", reasoning: { effort: "high" }, text: { format: { type: "text" } } };
+  const built = buildClaudeCodeRequest(body, { nativeReasoningEfforts: ["low", "medium", "high"] });
+  assert.ok(built);
+  assert.deepEqual(built.body.output_config, { effort: "high" });
+  assert.equal(buildClaudeCodeRequest({ ...body, text: { format: { type: "unknown_format" } } }, { nativeReasoningEfforts: ["high"] }), null);
 });
 
 test("Surplus Claude accepts the Codex concise reasoning summary preference", () => {

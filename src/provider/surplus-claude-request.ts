@@ -319,6 +319,8 @@ const structuredOutputFormat = (value: unknown): JsonRecord | null | undefined =
   if (!isRecord(value) || Object.keys(value).some((key) => key !== "format")) return null;
   const format = value.format;
   if (format === undefined) return undefined;
+  // OpenAI's default ResponseFormatText is exactly `{ type: "text" }`; it requests no structured output.
+  if (isRecord(format) && format.type === "text" && Object.keys(format).length === 1) return undefined;
   if (!isRecord(format) || format.type !== "json_schema" || !isRecord(format.schema)) return null;
   if (format.strict !== undefined && typeof format.strict !== "boolean") return null;
   if (format.name !== undefined && typeof format.name !== "string") return null;
