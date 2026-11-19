@@ -77,16 +77,21 @@ namespace {
     return *number * scale;
   }
 
-  std::optional<double> codexStreamRetryAfter(const rs::ResponsesStreamEvent& event, const json::object& error, const rt::Headers& headers) {
+  std::optional<double> codexHeaderRetryAfter(const rt::Headers& headers) {
     const double now = rt::dateNow();
     const auto header = authority::native_codex_429::futureRetryAfterDeadline(headers, now);
     std::optional<double> delay = header ? std::optional(header->deadlineMs - now) : std::nullopt;
     if (headers.get("retry-after") == "0") delay = 0;
-    const auto useHint = [&delay](std::optional<double> hint) { if (hint) delay = std::max(delay.value_or(0), *hint); };
     if (const auto headerMs = headers.get("retry-after-ms")) {
       const json::value value(*headerMs);
-      useHint(retryAfterMillis(&value, 1));
+      if (const auto hint = retryAfterMillis(&value, 1)) delay = std::max(delay.value_or(0), *hint);
     }
+    return delay;
+  }
+
+  std::optional<double> codexStreamRetryAfter(const rs::ResponsesStreamEvent& event, const json::object& error, const rt::Headers& headers) {
+    auto delay = codexHeaderRetryAfter(headers);
+    const auto useHint = [&delay](std::optional<double> hint) { if (hint) delay = std::max(delay.value_or(0), *hint); };
     for (const auto* payload : {&error, &event.value}) {
       useHint(retryAfterMillis(rt::get(*payload, "retry_after_ms"), 1));
       useHint(retryAfterMillis(rt::get(*payload, "retry_after"), 1000));
@@ -107,13 +112,13 @@ namespace {
     return codex::dispatch::CodexStreamRetry{status, delay.value_or(0)};
   }
 
-  std::optional<codex::dispatch::CodexStreamRetry> classifyCodexStreamReadFailure(const rt::Reason& error) {
+  std::optional<int> codexStreamReadFailureStatus(const rt::Reason& error) {
     const auto* streamError = rs::responsesStreamErrorOf(error);
-    if (streamError && streamError->kind == "premature_eof") return codex::dispatch::CodexStreamRetry{502, 0};
-    if (streamError && streamError->kind == "inactivity_timeout") return codex::dispatch::CodexStreamRetry{504, 0};
+    if (streamError && streamError->kind == "premature_eof") return 502;
+    if (streamError && streamError->kind == "inactivity_timeout") return 504;
     try { std::rethrow_exception(error); }
     catch (const rt::FetchError& fetchError) {
-      if (fetchError.code == "ECONNRESET") return codex::dispatch::CodexStreamRetry{502, 0};
+      if (fetchError.code == "ECONNRESET") return 502;
     }
     catch (...) {}
     return std::nullopt;
@@ -121,12 +126,17 @@ namespace {
 
   rt::Task<std::optional<codex::dispatch::CodexStreamRetry>> preflightCodexStream(rt::Response response, std::shared_ptr<CodexStreamPreflight> preflight,
       std::optional<rt::AbortSignal> signal, std::optional<tel::UsageContext> context) {
-    if (!response.body()) co_return std::nullopt;
+    if (signal && signal->aborted()) co_return std::nullopt;
+    const auto body = response.body();
+    if (!body) {
+      if (response.status() == 200) co_return codex::dispatch::CodexStreamRetry{502, codexHeaderRetryAfter(response.headers()).value_or(0)};
+      co_return std::nullopt;
+    }
     rs::ReadResponsesStreamOptions readOptions;
     if (context && context->responseTelemetry) {
       readOptions.onEvent = [telemetry = context->responseTelemetry](const rs::ResponsesStreamEvent& event) { tel::recordUpstreamResponsesFailure(*telemetry, event); };
     }
-    auto iterator = rs::readResponsesStream(*response.body(), signal, readOptions);
+    auto iterator = rs::readResponsesStream(*body, signal, readOptions);
     fs::PrepareResponsesStreamForCommitOptions prepareOptions{
       .onEvent = [&context](const rs::ResponsesStreamEvent& event) {
         const auto* usage = context ? &*context : nullptr;
@@ -139,7 +149,12 @@ namespace {
     try { preflight->prepared = co_await std::move(preparing); }
     catch (...) { preflight->error = std::current_exception(); }
     if (signal && signal->aborted()) co_return std::nullopt;
-    if (preflight->error) co_return classifyCodexStreamReadFailure(preflight->error);
+    if (preflight->error) {
+      if (const auto status = codexStreamReadFailureStatus(preflight->error)) {
+        co_return codex::dispatch::CodexStreamRetry{*status, codexHeaderRetryAfter(response.headers()).value_or(0)};
+      }
+      co_return std::nullopt;
+    }
     if (preflight->prepared->semantic || !preflight->prepared->terminal) co_return std::nullopt;
     co_return classifyCodexStreamTerminal(*preflight->prepared->terminal, response.headers());
   }

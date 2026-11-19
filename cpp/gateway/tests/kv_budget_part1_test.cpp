@@ -391,17 +391,24 @@ ASYNC_TEST("Codex relays a server error after the first output delta without ret
 }
 
 ASYNC_TEST("Codex retries a stream that ends silently before output") {
-  Scope scope;
-  AWAIT(key, h::prepareApiKeyInference("5", "codex-stream-eof-retry", 5));
-  ScriptedCodexStream upstream({closedSse(retryFixturePreamble("resp_eof")), closedSse(retryFixtureSuccess("resp_after_eof"))});
-  const auto request = h::streamingRequest(key.token, "responses");
-  AWAIT(result, deliverStreamRetryRequest(scope.logs, request));
-  EXPECT_EQ(result.status, 200);
-  expectSelectedStream(result.body, "resp_after_eof");
-  expectStreamRetryAttempts(scope.logs, {502, 200});
-  EXPECT_EQ(upstream.attempts.size(), 2U);
-  EXPECT_EQ(rt::getNumber(result.terminal, "in_stream_retries"), 1);
-  expectWindow(key, 1, 0);
+  const std::vector<bool> withPreamble{true, false};
+  for (const bool hasPreamble : withPreamble) {
+    Scope scope;
+    AWAIT(key, h::prepareApiKeyInference("5", "codex-stream-eof-retry", 5));
+    auto ended = hasPreamble ? closedSse(retryFixturePreamble("resp_eof"))
+      : rt::Response(nullptr, {.headers = rt::Headers{{"Content-Type", "text/event-stream"}}});
+    ended.headers().set("Retry-After", "1");
+    ScriptedCodexStream upstream({ended, closedSse(retryFixtureSuccess("resp_after_eof"))});
+    const auto request = h::streamingRequest(key.token, "responses");
+    AWAIT(result, deliverStreamRetryRequest(scope.logs, request));
+    EXPECT_EQ(result.status, 200);
+    expectSelectedStream(result.body, "resp_after_eof");
+    expectStreamRetryAttempts(scope.logs, {502, 200});
+    ASSERT_EQ(upstream.attempts.size(), 2U);
+    EXPECT(upstream.attempts[1].atMs - upstream.attempts[0].atMs >= 1000);
+    EXPECT_EQ(rt::getNumber(result.terminal, "in_stream_retries"), 1);
+    expectWindow(key, 1, 0);
+  }
 }
 
 ASYNC_TEST("Codex retries a failed response in Chat Completions after the longer Retry-After hint") {
