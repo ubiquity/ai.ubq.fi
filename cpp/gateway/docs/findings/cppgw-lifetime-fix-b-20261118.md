@@ -46,10 +46,10 @@ A commit listed as “this commit” is the commit that introduced that verdict 
 | D07 | LEFT — Memory KV await-expression reverification pending. | — | Pending |
 | D08 | LEFT — Cache fingerprint await-expression reverification pending. | — | Pending |
 | D09 | FIXED — The last public terminal callback stops periodic renewal when there is no terminal intent. The last stored lease can expire naturally. | `fix(cpp): stop renewing abandoned kernel reservations` | `kernel_quota_context_differential_test`: a retained callback copy renews the lease. Dropping it leaves the expiry unchanged and later aborts with `TimeoutError`. |
-| D10 | LEFT — Worker body read listener reverification pending. | — | Pending |
-| D11 | LEFT — Worker request bridge reverification pending. | — | Pending |
-| D12 | LEFT — Worker delivery abort listener reverification pending. | — | Pending |
-| D13 | LEFT — Pending delivery receipt retention reverification pending. | — | Pending |
+| D10 | FIXED — A weak signal capture and frame-owned registration release the body reader on abandonment. | `fix(cpp): release worker request and response state` | `worker_boundary_test`: an abandoned read releases its stream even when the caller keeps the signal. |
+| D11 | FIXED — An owned abort registration forwards through a weak signal, transfers into delivery, and unregisters on teardown. | `fix(cpp): release worker request and response state` | `worker_boundary_test`: loop teardown during authentication releases the request. |
+| D12 | FIXED — The body owns its delivery state. Cancellation observes that state weakly and releases its registration on terminal paths and destruction. | `fix(cpp): release worker request and response state` | `worker_boundary_test`: an unread body and upstream response expire after drop, including when abort preceded delivery setup. |
+| D13 | FIXED — A host receipt retains the shared settlement latch and abort registration. The dropped body, reader, and host lifetime callable can expire before the receipt arrives. | `fix(cpp): release worker request and response state` | `worker_boundary_test`: a pending receipt outlives the released response body, then settles one admission as delivered. |
 | D14 | LEFT — Quota and usage await-expression reverification pending. | — | Pending |
 
 ## Verification and open questions
@@ -129,9 +129,29 @@ bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" tests/kernel_quota_con
 bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" tests/kernel_quota_context_differential_test.cpp,tests/kernel_quota_reserve_differential_test.cpp --config release
 ```
 
-The baseline passed 5/6 cases in 31.641 s. The fixed ASan differential fixtures
-passed 2 binaries and 22/22 cases in 31.403 s. A broader `kernel_quota` selection
-was interrupted during its cold compilation to finish the focused regression
-first. Its compiled objects remain in the scratch cache.
+The baseline passed 5/6 cases in 31.641 s. The fixed differential fixtures
+passed 2 binaries and 22/22 cases in 31.403 s under ASan and 45.554 s on
+release. A broader `kernel_quota` selection was interrupted during its cold
+compilation to finish the focused regression first. Its compiled objects
+remain in the scratch cache.
+
+`readBoundedJson` and `boundaryFetch` registered callbacks with strong paths
+back to their own signal. `deliverResponse` stored a callback owning the same
+delivery object, and the host receipt held a reaction that owned the entire
+response. Four regression cases reproduced these retentions. The original
+sanitizer run reported 31,947 leaked bytes in 243 allocations and did not flush
+a case summary. A fixture iteration also identified the stream start reaction's
+temporary ownership. The final fixture lets that reaction finish before checking
+the still-pending receipt. The late receipt supplies the real outcome to the
+same settlement as body cancellation or EOF, gated by one completion promise.
+
+```sh
+bash "$scratch/run.sh" 4 python3 -B "$scratch/focused.py" tests/worker_boundary_test.cpp --config asan
+bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" src/worker/entrypoint.cpp --config asan worker_boundary_test
+bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" src/worker/entrypoint.cpp --config release worker_boundary_test
+```
+
+The baseline took 34.134 s. The fixed fixture passed 10/10 cases in 24.535 s
+under ASan and 13.081 s on release.
 
 [Area B audit](cppgw-lifetime-b-20261118.md)
