@@ -386,11 +386,13 @@ namespace uos::rt {
         const std::string flags = requiredString();
         const std::optional<std::string> canonical = canonicalRegExpFlags(flags);
         if (!canonical) malformed();
-        // rt::Regex has no unicodeSets mode; a v-flag pattern is taken as written.
+        // Keep the existing storage path that preserves v-flag patterns verbatim.
         if (canonical->find('v') == std::string::npos) {
           try {
             const Regex compiled(source, *canonical);
           } catch (const SyntaxError&) {
+            malformed();
+          } catch (const RangeError&) {
             malformed();
           }
         }

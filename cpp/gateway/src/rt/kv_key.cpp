@@ -1,6 +1,8 @@
 // Key parts, the tuple key codec (kv_key.js with the repository's number patch),
 // versionstamps and list cursors (kv_util.js).
 #include "kv_internal.hpp"
+#include "uos/rt/base64.hpp"
+#include "uos/rt/limits.hpp"
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -280,63 +282,6 @@ namespace uos::rt {
       throw TypeError("Invalid argument type in ToBigInt operation");
     }
 
-    std::string base64Encode(std::string_view input) {
-      static constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-      std::string out;
-      std::size_t index = 0;
-      const auto byte = [&](std::size_t at) { return static_cast<std::uint32_t>(static_cast<std::uint8_t>(input[at])); };
-      for (; index + 2 < input.size(); index += 3) {
-        const std::uint32_t chunk = (byte(index) << 16) | (byte(index + 1) << 8) | byte(index + 2);
-        out += alphabet[(chunk >> 18) & 0x3F];
-        out += alphabet[(chunk >> 12) & 0x3F];
-        out += alphabet[(chunk >> 6) & 0x3F];
-        out += alphabet[chunk & 0x3F];
-      }
-      if (input.size() - index == 1) {
-        const std::uint32_t chunk = byte(index) << 16;
-        out += alphabet[(chunk >> 18) & 0x3F];
-        out += alphabet[(chunk >> 12) & 0x3F];
-        out += "==";
-      } else if (input.size() - index == 2) {
-        const std::uint32_t chunk = (byte(index) << 16) | (byte(index + 1) << 8);
-        out += alphabet[(chunk >> 18) & 0x3F];
-        out += alphabet[(chunk >> 12) & 0x3F];
-        out += alphabet[(chunk >> 6) & 0x3F];
-        out += '=';
-      }
-      return out;
-    }
-
-    // `atob`: the WHATWG forgiving-base64 decode; std::nullopt where atob throws.
-    std::optional<KvBytes> forgivingBase64Decode(std::string_view input) {
-      std::string data;
-      for (const char c : input)
-        if (c != '\t' && c != '\n' && c != '\f' && c != '\r' && c != ' ') data += c;
-      if (data.size() % 4 == 0) {
-        if (data.ends_with("==")) data.resize(data.size() - 2);
-        else if (data.ends_with('=')) data.resize(data.size() - 1);
-      }
-      if (data.size() % 4 == 1) return std::nullopt;
-      KvBytes out;
-      std::uint32_t buffer = 0;
-      int bits = 0;
-      for (const char c : data) {
-        std::uint32_t sextet;
-        if (c >= 'A' && c <= 'Z') sextet = static_cast<std::uint32_t>(c - 'A');
-        else if (c >= 'a' && c <= 'z') sextet = static_cast<std::uint32_t>(c - 'a' + 26);
-        else if (c >= '0' && c <= '9') sextet = static_cast<std::uint32_t>(c - '0' + 52);
-        else if (c == '+') sextet = 62;
-        else if (c == '/') sextet = 63;
-        else return std::nullopt;
-        buffer = (buffer << 6) | sextet;
-        bits += 6;
-        if (bits >= 8) {
-          bits -= 8;
-          out.push_back(static_cast<std::uint8_t>((buffer >> bits) & 0xFF));
-        }
-      }
-      return out;
-    }
   }
 
   const KvBytes& KvKeyPart::bytes() const {
@@ -507,18 +452,18 @@ namespace uos::rt {
   }
 
   std::string packCursor(std::span<const std::uint8_t> lastYieldedKeyBytes) {
-    return base64Encode("{\"lastYieldedKeyBytes\":\"" + encodeHex(lastYieldedKeyBytes) + "\"}");
+    const auto text = "{\"lastYieldedKeyBytes\":\"" + encodeHex(lastYieldedKeyBytes) + "\"}";
+    return toBase64({reinterpret_cast<const std::uint8_t*>(text.data()), text.size()});
   }
 
   KvBytes unpackCursor(std::string_view cursor) {
+    if (cursor.size() > limits::kKvCursorBytes) throw JsError("Invalid cursor");
     try {
-      if (const std::optional<KvBytes> decoded = forgivingBase64Decode(cursor)) {
-        boost::system::error_code error;
-        const json::value parsed = json::parse(kv_internal::textDecode(*decoded), error);
-        if (!error && parsed.is_object())
-          if (const json::value* field = parsed.as_object().if_contains("lastYieldedKeyBytes"); field && field->is_string())
-            return kv_internal::decodeHex(std::string_view(field->as_string()));
-      }
+      boost::system::error_code error;
+      const json::value parsed = json::parse(kv_internal::textDecode(atobBytes(cursor)), error);
+      if (!error && parsed.is_object())
+        if (const json::value* field = parsed.as_object().if_contains("lastYieldedKeyBytes"); field && field->is_string())
+          return kv_internal::decodeHex(std::string_view(field->as_string()));
     } catch (const JsError&) {
     }
     throw JsError("Invalid cursor");

@@ -7,6 +7,7 @@
 #include "uos/rt/clock.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/kv_sqlite.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/sqlite.hpp"
 #include <boost/asio/async_result.hpp>
 #include <boost/asio/executor_work_guard.hpp>
@@ -177,6 +178,7 @@ namespace uos::rt {
       throw JsError("invalid " + std::string(what) + " in queue message: " + json::serialize(value));
     }
     std::vector<std::uint64_t> parseBackoffSchedule(const std::string& text) {
+      if (text.size() > limits::kJsonDocumentBytes) throw JsError("Queue backoff schedule exceeds JSON limit");
       const json::value parsed = json::parse(text);
       std::vector<std::uint64_t> schedule;
       if (parsed.is_null()) return schedule;
@@ -185,6 +187,7 @@ namespace uos::rt {
       return schedule;
     }
     std::vector<KvBytes> parseKeys(const std::string& text) {
+      if (text.size() > limits::kJsonDocumentBytes) throw JsError("Queue undelivered keys exceed JSON limit");
       const json::value parsed = json::parse(text);
       if (!parsed.is_array()) throw JsError("invalid undelivered keys in queue message: " + text);
       std::vector<KvBytes> keys;
