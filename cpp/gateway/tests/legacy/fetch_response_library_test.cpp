@@ -170,6 +170,12 @@ TEST("Fetch budgets split response heads by bytes and fields") {
     ASSERT_EQ(parser.readHead(std::string_view(head).substr(0, 101), consumed), HPE_OK);
     EXPECT_EQ(parser.readHead(std::string_view(head).substr(consumed), consumed), extra == 0 ? HPE_PAUSED : HPE_USER);
 
+    head = "HTTP/1.1 200 OK\r\nX-Fill: ";
+    head.resize(limits::kFetchResponseHeaderBlockBytes - 4 + extra, 'a');
+    head += "\r\n\r\n";
+    fetch::ResponseParser compatibility(limits::kHttpHeaderFields, limits::kFetchResponseHeaderBlockBytes);
+    EXPECT_EQ(compatibility.readHead(head, consumed), extra == 0 ? HPE_PAUSED : HPE_USER);
+
     head = "HTTP/1.1 200 OK\r\n";
     for (std::size_t i = 0; i < limits::kHttpHeaderFields + extra; ++i) head += "X: a\r\n";
     head += "\r\n";

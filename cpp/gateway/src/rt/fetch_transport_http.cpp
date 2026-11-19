@@ -296,7 +296,7 @@ namespace uos::rt::detail::fetch {
   }();
 
   ResponseParser::ResponseParser(std::size_t maxFields, std::size_t maxHeadBytes)
-      : maxFields_(std::min(maxFields, limits::kHttpHeaderFields)), maxHeadBytes_(std::min(maxHeadBytes, limits::kHttpHeaderBlockBytes)) {
+      : maxFields_(std::min(maxFields, limits::kHttpHeaderFields)), maxHeadBytes_(std::min(maxHeadBytes, limits::kFetchResponseHeaderBlockBytes)) {
     llhttp_init(&parser_, HTTP_RESPONSE, &settings_);
     parser_.data = this;
   }
@@ -388,7 +388,7 @@ namespace uos::rt::detail::fetch {
       std::size_t capacity = bodyBytesRemaining_;
       const bool metadata = chunked_ && chunkPart_ != ChunkPart::data;
       if (metadata) {
-        const auto limit = chunkPart_ == ChunkPart::size ? limits::kHttpChunkLineBytes : maxHeadBytes_;
+        const auto limit = chunkPart_ == ChunkPart::size ? limits::kHttpChunkLineBytes : std::min(maxHeadBytes_, limits::kHttpHeaderBlockBytes);
         capacity = std::min(limit - metadataBytes_, metadataRemaining_);
       } else if (chunked_) {
         // A finished chunk still has its CRLF delimiter to consume.

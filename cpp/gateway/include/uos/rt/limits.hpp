@@ -6,6 +6,8 @@
 namespace uos::rt::limits {
   // Use a smaller limit where the route or protocol already requires one.
   inline constexpr std::size_t kHttpHeaderBlockBytes = 32 * 1024;
+  // Fetch's existing compatibility allowance admits a 1 MiB response field.
+  inline constexpr std::size_t kFetchResponseHeaderBlockBytes = 1536 * 1024;
   inline constexpr std::size_t kHttpHeaderFields = 256;
   inline constexpr std::size_t kHttpChunkLineBytes = 4 * 1024;
   inline constexpr std::size_t kHttpBodyBytes = 16 * 1024 * 1024;
@@ -33,7 +35,7 @@ namespace uos::rt::limits {
   inline constexpr std::size_t kImageEditJsonBytes = ((kImageEditInputBytes + 2) / 3) * 4 + 1024 * 1024;
   inline constexpr std::size_t kImageEditMultipartBytes = 64 * 1024 * 1024;
   inline constexpr std::size_t kMultipartBoundaryBytes = 72;
-  inline constexpr std::size_t kMultipartParts = 256;
+  inline constexpr std::size_t kMultipartParts = 2048;
   inline constexpr std::size_t kMultipartPartBytes = kImageEditInputBytes;
   // Stored replay envelopes can exceed the ordinary HTTP body limit.
   inline constexpr std::size_t kStoredGzipBytes = 64 * 1024 * 1024;

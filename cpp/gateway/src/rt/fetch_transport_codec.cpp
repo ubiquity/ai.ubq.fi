@@ -293,7 +293,7 @@ namespace uos::rt::detail::fetch {
           if (!budget_.advance(in.pos - before, target.pos)) decompressionFailed("ResponseBodyTooLarge", url_);
           out.append(reinterpret_cast<const char*>(buffer), target.pos);
           frameOpen_ = result != 0;
-          if (in.pos == in.size && target.pos < target.size) return;
+          if (in.pos == in.size && (!frameOpen_ || target.pos < target.size)) return;
         }
       }
 

@@ -264,7 +264,7 @@ namespace uos::rt::detail::fetch {
     // ---- one exchange -------------------------------------------------------------
 
     struct Exchange {
-      ResponseParser parser;
+      ResponseParser parser{limits::kHttpHeaderFields, limits::kFetchResponseHeaderBlockBytes};
       std::weak_ptr<Pool> pool;
       std::shared_ptr<Connection> connection;
       std::unique_ptr<ContentDecoder> decoder;
