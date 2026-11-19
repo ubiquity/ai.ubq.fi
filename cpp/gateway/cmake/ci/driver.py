@@ -395,10 +395,12 @@ def main():
     if clang:
         # Some consumers include vendor headers relative to the gateway root.
         flags.append("--system-header-prefix=third_party/")
+    extra_cxx_flags = shlex.split(os.environ.get("UOS_CI_CXXFLAGS", ""))
+    extra_c_flags = vendor_sources.vendor_flags(shlex.split(os.environ.get("UOS_CI_CFLAGS", "")))
     flags += CONFIGS[options.config] + [flag for flag in package_flags if flag.startswith(("-I", "-D"))]
-    flags += shlex.split(os.environ.get("UOS_CI_CXXFLAGS", ""))
+    flags += extra_cxx_flags
     c_flags = ["-std=c11"] + [flag for flag in CONFIGS[options.config] if not flag.startswith("-D")]
-    c_flags += vendor_sources.vendor_flags(shlex.split(os.environ.get("UOS_CI_CFLAGS", "")))
+    c_flags += extra_c_flags
     # Some fixtures use __FILE__ to read repository assets. Give those paths a
     # stable absolute name that the fixture namespace binds to this checkout.
     path_flags = [f"-fdebug-prefix-map={ROOT}=.",
@@ -466,6 +468,11 @@ def main():
     cache_log = build / "ccache.log"
     if launcher:
         build_env = compiler_cache.environment(build_env, ROOT, options.config)
+        # Ccache intentionally omits path-map options from its hash. Explicit
+        # arguments can change their destinations, unlike our fixed path maps.
+        extra_arguments = [compiler[1:], c_compiler[1:], extra_cxx_flags, extra_c_flags]
+        if any(extra_arguments):
+            build_env["CCACHE_NAMESPACE"] += "-" + hashlib.sha256(json.dumps(extra_arguments).encode()).hexdigest()
     if compiler_cache.is_ccache(launcher):
         cache_log.unlink(missing_ok=True)
         build_env.update(CCACHE_STATS="1", CCACHE_STATSLOG=str(cache_log))
