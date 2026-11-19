@@ -33,24 +33,24 @@ building subset with the pending rows and their evidence gaps stated.
 
 ## Defect ledger
 
-A commit listed as “this commit” is the commit that introduced that verdict or fix.
+The commit column identifies the fix and any follow-up for each finding.
 
-| ID  | Verdict                                                                                                                                                                        | Commit                                                             | Test                                                                                                                                                                                                                                                |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D01 | FIXED — Closing clears queued writes and keeps the active buffer through Asio's completion callback.                                                                           | `fix(cpp): retain HTTP write buffer through cancellation`          | `runtime_http_lifetime_test`: ASan baseline failed the buffer-liveness assertion, then 5/5 passed under ASan and release.                                                                                                                           |
-| D02 | FIXED — Failed startup now closes the low-level server after rejecting both public receipts, releasing its handler registrations.                                              | `fix(cpp): release HTTP listeners on startup failure and teardown` | `runtime_http_lifetime_test`: the failed-bind handler survived on the baseline and expires after the fix.                                                                                                                                           |
-| D03 | FIXED — A waiting frame owns the drain listeners. Event dispatch acquires a weak target and frame destruction removes the registrations.                                       | `fix(cpp): release HTTP listeners on startup failure and teardown` | `runtime_http_test`: backpressure, drain, and disconnect. The public HTTP path closes or aborts before it can abandon a drain wait in isolation.                                                                                                    |
-| D04 | FIXED — The request frame unregisters the early SSE entry on destruction, including while its handler is still pending.                                                        | `fix(cpp): release HTTP listeners on startup failure and teardown` | `runtime_http_lifetime_test`: a disconnected request survived loop destruction on the baseline and expires after the fix.                                                                                                                           |
-| D05 | FIXED — The abort callback weakly observes the signal, and the sender removes the listener on frame destruction.                                                               | `fix(cpp): release HTTP listeners on startup failure and teardown` | `runtime_http_test` and `runtime_http_sse_headers_test`: pending reads, interruption, and streaming. Abandonment without abort is only exposed during forced loop destruction; a socket-only fixture also introduces connection teardown lifetimes. |
-| D06 | FIXED — Recheck shutdown and disconnect after the module await, before the synchronous WebSocket handoff.                                                                      | `fix(cpp): refuse WebSocket upgrades that race shutdown`           | `runtime_http_lifetime_test`: ASan baseline accepted the upgrade, then 6/6 passed in ASan and release with a 503 refusal.                                                                                                                           |
-| D07 | FIXED — Memory KV delete names the commit result before reading `ok`. The audited expression violated the GCC 12 comparison rule.                                              | `fix(cpp): name awaited KV keys and fingerprint inputs`            | `rt/kv_test`: existing delete coverage. The comparison-rule fix has no observed modern sanitizer failure.                                                                                                                                           |
-| D08 | FIXED — Each of the four fingerprint hashes receives a named canonical string in a separately constructed task.                                                                | `fix(cpp): name awaited KV keys and fingerprint inputs`            | `prompt_cache_scope_targets_test`: existing fingerprint behavior. The finding is a comparison-rule violation.                                                                                                                                       |
-| D09 | FIXED — The last public terminal callback stops periodic renewal when there is no terminal intent. The last stored lease can expire naturally.                                 | `fix(cpp): stop renewing abandoned kernel reservations`            | `kernel_quota_context_differential_test`: a retained callback copy renews the lease. Dropping it leaves the expiry unchanged and later aborts with `TimeoutError`.                                                                                  |
-| D10 | FIXED — A weak signal capture and frame-owned registration release the body reader on abandonment.                                                                             | `fix(cpp): release worker request and response state`              | `worker_boundary_test`: an abandoned read releases its stream even when the caller keeps the signal.                                                                                                                                                |
-| D11 | FIXED — An owned abort registration forwards through a weak signal, transfers into delivery, and unregisters on teardown.                                                      | `fix(cpp): release worker request and response state`              | `worker_boundary_test`: loop teardown during authentication releases the request.                                                                                                                                                                   |
-| D12 | FIXED — The body owns its delivery state. Cancellation observes that state weakly and releases its registration on terminal paths and destruction.                             | `fix(cpp): release worker request and response state`              | `worker_boundary_test`: an unread body and upstream response expire after drop, including when abort preceded delivery setup.                                                                                                                       |
-| D13 | FIXED — A host receipt retains the shared settlement latch and abort registration. The dropped body, reader, and host lifetime callable can expire before the receipt arrives. | `fix(cpp): release worker request and response state`              | `worker_boundary_test`: a pending receipt outlives the released response body, then settles one admission as delivered.                                                                                                                             |
-| D14 | FIXED — Separately construct the two quota and six usage KV keys and read tasks before awaiting them.                                                                          | `fix(cpp): name awaited KV keys and fingerprint inputs`            | `kernel_quota_values_differential_test` and `kernel_usage_coverage_test`: existing projection and readback coverage. The finding is a comparison-rule violation.                                                                                    |
+| ID  | Verdict                                                                                                                                                                        | Commit                 | Test                                                                                                                                                                                                                                                |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D01 | FIXED — Closing clears queued writes and keeps the active buffer through Asio's completion callback.                                                                           | `90746e3e`             | `runtime_http_lifetime_test`: ASan baseline failed the buffer-liveness assertion, then 5/5 passed under ASan and release.                                                                                                                           |
+| D02 | FIXED — Failed startup now closes the low-level server after rejecting both public receipts, releasing its handler registrations.                                              | `b3eceb91`             | `runtime_http_lifetime_test`: the failed-bind handler survived on the baseline and expires after the fix.                                                                                                                                           |
+| D03 | FIXED — A waiting frame owns the drain listeners. Event dispatch acquires a weak target and frame destruction removes the registrations.                                       | `b3eceb91`             | `runtime_http_test`: backpressure, drain, and disconnect. The public HTTP path closes or aborts before it can abandon a drain wait in isolation.                                                                                                    |
+| D04 | FIXED — The request frame unregisters the early SSE entry on destruction, including while its handler is still pending.                                                        | `b3eceb91`             | `runtime_http_lifetime_test`: a disconnected request survived loop destruction on the baseline and expires after the fix.                                                                                                                           |
+| D05 | FIXED — The abort callback weakly observes the signal, and the sender removes the listener on frame destruction.                                                               | `b3eceb91`             | `runtime_http_test` and `runtime_http_sse_headers_test`: pending reads, interruption, and streaming. Abandonment without abort is only exposed during forced loop destruction; a socket-only fixture also introduces connection teardown lifetimes. |
+| D06 | FIXED — Recheck shutdown and disconnect after the module await, before the synchronous WebSocket handoff.                                                                      | `f6c5c2bf`, `5dc5afb2` | `runtime_http_lifetime_test`: ASan baseline accepted the upgrade, then 6/6 passed in ASan and release with a 503 refusal.                                                                                                                           |
+| D07 | FIXED — Memory KV delete names the commit result before reading `ok`. The audited expression violated the GCC 12 comparison rule.                                              | `c0509870`             | `rt/kv_test`: existing delete coverage. The comparison-rule fix has no observed modern sanitizer failure.                                                                                                                                           |
+| D08 | FIXED — Each of the four fingerprint hashes receives a named canonical string in a separately constructed task.                                                                | `c0509870`             | `prompt_cache_scope_targets_test`: existing fingerprint behavior. The finding is a comparison-rule violation.                                                                                                                                       |
+| D09 | FIXED — The last public terminal callback stops periodic renewal when there is no terminal intent. The last stored lease can expire naturally.                                 | `a1920377`             | `kernel_quota_context_differential_test`: a retained callback copy renews the lease. Dropping it leaves the expiry unchanged and later aborts with `TimeoutError`.                                                                                  |
+| D10 | FIXED — A weak signal capture and frame-owned registration release the body reader on abandonment.                                                                             | `b5c249b7`             | `worker_boundary_test`: an abandoned read releases its stream even when the caller keeps the signal.                                                                                                                                                |
+| D11 | FIXED — An owned abort registration forwards through a weak signal, transfers into delivery, and unregisters on teardown.                                                      | `b5c249b7`             | `worker_boundary_test`: loop teardown during authentication releases the request.                                                                                                                                                                   |
+| D12 | FIXED — The body owns its delivery state. Cancellation observes that state weakly and releases its registration on terminal paths and destruction.                             | `b5c249b7`             | `worker_boundary_test`: an unread body and upstream response expire after drop, including when abort preceded delivery setup.                                                                                                                       |
+| D13 | FIXED — A host receipt retains the shared settlement latch and abort registration. The dropped body, reader, and host lifetime callable can expire before the receipt arrives. | `b5c249b7`             | `worker_boundary_test`: a pending receipt outlives the released response body, then settles one admission as delivered.                                                                                                                             |
+| D14 | FIXED — Separately construct the two quota and six usage KV keys and read tasks before awaiting them.                                                                          | `c0509870`             | `kernel_quota_values_differential_test` and `kernel_usage_coverage_test`: existing projection and readback coverage. The finding is a comparison-rule violation.                                                                                    |
 
 ## Verification and open questions
 
@@ -193,33 +193,121 @@ bash "$scratch/run.sh" 1 python3 -B cpp/gateway/analysis/lifetime/b/probe.py \
 
 ## Final verification and handoff
 
-`http.cpp` and `http_upgrade.cpp` use the HTTP lifetime, differential, streaming,
-and WebSocket fixtures. `entrypoint.cpp` uses the worker-boundary fixture.
-`quota_reservations.cpp`, `quota_v2.cpp`, `usage.cpp`, and `scope_targets.cpp`
-use the quota, usage, and scope-target fixtures. `kv_memory.cpp` is a shared RT
-source linked into all 450 tests. The final ASan selection therefore uses the
-four full shards and the release gate uses full shard 1.
+The driver uses each test's registered link sources and links all 44 RT
+translation units into every binary.
+
+| Changed source                      | Test binaries |
+| ----------------------------------- | ------------: |
+| `src/runtime/http.cpp`              |            88 |
+| `src/runtime/http_upgrade.cpp`      |            89 |
+| `src/worker/entrypoint.cpp`         |             1 |
+| `src/kernel/quota_reservations.cpp` |            72 |
+| `src/kernel/quota_v2.cpp`           |            74 |
+| `src/kernel/usage.cpp`              |            50 |
+| `src/cache/scope_targets.cpp`       |            68 |
+| `src/rt/kv_memory.cpp`              |           450 |
+
+The focused family checks above exercised the regressions before the final
+linked coverage. The shared memory KV file put every registered binary in
+scope for the end-to-end sanitizer run and the release link-dependent checks.
+The Linux ARM64 driver compiled 369 production translation units in each
+configuration and ran every test in isolated loopback namespaces.
+
+The D06 follow-up at `5dc5afb2` names the loaded module before moving it into
+the optional. The lifetime fixture passed 8/8 cases in 11.112 s under ASan
+and in 7.327 s on release. The earlier release build was interrupted to bind
+the final receipts to the corrected source.
 
 ```sh
+scratch=/tmp/cppgw-lifetime-fix-b.03wOF6
 bash "$scratch/run.sh" 2 bash cpp/gateway/tools/ci-build.sh --config release --shard 1/4
-for shard in 1 2 3 4; do
-  bash "$scratch/run.sh" "$jobs" bash cpp/gateway/tools/ci-build.sh --config asan --shard "$shard/4"
+bash "$scratch/run.sh" 2 bash cpp/gateway/tools/ci-build.sh --config asan --shard 1/4
+for shard in 2 3 4; do
+  bash "$scratch/run.sh" 4 bash cpp/gateway/tools/ci-build.sh --config asan --shard "$shard/4"
 done
-python3 cpp/gateway/tools/links.py --check
+for shard in 2 3 4; do
+  bash "$scratch/run.sh" 4 bash cpp/gateway/tools/ci-build.sh --config release --shard "$shard/4"
+done
+python3 -B cpp/gateway/tools/links.py --check
 git diff --check aae39d0ea73e7b5678dc92c437f7da6fb32f0c06 HEAD
 ```
 
-Run with two workers per configuration while both are active, then use the
-remaining four workers for subsequent shards. The driver writes per-object
-logs, incremental case totals, and a receipt with Git and input hashes. The
-partially warm first build is expected to take tens of minutes on four cores.
-Subsequent shards reuse production objects. A failing gate preserves its log for
-diagnosis and leaves the branch unpublished. Final receipts are pending.
+The scratch launcher made a fresh parent environment for each command.
 
-The D06 follow-up (`fix(cpp): name the loaded WebSocket module before storing it`)
-names the value returned by the module await before moving it into the optional.
-The lifetime fixture passed 8/8 cases in 11.112 s under ASan and 7.327 s on
-release. The earlier full release build was interrupted to bind final receipts
-to the corrected tree.
+```sh
+isolated=$(mktemp -d "$scratch/run.XXXXXX")
+mkdir "$isolated/home" "$isolated/tmp"
+jobs=$1
+shift
+exec env -i PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C HOME="$isolated/home" TMPDIR="$isolated/tmp" \
+  CC=clang-21 CXX=clang++-21 UOS_CI_JOBS="$jobs" UOS_CI_BUILD_DIR="$scratch/build" "$@"
+```
+
+| Driver selection | Test binaries passed | Cases passed | Object phase (s) | Link and test phase (s) | Total (s) |
+| ---------------- | -------------------: | -----------: | ---------------: | ----------------------: | --------: |
+| release 1/4      |                  113 |        1,333 |         1176.473 |                  46.960 |  1223.954 |
+| asan 1/4         |                  113 |        1,333 |         2239.842 |                 131.888 |  2372.253 |
+| asan 2/4         |                  113 |        1,241 |          411.248 |                  45.620 |   457.394 |
+| asan 3/4         |                  112 |        1,444 |          415.483 |                  51.082 |   467.103 |
+| asan 4/4         |                  112 |        1,104 |          398.413 |                 112.932 |   511.866 |
+
+All four sanitizer shards passed 450 binaries and 5,122 cases
+under ASan, UBSan, and LSan. The link registry validated all 450 entries.
+The test driver used Clang 21.1.8, Boost 1.92.0, SQLite 3.54.0, and ICU 78.3.
+
+The required release shard and sanitizer shards recorded commit
+`5dc5afb27f7ef2af8f807522a9805115fdc8a449` and tree
+`d3c289cbd4ab31d9e534a0e38b4bbbb5650a81b1`. The driver input SHA-256 was
+`bd96c33f974634165d7ccb4ee9ea4fcb6e38bf9d0fd92ff46e93a3fa915c03d4` before and after each run.
+
+Release shards 2, 3, 4 are pending. Their linked coverage extends the required full release shard.
+
+The restart recovery copied the orphaned third sanitizer shard's terminal
+driver receipt before the next shard started. Its complete passing status
+came from the receipt and final driver table.
+
+```text
+ddeae281e25b865817682efe162f01b63f58582d1e57b8891edf7e415ee4e904  final-release-1.receipt.json
+6a8e286df5756571d08c5e3536160894b5b7b06861564a17537432ac23a45c64  final-asan-1.receipt.json
+40ed73b90b5bb4cb5f0ac21a8efb5f6958e5248162d60a4dfcbd613156902253  final-asan-2.receipt.json
+a4791f41abc32ce9912da0470d48df2fb66c04543a2df378965db94e03902dbb  final-asan-3.receipt.json
+3915e494a5f254ceb9d55e81bd672b58a92837a4ab2dc28b673aac44d2690309  final-asan-4.receipt.json
+```
+
+The handoff commits update this report after the tested source commit.
+This branch starts from the requested integration head `aae39d0ea73e7b5678dc92c437f7da6fb32f0c06`
+and merges the four audit files from `fa1cd486b94214e5110529a35fd7c4e0ff5c93a9`.
+The refreshed `origin/development` at `5ddac3dd154d74b1049197fb7cf5f53551609072`
+diverges from that integration branch by 17 development commits and 406 integration commits.
+The integration branch carries `cpp/gateway`.
+The intended PR base is `agent-jobs/cppgw-integrate-f2-20261118-44374217576-1`.
+
+```sh
+git fetch --no-tags origin refs/heads/development:refs/remotes/origin/development
+git merge-base --is-ancestor aae39d0ea73e7b5678dc92c437f7da6fb32f0c06 origin/development
+GIT_TERMINAL_PROMPT=0 git -c core.askPass=/bin/false push --dry-run origin \
+  HEAD:refs/heads/agent-jobs/cppgw-lifetime-fix-b-20261118
+gh auth status --hostname github.com
+```
+
+The GitHub HTTPS push preflight exited 128 because the runner has no write
+authentication. The commit series remains on the clean local `agent-job`
+branch. Publication and hosted verification are pending.
 
 [Area B audit](cppgw-lifetime-b-20261118.md)
+
+## Handoff summary
+
+Fixed all 14 audited defects. A disconnect during a backpressured HTTP write
+now keeps the buffer alive through cancellation. Shutdown refuses late
+WebSocket upgrades, abandoned requests and responses release their resources,
+and dropped quota reservations stop renewing. Worker accounting settles once
+using the actual delivery outcome. KV and fingerprint reads follow the port's
+coroutine rules.
+
+Linux ARM64 passed all 450 sanitizer binaries (5,122 cases), the full release shard (113 binaries and 1,333 cases), and the link registry check.
+The fetch-body retention belongs to a separate source area. The report records
+the remaining forced-loop teardown questions and the GCC 12 evidence limit.
+
+The fixes are committed locally. GitHub write authentication is unavailable
+on this runner, so the PR and hosted CI are pending.
