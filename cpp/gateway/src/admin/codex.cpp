@@ -69,7 +69,11 @@ std::optional<rt::Response> runtimeConfigErrorResponse(rt::Reason failure) {
 }
 rt::Task<rt::Response> handleAdminDebugRouting(rt::Request req) {
   if (req.method() == "GET") { const auto routing = co_await debug_routing::loadDebugRoutingConfig(); co_return http::json(200, json::object{{"routing", json::value_from(routing)}}, rt::Headers{{"Cache-Control", "no-store"}}); }
-  if (req.method() == "DELETE") { const auto routing = co_await debug_routing::setDebugRoutingConfig(std::string("normal"), 0); co_return http::json(200, json::object{{"routing", json::value_from(routing)}}, rt::Headers{{"Cache-Control", "no-store"}}); }
+  if (req.method() == "DELETE") {
+    const std::string scenario = "normal";
+    const auto routing = co_await debug_routing::setDebugRoutingConfig(scenario, 0);
+    co_return http::json(200, json::object{{"routing", json::value_from(routing)}}, rt::Headers{{"Cache-Control", "no-store"}});
+  }
   const auto raw = co_await request::readJsonBody(req);
   if (!rt::truthy(raw) || !utils::isRecord(raw)) co_return error(400, "Invalid JSON body", "invalid_request_error");
   auto scenarioRaw = rt::getString(raw, "scenario"); const auto scenario = scenarioRaw ? rt::trim(*scenarioRaw) : std::string();

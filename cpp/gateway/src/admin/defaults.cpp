@@ -98,7 +98,12 @@ namespace {
     if (nextRuntime) atomic->set(runtime_config::RUNTIME_CONFIG_V2_KEY, rt::KvValue(runtime_config::toJson(*nextRuntime)));
     if (intent.writesKernelLimit) atomic->set(base::DEFAULT_KERNEL_POLICY_LIMIT_KEY, rt::KvValue(limit));
     if (intent.writesKernelWindow) atomic->set(base::DEFAULT_KERNEL_POLICY_WINDOW_KEY, rt::KvValue(window));
-    bool committed = false; rt::Reason failure; try { committed = (co_await atomic->commit()).ok; } catch (...) { failure = std::current_exception(); }
+    bool committed = false;
+    rt::Reason failure;
+    try {
+      const auto result = co_await atomic->commit();
+      committed = result.ok;
+    } catch (...) { failure = std::current_exception(); }
     if (!committed && guard) { auto task = kernel::releaseKernelDefaultWindowCutover(database, *guard); co_await std::move(task); }
     if (failure) std::rethrow_exception(failure);
     if (!committed) co_return std::nullopt;

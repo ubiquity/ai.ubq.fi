@@ -122,7 +122,10 @@ namespace uos::responses_stream {
     }
 
   private:
-    static rt::Task<void> run(std::shared_ptr<const Async> function, A... args) { co_await (*function)(std::move(args)...); }
+    static rt::Task<void> run(std::shared_ptr<const Async> function, A... args) {
+      auto pending = (*function)(std::move(args)...);
+      co_await std::move(pending);
+    }
     std::shared_ptr<const Sync> sync_;
     std::shared_ptr<const Async> async_;
   };

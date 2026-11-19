@@ -60,14 +60,14 @@ column identifies a source commit by its unique subject so the report can travel
 | `src/lib/jev_compaction/jev_codex_smoke.cpp:180` | FIXED · The fake owns its server handle, which previously retained the fake through the registered handler. Registration is weak and each request holds a locked owner. | Break listener and server ownership cycles | `jev_codex_smoke_test` starts and stops the loopback fake and checks that its owner expires. |
 | `src/serve.cpp:159` | FIXED · `process::once` stores its callback before arming the signal wait. The development launcher's cleanup guard now covers both registrations. | Drain startup migration before KV closure | `serve_test` covers startup cleanup. Faulting a valid OS signal registration requires intrusive failure injection. |
 | `src/handler/serve_handler.cpp:13` | FIXED · The request signal owned a listener that held the same signal. The handoff owns the signal and the listener now holds it weakly. | Break listener and server ownership cycles | `serve_delivery_http_test` drops a handoff without calling it and checks that the request signal is released. |
-| `src/admin/defaults.cpp:99` | LEFT · Pending re-verification. | | |
-| `src/auth/passkeys.cpp:4313` | LEFT · Pending re-verification. | | |
-| `src/admin/codex.cpp:71` | LEFT · Pending re-verification. | | |
-| `src/admin/kernel.cpp:380` | LEFT · Pending re-verification. | | |
-| `src/auth/index.cpp:137` | LEFT · Pending re-verification. | | |
-| `src/models/codex_models_whitelist.cpp:134` | LEFT · Pending re-verification. | | |
-| `src/responses_failover_stream.cpp:944` | LEFT · Pending re-verification. | | |
-| `include/uos/responses_stream.hpp:125` | LEFT · Pending re-verification. | | |
+| `src/admin/defaults.cpp:99` | FIXED · `applyDefaultsUpdateAttempt` now binds the atomic result before reading `ok`. | Name owning coroutine inputs and results | Existing `admin_defaults_differential_test` commit paths. |
+| `src/auth/passkeys.cpp:4313` | FIXED · All six audited lookups or deletions still constructed their keys in the await expression. Each now receives a named key. | Name owning coroutine inputs and results | Existing `passkeys_test`, `passkeys_part1_test` and `passkeys_part2_test`. |
+| `src/admin/codex.cpp:71` | FIXED · The debug-routing DELETE handler names the reset scenario before awaiting. | Name owning coroutine inputs and results | Existing DELETE fixture in `admin_codex_coverage_test`. |
+| `src/admin/kernel.cpp:380` | FIXED · Cohort hashing, reset and overage reads, and the overage write now use named strings. | Name owning coroutine inputs and results | Existing `admin_kernel_coverage_test`. |
+| `src/auth/index.cpp:137` | FIXED · The GitHub cache input and policy queue path are built before awaiting. The digest call takes ownership of the assembled input. | Name owning coroutine inputs and results | Existing `auth_responses_branch_coverage_test`. |
+| `src/models/codex_models_whitelist.cpp:134` | FIXED · The strong-read options and Task are named before awaiting. | Name owning coroutine inputs and results | Existing whitelist and failure fixtures in `admin_codex_coverage_test`. |
+| `src/responses_failover_stream.cpp:944` | FIXED · Both `emitFailureTerminal` calls move their event inputs into a named Task before awaiting it. | Name owning coroutine inputs and results | Existing `responses_failover_stream_test` and `responses_failover_branch_coverage_test`. |
+| `include/uos/responses_stream.hpp:125` | FIXED · `MaybeAsyncCallback::run` starts a named Task with its owned event or failure aggregate. | Name owning coroutine inputs and results | Existing `responses_stream_test` and `responses_failover_stream_test`. |
 
 ## Verification and handoff
 
@@ -82,3 +82,65 @@ are pending.
 
 Startup and catalog changes passed strict syntax checks for their two source and two test translation units.
 Their link closures contain 3 and 129 binaries respectively. Their release and sanitizer runs are pending.
+
+The callback and ownership changes affect 231 and 51 link closures respectively. The tests release their external
+callback owners before resuming pending work. Ordinary admin dispatch builds empty overrides. The regression fixtures
+exercise the public override entry points and the same fail-fast join. The admission timer stays exact and unreferenced
+and its combined signal preserves the order of caller listeners and the caller-abort preference.
+
+The eight named-await rows are confirmed violations of `PORTING.md`. Their results and inputs already have the expected
+wire or storage shape under Clang. The existing regression fixtures exercise those behaviors, and the comparison-only
+compiler failure is outside the portable Clang sanitizer profile. The await changes affect 222 link closures.
+
+### Runner and commands
+
+The runner is Ubuntu 24.04.5 Linux ARM64 with four CPUs. Clang and Clang++ 21.1.8 came from apt.llvm.org. The
+staged official archives were SHA-256 verified before building Boost 1.92.0 static JSON and Container, ICU 78.3 and
+SQLite 3.54.0 with `-O2 -DSQLITE_DQS=3`. Ubuntu supplied OpenSSL 3.0.13, zlib 1.3, Brotli 1.1.0, Zstd 1.5.5,
+and mold 2.30.0. The driver independently checked SQLite 3.54.0 inside the fixture namespace.
+
+```bash
+session=$(mktemp -d "$scratch/gate.XXXXXXXX")
+mkdir "$session/home" "$session/tmp"
+env -i PATH=/usr/local/bin:/usr/bin:/bin:/usr/lib/llvm-21/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
+  HOME="$session/home" TMPDIR="$session/tmp" CC=clang-21 CXX=clang++-21 UOS_CI_JOBS="$jobs" \
+  UOS_CI_BUILD_DIR="$scratch/ci" UOS_CI_SQLITE_PREFIX="$scratch/sqlite" \
+  PKG_CONFIG_PATH="$scratch/icu78/lib/pkgconfig:$scratch/sqlite/lib/pkgconfig" \
+  UOS_CI_CFLAGS="$instrument" UOS_CI_CXXFLAGS="-isystem $scratch/boost_1_92_0 $instrument" \
+  UOS_CI_LDFLAGS="-L$scratch/boost_1_92_0/stage/lib -Wl,--disable-new-dtags,-rpath,$scratch/icu78/lib:$scratch/sqlite/lib" \
+  "$@"
+```
+
+The scratch `run-gate.sh` uses that environment with `instrument` empty for release and
+`-gline-tables-only -fno-sanitize-recover=all` for ASan. A scratch selector imports the unmodified portable driver.
+It filters the `links.all_tests()` inventory to tests whose `links.input_paths(test, links.resolve(test, registry).sources)`
+intersect the changed paths. The driver still compiles all 369 production objects and runs each selected test in a
+fresh network, mount and PID namespace as UID 1001. Each unit uses its own committed snapshot in the same detached
+verification checkout so Ninja can reuse unchanged objects. Only changes within a unit determine its selection.
+
+```bash
+# Run from the detached verification checkout at the source commit being tested.
+bash "$scratch/run-gate.sh" "$config" 2 python3 -B "$scratch/select.py" cpp/gateway changes \
+  "${changed_paths[@]}" -- --config "$config"
+bash "$scratch/run-gate.sh" asan 4 python3 -B "$scratch/select.py" cpp/gateway changes \
+  "${all_changed_paths[@]}" -- --config asan --shard "$shard/4"
+bash "$scratch/run-gate.sh" release 4 bash cpp/gateway/tools/ci-build.sh --config release --shard 1/4
+python3 cpp/gateway/tools/links.py --check
+git diff --check
+```
+
+Strict `clang++-21 -fsyntax-only` checks ran with the driver's warnings, C++20, sanitizer, include and native
+dependency flags before the source commits. The link registry preliminary check passed all 450 entries. The
+cold release and sanitizer gates are in progress, with subsequent gates pending the same checkout's release.
+
+## Out-of-area observations
+
+- The SSE header setup fault in the ledger reproduces by inspection in `runtime::http::sendResponse`. The transport
+  owns the response at that point. It must cancel the unread body with the original failure so terminal accounting,
+  admission release and the request drain can finish while preserving the fallback transport receipt.
+- `src/codex/auth_refresh.cpp` still removes its private abort listener after shared auth wins without settling the
+  abort promise. The Codex owner has that source path.
+- `include/uos/rt/async.hpp` and `src/rt/async.cpp` still retain each pending source reaction until settlement or loop
+  teardown. The runtime owner has the shared implementation. The area D changes use only local settlement.
+- `src/rt/kv.cpp` still returns the awaited aggregate directly from `GenericAtomicOperation::commit`. The runtime
+  owner has that source path.
