@@ -114,7 +114,24 @@ ASYNC_TEST("admin models catalog serves the picker view and reports KV outages")
   Fixture fixture; a::CatalogDependencies dependencies; dependencies.buildCatalog = [] { return rt::fulfilledTask(catalogFixture()); }; AWAIT(response, a::handleAdminModelsCatalogGet(dependencies)); EXPECT_EQ(response.status(), 200); EXPECT_EQ(response.headers().get("cache-control"), "no-store"); AWAIT(body, response.json()); EXPECT_EQ(rt::getBool(body.at("data"), "filter_active"), false); EXPECT_EQ(rt::getArray(body.at("data"), "models")->size(), 2u); uos::kv::setKvForTest(nullptr); AWAIT(absent, a::handleAdminModelsCatalogGet(dependencies)); EXPECT_EQ(absent.status(), 500);
 }
 ASYNC_TEST("admin provider selection get serves the roster and reports an unavailable KV") {
-  Fixture fixture; a::CatalogDependencies dependencies; dependencies.buildCatalog = [] { return rt::fulfilledTask(catalogFixture()); }; AWAIT(response, a::handleAdminProviderSelectionGet(dependencies)); EXPECT_EQ(response.status(), 200); EXPECT_EQ(response.headers().get("cache-control"), "no-store"); AWAIT(body, response.json()); EXPECT_EQ(rt::getArray(body.at("data"), "providers")->size(), uos::provider::selection::SELECTABLE_PROVIDER_IDS.size()); EXPECT_EQ(rt::getBool(body.at("data"), "filter_active"), false); uos::kv::setKvForTest(nullptr); AWAIT(absent, a::handleAdminProviderSelectionGet(dependencies)); EXPECT_EQ(absent.status(), 500);
+  Fixture fixture;
+  a::CatalogDependencies dependencies;
+  dependencies.buildCatalog = [] { return rt::fulfilledTask(catalogFixture()); };
+  AWAIT(response, a::handleAdminProviderSelectionGet(dependencies));
+  EXPECT_EQ(response.status(), 200);
+  EXPECT_EQ(response.headers().get("cache-control"), "no-store");
+  AWAIT(body, response.json());
+  const auto* providers = rt::getArray(body.at("data"), "providers");
+  ASSERT(providers);
+  std::vector<std::string_view> ids;
+  for (const auto& row : *providers) ids.push_back(rt::getString(row, "id").value_or(""));
+  std::vector<std::string_view> expected;
+  for (const auto id : uos::provider::selection::SELECTABLE_PROVIDER_IDS) if (id != "gemini") expected.push_back(id);
+  EXPECT_EQ(ids, expected);
+  EXPECT_EQ(rt::getBool(body.at("data"), "filter_active"), false);
+  uos::kv::setKvForTest(nullptr);
+  AWAIT(absent, a::handleAdminProviderSelectionGet(dependencies));
+  EXPECT_EQ(absent.status(), 500);
 }
 namespace {
   json::object authPayload(const std::string& account = "acct") { return {{"tokens", json::object{{"access_token", "access"}, {"refresh_token", "refresh"}, {"account_id", account}}}}; }
