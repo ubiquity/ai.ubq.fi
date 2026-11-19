@@ -350,7 +350,8 @@ namespace uos::rt {
     Task<void> unconditionalDelete(HandlePtr handle, KvKey key) {
       std::unique_ptr<AtomicOperation> operation = checkedAtomic(handle);
       operation->delete_(std::move(key));
-      if (!(co_await operation->commit()).ok) throw JsError("Unconditional KV delete failed");
+      const KvCommitResult result = co_await operation->commit();
+      if (!result.ok) throw JsError("Unconditional KV delete failed");
     }
   }
 

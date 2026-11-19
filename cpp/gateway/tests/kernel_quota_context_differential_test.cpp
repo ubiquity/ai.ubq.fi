@@ -212,6 +212,39 @@ ASYNC_TEST("renewal extends the lease and reschedules its expiry") {
   fixture.expectOracle("renewal extends the lease and reschedules its expiry", std::move(steps));
 }
 
+ASYNC_TEST("a kernel reservation stops renewing when its last settlement handle is dropped") {
+  const Fixture fixture;
+  const auto kv = fixture.kv;
+  constexpr double interval = 60'000;
+  constexpr double initialExpiry = NOW + 300'000;
+  seedRows(*kv, initialExpiry);
+  auto context = reservations::kernelReservationContext(kv, "org", "acme", std::nullopt, W, "req-1", ROUTE, initialExpiry, interval);
+  auto commit = context.commit;
+  context.commit = {};
+  context.release = {};
+
+  clockMs = NOW + interval;
+  co_await rt::sleep(interval);
+  auto reading = leaseOf(kv);
+  const auto renewed = co_await std::move(reading);
+  EXPECT_EQ(renewed, rt::makeNumber(initialExpiry + interval));
+  EXPECT(!context.signal.aborted());
+
+  commit = {};
+  clockMs = NOW + 2 * interval;
+  co_await rt::sleep(interval);
+  auto checking = leaseOf(kv);
+  const auto lease = co_await std::move(checking);
+  EXPECT_EQ(lease, renewed);
+  EXPECT(!context.signal.aborted());
+
+  const double untilExpiry = initialExpiry + interval - clockMs;
+  clockMs += untilExpiry;
+  co_await rt::sleep(untilExpiry);
+  EXPECT(context.signal.aborted());
+  EXPECT_EQ(rt::errorName(context.signal.reason()), "TimeoutError");
+}
+
 ASYNC_TEST("an expired lease aborts and stops renewal until release") {
   const Fixture fixture;
   const std::shared_ptr<ThrowingKv> kv = fixture.kv;

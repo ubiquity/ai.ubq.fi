@@ -345,6 +345,25 @@ namespace {
 
   const AdmissionRecord& firstAdmission(const AuthorityState& state) { return *state.admissions.values().at(0); }
   const PrincipalWindow& firstWindow(const AuthorityState& state) { return *state.windows.values().at(0); }
+
+  rt::Task<UpstreamResult> ownedResponse(std::shared_ptr<int> owner, std::function<rt::Task<void>()> onDispatched, std::optional<rt::AbortController> abort,
+                                        std::shared_ptr<std::weak_ptr<const void>> observed = nullptr) {
+    auto marking = onDispatched();
+    co_await std::move(marking);
+    if (abort) abort->abort(rt::makeReason(rt::JsError("fixture dispatch interrupted")));
+    rt::UnderlyingSource<rt::ByteChunk> source;
+    source.pull = [owner](rt::ReadableStreamDefaultController<rt::ByteChunk> controller) {
+      controller.enqueue(encode(std::to_string(*owner)));
+      controller.close();
+    };
+    const rt::ByteStream body(std::move(source), rt::QueuingStrategy{.highWaterMark = 0});
+    const auto terminal = rt::Promise<TerminalEvidence>::resolve(TerminalEvidence{
+      .outcome = "completed", .providerRequestId = std::nullopt, .spendMicrocredits = std::nullopt, .fallback = std::nullopt,
+    });
+    const rt::Response response{rt::BodyInit(body)};
+    if (observed) *observed = response.weakIdentity();
+    co_return UpstreamResult{.response = response, .terminal = terminal};
+  }
 }
 
 ASYNC_TEST("authenticated Responses/chat JSON and progressive SSE use actual loopback HTTP; EOF remains unobserved delivery") {
@@ -430,6 +449,133 @@ ASYNC_TEST("midstream body cancellation propagates abort and settles one admissi
   EXPECT_EQ(window.active, 0);
   EXPECT_EQ(window.dispatched, 1);
   EXPECT_EQ(window.kernelReserved, 0);
+  f.stop();
+}
+
+TEST("an abandoned worker authentication wait releases the request") {
+  std::weak_ptr<const void> weakRequest;
+  {
+    rt::Loop loop;
+    const rt::LoopScope scope(loop);
+    const rt::Promise<std::optional<BoundaryPrincipal>> authentication;
+    const auto started = std::make_shared<bool>(false);
+    WorkerBoundaryDependencies dependencies{};
+    dependencies.authenticate = [authentication, started](rt::Request) {
+      *started = true;
+      return authentication.wait();
+    };
+    const auto boundary = createWorkerBoundary(std::move(dependencies));
+    auto input = request(object({{"model", "fixture"}}));
+    weakRequest = input.weakIdentity();
+    const rt::Promise<rt::Response> pending(boundary.fetch(std::move(input), BoundaryLifetime{}));
+    loop.run();
+    EXPECT(*started);
+    EXPECT(pending.pending());
+    EXPECT(!weakRequest.expired());
+  }
+  EXPECT(weakRequest.expired());
+}
+
+TEST("an abandoned worker body read drops its listener even while the caller owns the signal") {
+  const rt::AbortController caller;
+  std::weak_ptr<int> weakBody;
+  {
+    rt::Loop loop;
+    const rt::LoopScope scope(loop);
+    WorkerBoundaryDependencies dependencies{};
+    dependencies.authenticate = [](rt::Request) { return resolvedTask(std::optional<BoundaryPrincipal>(BoundaryPrincipal{.principalId = "p", .policyVersion = 1})); };
+    const auto boundary = createWorkerBoundary(std::move(dependencies));
+    const auto started = std::make_shared<bool>(false);
+    rt::RequestInit init;
+    init.method = "POST";
+    init.duplex = "half";
+    init.signal = caller.signal();
+    {
+      const auto owner = std::make_shared<int>(1);
+      weakBody = owner;
+      rt::UnderlyingSource<rt::ByteChunk> source;
+      source.pull = [owner, started](const rt::ReadableStreamDefaultController<rt::ByteChunk>&) { *started = *owner == 1; };
+      init.body = rt::BodyInit(rt::ByteStream(std::move(source), rt::QueuingStrategy{.highWaterMark = 0}));
+    }
+    rt::Request input("https://fixture.invalid/v1/responses", std::move(init));
+    const rt::Promise<rt::Response> pending(boundary.fetch(std::move(input), BoundaryLifetime{}));
+    loop.run();
+    EXPECT(*started);
+    EXPECT(pending.pending());
+    EXPECT(!weakBody.expired());
+  }
+  EXPECT(weakBody.expired());
+  EXPECT(!caller.signal().aborted());
+}
+
+ASYNC_TEST("dropping a worker response releases an unread body, including after dispatch abort") {
+  const Loopback loopback;
+  const bool abortCases[] = {false, true};
+  for (const bool abortDuringDispatch : abortCases) {
+    const Fixture f = fixture(loopback.network);
+    const rt::AbortController caller;
+    auto owner = std::make_shared<int>(1);
+    const std::weak_ptr<int> weakBody = owner;
+    const auto observed = std::make_shared<std::weak_ptr<const void>>();
+    const std::optional<rt::AbortController> abort = abortDuringDispatch ? std::optional(caller) : std::nullopt;
+    f.upstream->dispatchOverride = [owner, abort, observed](ValidatedGatewayInput, UpstreamAttempt, rt::AbortSignal, std::function<rt::Task<void>()> onDispatched) {
+      return ownedResponse(owner, std::move(onDispatched), abort, observed);
+    };
+    {
+      auto input = request(object({{"model", "fixture"}, {"stream", true}}), "/v1/responses", "Bearer synthetic-client", caller.signal());
+      auto fetching = f.boundary.fetch(std::move(input), f.lifetime);
+      const auto response = co_await std::move(fetching);
+      EXPECT_EQ(response.status(), 200);
+      EXPECT(response.body().has_value());
+    }
+    f.upstream->dispatchOverride = nullptr;
+    owner.reset();
+    auto draining = f.drain();
+    co_await std::move(draining);
+    EXPECT(weakBody.expired());
+    EXPECT(observed->expired());
+    const AdmissionRecord& admission = firstAdmission(f.state());
+    EXPECT_EQ(admission.semantic, std::optional<std::string>("completed"));
+    if (abortDuringDispatch) EXPECT_EQ(admission.delivery, std::optional<std::string>("interrupted"));
+    else EXPECT(!admission.delivery);
+    EXPECT_EQ(admission.settled, abortDuringDispatch);
+    f.stop();
+  }
+}
+
+ASYNC_TEST("a pending worker delivery receipt leaves the dropped body free and settles when it arrives") {
+  const Loopback loopback;
+  const Fixture f = fixture(loopback.network);
+  auto owner = std::make_shared<int>(1);
+  const std::weak_ptr<int> weakBody = owner;
+  f.upstream->dispatchOverride = [owner](ValidatedGatewayInput, UpstreamAttempt, rt::AbortSignal, std::function<rt::Task<void>()> onDispatched) {
+    return ownedResponse(owner, std::move(onDispatched), std::nullopt);
+  };
+  const auto receipt = rt::withResolvers<DeliveryOutcome>();
+  {
+    auto input = request(object({{"model", "fixture"}, {"stream", true}}));
+    const BoundaryDelivery delivery{.completed = receipt.promise};
+    auto fetching = f.boundary.fetch(std::move(input), f.lifetime, delivery);
+    const auto response = co_await std::move(fetching);
+    EXPECT_EQ(response.status(), 200);
+    EXPECT(response.body().has_value());
+  }
+  f.upstream->dispatchOverride = nullptr;
+  owner.reset();
+  // Let the returned stream's start reaction release its temporary ownership.
+  co_await rt::microtask();
+  EXPECT(receipt.promise.pending());
+  EXPECT(weakBody.expired());
+  EXPECT(!firstAdmission(f.state()).delivery);
+  receipt.resolve(std::string("delivered"));
+  auto draining = f.drain();
+  co_await std::move(draining);
+  const AdmissionRecord& admission = firstAdmission(f.state());
+  EXPECT_EQ(admission.semantic, std::optional<std::string>("completed"));
+  EXPECT_EQ(admission.delivery, std::optional<std::string>("delivered"));
+  EXPECT(admission.settled);
+  EXPECT_EQ(firstWindow(f.state()).kernelCompleted, 1);
+  EXPECT_EQ(firstWindow(f.state()).active, 0);
   f.stop();
 }
 
