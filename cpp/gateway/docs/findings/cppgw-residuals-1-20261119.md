@@ -8,7 +8,6 @@ Base `74062589fbb209d376a39d119cc00b5a4140d694` on `agent-jobs/cppgw-input-limit
 | ------------------------------------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Admin default-model field and application input limits | FIXED   | `b58afd3d1d835a8b86f25149232540f98f31f8bc`. Regressions in `admin_defaults_differential_test`, `admin_codex_reset_test`, `openai_compat_part11_test`, `images_test` and `codex_supervisor_brief_test`. |
 | SSE body settlement after rejected response headers    | FIXED   | `f90d511bf4e5e8adfb15cff8c20d5f9e1e49a8d4`. Regression in `serve_delivery_http_test`.                                                                                                                  |
-| Chat roles and Responses tool types                    | FIXED   | `d35a8a8bbc9a986bded5bba2d9c0f0f1a11c4ea1`. Regressions in `openai_compat_part11_test` and `conformance/compare_test.py`.                                                                              |
 
 ## Input limits
 
@@ -21,14 +20,6 @@ The supervisor brief route also matched JSON source and thread IDs before checki
 ## SSE header rejection
 
 Native HTTP rejects DEL in response headers after Fetch Headers has accepted it. Before the fix, this path emitted the fallback 500 with the SSE body still pending. The transport now cancels the original body with the header error before rethrowing it to the existing fallback handler. The loopback test checks the fallback status, content type and body, one upstream cancellation, one terminal settlement, one release and one interrupted delivery log. The server drains the request before the test completes.
-
-## Request validation
-
-The historical comparison recorded HTTP 200 and `deepseek.success` for both runtimes in `chat-invalid-role` and `responses-invalid-tool-type`. DeepSeek chat checked that messages were objects and never checked their role. DeepSeek Responses ignored unrecognized tool types during projection. The native ingress now checks provided role and tool type fields before provider matching and returns the usual HTTP 400 error with the indexed field in `param`. The tests check dispatch, the quota commitment callback, terminal usage and provider attempt telemetry.
-
-The accepted sets came from the pinned legacy `src/input-normalization.ts`, TypeScript provider projections and fixtures, and the `ChatCompletionRequestMessage` and `Tool` unions of OpenAI schema revision `120ed0197a808dbc8539f5b4dc7ae973d13ca19a`. This includes the deprecated chat function role, built-in Responses tools, Codex namespaces and OpenRouter's documented fixture aliases. The shared checks are limited to provided discriminators. The legacy nested function shape and provider-specific validation still apply.
-
-Conformance records independent Bun and native contracts for these two cases. Bun must still show 200 and one dispatch. Native must show 400, the matching error parameter and zero dispatches. The verdict and both wire observations appear in the report. [Deviations](../DEVIATIONS-FROM-BUN.md#inference-request-validation)
 
 ## Verification
 
@@ -117,6 +108,5 @@ The attempt for the tested head and tree timed out with exit 124. The restricted
 
 - Oversized admin, inference, and image fields now return their usual validation errors.
 - Rejected SSE headers cancel the original stream once and preserve the fallback HTTP 500.
-- Unknown chat roles and Responses tool types return HTTP 400 before provider dispatch or charging. Conformance records the intentional difference from Bun.
 
 All 134 affected binaries passed in Release and under sanitizers. Release shard 3/4, registration, and conformance controls also passed. The packaged Bun comparison remains pending, and the isolated committed-diff review timed out.

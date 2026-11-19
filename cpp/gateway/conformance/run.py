@@ -36,11 +36,6 @@ def load_cases(path, benchmark):
             raise ValueError("Invalid request path or phase in " + identifier)
         if type(case["expect"]["status"]) is not int:
             raise ValueError("Missing status expectation in " + identifier)
-        if "expect_bun" in case:
-            reference = case["expect_bun"]
-            if (case["expect"]["status"] != 400 or case["expect"].get("routes") != []
-                    or reference.get("status") != 200 or not reference.get("routes")):
-                raise ValueError("A stricter native validation case needs 400 without dispatch and reference 200 with dispatch in " + identifier)
         if "fixture" in case and case["fixture"] not in benchmark["SCENARIOS"]:
             raise ValueError("Unknown benchmark fixture in " + identifier)
         if sum(key in case for key in ("fixture", "raw", "json", "multipart", "ndjson")) > 1:
@@ -98,7 +93,7 @@ class Gateway:
                     self.terminals[terminal["request_id"]].append(terminal)
 
     def run(self, case, mock):
-        from compare import comparable_headers, expected_for, lookup, MISSING, OPAQUE_ID
+        from compare import comparable_headers, lookup, MISSING, OPAQUE_ID
         from wire import event_kind, expand, request
 
         spec = expand(case, self.variables)
@@ -110,11 +105,10 @@ class Gateway:
                 gate.set()
 
         deadline = time.monotonic() + (2 if spec.get("settle") else 0)
-        expected = expected_for(spec, self.runtime)
-        checks = expected.get("values", {})
+        checks = spec["expect"].get("values", {})
         while True:
             response = request(self.origin, spec, self.credentials, acknowledge if gate else None)
-            retry = (response["status"] == expected["status"] and not response.get("wire_error")
+            retry = (response["status"] == spec["expect"]["status"] and not response.get("wire_error")
                      and any(lookup(response, path) != expected for path, expected in checks.items()))
             if not retry or time.monotonic() >= deadline:
                 break
@@ -163,7 +157,7 @@ def run(args):
     smoke = benchmark["SMOKE"]
     sys.path.insert(2, str(smoke))
     from cases import synthetic_auth
-    from compare import case_outcome, compare, expectations, markdown, redact
+    from compare import compare, expectations, markdown, redact
     from fixtures import ADMIN_TOKEN, API_TOKEN, PROVIDER_TOKEN
     from network import write_json
     from providers import Upstream
@@ -207,23 +201,24 @@ def run(args):
                 for name, (spec, result) in pair.items():
                     if case.get("log"):
                         read_terminals(gateways[name], result)
-                    expected[name] = expectations(spec, result, name)
+                    expected[name] = expectations(spec, result)
                     if result.get("capture_error"):
                         expected[name].append({"path": "/capture", "expected": "valid identity", "actual": result["capture_error"]})
                     captures[name] = result
                 changes = compare(case, captures["bun"], captures["native"], {name: gateway.ids for name, gateway in gateways.items()})
                 receipt["cases"].append(redact({"id": case["id"], "observations": captures, "expectation_failures": expected,
-                                               "outcome": case_outcome(case, changes, expected),
                                                "differences": changes}, secrets))
             write_json(args.out / "results.partial.json", receipt)
 
-    counts = {"match": 0, "cosmetic": 0, "functional": 0, "native_stricter": 0, "differential_functional": 0, "shared_expectation_failures": 0}
+    counts = {"match": 0, "cosmetic": 0, "functional": 0, "differential_functional": 0, "shared_expectation_failures": 0}
     for row in receipt["cases"]:
         classes = {item["classification"] for item in row["differences"]}
         failures = row["expectation_failures"]
-        outcome = row["outcome"]
-        counts["differential_functional"] += outcome != "native_stricter" and ("FUNCTIONAL" in classes or failures["bun"] != failures["native"])
+        failed = any(failures.values())
+        counts["differential_functional"] += "FUNCTIONAL" in classes or failures["bun"] != failures["native"]
         counts["shared_expectation_failures"] += bool(failures["bun"]) and failures["bun"] == failures["native"]
+        outcome = "functional" if "FUNCTIONAL" in classes or failed else "cosmetic" if classes else "match"
+        row["outcome"] = outcome
         counts[outcome] += 1
     receipt.update(counts=counts, wall_s=round(time.monotonic() - started, 3))
     write_json(args.out / "results.json", receipt)

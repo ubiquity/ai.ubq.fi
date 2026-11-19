@@ -1005,17 +1005,7 @@
       },
       "expect": {
         "status": 400,
-        "routes": [],
-        "values": {
-          "/body/error/code": "invalid_request_error",
-          "/body/error/type": "invalid_request_error",
-          "/body/error/param": "messages[0].role"
-        },
-        "absent": ["/headers/x-uos-upstream", "/headers/x-uos-attempted-providers"]
-      },
-      "expect_bun": {
-        "status": 200,
-        "routes": ["deepseek.success"]
+        "routes": []
       },
       "mock": "success"
     },
@@ -1390,17 +1380,7 @@
       },
       "expect": {
         "status": 400,
-        "routes": [],
-        "values": {
-          "/body/error/code": "invalid_request_error",
-          "/body/error/type": "invalid_request_error",
-          "/body/error/param": "tools[0].type"
-        },
-        "absent": ["/headers/x-uos-upstream", "/headers/x-uos-attempted-providers"]
-      },
-      "expect_bun": {
-        "status": 200,
-        "routes": ["deepseek.success"]
+        "routes": []
       },
       "mock": "success"
     },

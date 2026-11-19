@@ -26,10 +26,6 @@
 #include "uos/rt/json.hpp"
 #include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
-
-#include <algorithm>
-#include <array>
-
 namespace uos::chat::envelope {
 namespace {
   namespace tel = openai_telemetry;
@@ -38,8 +34,6 @@ namespace {
   namespace rs = responses_stream;
   namespace fs = responses_failover_stream;
   namespace sel = provider::selection;
-  // ChatCompletionRequestMessage in the pinned OpenAI spec includes legacy function messages.
-  constexpr auto CHAT_MESSAGE_ROLES = std::to_array<std::string_view>({"developer", "system", "user", "assistant", "tool", "function"});
   struct NotOk { rt::Response response; };
   template<class T> using Step = std::variant<T, NotOk>;
   rt::Response invalid(const std::string& message, std::optional<std::string> param = std::nullopt) {
@@ -59,16 +53,6 @@ namespace {
     auto raw = body.is_object() ? std::move(body.as_object()) : recordOf(body);
     const auto model = rt::trim(rt::getString(raw, "model").value_or(""));
     if (model.size() > rt::limits::kRegexSubjectBytes) co_return NotOk{invalid("model is too long", "model")};
-    if (const auto* messages = rt::getArray(raw, "messages")) {
-      for (std::size_t index = 0; index < messages->size(); ++index) {
-        const auto* role = rt::get((*messages)[index], "role");
-        if (!role) continue;
-        const auto name = rt::getString(role);
-        if (name && std::ranges::find(CHAT_MESSAGE_ROLES, *name) != CHAT_MESSAGE_ROLES.end()) continue;
-        const auto field = "messages[" + std::to_string(index) + "].role";
-        co_return NotOk{invalid(field + (!name || name->empty() ? " must be a string" : " is not supported"), field)};
-      }
-    }
     rt::Promise<std::optional<sel::ProviderSelection>> selected(sel::loadProviderSelectionCached()); const auto selection = co_await selected.wait();
     const auto requested = deepseek::index::deepSeekUpstreamModelFor(model);
     const bool enabled = sel::isProviderEnabled("deepseek", selection);
