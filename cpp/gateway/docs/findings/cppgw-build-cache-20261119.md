@@ -14,7 +14,7 @@ Base commit `f92b14a9` on `agent-jobs/cppgw-cpp-only-20261119-44610457899-1`.
 - [x] Measure cold and warm sanitizer builds.
 - [x] Compare header invalidation with Ninja's dependency records and restore the header.
 - [x] Document the cache.
-- [ ] Run the final change-scoped checks.
+- [x] Run the final change-scoped checks.
 
 The driver already deduplicates its production inventory, vendor compilations
 and selected test objects in one Ninja graph per configuration. The CI jobs can
@@ -115,3 +115,42 @@ earlier release receipt counts and passed the Bookworm probe.
 BuildKit passed the explicit empty string from `ARG UOS_CI_COMPILER_LAUNCHER`
 in `toolchain` to `FROM toolchain AS cpp` and the helper returned an empty
 launcher list.
+
+## Final verification
+
+The warm release check used commit
+`7d8ff2530568d9c494949a1e186c986e518dce6b` and tree
+`eec6169a5fd485c6a5f35afde8445ffe8507d12a`. The two-worker sanitizer
+check and fuzz trials used commit `d51217dd5c250e742ecaea7b4bbb89602dc1f6e4`
+and tree `d7dbe89652dec660844880bab620fe9d0203be54`. The difference
+between these commits is this findings report. Both final suite checks hit
+509 of 509 compiler calls and passed 113 tests and 1,314 cases.
+
+Three additional four-worker sanitizer checks hit 509 of 509 compiler calls
+and produced byte-identical copies of the 508 objects from the measured warm
+run. They each had one different fixture failure. The concurrent check
+exceeded the two-second Codex supervisor deadline assertion. The two solo
+checks reported a missing Gemini fixture `child-pid` file and a Codex
+follow-ups fixture stack overflow, respectively. The final solo rerun used
+`UOS_CI_JOBS=2` with the same build configuration and passed. The timing
+table records the original four-worker cold and warm runs.
+
+The `base64` fuzz target ran twice under the workflow's network namespace
+with `--seconds 5 --jobs 4`. Both runs passed. The cold build took 84.122 s
+with 53 misses, and the warm build took 1.222 s with 53 hits. The GCC debug,
+Clang debug and Clang sanitizer driver controls each passed all seven checks.
+
+```sh
+python3 -B cpp/gateway/tools/links.py --check
+actionlint -config-file cpp/gateway/tools/ci-actionlint.yaml \
+  .github/workflows/cpp-gateway-ci.yml .github/workflows/cpp-gateway-release.yml
+docker buildx build --check --platform linux/arm64 --target package --no-cache-filter cpp \
+  --build-arg UOS_CI_COMPILER_LAUNCHER= --build-arg FRESH_COMPILE=1 \
+  -f cpp/gateway/packaging/portable/Dockerfile .
+git diff --check f92b14a97818ff81bf95cbfb2642e8ff13b4ab13 HEAD
+```
+
+The registration gate checked 449 tests. Both workflows passed actionlint
+1.7.12. Package verification covered Dockerfile validation with the release
+arguments, the Bookworm launcher and stats probe, and macOS script syntax
+on Linux.
