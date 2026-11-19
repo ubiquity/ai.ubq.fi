@@ -462,5 +462,49 @@ base `13502438fb2f1a986e61af3456d84611a12eed9e`, using the command above with
 with a bubblewrap isolation panic, so the diff and repository files were
 never inspected. No verdict on the code change itself is implied."
 The incomplete response yielded no review findings.
+Installing Ubuntu's `bubblewrap` 0.9.0-1ubuntu0.3 did not recover the sandbox.
+The independent probe
+`bwrap --die-with-parent --ro-bind / / --unshare-all --proc /proc --dev /dev /bin/true`
+exited 1 with `loopback: Failed RTM_NEWADDR: Operation not permitted`.
 
-The complete post-fix fuzz replay is in progress.
+## Release snapshot with updated guides
+
+Repeated the portable build, checksum, Debian verifier, pinned production
+comparison and public replay commands above from
+`984861d339379e1147852da6dbd0ed889773b4f3`, tree
+`ee80c4eee82e3a7f4180967c26df00b7af490174`, in
+`/tmp/cppgw-final-20261119/release-final.h6chV7FP` as `q`. The build took
+38.29 s and verified an 84,253,838-byte archive with SHA-256
+`50243c6c0f02a5dac7341610c792416d999cad7d4850ca02969e04221a56fca2`.
+The gateway SHA-256 was
+`d0b3ec6358417fff368a8ad3bc9fd0cf2e312b4029ca24e677ecc7a8c6858ba0`.
+The Ubuntu manifest SHA-256 was
+`c0d764a3ad76e01c24276ff96ddf01a73288eef856615312c62fd829746a384b`.
+
+The verifier exited 0 in 66.23 s with the exact health identity across
+restart, 1,161 matched settlements per proof and zero OOMs across all four
+runs. The same proof JSON query reports the latest application RSS peaks
+from 37,335,040 to 37,412,864 bytes with eight in flight. This replay ran
+with other qualification load. The package proof measures the gateway RSS
+and the full container cgroup peak separately.
+
+The paired comparison exited 1 after 14.55 s overall and 11.455 s in the
+namespace. All 184 matches and the two shared failures reproduced. A mock
+connection reset appeared in the server log. It had no corresponding wire,
+dispatch or expectation difference in the completed receipt
+`$q/conformance/run.bujtR1zX/output/results.json`, SHA-256
+`3457d7becd2ee5456702e42ab4555c543c9c9e9fe4e2957e9babe2ee9bcaace2`.
+Public replay matched four pairs with no mock dispatch and the exact native
+identity. Its receipt SHA-256 was
+`e8f5c11565af41aca416919005ffd568c6ab71711bbb9196646c0665f0e174d0`.
+`systemd-analyze verify --recursive-errors=one "$unit_file"` passed again
+on systemd 255.4 with the sealed package paths and a rendered scratch unit.
+The independent historical smoke preflight again failed on its missing
+supervisor evidence file. The target host's enforcement remains unverified.
+
+## Post-fix fuzz replay
+
+The workflow command above is running from the clean `3946c4a3` checkout.
+For `regex`, the 300-second campaign passed with 305 observed seconds,
+3,053 corpus files, one classified fork-parent leak and zero harness findings.
+The other four post-fix campaigns are in progress.

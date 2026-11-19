@@ -46,7 +46,7 @@ plus idle sweeps on the system clock), `versionIncrement` (default uniform 1..9)
 `sweepIntervalMs`/`sweepJitterMs` (60 000 / 1 000; 0/0 sweeps before every operation). Tests fix
 the increment and the clock; production passes nothing.
 
-## The file (byte-compatible with the TS store)
+## File layout
 
 - Schema: the C++ runs denokv's migration statements verbatim, so `sqlite_master.sql` is
   identical to a TS-created file (checked against the text a TS-created file holds, including the
@@ -55,8 +55,8 @@ the increment and the clock; production passes nothing.
   one row k=0, `PRAGMA journal_mode=wal`, page size 4096, user_version/application_id 0. The C++
   sets `synchronous=FULL` and `busy_timeout=5000` per connection (rusqlite's default timeout).
   `uos_kv_metadata` (codec `bun-jsc-v1`) is created by `storage::kv::openKv` as before.
-- Rows: tuple keys (`rt::packKey`); `v_encoding` 1 = Bun's node:v8 bytes (writer: canonical form;
-  reader: every form Bun writes), 2 = KvU64 8 bytes LE, 3 = raw bytes of a top-level Uint8Array
+- Rows: tuple keys (`rt::packKey`); `v_encoding` 1 = Bun/JavaScriptCore serialized bytes for supported
+  values, 2 = KvU64 8 bytes LE, 3 = raw bytes of a top-level Uint8Array
   (also a view: the viewed bytes). `version` = the commit's data_version; `seq` 0;
   `expiration_ms` absolute ms or -1 (plain sets and arithmetic reset it).
 - Versions: each committed write runs `update data_version set version = version + step` inside
@@ -78,6 +78,9 @@ keys_if_undelivered = JSON of the packed keys)` (TEXT values, as rusqlite binds 
   clock, while the handle is idle.
 
 ## Compatibility evidence
+
+The marked Bun/JSC format is shared to the extent shown by these tests and the recorded cross-reader runs.
+Rehearse with a stopped copy of production state before cutover. [Cutover checklist](../CUTOVER.md)
 
 The TypeScript side ran the pinned legacy `#kv` opener (`src/storage/kv.ts` with
 `prepareNativeKvBackend`) over the pinned native-kv artifact (denokv 9fe65cc + both patches; its
