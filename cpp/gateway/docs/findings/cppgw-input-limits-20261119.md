@@ -89,6 +89,43 @@ The engine uses 10 ms for compilation, 250 ms for ordinary matching and 1,800 ms
 
 The timing diagnostics observed Release 16 passing binaries, three failing binaries and two build failures, with 322 of 325 reported cases passing. ASan observed 16 passing binaries, four failing binaries and one build failure, with 348 of 353 cases passing. They overlapped source edits and both receipts were invalidated. The compatibility and compile fixes are listed above. The acceptance totals below come from separate, uninstrumented runs.
 
+## Acceptance runs
+
+The code under test is `577ada6b3463f6cd3c9a181877c8f13ff6ff39fa`, tree `1d3dec2e8fb331f9a17f419ce3f0b57ff55b732b`. The focused uninstrumented checks each passed **4 binaries and 62 cases**. They covered `fetch_response_library_test`, `gzip_test`, `http_test` and `regex_test`, including the corrected compatibility failures. The Release driver took 437.388 s and ASan took 601.783 s. Both receipts recorded unchanged source SHA-256 `7c4de595fe1b2e26608362c9e6f596b19834602df0843f9319d8552bc8caa6bb`.
+
+```sh
+bash "$scratch/run-smoke.sh" release 1 '^tests/(legacy/fetch_response_library|rt/(gzip|http|regex))_test\.cpp$'
+bash "$scratch/run-smoke.sh" asan 1 '^tests/(legacy/fetch_response_library|rt/(gzip|http|regex))_test\.cpp$'
+bash "$scratch/run-shards.sh" release 2
+bash "$scratch/run-shards.sh" asan 2
+```
+
+The smoke wrapper uses the driver with only the registered test closures and every runtime object. `run-shards.sh` invokes `bash "$scratch/run-gate.sh" "$profile" 2 --shard "$shard/4"` for shards 1 through 4 in each profile. It keeps each `driver.log`, `results.tsv` and `receipt.json` in `final-<profile>-<shard>`. The full matrix is in progress.
+
+## Committed review
+
+The base was fetched using `git fetch --no-tags origin refs/heads/agent-jobs/cppgw-combine-1-20261119-44443689630-1:refs/remotes/origin/agent-jobs/cppgw-combine-1-20261119-44443689630-1`. The local command `codex review --base origin/agent-jobs/cppgw-combine-1-20261119-44443689630-1` used the configured `ubiquity/deepseek-flash` model, for heads `db0dd9101fac487160366d47d87ba6a471dac69c` and `577ada6b3463f6cd3c9a181877c8f13ff6ff39fa`. Both runs reported `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted` before reading the diff. The system bubblewrap package and a read-only probe reproduced the failure.
+
+The fallback piped a prompt with exact base and head, followed by `git diff --no-ext-diff --no-color "$review_base" "$review_head"`, into `timeout -k 15s 1200s codex review -` with the same model. The completed reviews used the committed diffs and identified these findings verbatim.
+
+`db0dd9101fac487160366d47d87ba6a471dac69c`
+
+```text
+- [P1] Raising the regex deadline 180x permits client CPU stalls — /home/runner/work/_temp/agent-jobs/cppgw-input-limits-20261119/checkout/cpp/gateway/include/uos/rt/limits.hpp:28-28
+  `kRegexDeadline` increases from 10 ms to 1,800 ms, so every client-influenced regex operation can now occupy a worker for 180x longer. Since request paths, fields, model IDs, headers and large image strings flow through this adapter, a single request can chain several multi-second matches and compile/match operations; the tests only justify a larger budget for fixed compaction/image patterns, not for all generic client subjects. Use a separate deadline for those trusted patterns or retain a much tighter generic deadline.
+```
+
+The 10 ms declaration was unused on the base. The revision adopts the suggested separation with a 10 ms compile deadline, 250 ms for ordinary matches and 1,800 ms for fixed patterns above the generic subject limit. The earlier full-matrix object builds were stopped when this revision was made.
+
+`577ada6b3463f6cd3c9a181877c8f13ff6ff39fa`
+
+```text
+- [P1] Preserve the 2.5 s regex matching budget — /home/runner/work/_temp/agent-jobs/cppgw-input-limits-20261119/checkout/cpp/gateway/include/uos/rt/limits.hpp:28-29
+  The old matcher enforced a flat 2.5 s timeout, but these constants are now the executed budgets: ordinary patterns get 250 ms, and even the image/compaction/SSE patterns that admit subjects above 1 MiB get only 1.8 s. Any request whose regex previously completed between 250 ms and 2.5 s, or between 1.8 s and 2.5 s for a scoped pattern, will now fail at the timeout path; the recorded ASan run already consumed 1.37 s on the compaction scan and was interrupted at 1.5 s on the full image subject, leaving little margin. Keep the previous 2.5 s execution budget while retaining the subject-size caps.
+```
+
+Lowering the enforced deadline is an explicit requirement. The revised full-image case passed the uninstrumented sanitizer check. The compaction allowance follows the recorded 1,375 ms operation plus scheduling margin.
+
 ## Outside the owned paths
 
 - `docs/RUNTIME.md` and `docs/rt/regex.md` still describe several limits from the combined base, including the 2.5-second regex deadline. The current inventory lives in `SECURITY-LIMITS.md`.
