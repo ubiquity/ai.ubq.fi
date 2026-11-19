@@ -331,63 +331,10 @@ namespace uos::runtime::startup {
       if (::fsync(directory) != 0) refuse("fixture state directory durability failed");
     }
 
-    void addGeminiRuntimePermissions(permissions_linux::LinuxPermissions& permissions) {
-      for (const std::string_view name : {"/etc/ca-certificates", "/etc/passwd", "/etc/group"}) {
-        if (fs::exists(name)) permissions.read.push_back(fs::canonical(name).string());
-      }
-      const auto home = rt::env::get("HOME");
-      if (!home || home->empty()) return;
-      const fs::path executable = fs::path(*home) / ".local/bin/agy";
-      const fs::path cliState = fs::path(*home) / ".gemini/antigravity-cli";
-      struct stat executableInfo {};
-      struct stat cliInfo {};
-      if (::lstat(executable.c_str(), &executableInfo) != 0 || !S_ISREG(executableInfo.st_mode) || S_ISLNK(executableInfo.st_mode) ||
-          executableInfo.st_nlink != 1 || executableInfo.st_uid != ::getuid() || (executableInfo.st_mode & 0077) != 0 ||
-          (executableInfo.st_mode & 0100) == 0 || ::lstat(cliState.c_str(), &cliInfo) != 0 || !S_ISDIR(cliInfo.st_mode) ||
-          S_ISLNK(cliInfo.st_mode) || cliInfo.st_uid != ::getuid() || (cliInfo.st_mode & 0077) != 0) {
-        return;
-      }
-      permissions.read.push_back(fs::canonical(cliState).string());
-      permissions.write.push_back(fs::canonical(cliState).string());
-      permissions.execute.push_back(fs::canonical(executable).string());
-      permissions.allowChildProcess = true;
-      const fs::path loader = "/lib/ld-linux-aarch64.so.1";
-      if (!fs::exists(loader)) refuse("Antigravity CLI dynamic loader is unavailable");
-      permissions.execute.push_back(fs::canonical(loader).string());
-      // `agy` 1.5.11 has these additional direct dependencies. The launcher does
-      // not grant /usr/bin, so the loader cannot broaden into general command execution.
-      for (const std::string_view name : {"libresolv.so.2", "libpthread.so.0", "libdl.so.2", "librt.so.1"}) {
-        const fs::path library = fs::path("/usr/lib") / std::string(name);
-        if (!fs::exists(library)) refuse("Antigravity CLI host library is unavailable: " + std::string(name));
-        permissions.read.push_back(fs::canonical(library).string());
-      }
-      const fs::path cliConfig = fs::path(*home) / ".gemini/config";
-      struct stat configInfo {};
-      if (::lstat(cliConfig.c_str(), &configInfo) == 0 && S_ISDIR(configInfo.st_mode) && !S_ISLNK(configInfo.st_mode) &&
-          configInfo.st_uid == ::getuid() && (configInfo.st_mode & 0077) == 0) {
-        permissions.read.push_back(fs::canonical(cliConfig).string());
-      }
-      const fs::path pluginConfig = fs::path(*home) / ".config/antigravity";
-      struct stat pluginInfo {};
-      if (::lstat(pluginConfig.c_str(), &pluginInfo) == 0 && S_ISDIR(pluginInfo.st_mode) && !S_ISLNK(pluginInfo.st_mode) &&
-          pluginInfo.st_uid == ::getuid() && (pluginInfo.st_mode & 0077) == 0) {
-        permissions.read.push_back(fs::canonical(pluginConfig).string());
-      }
-    }
-
     void enforce(const fs::path& package, const fs::path& state, const permissions_linux::LinuxPermissionsArtifact& artifact, int port,
                  const std::optional<std::string>& origin) {
-      permissions_linux::LinuxPermissions permissions;
-      permissions.read = {package.string(), state.string()};
-      permissions.write = {(state / ".data").string()};
-      permissions.immutable = std::vector<std::string>{package.string()};
-      for (const std::string_view name : {"/usr/lib", "/etc/ssl", "/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/localtime", "/dev/null",
-                                           "/dev/urandom", "/dev/random", "/proc/self"}) {
-        if (fs::exists(name)) permissions.read.push_back(fs::canonical(name).string());
-      }
-      // Gemini's CLI transport is an explicit operator opt-in. Without it this
-      // function keeps the gateway's original no-child-process boundary and read set.
-      if (provider::gemini::geminiOperatorOptIn()) addGeminiRuntimePermissions(permissions);
+      auto profiles = permissions_linux::gatewayLinuxPermissions(package.string(), state.string());
+      auto& permissions = profiles.gateway;
       if (const char* optIn = std::getenv("UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT"); optIn && std::string_view(optIn) == "1") {
         permissions_linux::LinuxPermissionsTcpPorts ports{static_cast<std::uint16_t>(port)};
         if (origin) ports.connectPorts.push_back(static_cast<std::uint16_t>(std::stoi(rt::URL(*origin).port())));
@@ -397,6 +344,14 @@ namespace uos::runtime::startup {
       const auto receipt = permissions_linux::applyLinuxPermissions(permissions, artifact);
       if (!receipt.processThreadSync || (!receipt.filesystemThreadSync && !permissions.allowReducedConfinement))
         refuse("kernel confinement did not produce both enforcement receipts");
+      if (profiles.antigravity) {
+        provider::gemini::setGeminiChildConfinement([base = std::move(*profiles.antigravity)](const std::string& workspace) {
+          auto child = base;
+          child.read.push_back(workspace);
+          child.write.push_back(workspace);
+          permissions_linux::restrictLinuxChildThread(child);
+        });
+      }
       const std::string active = rt::join(receipt.activeProtections);
       const std::string missing = rt::join(receipt.missingProtections);
       std::fprintf(stderr, "Linux confinement Landlock ABI=%g active=%s missing=%s\n", receipt.landlockAbi, active.c_str(), missing.empty() ? "none" : missing.c_str());

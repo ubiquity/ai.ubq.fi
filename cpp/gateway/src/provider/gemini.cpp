@@ -230,6 +230,8 @@ namespace uos::provider::gemini {
       return runner;
     }
 
+    std::function<void(const std::string&)> childConfinement;
+
     struct ParsedCli {
       GeminiCliTurn turn;
       std::string status;
@@ -320,6 +322,7 @@ namespace uos::provider::gemini {
   }
 
   void setGeminiCliRunnerForTest(GeminiCliRunner runner) { testRunner() = std::move(runner); }
+  void setGeminiChildConfinement(std::function<void(const std::string&)> confine) { childConfinement = std::move(confine); }
 
   rt::Task<GeminiCliTurn> runGeminiCli(GeminiCliOptions options) {
     if (testRunner()) return runGeminiCli(options, *testRunner());
@@ -354,9 +357,12 @@ namespace uos::provider::gemini {
     if (options.disableSlashCommands) command.insert(command.end(), "--disable-slash-commands");
     std::vector<std::pair<std::string, std::string>> environment{
       {"HOME", *home}, {"PATH", "/usr/local/bin:/usr/bin:/bin"}, {"TMPDIR", directory}, {"LANG", "C.UTF-8"}};
-    const rt::process::Subprocess child = rt::process::spawn(command,
-      {.cwd = directory, .env = std::move(environment), .stdin = options.streamJson ? rt::process::Stdio::pipe : rt::process::Stdio::ignore,
-        .stdout = rt::process::Stdio::pipe, .stderr = rt::process::Stdio::pipe});
+    rt::process::SpawnOptions spawnOptions{.cwd = directory, .env = std::move(environment),
+      .stdin = options.streamJson ? rt::process::Stdio::pipe : rt::process::Stdio::ignore, .stdout = rt::process::Stdio::pipe, .stderr = rt::process::Stdio::pipe};
+    if (rt::process::platform == "linux") {
+      spawnOptions.confine = [&directory] { if (childConfinement) childConfinement(directory); };
+    }
+    const rt::process::Subprocess child = rt::process::spawn(std::move(command), std::move(spawnOptions));
     auto terminateChild = rt::scopeExit([child] {
       if (!child.exitCode()) child.kill();
     });

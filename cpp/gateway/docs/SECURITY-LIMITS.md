@@ -4,6 +4,10 @@ Input budgets are defined in [`uos/rt/limits.hpp`](../include/uos/rt/limits.hpp)
 
 The acceptance tests below are registered existing binaries with additional boundary cases. The ARM64 run records the tested commit, tree, commands and outcomes. [Run findings](findings/cppgw-input-limits-20261119.md)
 
+## Antigravity CLI
+
+An exact `UOS_GATEWAY_ENABLE_ANTIGRAVITY=1` and a validated CLI installation allow process creation and execution for the whole gateway. Seccomp cannot scope the exception by provider. Landlock's direct execute grants are limited to the canonical `agy` and ARM64 dynamic loader files. The loader can open compatible ELF files from the gateway's readable paths. A second Landlock ruleset narrows the CLI's view to specific host inputs, its private CLI state and its own workspace. The CLI state and workspace remain readable and writable to support the CLI. [Operator setup and residual risk](RUNTIME.md#enable-the-gemini-subscription)
+
 ## HTTP, WebSocket and compression
 
 | Library entry points                                                                                                                                                                                                                                                                                         | Origin                                                                                                                                                         | Effective limit before processing                                                                                                                                                                                                                                                                                                                                                           | Error and coverage                                                                                                                                                                                                                                                                                                                   |

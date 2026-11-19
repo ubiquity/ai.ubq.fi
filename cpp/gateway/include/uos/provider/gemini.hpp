@@ -77,6 +77,8 @@ namespace uos::provider::gemini {
   // Test seam. An empty runner selects the real installed `agy` executable.
   using GeminiCliRunner = std::function<rt::Task<GeminiCliTurn>(const GeminiCliOptions&)>;
 
+  // Set by the sealed Linux bootstrap before requests can start.
+  void setGeminiChildConfinement(std::function<void(const std::string&)> confine);
   rt::Task<GeminiCliTurn> runGeminiCli(GeminiCliOptions options);
   void setGeminiCliRunnerForTest(GeminiCliRunner runner);
   rt::Task<GeminiCliTurn> runGeminiCli(GeminiCliOptions options, GeminiCliRunner runner);
