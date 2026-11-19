@@ -32,6 +32,7 @@
 #include <array>
 #include "uos/handler/index.hpp"
 #include "uos/config.hpp"
+#include "uos/release.hpp"
 #include "uos/kv.hpp"
 #include "uos/rt/clock.hpp"
 #include "uos/rt/env.hpp"
@@ -91,6 +92,7 @@ namespace {
 #include "uos/health.hpp"
 #include "uos/codex/auth.hpp"
 #include "uos/config.hpp"
+#include "uos/release.hpp"
 #include "uos/kv.hpp"
 #include "uos/metered_quota.hpp"
 #include "uos/provider/health.hpp"
@@ -221,7 +223,12 @@ ASYNC_TEST("provider health serializes success to 429 to success transitions") {
   const std::function<double()> now = [] { return 3001.0; }; AWAIT(health, ph::getCodexProviderHealth("ordered-account", now)); EXPECT_EQ(health.state, "healthy"); EXPECT_EQ(health.last_observed_at_ms, std::optional(3000.0)); EXPECT_EQ(health.last_success_at_ms, std::optional(3000.0)); EXPECT_EQ(health.last_429_at_ms, std::optional(2000.0)); EXPECT_EQ(commits(scope), 3u);
 }
 ASYNC_TEST("public health is passive release provenance with zero upstream and KV work") {
-  Scope scope; auto response = h::handleHealth(); const auto payload = co_await response.json(); EXPECT_EQ(response.status(), 200); EXPECT_EQ(rt::getString(payload, "status"), std::optional<std::string_view>("available")); EXPECT(rt::getString(object(payload, "release"), "git_sha").has_value()); EXPECT(rt::getString(object(payload, "release"), "deployment_id").has_value()); EXPECT(scope.store->commands.empty());
+  Scope scope; auto response = h::handleHealth(); const auto payload = co_await response.json(); EXPECT_EQ(response.status(), 200); EXPECT_EQ(rt::getString(payload, "status"), std::optional<std::string_view>("available")); EXPECT(rt::getString(object(payload, "release"), "git_sha").has_value());
+    EXPECT_EQ(*rt::getString(object(payload, "release"), "git_sha"), std::string_view(uos::config::runtimeGitSha()));
+#ifdef UOS_PACKAGE_GIT_COMMIT
+    EXPECT_EQ(*rt::getString(object(payload, "release"), "git_sha"), std::string_view(UOS_PACKAGE_GIT_COMMIT));
+    EXPECT(*rt::getString(object(payload, "release"), "git_sha") != std::string_view("unknown"));
+#endif EXPECT(rt::getString(object(payload, "release"), "deployment_id").has_value()); EXPECT(scope.store->commands.empty());
 }
 ASYNC_TEST("public health HEAD is release liveness without a response body") {
   T2IngressScope ingress;

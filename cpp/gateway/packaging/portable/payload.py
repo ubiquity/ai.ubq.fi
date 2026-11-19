@@ -19,6 +19,10 @@ from seal import EXECUTABLES, manifest, require_portable
 
 
 def main(commit, tree, epoch):
+    if len(commit) != 40 or any(character not in "0123456789abcdef" for character in commit):
+        raise ValueError("The portable package requires the full lowercase Git commit")
+    if len(tree) != 40 or any(character not in "0123456789abcdef" for character in tree):
+        raise ValueError("The portable package requires the full lowercase Git tree")
     payload = OUTPUT / "payload"
     payload.mkdir(parents=True)
     for name in EXECUTABLES:

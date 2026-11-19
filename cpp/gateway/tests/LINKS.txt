@@ -51,6 +51,7 @@ tests/codex_supervisor_brief_test.cpp: (header)
 tests/codex_supervisor_config_differential_test.cpp: src/codex/supervisor_config.cpp
 tests/codex_supervisor_secret_test.cpp: src/codex/supervisor_secret.cpp
 tests/config_differential_test.cpp: src/config.cpp src/release.cpp
+tests/release_identity_test.cpp: src/config.cpp src/release.cpp
 tests/defaults_test.cpp: src/defaults.cpp
 tests/harmony_tools_backend_differential_test.cpp: src/harmony/tools/backend.cpp
 tests/harmony_tools_fakes_differential_test.cpp: src/harmony/tools/fakes.cpp src/harmony/tools/result.cpp src/harmony/tools/backend.cpp

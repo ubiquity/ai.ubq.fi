@@ -33,11 +33,14 @@ parser.add_argument("--timeout", type=int, default=180)
 parser.add_argument("--sqlite-prefix", type=Path, help="Prepared SQLite 3.54.0 prefix for the versioned native fixtures")
 parser.add_argument("--legacy-loaders", action="store_true", help="Compile the three C-library loaders through their Darwin dlopen branches")
 parser.add_argument("--require-clean", action="store_true")
+parser.add_argument("--release-commit", help="Full lowercase Git commit bound into a packaged release")
 args = parser.parse_args()
 if platform.system() != "Darwin" or platform.machine() != "arm64":
     parser.error("This driver requires native macOS Apple Silicon")
 if args.jobs < 1 or args.timeout < 1:
     parser.error("jobs and timeout must be positive")
+if args.release_commit and not re.fullmatch(r"[0-9a-f]{40}", args.release_commit):
+    parser.error("release-commit must be the full 40-character lowercase Git commit")
 gateway = Path(os.environ["UOS_MACOS_GATEWAY"]).resolve()
 repo = gateway.parent.parent
 sys.path.insert(0, str(gateway / "tools"))
@@ -102,6 +105,8 @@ flags = [compiler, "-std=c++20", "-stdlib=libc++", "-O0", "-g0", "-Wall", "-Wext
          "--system-header-prefix=third_party/",
          "-isystem", str(sqlite / "include"), "-pthread", *cflags]
 flags.append("-DUOS_GATEWAY_NATIVE_LIBRARIES")
+if args.release_commit:
+    flags.append('-DUOS_PACKAGE_GIT_COMMIT="' + args.release_commit + '"')
 vendor_c_flags = [c_compiler, "-std=c11", "-O0", "-g0"]
 vendor_cxx_flags = vendor_sources.vendor_flags(flags)
 libs += [str(sqlite / "lib/libsqlite3.dylib"), "-L" + str(prefixes["boost"] / "lib"), "-lboost_json", "-lboost_container"]

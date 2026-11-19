@@ -11,6 +11,8 @@ RUN bash /usr/local/bin/portable-dependencies "$JOBS"
 
 FROM toolchain AS cpp
 ARG JOBS=4
+ARG SOURCE_COMMIT
+RUN printf '%s' "$SOURCE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
 RUN apt-get update && apt-get install -y --no-install-recommends ccache && rm -rf /var/lib/apt/lists/*
 WORKDIR /source
 COPY cpp/gateway/CMakeLists.txt cpp/gateway/PORT-MANIFEST.json cpp/gateway/PORTED.txt cpp/gateway/
@@ -33,6 +35,7 @@ RUN --network=none --mount=type=cache,target=/var/cache/ccache \
     UOS_GATEWAY_BUILD_EVIDENCE=bookworm-arm64 UOS_GATEWAY_TOOL_ROOT=/opt/uos \
     cmake -S cpp/gateway -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DUOS_GATEWAY_FRAME_RECYCLING_DISABLED=ON \
+      -DUOS_GATEWAY_GIT_COMMIT="$SOURCE_COMMIT" \
       -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
       '-DCMAKE_C_FLAGS=-march=armv8-a -ffile-prefix-map=/source=.' \
       '-DCMAKE_CXX_FLAGS=-march=armv8-a -isystem /opt/uos/include -ffile-prefix-map=/source=. --warning-suppression-mappings=/opt/uos/clang-warnings.txt' \
