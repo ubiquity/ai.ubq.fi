@@ -17,8 +17,10 @@ Landlock policy to the CLI child. [Environment and CLI setup](RUNTIME.md#environ
 
 The native gateway applies the published byte, nesting and time limits at its library and
 transport boundaries. For example, Chat Completions and Responses return HTTP 400 before
-dispatch when their trimmed model string exceeds 1 MiB. Image edit JSON and multipart retain
-their larger documented input allowances. [Security limits](SECURITY-LIMITS.md)
+dispatch when their trimmed model string exceeds 1 MiB. An explicit admin default model
+over 200 UTF-16 code units returns the unknown-model error before the catalog lookup.
+Image edit JSON and multipart retain their larger documented input allowances.
+[Security limits](SECURITY-LIMITS.md)
 
 ## JSON
 

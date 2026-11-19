@@ -169,8 +169,9 @@ backend handles the actual database operations. [Architecture](docs/ARCHITECTURE
 - In the two shared conformance failures, both gateways dispatch and receive HTTP 200. The suite expects HTTP
   400 and no dispatch for an unknown Chat role and an unknown Responses tool type. [Paired conformance](docs/CONFORMANCE.md)
 - The storage reader preserves sparse entries, references and cycles in the typed graph. Projection to dense JSON
-  can materialize holes. Cutover still needs complete decoding on a stopped copy, verified reverse conversion of
-  the latest writes, and durability evidence. [Storage cutover](docs/CUTOVER.md) ·
+  can materialize holes. Cutover still needs stopped-copy decoding, durability evidence and a Bun reopen of the
+  latest native-written rehearsal state. A legacy Deno rollback also requires verified reverse conversion.
+  [Storage cutover](docs/CUTOVER.md) ·
   [Durable KV](docs/rt/kv-durable.md)
 - The native Fetch client uses HTTP/1.1 and has no proxy support. The loopback server has no TLS termination of
   its own. Some buffered-body transfer framing and gzip bytes differ from Bun. The recorded request-path tests
