@@ -13,10 +13,23 @@
 #include "uos/utils.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
+
+#include <algorithm>
+#include <array>
+
 namespace uos::responses_request {
 namespace {
   namespace n = input_normalization;
   namespace policy = request_policy;
+  // Tool in the pinned OpenAI spec, including Codex namespace and tool search declarations.
+  constexpr auto RESPONSE_TOOL_TYPES = std::to_array<std::string_view>({
+    "function", "file_search", "computer", "computer_use_preview", "web_search", "web_search_2025_08_26",
+    "mcp", "code_interpreter", "programmatic_tool_calling", "image_generation", "local_shell", "shell",
+    "custom", "namespace", "tool_search", "web_search_preview", "web_search_preview_2025_03_11", "apply_patch",
+    // OpenRouter web tool aliases exercised by the compatibility fixtures.
+    "openrouter:web_search", "openrouter:web_fetch", "web_fetch", "web_fetch_20250910",
+  });
   rt::Response invalid(std::string message, std::optional<std::string> param = std::nullopt) {
     http::OpenaiErrorOptions options; if (param) options.param = param;
     return http::openaiError(400, std::move(message), "invalid_request_error", options);
@@ -65,6 +78,18 @@ rt::Task<ResponsesStep<ReadResponsesRequestValue>> readResponsesRequest(rt::Requ
   json::object record;
   if (rawBody.is_object()) record = rawBody.get_object();
   else for (std::size_t i = 0; i < rawBody.get_array().size(); ++i) record[rt::numberToString(static_cast<double>(i))] = rawBody.get_array()[i];
+  if (rt::trim(rt::getString(record, "model").value_or("")).size() > rt::limits::kRegexSubjectBytes)
+    co_return ResponsesStepNotOk{invalid("model is too long", "model")};
+  if (const auto* tools = rt::getArray(record, "tools")) {
+    for (std::size_t index = 0; index < tools->size(); ++index) {
+      const auto* type = rt::get((*tools)[index], "type");
+      if (!type) continue;
+      const auto name = rt::getString(type);
+      if (name && std::ranges::find(RESPONSE_TOOL_TYPES, *name) != RESPONSE_TOOL_TYPES.end()) continue;
+      const auto field = "tools[" + std::to_string(index) + "].type";
+      co_return ResponsesStepNotOk{invalid(field + " is not supported", field)};
+    }
+  }
   co_return ResponsesStepOk<ReadResponsesRequestValue>{{record, record}};
 }
 std::optional<rt::Response> validateResponsesRequestFields(const json::object& rawRecord, const ::uos::types::ResponsesRequest& rawBody, const rt::OrderedSet<std::string>* providerExtensions) {

@@ -257,12 +257,6 @@ namespace uos::admin::api_keys {
   std::optional<double> normalizeKernelExpiresAtMsInput(const json::value& value, double nowMs) { return normalizeKernelExpiresAtMsInput(&value, nowMs); }
   std::string normalizeKernelScope(const json::value* value) { return value && value->is_string() && rt::toLowerCase(rt::trim(std::string(value->as_string()))) == "org" ? "org" : "repo"; }
   std::string normalizeKernelScope(const json::value& value) { return normalizeKernelScope(&value); }
-  std::optional<std::string> normalizeDefaultModel(const json::value* value) {
-    if (!value || !value->is_string()) return std::nullopt;
-    const auto model = rt::trim(std::string(value->as_string()));
-    return model.empty() || whitespace(model) ? std::nullopt : std::optional(model);
-  }
-  std::optional<std::string> normalizeDefaultModel(const json::value& value) { return normalizeDefaultModel(&value); }
   std::vector<defaults::ReasoningEffort> extractModelReasoningLevels(const std::optional<json::object>& model) {
     if (!model) return {};
     const auto* raw = rt::getArray(*model, "supported_reasoning_levels");
