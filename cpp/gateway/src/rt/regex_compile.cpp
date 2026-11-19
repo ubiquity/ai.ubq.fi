@@ -132,8 +132,8 @@ namespace uos::rt::regex_detail {
     auto program = std::make_shared<Program>();
     int mask = parseFlags(*program, flags);
     program->subjectBytes = subjectBudget(*program, pattern, mask);
-    // The fixed supervisor redaction scan took 593 ms under sanitizers.
-    if (mask == (LRE_FLAG_GLOBAL | LRE_FLAG_IGNORECASE) && pattern == credentialKey) program->matchDeadline = limits::kRegexDeadline * 3;
+    // The fixed supervisor scan took 593 ms in isolation and exceeded 750 ms in the parallel sanitizer shard.
+    if (mask == (LRE_FLAG_GLOBAL | LRE_FLAG_IGNORECASE) && pattern == credentialKey) program->matchDeadline = limits::kRegexDeadline * 5;
     program->source = escapeSource(pattern, program->unicodeSets);
     // The image data URL validator accepts tens of MiB of encoded data. Fixed-size
     // blocks avoid a backtracking entry per byte, and the lookahead commits to the

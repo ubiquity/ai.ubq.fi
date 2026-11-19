@@ -886,7 +886,7 @@ TEST("regexp engine hooks enforce the shared deadline and retain the allocation 
   EXPECT(compilation.deadline >= compileStart + rt::limits::kRegexCompileDeadline);
   EXPECT(compilation.deadline <= compileEnd + rt::limits::kRegexCompileDeadline);
   const rt::Regex credentialKey(R"re(\b(?=\w*(?:key|token|secret|password))(?=(\w*))\1(?:[.-]\w*){0,16}(["']?)\s*(?=[:=]))re", "gi");
-  EXPECT_EQ(credentialKey.program().matchDeadline.count(), (rt::limits::kRegexDeadline * 3).count());
+  EXPECT_EQ(credentialKey.program().matchDeadline.count(), (rt::limits::kRegexDeadline * 5).count());
   EXPECT_EQ(rt::Regex("key", "gi").program().matchDeadline.count(), rt::limits::kRegexDeadline.count());
   budget.deadline = Limits::Clock::time_point::max();
   EXPECT_EQ(lre_check_timeout(&budget), 0);
