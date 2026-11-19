@@ -41,6 +41,7 @@ def main(commit, tree, epoch):
     vendored_versions = native.copy_vendor_licenses(payload)
     shutil.copytree("/opt/uos/licenses", payload / "licenses", dirs_exist_ok=True)
     native.copy_file(GATEWAY / "packaging/SQLITE-LICENSE", payload / "licenses/sqlite/LICENSE")
+    native.copy_file(GATEWAY / "packaging/DENOKV-LICENSE", payload / "licenses/denokv/LICENSE")
     native.copy_file(Path("/usr/share/common-licenses/GPL-3"), payload / "licenses/gcc/GPL-3")
     packages = ["libc6", "clang-21", "libstdc++-12-dev", "libgcc-12-dev", "libssl-dev", "zlib1g-dev", "libbrotli-dev", "libzstd-dev", "mold"]
     profile = {

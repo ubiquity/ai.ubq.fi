@@ -48,7 +48,7 @@ COPY favicon.png favicon-32.png ./
 COPY cpp/gateway/docs/licenses cpp/gateway/docs/licenses
 COPY cpp/gateway/docs/RASPBERRY-PI.md cpp/gateway/docs/
 COPY cpp/gateway/ops/launch-native.sh cpp/gateway/ops/
-COPY cpp/gateway/packaging/SQLITE-LICENSE cpp/gateway/packaging/
+COPY cpp/gateway/packaging/SQLITE-LICENSE cpp/gateway/packaging/DENOKV-LICENSE cpp/gateway/packaging/
 COPY cpp/gateway/packaging/portable cpp/gateway/packaging/portable
 ARG SOURCE_COMMIT
 ARG SOURCE_TREE

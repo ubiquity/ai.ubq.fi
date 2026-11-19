@@ -1,6 +1,5 @@
 // rt::SqliteKv (uos/rt/kv_sqlite.hpp): the SDK layer (kv_sdk) over a C++ port of denokv's
-// SQLite backend at 9fe65cc with packaging/native-kv/atomic-write-rollback.patch
-// (sqlite/backend.rs, sqlite/lib.rs) and the napi glue (npm/napi/src/lib.rs): the
+// SQLite backend at 9fe65cc with atomic-write rollback. See packaging/DENOKV-LICENSE. The
 // migrations, snapshot reads, atomic writes with a savepoint each, the expiry sweep and the
 // queue's insert and cleanup, run by one worker thread per handle.
 #include "kv_sdk.hpp"

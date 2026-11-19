@@ -108,6 +108,7 @@ def main():
             copy_file(GATEWAY / "ops" / name, stage / "ops" / name, name.endswith(".sh"))
         copy_vendor_licenses(stage)
         copy_file(GATEWAY / "packaging/SQLITE-LICENSE", stage / "licenses/sqlite/LICENSE")
+        copy_file(GATEWAY / "packaging/DENOKV-LICENSE", stage / "licenses/denokv/LICENSE")
         copy_file(GATEWAY / "docs/RUNTIME.md", stage / "README.md")
         copy_file(args.profile_manifest, stage / "build-profile.json")
         copy_file(GATEWAY / "runtime/launch-schema.json", stage / "runtime/launch-schema.json")

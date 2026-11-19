@@ -144,8 +144,9 @@ def build(work, output, jobs):
         notice = GATEWAY / "docs/licenses" / library.name / "NOTICE"
         if library.name in ("simdjson", "simdutf") or notice.is_file():
             shutil.copyfile(notice, destination / "NOTICE")
-    (licenses / "sqlite").mkdir()
-    shutil.copyfile(GATEWAY / "packaging/SQLITE-LICENSE", licenses / "sqlite/LICENSE")
+    for library in ("sqlite", "denokv"):
+        (licenses / library).mkdir()
+        shutil.copyfile(GATEWAY / "packaging" / f"{library.upper()}-LICENSE", licenses / library / "LICENSE")
 
     env["SDKROOT"] = profile["sdk"]
     flags = [*profile["flags"], f"-ffile-prefix-map={work}=."]

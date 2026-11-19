@@ -172,7 +172,7 @@ namespace uos::runtime::startup {
         }
       }
       for (const std::string_view required : {"bin/uos-gateway", "package-info.json", "build-profile.json", "runtime-closure.json", "operator-closure.json",
-                                               "static/index.html", "static/openapi.json", "favicon.png", "favicon-32.png", "licenses/sqlite/LICENSE",
+                                               "static/index.html", "static/openapi.json", "favicon.png", "favicon-32.png", "licenses/sqlite/LICENSE", "licenses/denokv/LICENSE",
                                                "runtime/launch-schema.json", "ops/launch-native.sh"}) {
         if (!selected.contains(std::string(required))) refuse("package lacks a required file: " + std::string(required));
       }
