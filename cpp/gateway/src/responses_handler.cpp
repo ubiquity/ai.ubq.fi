@@ -358,7 +358,11 @@ namespace {
     const auto response = rt::Response(rs::withSseKeepalive(body), {.status = 200, .headers = headers}); return request_policy::withUosWarning(response, delivery->clientWarnings);
   }
   rt::Task<rt::Response> deliverPreparedResponses(Delivery delivery) {
-    tel::recordFirstSemanticCommitment(contextFor(delivery)); if (delivery->ready.prepared.terminal) onResponsesTerminal(delivery, *delivery->ready.prepared.terminal);
+    const auto& prepared = delivery->ready.prepared;
+    if (prepared.semantic || !prepared.terminal || !delivery->clientWantsStream || delivery->ready.provider != "chatgpt_codex") {
+      tel::recordFirstSemanticCommitment(contextFor(delivery));
+    }
+    if (prepared.terminal) onResponsesTerminal(delivery, *prepared.terminal);
     if (!delivery->clientWantsStream) { auto task = deliverBufferedResponses(delivery); rt::Promise<rt::Response> pending(std::move(task)); auto awaitedResult5 = co_await pending.wait(); co_return awaitedResult5; }
     co_return deliverStreamingResponses(delivery);
   }
