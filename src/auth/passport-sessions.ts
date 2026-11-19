@@ -2,7 +2,7 @@ import type { KvKey } from "#kv";
 import { getKv } from "../kv.ts";
 import { base64UrlEncode, isRecord, sha256Hex } from "../utils.ts";
 
-const ISSUER = "https://passport.ubq.fi";
+const ISSUER = "https://auth.ubq.fi";
 const LOCAL_TOKEN = /^uos_ai_passport_session_[A-Za-z0-9_-]{43}$/;
 const APP_TOKEN = /^uos_app_session_[A-Za-z0-9_-]{43}$/;
 const BINDING = {

@@ -10,7 +10,7 @@ import { setKvForTest } from "../src/kv.ts";
 import { base64UrlEncode } from "../src/utils.ts";
 
 const ORIGIN = "https://ai.ubq.fi";
-const ISSUER = "https://passport.ubq.fi";
+const ISSUER = "https://auth.ubq.fi";
 const SESSION_COOKIE = "__Host-uos_ai_passport_session";
 const STATE_COOKIE = "__Host-uos_ai_passport_state";
 const VERIFIER_COOKIE = "__Host-uos_ai_passport_verifier";
@@ -186,31 +186,35 @@ test("Passport callback rejects absent, mismatched and duplicated state before c
   assert.equal(exchanges.length, 0);
 });
 
-test.each([400, 401, 403, 422, 429])("Passport callback returns 401 and clears state for rejected exchange status %i", async (status) => {
-  exchangeStatus = status;
-  const { state, stateCookie } = await begin();
-  const response = await handler(request(`/auth/callback?state=${state}&code=rejected-code`, "", { headers: { Cookie: stateCookie } }));
-  assert.equal(exchanges.length, 1);
-  assert.deepEqual(response.headers.getSetCookie(), [
-    `${STATE_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
-    `${VERIFIER_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
-  ]);
-  assert.equal(response.status, 401);
-  assert.equal((await response.json()).error.code, "invalid_api_key");
-});
+for (const status of [400, 401, 403, 422, 429]) {
+  test(`Passport callback returns 401 and clears state for rejected exchange status ${status}`, async () => {
+    exchangeStatus = status;
+    const { state, stateCookie } = await begin();
+    const response = await handler(request(`/auth/callback?state=${state}&code=rejected-code`, "", { headers: { Cookie: stateCookie } }));
+    assert.equal(exchanges.length, 1);
+    assert.deepEqual(response.headers.getSetCookie(), [
+      `${STATE_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
+      `${VERIFIER_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
+    ]);
+    assert.equal(response.status, 401);
+    assert.equal((await response.json()).error.code, "invalid_api_key");
+  });
+}
 
-test.each([500, 502, 503, 504])("Passport callback retains 502 and clears state for upstream exchange status %i", async (status) => {
-  exchangeStatus = status;
-  const { state, stateCookie } = await begin();
-  const response = await handler(request(`/auth/callback?state=${state}&code=valid-code`, "", { headers: { Cookie: stateCookie } }));
-  assert.equal(exchanges.length, 1);
-  assert.deepEqual(response.headers.getSetCookie(), [
-    `${STATE_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
-    `${VERIFIER_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
-  ]);
-  assert.equal(response.status, 502);
-  assert.equal((await response.json()).error.code, "passport_unavailable");
-});
+for (const status of [500, 502, 503, 504]) {
+  test(`Passport callback retains 502 and clears state for upstream exchange status ${status}`, async () => {
+    exchangeStatus = status;
+    const { state, stateCookie } = await begin();
+    const response = await handler(request(`/auth/callback?state=${state}&code=valid-code`, "", { headers: { Cookie: stateCookie } }));
+    assert.equal(exchanges.length, 1);
+    assert.deepEqual(response.headers.getSetCookie(), [
+      `${STATE_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
+      `${VERIFIER_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`,
+    ]);
+    assert.equal(response.status, 502);
+    assert.equal((await response.json()).error.code, "passport_unavailable");
+  });
+}
 
 test("failed Passport callback clears only transient cookies and never creates a session from an agent", async () => {
   exchangedToken = await sign({ agentTokenId: "agent-id" });
