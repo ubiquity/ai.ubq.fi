@@ -8,6 +8,8 @@ The portable build uses Clang 21 on Debian 12. It statically links Boost.JSON an
 
 Sealing validates the payload and binds the executable hashes, ELF interpreter, direct and transitive host-library paths and hashes, symbol versions and permitted system DSO runpaths. Executable search paths and missing host libraries fail verification. Seal a new release after a host library changes. The Arch profile uses its own host closure and may need newer ABI symbols than the portable archive. [Sealer](../packaging/portable/seal.py) · [Library closure tool](../tools/runtime-manifest.py)
 
+The portable build passes the full archived source SHA to CMake as `UOS_GATEWAY_RELEASE_COMMIT` and compiles it into the health identity. This is a build-time setting. The health response uses the explicitly supplied deployment ID when configured and defaults to `vps-<full-sha>` on Linux without deployment markers. The Debian verifier checks both response headers and JSON against the sealed build profile. [Health endpoint](../src/health.cpp) · [Package proof](../packaging/portable/proof.py)
+
 ### Arch host-bound build
 
 Keep compiler work within two global slots and one full release build at a time. Link admission requires 3.5 GiB of `MemAvailable`, compile and archive admission require 3 GiB, and other build operations require 2 GiB. The live hard stop is below 2 GiB. Compiler wrappers keep the 3 GiB link and 2 GiB compile address-space caps. An admission deferral waits 30 seconds between attempts for up to 20 minutes per target. Build admission also requires more than 8 GiB of free disk.

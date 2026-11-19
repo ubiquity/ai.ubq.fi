@@ -99,11 +99,16 @@ def memory(gateway, phase):
     return {"sample_count": len(samples), "median_rss_bytes": statistics.median(samples), "peak_rss_bytes": max(samples)}
 
 
-def health(gateway):
+def health(gateway, commit):
     result = checked(request(gateway.origin, "/health"))
-    if result["json"]["status"] != "available":
+    body, headers = result["json"], result["headers"]
+    if body["status"] != "available":
         raise RuntimeError("Health did not report availability")
-    return result["json"]
+    deployment = f"vps-{commit}"
+    if (body["release"] != {"git_sha": commit, "deployment_id": deployment}
+            or headers.get("x-uos-git-sha") != commit or headers.get("x-uos-deployment-id") != deployment):
+        raise RuntimeError("Health release identity does not match the sealed build")
+    return body
 
 
 def favicons(gateway, package):
@@ -130,14 +135,14 @@ def clean_shutdown(gateway):
         raise RuntimeError("Gateway did not settle naturally after SIGTERM")
 
 
-def exercise(gateway, upstream, binding):
+def exercise(gateway, upstream, binding, commit):
     if Path(f"/proc/{gateway.child.pid}/exe").resolve(strict=True) != Path(binding["packageRoot"]) / "bin/uos-gateway":
         raise RuntimeError("The launched process is not the sealed gateway")
     process = status(gateway.child.pid)
     if int(process["NoNewPrivs"]) != 1 or int(process["Seccomp_filters"]) <= int(status("self")["Seccomp_filters"]):
         raise RuntimeError("Gateway did not install its seccomp filter")
     cold = gateway.idle("idle_cold")
-    initial_health = health(gateway)
+    initial_health = health(gateway, commit)
     static_sha256 = favicons(gateway, Path(binding["packageRoot"]))
     body = inference_body("chat", False)
     body["model"] = MODEL
@@ -183,7 +188,7 @@ def exercise(gateway, upstream, binding):
     _, accounted = usage(gateway, key)
     if len(upstream.calls) != completed or any(call["path"] != "/codex/responses" for call in upstream.calls) or accounted != completed or upstream.failures or upstream.redirected_requests:
         raise RuntimeError(f"Expected {completed} completed and accounted chats: calls={len(upstream.calls)} usage={accounted} failures={upstream.failures}")
-    return key, {"health_initial": initial_health, "health_after_load": health(gateway), "unauthenticated_chat_status": 401,
+    return key, {"health_initial": initial_health, "health_after_load": health(gateway, commit), "unauthenticated_chat_status": 401,
                  "favicon_sha256": static_sha256,
                  "completed_chat_requests": completed, "accounted_requests": accounted, "idle_cold": cold, "idle_warm": warm,
                  "eight_in_flight": concurrent, "throughput_rss": [memory(gateway, f"throughput_{trial + 1}") for trial in range(TRIALS)],
@@ -196,6 +201,7 @@ def run(state, cap):
     package = Path(binding["packageRoot"])
     if sha256(package / "manifest.sha256") != binding["packageManifestSha256"]:
         raise RuntimeError("Staged package binding changed")
+    commit = json.loads((package / "build-profile.json").read_text())["gitCommit"]
     (state / ".data").mkdir(mode=0o700)
     startup = state / "launch.json"
     upstream = CodexUpstream()
@@ -206,14 +212,14 @@ def run(state, cap):
         write_json(startup, {**binding, "schema": "uos-gateway-launch-v1", "stateRoot": str(state),
                              "hostname": "127.0.0.1", "port": 0, "fixture": {"syntheticOrigin": upstream.origin}})
         gateway = GatewayProcess(command, state, environment)
-        key, result = exercise(gateway, upstream, binding)
+        key, result = exercise(gateway, upstream, binding, commit)
         clean_shutdown(gateway)
         gateway = None
         # A distinct empty HOME and TMPDIR are supplied for the reopened process.
         (state / "home").rmdir()
         (state / "tmp").rmdir()
         gateway = GatewayProcess(command, state, environment, label="reopen")
-        health(gateway)
+        health(gateway, commit)
         _, reopened = usage(gateway, key)
         if reopened != result["completed_chat_requests"] or len(upstream.calls) != reopened:
             raise RuntimeError("Restart changed durable usage or dispatched a request")

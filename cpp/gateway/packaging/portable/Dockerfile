@@ -28,11 +28,13 @@ COPY cpp/gateway/tests/production_smoke/serve_failure_gate.cpp cpp/gateway/tests
 COPY cpp/gateway/packaging/portable/clang-warnings.txt /opt/uos/clang-warnings.txt
 ENV CCACHE_DIR=/var/cache/ccache CCACHE_COMPILERCHECK=content CCACHE_EXTRAFILES=/opt/uos/clang-warnings.txt
 ARG FRESH_COMPILE=0
+ARG SOURCE_COMMIT
 RUN --network=none --mount=type=cache,target=/var/cache/ccache \
     if [ "$FRESH_COMPILE" = 1 ]; then export CCACHE_DISABLE=1; fi; \
     UOS_GATEWAY_BUILD_EVIDENCE=bookworm-arm64 UOS_GATEWAY_TOOL_ROOT=/opt/uos \
     cmake -S cpp/gateway -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DUOS_GATEWAY_FRAME_RECYCLING_DISABLED=ON \
+      -DUOS_GATEWAY_RELEASE_COMMIT="$SOURCE_COMMIT" \
       -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
       '-DCMAKE_C_FLAGS=-march=armv8-a -ffile-prefix-map=/source=.' \
       '-DCMAKE_CXX_FLAGS=-march=armv8-a -isystem /opt/uos/include -ffile-prefix-map=/source=. --warning-suppression-mappings=/opt/uos/clang-warnings.txt' \

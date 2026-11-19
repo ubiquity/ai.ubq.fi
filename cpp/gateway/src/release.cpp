@@ -1,6 +1,9 @@
 #include "uos/release.hpp"
 
+#ifndef UOS_GATEWAY_RELEASE_COMMIT
+#define UOS_GATEWAY_RELEASE_COMMIT "unknown"
+#endif
+
 namespace uos::release {
-  // CI replaces this value inside the immutable deployment artifact.
-  const std::string_view RELEASE_GIT_SHA = "unknown";
+  const std::string_view RELEASE_GIT_SHA = UOS_GATEWAY_RELEASE_COMMIT;
 }

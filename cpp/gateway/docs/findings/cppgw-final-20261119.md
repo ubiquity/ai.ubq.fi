@@ -315,4 +315,36 @@ timeout -k 10s 360s codex review --base origin/agent-jobs/cppgw-gemini-merge-202
   -c sandbox_mode=read-only -c approval_policy=never -c shell_environment_policy.inherit=none
 ```
 
-The suite shards and remaining fuzz campaigns are in progress.
+## Recovered shard and fuzz results
+
+The saved receipts in `final-run.7Q5kEdU9` completed after the previous
+checkpoint. All four Release shards and all four sanitizer shards passed
+with the sanitizer shard 1 retry. Each mode passed 453 binaries and 5,264
+cases: 114/1,394, 113/1,237, 113/1,331 and 113/1,302 by shard.
+Release shard 1 ran at `2507e122`. The other passing receipts, including the
+sanitizer shard 1 retry in `asan-retry.qinvIiaN`, ran at `1e8fc45f`,
+tree `3c40d7822bb5b320f40895e80da44dd976098aee`. All used source input
+digest `3ab20c3a1b83656aa230cb33703ceff243f540672fa80668773045ea2db9194e`
+with before and after hashes equal. The initial sanitizer shard 1 completed
+1,393/1,394 cases while other jobs ran. Its supervisor secret-redaction case
+missed the existing 2,000 ms wall-clock budget. The unchanged shard passed
+on a quiet retry in 51.549 s of test time, with 41/41 in that binary.
+
+Five 300-second fuzz campaigns completed using the workflow arguments
+above. `jq '{target, outcome, fuzzed_seconds, corpus_count, expected_fork_exit_leaks, findings}' "$out/summary.json"`
+reported `regex` 302 s and 2,292 corpus files, `kv_jsc` 308 s and 1,933,
+`json` 306 s and 1,336, `http_request` 303 s and 1,807, and `url` 309 s
+and 1,942. Each recorded one classified ARM64 libFuzzer fork-parent exit
+leak and zero harness findings. The first `http_request` campaign ended at
+109 s with the same 32-byte fork-parent leak. Its clean retry in
+`fuzz-http-retry.daaFORNp` completed the duration.
+
+## Portable release identity correction
+
+The exact identity failure above is in the authorized packaging and runtime
+scope. The portable build now passes its archived source commit into CMake,
+which validates it and binds it to the release constant at compile time.
+The Debian verifier checks the sealed build's exact Git SHA and
+`vps-<full-sha>` in the health JSON and headers, including after reopening.
+The standard CI test driver still builds the development constant. Final
+package, paired, replay and test receipts will be refreshed for this change.

@@ -28,7 +28,8 @@ shasum -a 256 -c SHA256SUMS
 ```
 
 Continue only if the command prints `OK` for the expected archive. The archive's `VERSION` records the source commit,
-its UTC timestamp, the compiler and the selected library versions.
+its UTC timestamp, the compiler and the selected library versions. The Linux portable build also compiles that
+exact commit into the gateway for the health response and identity headers.
 
 ## Install on Arch Linux ARM or Raspberry Pi OS
 
@@ -93,7 +94,9 @@ owned by the gateway user and fill in the three printed values and the canonical
 
 Run `"$release/ops/launch-native.sh" /absolute/path/to/launch.json` as the gateway user with its approved environment.
 For systemd, reference the owner-selected settings with `EnvironmentFile=` in the reviewed unit. The runtime performs no implicit `.env` discovery.
-In another terminal, `curl -f http://127.0.0.1:18080/health` checks the listener. The sealed `bin/` also contains
+In another terminal, `curl -q --noproxy '*' -fsS -i http://127.0.0.1:18080/health` checks the listener. Compare the
+health body and headers with the full SHA in `VERSION` and the expected deployment ID. The portable Linux gateway
+defaults to `vps-<full-sha>` when no deployment marker or ID is configured. The sealed `bin/` also contains
 `uos-kv-convert` and `uos-kv-proof`. Their offline manifest and stopped-state requirements apply before using them.
 [Native startup and KV tools](RUNTIME.md) · [Service draft](../ops/uos-gateway-native.service)
 
