@@ -460,7 +460,7 @@ namespace uos::rt {
 
     template <class T> void teePull(const std::shared_ptr<TeeState<T>>& tee);
 
-    template <class T> Task<void> teeRead(std::weak_ptr<TeeState<T>> weak, std::weak_ptr<PromiseState<void>> cancellation) {
+    template <class T> Task<void> teeRead(std::weak_ptr<TeeState<T>> weak) {
       ReadableStreamReadResult<T> result;
       bool failed = false;
       try {
@@ -472,14 +472,7 @@ namespace uos::rt {
         failed = true;
       }
       auto tee = weak.lock();
-      if (!tee) {
-        // A cancelled branch can still be awaiting source completion even
-        // though neither branch owns the tee any more.
-        if (!failed && result.done) {
-          if (auto pending = cancellation.lock()) Resolve<void>(std::move(pending))();
-        }
-        co_return;
-      }
+      if (!tee) co_return;
       if (failed) {
         tee->reading = false;
         co_return;
@@ -514,7 +507,7 @@ namespace uos::rt {
         return;
       }
       tee->reading = true;
-      start(currentLoop(), teeRead<T>(tee, tee->cancelPromise));
+      start(currentLoop(), teeRead<T>(tee));
     }
 
     template <class T> Task<void> teeCancel(std::shared_ptr<TeeState<T>> tee, bool first, Reason reason) {
@@ -525,10 +518,7 @@ namespace uos::rt {
         tee->canceled2 = true;
         tee->reason2 = std::move(reason);
       }
-      if (tee->canceled1 && tee->canceled2) {
-        tee->cancelPromise->locked = true;
-        adopt(tee->cancelPromise, cancelStream(tee->source, makeReason(TeeCancelReason(tee->reason1, tee->reason2))));
-      }
+      if (tee->canceled1 && tee->canceled2) adopt(tee->cancelPromise, cancelStream(tee->source, makeReason(TeeCancelReason(tee->reason1, tee->reason2))));
       auto cancelPromise = tee->cancelPromise;
       tee.reset();
       auto cancelled = awaitSettled(cancelPromise);
@@ -588,13 +578,12 @@ namespace uos::rt {
     tee->branch2 = branch2.state();
     std::weak_ptr<detail::TeeState<T>> weak = tee;
     auto closed = tee->reader->closed.state();
-    closed->react([closed, weak, cancellation = std::weak_ptr(tee->cancelPromise)] {
-      if (closed->status != detail::PromiseCore::Status::rejected) return;
-      if (auto state = weak.lock()) {
-        if (auto first = state->branch1.lock()) first->error(closed->error);
-        if (auto second = state->branch2.lock()) second->error(closed->error);
-      }
-      if (auto pending = cancellation.lock()) Resolve<void>(std::move(pending))();
+    closed->react([closed, weak] {
+      auto state = weak.lock();
+      if (!state || closed->status != detail::PromiseCore::Status::rejected) return;
+      if (auto first = state->branch1.lock()) first->error(closed->error);
+      if (auto second = state->branch2.lock()) second->error(closed->error);
+      if (!state->canceled1 || !state->canceled2) state->cancelPromise->fulfill();
     });
     return {std::move(branch1), std::move(branch2)};
   }
