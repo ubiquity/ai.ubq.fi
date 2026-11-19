@@ -17,6 +17,10 @@
 ## Progress
 
 Merged the fetched residual branch with `git merge --no-ff --no-commit FETCH_HEAD`
-and an ordinary two-parent merge commit. It brings in `b58afd3d1` (request bounds),
-`f90d511bf` (SSE cancellation), and `d35a8a8b` (allowlists). The allowlist
-revert, documentation, and full qualification are pending.
+and ordinary two-parent merge commit `984f15ee`. It brings in `b58afd3d1` (request bounds),
+`f90d511bf` (SSE cancellation), and `d35a8a8b` (allowlists). Applied `git revert --no-commit d35a8a8bbc9a986bded5bba2d9c0f0f1a11c4ea1`.
+The only conflict was in the earlier findings file, which retains its historical
+results with a note pointing here. The code retains the model length checks in
+both inference entry points. The two conformance cases again have the same HTTP
+400 and zero-dispatch assertions on both sides. The allowlist tests were removed
+by the revert. Documentation and full qualification are pending.

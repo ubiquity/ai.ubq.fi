@@ -2,6 +2,8 @@
 
 Base `74062589fbb209d376a39d119cc00b5a4140d694` on `agent-jobs/cppgw-input-limits-20261119-44456009556-1`.
 
+The request-validation findings describe the residual branch before the final integration revert. The final gateway preserves the reference behavior for unknown chat roles and Responses tool types. [Final qualification](cppgw-final-20261119.md)
+
 ## Status
 
 | Defect                                                 | Verdict | Commit and regression                                                                                                                                                                                  |
@@ -28,7 +30,7 @@ The historical comparison recorded HTTP 200 and `deepseek.success` for both runt
 
 The accepted sets came from the pinned legacy `src/input-normalization.ts`, TypeScript provider projections and fixtures, and the `ChatCompletionRequestMessage` and `Tool` unions of OpenAI schema revision `120ed0197a808dbc8539f5b4dc7ae973d13ca19a`. This includes the deprecated chat function role, built-in Responses tools, Codex namespaces and OpenRouter's documented fixture aliases. The shared checks are limited to provided discriminators. The legacy nested function shape and provider-specific validation still apply.
 
-Conformance records independent Bun and native contracts for these two cases. Bun must still show 200 and one dispatch. Native must show 400, the matching error parameter and zero dispatches. The verdict and both wire observations appear in the report. [Deviations](../DEVIATIONS-FROM-BUN.md#inference-request-validation)
+Conformance records independent Bun and native contracts for these two cases. Bun must still show 200 and one dispatch. Native must show 400, the matching error parameter and zero dispatches. The verdict and both wire observations appear in the report. [Final conformance](../CONFORMANCE.md)
 
 ## Verification
 

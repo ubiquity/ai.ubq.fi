@@ -143,18 +143,14 @@ def header_diffs(left, right, status):
             yield delta("/headers/" + name, x, y, "COSMETIC")
 
 
-def expected_for(spec, runtime):
-    return spec.get("expect_bun", spec["expect"]) if runtime == "bun" else spec["expect"]
-
-
-def expectations(spec, observation, runtime="native"):
+def expectations(spec, observation):
     errors = []
     if observation.get("wire_error"):
         errors.append({"path": "/wire_error", "expected": "complete wire exchange", "actual": observation["wire_error"]})
     if observation["mock_errors"] or observation["benchmark_failures"]:
         errors.append({"path": "/mock", "expected": "no rejected fixture traffic",
                        "actual": [observation["mock_errors"], observation["benchmark_failures"]]})
-    expected = expected_for(spec, runtime)
+    expected = spec["expect"]
     checks = {"/status": expected["status"], **expected.get("values", {})}
     observation["routes"] = [call["route"] for call in observation["dispatches"]]
     if "routes" in expected:
@@ -213,16 +209,6 @@ def compare(spec, bun, native, ids):
     return sorted(changes, key=lambda item: item["classification"] != "FUNCTIONAL")
 
 
-def case_outcome(spec, differences, failures):
-    if any(failures.values()):
-        return "functional"
-    if "expect_bun" in spec:
-        return "native_stricter"
-    if any(item["classification"] == "FUNCTIONAL" for item in differences):
-        return "functional"
-    return "cosmetic" if differences else "match"
-
-
 def redact(value, secrets):
     if isinstance(value, str):
         for secret in secrets:
@@ -243,7 +229,7 @@ def markdown(receipt):
     lines = ["| Case | Bun | Native | Result |", "| --- | ---: | ---: | --- |"]
     for row in receipt["cases"]:
         statuses = [row["observations"].get(runtime, {}).get("status") for runtime in ("bun", "native")]
-        descriptions = ["Native stricter than reference"] if row["outcome"] == "native_stricter" else []
+        descriptions = []
         for item in row["differences"]:
             descriptions.append(f'{item["classification"]} `{item["path"]}` {cell(item["bun"])} → {cell(item["native"])}')
         expected = row["expectation_failures"]
