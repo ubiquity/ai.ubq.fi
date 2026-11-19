@@ -76,12 +76,7 @@ a reaction that holds the combined result. Cleanup at all six sites removed the 
 source. The new tests sample ASan's live allocation count before the loop is destroyed. The loop's teardown
 otherwise removes pending reactions and can leave LeakSanitizer clean even after a long-running process retains
 memory. The checked behavior includes the first event, inactivity, timeout and abort results and the existing
-microtask traces. The six race changes affect 218 of 450 link closures. Strict Clang 21.1.8 syntax checks passed
-for the 12 changed or instantiating source and test translation units. Release and sanitizer link and run gates
-are pending.
-
-Startup and catalog changes passed strict syntax checks for their two source and two test translation units.
-Their link closures contain 3 and 129 binaries respectively. Their release and sanitizer runs are pending.
+microtask traces.
 
 The callback and ownership changes affect 231 and 51 link closures respectively. The tests release their external
 callback owners before resuming pending work. Ordinary admin dispatch builds empty overrides. The regression fixtures
@@ -122,22 +117,36 @@ verification checkout so Ninja can reuse unchanged objects. Only changes within 
 # Run from the detached verification checkout at the source commit being tested.
 bash "$scratch/run-gate.sh" "$config" 2 python3 -B "$scratch/select.py" cpp/gateway changes \
   "${changed_paths[@]}" -- --config "$config"
-bash "$scratch/run-gate.sh" asan 4 python3 -B "$scratch/select.py" cpp/gateway changes \
+bash "$scratch/run-gate.sh" asan 2 python3 -B "$scratch/select.py" cpp/gateway changes \
   "${all_changed_paths[@]}" -- --config asan --shard "$shard/4"
-bash "$scratch/run-gate.sh" release 4 bash cpp/gateway/tools/ci-build.sh --config release --shard 1/4
+bash "$scratch/run-gate.sh" release 2 bash cpp/gateway/tools/ci-build.sh --config release --shard 1/4
 python3 cpp/gateway/tools/links.py --check
 git diff --check
 ```
 
 Strict `clang++-21 -fsyntax-only` checks ran with the driver's warnings, C++20, sanitizer, include and native
-dependency flags before the source commits. The link registry preliminary check passed all 450 entries. The
-corrected race unit passed 218/218 binaries and 3,132/3,132 cases in both configurations. Subsequent gates are running.
+dependency flags before the source commits. `python3 cpp/gateway/tools/links.py --check` passed all 450 entries on
+the source candidate. `git diff --check aae39d0e..HEAD` passed.
 
 The six source commits end at `b9d90942d56bda718599cdd39a4093d7206e499c`, tree
 `c409743e10cafe2c4cfb917060a5280e2b5a94e3`. There are 18 new cases in 17 existing test binaries. The final
 sanitizer selection contains 277 of the 450 registered binaries. The restart checkpoint for local toolchain,
 build caches and the running verification pipeline is `/var/tmp/cppgw-lifetime-fix-d.8WiFYc9c`. A build's
 terminal receipt records the tested commit, source digest, result counts and the full compiler configuration.
+
+### Per-commit gates
+
+The binary and case totals apply separately to release and ASan. Wall times are seconds, including each driver's
+compilation and isolated test execution. The copies under `receipts/` use the unit name and configuration.
+
+| Unit         | Commit                                     | Tree                                       | Binaries per profile | Cases per profile | Release wall (s) | ASan wall (s) |
+| ------------ | ------------------------------------------ | ------------------------------------------ | -------------------: | ----------------: | ---------------: | ------------: |
+| Races        | `cc566ea14ba4dde56a105f91847f8b95f6d6ae8f` | `8aa11d9379b32eaea28cd292c5b1deb3382eb304` |              218/218 |       3,132/3,132 |           78.257 |       225.582 |
+| Startup      | `d51744286f8056b448905a2901ec51ea52d6de0b` | `473015577ea6946c157088ef1dfc07f55cf89dea` |                  3/3 |             19/19 |           13.039 |        15.307 |
+| Catalog      | `4e525a2d8b37e72503294b4ff6fb207ca457a0c8` | `9091b8d1db4023580cc0686e2ba4b8f197d6384f` |              129/129 |       1,809/1,809 |          536.445 |       783.443 |
+| Callbacks    | `3eafbfe1d02698552d9f95d414f5ee08fd8d9d88` | `babc9578abd100a0b413a21f5239e3b45377bf56` |              231/231 |       3,086/3,086 |          273.445 |       497.255 |
+| Cycles       | `554240606eabd67d42e4dc8c98de37e43e3cf355` | `094bbd58dc9de3351e4d2743dd0b32cabceeb89e` |                51/51 |           623/623 |           75.023 |       129.316 |
+| Named awaits | `b9d90942d56bda718599cdd39a4093d7206e499c` | `c409743e10cafe2c4cfb917060a5280e2b5a94e3` |              running |                   |                  |               |
 
 ### Health fixture isolation
 
