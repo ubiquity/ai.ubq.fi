@@ -53,7 +53,8 @@ namespace uos::kv {
     rt::Task<std::shared_ptr<rt::Kv>> attemptOpenKv() {
       rt::Reason failure;
       try {
-        rt::Promise<std::shared_ptr<rt::Kv>> opening(state().selectedOpener());
+        const auto opener = state().selectedOpener;
+        rt::Promise<std::shared_ptr<rt::Kv>> opening(opener());
         std::shared_ptr<rt::Kv> kv = co_await opening.wait();
         state().openedKv = kv;
         state().openFailureCount = 0;

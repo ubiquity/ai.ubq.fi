@@ -316,6 +316,35 @@ ASYNC_TEST("terminal telemetry failures do not change non-stream or SSE response
   EXPECT_EQ(uos::tests::helpers::terminal_log_harness::terminalPayloads(logs).size(), std::size_t{2});
 }
 
+ASYNC_TEST("a terminal writer can finish after setup of a later writer throws") {
+  uos::tests::helpers::terminal_log_harness::Isolation isolation;
+  rt::console::Capture logs({rt::console::Method::info});
+  const auto resume = rt::withResolvers<void>();
+  const auto done = rt::withResolvers<void>();
+  auto capture = std::make_shared<std::string>("terminal writer callback");
+  const std::weak_ptr observer = capture;
+  auto options = uos::tests::helpers::terminal_log_harness::terminalOptions("writer-lifetime");
+  options.recordTelemetry = [capture = std::move(capture), waiting = resume.promise, finish = done.resolve](PromptCacheTelemetryEvent)
+    -> rt::Task<PromptCacheTelemetryRecordResult> {
+    co_await waiting.wait();
+    EXPECT_EQ(*capture, "terminal writer callback");
+    finish();
+    co_return PromptCacheTelemetryRecordResult{"ignored", "unsupported_route", std::nullopt, std::nullopt, std::nullopt, std::nullopt};
+  };
+  options.recordCacheAnalytics = [](auto) -> rt::Promise<uos::cache::prompt_analytics_core::PromptCacheAnalyticsRecordResult> {
+    throw rt::JsError("controlled writer setup failure");
+  };
+  const rt::Response response("ok");
+  auto logging = uos::handler::terminal_log::withTerminalRequestLog(response, std::move(options));
+  const auto result = co_await logging.wait();
+  EXPECT_EQ(result.status(), 200);
+  ASSERT(!observer.expired());
+  resume.resolve();
+  co_await done.promise.wait();
+  co_await rt::microtask();
+  EXPECT(observer.expired());
+}
+
 TEST("quota accounting warnings expose only error classes") {
   rt::console::Capture warnings({rt::console::Method::warn});
   const std::string secret = "quota-secret-must-not-reach-logs";

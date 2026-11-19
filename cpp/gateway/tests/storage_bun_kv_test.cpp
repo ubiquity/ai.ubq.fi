@@ -452,6 +452,26 @@ ASYNC_TEST("concurrent opener calls coalesce and scoped failures retry after bac
   opened->close();
 }
 
+ASYNC_TEST("replacing the KV opener keeps a suspended open callback alive") {
+  const auto resume = rt::withResolvers<void>();
+  auto captured = std::make_shared<std::string>("original KV opener");
+  const std::weak_ptr observer = captured;
+  const auto original = std::make_shared<rt::MemoryKv>(rt::dateNow);
+  kv::setKvForTest(nullptr, [capture = std::move(captured), waiting = resume.promise, original]() -> rt::Task<std::shared_ptr<rt::Kv>> {
+    co_await waiting.wait();
+    EXPECT_EQ(*capture, "original KV opener");
+    co_return original;
+  });
+  const auto reset = rt::scopeExit([] { kv::setKvForTest(nullptr); });
+  const auto pending = kv::getKv();
+  kv::setKvForTest(nullptr);
+  ASSERT(!observer.expired());
+  resume.resolve();
+  const auto opened = co_await pending.wait();
+  EXPECT_EQ(opened, original);
+  EXPECT(observer.expired());
+}
+
 // Differential cases from src/storage/kv.ts beyond the bun tests.
 ASYNC_TEST("openKv creates a marked database exclusively and hands the native store its resolved path") {
   const SdkScope scope;

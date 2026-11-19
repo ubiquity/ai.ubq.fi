@@ -48,6 +48,15 @@ namespace uos::handler::terminal_log {
       return batch->result;
     }
 
+    template <class Writer, class... Args>
+    auto invokeWriter(Writer writer, Args&&... args) {
+      auto owner = std::make_shared<Writer>(std::move(writer));
+      auto pending = (*owner)(std::forward<Args>(args)...);
+      // A later writer can throw before the batch starts observing the writes.
+      pending.state()->react([owner = std::move(owner)] { (void)owner; });
+      return pending;
+    }
+
     struct LogInput {
       WithTerminalRequestLogInput input;
       rt::Response response;
@@ -160,7 +169,7 @@ namespace uos::handler::terminal_log {
         .completed = completed, .usageTelemetryStatus = telemetry ? telemetry->usageTelemetryStatus : "missing",
         .cacheWriteTokensPresent = telemetry && telemetry->cacheWriteInputTokens.has_value(),
       };
-      auto telemetryWrite = input.recordTelemetry ? input.recordTelemetry(telemetryEvent)
+      auto telemetryWrite = input.recordTelemetry ? invokeWriter(std::move(input.recordTelemetry), telemetryEvent)
                                                  : rt::Promise(cache::telemetry_gate::recordPromptCacheTelemetry(telemetryEvent));
       // Only aggregate analytics is queued; durable gates and required evidence stay awaited.
       cache::prompt_analytics_core::PromptCacheAnalyticsEvent analyticsEvent{
@@ -172,14 +181,14 @@ namespace uos::handler::terminal_log {
         .promptCacheKeyPresent = telemetry ? telemetry->promptCacheKeyPresent : false,
         .promptCacheMode = telemetry ? telemetry->promptCacheMode : "unspecified", .fallbackReason = rt::orNull(telemetry ? telemetry->fallbackReason : std::nullopt),
       };
-      auto cacheAnalyticsWrite = input.recordCacheAnalytics ? input.recordCacheAnalytics(analyticsEvent)
+      auto cacheAnalyticsWrite = input.recordCacheAnalytics ? invokeWriter(std::move(input.recordCacheAnalytics), analyticsEvent)
         : rt::Promise(cache::prompt_analytics_queue::enqueuePromptCacheAnalytics(analyticsEvent));
       authority::native_paid_contracts::TerminalUsageRollupInput rollupInput{
         .model = telemetry ? telemetry->model : std::nullopt, .provider = provider, .request_id = input.requestId,
         .request_created_at_ms = input.requestStartedAtMs ? *input.requestStartedAtMs : rt::dateNow(), .input_tokens = telemetry ? telemetry->inputTokens : std::nullopt,
         .cached_input_tokens = telemetry ? telemetry->cachedInputTokens : std::nullopt, .output_tokens = telemetry ? telemetry->outputTokens : std::nullopt,
       };
-      const auto usageRollupWrite = (input.recordUsageRollup ? input.recordUsageRollup(rollupInput)
+      const auto usageRollupWrite = (input.recordUsageRollup ? invokeWriter(std::move(input.recordUsageRollup), rollupInput)
         : rt::Promise(paid_fallback::rollups::recordTerminalUsageRollup(rollupInput))).catch_([](rt::Reason) { return false; });
       if (!input.sentinelReplayInput && skipsAdminError(input, data.response.status(), provider)) {
         const auto writes = settleWrites(telemetryWrite, cacheAnalyticsWrite, usageRollupWrite);
@@ -197,7 +206,7 @@ namespace uos::handler::terminal_log {
       const auto clientObservation = replay::resolveSentinelClientFailureObservation(replayObservation, clientBodyObservation);
       std::optional<rt::Promise<replay::SentinelReplayPersistResult>> replayWrite;
       if (input.sentinelReplayInput && !data.suppressSentinelReplay && replay::shouldPersistSentinelReplay(replayObservation, clientObservation)) {
-        replayWrite = input.persistSentinelReplay ? input.persistSentinelReplay(*input.sentinelReplayInput, replayObservation, clientObservation)
+        replayWrite = input.persistSentinelReplay ? invokeWriter(std::move(input.persistSentinelReplay), *input.sentinelReplayInput, replayObservation, clientObservation)
           : rt::Promise(sentinel::replay_store::persistSentinelReplayFromEnvironment(*input.sentinelReplayInput, replayObservation, clientObservation));
       }
       const http::SentinelProviderDegradationInput degradationInput{
@@ -205,14 +214,14 @@ namespace uos::handler::terminal_log {
         .removedProviderTriggerClass = telemetry ? telemetry->removedProviderTriggerClass : std::nullopt,
       };
       auto degradationWrite = http::shouldSignalSentinelProviderDegradation(degradationInput) && input.recordSentinelDegradation
-        ? input.recordSentinelDegradation(rt::dateNow()) : rt::Promise<bool>::resolve(false);
+        ? invokeWriter(std::move(input.recordSentinelDegradation), rt::dateNow()) : rt::Promise<bool>::resolve(false);
       admin::error_log::AdminErrorInput errorInput{
         .request_id = input.requestId, .route = input.route, .status = static_cast<double>(data.response.status()), .provider = provider,
         .model = telemetry ? telemetry->model : std::nullopt, .reasoning = telemetry ? telemetry->reasoning : std::nullopt, .stream = stream,
         .terminal_type = clientObservation.terminal_type, .failure_kind = clientObservation.failure_kind, .delivery_outcome = data.deliveryOutcome,
         .created_at_ms = rt::dateNow(), .latency_ms = latencyMs, .git_sha = config::runtimeGitSha(), .deno_revision = config::runtimeDeploymentId(),
       };
-      const auto adminErrorWrite = input.recordAdminError ? input.recordAdminError(errorInput) : rt::Promise(admin::error_log::recordAdminError(errorInput));
+      const auto adminErrorWrite = input.recordAdminError ? invokeWriter(std::move(input.recordAdminError), errorInput) : rt::Promise(admin::error_log::recordAdminError(errorInput));
       const auto noReplay = rt::Promise<void>::resolve();
       const auto writes = replayWrite ? settleWrites(telemetryWrite, cacheAnalyticsWrite, *replayWrite, degradationWrite, adminErrorWrite, usageRollupWrite)
                                       : settleWrites(telemetryWrite, cacheAnalyticsWrite, noReplay, degradationWrite, adminErrorWrite, usageRollupWrite);
