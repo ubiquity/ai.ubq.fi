@@ -46,3 +46,5 @@ FAIL Gemini CLI receives only the minimal environment required for the owner CLI
 The fixture creates its root through `/tmp`. Darwin's `getcwd` returns `/private/tmp`, so the real child
 workspace has that prefix. The test now derives its expected data directory with `realpathSync` on Darwin
 and checks the same `antigravity-run-` path prefix. The Linux expectation continues to use the original path.
+The corrected Gemini binary passed 27/27 cases in `gemini-fixed.log` after commit
+`f2b1237c61ac8d7bae0537c7da4def3ac3efb1e5`. The full qualification will rerun from the committed fix.
