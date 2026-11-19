@@ -90,14 +90,12 @@ compiler = shutil.which(os.environ["CXX"]) if os.environ.get("CXX") else capture
 c_compiler = shutil.which(os.environ["CC"]) if os.environ.get("CC") else capture(["xcrun", "--find", "clang"])
 if not compiler or not c_compiler:
     parser.error("CC and CXX must name available compilers")
+compiler, c_compiler = map(os.path.abspath, (compiler, c_compiler))
 env["SDKROOT"] = capture(["xcrun", "--show-sdk-path"])
 try:
     launcher = compiler_cache.launcher()
 except ValueError as error:
     parser.error(str(error))
-build_env = compiler_cache.environment(env, repo, "macos") if launcher else env
-test_build_env = (compiler_cache.environment(env, repo, "macos-tests-" + hashlib.sha256(str(repo).encode()).hexdigest())
-                  if launcher else env)
 checkout_flags = [f"-fdebug-prefix-map={repo}=."]
 packages = ["openssl", "zlib", "libbrotlidec", "libzstd", "icu-uc", "icu-i18n"]
 cflags = shlex.split(capture(["pkg-config", "--cflags-only-other", *packages]))
@@ -116,6 +114,9 @@ vendor_cxx_flags = vendor_sources.vendor_flags(flags)
 libs += [str(sqlite / "lib/libsqlite3.dylib"), "-L" + str(prefixes["boost"] / "lib"), "-lboost_json", "-lboost_container"]
 # dyld fallback search is explicit and credential-free; native links use the exact dylib above.
 env["DYLD_LIBRARY_PATH"] = ":".join(str(p / "lib") for p in prefixes.values())
+build_env = compiler_cache.environment(env, repo, "macos") if launcher else env
+test_build_env = (compiler_cache.environment(env, repo, "macos-tests-" + hashlib.sha256(str(repo).encode()).hexdigest())
+                  if launcher else env)
 provenance = dict(source_identity=source_identity, platform=platform.platform(), compiler=capture([compiler, "--version"]),
                   c_compiler=capture([c_compiler, "--version"]),
                   compiler_launcher=launcher,
