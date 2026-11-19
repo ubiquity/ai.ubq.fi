@@ -4,7 +4,7 @@ The starting commit is `f92b14a97818ff81bf95cbfb2642e8ff13b4ab13` with tree `9a4
 
 ## Deleted paths
 
-The STATE A comparison found 57 deleted paths, 54 distinct basenames and five fully removed directories. The directory checks covered `conformance`, `packaging/confinement`, `packaging/native-kv`, `packaging/portable/licenses` and `runtime/legacy-codec` under `cpp/gateway`.
+The STATE A comparison found 57 removed paths, 54 distinct basenames and five fully removed directories. This includes the old KV license path, which Git recognizes as a rename to `packaging/DENOKV-LICENSE`. The directory checks covered `conformance`, `packaging/confinement`, `packaging/native-kv`, `packaging/portable/licenses` and `runtime/legacy-codec` under `cpp/gateway`.
 
 ```sh
 git diff --diff-filter=D --name-only --no-renames ca045a83ebaab6c50c20567d1a825638abac0891 HEAD > "$scratch/deleted-paths.txt"
@@ -28,6 +28,7 @@ The qualified list included each deleted path and removed directory in both root
 | `docs/PORT-NOTES.md`, `tests/kv_conversion_convert_differential_test.cpp` and two references to `tests/helpers/linked_native_kv.hpp` | Document the self-contained native store fixtures. |
 | `docs/briefs/file-urls.md`, `src/kv_conversion/legacy_codec.cpp`, `src/storage/native_addon.cpp`, `src/runtime/native_kv_bootstrap.cpp`, `tests/native_addon_differential_test.cpp` and `tests/kv_conversion_convert_differential_test.cpp` | Keep the native URL, static, SQLite, snapshot digest and startup checks in the example. |
 | `docs/briefs/filesystem-paths.md`, `src/runtime/native_kv_bootstrap.cpp` and the retired add-on and conversion test names | Point to native startup containment and keep the registered tests in the example. |
+| `docs/rt/websocket.md`, root `package.json` | Describe the recorded WebSocket oracle without referring to the removed manifest. |
 
 The Markdown release ledger and the lifetime and clang-tidy JSON receipts document historical revisions. `tools/tidy.sh --audit` reads the saved clang-tidy configuration, then discovers sources directly. The first-party build, fuzz, test and package registries have no other deleted inputs. The basename `typed-value.ts` in the port manifest and port census points to the original TypeScript source under `src/kv-conversion`, which is distinct from the retired runtime shim. The conformance links resolve at STATE A.
 
@@ -73,6 +74,7 @@ env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$scratch/tidy-test-h
   --icu "$scratch/icu78/include" --source src/release.cpp --out "$scratch/tidy-scope"
 
 bash "$scratch/release.sh" "$scratch"
+bash "$scratch/release-resume.sh" "$scratch"
 bash "$scratch/fuzz.sh" "$scratch"
 bash "$scratch/package.sh" "$scratch"
 ```
@@ -85,6 +87,15 @@ env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC HOME
   PKG_CONFIG_PATH="$scratch/icu78/lib/pkgconfig:$scratch/sqlite/lib/pkgconfig" UOS_CI_CXXFLAGS="-isystem $scratch/boost_1_92_0" \
   UOS_CI_LDFLAGS="-L$scratch/boost_1_92_0/stage/lib -Wl,--disable-new-dtags,-rpath,$scratch/icu78/lib:$scratch/sqlite/lib" \
   /usr/bin/time -p python3 -B "$scratch/selected.py"
+```
+
+The resumed invocation used the same command with `UOS_CI_JOBS=4` and fresh scratch directories. It reused the previously completed objects, built the remaining 183 and passed all 243 linked binaries and 3,367 cases in 516.35 s. The driver's compile phase took 477.558 s and its link and test phase took 37.855 s. Health passed 23 cases, native startup passed one, and the ASN.1 and CBOR passkey libraries passed 11 and 13 respectively. The receipt records unchanged input SHA-256 `e77d5fc6c6ed2042417cb6bbe2b698d3a1bea8c3613037dd1fcd44a4723d571b` and the committed source and tree above.
+
+The standalone startup bind-failure gate used the same Release compiler flags, 366 committed objects, vendor archives and CI namespace helpers. Its three checks passed, including exactly one close of the durable store. The compile and link took 5.643 s and the isolated run took 0.064 s.
+
+```sh
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC HOME="$run/home" TMPDIR="$run/tmp" \
+  /usr/bin/time -p python3 -B "$scratch/serve-failure-gate.py" "$scratch" "$run"
 ```
 
 The fuzz runner extracts the workflow's discovery Python from `.github/workflows/cpp-gateway-ci.yml`. The matrix contains 25 entries. It invokes `fuzz/ci.py` separately for each entry with `--seconds 20 --jobs 2` under the workflow's `sudo -n unshare --net -- setpriv` boundary. The same invocation links the target before its campaign. The `clang` and `clang++` wrappers use ccache with the installed Clang 21.1.8 compilers. Each run has a new home, temporary directory, corpus and artifact directory under `$scratch/fuzz`.
@@ -123,6 +134,16 @@ cmp "$scratch/uos-gateway-linux-arm64.tar.gz" "$scratch/uos-gateway-linux-arm64-
 
 The verifier took 54.23 s. All four Debian 12/13 and 256/512 MiB configurations matched `e33972637da3514281e39b5a290789e77a150477` and its `vps-` deployment ID in the health body and headers, including on reopen. Each configuration refused two tampered startup fixtures and reopened with 1,161 accounted loopback requests. Peak cgroup use across all four was 87,789,568 bytes. Median throughput per configuration ranged from 214.08 to 230.21 requests/s. The executable SHA-256 was `6536c7e4d79649ed017f303723930ba11a6ba373bb200c3ec1f7c9d34873be8d` on both images. Build logs and proof receipts are under `$scratch/package-*.log` and `$scratch/package-evidence`.
 
-## Status
+## Remaining work and outside findings
 
-The interrupted Release test run resumed using the existing objects. Apple Silicon execution and the automatic hosted matrix are pending. The local model review launcher requires Node and model traffic, so this job uses a local diff review. The existing public auth guide still points to the legacy upload tooling. [Previous cleanup findings](cppgw-cpp-only-20261119.md)
+The final branch retains the compiled and packaged inputs of `e33972637da3514281e39b5a290789e77a150477`. The subsequent changes cover lifetime lint and documentation. The committed diff against `f92b14a97818ff81bf95cbfb2642e8ff13b4ab13` passed `git diff --check` and local inspection. `bash -n` passed on three changed shell files, and `ast.parse` passed on three Python files and the macOS build driver's embedded Python. The installed model review launcher requires Node and model traffic, so this run used manual inspection under the task's runtime and provider constraints.
+
+The public auth guide in `static/docs/llms-agents.md` still points to the removed root manifest and the legacy upload command. The separate host-specific CMake `package` target still inherits the development release identity unless `UOS_PACKAGE_GIT_COMMIT` is supplied to CMake. [Previous cleanup findings](cppgw-cpp-only-20261119.md)
+
+## Summary
+
+Removed the deleted native add-on from both passkey fuzz targets and switched the lifetime lint runner to the current source inventory. All 25 fuzz targets built and completed 20-second campaigns. The HTTP server harness completed on retry after an initial abort.
+
+Portable Linux and macOS package builds now embed the full source commit. The Debian 12 and 13 package proofs matched it in the health body and headers, and a repeat build produced identical bytes.
+
+All 449 test registrations resolved, and 243 Release binaries passed 3,367 cases. Native macOS packaging and the hosted CI matrix remain pending.
