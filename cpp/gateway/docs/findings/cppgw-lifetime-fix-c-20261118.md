@@ -64,8 +64,15 @@ IDs include the original audit line ranges. The verification section identifies 
 | anthropic_responses.cpp:779,857,880   | FIXED — the two bounded reads and the native HTTP error normalizer passed owning options aggregates in the await expressions. Name each Task before awaiting it.                                                    | `fix(cpp): bind provider coroutine tasks before awaiting`             | `anthropic_responses_test.cpp` covers HTTP errors and buffered success. The Clang sanitizer profile cannot establish the GCC 12.2 compiler hazard. Gates pending.                 |
 | claude_code_usage_refresh.cpp:35,75   | FIXED — both usage-lease reads supplied braced options inside the await expressions. The options contain only an optional enum. Name the options and Tasks to follow the port rule.                                 | `fix(cpp): bind provider coroutine tasks before awaiting`             | `claude_usage_retry_test.cpp` and `claude_capacity_analytics_test.cpp` cover claim and cleanup. There is no owning temporary here to drive a sanitizer regression. Gates pending. |
 
-The audit recorded zero UNCLEAR rows. Its reported injected opener lifetime in `src/kv.cpp`
-is outside Area C and remains a separate item for the owning agent.
+The audit recorded zero UNCLEAR rows. Two observations belong to the shared runtime:
+
+- `src/kv.cpp`, `attemptOpenKv`. Replacing `selectedOpener` while an injected coroutine
+  opener is suspended can destroy the closure its frame still uses. This was reported in
+  the audit and is outside the assigned paths.
+- `src/rt/abort.cpp`, `rt::sleep(double, AbortSignal)`. Dropping a timer on Loop teardown
+  leaves its once listener installed. A surviving source can retain a composed signal and
+  the callback's pending result through that listener. This follows the same ownership
+  path as the Voyage case. The shared helper was inspected and has no new runtime witness here.
 
 ## Verification
 
@@ -75,22 +82,75 @@ OpenSSL 3, zlib, Brotli, and Zstd. The saved `/var/tmp/cppgw-lifetime-fix-c-2026
 records the setup commands. Package setup took 19.917 s, Boost 95.878 s, SQLite 61.935 s and ICU
 263.635 s with overlapping builds. SQLite's fixture probe reported 3.54.0 in both configurations.
 
-The retry fix at `f014705af507c82b3d5d48a9599366f3108e2b5a`, tree
-`55ad16ee339a4860a6fc456df78a85198044ef74`, passed 158 binaries and 2,185 cases in each profile.
-The release gate took 3,220.934 s including the cold build. The incremental ASan gate took
-1,548.973 s. Its baseline with the new regression observed the expired signal assertion and an
-ASan heap-use-after-free after the request had already returned its original abort error.
-The six abort-cycle baseline binaries each failed under LSan with the new tests. The measured leaks
-were 776 bytes for shared refresh, 3,680 for the supervisor call, 496 for Voyage, 848 for Claude,
-920 for Metered and 920 for Surplus. The baseline diagnostics and individual driver receipts are
-under `/var/tmp/cppgw-lifetime-fix-c-20261118/receipts`.
+### Before the fixes
 
-The driver scopes each checkpoint to the test files in its diff and tests whose link lists
-contain a changed source. The final ASan scope uses the union of the same paths across the
-repair. `ci.sh` stages an empty HOME and fresh TMPDIR, clears the inherited environment, and
-selects the prepared libraries. The driver confines fixtures to private network, mount and PID
-namespaces and checks the loopback and outside-route behavior before executing any tests.
-Outstanding checkpoint and final shard results will be recorded here.
+The baseline builds used the preceding commit's production source and the new test files. For the
+old Voyage cache-writer signature, the baseline test passed the store by reference and released its
+owner immediately after the write returned. The baseline diagnostics and driver receipts are under
+`/var/tmp/cppgw-lifetime-fix-c-20261118/receipts`.
+
+| Regression               | Baseline observation                                                                                                                                                                      |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex retry              | The signal release assertion failed. ASan then reported heap-use-after-free when the sleeper resumed after the abort rejection.                                                           |
+| Abort listeners          | Six binaries failed with LSan diagnostics. Shared refresh leaked 776 bytes, supervisor 3,680, Voyage 496, Claude 848, Metered 920 and Surplus 920.                                        |
+| KV receiver lifetime     | Nine of nine cases failed their receiver-liveness assertion in the ASan profile. The weak observer keeps the combined allocation alive, so the assertion identifies the lifetime failure. |
+| Health clock             | ASan reported heap-use-after-free when the code copied the erased queue entry's promise.                                                                                                  |
+| Shared provider lookups  | Three of three new cases failed when the second loop ran out of work while waiting on the first loop's promise. The other 38 cases in those binaries passed.                              |
+| Owning await expressions | Existing contract fixtures cover the corrected paths. The Clang sanitizer run does not exercise the GCC 12.2 compiler behavior.                                                           |
+
+### Checkpoint and final commands
+
+The staged `ci.sh` launcher uses `env -i`, an empty HOME, fresh TMPDIR, `CC=clang-21`,
+`CXX=clang++-21`, and a 5,400-second command budget. It sets `UOS_CI_BUILD_DIR` to the
+evidence root's `build` directory, `UOS_CI_SQLITE_PREFIX` to `sqlite`, and `PKG_CONFIG_PATH`
+to `icu78/lib/pkgconfig`. The C++ flags add `-isystem` for the Boost source. The linker flags
+add Boost's `stage/lib` and ICU's `lib`, `-Wl,-rpath` for ICU and `-licudata`. The driver's
+300-second per-binary bound and OS fixture isolation apply. The two profiles ran on separate
+detached worktrees to keep each run's source stable. Retry used four workers per invocation
+and the remaining checkpoints used two per profile.
+
+```bash
+evidence=/var/tmp/cppgw-lifetime-fix-c-20261118
+# One command per profile from its worktree at the checkpoint commit.
+mapfile -t changed < <(git diff-tree --no-commit-id --name-only -r HEAD -- cpp/gateway/src cpp/gateway/tests)
+CPPGW_JOBS=2 bash "$evidence/ci.sh" python3 -B "$evidence/select.py" "${changed[@]#cpp/gateway/}" -- --config "$profile"
+
+# Final ASan coverage, from the candidate worktree.
+mapfile -t changed < <(git diff --name-only 78b5276c HEAD -- cpp/gateway/src cpp/gateway/tests)
+for shard in 1 2 3 4; do
+  CPPGW_JOBS=2 bash "$evidence/ci.sh" python3 -B "$evidence/select.py" "${changed[@]#cpp/gateway/}" -- --config asan --shard "$shard/4"
+done
+CPPGW_JOBS=2 bash "$evidence/ci.sh" bash cpp/gateway/tools/ci-build.sh --config release --shard 1/4
+python3 -B cpp/gateway/tools/links.py --check
+git diff --check 78b5276c HEAD
+```
+
+The selector resolves every test with `tools/links.py` and passes through explicit changed
+tests and tests whose link sets contain any changed source. It invokes the same `driver.py`
+as `ci-build.sh`. The Voyage header changed with its implementation, and the selector
+includes both source call sites of the modified writer. The final ASan scope is the union
+of the checkpoint scopes. Fixture subprocesses start with credential-free environments and
+private network, mount and PID namespaces. The boundary proves loopback and outside-route denial.
+
+| Checkpoint                      | Release binaries / cases / elapsed | ASan binaries / cases / elapsed |
+| ------------------------------- | ---------------------------------- | ------------------------------- |
+| Retry `f014705a`                | 158 / 2,185 / 3,220.934 s          | 158 / 2,185 / 1,548.973 s       |
+| Abort listeners `328b0619`      | 175 / 2,437 / 184.472 s            | 175 / 2,437 / 407.115 s         |
+| KV receiver lifetime `df33c21e` | 180 / 2,576 / 215.148 s            | 180 / 2,576 / 456.420 s         |
+| Health clock `b4533584`         | 177 / 2,496 / 63.634 s             | 177 / 2,496 / 181.269 s         |
+
+Each result above had 369 compiled production objects and all selected cases passed. The
+remaining checkpoint receipts and final shards are in progress. Link resolution succeeded
+for all 451 declarations, and `git diff --check 78b5276c HEAD` passed.
+
+### Branch handoff
+
+`git fetch --no-tags origin refs/heads/development:refs/remotes/origin/development` resolved
+development to `5ddac3dd154d74b1049197fb7cf5f53551609072`. The task branch descends from the
+assigned C++ integration branch. Its tip is outside the fetched development history. The
+command `GIT_TERMINAL_PROMPT=0 git push --dry-run origin HEAD:refs/heads/agent-jobs/cppgw-lifetime-fix-c-20261118`
+failed because GitHub write credentials were unavailable. The publication, pull request and
+hosted matrix are pending. The local commits remain on `agent-job` for the job owner.
 
 ## Summary
 
