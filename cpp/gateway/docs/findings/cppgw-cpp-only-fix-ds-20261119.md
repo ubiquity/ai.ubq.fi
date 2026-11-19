@@ -48,6 +48,13 @@ All 19 fuzz targets in `cmake/extra-targets.json` and every source in `tests/LIN
 - Added `tests/release_identity_test.cpp` (registered in `tests/LINKS.txt`) and extended `tests/health_test.cpp` so
   a packaged build asserts the health field equals `UOS_PACKAGE_GIT_COMMIT` and is never `unknown`.
 
+## Verification identity
+
+Code, fuzz and package evidence were produced from commit `508e62cc77452aa36c920a9a04b028ded82a0e54`,
+tree `1ec7e5321d91fd4b46eabc82cf575dbebc4d3119`. Every later commit in this job changes only documentation,
+this findings report or the acceptance prose; no compilation unit, fuzz list, test registration or package
+script differs from that verified state. The checkout is clean at the final report commit.
+
 ## Exact commands and measurements
 
 ### Registration and source inventory
