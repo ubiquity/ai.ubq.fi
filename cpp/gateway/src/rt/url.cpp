@@ -1,4 +1,5 @@
 #include "uos/rt/url.hpp"
+#include "url_limits.hpp"
 #include "uos/rt/fs.hpp"
 #include "uos/rt/limits.hpp"
 #include "uos/rt/regex.hpp"
@@ -27,16 +28,6 @@ namespace uos::rt {
       if (isUtf8(input)) return input;
       storage = toWellFormed(input);
       return storage;
-    }
-
-    bool boundedQuery(std::string_view query) {
-      if (query.starts_with('?')) query.remove_prefix(1);
-      if (query.size() > limits::kUrlQueryBytes) return false;
-      std::size_t count = 0;
-      for (const auto part : query | std::views::split('&')) {
-        if (!part.empty() && ++count > limits::kUrlQueryPairs) return false;
-      }
-      return true;
     }
 
     // Long URLs are used for image references. Keep Ada's authority and IDNA
@@ -130,7 +121,7 @@ namespace uos::rt {
       if (!boundedUrl(input)) return tl::unexpected(ada::errors::type_error);
       std::string storage;
       auto parsed = ada::parse(usv(input, storage), base);
-      if (parsed && (!validHost(*parsed) || !boundedQuery(parsed->get_search()))) return tl::unexpected(ada::errors::type_error);
+      if (parsed && (!validHost(*parsed) || !detail::boundedUrlQuery(parsed->get_search()))) return tl::unexpected(ada::errors::type_error);
       return parsed;
     }
 
@@ -188,7 +179,7 @@ namespace uos::rt {
   URLSearchParams::URLSearchParams() noexcept = default;
 
   URLSearchParams::URLSearchParams(std::string_view init) {
-    if (!boundedQuery(init)) throw TypeError("URL search parameters exceed limit");
+    if (!detail::boundedUrlQuery(init)) throw TypeError("URL search parameters exceed limit");
     std::string storage;
     reset(usv(init, storage));
   }
@@ -245,7 +236,7 @@ namespace uos::rt {
   }
 
   void URLSearchParams::reset(std::string_view query) {
-    if (!boundedQuery(query)) throw TypeError("URL search parameters exceed limit");
+    if (!detail::boundedUrlQuery(query)) throw TypeError("URL search parameters exceed limit");
     if (query.empty()) params_.reset();
     else data().reset(query);
   }
@@ -262,7 +253,7 @@ namespace uos::rt {
     std::string keyStorage, valueStorage;
     auto candidate = data();
     candidate.append(usv(name, keyStorage), usv(value, valueStorage));
-    if (!boundedQuery(candidate.to_string())) throw TypeError("URL search parameters exceed limit");
+    if (!detail::boundedUrlQuery(candidate.to_string())) throw TypeError("URL search parameters exceed limit");
     *params_ = std::move(candidate);
     update();
   }
@@ -312,7 +303,7 @@ namespace uos::rt {
     std::string keyStorage, valueStorage;
     auto candidate = data();
     candidate.set(usv(name, keyStorage), usv(value, valueStorage));
-    if (!boundedQuery(candidate.to_string())) throw TypeError("URL search parameters exceed limit");
+    if (!detail::boundedUrlQuery(candidate.to_string())) throw TypeError("URL search parameters exceed limit");
     *params_ = std::move(candidate);
     update();
   }
@@ -475,11 +466,11 @@ namespace uos::rt {
   }
 
   void URL::search(std::string_view value) {
-    if (!url_ || !boundedQuery(value)) return;
+    if (!url_ || !detail::boundedUrlQuery(value)) return;
     std::string storage;
     auto candidate = *url_;
     candidate.set_search(usv(value, storage));
-    if (!boundedQuery(candidate.get_search())) return;
+    if (!detail::boundedUrlQuery(candidate.get_search())) return;
     *url_ = std::move(candidate);
     refreshRecord();
     searchParams_.reset(url_->get_search());

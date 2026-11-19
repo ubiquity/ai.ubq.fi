@@ -10,6 +10,7 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/url.hpp"
+#include "src/rt/url_limits.hpp"
 
 #include "third_party/llhttp/llhttp.h"
 
@@ -689,6 +690,11 @@ namespace uos::runtime::http {
         const std::size_t targetStart = text.size() - requestLine.size() + method.size() + 1;
         if (target.empty() || target == "*" || parser.target.offset != targetStart || text[targetStart - 1] != ' ' ||
             !text.substr(parser.target.offset + target.size()).starts_with(suffix)) {
+          refuse(BAD_REQUEST);
+          return false;
+        }
+        const auto targetPath = target.substr(0, target.find('#'));
+        if (const auto query = targetPath.find('?'); query != std::string_view::npos && !rt::detail::boundedUrlQuery(targetPath.substr(query))) {
           refuse(BAD_REQUEST);
           return false;
         }

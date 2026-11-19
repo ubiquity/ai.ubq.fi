@@ -221,3 +221,14 @@ TEST("fixed and chunked request bodies keep the HTTP and image route ceilings") 
     EXPECT_EQ(chunked.connection->parser.bodyTooLarge, extra != 0);
   }
 }
+
+TEST("client query parameter limits reject at the HTTP boundary") {
+  std::string target = "/?q";
+  for (std::size_t i = 1; i < rt::limits::kUrlQueryPairs; ++i) target += "&q";
+  for (const std::size_t extra : {0u, 1u}) {
+    Fixture fixture;
+    if (extra) target += "&q";
+    fixture.append("GET " + target + " HTTP/1.1\r\nHost: local\r\n\r\n");
+    EXPECT_EQ(fixture.connection->parseHead(), extra == 0);
+  }
+}
