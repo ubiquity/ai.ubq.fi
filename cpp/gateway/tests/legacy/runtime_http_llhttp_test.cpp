@@ -3,6 +3,8 @@
 #include "src/runtime/http.cpp"
 #include "uos/rt/test.hpp"
 
+#include <tuple>
+
 namespace {
   namespace rt = uos::rt;
   using uos::runtime::http::node_http::ConnectionState;

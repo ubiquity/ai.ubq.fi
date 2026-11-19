@@ -294,10 +294,9 @@ namespace uos::rt::detail::fetch {
       });
       spawn(writeRequest(connection, head, body, writer, signal));
       auto exchange = std::make_shared<Exchange>();
-      std::size_t headBytes = 0;
       for (;;) {
         std::size_t consumed = 0;
-        const auto parsed = exchange->parser.readHead(connection->input.view().substr(0, kMaxResponseHead - headBytes), consumed);
+        const auto parsed = exchange->parser.readHead(connection->input.view(), consumed);
         connection->input.consume(consumed);
         if (parsed == HPE_PAUSED) {
           const ResponseHead& response = exchange->parser.head();
@@ -305,17 +304,16 @@ namespace uos::rt::detail::fetch {
           if (status == 101) throw verboseError("UnrequestedUpgrade", originalUrl);
           if (response.framing.error) throw verboseError(response.framing.error, originalUrl);
           const auto bodyStatus = exchange->parser.beginBody(method == "HEAD");
+          if (bodyStatus == HPE_USER) throw verboseError("ResponseBodyTooLarge", originalUrl);
           if (bodyStatus != HPE_OK && bodyStatus != HPE_PAUSED) throw verboseError("Malformed_HTTP_Response", originalUrl);
           if (status >= 100 && status < 200) {
             exchange->parser.reset();
-            headBytes = 0;
             continue;
           }
           break;
         }
+        if (parsed == HPE_USER && exchange->parser.headLimitReached()) throw verboseError("ResponseHeadersTooLarge", originalUrl);
         if (parsed != HPE_OK) throw verboseError("Malformed_HTTP_Response", originalUrl);
-        headBytes += consumed;
-        if (headBytes >= kMaxResponseHead) throw verboseError("ResponseHeadersTooLarge", originalUrl);
         auto filling = connection->fill();
         const ReadStatus status = co_await std::move(filling);
         if (status == ReadStatus::data) continue;

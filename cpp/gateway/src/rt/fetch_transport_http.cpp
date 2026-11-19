@@ -222,10 +222,34 @@ namespace uos::rt::detail::fetch {
       self.startField_ = true;
       return 0;
     };
+    settings.on_header_field_complete = [](llhttp_t* parser) -> int {
+      auto& self = *static_cast<ResponseParser*>(parser->data);
+      if ((parser->flags & F_TRAILING) && ++self.trailerCount_ > self.maxFields_) {
+        llhttp_set_error_reason(parser, "Too many HTTP response trailers");
+        return HPE_USER;
+      }
+      return 0;
+    };
     settings.on_headers_complete = [](llhttp_t*) { return static_cast<int>(HPE_PAUSED); };
+    settings.on_chunk_header = [](llhttp_t* parser) -> int {
+      auto& self = *static_cast<ResponseParser*>(parser->data);
+      if (parser->content_length > self.bodyBytesRemaining_) {
+        llhttp_set_error_reason(parser, "HTTP response body exceeds limit");
+        return HPE_USER;
+      }
+      self.chunkPart_ = parser->content_length == 0 ? ChunkPart::trailers : ChunkPart::data;
+      return HPE_PAUSED;
+    };
+    settings.on_chunk_complete = [](llhttp_t* parser) -> int {
+      auto& self = *static_cast<ResponseParser*>(parser->data);
+      if (self.chunkPart_ == ChunkPart::trailers) return HPE_OK;
+      self.chunkPart_ = ChunkPart::size;
+      return HPE_PAUSED;
+    };
     settings.on_body = [](llhttp_t* parser, const char* data, std::size_t size) {
       if (size == 0) return 0;
       auto& self = *static_cast<ResponseParser*>(parser->data);
+      self.bodyBytesRemaining_ -= size;
       if (auto* out = self.bodyBytes_) {
         const auto* first = reinterpret_cast<const std::uint8_t*>(data);
         return storeParserBytes(parser, [&] {
@@ -236,11 +260,15 @@ namespace uos::rt::detail::fetch {
       if (self.body_) return storeParserBytes(parser, [&] { self.body_->append(data, size); });
       return 0;
     };
-    settings.on_message_complete = [](llhttp_t*) { return static_cast<int>(HPE_PAUSED); };
+    settings.on_message_complete = [](llhttp_t* parser) -> int {
+      static_cast<ResponseParser*>(parser->data)->bodyComplete_ = true;
+      return HPE_PAUSED;
+    };
     return settings;
   }();
 
-  ResponseParser::ResponseParser(std::size_t maxFields) : maxFields_(maxFields) {
+  ResponseParser::ResponseParser(std::size_t maxFields, std::size_t maxHeadBytes)
+      : maxFields_(std::min(maxFields, limits::kHttpHeaderFields)), maxHeadBytes_(std::min(maxHeadBytes, limits::kHttpHeaderBlockBytes)) {
     llhttp_init(&parser_, HTTP_RESPONSE, &settings_);
     parser_.data = this;
   }
@@ -258,13 +286,18 @@ namespace uos::rt::detail::fetch {
   llhttp_errno_t ResponseParser::readHead(std::string_view input, std::size_t& consumed) {
     const bool invalidPrefix = firstHeadBytes_ && !input.empty() && input.front() != 'H';
     firstHeadBytes_ = firstHeadBytes_ && input.empty();
-    const auto result = execute(input, consumed);
+    const auto result = execute(input.substr(0, maxHeadBytes_ - headBytes_), consumed);
+    headBytes_ += consumed;
     // llhttp also accepts leading blank lines, RTSP and ICE. The client
     // transports expect the response to start directly with HTTP.
     if (invalidPrefix && (result == HPE_OK || result == HPE_PAUSED)) {
       consumed = 0;
       llhttp_set_error_reason(&parser_, "Expected an HTTP response");
       return HPE_INVALID_CONSTANT;
+    }
+    if (result == HPE_OK && headBytes_ == maxHeadBytes_) {
+      llhttp_set_error_reason(&parser_, "HTTP response head exceeds limit");
+      return HPE_USER;
     }
     if (result != HPE_PAUSED) return result;
     if (llhttp_get_http_major(&parser_) != 1) {
@@ -291,36 +324,77 @@ namespace uos::rt::detail::fetch {
     if (headRequest || parser_.status_code / 100 == 1) parser_.flags |= F_SKIPBODY;
     llhttp_resume(&parser_);
     std::size_t consumed;
-    return execute({}, consumed);
+    const auto result = execute({}, consumed);
+    if (result != HPE_OK) return result;
+    chunked_ = head_.framing.framing == Framing::chunked;
+    if (head_.framing.framing == Framing::length && head_.framing.length > bodyBytesRemaining_) {
+      llhttp_set_error_reason(&parser_, "HTTP response body exceeds limit");
+      return HPE_USER;
+    }
+    return result;
   }
 
   void ResponseParser::reset() {
     llhttp_reset(&parser_);
     head_ = {};
+    headBytes_ = 0;
+    bodyBytesRemaining_ = limits::kHttpBodyBytes;
+    metadataBytes_ = 0;
+    trailerCount_ = 0;
+    chunkPart_ = ChunkPart::size;
+    bodyComplete_ = false;
+    chunked_ = false;
     firstHeadBytes_ = true;
     startField_ = true;
   }
 
   llhttp_errno_t ResponseParser::readBody(std::string_view input, std::size_t& consumed, ByteChunk* out) {
     bodyBytes_ = out;
-    bodyInputSize_ = input.size();
-    const auto result = execute(input, consumed);
+    bodyInputSize_ = std::min(input.size(), bodyBytesRemaining_);
+    consumed = 0;
+    auto result = static_cast<llhttp_errno_t>(parser_.error);
+    while (!input.empty() && result == HPE_OK) {
+      std::size_t capacity = bodyBytesRemaining_;
+      const bool metadata = chunked_ && chunkPart_ != ChunkPart::data;
+      if (metadata) {
+        const auto limit = chunkPart_ == ChunkPart::size ? limits::kHttpChunkLineBytes : maxHeadBytes_;
+        capacity = limit - metadataBytes_;
+      } else if (chunked_) {
+        // A finished chunk still has its CRLF delimiter to consume.
+        capacity = parser_.content_length == 0 ? 2 : static_cast<std::size_t>(parser_.content_length);
+      }
+      if (capacity == 0) {
+        llhttp_set_error_reason(&parser_, metadata ? "HTTP response chunk metadata exceeds limit" : "HTTP response body exceeds limit");
+        result = HPE_USER;
+        break;
+      }
+      std::size_t step = 0;
+      result = execute(input.substr(0, capacity), step);
+      consumed += step;
+      input.remove_prefix(step);
+      if (metadata) metadataBytes_ += step;
+      if (result == HPE_PAUSED && !bodyComplete_) {
+        metadataBytes_ = 0;
+        llhttp_resume(&parser_);
+        result = HPE_OK;
+      }
+    }
     bodyBytes_ = nullptr;
     return result;
   }
 
   llhttp_errno_t ResponseParser::readBody(std::string_view input, std::size_t& consumed, std::string& out) {
     body_ = &out;
-    const auto result = execute(input, consumed);
+    const auto result = readBody(input, consumed);
     body_ = nullptr;
     return result;
   }
 
   HeadParse parseResponseHead(std::string_view data, std::size_t maxBytes, std::size_t maxFields) {
-    ResponseParser parser(maxFields);
+    ResponseParser parser(maxFields, maxBytes);
     HeadParse parsed;
-    parsed.error = parser.readHead(data.substr(0, maxBytes), parsed.length);
-    if (parsed.error == HPE_OK) {
+    parsed.error = parser.readHead(data, parsed.length);
+    if (parsed.error == HPE_OK || (parsed.error == HPE_USER && parser.headLimitReached())) {
       parsed.length = 0;
     } else if (parsed.error == HPE_PAUSED) {
       parsed.head = parser.takeHead();

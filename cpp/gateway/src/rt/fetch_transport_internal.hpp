@@ -7,6 +7,7 @@
 #include "uos/rt/clock.hpp"
 #include "uos/rt/fetch_transport.hpp"
 #include "uos/rt/http.hpp"
+#include "uos/rt/limits.hpp"
 #include "third_party/llhttp/llhttp.h"
 
 #include <boost/asio/execution_context.hpp>
@@ -59,10 +60,6 @@ namespace uos::rt::detail::fetch {
 
   // ---- response head ------------------------------------------------------------
 
-  // Bun rejects a head larger than about 1.5 MiB and more than 256 fields.
-  inline constexpr std::size_t kMaxResponseHead = 1572864;
-  inline constexpr std::size_t kMaxResponseFields = 256;
-
   enum class Framing : std::uint8_t { empty, length, chunked, close };
   struct FramingRule {
     Framing framing = Framing::empty;
@@ -97,7 +94,7 @@ namespace uos::rt::detail::fetch {
   // byte counts are relative to the input passed to that call.
   class ResponseParser {
   public:
-    explicit ResponseParser(std::size_t maxFields = kMaxResponseFields);
+    explicit ResponseParser(std::size_t maxFields = limits::kHttpHeaderFields, std::size_t maxHeadBytes = limits::kHttpHeaderBlockBytes);
     ResponseParser(const ResponseParser&) = delete;
     ResponseParser& operator=(const ResponseParser&) = delete;
 
@@ -105,6 +102,7 @@ namespace uos::rt::detail::fetch {
     const ResponseHead& head() const { return head_; }
     ResponseHead takeHead() { return std::move(head_); }
     const char* errorReason() const { return llhttp_get_error_reason(&parser_); }
+    bool headLimitReached() const { return headBytes_ == maxHeadBytes_; }
     // Completes immediately if llhttp determines the response has no body.
     llhttp_errno_t beginBody(bool headRequest = false);
     bool needsEof() const { return llhttp_message_needs_eof(&parser_); }
@@ -116,6 +114,7 @@ namespace uos::rt::detail::fetch {
     llhttp_errno_t finish() { return llhttp_finish(&parser_); }
 
   private:
+    enum class ChunkPart { size, data, trailers };
     static const llhttp_settings_t settings_;
     llhttp_errno_t execute(std::string_view input, std::size_t& consumed);
 
@@ -125,11 +124,19 @@ namespace uos::rt::detail::fetch {
     std::size_t bodyInputSize_ = 0;
     std::string* body_ = nullptr;
     std::size_t maxFields_;
+    std::size_t maxHeadBytes_;
+    std::size_t headBytes_ = 0;
+    std::size_t bodyBytesRemaining_ = limits::kHttpBodyBytes;
+    std::size_t metadataBytes_ = 0;
+    std::size_t trailerCount_ = 0;
+    ChunkPart chunkPart_ = ChunkPart::size;
+    bool bodyComplete_ = false;
+    bool chunked_ = false;
     bool firstHeadBytes_ = true;
     bool startField_ = true;
   };
 
-  HeadParse parseResponseHead(std::string_view data, std::size_t maxBytes = kMaxResponseHead, std::size_t maxFields = kMaxResponseFields);
+  HeadParse parseResponseHead(std::string_view data, std::size_t maxBytes = limits::kHttpHeaderBlockBytes, std::size_t maxFields = limits::kHttpHeaderFields);
   FramingRule responseFraming(const std::string& method, const ResponseHead& head);
 
   // Standalone entry point for decoding an already identified chunked body.

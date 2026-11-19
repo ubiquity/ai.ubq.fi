@@ -151,3 +151,65 @@ TEST("response head limits stop at the header boundary") {
   ASSERT(parsed);
   EXPECT_EQ(parsed->length, head.size());
 }
+
+TEST("Fetch budgets split response heads by bytes and fields") {
+  namespace limits = uos::rt::limits;
+  for (const std::size_t extra : {0u, 1u}) {
+    std::string head = "HTTP/1.1 200 OK\r\nX-Fill: ";
+    head.resize(limits::kHttpHeaderBlockBytes - 4 + extra, 'a');
+    head += "\r\n\r\n";
+    fetch::ResponseParser parser;
+    std::size_t consumed = 0;
+    ASSERT_EQ(parser.readHead(std::string_view(head).substr(0, 101), consumed), HPE_OK);
+    EXPECT_EQ(parser.readHead(std::string_view(head).substr(consumed), consumed), extra == 0 ? HPE_PAUSED : HPE_USER);
+
+    head = "HTTP/1.1 200 OK\r\n";
+    for (std::size_t i = 0; i < limits::kHttpHeaderFields + extra; ++i) head += "X: a\r\n";
+    head += "\r\n";
+    EXPECT_EQ(fetch::parseResponseHead(head).status, extra == 0 ? fetch::HeadStatus::complete : fetch::HeadStatus::malformed);
+  }
+}
+
+TEST("Fetch bounds declared, chunked and EOF-delimited response bodies") {
+  namespace limits = uos::rt::limits;
+  for (const std::size_t extra : {0u, 1u}) {
+    fetch::ResponseParser fixed;
+    std::size_t consumed = 0;
+    const auto head = "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(limits::kHttpBodyBytes + extra) + "\r\n\r\n";
+    ASSERT_EQ(fixed.readHead(head, consumed), HPE_PAUSED);
+    EXPECT_EQ(fixed.beginBody(), extra == 0 ? HPE_OK : HPE_USER);
+
+    fetch::ChunkedDecoder chunked;
+    std::string body;
+    consumed = 0;
+    EXPECT_EQ(chunked.decode(extra == 0 ? "1000000\r\n" : "1000001\r\n", consumed, body),
+              extra == 0 ? fetch::ChunkedDecoder::Result::more : fetch::ChunkedDecoder::Result::invalid);
+    EXPECT(body.empty());
+
+    fetch::ResponseParser close;
+    ASSERT_EQ(close.readHead("HTTP/1.0 200 OK\r\n\r\n", consumed), HPE_PAUSED);
+    ASSERT_EQ(close.beginBody(), HPE_OK);
+    EXPECT_EQ(close.readBody(std::string(limits::kHttpBodyBytes + extra, 'a'), consumed), extra == 0 ? HPE_OK : HPE_USER);
+    EXPECT_EQ(consumed, limits::kHttpBodyBytes);
+  }
+}
+
+TEST("Fetch bounds each chunk line and the trailer block") {
+  namespace limits = uos::rt::limits;
+  for (const std::size_t extra : {0u, 1u}) {
+    std::string line = "1;name=";
+    line.resize(limits::kHttpChunkLineBytes - 2 + extra, 'a');
+    line += "\r\na\r\n0\r\n\r\n";
+    fetch::ChunkedDecoder chunked;
+    std::size_t offset = 0;
+    std::string body;
+    EXPECT_EQ(chunked.decode(line, offset, body), extra == 0 ? fetch::ChunkedDecoder::Result::done : fetch::ChunkedDecoder::Result::invalid);
+
+    std::string trailers = "X-Fill: ";
+    trailers.resize(limits::kHttpHeaderBlockBytes - 4 + extra, 'a');
+    trailers += "\r\n\r\n";
+    fetch::ChunkedDecoder trailerParser;
+    offset = 0;
+    EXPECT_EQ(trailerParser.decode("0\r\n" + trailers, offset, body), extra == 0 ? fetch::ChunkedDecoder::Result::done : fetch::ChunkedDecoder::Result::invalid);
+  }
+}
