@@ -2,7 +2,7 @@
 
 - [x] Trace the request, stream, routing and settlement paths.
 - [x] Implement and commit bounded retries and telemetry.
-- [ ] Add and commit scripted regressions and the TypeScript deviation.
+- [x] Add and commit scripted regressions and the TypeScript deviation.
 - [ ] Record release and sanitizer results for the committed tree.
 
 After a restart, read this checklist and `git log --oneline` before resuming. The starting commit is `f92b14a9` on `agent-jobs/cppgw-cpp-only-20261119-44610457899-1`.

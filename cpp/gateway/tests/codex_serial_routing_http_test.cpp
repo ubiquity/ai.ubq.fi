@@ -49,6 +49,7 @@
 #include "uos/rt/env.hpp"
 #include "uos/rt/date.hpp"
 #include "uos/rt/console.hpp"
+#include "uos/rt/regex.hpp"
 #include "uos/rt/test_async.hpp"
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/url.hpp"
@@ -75,6 +76,7 @@ struct Fixture{
   std::vector<UpstreamCall> calls;
   std::string token="u_"+std::string(64,'b'),endpoint;
   bool exhaustAccountA=false;int requestIndex=0;
+  bool failFirstStream = false;
   double now=rt::dateNow();
   uos::types::CodexAuthState accountA{.access_token=ACCOUNT_A+"-access-token",.refresh_token=ACCOUNT_A+"-refresh-token",.account_id=ACCOUNT_A,.updated_at_ms=now};
   uos::types::CodexAuthState accountB{.access_token=ACCOUNT_B+"-access-token",.refresh_token=ACCOUNT_B+"-refresh-token",.account_id=ACCOUNT_B,.updated_at_ms=now};
@@ -98,6 +100,20 @@ struct Fixture{
       auto reading=request.json();const auto body=co_await std::move(reading);const auto id=request.headers().get("chatgpt-account-id");const auto sentinel=contentText(rt::get(body,"input"));const bool exhausted=exhaustAccountA&&id==ACCOUNT_A;
       calls.push_back({id,request.headers().get("session-id"),request.headers().get("conversation_id"),rt::getString(body,"prompt_cache_key")?std::optional<std::string>(std::string(*rt::getString(body,"prompt_cache_key"))):std::nullopt,exhausted?429:200,sentinel});
       if(exhausted)co_return rt::Response::json(json::object{{"error",json::object{{"message","Codex subscription quota exhausted"},{"type","usage_limit_reached"}}}},rt::ResponseInit{.status=429,.headers=rt::Headers{{"Retry-After",rt::Date(rt::dateNow()+90'000).toUTCString()}}});
+      if (failFirstStream && calls.size() == 1) {
+        const std::string preamble =
+          "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_abandoned_loopback\"}}\n\n"
+          "data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_abandoned_loopback\"}}\n\n";
+        rt::UnderlyingSource<rt::ByteChunk> source;
+        source.start = [preamble](auto controller) {
+          controller.enqueue(rt::encodeUtf8(preamble));
+          rt::setTimeout([controller] {
+            controller.enqueue(rt::encodeUtf8("data: {\"type\":\"error\",\"code\":\"server_error\",\"message\":\"loopback failure\",\"param\":null}\n\n"));
+            controller.close();
+          }, 25);
+        };
+        co_return rt::Response(rt::ByteStream(source), {.headers = rt::Headers{{"Content-Type", "text/event-stream"}}});
+      }
       const auto responseId="resp_serial_routing_http_"+std::to_string(calls.size());const json::object completed{{"id",responseId},{"object","response"},{"created_at",rt::Math::trunc(rt::dateNow()/1000)},{"status","completed"},{"model",MODEL},{"output",json::array{json::object{{"type","message"},{"id","msg_"+responseId},{"status","completed"},{"role","assistant"},{"content",json::array{json::object{{"type","output_text"},{"text",sentinel},{"annotations",json::array{}}}}}}}},{"usage",json::object{{"input_tokens",2},{"output_tokens",1},{"total_tokens",3}}}};
       const auto sse="data: "+rt::jsonStringify(json::object{{"type","response.created"},{"response",json::object{{"id",responseId}}}})+"\n\ndata: "+rt::jsonStringify(json::object{{"type","response.output_text.delta"},{"delta",sentinel}})+"\n\ndata: "+rt::jsonStringify(json::object{{"type","response.completed"},{"response",completed}})+"\n\n";
       co_return rt::Response(sse,rt::ResponseInit{.headers=rt::Headers{{"Content-Type","text/event-stream"}}});
@@ -131,4 +147,47 @@ ASYNC_TEST("serial Codex routing keeps one active account across cache keys, idl
 
   }catch(...){failure=std::current_exception();}
   auto cleanupTask=fixture.stop();co_await std::move(cleanupTask);if(failure)std::rethrow_exception(failure);
+}
+
+ASYNC_TEST("Native Codex SSE headers stay open across a pre-output retry over loopback HTTP") {
+  Fixture fixture;
+  fixture.failFirstStream = true;
+  rt::Reason failure;
+  try {
+    auto starting = fixture.start();
+    co_await std::move(starting);
+    const json::object payload{{"model", MODEL}, {"input", "loopback retry"}, {"stream", true}};
+    const rt::RequestInit init{
+      .method = "POST",
+      .headers = rt::Headers{{"authorization", "Bearer " + fixture.token}, {"content-type", "application/json"},
+                             {"x-codex-turn-metadata", R"({"session_id":"retry","thread_id":"retry","turn_id":"retry"})"}},
+      .body = rt::jsonStringify(payload),
+    };
+    const auto url = fixture.endpoint + "/v1/responses";
+    auto fetching = rt::fetch(url, init);
+    const auto response = co_await std::move(fetching);
+    EXPECT_EQ(response.status(), 200);
+    EXPECT_EQ(response.headers().get("content-type"), "text/event-stream");
+    EXPECT(!response.headers().has("x-uos-upstream"));
+
+    auto reading = response.text();
+    const auto body = co_await std::move(reading);
+    EXPECT(!rt::includes(body, "resp_abandoned_loopback"));
+    std::vector<json::value> events;
+    for (const auto& match : rt::matchAll(body, rt::Regex("^data: (.+)$", "gm"))) events.push_back(rt::jsonParse(*match[1]));
+    ASSERT_EQ(events.size(), 3U);
+    EXPECT_EQ(rt::getString(events.front(), "type"), "response.created");
+    EXPECT_EQ(rt::getString(events[1], "type"), "response.output_text.delta");
+    EXPECT_EQ(rt::getString(events.back(), "type"), "response.completed");
+    EXPECT_EQ(rt::getString(*rt::get(events.front(), "response"), "id"), "resp_serial_routing_http_2");
+    EXPECT_EQ(rt::getString(*rt::get(events.back(), "response"), "id"), "resp_serial_routing_http_2");
+    ASSERT_EQ(fixture.calls.size(), 2U);
+    EXPECT_EQ(fixture.calls[0].conversationId, fixture.calls[1].conversationId);
+    EXPECT_EQ(fixture.calls[0].accountId, fixture.calls[1].accountId);
+  } catch (...) {
+    failure = std::current_exception();
+  }
+  auto stopping = fixture.stop();
+  co_await std::move(stopping);
+  if (failure) std::rethrow_exception(failure);
 }
