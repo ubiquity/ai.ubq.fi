@@ -370,8 +370,9 @@ namespace {
     const auto invalid = reqs::validateResponsesRequestFields(rawRecord, rawBody, extensions ? &*extensions : nullptr); if (invalid) co_return *invalid;
     const auto dispatchContext = responses_native_headers::nativeHeaderUsageContext(req, rawRecord, context); const auto* dispatch = dispatchContext ? &*dispatchContext : nullptr;
     const auto requested = rt::trim(rt::getString(rawRecord, "model").value_or(""));
-    if (!requested.empty() && provider::gemini::isGeminiModel(requested)) {
-      const auto selection = co_await provider::selection::loadProviderSelectionCached(); co_await rt::microtask();
+    if (provider::gemini::isGeminiModel(requested) && provider::gemini::geminiOperatorOptIn()) {
+      auto selectionTask = provider::selection::loadProviderSelectionCached();
+      const auto selection = co_await std::move(selectionTask);
       if (provider::selection::isProviderEnabled("gemini", selection)) {
         auto task = provider::gemini::handleGeminiResponses(req, rawRecord, requested, dispatch);
         rt::Promise<rt::Response> pending(std::move(task));

@@ -58,8 +58,8 @@
 #include "uos/provider/claude_code_accounts.hpp"
 #include "uos/provider/claude_code_credentials.hpp"
 #include "uos/provider/claude_code_quota.hpp"
-#include "uos/provider/health.hpp"
 #include "uos/provider/gemini.hpp"
+#include "uos/provider/health.hpp"
 #include "uos/provider/lithos.hpp"
 #include "uos/provider/metered.hpp"
 #include "uos/provider/openrouter.hpp"
@@ -352,10 +352,12 @@ namespace uos::health {
     const auto claudeStatus = co_await getClaudeSubscriptionStatusSnapshot();
     auto cerebras = safeHealth(ph::getCerebrasProviderHealth()); auto claude = safeHealth(claudeHealth());
     rt::Promise<std::vector<ph::ProviderHealthView>> codex(codexHealth(context.account_ids));
-    auto deepseek = safeHealth(ph::getDeepSeekProviderHealth()); auto gemini = safeHealth(ph::getGeminiProviderHealth()); auto lithos = safeHealth(ph::getLithosProviderHealth()); auto metered = safeHealth(ph::getMeteredProviderHealth()); auto openrouter = safeHealth(ph::getOpenRouterProviderHealth()); auto surplus = safeHealth(ph::getSurplusProviderHealth());
+    auto deepseek = safeHealth(ph::getDeepSeekProviderHealth()); auto lithos = safeHealth(ph::getLithosProviderHealth()); auto metered = safeHealth(ph::getMeteredProviderHealth()); auto openrouter = safeHealth(ph::getOpenRouterProviderHealth()); auto surplus = safeHealth(ph::getSurplusProviderHealth());
+    std::optional<rt::Promise<ph::ProviderHealthView>> gemini;
+    if (provider::gemini::geminiCliConfigured()) gemini.emplace(safeHealth(ph::getGeminiProviderHealth()));
     rt::Promise<std::optional<metered_quota::MeteredQuotaSnapshot>> quota(cachedQuota());
-    auto pending = rt::all(cerebras, claude, codex, deepseek, gemini, lithos, metered, openrouter, surplus, quota);
-    const auto values = co_await pending.wait(); const auto& codexViews = std::get<2>(values); const auto& meteredQuota = std::get<9>(values);
+    auto pending = rt::all(cerebras, claude, codex, deepseek, lithos, metered, openrouter, surplus, quota);
+    const auto values = co_await pending.wait(); const auto& codexViews = std::get<2>(values); const auto& meteredQuota = std::get<8>(values);
     json::array codexAccounts;
     const auto* rawAccounts = rt::getArray(auth, "accounts");
     if (rawAccounts) for (std::size_t index = 0; index < rawAccounts->size(); ++index) { auto row = (*rawAccounts)[index].as_object(); rt::objectSet(row, "health", json::value_from(codexViews[index])); codexAccounts.push_back(std::move(row)); }
@@ -365,7 +367,12 @@ namespace uos::health {
     else surplusQuota = {{"available", false}, {"observed_at_ms", nullptr}};
     auto claudeView = claudeStatus;
     if (rt::isNullish(rt::get(claudeView, "health"))) rt::objectSet(claudeView, "health", json::value_from(std::get<1>(values)));
-    co_return json::object{{"mode", "passive"}, {"generated_at_ms", rt::makeNumber(rt::dateNow())}, {"stale_after_ms", rt::makeNumber(ph::PROVIDER_HEALTH_STALE_AFTER_MS)}, {"codex", json::object{{"configured", utils::getString(rt::get(auth, "source")) != "none"}, {"source", *rt::get(auth, "source")}, {"account_count", *rt::get(auth, "account_count")}, {"state", aggregateProviderStates(codexViews)}, {"accounts", codexAccounts}}}, {"cerebras", json::object{{"configured", provider::cerebras::readCerebrasApiKey().has_value()}, {"health", json::value_from(std::get<0>(values))}}}, {"claude_code", claudeView}, {"deepseek", json::object{{"configured", deepseek::index::readDeepSeekApiKey().has_value()}, {"health", json::value_from(std::get<3>(values))}}}, {"gemini", json::object{{"configured", provider::gemini::geminiCliConfigured()}, {"health", json::value_from(std::get<4>(values))}, {"control", "antigravity-cli"}}}, {"lithos", json::object{{"configured", provider::lithos::readLithosApiKey().has_value()}, {"health", json::value_from(std::get<5>(values))}}}, {"metered", json::object{{"configured", provider::metered::readMeteredApiKey().has_value()}, {"quota_monitoring_configured", metered_quota::readMeteredAccountCredentials().has_value()}, {"health", json::value_from(std::get<6>(values))}, {"quota", meteredQuotaView}}}, {"openrouter", json::object{{"configured", provider::openrouter::readOpenRouterApiKey().has_value()}, {"health", json::value_from(std::get<7>(values))}}}, {"surplus", json::object{{"configured", provider::surplus::readSurplusApiKey().has_value()}, {"quota_monitoring_configured", false}, {"health", json::value_from(std::get<8>(values))}, {"quota", surplusQuota}}}, {"ubiquity", gatewayProviderHealthSubtree()}};
+    json::object result{{"mode", "passive"}, {"generated_at_ms", rt::makeNumber(rt::dateNow())}, {"stale_after_ms", rt::makeNumber(ph::PROVIDER_HEALTH_STALE_AFTER_MS)}, {"codex", json::object{{"configured", utils::getString(rt::get(auth, "source")) != "none"}, {"source", *rt::get(auth, "source")}, {"account_count", *rt::get(auth, "account_count")}, {"state", aggregateProviderStates(codexViews)}, {"accounts", codexAccounts}}}, {"cerebras", json::object{{"configured", provider::cerebras::readCerebrasApiKey().has_value()}, {"health", json::value_from(std::get<0>(values))}}}, {"claude_code", claudeView}, {"deepseek", json::object{{"configured", deepseek::index::readDeepSeekApiKey().has_value()}, {"health", json::value_from(std::get<3>(values))}}}, {"lithos", json::object{{"configured", provider::lithos::readLithosApiKey().has_value()}, {"health", json::value_from(std::get<4>(values))}}}, {"metered", json::object{{"configured", provider::metered::readMeteredApiKey().has_value()}, {"quota_monitoring_configured", metered_quota::readMeteredAccountCredentials().has_value()}, {"health", json::value_from(std::get<5>(values))}, {"quota", meteredQuotaView}}}, {"openrouter", json::object{{"configured", provider::openrouter::readOpenRouterApiKey().has_value()}, {"health", json::value_from(std::get<6>(values))}}}, {"surplus", json::object{{"configured", provider::surplus::readSurplusApiKey().has_value()}, {"quota_monitoring_configured", false}, {"health", json::value_from(std::get<7>(values))}, {"quota", surplusQuota}}}, {"ubiquity", gatewayProviderHealthSubtree()}};
+    if (gemini) {
+      const auto view = co_await gemini->wait();
+      result.emplace("gemini", json::object{{"configured", true}, {"health", json::value_from(view)}, {"control", "antigravity-cli"}});
+    }
+    co_return result;
   }
   rt::Task<rt::Response> handleHealthProviders() { return handleHealthProviders(PassiveProviderHealthOptions{}); }
   rt::Task<rt::Response> handleHealthProviders(PassiveProviderHealthOptions options) {

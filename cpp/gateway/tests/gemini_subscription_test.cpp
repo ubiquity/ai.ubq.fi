@@ -648,6 +648,7 @@ ASYNC_TEST("Gemini prompt limits and missing executables do not record upstream 
 }
 
 ASYNC_TEST("authenticated gateway request routes to Gemini and records the subscription spend") {
+  const rt::env::ScopedOverride optIn{{"UOS_GATEWAY_ENABLE_ANTIGRAVITY", "1"}};
   const auto savedConfig = uos::config::config;
   uos::config::config.authTokens = {"fixture-gateway-key"};
   uos::config::config.adminTokens.clear();
@@ -677,6 +678,7 @@ ASYNC_TEST("authenticated gateway request routes to Gemini and records the subsc
 }
 
 ASYNC_TEST("Gemini API-key request increments the admin usage meter exactly once") {
+  const rt::env::ScopedOverride optIn{{"UOS_GATEWAY_ENABLE_ANTIGRAVITY", "1"}};
   const auto savedConfig = uos::config::config;
   uos::config::config.authTokens.clear();
   uos::config::config.adminTokens.clear();
