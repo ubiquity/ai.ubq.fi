@@ -171,6 +171,58 @@ ASYNC_TEST("buffered terminal delivery releases before durable writes and the re
   EXPECT_EQ(released, 1);
 }
 
+ASYNC_TEST("rejected SSE headers cancel the original body and settle its terminal once") {
+  fixture::Isolation isolation;
+  ScopedLoopbackFetch network;
+  rt::console::Capture logs({rt::console::Method::info});
+  struct Observation {
+    int cancels = 0;
+    int terminals = 0;
+    int releases = 0;
+  };
+  const auto observed = std::make_shared<Observation>();
+  const auto server = wire::serveHttp(loopbackOptions(), [observed](rt::Request req, wire::ServeHandlerInfo info) -> rt::Task<rt::Response> {
+    rt::UnderlyingSource<rt::ByteChunk> source;
+    source.cancel = [observed](rt::Reason reason) {
+      ++observed->cancels;
+      EXPECT_EQ(rt::errorMessage(reason), "Invalid character in header content [\"x-fixture\"]");
+    };
+    auto response = streamResponse(std::move(source));
+    // Fetch Headers accepts DEL in a ByteString. Native HTTP rejects it.
+    response.headers().set("x-fixture", "\x7f");
+    auto options = fixture::terminalOptions("rejected-sse-headers");
+    options.deliveryCompleted = info.completed;
+    options.deliverySignal = req.signal();
+    options.onTerminal = [observed](auto outcome, auto reason) {
+      ++observed->terminals;
+      EXPECT_EQ(outcome, "incomplete");
+      EXPECT_EQ(reason, "downstream_cancelled");
+      return rt::Promise<void>::resolve();
+    };
+    options.onSettled = [observed] { ++observed->releases; };
+    const auto wrapped = terminal::withTerminalRequestLog(response, options);
+    auto result = co_await wrapped.wait();
+    co_return result;
+  });
+  const auto address = co_await server.ready.wait();
+  auto fetching = rt::fetch(origin(address) + "/rejected-headers");
+  const auto response = co_await std::move(fetching);
+  EXPECT_EQ(response.status(), 500);
+  EXPECT_EQ(response.headers().get("content-type"), "text/plain; charset=utf-8");
+  EXPECT(!response.headers().has("x-fixture"));
+  const auto body = co_await response.text();
+  EXPECT_EQ(body, "Internal Server Error");
+  const auto stopped = server.shutdown();
+  ASSERT_EQ(observed->cancels, 1);
+  co_await stopped.wait();
+  EXPECT_EQ(observed->cancels, 1);
+  EXPECT_EQ(observed->terminals, 1);
+  EXPECT_EQ(observed->releases, 1);
+  const auto events = fixture::terminalPayloads(logs, "rejected-sse-headers");
+  ASSERT_EQ(events.size(), 1u);
+  EXPECT_EQ(rt::getString(events[0], "delivery_outcome"), "interrupted");
+}
+
 ASYNC_TEST("semantic completion sends ready SSE bytes while one accounting settlement is pending") {
   fixture::Isolation isolation;
   rt::console::Capture logs({rt::console::Method::info});
