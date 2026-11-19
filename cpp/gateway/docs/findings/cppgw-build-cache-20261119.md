@@ -8,7 +8,7 @@ Base commit `f92b14a9` on `agent-jobs/cppgw-cpp-only-20261119-44610457899-1`.
 - [x] Wire the portable Linux driver to the launcher and verify its fixture boundary.
 - [x] Wire the fuzz CI builder to the launcher.
 - [x] Wire the macOS packager and its build driver to the launcher.
-- [ ] Wire the portable Linux packager to the launcher.
+- [x] Wire the portable Linux packager and its dependency builds to the launcher.
 - [ ] Set up the CI caches and keep the published Linux build fresh.
 - [ ] Measure cold, warm and cross-checkout builds, plus header invalidation.
 - [ ] Document the cache and run the change-scoped checks.
