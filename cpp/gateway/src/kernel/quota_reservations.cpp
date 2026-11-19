@@ -559,7 +559,9 @@ namespace uos::kernel::quota_reservations {
   namespace {
     /** True when the scope has an explicit policy, which supersedes the defaults. */
     rt::Task<bool> kernelScopeHasPolicy(std::shared_ptr<rt::Kv> kv, KernelQuotaScope scope, std::string owner, std::optional<std::string> repo) {
-      const rt::KvEntryMaybe<> policyEntry = co_await kv->get(native_kernel::kernelScopedPolicyKey(scope, owner, repo), STRONG);
+      auto key = native_kernel::kernelScopedPolicyKey(scope, owner, repo);
+      auto reading = kv->get(std::move(key), STRONG);
+      const rt::KvEntryMaybe<> policyEntry = co_await std::move(reading);
       if (policyEntry.value.isNull()) co_return false;
       if (!quota_v2::normalizeKernelQuotaPolicyV2(kernelQuotaValue(policyEntry.value), scope, owner, repo)) {
         throw rt::JsError("Kernel quota policy is malformed");
