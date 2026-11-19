@@ -52,8 +52,8 @@ returned Landlock ABI 8. `docker buildx version` showed v0.39.0 and
 The signed Ubuntu Noble LLVM 21 repository was checked against key fingerprint
 `6084F3CF814B57C1CF12EFD515CF4D18AF4F7421`. The installed tools were
 `clang-21 llvm-21 libclang-rt-21-dev libssl-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev mold`.
-Clang reported 21.1.8 with `clang++-21 --version`, and the Boost bootstrap used
-GCC 14.2.0. Downloaded Boost, ICU and SQLite archive SHA-256 values passed
+Clang reported 21.1.8 with `clang++-21 --version`, and the Boost build log showed the system GCC 13.3.0 toolset. The ICU build
+used GCC 14.2.0. Downloaded Boost, ICU and SQLite archive SHA-256 values passed
 `sha256sum --check` against the three pins in
 `cpp/gateway/packaging/portable/dependencies.sh` before extraction.
 
