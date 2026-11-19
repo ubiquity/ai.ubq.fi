@@ -240,7 +240,8 @@ namespace uos::admin::gemini_quota {
       const auto pending = *gate.pending;
       co_return co_await pending.wait();
     }
-    auto current = co_await readSnapshotInternal(directory, nowMs);
+    auto reading = readSnapshotInternal(directory, nowMs);
+    auto current = co_await std::move(reading);
     if (!options.force_refresh && current.observed_at_ms > 0 && nowMs - current.observed_at_ms < GEMINI_QUOTA_REFRESH_FRESH_MS) {
       co_return current;
     }
