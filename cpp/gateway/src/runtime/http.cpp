@@ -1882,7 +1882,13 @@ namespace uos::runtime::http {
         if (const std::optional<rt::ByteStream> body = response.body()) rt::spawn(body->cancel(signal.reason()), rt::ignoreRejection);
         co_return;
       }
-      prepareResponseHeaders(request, response, *outgoing);
+      try {
+        prepareResponseHeaders(request, response, *outgoing);
+      } catch (...) {
+        // The fallback writes its own body. Settle the original producer without waiting for it.
+        if (const auto body = response.body()) (void)body->cancelPromise(std::current_exception()).catch_(rt::ignoreRejection);
+        throw;
+      }
       const std::optional<rt::ByteStream> body = response.body();
       if (!body || request.method() == "HEAD" || response.status() == 204 || response.status() == 205 || response.status() == 304) {
         if (body) rt::spawn(body->cancel(), rt::ignoreRejection);

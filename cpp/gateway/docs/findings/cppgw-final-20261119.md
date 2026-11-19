@@ -16,4 +16,7 @@
 
 ## Progress
 
-Residual merge and revert, documentation, and full qualification are pending.
+Merged the fetched residual branch with `git merge --no-ff --no-commit FETCH_HEAD`
+and an ordinary two-parent merge commit. It brings in `b58afd3d1` (request bounds),
+`f90d511bf` (SSE cancellation), and `d35a8a8b` (allowlists). The allowlist
+revert, documentation, and full qualification are pending.

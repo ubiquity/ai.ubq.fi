@@ -92,6 +92,7 @@ namespace {
 #include "uos/admin/codex_reset.hpp"
 #include "uos/codex/routing_state.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/test_async.hpp"
 namespace rt = uos::rt;
 namespace json = uos::json;
@@ -105,7 +106,7 @@ namespace {
 }
 ASYNC_TEST("admin consume accepts only stable account identity") {
   harness::CredentialScope scope;
-  const std::vector<json::value> values{json::object{}, json::object{{"account_id_hash", "bad"}}, json::object{{"account_id_hash", std::string(64, 'a')}, {"access_token", "forbidden"}}, json::object{{"account_id_hash", std::string(64, 'a')}, {"slot", 1}}};
+  const std::vector<json::value> values{json::object{}, json::object{{"account_id_hash", "bad"}}, json::object{{"account_id_hash", std::string(64, 'a')}, {"access_token", "forbidden"}}, json::object{{"account_id_hash", std::string(64, 'a')}, {"slot", 1}}, json::object{{"account_id_hash", std::string(rt::limits::kRegexSubjectBytes + 1, 'a')}}};
   for (const auto& value : values) { auto handling = handleAdminCodexResetConsume(request(value)); const auto response = co_await std::move(handling); EXPECT_EQ(response.status(), 400); }
 }
 ASYNC_TEST("admin consume reports verified matching account only after promotion") {

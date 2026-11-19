@@ -53,8 +53,12 @@
 #include "uos/kernel/attestation.hpp"
 #include "uos/utils.hpp"
 #include "uos/rt/crypto.hpp"
+#include "uos/rt/env.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
+#include "uos/responses_request.hpp"
+#include <array>
 #include <cstdio>
 namespace rt=uos::rt;namespace json=uos::json;namespace h=uos::tests::helpers::openai_compat_harness;namespace tel=uos::openai_telemetry;
 namespace {
@@ -134,6 +138,100 @@ ASYNC_TEST("openai: streamed Responses force the SSE content type") {
 }
 ASYNC_TEST("openai: invalid route-dependent Responses fields fail before dispatch") {
   h::Fixture fixture;std::setvbuf(stdout,nullptr,_IONBF,0);const std::vector<std::pair<std::string,json::value>> cases{{"max_output_tokens",0},{"max_output_tokens",1.5},{"max_output_tokens","12"},{"parallel_tool_calls",nullptr},{"parallel_tool_calls","true"},{"parallel_tool_calls",1}};for(const auto& [param,value]:cases){auto raw=body(false,true,std::string(h::DEFAULT_TEST_MODEL));raw[param]=value;auto task=exchange(false,raw,fixed(h::sseResponse(h::baseSseChunks())));const auto result=co_await std::move(task);EXPECT_EQ(result.response.status(),400);EXPECT_EQ(rt::getString(*rt::get(result.payload(),"error"),"param"),param);EXPECT(result.calls.empty());}co_await h::settleHarness();
+}
+ASYNC_TEST("openai: oversized model IDs fail before provider matching or dispatch") {
+  h::Fixture fixture;
+  const std::string oversized(rt::limits::kRegexSubjectBytes + 1, 'x');
+  const std::array routes{true, false};
+  for (const auto chat : routes) {
+    auto pending = exchange(chat, body(chat, false, oversized), fixed(h::sseResponse(h::baseSseChunks())));
+    const auto result = co_await std::move(pending);
+    EXPECT_EQ(result.response.status(), 400);
+    const auto payload = result.payload();
+    EXPECT_EQ(rt::getString(payload.at("error"), "param"), "model");
+    EXPECT(result.calls.empty());
+  }
+  co_await h::settleHarness();
+}
+ASYNC_TEST("openai: unknown chat roles and Responses tool types fail before provider dispatch or accounting") {
+  h::Fixture fixture;
+  rt::env::ScopedOverride deepseek{{"DEEPSEEK_API_KEY", "deepseek-test-key"}};
+  int admissions = 0;
+  int usageRecords = 0;
+  tel::UsageContext context{.keyId = std::nullopt, .kernelRepo = std::nullopt, .kernelOrg = std::nullopt};
+  context.beforeProviderDispatch = [&admissions](std::string) {
+    ++admissions;
+    const uos::api_key_policy::ApiKeyProviderDispatch dispatch{[] {}, [] { return rt::fulfilledTask(); }};
+    return rt::fulfilledTask(std::optional(dispatch));
+  };
+  context.onTerminalUsage = [&usageRecords](auto, bool) { ++usageRecords; };
+  const auto responder = fixed(rt::Response::json(completion(json::object{{"role", "assistant"}, {"content", "mock result"}})));
+  const std::array routes{true, false};
+  for (const auto chat : routes) {
+    auto raw = body(chat, false);
+    if (chat) raw["messages"] = json::array{json::object{{"role", "operator"}, {"content", "hi"}}};
+    else raw["tools"] = json::array{json::object{{"type", "bad"}}};
+    auto pending = exchange(chat, raw, responder, context);
+    const auto result = co_await std::move(pending);
+    EXPECT_EQ(result.response.status(), 400);
+    const auto payload = result.payload();
+    const auto& error = payload.at("error");
+    EXPECT_EQ(rt::getString(error, "type"), "invalid_request_error");
+    EXPECT_EQ(rt::getString(error, "code"), "invalid_request_error");
+    EXPECT_EQ(rt::getString(error, "param"), chat ? "messages[0].role" : "tools[0].type");
+    EXPECT(!result.response.headers().has("x-uos-upstream"));
+    EXPECT(result.calls.empty());
+    ASSERT(result.telemetry);
+    EXPECT(result.telemetry->attemptedProviders.empty());
+    EXPECT_EQ(result.telemetry->provider, "gateway");
+    EXPECT(!result.telemetry->usageObserved);
+  }
+  EXPECT_EQ(admissions, 0);
+  EXPECT_EQ(usageRecords, 0);
+  co_await h::settleHarness();
+}
+ASYNC_TEST("openai: chat role validation preserves the provider's supported roles") {
+  h::Fixture fixture;
+  rt::env::ScopedOverride deepseek{{"DEEPSEEK_API_KEY", "deepseek-test-key"}};
+  const json::array messages{
+    json::object{{"role", "system"}, {"content", "rules"}},
+    json::object{{"role", "developer"}, {"content", "instructions"}},
+    json::object{{"role", "user"}, {"content", "hello"}},
+    json::object{{"role", "assistant"}, {"content", "checking"}},
+    json::object{{"role", "tool"}, {"content", "result"}, {"tool_call_id", "call_fixture"}},
+    json::object{{"role", "function"}, {"content", "legacy result"}, {"name", "lookup"}},
+  };
+  auto raw = body(true, false);
+  raw["messages"] = messages;
+  const auto responder = fixed(rt::Response::json(completion(json::object{{"role", "assistant"}, {"content", "mock result"}})));
+  auto pending = exchange(true, raw, responder);
+  const auto result = co_await std::move(pending);
+  EXPECT_EQ(result.response.status(), 200);
+  ASSERT_EQ(result.calls.size(), 1u);
+  auto expected = messages;
+  expected[1].as_object()["role"] = "system";
+  EXPECT(rt::deepEqual(result.calls[0].body.at("messages"), expected));
+  co_await h::settleHarness();
+}
+ASYNC_TEST("openai: Responses preserves official and compatibility tool declarations") {
+  namespace reqs = uos::responses_request;
+  const std::array types{
+    "function", "file_search", "computer", "computer_use_preview", "web_search", "web_search_2025_08_26", "mcp",
+    "code_interpreter", "programmatic_tool_calling", "image_generation", "local_shell", "shell", "custom",
+    "namespace", "tool_search", "web_search_preview", "web_search_preview_2025_03_11", "apply_patch",
+    "openrouter:web_search", "openrouter:web_fetch", "web_fetch", "web_fetch_20250910",
+  };
+  json::array tools;
+  for (const auto type : types) tools.push_back(json::object{{"type", type}});
+  tools.push_back(json::object{{"function", json::object{{"name", "legacy_untyped_function"}}}});
+  auto raw = body(false, false);
+  raw["tools"] = tools;
+  const auto request = h::deepSeekResponsesRequest(raw);
+  auto read = reqs::readResponsesRequest(request);
+  const auto result = co_await std::move(read);
+  const auto* accepted = std::get_if<reqs::ResponsesStepOk<reqs::ReadResponsesRequestValue>>(&result);
+  ASSERT(accepted);
+  EXPECT(rt::deepEqual(accepted->value.rawRecord.at("tools"), tools));
 }
 ASYNC_TEST("openai: buffered Responses observe each real or synthetic terminal once") {
   h::Fixture fixture;std::setvbuf(stdout,nullptr,_IONBF,0);std::vector<std::pair<bool,std::optional<double>>> observations;tel::UsageContext context{.keyId=std::nullopt,.kernelRepo=std::nullopt,.kernelOrg=std::nullopt,.onTerminalUsage=[&observations](std::optional<tel::UsageTokens> usage,bool completed){observations.emplace_back(completed,usage?usage->totalTokens:std::nullopt);}};auto task=exchange(false,body(false,false,std::string(h::DEFAULT_TEST_MODEL)),fixed(h::sseResponse(h::baseSseChunks())),context);const auto value=co_await std::move(task);EXPECT_EQ(value.response.status(),200);const std::vector<std::pair<bool,std::optional<double>>> expected{{true,2}};EXPECT_EQ(observations,expected);co_await h::settleHarness();

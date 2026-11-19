@@ -3,7 +3,7 @@
 import unittest
 from io import BytesIO
 
-from compare import compare, expectations, normalize, redact
+from compare import case_outcome, compare, expectations, markdown, normalize, redact
 from wire import read_sse
 
 
@@ -60,6 +60,25 @@ class CompareTest(unittest.TestCase):
         result = observation(dispatches=[{"route": "deepseek.success"}])
         self.assertEqual(self.differences(result, result), [])
         self.assertEqual([item["path"] for item in expectations(spec, result)], ["/status", "/routes"])
+
+    def test_stricter_native_validation_is_visible_and_both_expectations_are_required(self):
+        spec = {"expect": {"status": 400, "routes": [], "values": {"/body/error/param": "tools[0].type"}},
+                "expect_bun": {"status": 200, "routes": ["deepseek.success"]}, "request_id": False}
+        bun = observation(dispatches=[{"route": "deepseek.success"}])
+        native = observation(status=400, body={"error": {"code": "invalid_request_error", "type": "invalid_request_error", "param": "tools[0].type"}})
+        failures = {"bun": expectations(spec, bun, "bun"), "native": expectations(spec, native)}
+        changes = compare(spec, bun, native, {"bun": {}, "native": {}})
+        outcome = case_outcome(spec, changes, failures)
+        self.assertEqual(outcome, "native_stricter")
+        report = markdown({"cases": [{"id": "test", "outcome": outcome, "differences": changes,
+                                      "expectation_failures": failures, "observations": {"bun": bun, "native": native}}]})
+        self.assertIn("Native stricter than reference", report)
+        self.assertIn("`/status` 200 → 400", report)
+        self.assertIn("`/routes/length` 1 → 0", report)
+        self.assertEqual(case_outcome(spec, changes, {**failures, "native": expectations(spec, bun)}), "functional")
+        self.assertEqual(case_outcome(spec, changes, {**failures, "bun": expectations(spec, native, "bun")}), "functional")
+        native["dispatches"] = bun["dispatches"]
+        self.assertEqual(case_outcome(spec, changes, {**failures, "native": expectations(spec, native)}), "functional")
 
     def test_credential_redaction(self):
         self.assertEqual(redact({"echo": ["prefix private-fixture suffix"]}, ("private-fixture",)),

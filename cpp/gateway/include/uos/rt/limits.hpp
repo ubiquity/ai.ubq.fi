@@ -23,6 +23,7 @@ namespace uos::rt::limits {
   inline constexpr std::size_t kWebSocketFragments = 4096;
   inline constexpr auto kWebSocketIdleTimeout = std::chrono::seconds(60);
 
+  inline constexpr std::size_t kModelIdCodeUnits = 200;
   inline constexpr std::size_t kRegexPatternBytes = 4 * 1024;
   inline constexpr std::size_t kRegexSubjectBytes = 1024 * 1024;
   inline constexpr auto kRegexCompileDeadline = std::chrono::milliseconds(10);
