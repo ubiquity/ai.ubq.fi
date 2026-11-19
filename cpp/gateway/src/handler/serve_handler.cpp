@@ -1,6 +1,7 @@
 #include "uos/handler/serve_handler.hpp"
 #include "uos/handler/index.hpp"
 
+#include <memory>
 #include <utility>
 
 namespace uos::handler::serve_handler {
@@ -10,7 +11,10 @@ namespace uos::handler::serve_handler {
     if (requestSignal.aborted()) {
       downstream.abort(requestSignal.reason());
     } else {
-      abortBeforeHandoff = rt::EventListener([requestSignal, downstream] { downstream.abort(requestSignal.reason()); });
+      const std::weak_ptr source = requestSignal.state();
+      abortBeforeHandoff = rt::EventListener([source, downstream] {
+        if (auto signal = source.lock()) downstream.abort(rt::AbortSignal(std::move(signal)).reason());
+      });
       requestSignal.addEventListener("abort", abortBeforeHandoff, {.once = true});
     }
     completed.catch_([downstream](rt::Reason reason) { downstream.abort(std::move(reason)); });
