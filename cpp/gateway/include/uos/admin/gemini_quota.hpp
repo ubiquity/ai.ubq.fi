@@ -14,6 +14,7 @@ namespace uos::admin::gemini_quota {
   inline constexpr std::string_view GEMINI_QUOTA_FILE = "antigravity-quota.json";
   inline constexpr double GEMINI_QUOTA_STALE_AFTER_MS = 5 * 60'000;
   inline constexpr double GEMINI_QUOTA_REFRESH_FRESH_MS = 10'000;
+  inline constexpr double GEMINI_QUOTA_REFRESH_DEADLINE_MS = 15'000;
 
   struct Bucket {
     std::optional<double> remaining_fraction{};
@@ -32,6 +33,7 @@ namespace uos::admin::gemini_quota {
 
   struct GeminiQuotaOptions {
     provider::gemini::GeminiCliRunner runner{};
+    std::optional<rt::AbortSignal> signal{};
     bool force_refresh = false;
   };
 

@@ -39,6 +39,8 @@ namespace uos::runtime::permissions_linux {
     std::optional<std::vector<std::string>> immutable = std::nullopt;
     /** Exact executable paths. Empty keeps the original no-child-process boundary. */
     std::vector<std::string> execute = {};
+    /** Explicitly permits child process creation. Executable grants require this opt-in. */
+    bool allowChildProcess = false;
     /** Operator opt-in with TCP grants for kernels that support TCP port restrictions. */
     std::optional<LinuxPermissionsTcpPorts> allowReducedConfinement = std::nullopt;
   };

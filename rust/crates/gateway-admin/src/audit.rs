@@ -29,6 +29,7 @@ pub struct KeyChange {
     pub request_id: String,
     pub release: String,
 }
+
 pub fn actor(principal: &AuthPrincipal) -> ChangeActor {
     let identity =
         |id: &String, label: &String| ("passkey_user", Some(id.clone()), Some(label.clone()));
@@ -50,6 +51,7 @@ pub fn actor(principal: &AuthPrincipal) -> ChangeActor {
 pub fn safe_changed(value: &Value) -> Result<SourceJson, GatewayError> {
     safe_changed_source(&SourceJson::from_serializable(value)?)
 }
+
 pub fn safe_changed_source(value: &SourceJson) -> Result<SourceJson, GatewayError> {
     let allowed = [
         "name",
@@ -111,6 +113,7 @@ pub struct ChangeInput<'a> {
     pub name: Option<&'a JsString16>,
     pub changed: &'a SourceJson,
 }
+
 pub struct SourceChangeInput<'a> {
     pub principal: Option<&'a AuthPrincipal>,
     pub request_id: &'a str,

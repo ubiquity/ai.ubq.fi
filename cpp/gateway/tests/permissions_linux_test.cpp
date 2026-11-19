@@ -233,7 +233,7 @@ TEST("a confined child reads and writes only its grants and cannot change modes"
 #endif
 }
 
-TEST("an explicit executable grant permits only that binary for the confined child") {
+TEST("explicit executable grants cannot be broadened through the dynamic loader") {
   const Fixture fixture;
 #if defined(__APPLE__)
   return;
@@ -249,9 +249,10 @@ TEST("an explicit executable grant permits only that binary for the confined chi
     int code = 0;
     try {
       LinuxPermissions permissions;
-      permissions.read = {"/usr/lib", "/lib", "/bin/true", "/lib/ld-linux-aarch64.so.1"};
+      permissions.read = {"/bin/true", "/usr/lib/libc.so.6", "/etc/ld.so.cache", "/lib/ld-linux-aarch64.so.1"};
       permissions.write = {writable};
       permissions.execute = {"/bin/true", "/lib/ld-linux-aarch64.so.1"};
+      permissions.allowChildProcess = true;
       const auto receipt = applyLinuxPermissions(permissions, fixture.artifact);
       if (!receipt.processThreadSync || !receipt.filesystemThreadSync) code |= 1;
       pid_t allowed = -1;
@@ -266,8 +267,53 @@ TEST("an explicit executable grant permits only that binary for the confined chi
       char* const deniedArgv[] = {const_cast<char*>("/bin/false"), nullptr};
       const int deniedStatus = ::posix_spawn(&denied, "/bin/false", nullptr, nullptr, deniedArgv, environ);
       if (deniedStatus != EACCES) code |= 8;
+      pid_t loaderAllowed = -1;
+      char* const loaderAllowedArgv[] = {const_cast<char*>("/lib/ld-linux-aarch64.so.1"), const_cast<char*>("/bin/true"), nullptr};
+      const int loaderAllowedStatus = ::posix_spawn(&loaderAllowed, "/lib/ld-linux-aarch64.so.1", nullptr, nullptr, loaderAllowedArgv, environ);
+      if (loaderAllowedStatus != 0 || loaderAllowed <= 0) code |= 32;
+      else {
+        int waited = 0;
+        if (::waitpid(loaderAllowed, &waited, 0) != loaderAllowed || !WIFEXITED(waited) || WEXITSTATUS(waited) != 0) code |= 64;
+      }
+      pid_t loaderDenied = -1;
+      char* const loaderDeniedArgv[] = {const_cast<char*>("/lib/ld-linux-aarch64.so.1"), const_cast<char*>("/bin/false"), nullptr};
+      const int loaderDeniedStatus = ::posix_spawn(&loaderDenied, "/lib/ld-linux-aarch64.so.1", nullptr, nullptr, loaderDeniedArgv, environ);
+      if (loaderDeniedStatus == 0 && loaderDenied > 0) {
+        int waited = 0;
+        if (::waitpid(loaderDenied, &waited, 0) != loaderDenied || !WIFEXITED(waited) || WEXITSTATUS(waited) == 0) code |= 128;
+      } else if (loaderDeniedStatus != EACCES) {
+        code |= 128;
+      }
     } catch (...) {
       code |= 16;
+    }
+    ::_exit(code);
+  }
+  int status = 0;
+  ASSERT(::waitpid(child, &status, 0) == child);
+  EXPECT(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+#endif
+}
+
+TEST("executable grants require an explicit child-process opt-in") {
+#if defined(__APPLE__)
+  return;
+#else
+  const Fixture fixture;
+  const pid_t child = ::fork();
+  ASSERT(child >= 0);
+  if (child == 0) {
+    int code = 1;
+    try {
+      LinuxPermissions permissions;
+      permissions.read = {"/bin/true", "/usr/lib/libc.so.6", "/lib/ld-linux-aarch64.so.1"};
+      permissions.execute = {"/bin/true"};
+      static_cast<void>(applyLinuxPermissions(permissions, fixture.artifact));
+    } catch (const rt::TypeError&) {
+      code = 0;
+    } catch (...) {
+      code = 2;
     }
     ::_exit(code);
   }

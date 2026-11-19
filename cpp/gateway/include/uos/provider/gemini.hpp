@@ -25,12 +25,15 @@ namespace uos::provider::gemini {
     "gemini-3.8-flash-low",
   };
   inline constexpr std::string_view GEMINI_PROVIDER_ID = "gemini";
+  inline constexpr std::string_view GEMINI_OPT_IN_ENV = "UOS_GATEWAY_ENABLE_ANTIGRAVITY";
   inline constexpr double GEMINI_CONTEXT_WINDOW_TOKENS = 1'048'576;
 
   std::optional<std::string> geminiUpstreamModelFor(std::string_view model);
   bool isGeminiModel(std::string_view model);
+  inline bool geminiOperatorOptIn() { return rt::env::get(GEMINI_OPT_IN_ENV) == std::optional<std::string>("1"); }
   inline bool geminiCliConfigured() {
     try {
+      if (!geminiOperatorOptIn()) return false;
       const auto home = rt::env::get("HOME");
       if (!home || home->empty()) return false;
       const auto executable = rt::fs::lstatSync(rt::path::join(*home, ".local/bin/agy"));

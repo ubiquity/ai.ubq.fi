@@ -6,30 +6,6 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
-## Antigravity subscription serves Gemini through the documented CLI headless contract - 2026-11-18
-
-The owner authorized the project-specific use of the existing `ubiquitydao@gmail.com` Antigravity Starter subscription. The C++ gateway now exposes a `gemini` subscription provider with the installed Gemini 3.8 Flash `high`, `medium`, and `low` model IDs. Each inference runs the owner-private official `agy` headless command with the CLI's signed-in state. That state remains owned by the CLI, and the gateway never reads or forwards the OAuth token itself.
-
-Reason: the official headless stream-json interface is the programmatic surface installed in this environment. A live probe returned the requested marked response with 8,699 measured tokens, and a separate documented `/usage` command showed the Gemini weekly bucket fall from 98.9199996% to 98.6355186% remaining. The owner explicitly required this normal subscription path rather than a paid Gemini API key or developer credits.
-
-Reversal risk: consumer subscription entitlements and CLI arguments can change independently of the gateway. Removing the exact `agy` execution grant restores the stronger no-child-process boundary but disables this provider. Switching to a paid API key changes the credential, billing, and owner, and therefore requires a new decision.
-
-## Antigravity quota is refreshable and never spends inference - 2026-11-18
-
-Admin Analytics reads `.data/antigravity-quota.json` and can explicitly refresh it through `POST /admin/providers/gemini/quota/refresh`. Refresh runs the documented CLI `/usage` command, projects only bucket IDs, remaining fractions or amounts, reset instants and disabled state, and atomically replaces an owner-private `0600` snapshot. Successful gateway inference schedules the same best-effort refresh so the meter follows subscription use without a periodic gateway process.
-
-Reason: the earlier status-line-only snapshot was display-only and could remain stale. The CLI `/usage` command returned the exact Gemini and third-party weekly buckets with zero token usage, providing a direct meter source that does not probe inference capacity.
-
-Reversal risk: removing the explicit refresh returns the panel to stale CLI status-line observations. Treating the meter as a routing cooldown would couple independent quota presentations to inference denial; this decision grants no such authority. Credential renewal, account switching, overage settings and model routing beyond the provider/model allowlists remain CLI- or admin-owned surfaces and are not invented by this meter.
-
-## Rust verification is manual-only - 2026-11-18
-
-The owner removed the Rust CI gate. Gateway CI no longer defines `rust-native` or `rust-wasm`, `scope` no longer emits Rust selection outputs, `validate` requires only the portable gate, and the native job no longer depends on Rust success. Manual Rust validation remains available through `bun --no-env-file --no-install scripts/rust-verify.ts --stage native|wasm` and `bun run rust:quality`; the Rust source, workspace, and rules are unchanged.
-
-Reason: the base repair exposed stale Rust quality/Clippy baselines and macOS-only Rust preflight failures that were blocking unrelated TypeScript gateway work. The owner directed that the Rust port not gate the TypeScript service.
-
-Reversal risk: Rust changes can now merge without hosted compilation or tests. Re-enabling Rust delivery requires restoring the two jobs and their `validate`/`native` dependencies, or running the manual commands on the exact candidate. This removes no Rust source and grants no deployment or production authority.
-
 ## Direct Claude Messages omits the unsupported hosted web_search - 2026-11-05
 
 The direct Claude subscription and native Messages lane omits every hosted `web_search` declaration from the upstream request instead of rejecting the whole turn. This includes Codex's default `external_web_access:true` declaration, which the TUI restores after a per-thread disable. Function, namespace, MCP and other representable tools remain unchanged. Surplus and other reseller adapters retain their existing rejection of an enabled hosted declaration.
@@ -134,7 +110,7 @@ Reversal risk: removing the arming and audit gate allows an external spend on th
 
 ## Merged-only CI gates expensive jobs behind portable validation - 2026-10-21
 
-This supersedes the merge-group, queue-canary, Sentinel-authored PR, and development-push trigger requirements in "Real CI checks for Sentinel and merge groups" for the current GitHub Actions quota policy. `pull_request: closed` and `workflow_dispatch` are the only triggers, and every job requires a merged pull request or explicit manual dispatch. After `scope`, the portable x64 `portable` gate must pass before `rust-native`; `rust-wasm` follows `rust-native`; `native` and macOS/Darwin work start only after their selected earlier gates pass. The `validate` job remains the required check name and fails closed when a selected portable or Rust gate is missing, skipped, cancelled, or failed. Each job has an explicit timeout, and the workflow never deploys. The Rust dependency and gate portions of this entry are superseded by "Rust verification is manual-only - 2026-11-18"; the merged-only triggers, portable gate, and non-deploying workflow remain.
+This supersedes the merge-group, queue-canary, Sentinel-authored PR, and development-push trigger requirements in "Real CI checks for Sentinel and merge groups" for the current GitHub Actions quota policy. `pull_request: closed` and `workflow_dispatch` are the only triggers, and every job requires a merged pull request or explicit manual dispatch. After `scope`, the portable x64 `portable` gate must pass before `rust-native`; `rust-wasm` follows `rust-native`; `native` and macOS/Darwin work start only after their selected earlier gates pass. The `validate` job remains the required check name and fails closed when a selected portable or Rust gate is missing, skipped, cancelled, or failed. Each job has an explicit timeout, and the workflow never deploys.
 
 Reason: recent failed runs spent 70-90 job-minutes because `native`, `rust-wasm`, and macOS work started even after `rust-native` failed, while `validate` waited for both Rust jobs before running portable checks. The dependency chain preserves every selected check but skips work that cannot be accepted once an earlier selected gate fails.
 
@@ -2705,6 +2681,26 @@ Representative known defects must produce their exact marked diagnostics, and cl
 
 The first complete scan's four pinned Beast `bugprone-use-after-move` findings remain preserved as a failed receipt. Source inspection and a real reduced static probe proved the Asio stackless yield/reentry path-sensitivity limitation, with equivalent explicit-return code clean and genuine same-invocation misuse fatal. A finite checked-in baseline may classify only those four exact Session-TU SDK fingerprints and move/loop notes under matching tool/frontend/header/policy identities, preserving raw exit1 and explicit classified/new counts. New, changed, missing or first-party findings and identity drift remain fatal; no checker, SDK directory or runtime source is suppressed or changed.
 
+## Antigravity Gemini uses an explicit off-by-default confinement opt-in - 2026-11-18
+
+The owner authorized the project-specific use of the existing Antigravity Starter subscription. The C++ gateway exposes the installed Gemini 3.8 Flash high, medium, and low model IDs only when `UOS_GATEWAY_ENABLE_ANTIGRAVITY=1` and the owner-private `agy` executable and CLI state pass validation. Without the exact opt-in, Gemini is not discoverable or callable, its admin meter fails closed, and the gateway keeps its existing no-child-process seccomp and file-read boundary.
+
+Reason: the official CLI is the supported programmatic subscription surface, but it requires child execution, its dynamic loader, and read/write access to CLI state that contains the OAuth credential. The opt-in makes that process-wide security tradeoff explicit instead of enabling it whenever files exist. Landlock gates loader execution, not the ELF selected by the loader, so the launcher does not grant `/usr/bin` and the permission regression invokes the loader against an unreadable binary.
+
+Reversal risk: enabling the opt-in permits process creation for the gateway lifetime and grants the gateway access to the CLI state directory. Removing the opt-in and restarting restores the stronger default and disables Gemini. Credential renewal, account switching, overage settings, model availability, and quota units remain CLI-owned and can drift independently.
+
+## Antigravity quota is refreshed through the official usage command - 2026-11-18
+
+Admin Analytics reads `.data/antigravity-quota.json` and can explicitly refresh it through `POST /admin/providers/gemini/quota/refresh`. Refresh runs the documented CLI `/usage` command, projects only bucket IDs, remaining fractions or amounts, reset instants and disabled state, and atomically replaces an owner-private `0600` snapshot. Successful gateway inference schedules the same best-effort refresh. The file uses the same strict schema accepted by the Bun reader while HTTP-only age and stale presentation fields remain response-only.
+
+Reason: `/usage` returns the exact subscription buckets without spending inference quota, while a status-line-only snapshot can remain stale. Treating those buckets as a routing cooldown would couple a presentation meter to inference denial, which this decision does not authorize.
+
+Reversal risk: removing refresh returns the panel to the last local observation. Credential renewal, account switching, overage settings, and banked credits remain outside the gateway adapter.
+
 ## DeepSeek compacts at 75% before gateway admission - 2026-11-18
 
-The synthetic `ubiquity/deepseek-flash` catalog row now advertises `auto_compact_token_limit=747110`, 75% of its 996,147-token usable window. DeepSeek's calibrated aggregate-admission estimate can reject a request while the client's last reported input usage is still near 792k, so the generic 85% derived limit is too late. The lower trigger is model-specific: GPT and other models keep their existing 85% derived limit and the host's turn-end threshold returns to 90%. The earlier global 75% setting was `model_post_turn_compact_threshold_percent`, which only runs after a turn ends and never protected a long mid-turn tool loop. Compaction itself remains fail-closed: when even the summary request exceeds admission, the client trims old history until the summary fits and records the actual compaction lifecycle; a normal inference request is never silently split or rewritten.
+The synthetic `ubiquity/deepseek-flash` catalog row advertises `auto_compact_token_limit=747110`, 75% of its 996,147-token usable window. DeepSeek's calibrated aggregate-admission estimate can reject a request while the client's last reported input usage remains near 792k, so the generic 85% derived limit is too late. The lower trigger is model-specific; GPT and other models retain their existing cadence.
+
+Reason: the C++ port must carry the development decision that protects long DeepSeek turns before gateway admission.
+
+Reversal risk: restoring the old limit lets clients reach a known rejection range. Compaction remains fail-closed when even the summary request exceeds admission.

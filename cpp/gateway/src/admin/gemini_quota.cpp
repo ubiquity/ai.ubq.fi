@@ -1,6 +1,7 @@
 #include "uos/admin/gemini_quota.hpp"
 
 #include "uos/http.hpp"
+#include "uos/openai.hpp"
 #include "uos/rt/clock.hpp"
 #include "uos/rt/crypto.hpp"
 #include "uos/rt/date.hpp"
@@ -114,6 +115,17 @@ namespace uos::admin::gemini_quota {
       return result;
     }
 
+    json::value storedSnapshotJson(const Snapshot& snapshot) {
+      json::object result{{"version", rt::makeNumber(1.0)}, {"observed_at_ms", rt::makeNumber(snapshot.observed_at_ms)}, {"status", snapshot.status}};
+      if (snapshot.status == "observed") {
+        result["plan_tier"] = snapshot.plan_tier ? json::value(*snapshot.plan_tier) : json::value(nullptr);
+        json::object quota;
+        for (const auto& [id, value] : snapshot.quota) quota[id] = bucketJson(value);
+        result["quota"] = std::move(quota);
+      }
+      return result;
+    }
+
     void requireDirectory(std::string_view directory) {
       const std::filesystem::path stateDirectory(directory);
       if (!stateDirectory.is_absolute() || stateDirectory.filename() != ".data") {
@@ -156,7 +168,7 @@ namespace uos::admin::gemini_quota {
       requireDirectory(directory);
       const std::string path = filePath(directory);
       const std::string temporary = path + ".tmp-" + rt::crypto::randomUUID();
-      const std::string body = rt::jsonStringify(snapshotJson(snapshot, snapshot.observed_at_ms)) + "\n";
+      const std::string body = rt::jsonStringify(storedSnapshotJson(snapshot)) + "\n";
       rt::fs::writeFileSync(temporary, body, {.flag = "wx", .mode = 0600});
       auto cleanup = rt::scopeExit([temporary] {
         if (rt::fs::existsSync(temporary)) {
@@ -169,8 +181,10 @@ namespace uos::admin::gemini_quota {
     }
 
     rt::Task<Snapshot> refreshNow(std::string directory, GeminiQuotaOptions options, double nowMs) {
+      const rt::AbortSignal deadline = rt::AbortSignal::timeout(GEMINI_QUOTA_REFRESH_DEADLINE_MS);
+      const rt::AbortSignal signal = options.signal ? rt::AbortSignal::any({*options.signal, deadline}) : deadline;
       provider::gemini::GeminiCliOptions command{
-        .model = "gemini-3.8-flash-low", .prompt = "/usage", .mode = "", .disableSlashCommands = false, .streamJson = false};
+        .model = "gemini-3.8-flash-low", .prompt = "/usage", .signal = signal, .mode = "", .disableSlashCommands = false, .streamJson = false};
       auto task = provider::gemini::runGeminiCli(command, options.runner);
       auto turn = co_await std::move(task);
       auto snapshot = projectUsageCommand(turn.rawResult, nowMs);
@@ -239,6 +253,8 @@ namespace uos::admin::gemini_quota {
   }
 
   rt::Task<rt::Response> handleAdminGeminiQuota() {
+    if (!provider::gemini::geminiCliConfigured())
+      co_return http::openaiError(404, "Gemini subscription controls are not enabled on this gateway.", "gemini_disabled");
     const double now = rt::dateNow();
     auto task = readSnapshot(rt::path::resolve(rt::process::cwd(), ".data"), now);
     const auto snapshot = co_await std::move(task);
@@ -250,13 +266,18 @@ namespace uos::admin::gemini_quota {
     return handleAdminGeminiQuotaRefresh(std::move(req), GeminiQuotaOptions{.force_refresh = true});
   }
 
-  rt::Task<rt::Response> handleAdminGeminiQuotaRefresh(rt::Request, GeminiQuotaOptions options) {
+  rt::Task<rt::Response> handleAdminGeminiQuotaRefresh(rt::Request req, GeminiQuotaOptions options) {
+    if (!options.runner && !provider::gemini::geminiCliConfigured())
+      co_return http::openaiError(404, "Gemini subscription controls are not enabled on this gateway.", "gemini_disabled");
+    options.signal = openai::downstreamSignalFor(req);
     const double now = rt::dateNow();
     try {
       auto task = refreshSnapshot(rt::path::resolve(rt::process::cwd(), ".data"), options, now);
       const auto snapshot = co_await std::move(task);
       co_return http::json(200, snapshotJson(snapshot, rt::dateNow()), rt::Headers{{"Cache-Control", "no-store"}});
     } catch (const rt::JsError& error) {
+      if (error.name == "AbortError") co_return http::openaiError(499, "Request was cancelled.", "request_cancelled");
+      if (error.name == "TimeoutError") co_return http::openaiError(504, "Gemini quota refresh exceeded the gateway deadline.", "gateway_timeout");
       co_return http::openaiError(503, error.message, "gemini_quota_refresh_failed");
     }
   }

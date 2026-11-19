@@ -337,6 +337,8 @@ namespace uos::runtime::permissions_linux {
     for (const std::string& path : permissions.write) writePaths.push_back(canonicalize(path));
     std::vector<std::string> executePaths;
     for (const std::string& path : permissions.execute) executePaths.push_back(canonicalize(path));
+    if (executePaths.empty() ? permissions.allowChildProcess : !permissions.allowChildProcess)
+      throw rt::TypeError("Executable grants require explicit child-process opt-in");
     std::vector<std::string> immutablePaths;
     for (const std::string& path : permissions.immutable.value_or(std::vector<std::string>{})) immutablePaths.push_back(canonicalize(path));
     std::vector<std::string> immutableMounts;
@@ -381,7 +383,7 @@ namespace uos::runtime::permissions_linux {
     report((policy.ruleset.scoped & scopeAbstractUnixSocket) != 0, "abstract-unix-sockets");
     report((policy.ruleset.scoped & scopeSignal) != 0, "signal-scope");
     report((policy.ruleset.handledAccessFs & resolveUnixSocket) != 0, "pathname-unix-sockets");
-    if (!native.enforce(list, policy, permissions.allowReducedConfinement, !executePaths.empty()))
+    if (!native.enforce(list, policy, permissions.allowReducedConfinement, permissions.allowChildProcess))
       throw rt::JsError("Native confinement did not produce an enforcement receipt");
     return receipt;
   }
