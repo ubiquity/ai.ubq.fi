@@ -9,7 +9,7 @@
   "useTabs": false,
   "overrides": [
     {
-      "files": ["*.json", "*.jsonc", "*.md", "*.js", "*.cjs", "*.css", "*.html", "*.yml", "*.yaml"],
+      "files": ["*.json", "*.jsonc", "*.md", "*.js", "*.cjs", "*.jsx", "*.css", "*.html", "*.yml", "*.yaml"],
       "options": {
         "printWidth": 120
       }

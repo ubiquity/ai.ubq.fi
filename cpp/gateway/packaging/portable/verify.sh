@@ -66,6 +66,9 @@ verify_release() {
         if grep -Fq "not found" /staged/versions.txt; then exit 1; fi
       done
     ' sh "$ssl" > "$result/elf.txt" 2>&1 || return 1
+  for asset in favicon.png favicon-32.png; do
+    cmp -- "$root/$asset" "$staged/package/$asset" || return 1
+  done
   cp -- "$staged/package/build-profile.json" "$staged/package/runtime-closure.json" "$staged/binding.json" "$result/" || return 1
 
   local failed=0

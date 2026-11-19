@@ -289,7 +289,7 @@ TEST("readNativeKvDevelopmentBinding matches the recorded outcomes") {
     const std::string data = rt::path::join(root, ".data");
     const bootstrap::NativeKvDevelopmentPaths paths{
       root, data, rt::path::join(data, "native-kv.binding.json"),
-      rt::path::join(root, "tools", "native-kv", rt::process::platform == "darwin" ? "inputs-darwin-arm64.json" : "inputs.json")};
+      rt::path::join(root, "cpp/gateway/packaging/native-kv", rt::process::platform == "darwin" ? "inputs-darwin-arm64.json" : "inputs.json")};
     if (tweak != "data-missing") makeDirectory(paths.data, 0700);
     std::string artifactParent = paths.data;
     if (tweak == "artifact-nested" || tweak == "nested-0750") {
@@ -305,13 +305,13 @@ TEST("readNativeKvDevelopmentBinding matches the recorded outcomes") {
       if (tweak != "provenance-missing") writeFile(rt::path::join(artifact, "native-kv.provenance.json"), valid.provenanceText, 0600);
       if (tweak == "artifact-hardlink") rt::fs::linkSync(rt::path::join(artifact, "native-kv.node"), rt::path::join(artifact, "node.link"));
     }
-    makeDirectory(rt::path::join(root, "tools", "native-kv"), 0777, true);
+    makeDirectory(rt::path::dirname(paths.inputs), 0777, true);
     writeFile(paths.inputs, valid.inputsText, 0600);
     rt::fs::chmodSync(paths.inputs, tweak == "inputs-0644" ? 0644 : tweak == "inputs-0620" ? 0620 : 0600);
     std::string receiptDirectory = artifact;
     if (tweak == "artifact-outside") receiptDirectory = root;
     if (tweak == "artifact-is-data") receiptDirectory = paths.data;
-    if (tweak == "artifact-traverse") receiptDirectory = rt::path::join(paths.data, "..", "tools");
+    if (tweak == "artifact-traverse") receiptDirectory = rt::path::join(paths.data, "..", "cpp");
     json::object document;
     rt::objectDefine(document, "artifactDirectory", json::value(receiptDirectory));
     rt::objectDefine(document, "expectedProvenanceSha256", json::value(tweak == "wrong-hash" ? std::string(64, '0') : sha(valid.provenanceText)));
@@ -342,7 +342,15 @@ TEST("readNativeKvDevelopmentBinding matches the recorded outcomes") {
     } catch (const rt::JsError& error) {
       actual = errorOutcome(error, outer);
     }
-    expectOutcome(actual, *rt::get(entry, "outcome"), "bootstrap " + name);
+    json::value expected = *rt::get(entry, "outcome");
+    if (json::value* value = expected.as_object().if_contains("value")) {
+      auto& input = value->as_object().at("inputsManifest");
+      const std::string_view recorded(input.as_string().data(), input.as_string().size());
+      constexpr std::string_view oldPrefix = "<root>/tools/native-kv/";
+      EXPECT(recorded.starts_with(oldPrefix));
+      input = json::value(std::string("<root>/cpp/gateway/packaging/native-kv/") + std::string(recorded.substr(oldPrefix.size())));
+    }
+    expectOutcome(actual, expected, "bootstrap " + name);
     checked += 1;
   }
   EXPECT_EQ(checked, std::size_t(28));

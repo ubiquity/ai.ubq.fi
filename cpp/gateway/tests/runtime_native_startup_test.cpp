@@ -5,7 +5,7 @@
 // (no native backend is prepared before the refusals; the last case prepares one), with
 // globalThis.fetch replaced the way the child replaces it. The fixture artifact is
 // synthetic: the TS copies the artifact the test preload prepared, while these cases
-// only need a verification chain that holds (real tools/native-kv/inputs.json,
+// only need a verification chain that holds (real packaging/native-kv/inputs.json,
 // generated provenance and artifact bytes).
 //
 // Not ported: opening, writing and reading the native KV after a successful startup
@@ -78,9 +78,9 @@ namespace {
   SourceArtifact sourceArtifact(const std::string& base) {
     SourceArtifact source;
 #if defined(__APPLE__)
-    source.inputsManifest = rt::path::join(workspace(), "tools", "native-kv", "inputs-darwin-arm64.json");
+    source.inputsManifest = rt::path::join(workspace(), "cpp/gateway/packaging/native-kv", "inputs-darwin-arm64.json");
 #else
-    source.inputsManifest = rt::path::join(workspace(), "tools", "native-kv", "inputs.json");
+    source.inputsManifest = rt::path::join(workspace(), "cpp/gateway/packaging/native-kv", "inputs.json");
 #endif
     source.artifactDirectory = rt::path::join(base, "source");
     rt::fs::mkdirSync(source.artifactDirectory);
@@ -127,7 +127,7 @@ namespace {
     }
     rt::fs::MkdirOptions toolsOptions;
     toolsOptions.recursive = true;
-    rt::fs::mkdirSync(rt::path::join(root, "tools", "native-kv"), toolsOptions);
+    rt::fs::mkdirSync(rt::path::dirname(paths.inputs), toolsOptions);
     rt::fs::copyFileSync(source.inputsManifest, paths.inputs);
     json::object receipt;
     rt::objectDefine(receipt, "artifactDirectory", json::value(artifact));

@@ -40,7 +40,7 @@ namespace {
 }
 
 TEST("the runtime request allowlists equal the pinned official surfaces") {
-  const std::string pinPath = rt::path::resolve(rt::path::dirname(__FILE__), "../../../scripts/openai-spec-pin.json");
+  const std::string pinPath = rt::path::resolve(rt::path::dirname(__FILE__), "fixtures/openai-spec-pin.json");
   const json::value pin = rt::jsonParse(rt::fs::readFileSync(pinPath, "utf8"));
   const json::object* surfaces = rt::getObject(pin, "surfaces");
   ASSERT(surfaces != nullptr);

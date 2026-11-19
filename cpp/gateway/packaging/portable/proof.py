@@ -106,6 +106,16 @@ def health(gateway):
     return result["json"]
 
 
+def favicons(gateway, package):
+    hashes = {}
+    for route, asset in (("/favicon.ico", "favicon.png"), ("/favicon.png", "favicon.png"), ("/favicon-32.png", "favicon-32.png")):
+        result = checked(request(gateway.origin, route))
+        if result["headers"].get("content-type") != "image/png" or result["body_sha256"] != sha256(package / asset):
+            raise RuntimeError(f"Packaged asset differs at {route}")
+        hashes[route] = result["body_sha256"]
+    return hashes
+
+
 def chat(gateway, body):
     result = checked(request(gateway.origin, CHAT, API_TOKEN, body))["json"]
     choice = result["choices"][0]
@@ -128,6 +138,7 @@ def exercise(gateway, upstream, binding):
         raise RuntimeError("Gateway did not install its seccomp filter")
     cold = gateway.idle("idle_cold")
     initial_health = health(gateway)
+    static_sha256 = favicons(gateway, Path(binding["packageRoot"]))
     body = inference_body("chat", False)
     body["model"] = MODEL
     checked(request(gateway.origin, CHAT, body=body), 401)
@@ -173,6 +184,7 @@ def exercise(gateway, upstream, binding):
     if len(upstream.calls) != completed or any(call["path"] != "/codex/responses" for call in upstream.calls) or accounted != completed or upstream.failures or upstream.redirected_requests:
         raise RuntimeError(f"Expected {completed} completed and accounted chats: calls={len(upstream.calls)} usage={accounted} failures={upstream.failures}")
     return key, {"health_initial": initial_health, "health_after_load": health(gateway), "unauthenticated_chat_status": 401,
+                 "favicon_sha256": static_sha256,
                  "completed_chat_requests": completed, "accounted_requests": accounted, "idle_cold": cold, "idle_warm": warm,
                  "eight_in_flight": concurrent, "throughput_rss": [memory(gateway, f"throughput_{trial + 1}") for trial in range(TRIALS)],
                  "requests_per_trial": REQUESTS_PER_TRIAL, "requests_per_second": rates, "median_requests_per_second": statistics.median(rates),

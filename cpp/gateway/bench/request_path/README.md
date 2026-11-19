@@ -28,17 +28,17 @@ newer, zlib, ICU, Brotli and Zstd. The benchmark uses `ip`, `unshare` and `setpr
 LLVM symbolizer and any matching system debug packages before timing. Preparation uses network access for exact tool and dependency
 downloads. The benchmark itself has loopback access only.
 
-Run from the repository root. All output goes into the scratch directory. Use the corresponding `toolchain.version`
-in `tools/native-kv/inputs.json` and the exact platform binaries when running against another source revision.
+Run from the native checkout. The C++ build uses the current source. Bun loads the frozen legacy checkout prepared by the conformance oracle helper. See the conformance guide for a comparison using a sealed portable package. [Paired conformance](../../docs/CONFORMANCE.md)
 
 ```sh
 bench=cpp/gateway/bench/request_path
-revision=$(git rev-parse HEAD)
+candidate=$(git rev-parse --show-toplevel)
 scratch=$(mktemp -d -t cppgw-request-path.XXXXXXXX)
 bun_bin=$(command -v bun)
 rustup_bin=$(command -v rustup)
-mkdir "$scratch/oracle" "$scratch/prep-home" "$scratch/prep-tmp"
-git archive "$revision" | tar -x -C "$scratch/oracle"
+mkdir "$scratch/prep-home" "$scratch/prep-tmp"
+revision=$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/prep-home" TMPDIR="$scratch/prep-tmp" \
+  bash cpp/gateway/conformance/oracle.sh "$scratch/oracle")
 test "$("$bun_bin" --no-env-file --no-install --version)" = 1.4.0
 test -f "$scratch/oracle/bun.lock" && test -f "$scratch/oracle/tools/lint/bun.lock"
 
@@ -53,7 +53,7 @@ test -f "$scratch/oracle/bun.lock" && test -f "$scratch/oracle/tools/lint/bun.lo
     cxxflags='-g1 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer' stage
 )
 
-python3 -I "$bench/build.py" --source "$scratch/oracle" --out "$scratch/build" \
+python3 -I "$bench/build.py" --source "$candidate" --out "$scratch/build" \
   --boost "$scratch/boost_1_92_0" --cxx g++-14 --jobs 4
 ```
 
@@ -80,8 +80,10 @@ ln -s "$scratch/rustup/toolchains/${rust_version}-aarch64-unknown-linux-gnu" \
 )
 
 binding="$scratch/oracle/.data/native-kv.binding.json"
-package="$scratch/oracle/.data/request-path-package"
-python3 -I "$bench/package.py" --source "$scratch/oracle" \
+cmp "$scratch/oracle/tools/native-kv/inputs.json" "$candidate/cpp/gateway/packaging/native-kv/inputs.json"
+mkdir -p "$candidate/.data"
+package=$(mktemp -d "$candidate/.data/request-path.XXXXXXXX")/package
+python3 -I "$bench/package.py" --source "$candidate" \
   --build-dir "$scratch/build" --profile-manifest "$scratch/build/profile-owner.json" \
   --native-kv "$(jq -r .artifactDirectory "$binding")" \
   --native-kv-inputs "$(jq -r .inputsManifest "$binding")" \

@@ -1,4 +1,4 @@
-// Files are read relative to the repository root (`new URL("../", import.meta.url)` of the TS test).
+// Public assets come from the repository root. Route literals come from the native source tree.
 // Links: tests/openapi_runtime_contract_test.cpp
 // src/openai_schema.cpp src/agent_messages.cpp src/request.cpp src/auth/index.cpp src/kernel/quota_reservations.cpp src/authority/native_kernel_contracts.cpp src/openai.cpp src/utils.cpp
 // src/authority/native_kernel.cpp src/provider/metered.cpp src/api_key_policy.cpp src/models/codex_models.cpp src/authority/native_api_key.cpp src/kv.cpp src/auth/passport.cpp src/inference_deadline.cpp
@@ -56,6 +56,7 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
 
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <string>
@@ -68,8 +69,8 @@ namespace {
   namespace json = uos::json;
   namespace ledger = uos::embeddings::ledger;
 
-  // `new URL("../", import.meta.url)` of the test: the repository root.
   const std::string ROOT = rt::path::resolve(rt::path::dirname(__FILE__), "../../..");
+  const std::string GATEWAY = rt::path::join(ROOT, "cpp/gateway");
 
   const json::object& document() {
     static const json::object parsed = rt::jsonParse(rt::fs::readFileSync(rt::path::join(ROOT, "static/openapi.json"), "utf8")).as_object();
@@ -96,16 +97,23 @@ namespace {
   const std::vector<std::string>& SOURCE_FILES() {
     static const std::vector<std::string> files = [] {
       std::vector<std::string> entries;
-      readdirRecursive(rt::path::join(ROOT, "src"), "", entries);
+      for (const char* directory : {"src", "include", "runtime", "entrypoints"}) {
+        readdirRecursive(rt::path::join(GATEWAY, directory), directory, entries);
+      }
       std::vector<std::string> sources;
       for (const std::string& file : entries)
-        if (rt::endsWith(file, ".ts")) sources.push_back(file);
+        if (file.ends_with(".cpp") || file.ends_with(".hpp")) sources.push_back(file);
+      for (const char* required : {"src/handler/index.cpp", "src/handler/terminal_route.cpp"}) {
+        if (std::find(sources.begin(), sources.end(), required) == sources.end()) {
+          throw rt::JsError(std::string("Missing native dispatch source: ") + required);
+        }
+      }
       return sorted(std::move(sources));
     }();
     return files;
   }
 
-  std::string sourceText(const std::string& file) { return rt::fs::readFileSync(rt::path::join(ROOT, "src", file), "utf8"); }
+  std::string sourceText(const std::string& file) { return rt::fs::readFileSync(rt::path::join(GATEWAY, file), "utf8"); }
 
   const json::object& schemaNamed(std::string_view name) {
     const json::object& schemas = document().at("components").at("schemas").as_object();
@@ -123,13 +131,19 @@ namespace {
 
   /** Retain the literal-dispatch safety net for code introduced outside the registered route tables. */
   std::vector<std::string> dispatchedUosOperations(const std::string& text) {
-    static const rt::Regex METHOD_THEN_PATH(R"re(req\.method === "([A-Z]+)" && path === "(\/uos\/[^"]+)")re", "g");
-    static const rt::Regex PATH_THEN_METHOD(R"re(path === "(\/uos\/[^"]+)" && req\.method === "([A-Z]+)")re", "g");
-    static const rt::Regex METHOD_THEN_PREFIX(R"re(req\.method === "([A-Z]+)" && path\.startsWith\("(\/uos\/[^"]+\/)"\))re", "g");
+    static const std::string method = R"re(\b(?:req\.method\(\)|method)\s*==\s*"([A-Z]+)")re";
+    static const std::string path = R"re(\bpath\s*==\s*"(/uos/[^"\s]+)")re";
+    static const std::string prefix = R"re(\b(?:path\.starts_with\(\s*|rt::startsWith\(\s*path\s*,\s*)"(/uos/[^"\s]*/)"\s*\))re";
+    static const std::string conjunction = R"(\s*&&\s*)";
+    static const rt::Regex METHOD_THEN_PATH(method + conjunction + path, "g");
+    static const rt::Regex PATH_THEN_METHOD(path + conjunction + method, "g");
+    static const rt::Regex METHOD_THEN_PREFIX(method + conjunction + prefix, "g");
+    static const rt::Regex PREFIX_THEN_METHOD(prefix + conjunction + method, "g");
     rt::OrderedSet<std::string> operations;
     for (const rt::RegexMatch& match : rt::matchAll(text, METHOD_THEN_PATH)) operations.add(*match[1] + " " + *match[2]);
     for (const rt::RegexMatch& match : rt::matchAll(text, PATH_THEN_METHOD)) operations.add(*match[2] + " " + *match[1]);
     for (const rt::RegexMatch& match : rt::matchAll(text, METHOD_THEN_PREFIX)) operations.add(*match[1] + " " + *match[2] + "{id}");
+    for (const rt::RegexMatch& match : rt::matchAll(text, PREFIX_THEN_METHOD)) operations.add(*match[2] + " " + *match[1] + "{id}");
     return sorted(rt::arrayFrom(operations));
   }
 
@@ -148,13 +162,13 @@ namespace {
     return sorted(rt::arrayFrom(operations));
   }
 
-  // Scoped to "src/file.ts: /uos/path", with a required reason. Only genuine non-route references belong here.
+  // Scoped to the native file and literal, with a required reason for each non-route reference.
   const rt::OrderedMap<std::string, std::string> UOS_NON_ROUTE_LITERALS{};
 
   std::vector<std::string> uosPathLiterals(const std::string& text) {
-    static const rt::Regex LITERAL(R"re((["'`])(\/uos\/[^"'`\s]*)\1)re", "g");
+    static const rt::Regex LITERAL(R"re("(/uos/[^"\s]*)")re", "g");
     std::vector<std::string> out;
-    for (const rt::RegexMatch& match : rt::matchAll(text, LITERAL)) out.push_back(*match[2]);
+    for (const rt::RegexMatch& match : rt::matchAll(text, LITERAL)) out.push_back(*match[1]);
     return out;
   }
 
@@ -242,15 +256,15 @@ TEST("OpenAPI publishes exactly the UOS routes the runtime dispatches and the ag
   const auto runtime=runtimeUosOperations();EXPECT_EQ(publishedUosOperations(),runtime);const auto text=rt::fs::readFileSync(rt::path::join(ROOT,"static/docs/llms-agents.md"),"utf8");const rt::Regex section(R"(UOS gateway endpoints:\n\n((?:- `[^`\n]+`[^\n]*\n)+))");const auto match=section.exec(text);ASSERT(match&&(*match)[1]);std::vector<std::string> operations;const rt::Regex operation(R"(- `([A-Z]+ \/uos\/[^`]+)`)","g");for(const auto& item:rt::matchAll(*(*match)[1],operation))operations.push_back(*item[1]);EXPECT_EQ(sorted(operations),runtime);
   for(const auto& entry:PUBLISHED_OPERATIONS()){if(!rt::startsWith(entry.path,"/uos/"))continue;EXPECT(rt::getString(*entry.operation,"operationId"));EXPECT(rt::length(rt::getString(*entry.operation,"description").value_or(""))>80);}
 }
-TEST("every /uos/ path literal anywhere under src/ is published or explicitly documented as a non-route") {
+TEST("every /uos/ literal in native source is published or explicitly documented as a non-route") {
   rt::OrderedSet<std::string> publishedPaths;
   for (const PublishedOperation& operation : PUBLISHED_OPERATIONS()) publishedPaths.add(operation.path);
   std::vector<std::string> unpublished;
   rt::OrderedSet<std::string> seen;
   for (const std::string& file : SOURCE_FILES()) {
     const std::string text = sourceText(file);
-    for (const std::string& literal : uosPathLiterals(text)) seen.add("src/" + file + ": " + literal);
-    for (std::string& key : unpublishedUosLiterals("src/" + file, text, publishedPaths)) unpublished.push_back(std::move(key));
+    for (const std::string& literal : uosPathLiterals(text)) seen.add(file + ": " + literal);
+    for (std::string& key : unpublishedUosLiterals(file, text, publishedPaths)) unpublished.push_back(std::move(key));
   }
   for (const auto& [key, reason] : UOS_NON_ROUTE_LITERALS) {
     // `${key} needs a non-route explanation`
@@ -274,16 +288,21 @@ TEST("UOS table parity includes paths constructed from a slashless prefix or joi
 }
 
 TEST("literal dispatch outside the UOS tables still participates in operation parity") {
-  EXPECT_EQ(runtimeUosOperations({}, strings({"if (req.method === \"POST\" && path === \"/uos/auth\") return probe();"})), strings({"POST /uos/auth"}));
+  EXPECT_EQ(runtimeUosOperations({}, strings({
+    R"(if (req.method() == "POST" && path == "/uos/auth") return probe();)",
+    R"(if (path == "/uos/auth" && method == "PATCH") return probe();)",
+    R"(if (method == "GET" && rt::startsWith(path, "/uos/probe/")) return probe();)",
+    R"(if (path.starts_with("/uos/probe/") && req.method() == "DELETE") return probe();)",
+  })), strings({"DELETE /uos/probe/{id}", "GET /uos/probe/{id}", "PATCH /uos/auth", "POST /uos/auth"}));
 }
 
 TEST("non-route UOS literal exceptions are file-scoped and do not mask other unpublished paths") {
-  const std::string source = "const doc = \"/uos/probe\"; const route = \"/uos/other\";";
-  const rt::OrderedMap<std::string, std::string> allowlist{{"src/example.ts: /uos/probe", "Documentation link, not a dispatch condition"}};
-  EXPECT_EQ(unpublishedUosLiterals("src/example.ts", source, {}, allowlist), strings({"src/example.ts: /uos/other"}));
-  const rt::OrderedMap<std::string, std::string> blankReason{{"src/example.ts: /uos/probe", " "}};
-  EXPECT_EQ(unpublishedUosLiterals("src/example.ts", "\"/uos/probe\"", {}, blankReason), strings({"src/example.ts: /uos/probe"}));
-  EXPECT_EQ(unpublishedUosLiterals("src/other.ts", source, {}, allowlist), strings({"src/other.ts: /uos/probe", "src/other.ts: /uos/other"}));
+  const std::string source = R"(const auto doc = "/uos/probe"; const auto route = "/uos/other";)";
+  const rt::OrderedMap<std::string, std::string> allowlist{{"src/example.cpp: /uos/probe", "Documentation link"}};
+  EXPECT_EQ(unpublishedUosLiterals("src/example.cpp", source, {}, allowlist), strings({"src/example.cpp: /uos/other"}));
+  const rt::OrderedMap<std::string, std::string> blankReason{{"src/example.cpp: /uos/probe", " "}};
+  EXPECT_EQ(unpublishedUosLiterals("src/example.cpp", "\"/uos/probe\"", {}, blankReason), strings({"src/example.cpp: /uos/probe"}));
+  EXPECT_EQ(unpublishedUosLiterals("src/other.cpp", source, {}, allowlist), strings({"src/other.cpp: /uos/probe", "src/other.cpp: /uos/other"}));
 }
 
 TEST("agent-messages publishes the kernel attestation header as required and the repository headers as optional cross-checks") {

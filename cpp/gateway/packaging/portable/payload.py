@@ -24,7 +24,7 @@ def main(commit, tree, epoch):
     kv = Path("/native/kv")
     permissions = Path("/native/permissions")
     provenance = Path("/native/kv-provenance-sha256").read_text().strip()
-    inputs = ROOT / "tools/native-kv/inputs.json"
+    inputs = GATEWAY / "packaging/native-kv/inputs.json"
     native.verify_native_kv(kv, inputs, provenance)
     native.verify_permissions(permissions)
     for name in EXECUTABLES:
@@ -39,9 +39,10 @@ def main(commit, tree, epoch):
             raise ValueError(f"Unsafe static asset: {asset}")
         if asset.is_file():
             native.copy_file(asset, payload / asset.relative_to(ROOT))
+    for name in ("favicon.png", "favicon-32.png"):
+        native.copy_file(ROOT / name, payload / name)
     for name in ("v8-helper.mjs", "typed-value.ts"):
-        where = Path("src/kv-conversion") / name
-        native.copy_file(ROOT / where, payload / where)
+        native.copy_file(GATEWAY / "runtime/legacy-codec" / name, payload / "src/kv-conversion" / name)
     for name in ("launch-schema.json", "offline-schema.json"):
         native.copy_file(GATEWAY / "runtime" / name, payload / "runtime" / name)
     native.copy_file(GATEWAY / "ops/launch-native.sh", payload / "ops/launch-native.sh", executable=True)

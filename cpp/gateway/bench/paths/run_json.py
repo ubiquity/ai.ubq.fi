@@ -23,7 +23,8 @@ def run(native, bun, output):
               "bun": {"path": str(bun), "sha256": sha256(bun)}, "trials": [], "inputs": []}
     script = WORKTREE / "cpp/gateway/bench/paths/json.ts"
     source = WORKTREE / "cpp/gateway/bench/paths/json.cpp"
-    result["sources"] = {str(path): sha256(path) for path in (script, source, Path(__file__))}
+    config = script.with_name("bunfig.toml")
+    result["sources"] = {str(path): sha256(path) for path in (script, source, config, Path(__file__))}
     for target, iterations in ((1024, 2000), (16384, 200), (1048576, 4)):
         rows = [{"id": index, "text": "fixture-ascii-" + "abcdefghijklmnop" * 4, "value": 1.25,
                  "enabled": True, "items": [1, 2, None, "fixture"]} for index in range(math.ceil(target / 160))]
@@ -39,7 +40,7 @@ def run(native, bun, output):
                 for runtime in order:
                     tail = [str(path), operation, str(iterations), "9"]
                     command = [str(native), *tail] if runtime == "native" else [str(bun), "--no-env-file", "--no-install",
-                               "--config=" + str(WORKTREE / "ops/runtime-bunfig.toml"), str(script), *tail]
+                               "--config=" + str(config), str(script), *tail]
                     started = time.perf_counter_ns()
                     child = subprocess.run(command, cwd=output, env=sparse_environment(output), stdin=subprocess.DEVNULL,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False)

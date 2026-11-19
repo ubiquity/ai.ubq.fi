@@ -48,16 +48,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends libnode-dev pat
 COPY cpp/gateway/packaging/portable/native.sh /usr/local/bin/portable-native
 COPY cpp/gateway/packaging/portable/native-receipt.py /usr/local/bin/portable-native-receipt
 COPY cpp/gateway/packaging/portable/licenses /usr/local/share/uos-crate-licenses
-COPY scripts/build-native-kv.ts /source/scripts/
-COPY tools/native-kv /source/tools/native-kv
-COPY src/runtime/permissions-native.c /source/src/runtime/
+COPY cpp/gateway/packaging/native-kv /source/cpp/gateway/packaging/native-kv
+COPY cpp/gateway/packaging/confinement/permissions-native.c /source/cpp/gateway/packaging/confinement/
 RUN bash /usr/local/bin/portable-native
 
 FROM cpp AS assemble
 COPY --from=native /native /native
 COPY static static
-COPY src/kv-conversion/v8-helper.mjs src/kv-conversion/typed-value.ts src/kv-conversion/
-COPY tools/native-kv/inputs.json tools/native-kv/
+COPY favicon.png favicon-32.png ./
+COPY cpp/gateway/packaging/native-kv/inputs.json cpp/gateway/packaging/native-kv/
 COPY cpp/gateway/docs/licenses cpp/gateway/docs/licenses
 COPY cpp/gateway/docs/RASPBERRY-PI.md cpp/gateway/docs/
 COPY cpp/gateway/ops/launch-native.sh cpp/gateway/ops/

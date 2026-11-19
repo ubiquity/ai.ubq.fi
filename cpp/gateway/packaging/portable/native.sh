@@ -29,7 +29,7 @@ SH
 chmod 755 "$work/rustc-wrapper"
 cd /source
 kv_builder=$(cat <<'JS'
-import { buildNativeKv } from "./scripts/build-native-kv.ts";
+import { buildNativeKv } from "./cpp/gateway/packaging/native-kv/build-native-kv.ts";
 const work = Bun.env.UOS_PORTABLE_WORK;
 try {
   const receipt = await buildNativeKv("/native/kv", {
@@ -50,11 +50,12 @@ python3 -B /usr/local/bin/portable-native-receipt "$work"
 
 mkdir /native/permissions
 permissions=/native/permissions/linux-arm64.node
+source=cpp/gateway/packaging/confinement/permissions-native.c
 # Bookworm's UAPI predates these four ARM64 syscall names. Match the linked C++ filter.
 cc -shared -fPIC -O2 -Wall -Wextra -Werror -march=armv8-a -DNAPI_VERSION=8 -I/usr/include/node \
   -D__NR_fchmodat2=452 -D__NR_setxattrat=463 -D__NR_removexattrat=466 -D__NR_file_setattr=469 \
-  -o "$permissions" src/runtime/permissions-native.c
-python3 -B - "$permissions" <<'PY'
+  -o "$permissions" "$source"
+python3 -B - "$permissions" "$source" <<'PY'
 import hashlib
 import json
 import sys
@@ -63,7 +64,7 @@ from pathlib import Path
 binary = Path(sys.argv[1])
 manifest = {"path": binary.name, "architecture": "arm64",
             "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
-            "sourceSha256": hashlib.sha256(Path("src/runtime/permissions-native.c").read_bytes()).hexdigest(),
+            "sourceSha256": hashlib.sha256(Path(sys.argv[2]).read_bytes()).hexdigest(),
             "landlockAbi": {"minimum": 8, "maximum": 10}}
 binary.with_name("manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 PY

@@ -1,6 +1,6 @@
 # Integrate only through the build owner. This target never installs or launches.
 set(UOS_PACKAGE_NATIVE_KV_DIR "" CACHE PATH "Explicit genuine offline native KV artifact directory")
-set(UOS_PACKAGE_NATIVE_KV_INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/native-kv/inputs.json" CACHE FILEPATH "Pinned native KV inputs")
+set(UOS_PACKAGE_NATIVE_KV_INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/native-kv/inputs.json" CACHE FILEPATH "Pinned native KV inputs")
 set(UOS_PACKAGE_NATIVE_KV_PROVENANCE_SHA256 "" CACHE STRING "Independently supplied native KV provenance SHA256")
 set(UOS_PACKAGE_PERMISSIONS_DIR "" CACHE PATH "Explicit genuine offline Linux permissions artifact directory")
 set(UOS_PACKAGE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}-package" CACHE PATH "New task-worktree package output directory")

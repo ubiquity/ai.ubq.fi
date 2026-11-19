@@ -19,7 +19,8 @@ namespace uos::storage::native_addon {
     constexpr std::string_view SOURCE_COMMIT = "9fe65cc138ff56ca5bfe7a1bf8c53e832246f9d5";
 
     const std::string& INPUTS_MANIFEST() {
-      static const std::string path = rt::path::resolve(rt::path::dirname(__FILE__), "../../../../tools/native-kv/inputs.json");
+      static const std::string path = rt::path::resolve(rt::path::dirname(__FILE__), "../../packaging/native-kv",
+        rt::process::platform == "darwin" ? "inputs-darwin-arm64.json" : "inputs.json");
       return path;
     }
 

@@ -1,7 +1,7 @@
 #pragma once
 // Port of src/runtime/permissions-linux.ts.
 //
-// The TS loads the Landlock/seccomp addon built from src/runtime/permissions-native.c with
+// The packaged Landlock/seccomp addon is built from packaging/confinement/permissions-native.c with
 // process.dlopen after verifying it against .uos-permissions/manifest.json. The port keeps every
 // check on the manifest and the artifact file, and binds the addon's three functions (support,
 // readonlyMount, enforce) to their translation compiled into this binary instead of loading the

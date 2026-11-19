@@ -68,7 +68,7 @@ namespace uos::runtime::permissions_linux {
     };
 
 #if defined(__linux__) && defined(__aarch64__)
-    // src/runtime/permissions-native.c, without its Node-API glue.
+    // packaging/confinement/permissions-native.c, without its Node-API glue.
     // Primary ABI: docs.kernel.org/userspace-api/{landlock,seccomp_filter}.html.
     // The asm-generic numbers the release artifact compiles in from current kernel headers.
 #ifndef __NR_fchmodat2

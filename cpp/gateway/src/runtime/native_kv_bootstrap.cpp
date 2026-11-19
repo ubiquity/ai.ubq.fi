@@ -89,7 +89,7 @@ namespace uos::runtime::native_kv_bootstrap {
     if (rt::process::arch != "arm64" || !(rt::process::platform == "linux" || rt::process::platform == "darwin"))
       throw rt::JsError("Native KV development platform is unsupported");
     const std::string data = rt::path::join(root, ".data");
-    const std::string inputs = rt::path::join(root, "tools", "native-kv", rt::process::platform == "darwin" ? "inputs-darwin-arm64.json" : "inputs.json");
+    const std::string inputs = rt::path::join(root, "cpp/gateway/packaging/native-kv", rt::process::platform == "darwin" ? "inputs-darwin-arm64.json" : "inputs.json");
     return NativeKvDevelopmentPaths{root, data, rt::path::join(data, BINDING_FILE), inputs};
   }
 
