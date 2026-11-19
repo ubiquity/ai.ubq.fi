@@ -10,6 +10,12 @@ This branch contains the native C++20 gateway for OpenAI-compatible Chat Complet
 
 The paired comparison with the TypeScript gateway lives at [commit `ca045a83ebaab6c50c20567d1a825638abac0891`](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891/cpp/gateway/conformance).
 
+Run native build, test and packaging commands from the checkout root.
+
+```sh
+cd "$(git rev-parse --show-toplevel)"
+```
+
 ## Output-token caps
 
 `max_completion_tokens` is the OpenAI Chat Completions cap. `max_output_tokens` is the OpenAI Responses cap. Both are positive-integer output caps. Do not swap these fields between endpoints.

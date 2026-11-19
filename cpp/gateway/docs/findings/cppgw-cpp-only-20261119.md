@@ -71,7 +71,13 @@ make install
 The scratch test wrapper `run-release.sh` runs from the detached worktree at `$scratch/state-a`. It uses a fresh `run` directory for every invocation and the repository CI driver for all compilation, links and test isolation. The Python selector only restricts `links.all_tests()` before calling `driver.main()` with `--config release`. It selects closures containing either request source for STATE A and the patterns in `$scratch/final-groups.tsv` for final gates.
 
 ```sh
-env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC   HOME="$run/home" TMPDIR="$run/tmp" CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4   UOS_CI_BUILD_DIR="$scratch/ci" UOS_CI_SQLITE_PREFIX="$scratch/sqlite"   PKG_CONFIG_PATH="$scratch/icu78/lib/pkgconfig:$scratch/sqlite/lib/pkgconfig"   UOS_CI_CXXFLAGS="-isystem $scratch/boost_1_92_0"   UOS_CI_LDFLAGS="-L$scratch/boost_1_92_0/stage/lib -Wl,--disable-new-dtags,-rpath,$scratch/icu78/lib:$scratch/sqlite/lib"   python3 -B "$scratch/selected.py" "$@"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
+  HOME="$run/home" TMPDIR="$run/tmp" CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4 \
+  UOS_CI_BUILD_DIR="$scratch/ci" UOS_CI_SQLITE_PREFIX="$scratch/sqlite" \
+  PKG_CONFIG_PATH="$scratch/icu78/lib/pkgconfig:$scratch/sqlite/lib/pkgconfig" \
+  UOS_CI_CXXFLAGS="-isystem $scratch/boost_1_92_0" \
+  UOS_CI_LDFLAGS="-L$scratch/boost_1_92_0/stage/lib -Wl,--disable-new-dtags,-rpath,$scratch/icu78/lib:$scratch/sqlite/lib" \
+  python3 -B "$scratch/selected.py" "$@"
 ```
 
 STATE A ran `bash "$scratch/run-release.sh" state-a "$index" 10` for indices 0, 10, 20, 30, 40, 50 and 60. All receipts bind the exact STATE A commit and tree and unchanged input SHA-256 `3ab20c3a1b83656aa230cb33703ceff243f540672fa80668773045ea2db9194e`. The driver proved loopback-only networking in fresh network, mount and PID namespaces via `sudo`, dropped back to uid 1001, and probed SQLite 3.54.0 inside the boundary. Every linked test passed.
@@ -104,3 +110,5 @@ Registration resolved 449 binaries. The filename scan returned 14 tracked browse
 The final test worktree is now at `3d44d15e2db235f5b72f7b304eac51db6e873f28`, tree `662efec391f9153d4dcbecfd8d28d07a78a31789`. Its Release groups run sequentially with logs and receipts named `final-<group>` in scratch.
 
 The portable build runs from `$scratch/package-tree` at commit `d5454f1702eb22a89e7f6e570893a6ae5e844e7d`, tree `b5724b1ae685e43b05e59e41c5a10a6f90dd0bfb`, with the same shipping code and package inputs as the test tree. Its background command uses `env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$run/home" TMPDIR="$run/tmp" /usr/bin/time -p bash cpp/gateway/packaging/portable/build.sh "$scratch/uos-gateway-linux-arm64.tar.gz"`. Poll `package-build.log` and `package-build.status`. When it completes, run the verifier from the same package worktree, with a fresh empty home and temporary root and a new evidence path.
+
+The first startup/static Release group passed five binaries and 60 of 61 cases. The static scan still required a repository-root command in the root README after the old upload section was removed. Restored that command as the entry to the native build/test instructions and kept the static assertions. The CI driver also no longer sets the leftover terminal-only environment variable from the old runtime. Requalify both changes with the final focused groups.
