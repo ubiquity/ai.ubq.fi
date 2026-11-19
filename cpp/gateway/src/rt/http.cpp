@@ -669,6 +669,7 @@ namespace uos::rt {
         co_return start.buffered;
       }
       auto reader = std::move(*start.reader);
+      auto release = scopeExit([&reader] { reader.releaseLock(); });
       auto collected = std::make_shared<Bytes>();
       for (;;) {
         Task<ReadableStreamReadResult<ByteChunk>> reading = reader.read();
@@ -676,7 +677,6 @@ namespace uos::rt {
         if (step.done) break;
         collected->insert(collected->end(), step.value->begin(), step.value->end());
       }
-      reader.releaseLock();
       co_return Consumed{std::nullopt, std::move(collected), true};
     }
 

@@ -802,6 +802,29 @@ TEST("a promise created outside any running loop starts its task synchronously o
   EXPECT_EQ(*log, (Strings{"started", "resumed"}));
 }
 
+TEST("destroyed coroutine frames cannot post microtasks into an enclosing loop") {
+  rt::FakeClock clock;
+  rt::Loop outer(clock);
+  rt::LoopScope ambient(outer);
+  auto log = makeLog();
+  {
+    rt::Loop inner(clock);
+    rt::LoopScope scope(inner);
+    auto never = rt::withResolvers();
+    rt::spawn(rt::async([log, waiting = never.promise]() -> rt::Task<void> {
+      auto cleanup = rt::scopeExit([log] {
+        log->push_back("cleanup");
+        rt::queueMicrotask([log] { log->push_back("orphaned microtask"); });
+      });
+      co_await waiting.wait();
+    }));
+    inner.run();
+  }
+  EXPECT_EQ(outer.microtaskCount(), 0u);
+  outer.run();
+  EXPECT_EQ(*log, (Strings{"cleanup"}));
+}
+
 namespace {
   struct Counted {
     std::shared_ptr<int> token;
@@ -846,6 +869,51 @@ ASYNC_TEST("aggregate values pass through Promise, async, withFinally and genera
   EXPECT_EQ(token.use_count(), 1);
 }
 
+ASYNC_TEST("a generator body can borrow its yield handle across suspension") {
+  rt::AsyncGenerator<std::string> generator([](const rt::Yield<std::string>& yield) -> rt::Task<void> {
+    co_await rt::microtask();
+    auto yielding = yield("value");
+    co_await std::move(yielding);
+  });
+  const auto first = co_await generator.next();
+  ASSERT(first.value.has_value());
+  EXPECT_EQ(*first.value, "value");
+  const auto last = co_await generator.next();
+  EXPECT(last.done);
+}
+
+ASYNC_TEST("generator steps keep the generator alive until their results settle") {
+  auto makeGenerator = [] {
+    return rt::AsyncGenerator<int>([](rt::Yield<int> yield) -> rt::Task<void> {
+      auto yielding = yield(7);
+      co_await std::move(yielding);
+    });
+  };
+  rt::Task<rt::IteratorResult<int>> next;
+  rt::Task<rt::IteratorResult<int>> returning;
+  {
+    auto generator = makeGenerator();
+    next = generator.next();
+  }
+  {
+    auto generator = makeGenerator();
+    auto discarded = generator.next();
+    returning = generator.return_();
+  }
+  rt::Promise nextResult(std::move(next));
+  rt::Promise returnResult(std::move(returning));
+
+  // The timer runs after the microtask checkpoint. A stranded step fails
+  // here without parking the test on a Promise that never settles.
+  co_await rt::sleep(1);
+  ASSERT(nextResult.fulfilled());
+  ASSERT(returnResult.fulfilled());
+  EXPECT(!nextResult.value().done);
+  ASSERT(nextResult.value().value.has_value());
+  EXPECT_EQ(*nextResult.value().value, 7);
+  EXPECT(returnResult.value().done);
+}
+
 ASYNC_TEST("resolving functions: resolve(promise) locks the promise so a later reject is ignored; a throwing executor rejects") {
   auto [promise, resolve, reject] = rt::withResolvers<int>();
   auto source = rt::withResolvers<int>();
@@ -862,6 +930,35 @@ ASYNC_TEST("resolving functions: resolve(promise) locks the promise so a later r
   (void)failing.catch_(rt::ignoreRejection);
   auto voidPromise = rt::newPromise([](auto resolveVoid, auto) { resolveVoid(); });
   EXPECT(voidPromise.fulfilled());
+}
+
+ASYNC_TEST("Promise callback Tasks retain the borrowed fulfillment or rejection") {
+  auto gate = rt::withResolvers();
+  const auto failure = rt::makeReason(rt::TypeError("early rejection"));
+  auto late = [ready = gate.promise](const std::string& value) -> rt::Task<std::string> {
+    co_await ready.wait();
+    co_return value;
+  };
+  const std::string payload(128, 'x');
+  auto pending = rt::Promise<std::string>::resolve(payload).then(late);
+  std::vector inputs{rt::Promise<std::string>::reject(failure), pending};
+  auto combined = rt::all(std::move(inputs));
+  EXPECT_REJECTS_REASON(combined.wait(), failure);
+  EXPECT(pending.pending());
+  gate.resolve();
+  const auto value = co_await pending.wait();
+  EXPECT_EQ(value, payload);
+
+  auto onRejected = [](const rt::Reason& reason) -> rt::Task<std::string> {
+    co_await rt::microtask();
+    co_return rt::reasonToString(reason);
+  };
+  auto rejected = rt::Promise<std::string>::reject(failure).then(late, onRejected);
+  auto recovered = rt::Promise<std::string>::reject(failure).catch_(onRejected);
+  const auto fromThen = co_await rejected.wait();
+  const auto fromCatch = co_await recovered.wait();
+  EXPECT_EQ(fromThen, "TypeError: early rejection");
+  EXPECT_EQ(fromCatch, fromThen);
 }
 
 ASYNC_TEST("then(onFulfilled, onRejected), catch_ returning a value, and rejections passing through then") {

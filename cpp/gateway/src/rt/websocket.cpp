@@ -46,7 +46,14 @@ namespace uos::rt::ws {
             request->abort();
             if (request->socket) request->socket->shutdown();
           }
-          if (state.socket) state.socket->shutdown();
+          if (state.socket) {
+            state.bufferedAmount = websocket->ownBufferedAmount();
+            state.socket->shutdown();
+          }
+          state.sender.reset();
+          state.socket.reset();
+          state.socketAttached = false;
+          state.readyState = WebSocket::CLOSED;
           if (state.receiver) state.receiver->removeAllListeners();
           websocket->removeAllListeners();
         }
@@ -204,6 +211,7 @@ namespace uos::rt::ws {
   }
 
   bool EventEmitter::emit(std::string_view event, const EventArgs& args) {
+    const auto receiver = pinEventReceiver();
     std::vector<Registration> listeners;
     for (const Registration& entry : registrations_) {
       if (entry.event == event) listeners.push_back(entry);
@@ -739,6 +747,7 @@ namespace uos::rt::ws {
   }
 
   void WebSocketServer::completeUpgrade(const std::string& key, const std::vector<std::string>& protocols, const UpgradeRequest& request, UpgradeSocket& socket, Bytes head, UpgradeCallback cb) {
+    const auto self = weak_from_this().lock();
     // Destroy the socket if the client has already sent a FIN packet.
     if (!socket.readable || !socket.writable) {
       takeSocket(socket)->destroy();

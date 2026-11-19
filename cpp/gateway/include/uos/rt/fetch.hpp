@@ -17,7 +17,7 @@ namespace uos::rt {
   // Copies share identity, so `globalThis.fetch === defaultFetch` ports as ==.
   class Fetch {
   public:
-    using Function = std::function<Task<Response>(RequestInfo input, RequestInit init)>;
+    using Function = std::function<Task<Response>(RequestInfo&& input, RequestInit&& init)>;
 
     // No function (JS `undefined`).
     Fetch() = default;
@@ -46,7 +46,6 @@ namespace uos::rt {
       }
     }
     static Task<Response> resolved(Response response);
-    static Task<Response> keepAlive(std::shared_ptr<const Function> function, Task<Response> task);
     std::shared_ptr<const Function> function_;
   };
 
@@ -102,14 +101,14 @@ namespace uos::rt {
   // A transport for tests: records every request and answers through a handler.
   class MockTransport : public FetchTransport {
   public:
-    using Handler = std::function<Task<Response>(Request request)>;
-    explicit MockTransport(Handler handler) : handler_(std::move(handler)) {}
+    using Handler = std::function<Task<Response>(Request&& request)>;
+    explicit MockTransport(Handler handler) : handler_(std::make_shared<const Handler>(std::move(handler))) {}
     Task<Response> send(Request request) override;
     // The requests sent so far, in order.
     const std::vector<Request>& requests() const { return requests_; }
 
   private:
-    Handler handler_;
+    std::shared_ptr<const Handler> handler_;
     std::vector<Request> requests_;
   };
 }

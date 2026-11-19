@@ -159,12 +159,13 @@ namespace uos::rt {
     std::size_t reported = 0;
     bool draining = false;
     bool running = false;
+    bool shuttingDown = false;
 
     Impl(Loop& owner_, Clock& clock_) : owner(owner_), clock(&clock_), timers(detail::makeTimerQueue()) { context.emplace(1); }
-    ~Impl();
     Impl(const Impl&) = delete;
     Impl& operator=(const Impl&) = delete;
 
+    void shutdown();
     void uncaught(Reason reason, bool rejection);
     void checkpoint();
     bool turn(const detail::PromiseCore* until);
@@ -191,7 +192,7 @@ namespace uos::rt {
       LoopExecutor require(asio::execution::blocking_t::possibly_t) const noexcept { return LoopExecutor(impl_, false); }
 
       template <class F> void execute(F&& function) const {
-        if (!impl_->context) {
+        if (impl_->shuttingDown || !impl_->context) {
           std::decay_t<F> dropped(std::forward<F>(function));
           return;
         }
@@ -249,7 +250,8 @@ namespace uos::rt {
     }
   }
 
-  Loop::Impl::~Impl() {
+  void Loop::Impl::shutdown() {
+    shuttingDown = true;
     // Timers and microtasks own callbacks and suspended coroutines; dropping
     // them can queue more work (a destroyed frame posts its unwinding), so
     // repeat until quiet, then destroy the io_context and what it still holds.
@@ -378,7 +380,10 @@ namespace uos::rt {
 
   Loop::Loop() : Loop(systemClock()) {}
   Loop::Loop(Clock& clock) : impl_(std::make_unique<Impl>(*this, clock)) {}
-  Loop::~Loop() = default;
+  Loop::~Loop() {
+    LoopScope scope(*this);
+    impl_->shutdown();
+  }
 
   asio::io_context& Loop::context() noexcept { return *impl_->context; }
   Executor Loop::executor() noexcept { return Executor(LoopExecutor(impl_.get(), false)); }
@@ -409,11 +414,13 @@ namespace uos::rt {
 
     void PromiseCore::react(Job reaction) {
       handled = true;
+      auto& impl = currentLoop().impl();
+      if (impl.shuttingDown) return;
       if (pending()) {
-        if (!waitingList) linkWaiting(currentLoop().impl().waiting, *this);
+        if (!waitingList) linkWaiting(impl.waiting, *this);
         reactions.push_back(std::move(reaction));
       } else {
-        currentLoop().impl().microtasks.push_back(std::move(reaction));
+        impl.microtasks.push_back(std::move(reaction));
       }
     }
 
@@ -421,6 +428,10 @@ namespace uos::rt {
       status = outcome;
       unlinkWaiting(*this);
       auto& impl = currentLoop().impl();
+      if (impl.shuttingDown) {
+        auto dropped = std::exchange(reactions, {});
+        return;
+      }
       for (auto& reaction : reactions) impl.microtasks.push_back(std::move(reaction));
       reactions.clear();
       if (outcome == Status::rejected && !handled) {
@@ -440,7 +451,10 @@ namespace uos::rt {
       });
     }
 
-    void queueMicrotask(Loop& loop, Job job) { loop.impl().microtasks.push_back(std::move(job)); }
+    void queueMicrotask(Loop& loop, Job job) {
+      auto& impl = loop.impl();
+      if (!impl.shuttingDown) impl.microtasks.push_back(std::move(job));
+    }
 
     void reportUncaught(Reason reason, bool rejection) { currentLoop().impl().uncaught(std::move(reason), rejection); }
 

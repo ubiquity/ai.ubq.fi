@@ -58,6 +58,53 @@ ASYNC_TEST("Fetch values compare by identity like JS functions") {
   EXPECT(globalFetch() == original);
 }
 
+ASYNC_TEST("Fetch keeps borrowed inputs after returning its callback's Task") {
+  const std::string address = "http://example.test/" + std::string(128, 'x');
+  Fetch fetcher([](const RequestInfo& input, const RequestInit& init) -> Task<Response> {
+    co_await microtask();
+    co_return Response(BodyInit(init.method.value_or("") + " " + std::get<std::string>(input)));
+  });
+  RequestInit init;
+  init.method = "POST";
+  auto task = fetcher(RequestInfo(address), std::move(init));
+  auto response = co_await std::move(task);
+  const auto text = co_await response.text();
+  EXPECT_EQ(text, "POST " + address);
+}
+
+ASYNC_TEST("a global Fetch can replace itself during its eager invocation") {
+  GlobalFetchOverride scope(Fetch{});
+  auto payload = std::make_shared<std::string>("original");
+  setGlobalFetch(Fetch([payload](RequestInfo, RequestInit) {
+    setGlobalFetch(Fetch([](RequestInfo, RequestInit) { return Response(BodyInit(std::string("replacement"))); }));
+    return Response(BodyInit(*payload));
+  }));
+  payload.reset();
+
+  auto original = fetch(info("http://example.test/"));
+  auto replacement = fetch(info("http://example.test/"));
+  auto fromOriginal = co_await std::move(original);
+  auto fromReplacement = co_await std::move(replacement);
+  const auto originalText = co_await fromOriginal.text();
+  const auto replacementText = co_await fromReplacement.text();
+  EXPECT_EQ(originalText, "original");
+  EXPECT_EQ(replacementText, "replacement");
+}
+
+ASYNC_TEST("a MockTransport Task keeps its handler and borrowed request after the mock is destroyed") {
+  auto mock = std::make_unique<MockTransport>([prefix = std::string(128, 'x')](const Request& request) -> Task<Response> {
+    co_await microtask();
+    co_return Response(BodyInit(prefix + request.url()));
+  });
+  auto task = mock->send(Request("http://example.test/"));
+  EXPECT_EQ(mock->requests().size(), 1u);
+  mock.reset();
+
+  auto response = co_await std::move(task);
+  const auto text = co_await response.text();
+  EXPECT_EQ(text, std::string(128, 'x') + "http://example.test/");
+}
+
 ASYNC_TEST("a replaced globalThis.fetch receives input and init unchanged") {
   auto seen = std::make_shared<std::vector<std::string>>();
   const Fetch mock([seen](RequestInfo input, RequestInit init) -> Task<Response> {
@@ -241,6 +288,65 @@ ASYNC_TEST("aborting while the transport waits rejects with the reason") {
   timed.signal = AbortSignal::timeout(20);
   Task<Response> rejected16 = fetch(info("http://a/slow"), std::move(timed));
   EXPECT_REJECTS_MESSAGE(std::move(rejected16), DOMException, "The operation timed out.");
+}
+
+ASYNC_TEST("abort retains a replaced transport until its suspended send returns") {
+  struct Transport final : FetchTransport {
+    Resolvers<void> started = withResolvers();
+    Resolvers<void> resume = withResolvers();
+    std::string payload = "transport still alive";
+    std::shared_ptr<std::string> observed = std::make_shared<std::string>();
+
+    Task<Response> send(Request) override {
+      started.resolve();
+      co_await resume.promise.wait();
+      *observed = payload;
+      co_return Response();
+    }
+  };
+  auto restore = ScopeExit([previous = fetchTransport()] { setFetchTransport(previous); });
+  auto transport = std::make_shared<Transport>();
+  const std::weak_ptr<Transport> weak = transport;
+  auto started = transport->started.promise;
+  auto resume = transport->resume.resolve;
+  auto observed = transport->observed;
+  setFetchTransport(std::move(transport));
+  AbortController abort;
+  RequestInit init;
+  init.signal = abort.signal();
+  Promise result(fetch(info("http://example.test/"), std::move(init)));
+  co_await started.wait();
+  setFetchTransport(nullptr);
+
+  abort.abort();
+  EXPECT_REJECTS_REASON(result.wait(), abort.signal().reason());
+  EXPECT(!weak.expired());
+  resume();
+  co_await uos::rt::sleep(1);
+  EXPECT_EQ(*observed, "transport still alive");
+  EXPECT(weak.expired());
+}
+
+ASYNC_TEST("dropping an unread abortable response releases the wrapper and source") {
+  std::weak_ptr<detail::StreamState<ByteChunk>> sourceState, wrapperState;
+  TransportScope scope([&sourceState](Request) -> Task<Response> {
+    ByteStream source({}, QueuingStrategy{0});
+    sourceState = source.state();
+    co_return Response(BodyInit(std::move(source)));
+  });
+  AbortController abort;
+  {
+    RequestInit init;
+    init.signal = abort.signal();
+    auto sending = fetch(info("http://example.test/"), std::move(init));
+    auto response = co_await std::move(sending);
+    ASSERT(response.body().has_value());
+    wrapperState = response.body()->state();
+    EXPECT(!sourceState.expired());
+  }
+  co_await uos::rt::sleep(1);
+  EXPECT(wrapperState.expired());
+  EXPECT(sourceState.expired());
 }
 
 ASYNC_TEST("aborting after the response errors its body with the reason") {

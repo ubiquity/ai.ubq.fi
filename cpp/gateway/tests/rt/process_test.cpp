@@ -231,6 +231,21 @@ TEST("signal listeners: dedupe, once, order, (name, number), default action rest
   EXPECT_THROWS(process::on("exit", process::Listener([] {})), std::invalid_argument);
 }
 
+TEST("destroying a loop removes its signal registrations before the Asio service dies") {
+  const process::Listener listener = [] {};
+  {
+    rt::Loop local;
+    rt::LoopScope scope(local);
+    process::on("SIGUSR1", listener);
+    EXPECT(!defaultAction(SIGUSR1));
+  }
+  EXPECT(defaultAction(SIGUSR1));
+  rt::Loop later;
+  rt::LoopScope scope(later);
+  EXPECT_EQ(process::listenerCount("SIGUSR1"), 0u);
+  process::off("SIGUSR1", listener);
+}
+
 TEST("Bun.spawn exit codes, signals, kill and killed (spawn1 probe)") {
   rt::Loop loop;
   rt::blockOn(loop, []() -> rt::Task<void> {

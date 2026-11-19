@@ -104,9 +104,21 @@ namespace uos::rt::process {
       std::uint64_t generation = 0;
     };
 
+    class SignalRegistry final : public asio::execution_context::service {
+    public:
+      inline static asio::execution_context::id id;
+      explicit SignalRegistry(asio::execution_context& context) : service(context) {}
+      Signals state;
+
+    private:
+      void shutdown() override {
+        state.set.reset();
+        state.listeners.clear();
+      }
+    };
+
     Signals& signals() {
-      static Signals state;
-      return state;
+      return asio::use_service<SignalRegistry>(rt::loop().context()).state;
     }
 
     int requireSignal(std::string_view event) {

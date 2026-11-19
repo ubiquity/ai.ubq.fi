@@ -163,6 +163,7 @@ namespace uos::rt::ws {
     };
 
   protected:
+    virtual std::shared_ptr<const void> pinEventReceiver() const { return {}; }
     std::vector<Registration> registrations_;
   };
 
@@ -344,6 +345,7 @@ namespace uos::rt::ws {
 
   private:
     friend class WebSocketServer;
+    std::shared_ptr<const void> pinEventReceiver() const override { return weak_from_this().lock(); }
     std::unique_ptr<State> state_;
   };
 
@@ -439,6 +441,7 @@ namespace uos::rt::ws {
     const ServerOptions& options() const noexcept { return options_; }
 
   private:
+    std::shared_ptr<const void> pinEventReceiver() const override { return weak_from_this().lock(); }
     void completeUpgrade(const std::string& key, const std::vector<std::string>& protocols, const UpgradeRequest& request, UpgradeSocket& socket, Bytes head, UpgradeCallback cb);
     void emitClose();
     ServerOptions options_;

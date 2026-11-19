@@ -3,6 +3,7 @@
 // Bun's wire rules for the request head, the response parser, the content
 // decoders, the connection (TCP, or TLS over
 // OpenSSL memory BIOs) and the per-loop keep-alive pool.
+#include "uos/rt/async.hpp"
 #include "uos/rt/clock.hpp"
 #include "uos/rt/fetch_transport.hpp"
 #include "uos/rt/http.hpp"
@@ -202,6 +203,8 @@ namespace uos::rt::detail::fetch {
     double idleSince = 0;
 
     bool isOpen() const noexcept { return open_; }
+    // Installed only while the upload writer can be waiting on a stream read.
+    Job stopUpload;
     // Closes the socket: pending operations complete with operation_aborted.
     void close() noexcept;
     // Bun's fetch timeout: once `ms` pass without a read or a write, the

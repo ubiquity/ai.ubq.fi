@@ -216,7 +216,8 @@ namespace uos::rt {
     }
 
     template <class T> Task<T> awaitOwned(std::shared_ptr<PromiseState<T>> state) {
-      co_await awaitSettled(state);
+      auto ready = awaitSettled(state);
+      co_await std::move(ready);
       if (state->status == PromiseCore::Status::rejected) rethrow(state->error);
       if constexpr (!std::is_void_v<T>) co_return std::move(*state->value);
     }
@@ -372,7 +373,8 @@ namespace uos::rt {
 
   private:
     static Task<T> awaitState(std::shared_ptr<detail::PromiseState<T>> state) {
-      co_await detail::awaitSettled(state);
+      auto ready = detail::awaitSettled(state);
+      co_await std::move(ready);
       if (state->status == detail::PromiseCore::Status::rejected) rethrow(state->error);
       if constexpr (!std::is_void_v<T>) co_return *state->value;
     }
@@ -628,7 +630,7 @@ namespace uos::rt {
   // destroys its frame without running further code, as JS garbage-collects it.
   template <class T, class TReturn = void> class AsyncGenerator {
   public:
-    using Body = std::function<Task<TReturn>(Yield<T>)>;
+    using Body = std::function<Task<TReturn>(Yield<T>&&)>;
     explicit AsyncGenerator(Body body);
     // `iterator.next()`
     [[nodiscard]] Task<IteratorResult<T>> next() const;
@@ -676,7 +678,7 @@ namespace uos::rt {
     // Suspends forever: the coroutine is destroyed without resuming.
     Task<void> abandon();
 
-    template <class T> Task<T> keepAlive(std::shared_ptr<void> keep, Task<T> task) {
+    template <class T, class Owner> Task<T> keepAlive(Owner keep, Task<T> task) {
       (void)keep;
       if constexpr (std::is_void_v<T>) {
         co_await std::move(task);
@@ -688,8 +690,9 @@ namespace uos::rt {
 
     // Settles `target` with the result of `call()`: a value, void, a Task (an
     // async callback, whose promise `target` adopts) or a Promise (adopted).
-    // `keep` owns the callback for as long as a Task it returned runs.
-    template <class U, class Call> void settleWith(const std::shared_ptr<PromiseState<U>>& target, std::shared_ptr<void> keep, Call&& call) {
+    // A callback Task may borrow both the callable and the source outcome.
+    template <class U, class T, class Call>
+    void settleWith(const std::shared_ptr<PromiseState<U>>& target, std::shared_ptr<void> keep, const std::shared_ptr<PromiseState<T>>& source, Call&& call) {
       using R = std::invoke_result_t<Call&>;
       try {
         if constexpr (std::is_void_v<R>) {
@@ -698,7 +701,9 @@ namespace uos::rt {
           target->fulfill();
         } else if constexpr (IsTask<R>::value) {
           auto inner = std::make_shared<PromiseState<U>>();
-          start(currentLoop(), keepAlive<void>(std::move(keep), runInto(inner, call())));
+          auto task = call();
+          auto owners = std::pair{std::move(keep), source};
+          start(currentLoop(), keepAlive<void>(std::move(owners), runInto(inner, std::move(task))));
           adopt(target, std::move(inner));
         } else if constexpr (IsPromise<R>::value) {
           adopt(target, call().state());
@@ -728,7 +733,7 @@ namespace uos::rt {
         target->reject(source->error);
         return;
       }
-      detail::settleWith(target, callback, [&] { return detail::invokeWithValue<T>(*callback, *source); });
+      detail::settleWith(target, callback, source, [&] { return detail::invokeWithValue<T>(*callback, *source); });
     });
     return out;
   }
@@ -742,8 +747,8 @@ namespace uos::rt {
     auto fulfilled = std::make_shared<F>(std::move(onFulfilled));
     auto rejected = std::make_shared<G>(std::move(onRejected));
     source->react([source, target, fulfilled, rejected] {
-      if (source->status == detail::PromiseCore::Status::rejected) detail::settleWith(target, rejected, [&] { return (*rejected)(source->error); });
-      else detail::settleWith(target, fulfilled, [&] { return detail::invokeWithValue<T>(*fulfilled, *source); });
+      if (source->status == detail::PromiseCore::Status::rejected) detail::settleWith(target, rejected, source, [&] { return (*rejected)(source->error); });
+      else detail::settleWith(target, fulfilled, source, [&] { return detail::invokeWithValue<T>(*fulfilled, *source); });
     });
     return out;
   }
@@ -757,7 +762,7 @@ namespace uos::rt {
     auto callback = std::make_shared<G>(std::move(onRejected));
     source->react([source, target, callback] {
       if (source->status == detail::PromiseCore::Status::rejected) {
-        detail::settleWith(target, callback, [&] { return (*callback)(source->error); });
+        detail::settleWith(target, callback, source, [&] { return (*callback)(source->error); });
       } else if constexpr (std::is_void_v<U>) {
         target->fulfill();
       } else {
@@ -1038,15 +1043,16 @@ namespace uos::rt {
     }
 
     template <class T, class TReturn>
-    Task<void> runGenerator(std::weak_ptr<GeneratorCore<T>> weak, std::function<Task<TReturn>(Yield<T>)> body, std::shared_ptr<std::optional<Slot<TReturn>>> returned) {
+    Task<void> runGenerator(std::weak_ptr<GeneratorCore<T>> weak, typename AsyncGenerator<T, TReturn>::Body body, std::shared_ptr<std::optional<Slot<TReturn>>> returned) {
       Reason failure;
       Yield<T> yield(weak);
       try {
+        auto running = body(std::move(yield));
         if constexpr (std::is_void_v<TReturn>) {
-          co_await body(yield);
+          co_await std::move(running);
           returned->emplace();
         } else {
-          auto value = co_await body(yield);
+          auto value = co_await std::move(running);
           // `return value` in an async generator awaits the value first.
           co_await microtask();
           returned->emplace(std::move(value));
@@ -1058,10 +1064,11 @@ namespace uos::rt {
       if (auto core = weak.lock()) core->finished(failure);
     }
 
-    template <class T> Task<IteratorResult<T>> requestStep(const std::shared_ptr<GeneratorCore<T>>& core, bool isReturn) {
+    template <class T> Task<IteratorResult<T>> requestStep(std::shared_ptr<GeneratorCore<T>> core, bool isReturn) {
       auto result = std::make_shared<PromiseState<IteratorResult<T>>>();
       core->enqueue(isReturn, result);
-      return awaitOwned(std::move(result));
+      auto waiting = awaitOwned(std::move(result));
+      return keepAlive<IteratorResult<T>>(std::move(core), std::move(waiting));
     }
 
     template <class T, class R> Task<R> delegateTo(Yield<T> outer, AsyncGenerator<T, R> inner) {
@@ -1070,7 +1077,8 @@ namespace uos::rt {
         if (step.done) break;
         bool forwardReturn = false;
         try {
-          co_await outer(std::move(*step.value));
+          auto passing = outer(std::move(*step.value));
+          co_await std::move(passing);
         } catch (const GeneratorReturn&) {
           forwardReturn = true;
         }
@@ -1120,8 +1128,9 @@ namespace uos::rt {
       Reason failure;
       bool proceed = true;
       try {
-        if constexpr (std::is_same_v<Result, Task<bool>>) proceed = co_await body(std::move(*step.value));
-        else co_await body(std::move(*step.value));
+        auto handling = body(std::move(*step.value));
+        if constexpr (std::is_same_v<Result, Task<bool>>) proceed = co_await std::move(handling);
+        else co_await std::move(handling);
       } catch (...) {
         failure = std::current_exception();
       }

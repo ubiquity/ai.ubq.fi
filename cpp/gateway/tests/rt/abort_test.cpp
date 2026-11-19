@@ -105,6 +105,19 @@ TEST("bun misc1: DOMException legacy codes") {
   }
 }
 
+TEST("abort dispatch retains the signal when a listener destroys its controller") {
+  auto controller = std::make_unique<rt::AbortController>();
+  Strings calls;
+  controller->signal().addEventListener("abort", [&] {
+    calls.push_back("destroy");
+    controller.reset();
+  });
+  controller->signal().addEventListener("abort", [&] { calls.push_back("once"); }, {.once = true});
+
+  controller->abort();
+  EXPECT_EQ(calls, (Strings{"destroy", "once"}));
+}
+
 TEST("bun abort1: listeners run in registration order; once, dedup, onabort position, removal and re-abort during dispatch") {
   auto log = makeLog();
   rt::AbortController c5;
