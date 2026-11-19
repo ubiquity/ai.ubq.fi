@@ -12,7 +12,7 @@ Base commit `f92b14a9` on `agent-jobs/cppgw-cpp-only-20261119-44610457899-1`.
 - [x] Set up the CI caches and keep the published Linux build fresh.
 - [x] Measure cold, warm and cross-checkout release builds.
 - [x] Measure cold and warm sanitizer builds.
-- [ ] Compare header invalidation with Ninja's dependency records and restore the header.
+- [x] Compare header invalidation with Ninja's dependency records and restore the header.
 - [x] Document the cache.
 - [ ] Run the final change-scoped checks.
 
@@ -64,6 +64,20 @@ before and after execution.
 All six vendor archive digests matched across the release builds. Running
 `ninja -f "$build/build.ninja" -n` from the checkout after the warm run
 reported `ninja: no work to do.`
+
+## Header invalidation
+
+Appended `static_assert(true, "cppgw compiler cache invalidation probe");` to
+`cpp/gateway/include/uos/rt/test.hpp` in the second worktree. A fresh release
+shard build reused the existing release cache. The baseline `ninja -t deps`
+records listed 113 objects that included the header, and the per-source
+`ccache.log` miss set matched those 113 paths exactly. The other 396 calls
+hit. All 113 tests and 1,314 cases passed.
+
+The edited input SHA-256 was
+`7b8791bfd2654c3cec26ef165b00dbd9e62ba3ba32a8a732e836d97354a16455`
+at the start and end of that run. `git restore` restored the header and
+`git diff --exit-code -- cpp/gateway/include/uos/rt/test.hpp` passed.
 
 ## Implementation checks
 
