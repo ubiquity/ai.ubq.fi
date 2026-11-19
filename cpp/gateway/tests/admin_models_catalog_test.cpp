@@ -254,10 +254,42 @@ ASYNC_TEST("a paid-discovered DeepSeek id receives the later official route meta
   PickerFixture fixture;rt::env::set("SURPLUS_API_KEY","fixture-surplus-key");rt::env::set("DEEPSEEK_API_KEY","fixture-deepseek-key");const json::array rows{json::object{{"id","deepseek-v4-flash"},{"context_length",1048576},{"top_provider",json::object{{"context_length",1048576}}},{"reasoning",json::object{{"supported_efforts",json::array{"third-party"}},{"default_effort","third-party"}}}}};auto enrichment=enrich(rows);co_await std::move(enrichment);rt::GlobalFetchOverride fetch(rt::Fetch([](rt::RequestInfo input,rt::RequestInit)->rt::Response{if(requestUrl(input).find("surplusintelligence.ai/v1/models")!=std::string::npos)return rt::Response::json(json::object{{"data",json::array{json::object{{"id","deepseek-v4-flash"},{"created",1800000000},{"provider","surplus"}}}}});throw rt::JsError("Unexpected discovery request: "+requestUrl(input));}));AWAIT(snapshot,catalog::buildModelCatalogSnapshot());const auto* row=rowById(snapshot,"deepseek-v4-flash");ASSERT(row);EXPECT(rt::deepEqual(providerIds(*row),json::array{"surplus","deepseek"}));EXPECT_EQ(row->context_window_tokens,1000000);EXPECT_EQ(row->max_context_window_tokens,1000000);EXPECT_EQ(row->supported_reasoning_levels,(std::vector<std::string>{"none","low","high","max"}));EXPECT_EQ(row->default_reasoning_effort,"high");EXPECT_EQ(row->context_source,"provider_discovery");EXPECT_EQ(row->reasoning_source,"provider_discovery");
 }
 ASYNC_TEST("the gateway waterfall model is cataloged with one provider row per usable hop in cost-first order") {
-  PickerFixture fixture;rt::env::set("OPENROUTER_API_KEY","fixture-openrouter-key");rt::env::set("DEEPSEEK_API_KEY","fixture-deepseek-key");AWAIT(snapshot,catalog::buildModelCatalogSnapshot());const auto* row=rowById(snapshot,WATERFALL);ASSERT(row);EXPECT(rt::deepEqual(providerIds(*row),json::array{"ubiquity","deepseek","openrouter"}));EXPECT_EQ(row->providers[0].supported_endpoints,(std::vector<std::string>{"/v1/responses"}));EXPECT_EQ(row->providers[0].owned_by,"ubiquity");EXPECT_EQ(row->context_window_tokens,800000);EXPECT_EQ(row->context_source,"provider_discovery");EXPECT_EQ(row->supported_reasoning_levels,(std::vector<std::string>{"low","high","max"}));EXPECT_EQ(row->default_reasoning_effort,"high");
+  PickerFixture fixture;
+  rt::env::set("OPENROUTER_API_KEY", "fixture-openrouter-key");
+  rt::env::set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
+  const auto rows = rt::jsonParse(R"([{"id":"~deepseek/deepseek-flash-latest","context_length":1048576,"top_provider":{"context_length":1048576}}])").as_array();
+  auto enrichment = enrich(rows);
+  co_await std::move(enrichment);
+  AWAIT(snapshot, catalog::buildModelCatalogSnapshot());
+  const auto* row = rowById(snapshot, WATERFALL);
+  ASSERT(row);
+  EXPECT(rt::deepEqual(providerIds(*row), json::array{"ubiquity", "deepseek", "openrouter"}));
+  EXPECT_EQ(row->providers[0].supported_endpoints, (std::vector<std::string>{"/v1/responses"}));
+  EXPECT_EQ(row->providers[0].owned_by, "ubiquity");
+  EXPECT_EQ(row->context_window_tokens, 800'000);
+  EXPECT_EQ(row->max_context_window_tokens, 800'000);
+  EXPECT_EQ(row->auto_compact_token_limit_tokens, 720'000);
+  EXPECT_EQ(row->context_source, "provider_discovery");
+  EXPECT_EQ(row->supported_reasoning_levels, (std::vector<std::string>{"low", "high", "max"}));
+  EXPECT_EQ(row->default_reasoning_effort, "high");
 }
 ASYNC_TEST("the gateway waterfall model lists the paid hops, OpenLux last, when their credentials are configured") {
-  PickerFixture fixture;rt::env::set("SURPLUS_API_KEY","fixture-surplus-key");rt::env::set("METERED_API_KEY","fixture-metered-key");AWAIT(snapshot,catalog::buildModelCatalogSnapshot());const auto* row=rowById(snapshot,WATERFALL);ASSERT(row);EXPECT(rt::deepEqual(providerIds(*row),json::array{"ubiquity","surplus","openlux"}));for(std::size_t i=1;i<row->providers.size();++i){EXPECT_EQ(row->providers[i].owned_by,"ubiquity");EXPECT_EQ(row->providers[i].supported_endpoints,(std::vector<std::string>{"/v1/responses"}));}EXPECT_EQ(row->context_window_tokens,800000);EXPECT_EQ(row->supported_reasoning_levels,(std::vector<std::string>{"low","high","max"}));EXPECT_EQ(row->default_reasoning_effort,"high");
+  PickerFixture fixture;
+  rt::env::set("SURPLUS_API_KEY", "fixture-surplus-key");
+  rt::env::set("METERED_API_KEY", "fixture-metered-key");
+  AWAIT(snapshot, catalog::buildModelCatalogSnapshot());
+  const auto* row = rowById(snapshot, WATERFALL);
+  ASSERT(row);
+  EXPECT(rt::deepEqual(providerIds(*row), json::array{"ubiquity", "surplus", "openlux"}));
+  for (std::size_t i = 1; i < row->providers.size(); ++i) {
+    EXPECT_EQ(row->providers[i].owned_by, "ubiquity");
+    EXPECT_EQ(row->providers[i].supported_endpoints, (std::vector<std::string>{"/v1/responses"}));
+  }
+  EXPECT_EQ(row->context_window_tokens, 800'000);
+  EXPECT_EQ(row->max_context_window_tokens, 800'000);
+  EXPECT_EQ(row->auto_compact_token_limit_tokens, 720'000);
+  EXPECT_EQ(row->supported_reasoning_levels, (std::vector<std::string>{"low", "high", "max"}));
+  EXPECT_EQ(row->default_reasoning_effort, "high");
 }
 ASYNC_TEST("a credential-gated provider with no key is absent instead of unavailable") {
   PickerFixture fixture;AWAIT(snapshot,catalog::buildModelCatalogSnapshot());for(const auto& row:snapshot.models)for(const auto& provider:row.providers){EXPECT(provider.id!="deepseek");EXPECT(provider.id!="cerebras");}EXPECT_EQ(snapshot.sources.get("deepseek")->configured,false);EXPECT_EQ(snapshot.sources.get("deepseek")->status,"unavailable");EXPECT_EQ(snapshot.sources.get("cerebras")->configured,false);

@@ -231,8 +231,16 @@ json::object buildDeepSeekWaterfallCodexRecord() {
   shellDefaults(row, 0); return row;
 }
 json::array withDeepSeekWaterfallModel(const json::array& models) {
-  for (const auto& row : models) if (rt::getString(row, "slug").value_or(rt::getString(row, "id").value_or("")) == deepseek::waterfall::DEEPSEEK_WATERFALL_MODEL_ID) return models;
-  auto result = models; result.push_back(buildDeepSeekWaterfallCodexRecord()); return result;
+  const json::value record = buildDeepSeekWaterfallCodexRecord();
+  auto result = models;
+  bool present = false;
+  for (auto& row : result) {
+    if (rt::getString(row, "slug").value_or(rt::getString(row, "id").value_or("")) != deepseek::waterfall::DEEPSEEK_WATERFALL_MODEL_ID) continue;
+    row = record;
+    present = true;
+  }
+  if (!present) result.push_back(record);
+  return result;
 }
 json::array lithosCodexModels() {
   json::array result;

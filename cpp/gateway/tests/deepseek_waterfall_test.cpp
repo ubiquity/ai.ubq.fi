@@ -110,6 +110,25 @@ TEST("waterfall: the Codex catalogue record carries the advertised contract") {
   EXPECT_EQ(uos::rt::getNumber(row, "max_context_window"), 800'000);
   EXPECT_EQ(uos::rt::getNumber(row, "auto_compact_token_limit"), 720'000);
 }
+TEST("waterfall: the gateway replaces an upstream same-id row and preserves catalog order") {
+  namespace json = uos::json;
+  namespace rt = uos::rt;
+  const json::object upstream{
+    {"slug", waterfall::DEEPSEEK_WATERFALL_MODEL_ID},
+    {"context_window", 1'048'576},
+    {"max_context_window", 1'048'576},
+    {"auto_compact_token_limit", 943'718},
+  };
+  const json::array models{json::object{{"slug", "upstream-before"}}, upstream, json::object{{"slug", "upstream-after"}}};
+  const auto result = uos::catalog::models::withDeepSeekWaterfallModel(models);
+  ASSERT_EQ(result.size(), 3u);
+  EXPECT_EQ(rt::getString(result[0], "slug"), "upstream-before");
+  EXPECT_EQ(rt::getString(result[1], "slug"), waterfall::DEEPSEEK_WATERFALL_MODEL_ID);
+  EXPECT_EQ(rt::getString(result[2], "slug"), "upstream-after");
+  EXPECT_EQ(rt::getNumber(result[1], "context_window"), 800'000);
+  EXPECT_EQ(rt::getNumber(result[1], "max_context_window"), 800'000);
+  EXPECT_EQ(rt::getNumber(result[1], "auto_compact_token_limit"), 720'000);
+}
 TEST("waterfall: allowedPaidProviders pins the Surplus hop without changing the default order") {
   namespace health = uos::paid_fallback::health;
   const uos::rt::env::ScopedEnvironment isolation{std::vector<std::pair<std::string, std::string>>{{"HOME", "/nonexistent/w07c1-waterfall"}, {"SURPLUS_API_KEY", "fixture-surplus-key"}, {"METERED_API_KEY", "fixture-metered-key"}}};

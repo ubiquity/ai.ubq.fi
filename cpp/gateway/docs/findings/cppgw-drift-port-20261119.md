@@ -34,7 +34,11 @@ git log --oneline HEAD..origin/development -- src serve.ts lib static
   including 900,000 tokens for the official DeepSeek aliases. The catalog store, metadata and input normalization
   vector fixtures and the recent context differential expectations were regenerated from the production target.
 - `f2768b2a38761d4d42312c0d49fe7874b0560b03` `fix(catalog): keep gateway DeepSeek window across metadata refresh`.
-  PORT, pending. This covers same-ID Codex rows and OpenRouter enrichment of the admin catalog.
+  PORT. `src/catalog/models.cpp` replaces the upstream same-ID record at its original position.
+  `src/models/catalog.cpp` disables OpenRouter enrichment for the gateway-owned row.
+  `tests/deepseek_waterfall_test.cpp` adds the upstream row replacement case. `tests/admin_models_catalog_test.cpp`
+  seeds the 1,048,576-token OpenRouter alias and checks both the enriched and paid-hop fixtures for 800,000-token
+  windows and a 720,000-token compaction limit.
 - `9353aa208a336da2c1516d604e0be16dc8af0ade` `Sentinel repair: issue 1281`.
   PORT, pending. The Passport callback classifies exchange 4xx responses as authentication failures.
 
