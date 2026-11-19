@@ -143,7 +143,29 @@ def header_diffs(left, right, status):
             yield delta("/headers/" + name, x, y, "COSMETIC")
 
 
-def expectations(spec, observation):
+def release_checks(spec, observation, commit):
+    """Expected identity of the package or the detached, unstamped Bun source."""
+    deployment = "unknown" if commit == "unknown" else f"vps-{commit}"
+    status = observation["status"]
+    if status is None:
+        return {}
+    checks = {
+        "/headers/" + name: [target]
+        for name, target in (("x-uos-git-sha", commit), ("x-uos-deployment-id", deployment))
+        if status != 101 or name in observation["headers"]
+    }
+    route = spec["path"].partition("?")[0]
+    if status == 200 and spec.get("method", "GET") == "GET":
+        if route == "/health":
+            checks.update({"/body/release/git_sha": commit, "/body/release/deployment_id": deployment})
+        if route == "/admin/api-keys/changes":
+            rows = lookup(observation, "/body/data")
+            if isinstance(rows, list):
+                checks.update({f"/body/data/{index}/release": commit for index in range(len(rows))})
+    return checks
+
+
+def expectations(spec, observation, release_fields=None):
     errors = []
     if observation.get("wire_error"):
         errors.append({"path": "/wire_error", "expected": "complete wire exchange", "actual": observation["wire_error"]})
@@ -157,7 +179,7 @@ def expectations(spec, observation):
         checks["/routes"] = expected["routes"]
     if spec.get("progressive"):
         checks["/progressive"] = True
-    for path, target in checks.items():
+    for path, target in [*checks.items(), *(release_fields or {}).items()]:
         actual = lookup(observation, path)
         if not equal(actual, target):
             errors.append({"path": path, "expected": target, "actual": printable(actual)})
@@ -192,7 +214,7 @@ def expectations(spec, observation):
     return errors
 
 
-def compare(spec, bun, native, ids):
+def compare(spec, bun, native, ids, *, release_fields=None):
     changes = list(diff(bun["status"], native["status"], "/status"))
     changes.extend(header_diffs(bun["headers"], native["headers"], bun["status"]))
     unordered = spec.get("unordered", {})
@@ -206,6 +228,11 @@ def compare(spec, bun, native, ids):
         left = normalize(bun.get(key, MISSING), dict(ids["bun"]), unordered, "/" + key)
         right = normalize(native.get(key, MISSING), dict(ids["native"]), unordered, "/" + key)
         changes.extend(diff(left, right, "/" + key))
+    if release_fields:
+        changes = [
+            item for item in changes
+            if not all(equal(item[name], release_fields[name].get(item["path"], MISSING)) for name in ("bun", "native"))
+        ]
     return sorted(changes, key=lambda item: item["classification"] != "FUNCTIONAL")
 
 

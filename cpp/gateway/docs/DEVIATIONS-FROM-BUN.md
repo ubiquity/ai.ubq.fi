@@ -13,6 +13,11 @@ On Linux ARM64, the operator can opt in to the Antigravity-backed Gemini text ad
 widens the gateway's process syscall and filesystem permissions and applies a narrower
 Landlock policy to the CLI child. [Environment and CLI setup](RUNTIME.md#environment)
 
+The portable archive embeds its source commit at build time. The Linux health response and headers expose that
+commit and the configured deployment identity. In a fresh local launch without deployment markers, the ID is
+`vps-<full-sha>`. The deployed Bun gateway also stamps the release SHA, and the detached Bun conformance source
+retains its unstamped identity. [Release identity verification](CONFORMANCE.md#cases-and-evidence)
+
 ## Input bounds
 
 The native gateway applies the published byte, nesting and time limits at its library and

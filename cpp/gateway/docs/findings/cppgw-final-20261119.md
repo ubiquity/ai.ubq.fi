@@ -348,3 +348,23 @@ The Debian verifier checks the sealed build's exact Git SHA and
 `vps-<full-sha>` in the health JSON and headers, including after reopening.
 The standard CI test driver still builds the development constant. Final
 package, paired, replay and test receipts will be refreshed for this change.
+
+The first stamped build at `3946c4a3227fd8966130010b810de25c689a1498`, tree
+`c053a41ed19f107e88c1977e4906313c9c3e2f13`, passed the four Debian proofs
+in 52.73 s. Its cached package build took 37.85 s. The manifest bound the
+compiled health identity and the verifier checked it through restart.
+`sha256sum -c SHA256SUMS` passed for
+`f178fa67a797278237294a870d93186c2f1f1cf5b12f3c21cce26128d114ee73`.
+The original paired comparator surfaced 185 differences from comparing
+each candidate release value to the detached Bun source's `unknown` value.
+All differences were the two identity headers, their health JSON fields,
+and API-key audit `release` fields. The paired receipt at
+`identity-final.THqVkvsc/conformance/run.bfdjL8n7/output/results.json` has
+SHA-256 `5a54161fe481ac5a2c0fc3b11c4e0fe9a39e3adee508fd8114d2b789981cf714`.
+
+The comparator now requires each runtime's exact observed release values and
+matches the pair only when both are correct. Missing or incorrect values
+still fail. Raw identity fields stay in the receipt. The two application
+validation assertions are unchanged. `python3 -B cpp/gateway/conformance/compare_test.py`
+passed 11 controls in a credential-free network namespace, including the new
+wrong-SHA and missing-field checks. The final paired run is pending.
