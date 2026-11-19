@@ -24,6 +24,8 @@
 #include "uos/rt/limits.hpp"
 #include "uos/rt/prelude.hpp"
 #include "uos/rt/test.hpp"
+#include "src/rt/regex_internal.hpp"
+#include "third_party/quickjs-libregexp/libregexp.h"
 
 #include <atomic>
 #include <cstdio>
@@ -871,6 +873,25 @@ TEST("execution budget rejects an unfinished match") {
   EXPECT(pattern.test("aab"));
 }
 
+TEST("regexp engine hooks enforce the shared deadline and retain the allocation ceiling") {
+  using Limits = rt::regex_detail::Limits;
+  const auto before = Limits::Clock::now();
+  Limits budget;
+  const auto after = Limits::Clock::now();
+  EXPECT(budget.deadline >= before + rt::limits::kRegexDeadline);
+  EXPECT(budget.deadline <= after + rt::limits::kRegexDeadline);
+  budget.deadline = Limits::Clock::time_point::max();
+  EXPECT_EQ(lre_check_timeout(&budget), 0);
+  budget.deadline = Limits::Clock::now();
+  EXPECT_EQ(lre_check_timeout(&budget), 1);
+
+  constexpr std::size_t maxAllocation = 72 * 1024 * 1024;
+  const std::unique_ptr<void, decltype(&std::free)> memory(lre_realloc(&budget, nullptr, maxAllocation), std::free);
+  EXPECT(memory);
+  const std::unique_ptr<void, decltype(&std::free)> over(lre_realloc(&budget, nullptr, maxAllocation + 1), std::free);
+  EXPECT(!over);
+}
+
 TEST("Unicode sets, named captures, and UTF-16 indices") {
   const std::string subject = "😀-😃";
   const rt::Regex letters("(?<face>[\\q{😀|😃}])", "vyd");
@@ -907,4 +928,13 @@ TEST("image data URL captures survive large Base64 payloads") {
   EXPECT(std::string_view(*match->captures[2]) == std::string_view(subject).substr(prefix.size()));
   subject.back() = '!';
   EXPECT(!pattern.test(subject));
+}
+
+TEST("the fixed image data URL pattern retains the encoded image allowance") {
+  const rt::Regex image(R"(^data:([^;,]+);base64,([a-z0-9+/]*={0,2})$)", "iu");
+  std::string subject = "DATA:IMAGE/PNG;BASE64,";
+  subject.resize(rt::limits::kImageRegexSubjectBytes, 'A');
+  EXPECT(image.test(subject));
+  subject.push_back('A');
+  EXPECT_THROWS_MESSAGE(image.test(subject), rt::RangeError, "regular expression subject is too large");
 }
