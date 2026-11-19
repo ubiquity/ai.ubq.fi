@@ -283,6 +283,10 @@ namespace {
 ASYNC_TEST("Codex retries an early error and delivers one Responses stream and one quota debit") {
   Scope scope;
   AWAIT(key, h::prepareApiKeyInference("1", "codex-stream-retry", 5));
+  auto seeding = h::seedKernelTestPublicKey();
+  co_await std::move(seeding);
+  h::seedKernelDefaultLimit(1);
+  const std::string org = "stream-retry-success-org";
   const auto unknown = retryFixtureEvent({{"type", "response.fixture_unknown"}, {"sequence_number", 2}});
   ScriptedCodexStream upstream({
     closedSse(retryFixturePreamble("resp_discarded") + unknown + unknown + retryFixtureFailure("server_error", 3), "failed-attempt"),
@@ -290,7 +294,8 @@ ASYNC_TEST("Codex retries an early error and delivers one Responses stream and o
   });
 
   const auto request = h::streamingRequest(key.token, "responses");
-  AWAIT(result, deliverStreamRetryRequest(scope.logs, request));
+  AWAIT(signedRequest, h::withKernelTestToken(request, key.token, org, "stream-retry"));
+  AWAIT(result, deliverStreamRetryRequest(scope.logs, signedRequest));
   EXPECT_EQ(result.status, 200);
   EXPECT(!rt::includes(result.body, "resp_discarded"));
   expectSelectedStream(result.body, "resp_selected");
@@ -315,6 +320,9 @@ ASYNC_TEST("Codex retries an early error and delivers one Responses stream and o
   EXPECT_EQ(rt::getString(failures[0], "type"), "error");
   EXPECT_EQ(rt::getString(failures[0], "code"), "server_error");
   expectWindow(key, 1, 0);
+  const auto kernelWindow = value(h::kernelOrgWindowKey(org));
+  EXPECT_EQ(rt::getNumber(kernelWindow, "usage_requests"), 1);
+  EXPECT_EQ(rt::getNumber(kernelWindow, "reserved_requests"), 0);
   const auto failedHealth = value(rt::KvKey{"uos_ai", "provider_health", "v1", "codex", "acct-1", "upstream_error"});
   EXPECT_EQ(rt::getNumber(failedHealth, "status"), 502);
 }
@@ -377,7 +385,7 @@ ASYNC_TEST("Codex relays a server error after the first output delta without ret
   EXPECT_EQ(upstream.attempts.size(), 1U);
   EXPECT_EQ(rt::getNumber(result.terminal, "in_stream_retries"), 0);
   EXPECT_EQ(rt::getString(result.terminal, "stream_terminal_type"), "error");
-  EXPECT_EQ(rt::getBool(result.terminal, "semantic_output_observed"), true);
+  EXPECT(rt::getNumber(result.terminal, "first_semantic_commitment_ms").has_value());
   const json::array failures = retryFailureEvents(result.terminal);
   ASSERT_EQ(failures.size(), 1U);
   EXPECT_EQ(rt::getString(failures[0], "code"), "server_error");
