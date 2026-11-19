@@ -1,0 +1,10 @@
+# Native gateway input limits
+
+Base branch `agent-jobs/cppgw-combine-1-20261119-44443689630-1`, commit
+`e97ed985ef6c39377783e0263b10d15767de1432`, tree `95f338db7da4f5a6afc5a69c1d947c242350bfce`.
+
+## Work and verification
+
+- Read the native gateway README, CI driver guidance and porting rules. Inspected the clean checkout and started locating library call sites.
+- `uname -m`, `cat /etc/os-release`, `g++-14 --version`, `pkg-config --modversion sqlite3 icu-uc`, and `bun --version` identified this host as Ubuntu 24.04.5 ARM64 with GCC 14.2, SQLite 3.45.1, ICU 74.2 and Bun 1.4.0. The qualified dependencies and isolated test runs are pending.
+- The boundary inventory, code changes, regression tests and measurements are pending. No test results are claimed at this point.
