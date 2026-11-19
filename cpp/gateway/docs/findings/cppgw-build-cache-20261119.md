@@ -13,7 +13,8 @@ Base commit `f92b14a9` on `agent-jobs/cppgw-cpp-only-20261119-44610457899-1`.
 - [x] Measure cold, warm and cross-checkout release builds.
 - [ ] Measure cold and warm sanitizer builds.
 - [ ] Compare header invalidation with Ninja's dependency records and restore the header.
-- [ ] Document the cache and run the change-scoped checks.
+- [x] Document the cache.
+- [ ] Run the final change-scoped checks.
 
 The driver already deduplicates its production inventory, vendor compilations
 and selected test objects in one Ninja graph per configuration. The CI jobs can
@@ -57,3 +58,44 @@ counts also include the SQLite probe compilation. All 509 compiler calls were
 cacheable. The three receipts reported the same input SHA-256
 `aa3911ae438220586dad38f37f3c61ddf59397c565e92e01ffaf6411d9b6ceea`
 before and after execution.
+
+All six vendor archive digests matched across the release builds. Running
+`ninja -f "$build/build.ninja" -n` from the checkout after the warm run
+reported `ninja: no work to do.`
+
+## Implementation checks
+
+- A relocated `-MD` probe restored its object and dependency file, rewrote the
+  target to the second output directory and retained its ASan and libFuzzer
+  symbols. A separate coverage probe restored the same object and `.gcno`
+  bytes, and changing compiler bytes caused a miss.
+- The Bookworm ARM64 Docker probe verified an explicit empty launcher in the
+  derived build stage. Its packaged ccache 4.7.5 recorded one miss followed by
+  one hit using the final per-run log parser. [Docker ARG scope](https://docs.docker.com/reference/dockerfile/#scope)
+
+## Committed-diff review
+
+Base `f92b14a97818ff81bf95cbfb2642e8ff13b4ab13`, head
+`91cfa29834097c81147846e72802f378765e42ab`, model
+`ubiquity/deepseek-flash`, exit 0. The original output is
+`/var/tmp/cppgw-cache-review.Hw3tV9/review.log`.
+
+```sh
+codex review --base refs/remotes/origin/agent-jobs/cppgw-cpp-only-20261119-44610457899-1 \
+  -c 'shell_environment_policy.inherit="core"'
+```
+
+> [P2] Do not require ccache's 4.10-only --print-log-stats option
+>
+> `stats()` invokes `ccache --print-log-stats`, which was added in ccache 4.10. `cpp/gateway/docs/CI.md` documents Ubuntu 24.04 as a supported prerequisite and tells users to install `ccache`; that release ships ccache 4.9.1, so the command fails with an unknown option. Because `cache_stats` is computed at `driver.py:523` before `receipt.json` is written, the top-level handler turns an otherwise successful compile/test run into exit 2 with no receipt. Return `None` (or fall back to `--show-log-stats`) when the option/version is unsupported. This only affects hosts whose ccache predates 4.10 (Ubuntu 24.04, Debian bookworm); the 26.04 CI runner is unaffected.
+
+Commit `86a4ea4c` reads the per-run log directly. The parser reproduced the
+earlier release receipt counts and passed the Bookworm probe.
+
+> [P3] Forward UOS_CI_COMPILER_LAUNCHER into the portable cpp stage
+>
+> `build.sh` forwards `UOS_CI_COMPILER_LAUNCHER` as a build arg, but the Dockerfile declares the `ARG` only in the `toolchain` stage, and build args do not cross `FROM toolchain AS cpp`. The `cpp` stage's `compiler_cache.launcher()` therefore always auto-detects the image's `/usr/bin/ccache`; a non-release portable build with `UOS_CI_COMPILER_LAUNCHER=''` still builds the gateway through ccache (contrary to the documented disable), and a custom launcher applies only to dependency builds. Re-declare/resolve the argument in the `cpp` stage while keeping the ccache default when it is unset.
+
+BuildKit passed the explicit empty string from `ARG UOS_CI_COMPILER_LAUNCHER`
+in `toolchain` to `FROM toolchain AS cpp` and the helper returned an empty
+launcher list.
