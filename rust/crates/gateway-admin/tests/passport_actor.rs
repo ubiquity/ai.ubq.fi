@@ -10,7 +10,7 @@ fn audit_identifies_passport_session_without_persisting_credentials() {
         token: Some(Secret::new("passport-jwt-must-not-persist".into())),
         method: AuthMethod::PassportSession {
             claims: gateway_auth::passport::PassportClaims {
-                iss: "https://passport.ubq.fi".into(),
+                iss: "https://auth.ubq.fi".into(),
                 sub: "passport-subject".into(),
                 handle: "passport-handle".into(),
                 is_admin: true,

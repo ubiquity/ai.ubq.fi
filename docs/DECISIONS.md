@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Passport canonical origin is auth.ubq.fi - 2026-11-19
+
+The gateway's fixed Passport issuer, authorize endpoint, SSO exchange endpoint and JWKS endpoint move from `https://passport.ubq.fi` to `https://auth.ubq.fi`. Client `ai`, audience `ai`, origin `https://ai.ubq.fi`, callback `/auth/callback`, PKCE S256, persistent app-session introspection and the existing cookie boundary stay unchanged. A `passport.ubq.fi` token is no longer accepted.
+
+Reason: Ubiquity Passport is settling on the conventional `auth.ubq.fi` identity origin while keeping Passport as the product name.
+
+Reversal risk: this is a protocol-identity change. A rollback requires redeploying the previous issuer contract together with the Passport service and every other client; old browser tokens require a fresh login.
+
 ## Rust verification is manual-only - 2026-11-18
 
 The owner removed the Rust CI gate. Gateway CI no longer defines `rust-native` or `rust-wasm`, `scope` no longer emits Rust selection outputs, `validate` requires only the portable gate, and the native job no longer depends on Rust success. Manual Rust validation remains available through `bun --no-env-file --no-install scripts/rust-verify.ts --stage native|wasm` and `bun run rust:quality`; the Rust source, workspace, and rules are unchanged.
