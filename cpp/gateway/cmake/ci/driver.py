@@ -520,7 +520,7 @@ def main():
     after_hash = input_digest(vendors)
     vendor_archives = {library.archive: hashlib.sha256((build / library.archive).read_bytes()).hexdigest()
                        for library in vendors if (build / library.archive).is_file()}
-    cache_stats = compiler_cache.stats(launcher, build_env, cache_log)
+    cache_stats = compiler_cache.stats(cache_log) if compiler_cache.is_ccache(launcher) else None
     receipt = dict(config=options.config, compiler=compiler, compiler_version=version, flags=flags, sqlite_version=sqlite_version,
                    c_compiler=c_compiler, c_compiler_version=c_version, c_flags=c_flags,
                    compiler_sha256=compiler_hash, c_compiler_sha256=c_compiler_hash, compile_path_flags=path_flags,
