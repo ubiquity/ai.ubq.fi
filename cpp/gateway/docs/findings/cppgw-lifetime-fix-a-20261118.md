@@ -125,7 +125,50 @@ profile. The first WebSocket and Fetch test attempts exposed a missing local
 socket header and an ambiguous unqualified `sleep`. Those fixture errors were
 corrected in their respective commits before the branch was published. The
 WebSocket write and Fetch front-end fixtures then passed 19 cases in each
-profile. The full build and final evidence are pending.
+profile. A later focused run on `d77b297a3dc6ae86a6bd442f215fbba56907bed3`
+passed all 9 selected binaries and 150/150 cases in each profile. Release took
+432.541 s and ASan/UBSan/LSan took 589.796 s. These are incremental focused
+measurements with one worker competing with cold production-object builds.
+
+The driver starts each binary in fresh Linux network, mount and PID namespaces.
+Its allowlisted fixture environment and private home and temporary directory also
+apply to the baseline controls. The outer launch uses the following configuration.
+Here `$scratch` is `/var/tmp/cppgw-lifetime-fix-a-20261118` and `$config` is
+`release` or `asan`.
+
+```bash
+session=$(mktemp -d "$scratch/gate.XXXXXXXX")
+mkdir "$session/home" "$session/tmp"
+instrument=
+if [[ "$config" == asan ]]; then
+  instrument="-gline-tables-only -fno-sanitize-recover=all"
+fi
+env -i PATH=/usr/local/bin:/usr/bin:/bin:/usr/lib/llvm-21/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
+  HOME="$session/home" TMPDIR="$session/tmp" CC=clang-21 CXX=clang++-21 UOS_CI_JOBS="$jobs" \
+  UOS_CI_BUILD_DIR="$scratch/ci" UOS_CI_SQLITE_PREFIX="$scratch/sqlite" \
+  PKG_CONFIG_PATH="$scratch/icu78/lib/pkgconfig:$scratch/sqlite/lib/pkgconfig" \
+  UOS_CI_CFLAGS="$instrument" UOS_CI_CXXFLAGS="-isystem $scratch/boost_1_92_0 $instrument" \
+  UOS_CI_LDFLAGS="-L$scratch/boost_1_92_0/stage/lib -Wl,--disable-new-dtags,-rpath,$scratch/icu78/lib:$scratch/sqlite/lib" \
+  bash cpp/gateway/tools/ci-build.sh --config "$config" --shard "$shard/4"
+```
+
+The focused gates ran the same driver, limiting its object inventory to runtime
+and resolved test closures in an isolated worktree, with these selections and a
+separate reusable build directory.
+
+```bash
+bash "$scratch/run-gate.sh" "$config" 1 "$scratch/focus" "$scratch/focus-build" \
+  python3 -B "$scratch/focused.py" "$config" \
+  rt/abort rt/async rt/stream rt/process rt/fetch rt/fetch_connection rt/fetch_transport rt/websocket_lifetime rt/websocket
+bash "$scratch/run-gate.sh" "$config" 1 "$scratch/focus" "$scratch/focus-build" \
+  python3 -B "$scratch/focused.py" "$config" rt/stream rt/http
+```
+
+The pre-candidate warm-ups were interrupted after the last tee edit so the
+official driver can rebuild affected objects and bind acceptance to one tree.
+The baseline controls apply the new test files to the audit merge in a separate
+worktree and pass the test harness's case selector through the same isolation.
+Their results and the official shard receipts are pending.
 
 `python3 -B cpp/gateway/tools/links.py --check` resolved all 450 registered
 binaries. `git diff --check 72242018..HEAD` passed. No new test binary or link
@@ -133,6 +176,10 @@ registry entry was needed.
 
 No confirmed out-of-area lifetime defects were found in the caller paths
 reviewed for these changes.
+
+A GitHub push dry run returned `fatal: unable to get password from user`.
+This checkout has no authenticated GitHub CLI session. The local commits and
+this PR body are the handoff for the job's branch publisher.
 
 ## Summary
 
