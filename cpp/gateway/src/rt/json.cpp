@@ -129,6 +129,7 @@ namespace uos::rt {
     }
 
     void appendQuoted(std::string& out, json::serializer& writer, std::string_view text) {
+      if (text.size() > limits::kTextInputBytes) throw RangeError("JSON string exceeds limit");
       if (simdjson::validate_utf8(text.data(), text.size())) {
         writer.reset(json::string_view(text.data(), text.size()));
         char buffer[4096];

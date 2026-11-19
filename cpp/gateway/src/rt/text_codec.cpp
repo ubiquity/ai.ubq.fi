@@ -1,5 +1,6 @@
 #include "uos/rt/text_codec.hpp"
 
+#include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
 #include "third_party/simdutf/simdutf.h"
 
@@ -81,11 +82,12 @@ namespace uos::rt {
   std::size_t utf8ByteLength(std::string_view text) { return isUtf8(text) ? text.size() : toWellFormed(text).size(); }
 
   bool isUtf8(std::span<const std::uint8_t> bytes) noexcept {
-    return bytes.empty() || simdutf::validate_utf8(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    return bytes.size() <= limits::kTextInputBytes && (bytes.empty() || simdutf::validate_utf8(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
   }
   bool isUtf8(std::string_view bytes) noexcept { return isUtf8(spanOf(bytes)); }
 
   std::string decodeUtf8(std::span<const std::uint8_t> bytes, TextDecoderOptions options) {
+    if (bytes.size() > limits::kTextInputBytes) throw TypeError("Text input exceeds limit");
     const Byte* p = bytes.data();
     const Byte* end = p + bytes.size();
     std::string out;
@@ -121,6 +123,7 @@ namespace uos::rt {
   // error in the rest therefore loses the rest's output but not the first part's
   // BOM-seen effect, and the bytes after the error are dropped.
   std::string TextDecoder::decode(std::span<const std::uint8_t> input, TextDecodeOptions options) {
+    if (input.size() > limits::kTextInputBytes) throw TypeError("Text input exceeds limit");
     if (!doNotFlush_) {
       heldSize_ = 0;
       bomSeen_ = false;

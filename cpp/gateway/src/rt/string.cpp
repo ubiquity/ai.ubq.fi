@@ -1,4 +1,5 @@
 #include "uos/rt/string.hpp"
+#include "uos/rt/limits.hpp"
 #include "third_party/simdutf/simdutf.h"
 
 #include <algorithm>
@@ -124,12 +125,14 @@ namespace uos::rt {
     // Ascii: every byte < 0x80. Utf8: well-formed UTF-8 without encoded surrogates (so
     // byte search and byte slicing at code point boundaries are exact). Other: anything else.
     Shape shapeOf(std::string_view text) {
+      if (text.size() > limits::kTextInputBytes) throw RangeError("String input exceeds limit");
       if (isAscii(text)) return Shape::Ascii;
       return simdutf::validate_utf8(text.data(), text.size()) ? Shape::Utf8 : Shape::Other;
     }
 
     // The UTF-8 validator rejects every surrogate. WTF-8 admits only an encoded surrogate here.
     bool validWtf8(std::string_view text, bool canonical) noexcept {
+      if (text.size() > limits::kTextInputBytes) return false;
       bool afterHigh = false;
       while (!text.empty()) {
         const auto prefix = simdutf::validate_utf8_with_errors(text.data(), text.size());
@@ -256,7 +259,7 @@ namespace uos::rt {
 
     // ICU accepts signed 32-bit lengths. Preserve WTF-8 through the UTF-16 boundary.
     std::int32_t icuLength(std::size_t length) {
-      if (length > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+      if (length > limits::kIcuInputBytes) {
         throw RangeError("String exceeds ICU length limit");
       }
       return static_cast<std::int32_t>(length);
@@ -266,12 +269,12 @@ namespace uos::rt {
 
     std::string mapCase(std::string_view text, decltype(&u_strToUpper) mapUtf16, Utf8CaseMap mapUtf8) {
       if (text.empty()) return {};
+      const auto inputLength = icuLength(text.size());
       UErrorCode status = U_ZERO_ERROR;
       if (isAscii(text)) {
         // Root casing of ASCII keeps the byte length unchanged.
-        const std::int32_t length = icuLength(text.size());
         std::string result(text.size(), '\0');
-        mapUtf8("", 0, text.data(), length, result.data(), length, nullptr, status);
+        mapUtf8("", 0, text.data(), inputLength, result.data(), inputLength, nullptr, status);
         if (U_FAILURE(status)) throw JsError(u_errorName(status));
         return result;
       }
@@ -435,10 +438,11 @@ namespace uos::rt {
 
   // ---- Encoding layer --------------------------------------------------------------------
   bool isAscii(std::string_view text) noexcept {
-    return text.empty() || simdutf::validate_ascii(text.data(), text.size());
+    return text.size() <= limits::kTextInputBytes && (text.empty() || simdutf::validate_ascii(text.data(), text.size()));
   }
 
   std::u16string toUtf16(std::string_view text) {
+    if (text.size() > limits::kTextInputBytes) throw RangeError("String input exceeds limit");
     std::u16string units;
     units.reserve(text.size());
     while (!text.empty()) {
@@ -459,6 +463,7 @@ namespace uos::rt {
   }
 
   std::string fromUtf16(std::u16string_view units) {
+    if (units.size() > limits::kTextInputBytes) throw RangeError("String input exceeds limit");
     if (units.empty()) return {};
     std::string out;
     if (simdutf::validate_utf16(units.data(), units.size())) {
@@ -506,6 +511,7 @@ namespace uos::rt {
   bool isCanonicalWtf8(std::string_view text) noexcept { return validWtf8(text, true); }
 
   std::string canonicalWtf8(std::string_view text) {
+    if (text.size() > limits::kTextInputBytes) throw RangeError("String input exceeds limit");
     if (isCanonicalWtf8(text)) return std::string(text);
     std::string out;
     out.reserve(text.size());
@@ -535,6 +541,7 @@ namespace uos::rt {
   }
 
   std::string toWellFormed(std::string_view text) {
+    if (text.size() > limits::kTextInputBytes) throw RangeError("String input exceeds limit");
     std::string out;
     out.reserve(text.size());
     const Byte* p = bytes(text);
@@ -551,10 +558,16 @@ namespace uos::rt {
   // ---- Length, access, slicing ---------------------------------------------------------------
   std::int64_t length(std::string_view text) noexcept {
     if (text.empty()) return 0;
-    const auto prefix = simdutf::validate_utf8_with_counts(text.data(), text.size());
-    const Byte* p = bytes(text) + prefix.input_count;
+    // Keep the exact length for callers of this noexcept helper. For strings
+    // beyond the conversion budget, count directly without handing them to SIMD.
+    const Byte* p = bytes(text);
     const Byte* end = bytes(text) + text.size();
-    auto units = static_cast<std::int64_t>(prefix.utf16_length());
+    std::int64_t units = 0;
+    if (text.size() <= limits::kTextInputBytes) {
+      const auto prefix = simdutf::validate_utf8_with_counts(text.data(), text.size());
+      p += prefix.input_count;
+      units = static_cast<std::int64_t>(prefix.utf16_length());
+    }
     while (p < end) {
       const Element element = decodeUnit(p, end);
       units += element.value >= 0x10000 ? 2 : 1;
@@ -932,6 +945,7 @@ namespace uos::rt {
   bool lessThan(std::string_view left, std::string_view right) { return compare(left, right) < 0; }
 
   int localeCompare(std::string_view left, std::string_view right) {
+    if (left.size() > limits::kIcuInputBytes || right.size() > limits::kIcuInputBytes) throw RangeError("String exceeds ICU length limit");
     const std::u16string a = toUtf16(left);
     const std::u16string b = toUtf16(right);
     return ucol_strcoll(rootCollator(), a.data(), icuLength(a.size()), b.data(), icuLength(b.size()));

@@ -4,6 +4,7 @@
 // toString("utf8") and the label table. The cases after the markers pin the WTF-8
 // storage convention (docs/rt/text.md) and the documented label bound.
 #include "uos/rt/string.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/test.hpp"
 #include "uos/rt/text_codec.hpp"
 
@@ -1871,4 +1872,14 @@ TEST("Long UTF-8 runs preserve maximal subparts and streamed tails") {
     EXPECT_EQ(decoder.decode("\x80"sv), std::string("\xF0\x9F\x98\x80"));
     EXPECT_THROWS(decoder.decode(prefix + "\xE0\x80", {.stream = true}), rt::TypeError);
   }
+}
+
+TEST("UTF-8 adapters admit the exact image-compatible byte limit") {
+  std::string text(rt::limits::kTextInputBytes, 'a');
+  EXPECT(rt::isUtf8(text));
+  EXPECT_EQ(rt::decodeUtf8(text).size(), text.size());
+  text.push_back('a');
+  EXPECT(!rt::isUtf8(text));
+  EXPECT_THROWS_MESSAGE(rt::decodeUtf8(text), rt::TypeError, "Text input exceeds limit");
+  EXPECT_THROWS_MESSAGE(rt::TextDecoder().decode(text), rt::TypeError, "Text input exceeds limit");
 }
