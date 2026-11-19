@@ -45,9 +45,16 @@ def run(*command, env):
 
 
 def source_identity(env):
+    try:
+        checkout = Path(capture("git", "rev-parse", "--show-toplevel", env=env)).resolve()
+        if checkout != ROOT:
+            raise ValueError("Packaging requires the gateway Git checkout")
+        identity = capture("git", "show", "-s", "--format=%H%n%T%n%ct", "HEAD", env=env).splitlines()
+    except subprocess.CalledProcessError as error:
+        raise ValueError("Packaging requires the gateway Git checkout with a committed HEAD") from error
     if capture("git", "status", "--porcelain", env=env):
         raise ValueError("A committed, clean source checkout is required")
-    return capture("git", "show", "-s", "--format=%H%n%T%n%ct", "HEAD", env=env).splitlines()
+    return identity
 
 
 def prepare_sqlite(work, env):
@@ -110,7 +117,7 @@ def build(work, output, jobs):
     sqlite, sqlite_obj = prepare_sqlite(work, env)
     build_root = work / "build"
     run("/bin/bash", GATEWAY / "tools/macos-build.sh", "--build-root", build_root, "--sqlite-prefix", sqlite,
-        "--jobs", str(jobs), "--suite", "rt", "--require-clean", env=env)
+        "--jobs", str(jobs), "--suite", "rt", "--require-clean", "--release-commit", commit, env=env)
     (receipt,) = (build_root / "runs").glob("*/provenance.json")
     profile = json.loads(receipt.read_text())
     identity = profile["source_identity"]
@@ -157,7 +164,7 @@ def build(work, output, jobs):
         if name == "uos-gateway":
             gateway_entry = work / "gateway.o"
             run(*flags, "-Dmain=uosGatewayMain", "-c", source, "-o", gateway_entry, env=env)
-            entry = (f'-DUOS_PACKAGE_GIT_COMMIT="{commit}"', GATEWAY / "packaging/macos/gateway-version.cpp", gateway_entry)
+            entry = (GATEWAY / "packaging/macos/gateway-version.cpp", gateway_entry)
         target = stage / "bin" / name
         run(*flags, *entry, GATEWAY / "runtime/startup.cpp",
             "-Xlinker", "-force_load", "-Xlinker", build_root / "libuos_gateway.a", *static_libraries,

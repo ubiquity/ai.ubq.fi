@@ -33,6 +33,7 @@ parser.add_argument("--timeout", type=int, default=180)
 parser.add_argument("--sqlite-prefix", type=Path, help="Prepared SQLite 3.54.0 prefix for the versioned native fixtures")
 parser.add_argument("--legacy-loaders", action="store_true", help="Compile the three C-library loaders through their Darwin dlopen branches")
 parser.add_argument("--require-clean", action="store_true")
+parser.add_argument("--release-commit", help="Bind this full commit SHA in the packaged gateway")
 args = parser.parse_args()
 if platform.system() != "Darwin" or platform.machine() != "arm64":
     parser.error("This driver requires native macOS Apple Silicon")
@@ -72,6 +73,8 @@ def identity():
 source_identity = identity()
 if args.require_clean and not source_identity["worktree_clean"]:
     parser.error("--require-clean requires a committed, clean checkout")
+if args.release_commit is not None and args.release_commit != source_identity["commit"]:
+    parser.error("--release-commit must match HEAD of the clean checkout")
 inputs = {str(p.relative_to(gateway)): hashlib.sha256(p.read_bytes()).hexdigest()
           for directory in ["entrypoints", "include", "runtime", "src", "tests", "tools"]
           for p in sorted((gateway / directory).rglob("*")) if p.is_file()}
@@ -145,6 +148,8 @@ def compile_one(source, selected_flags=None):
     target = obj(source)
     target.parent.mkdir(parents=True, exist_ok=True)
     source_flags = flags if selected_flags is None else selected_flags
+    if source == Path("src/release.cpp") and args.release_commit is not None:
+        source_flags = source_flags + [f'-DUOS_PACKAGE_GIT_COMMIT="{args.release_commit}"']
     if str(source) in simdjson_sources:
         source_flags = source_flags + vendor_sources.simdjson_flags(gateway)
     if args.legacy_loaders and str(source) in {"src/rt/gzip.cpp", "src/rt/sqlite.cpp", "src/rt/fetch_transport_codec.cpp"}:

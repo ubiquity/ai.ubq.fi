@@ -50,6 +50,7 @@ verify_release() {
       mkdir /staged/bundle
       tar --no-same-owner --no-same-permissions -xzf /archive.tar.gz -C /staged/bundle
       python3 -B /staged/bundle/seal.py /staged/package > /staged/binding.json
+      cmp /staged/bundle/VERSION /staged/package/build-profile.json
       cat /staged/binding.json
       for exe in /staged/package/bin/*; do
         sha256sum "$exe"

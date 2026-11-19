@@ -9,7 +9,12 @@ cache_options=()
 if [[ ${PORTABLE_REBUILD:-0} == 1 ]]; then
   cache_options=(--no-cache-filter cpp --build-arg FRESH_COMPILE=1)
 fi
-root=$(git -C "$(dirname -- "$0")" rev-parse --show-toplevel)
+root=$(cd -- "$(dirname -- "$0")/../../../.." && pwd -P)
+if [[ $(git -C "$root" rev-parse --show-toplevel 2>/dev/null) != "$root" ]] || \
+   ! commit=$(git -C "$root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null); then
+  echo 'Portable packaging requires the gateway Git checkout with a committed HEAD.' >&2
+  exit 64
+fi
 output=$(realpath -m -- "$1")
 scratch_parent=$(realpath -- "${TMPDIR:-/tmp}")
 if [[ "$output" == "$root" || "$output" == "$root/"* || "$scratch_parent" == "$root" || "$scratch_parent" == "$root/"* || \
@@ -26,7 +31,6 @@ fi
 scratch=$(mktemp -d --tmpdir="$scratch_parent" uos-portable.XXXXXX)
 archive=$(mktemp --tmpdir="$(dirname -- "$output")" .uos-portable.XXXXXX)
 trap 'rm -rf -- "$scratch"; rm -f -- "$archive"' EXIT
-commit=$(git -C "$root" rev-parse HEAD)
 tree=$(git -C "$root" rev-parse "$commit^{tree}")
 epoch=$(git -C "$root" show -s --format=%ct "$commit")
 mkdir "$scratch/context"

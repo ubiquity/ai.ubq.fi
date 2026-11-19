@@ -49,6 +49,15 @@ endif()
 message(STATUS "Gateway inventory: ${UOS_INVENTORY_MESSAGE}")
 include("${CMAKE_CURRENT_BINARY_DIR}/sources.cmake")
 
+if(DEFINED UOS_PACKAGE_GIT_COMMIT)
+  string(LENGTH "${UOS_PACKAGE_GIT_COMMIT}" package_commit_length)
+  if(NOT package_commit_length EQUAL 40 OR NOT UOS_PACKAGE_GIT_COMMIT MATCHES "^[0-9a-f]+$")
+    message(FATAL_ERROR "UOS_PACKAGE_GIT_COMMIT must be a full Git commit SHA")
+  endif()
+  set_source_files_properties(src/release.cpp PROPERTIES
+    COMPILE_DEFINITIONS "UOS_PACKAGE_GIT_COMMIT=\"${UOS_PACKAGE_GIT_COMMIT}\"")
+endif()
+
 # Stable integration API: each source is compiled once, and test closures select
 # individual objects instead of importing unrelated registrars or definitions.
 function(uos_object_for_source output source)
