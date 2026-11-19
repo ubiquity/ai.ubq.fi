@@ -504,19 +504,24 @@ supervisor evidence file. The target host's enforcement remains unverified.
 
 ## Post-fix fuzz replay
 
-The workflow command above is running from the clean checkout of
+The workflow command above ran from the clean checkout of
 `3946c4a3227fd8966130010b810de25c689a1498`, tree
 `c053a41ed19f107e88c1977e4906313c9c3e2f13`. The receipts are under
-`/tmp/cppgw-final-20261119/identity-final.THqVkvsc/fuzz`. The first three
+`/tmp/cppgw-final-20261119/identity-final.THqVkvsc/fuzz`. All five
 campaigns passed with 300 seconds requested, four jobs, one classified
 fork-parent leak each and zero harness findings.
 
-| Harness | Build (s) | Observed fuzzing (s) | Corpus files |
-| ------- | --------: | -------------------: | -----------: |
-| regex   |    98.425 |                  305 |        3,053 |
-| kv_jsc  |    98.838 |                  304 |        2,286 |
-| json    |    98.097 |                  303 |        1,810 |
+| Harness      | Build (s) | Observed fuzzing (s) | Corpus files |
+| ------------ | --------: | -------------------: | -----------: |
+| regex        |    98.425 |                  305 |        3,053 |
+| kv_jsc       |    98.838 |                  304 |        2,286 |
+| json         |    98.097 |                  303 |        1,810 |
+| http_request |   114.783 |                  303 |        1,989 |
+| url          |    99.844 |                  304 |        2,316 |
 
 Read the result for each target with
 `jq '{target,seconds,jobs,build_seconds,fuzzed_seconds,corpus_count,outcome,expected_fork_exit_leaks,findings}' "$out/summary.json"`.
-The HTTP request and URL replay campaigns are pending.
+The first `http_request` replay ended after 73 seconds with the classified
+fork-parent leak and exited 3. Its retry at
+`/tmp/cppgw-final-20261119/fuzz-http-final-retry.1j9CmzH7` ran the full
+duration on the same commit and exited 0, as did the other four campaigns.
