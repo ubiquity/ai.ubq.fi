@@ -1,6 +1,7 @@
 // Links: tests/legacy/fetch_response_library_test.cpp
 #include "src/rt/fetch_transport_internal.hpp"
 #include "src/rt/decompression_budget.hpp"
+#include "src/rt/tls_internal.hpp"
 #include "src/rt/websocket_internal.hpp"
 #include "uos/rt/gzip.hpp"
 #include "uos/rt/test.hpp"
@@ -170,6 +171,11 @@ TEST("Fetch budgets split response heads by bytes and fields") {
     head += "\r\n";
     EXPECT_EQ(fetch::parseResponseHead(head).status, extra == 0 ? fetch::HeadStatus::complete : fetch::HeadStatus::malformed);
   }
+}
+
+TEST("shared TLS context bounds peer certificate messages before ASN.1 decoding") {
+  const std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> context(uos::rt::detail::tls::newContext(), SSL_CTX_free);
+  EXPECT_EQ(SSL_CTX_get_max_cert_list(context.get()), static_cast<long>(uos::rt::limits::kCertificateBytes));
 }
 
 TEST("Fetch bounds declared, chunked and EOF-delimited response bodies") {

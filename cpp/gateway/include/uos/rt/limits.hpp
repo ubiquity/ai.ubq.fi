@@ -58,4 +58,5 @@ namespace uos::rt::limits {
   inline constexpr std::size_t kCertificateChainBytes = 256 * 1024;
   inline constexpr std::size_t kCertificateBase64Bytes = ((kCertificateBytes + 2) / 3) * 4;
   inline constexpr std::size_t kCertificatePemBytes = kCertificateBase64Bytes + ((kCertificateBase64Bytes + 63) / 64) * 2 + 64;
+  inline constexpr std::size_t kTrustStoreBytes = 1024 * 1024;
 }

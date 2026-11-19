@@ -2,6 +2,7 @@
 
 #include "uos/rt/abort.hpp"
 #include "uos/rt/base64.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/number.hpp"
 #include <openssl/bn.h>
 #include <openssl/core_names.h>
@@ -653,6 +654,7 @@ namespace uos::rt::crypto {
     }
 
     std::shared_ptr<EVP_PKEY> rsaFromSpki(BytesView der) {
+      if (der.size() > limits::kCertificateBytes) dataError(INVALID_KEY_DATA);
       const unsigned char* cursor = der.data();
       EVP_PKEY* raw = der.empty() ? nullptr : d2i_PUBKEY(nullptr, &cursor, static_cast<long>(der.size()));
       if (!raw) dataError(INVALID_KEY_DATA);
@@ -662,6 +664,7 @@ namespace uos::rt::crypto {
     }
 
     std::shared_ptr<EVP_PKEY> rsaFromPkcs8(BytesView der) {
+      if (der.size() > limits::kCertificateBytes) dataError(INVALID_KEY_DATA);
       const unsigned char* cursor = der.data();
       std::unique_ptr<PKCS8_PRIV_KEY_INFO, P8Free> info(der.empty() ? nullptr : d2i_PKCS8_PRIV_KEY_INFO(nullptr, &cursor, static_cast<long>(der.size())));
       if (!info) dataError(INVALID_KEY_DATA);
