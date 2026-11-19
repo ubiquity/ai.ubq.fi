@@ -17,6 +17,8 @@ python3 -B cpp/gateway/tools/links.py --check
 
 The qualified list included each deleted path and removed directory in both root-relative and gateway-relative form. Basenames came from the deletion list. The full-tree search produced 541 qualified and 428 basename matches before distinguishing exact paths from substrings, same-name files and historical evidence. Both binary-inclusive seed searches had zero hits. The Links gate resolved all 449 registrations.
 
+`python3 -B "$scratch/audit-active.py"` checked 1,762 active files after the edits and found zero references to deleted paths. It resolved the inputs and seed directories for all 25 fuzz targets and the sources for all 22 extra CMake targets. `python3 -B cpp/gateway/tools/cmake-sources.py "$scratch/sources.cmake"` resolved 366 production translation units, including 44 shared runtime units. The lifetime lint inventory found 141 current translation units and excluded the three deleted conversion sources. The WebSocket source comments refer to the upstream `ws` dependency's manifest, which is distinct from the removed root manifest.
+
 | Reference | Fix |
 | --- | --- |
 | `fuzz/targets.json`, `passkeys_cbor_library.extra_sources`, `src/storage/native_addon.cpp` | Removed the deleted translation unit. |
@@ -34,6 +36,8 @@ The Markdown release ledger and the lifetime and clang-tidy JSON receipts docume
 `src/release.cpp` provides the build's Git SHA to `config::runtimeGitSha()`. The portable builder archives the selected commit and passes the same full SHA to the Docker build and CMake that it writes to `VERSION`. CMake sets the definition on the release translation unit. The clean macOS packaging build binds that same translation unit and reads it back in `--version`. Both packagers require the gateway Git checkout with a committed HEAD.
 
 The portable proof compares `VERSION` with the sealed build profile and asserts the commit and platform deployment ID in the health body and headers at startup, after load and after reopen. The health handler and its deployment ID precedence use the existing code.
+
+On Linux, `cmake -S cpp/gateway -B "$scratch/probes/cmake-good" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DUOS_PACKAGE_GIT_COMMIT="$(git rev-parse HEAD)"` configured with `UOS_GATEWAY_BUILD_EVIDENCE=release-identity-check` and `UOS_GATEWAY_TOOL_ROOT="$scratch"`. The generated compile database applied the definition only to `src/release.cpp`. A fresh configure with `-DUOS_PACKAGE_GIT_COMMIT=` returned 1 with the full-SHA diagnostic. A clean-env, network-isolated `python3 -B "$scratch/probes/identity.py" "$scratch/source" "$scratch/probes"` passed in 3.05 s. It checked that both source identity gates reject an export with or without a parent Git repository and that the compiled macOS version entry point prints the bound full SHA and dispatches ordinary startup. This probe links the wrapper and release translation unit on Linux with a stand-in for the gateway main function.
 
 ## Runner and commands
 
@@ -75,7 +79,24 @@ bash "$scratch/package.sh" "$scratch"
 
 The Release selector derives the test list from `links.resolve` for `src/release.cpp`, includes startup, health and package paths, and explicitly selects both legacy passkey library tests. The CI driver selected 243 of 449 binaries and uses Linux network, mount and PID namespaces with its loopback and route-denial probes. Its logs and results are in `$scratch/ci` and `$scratch/release.log`.
 
+```sh
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC HOME="$run/home" TMPDIR="$run/tmp" \
+  CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=3 UOS_CI_BUILD_DIR="$scratch/ci" UOS_CI_SQLITE_PREFIX="$scratch/sqlite" \
+  PKG_CONFIG_PATH="$scratch/icu78/lib/pkgconfig:$scratch/sqlite/lib/pkgconfig" UOS_CI_CXXFLAGS="-isystem $scratch/boost_1_92_0" \
+  UOS_CI_LDFLAGS="-L$scratch/boost_1_92_0/stage/lib -Wl,--disable-new-dtags,-rpath,$scratch/icu78/lib:$scratch/sqlite/lib" \
+  /usr/bin/time -p python3 -B "$scratch/selected.py"
+```
+
 The fuzz runner extracts the workflow's discovery Python from `.github/workflows/cpp-gateway-ci.yml`. The matrix contains 25 entries. It invokes `fuzz/ci.py` separately for each entry with `--seconds 20 --jobs 2` under the workflow's `sudo -n unshare --net -- setpriv` boundary. The same invocation links the target before its campaign. The `clang` and `clang++` wrappers use ccache with the installed Clang 21.1.8 compilers. Each run has a new home, temporary directory, corpus and artifact directory under `$scratch/fuzz`.
+
+```sh
+sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --no-new-privs \
+  env -i PATH="$scratch/fuzz-tool:/usr/local/bin:/usr/bin:/bin" LANG=C.UTF-8 HOME="$out/home" TMPDIR="$out/tmp" \
+  CPLUS_INCLUDE_PATH="$scratch/boost_1_92_0:$scratch/icu78/include:$scratch/sqlite/include" CCACHE_DIR="$scratch/fuzz-cache" \
+  ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-21 \
+  LDFLAGS="-L$scratch/boost_1_92_0/stage/lib -L$scratch/icu78/lib -L$scratch/sqlite/lib -Wl,--disable-new-dtags,-rpath,$scratch/icu78/lib:$scratch/sqlite/lib" \
+  /usr/bin/time -p python3 -B cpp/gateway/fuzz/ci.py "$target" --seconds 20 --jobs 2 --out "$out"
+```
 
 The Docker build invokes `bash cpp/gateway/packaging/portable/build.sh "$scratch/uos-gateway-linux-arm64.tar.gz"` with `PORTABLE_JOBS=3`. The same committed checkout queues `bash cpp/gateway/packaging/portable/verify.sh "$scratch/uos-gateway-linux-arm64.tar.gz" "$scratch/package-evidence"`. Both use fresh home and temp directories. Logs and exit status files begin with `package-build` and `package-verify` under `$scratch`.
 
