@@ -246,6 +246,9 @@ exec env -i PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C HOME="$isolated/home" TMP
 | Driver selection | Test binaries passed | Cases passed | Object phase (s) | Link and test phase (s) | Total (s) |
 | ---------------- | -------------------: | -----------: | ---------------: | ----------------------: | --------: |
 | release 1/4      |                  113 |        1,333 |         1176.473 |                  46.960 |  1223.954 |
+| release 2/4      |                  113 |        1,241 |          249.474 |                  20.126 |   270.129 |
+| release 3/4      |                  112 |        1,444 |          248.106 |                  14.468 |   263.110 |
+| release 4/4      |                  112 |        1,104 |          227.195 |                  17.976 |   245.690 |
 | asan 1/4         |                  113 |        1,333 |         2239.842 |                 131.888 |  2372.253 |
 | asan 2/4         |                  113 |        1,241 |          411.248 |                  45.620 |   457.394 |
 | asan 3/4         |                  112 |        1,444 |          415.483 |                  51.082 |   467.103 |
@@ -255,19 +258,22 @@ All four sanitizer shards passed 450 binaries and 5,122 cases
 under ASan, UBSan, and LSan. The link registry validated all 450 entries.
 The test driver used Clang 21.1.8, Boost 1.92.0, SQLite 3.54.0, and ICU 78.3.
 
-The required release shard and sanitizer shards recorded commit
+Release shards 1 and 2 and all sanitizer shards recorded commit
 `5dc5afb27f7ef2af8f807522a9805115fdc8a449` and tree
 `d3c289cbd4ab31d9e534a0e38b4bbbb5650a81b1`. The driver input SHA-256 was
 `bd96c33f974634165d7ccb4ee9ea4fcb6e38bf9d0fd92ff46e93a3fa915c03d4` before and after each run.
 
-Release shards 2, 3, 4 are pending. Their linked coverage extends the required full release shard.
-
+All four release shards passed 450 binaries and 5,122 cases. The release receipts share the same stable driver input digest.
+Release shards 3 and 4 recorded the report checkpoint commit `51c1c10070f31fad3275f2d4bc04a21fb3eb325d` and tree `920db326d9513f012db85c214e1ea8de09f28d68`.
 The restart recovery copied the orphaned third sanitizer shard's terminal
 driver receipt before the next shard started. Its complete passing status
 came from the receipt and final driver table.
 
 ```text
 ddeae281e25b865817682efe162f01b63f58582d1e57b8891edf7e415ee4e904  final-release-1.receipt.json
+248effebf6962e087f1a8f7f254d9092364881e8c877f00834e36cccc5f77329  final-release-2.receipt.json
+20744e8f47a1bdc9424a73edf439baca306aece7e51621542723035c37edf78f  final-release-3.receipt.json
+3d14380c3979a6081588eaebb07ca0eea80b69318a773d4b6b4bf576978615ff  final-release-4.receipt.json
 6a8e286df5756571d08c5e3536160894b5b7b06861564a17537432ac23a45c64  final-asan-1.receipt.json
 40ed73b90b5bb4cb5f0ac21a8efb5f6958e5248162d60a4dfcbd613156902253  final-asan-2.receipt.json
 a4791f41abc32ce9912da0470d48df2fb66c04543a2df378965db94e03902dbb  final-asan-3.receipt.json
@@ -275,6 +281,14 @@ a4791f41abc32ce9912da0470d48df2fb66c04543a2df378965db94e03902dbb  final-asan-3.r
 ```
 
 The handoff commits update this report after the tested source commit.
+Bun 1.4.0 formatted and checked the report using pinned dependencies in scratch.
+
+```sh
+bun --no-env-file --no-install run format cpp/gateway/docs/findings/cppgw-lifetime-fix-b-20261118.md
+bun --no-env-file --no-install run format:check cpp/gateway/docs/findings/cppgw-lifetime-fix-b-20261118.md
+git diff --name-only 5dc5afb27f7ef2af8f807522a9805115fdc8a449 HEAD
+```
+
 This branch starts from the requested integration head `aae39d0ea73e7b5678dc92c437f7da6fb32f0c06`
 and merges the four audit files from `fa1cd486b94214e5110529a35fd7c4e0ff5c93a9`.
 The refreshed `origin/development` at `5ddac3dd154d74b1049197fb7cf5f53551609072`
@@ -298,16 +312,16 @@ branch. Publication and hosted verification are pending.
 
 ## Handoff summary
 
-Fixed all 14 audited defects. A disconnect during a backpressured HTTP write
-now keeps the buffer alive through cancellation. Shutdown refuses late
-WebSocket upgrades, abandoned requests and responses release their resources,
-and dropped quota reservations stop renewing. Worker accounting settles once
-using the actual delivery outcome. KV and fingerprint reads follow the port's
-coroutine rules.
+Fixed all 14 audited defects. The server now keeps the HTTP response buffer
+alive through cancellation when a slow client disconnects. Shutdown refuses
+late WebSocket upgrades. Abandoned requests and responses release their
+resources, and dropped quota reservations stop renewing. Worker accounting
+settles once using the final upstream result and the actual delivery outcome.
+KV and cache fingerprint reads follow the port's coroutine rules.
 
-Linux ARM64 passed all 450 sanitizer binaries (5,122 cases), the full release shard (113 binaries and 1,333 cases), and the link registry check.
-The fetch-body retention belongs to a separate source area. The report records
-the remaining forced-loop teardown questions and the GCC 12 evidence limit.
+Linux ARM64 passed 450 binaries and 5,122 cases in each of release and sanitizer, including nine new regression cases. The link registry check passed.
+The report records a separate fetch-body leak, open forced-loop teardown
+questions, and the GCC 12 execution gap.
 
-The fixes are committed locally. GitHub write authentication is unavailable
+The fixes are committed on `agent-job`. GitHub write authentication is unavailable
 on this runner, so the PR and hosted CI are pending.
