@@ -954,3 +954,16 @@ TEST("the fixed stored base64 pattern retains its encoded byte allowance and pad
   subject.push_back('A');
   EXPECT_THROWS_MESSAGE(standard.test(subject), rt::RangeError, "regular expression subject is too large");
 }
+
+TEST("the base64 alphabet replacements admit encoded input at the byte limit") {
+  rt::Regex dash("-", "g");
+  std::string input(rt::limits::kBase64InputBytes, 'A');
+  input.back() = '-';
+  dash.lastIndex = 5;
+  const auto translated = rt::replace(input, dash, "+");
+  EXPECT_EQ(translated.size(), input.size());
+  EXPECT_EQ(translated.back(), '+');
+  EXPECT_EQ(dash.lastIndex, 0u);
+  input.push_back('A');
+  EXPECT_THROWS_MESSAGE(rt::replace(input, dash, "+"), rt::RangeError, "regular expression subject is too large");
+}

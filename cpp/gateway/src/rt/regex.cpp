@@ -245,8 +245,33 @@ namespace uos::rt {
       }
     }
 
+    // These literal substitutions translate the base64 alphabet without asking
+    // the VM to match or retain captures across an encoded storage envelope.
+    std::optional<std::string> replaceBase64Alphabet(const Program& program, std::string_view input, std::string_view replacement) {
+      if (program.flags != "g" || input.size() <= limits::kRegexSubjectBytes) return std::nullopt;
+      char from;
+      if (program.source == "-" && replacement == "+") from = '-';
+      else if (program.source == "_" && replacement == "/") from = '_';
+      else if (program.source == R"(\+)" && replacement == "-") from = '+';
+      else if (program.source == R"(\/)" && replacement == "_") from = '/';
+      else return std::nullopt;
+
+      if (input.size() > limits::kBase64InputBytes || !isAscii(input)) throw RangeError("regular expression subject is too large");
+      const auto deadline = regex_detail::Limits::Clock::now() + limits::kRegexLargeSubjectDeadline;
+      std::string out(input);
+      std::ranges::replace(out, from, replacement.front());
+      if (regex_detail::Limits::Clock::now() >= deadline) throw RangeError("regular expression execution limit exceeded");
+      return out;
+    }
+
     // RegExp.prototype[@@replace]: all matches are found first, then callbacks run in order.
     std::string replaceWith(const Program& program, std::string_view input, std::size_t& lastIndex, std::string_view replacement, const RegexReplacer* replacer) {
+      if (!replacer) {
+        if (auto translated = replaceBase64Alphabet(program, input, replacement)) {
+          lastIndex = 0;
+          return std::move(*translated);
+        }
+      }
       Subject subject(input, program);
       Matcher matcher(program, input.size());
       std::size_t width = 2 * (static_cast<std::size_t>(program.captureCount) + 1);

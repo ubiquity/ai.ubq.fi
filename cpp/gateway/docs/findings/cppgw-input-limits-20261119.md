@@ -27,6 +27,7 @@ Base branch `agent-jobs/cppgw-combine-1-20261119-44443689630-1`, commit
 - Kept direct coverage of QuickJS-ng’s allocation ceiling after the smaller subject check began rejecting the old oversized examples earlier. Added checks for the deadline supplied to the library and the full image subject allowance.
 - The focused Release run exposed two compatibility cases. Fetch keeps its original 1.5 MiB head ceiling for the existing 1 MiB response field fixture. The multipart ceiling is 2,048 parts to cover the existing 1,124-part MIME table fixture. Also kept Zstd’s exact final full output buffer from being mistaken for the start of another frame.
 - Release shard 1 exposed another compatibility case in `sentinel_upstream_capture_differential_test`. A 4 MiB stored chunk encodes to 5,592,408 base64 bytes. The fixed canonical-base64 pattern now uses the shared encoded-byte ceiling and a bounded ASCII scan. The existing fixture still tests Sentinel’s smaller aggregate bound and its ordinary rejection.
+- Release shard 2 exposed the same allowance issue in the base64url alphabet normalization used by `sentinel_upstream_capture_test`. The four existing literal substitutions now use a bounded standard-library replacement on large encoded inputs. The fixture continues to verify the exact retained byte count and both truncation flags.
 
 ## Runner and exact commands
 
