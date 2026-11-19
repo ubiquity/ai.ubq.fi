@@ -61,7 +61,6 @@ namespace uos::rt {
   std::int64_t length(std::string_view text) noexcept;  // s.length
   std::string charAt(std::string_view text, NumberArg position);
   double charCodeAt(std::string_view text, NumberArg position);  // NaN when out of range
-  std::optional<std::uint32_t> codePointAt(std::string_view text, NumberArg position);
   std::optional<std::string> at(std::string_view text, NumberArg index);
   std::string slice(std::string_view text, NumberArg start);
   std::string slice(std::string_view text, NumberArg start, NumberArg end);
@@ -84,7 +83,6 @@ namespace uos::rt {
   std::string padEnd(std::string_view text, NumberArg maxLength, std::string_view fill = " ");
   std::string repeat(std::string_view text, NumberArg count);  // RangeError as JS
   std::string trim(std::string_view text);
-  std::string trimStart(std::string_view text);
   std::string trimEnd(std::string_view text);
   bool isJsWhitespace(std::uint32_t codePoint) noexcept;  // WhiteSpace or LineTerminator
   std::vector<std::string> split(std::string_view text);  // separator undefined

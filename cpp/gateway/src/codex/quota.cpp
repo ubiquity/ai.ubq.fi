@@ -44,10 +44,10 @@ namespace uos::codex::quota {
     // parses every discovered family but persists only one response-derived snapshot, so forwarding
     // multiple families makes whichever name sorts last overwrite the others. Remove every parseable
     // family before publishing the one client-specific capacity source this gateway can measure.
-    for (const std::string& name : headers.keys()) {
-      if (!rt::startsWith(name, "x-")) continue;
+    for (const std::string_view name : headers.keys()) {
+      if (!name.starts_with("x-")) continue;
       for (std::string_view suffix : RATE_LIMIT_FAMILY_SUFFIXES) {
-        if (rt::endsWith(name, suffix)) {
+        if (name.ends_with(suffix)) {
           headers.delete_(name);
           break;
         }

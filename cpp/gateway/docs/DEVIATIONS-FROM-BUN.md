@@ -335,3 +335,32 @@ an unfinished class reports `unexpected end`, and invalid or duplicate flags rep
 ## Incoming integrations
 
 Add a component section after its verified handback. Record the changed behavior, one concrete input/outcome, the application or security rationale, and the exact source and test receipt. Use this location for future library integrations. Record limit-specific exceptions and tested boundary outcomes in [Runtime](RUNTIME.md#input-limits).
+
+## UTC calendar operations
+
+The native runtime uses C++20 calendar and duration types for UTC dates. It reduces dates outside
+`std::chrono::year` to a 400-year Gregorian cycle and recovers the extended year before formatting.
+For example, `-1` ms formats as `1969-12-31T23:59:59.999Z`, and `+275760-09-13T00:00:00.000Z` reaches the upper
+TimeClip endpoint.
+
+Dates are constructed from epoch milliseconds with `Date(ms)` or normalized components with `Date::fromUtc`.
+The former setter fixtures use `utcFields()` to read the base components and construct a new value. For
+example, `Date::fromUtc(0, 1, 29)` produces `0000-02-29T00:00:00.000Z`. The gateway's `Date::UTC` adapter applies
+its 1900–1999 mapping to years 0–99.
+
+For a stable HTTP Retry-After deadline, the provider header must round-trip through UTC formatting with its
+canonical weekday and GMT spelling. The date, provider 429, filesystem and persisted-value fixtures exercise
+these behaviors. [ARM64 verification](findings/cppgw-slim-dates-20261118.md)
+
+## String operations at protocol boundaries
+
+Codex quota header names and the Responses `input_` type prefix use C++20
+byte comparisons. ASCII bytes decode directly, including after a truncated or
+malformed UTF-8 subpart. The shared string predicates also use native byte
+operations for ASCII tokens at byte-defined boundaries. User-text positions
+and search results continue to count UTF-16 code units.
+
+The C++ runtime drops the unused `codePointAt` and `trimStart` wrappers.
+Their fixture vectors use `charAt`, `slice`, code-point iteration and the
+existing whitespace predicate to check the same ranges, surrogates and
+whitespace behavior.

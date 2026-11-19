@@ -30,6 +30,7 @@
 //   src/deepseek/responses_payload.cpp src/lib/jev_compaction/codex_items.cpp src/codex/responses_state.cpp src/codex/responses_runners.cpp src/deepseek/responses_stream.cpp src/lib/jev_compaction/state.cpp src/lib/jev_compaction/compact.cpp src/lib/jev_compaction/types.cpp src/lib/jev_compaction/request.cpp
 // Port of all seven original registrations in tests/responses-conformance-http.test.ts.
 #include "tests/helpers/responses_conformance_fixture.hpp"
+#include "uos/responses_request.hpp"
 #include "uos/rt/fs.hpp"
 #include "uos/rt/process.hpp"
 #include "uos/rt/console.hpp"
@@ -112,4 +113,23 @@ ASYNC_TEST("stopped conformance fixture releases its owner after transport drain
   }
   co_await rt::microtask();
   EXPECT(released.expired());
+}
+
+ASYNC_TEST("Responses fixed input type prefix rejects even malformed suffixes") {
+  namespace request = uos::responses_request;
+  const std::string_view suffixes[] = {"", "other", "\xC3\xA9", "\xF0\x9F\x98\x80", "\xED\xA0\x80", "\xE2\x82", "\xC0\x80", {"\0", 1}};
+  for (const std::string_view suffix : suffixes) {
+    const std::string type = std::string("input_").append(suffix);
+    const auto result = request::normalizeResponsesInput(json::array{json::object{{"type", type}}});
+    const auto* invalid = std::get_if<request::ResponsesStepNotOk>(&result);
+    ASSERT(invalid);
+    EXPECT_EQ(invalid->response.status(), 400);
+    const auto body = co_await invalid->response.text();
+    const auto parsed = rt::jsonParse(body);
+    const auto* error = rt::getObject(parsed, "error");
+    ASSERT(error);
+    EXPECT_EQ(rt::getString(*error, "type"), std::optional<std::string_view>("invalid_request_error"));
+    EXPECT_EQ(rt::getString(*error, "param"), std::optional<std::string_view>("input[0].type"));
+    EXPECT_EQ(rt::getString(*error, "message"), std::optional<std::string_view>("input[0].type is not supported"));
+  }
 }

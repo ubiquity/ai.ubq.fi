@@ -5,6 +5,8 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/test.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <optional>
@@ -1337,14 +1339,14 @@ namespace {
     {-62198755200000.0, -62198755200000.0, "-1-01-01"sv},
   };
   // src/authority/native-codex-429.ts: Date.parse(value) round-trips through toUTCString.
-  struct RetryRow { std::string_view value; bool stable; };
+  struct RetryRow { std::string_view value; double deadline; bool stable; };
   constexpr RetryRow RETRY_AFTER[] = {
-    {"Wed, 21 Oct 2015 07:28:00 GMT"sv, true},
-    {"Wed, 21 Oct 2015 7:28:00 GMT"sv, false},
-    {"Thu, 21 Oct 2015 07:28:00 GMT"sv, false},
-    {"Wed, 21 Oct 2015 07:28:00 UTC"sv, false},
-    {"Mon, 16 Nov 2026 03:44:37 GMT"sv, true},
-    {"Sun, 06 Nov 1994 08:49:37 GMT"sv, false},
+    {"Wed, 21 Oct 2015 07:28:00 GMT"sv, 1445412480000.0, true},
+    {"Wed, 21 Oct 2015 7:28:00 GMT"sv, NaN, false},
+    {"Thu, 21 Oct 2015 07:28:00 GMT"sv, NaN, false},
+    {"Wed, 21 Oct 2015 07:28:00 UTC"sv, NaN, false},
+    {"Mon, 16 Nov 2026 03:44:37 GMT"sv, 1794800677000.0, true},
+    {"Sun, 06 Nov 1994 08:49:37 GMT"sv, 784111777000.0, false},
   };
 }
 // @end-generated-vectors
@@ -1356,15 +1358,30 @@ TEST("Date.parse and new Date(string)") {
   }
 }
 
-TEST("new Date(number), the UTC getters and the string forms") {
+TEST("UTC components and string forms for epoch milliseconds") {
   for (std::size_t row = 0; row < std::size(TIMES); ++row) {
     const TimeRow& entry = TIMES[row];
     const rt::Date date(entry.input);
-    const double fields[] = {date.getTime(), date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCDay(), date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds(), date.getUTCMilliseconds(), date.getTimezoneOffset()};
-    for (std::size_t index = 0; index < std::size(fields); ++index) ROW_NUMBER(row * 100 + index, fields[index], entry.fields[index]);
-    ROW_NUMBER(row, date.valueOf(), entry.fields[0]);
+    const auto fields = date.utcFields();
+    ROW_NUMBER(row, date.getTime(), entry.fields[0]);
+    ROW_NUMBER(row, date.getUTCFullYear(), entry.fields[1]);
+    ROW_NUMBER(row, date.getUTCMonth(), entry.fields[2]);
+    ROW_NUMBER(row, date.getUTCDate(), entry.fields[3]);
+    ROW_EQ(row, fields.has_value(), entry.isoOk);
+    if (fields) {
+      ROW_NUMBER(row, fields->year, entry.fields[1]);
+      ROW_NUMBER(row, static_cast<unsigned>(fields->month) - 1, entry.fields[2]);
+      ROW_NUMBER(row, static_cast<unsigned>(fields->day), entry.fields[3]);
+      ROW_NUMBER(row, fields->weekday.c_encoding(), entry.fields[4]);
+      ROW_NUMBER(row, static_cast<double>(fields->clock.hours().count()), entry.fields[5]);
+      ROW_NUMBER(row, static_cast<double>(fields->clock.minutes().count()), entry.fields[6]);
+      ROW_NUMBER(row, static_cast<double>(fields->clock.seconds().count()), entry.fields[7]);
+      ROW_NUMBER(row, static_cast<double>(fields->clock.subseconds().count()), entry.fields[8]);
+    }
     if (entry.isoOk) {
-      ROW_EQ(row, date.toISOString(), std::string(entry.iso));
+      const auto iso = date.toISOString();
+      ROW_EQ(row, iso, std::string(entry.iso));
+      ROW_NUMBER(row, rt::Date::parse(iso), entry.fields[0]);
       ROW_EQ(row, date.toJSON(), std::optional<std::string>(std::string(entry.iso)));
     } else {
       ROW_EQ(row, thrownText([&] { return date.toISOString(); }), "RangeError: " + std::string(entry.iso));
@@ -1393,25 +1410,64 @@ TEST("Date.UTC") {
   }
 }
 
-TEST("UTC setters and setTime") {
+TEST("UTC arithmetic and formatting across chrono's calendar bounds") {
+  struct Row {
+    double year, month, day, hour, minute, expected;
+    std::string_view iso, http;
+  };
+  constexpr Row rows[] = {
+    {32'767, 11, 31, 0, 0, 971890876800000.0, "+032767-12-31T00:00:00.000Z", "Sun, 31 Dec 32767 00:00:00 GMT"},
+    {32'767, 11, 31, 24, 0, 971890963200000.0, "+032768-01-01T00:00:00.000Z", "Mon, 01 Jan 32768 00:00:00 GMT"},
+    {32'767, 11, 32, 0, 0, 971890963200000.0, "+032768-01-01T00:00:00.000Z", "Mon, 01 Jan 32768 00:00:00 GMT"},
+    {32'767, 12, 1, 0, 0, 971890963200000.0, "+032768-01-01T00:00:00.000Z", "Mon, 01 Jan 32768 00:00:00 GMT"},
+    {-32'767, 0, 1, 0, 0, -1096193779200000.0, "-032767-01-01T00:00:00.000Z", "Sat, 01 Jan -32767 00:00:00 GMT"},
+    {-32'767, 0, 1, 0, -1, -1096193779260000.0, "-032768-12-31T23:59:00.000Z", "Fri, 31 Dec -32768 23:59:00 GMT"},
+    {-32'767, -1, 31, 0, 0, -1096193865600000.0, "-032768-12-31T00:00:00.000Z", "Fri, 31 Dec -32768 00:00:00 GMT"},
+    {1970, 0, 100'000'001, 0, 0, 8640000000000000.0, "+275760-09-13T00:00:00.000Z", "Sat, 13 Sep 275760 00:00:00 GMT"},
+    {1970, 0, -99'999'999, 0, 0, -8640000000000000.0, "-271821-04-20T00:00:00.000Z", "Tue, 20 Apr -271821 00:00:00 GMT"},
+    {-10'000'000'000'000'000.0, 120'000'000'000'000'016.0, 1, 0, 0, -62125228800000.0, "0001-05-01T00:00:00.000Z", "Tue, 01 May 0001 00:00:00 GMT"},
+  };
+  for (std::size_t row = 0; row < std::size(rows); ++row) {
+    const auto& entry = rows[row];
+    const rt::Date date(rt::Date::UTC(entry.year, entry.month, entry.day, entry.hour, entry.minute));
+    ROW_NUMBER(row, date.getTime(), entry.expected);
+    ROW_EQ(row, date.toISOString(), entry.iso);
+    ROW_EQ(row, date.toUTCString(), entry.http);
+    ROW_NUMBER(row, rt::Date::parse(entry.iso), entry.expected);
+  }
+
+  EXPECT_EQ(rt::Date::parse("+275760-09-13T00:01:00.000+00:01"), 8640000000000000.0);
+  EXPECT_EQ(rt::Date::parse("-271821-04-19T23:59:00.000-00:01"), -8640000000000000.0);
+  EXPECT(std::isnan(rt::Date::UTC(1970, 0, 100'000'002)));
+  EXPECT(std::isnan(rt::Date::UTC(1970, 0, -100'000'000)));
+  EXPECT(std::isnan(rt::Date::UTC(1e308, 1e308)));
+}
+
+TEST("UTC component replacements produce a new date") {
+  EXPECT_EQ(rt::Date::fromUtc(0, 1, 29).toISOString(), "0000-02-29T00:00:00.000Z");
+  EXPECT_EQ(rt::Date::fromUtc(99, 0, 1).toISOString(), "0099-01-01T00:00:00.000Z");
   for (std::size_t row = 0; row < std::size(SETTERS); ++row) {
     const SetterRow& entry = SETTERS[row];
-    rt::Date date(entry.base);
-    const double* a = entry.args;
-    const auto arg = [&](int index) { return index < entry.count ? std::optional<double>(a[index]) : std::nullopt; };
-    double result = NaN;
-    switch (entry.setter) {
-      case 0: result = date.setTime(a[0]); break;
-      case 1: result = date.setUTCFullYear(a[0], arg(1), arg(2)); break;
-      case 2: result = date.setUTCMonth(a[0], arg(1)); break;
-      case 3: result = date.setUTCDate(a[0]); break;
-      case 4: result = date.setUTCHours(a[0], arg(1), arg(2), arg(3)); break;
-      case 5: result = date.setUTCMinutes(a[0], arg(1), arg(2)); break;
-      case 6: result = date.setUTCSeconds(a[0], arg(1)); break;
-      default: result = date.setUTCMilliseconds(a[0]); break;
+    const rt::Date base(entry.base);
+    if (entry.setter == 0) {
+      ROW_NUMBER(row, rt::Date(entry.args[0]).getTime(), entry.expected);
+      continue;
     }
-    ROW_NUMBER(row, result, entry.expected);
-    ROW_NUMBER(row, date.getTime(), entry.expected);
+
+    auto fields = base.utcFields();
+    // The original full-year setter used the epoch as its fallback for an invalid base.
+    if (!fields && entry.setter == 1) fields = rt::Date(0.0).utcFields();
+    std::array<double, 7> parts{NaN, NaN, NaN, NaN, NaN, NaN, NaN};
+    if (fields) {
+      parts = {static_cast<double>(fields->year), static_cast<double>(static_cast<unsigned>(fields->month) - 1),
+               static_cast<double>(static_cast<unsigned>(fields->day)), static_cast<double>(fields->clock.hours().count()),
+               static_cast<double>(fields->clock.minutes().count()), static_cast<double>(fields->clock.seconds().count()),
+               static_cast<double>(fields->clock.subseconds().count())};
+    }
+    std::copy_n(entry.args, entry.count, parts.begin() + (entry.setter - 1));
+    const auto result = rt::Date::fromUtc(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]);
+    ROW_NUMBER(row, result.getTime(), entry.expected);
+    ROW_NUMBER(row, base.getTime(), entry.base);
   }
 }
 
@@ -1429,6 +1485,7 @@ TEST("the gateway's Date expressions") {
   // src/authority/native-codex-429.ts: a stable Retry-After round-trips through toUTCString.
   for (std::size_t row = 0; row < std::size(RETRY_AFTER); ++row) {
     const double deadline = rt::Date::parse(RETRY_AFTER[row].value);
+    ROW_NUMBER(row, deadline, RETRY_AFTER[row].deadline);
     const bool safe = std::isfinite(deadline) && std::trunc(deadline) == deadline && std::fabs(deadline) <= 9007199254740991.0;
     ROW_EQ(row, safe && deadline > 1445412479000.0 && rt::Date(deadline).toUTCString() == RETRY_AFTER[row].value, RETRY_AFTER[row].stable);
   }

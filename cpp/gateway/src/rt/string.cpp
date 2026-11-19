@@ -202,8 +202,6 @@ namespace uos::rt {
       return units;
     }
 
-    std::u16string unitsOf(std::string_view text) { return toUtf16(text); }
-
     // Substring by UTF-16 code unit range [from, to) of any input, canonical output.
     std::string unitRange(std::string_view text, std::int64_t from, std::int64_t to) {
       if (from >= to) return {};
@@ -581,17 +579,6 @@ namespace uos::rt {
     return static_cast<double>(toUtf16(unit)[0]);
   }
 
-  std::optional<std::uint32_t> codePointAt(std::string_view text, NumberArg position) {
-    const double index = toIntegerOrInfinity(position.value);
-    const std::int64_t size = length(text);
-    if (index < 0 || index >= static_cast<double>(size)) return std::nullopt;
-    const auto unit = static_cast<std::int64_t>(index);
-    const std::u16string pair = toUtf16(unitRange(text, unit, std::min(unit + 2, size)));
-    const std::uint32_t first = pair[0];
-    if (isHighSurrogate(first) && pair.size() > 1 && isLowSurrogate(pair[1])) return 0x10000 + ((first - 0xD800) << 10) + (static_cast<std::uint32_t>(pair[1]) - 0xDC00);
-    return first;
-  }
-
   std::optional<std::string> at(std::string_view text, NumberArg index) {
     const std::int64_t size = length(text);
     const double relative = toIntegerOrInfinity(index.value);
@@ -638,14 +625,12 @@ namespace uos::rt {
   // ---- Search ------------------------------------------------------------------------------
   std::int64_t indexOf(std::string_view text, std::string_view search, NumberArg position) {
     const Shape textShape = shapeOf(text);
-    const Shape searchShape = shapeOf(search);
     if (textShape == Shape::Ascii) {
       const auto from = static_cast<std::size_t>(clampIndex(position.value, 0, static_cast<std::int64_t>(text.size())));
-      if (searchShape != Shape::Ascii) return search.empty() ? static_cast<std::int64_t>(from) : -1;
       const std::size_t found = text.find(search, from);
       return found == std::string_view::npos ? -1 : static_cast<std::int64_t>(found);
     }
-    if (textShape == Shape::Utf8 && searchShape != Shape::Other) {
+    if (textShape == Shape::Utf8 && shapeOf(search) != Shape::Other) {
       const std::int64_t size = length(text);
       const std::int64_t from = clampIndex(position.value, 0, size);
       if (search.empty()) return from;
@@ -655,10 +640,9 @@ namespace uos::rt {
       if (found == std::string_view::npos) return -1;
       return unitsOfUtf8(bytes(text), bytes(text) + found);
     }
-    const std::u16string units = unitsOf(text);
-    const std::u16string needle = unitsOf(search);
+    const std::u16string units = toUtf16(text);
     const auto from = static_cast<std::size_t>(clampIndex(position.value, 0, static_cast<std::int64_t>(units.size())));
-    const std::size_t found = std::u16string_view(units).find(needle, from);
+    const std::size_t found = std::u16string_view(units).find(toUtf16(search), from);
     return found == std::u16string_view::npos ? -1 : static_cast<std::int64_t>(found);
   }
 
@@ -666,62 +650,53 @@ namespace uos::rt {
 
   std::int64_t lastIndexOf(std::string_view text, std::string_view search, NumberArg position) {
     const double requested = std::isnan(position.value) ? std::numeric_limits<double>::infinity() : position.value;
-    const Shape textShape = shapeOf(text);
-    const Shape searchShape = shapeOf(search);
-    if (textShape == Shape::Ascii && searchShape == Shape::Ascii) {
+    if (isAscii(text)) {
       const auto from = static_cast<std::size_t>(clampIndex(requested, 0, static_cast<std::int64_t>(text.size())));
       const std::size_t found = text.rfind(search, from);
       return found == std::string_view::npos ? -1 : static_cast<std::int64_t>(found);
     }
-    const std::u16string units = unitsOf(text);
-    const std::u16string needle = unitsOf(search);
+    const std::u16string units = toUtf16(text);
     const auto from = static_cast<std::size_t>(clampIndex(requested, 0, static_cast<std::int64_t>(units.size())));
-    const std::size_t found = std::u16string_view(units).rfind(needle, from);
+    const std::size_t found = std::u16string_view(units).rfind(toUtf16(search), from);
     return found == std::u16string_view::npos ? -1 : static_cast<std::int64_t>(found);
   }
 
   bool includes(std::string_view text, std::string_view search, NumberArg position) {
     if (position.value == 0 || std::isnan(position.value)) {
-      const Shape textShape = shapeOf(text);
       const Shape searchShape = shapeOf(search);
-      if (textShape != Shape::Other && searchShape != Shape::Other) return text.find(search) != std::string_view::npos;
+      // Decoding malformed bytes or surrogates cannot consume or produce ASCII bytes.
+      if (searchShape == Shape::Ascii || (searchShape == Shape::Utf8 && shapeOf(text) != Shape::Other)) return text.find(search) != std::string_view::npos;
     }
     return indexOf(text, search, position) >= 0;
   }
 
   bool startsWith(std::string_view text, std::string_view search, NumberArg position) {
+    if (search.empty()) return true;
+    if (position.value == 0 && isAscii(search)) return text.starts_with(search);
     const Shape textShape = shapeOf(text);
-    const Shape searchShape = shapeOf(search);
-    if (textShape != Shape::Other && searchShape != Shape::Other) {
-      if (textShape == Shape::Ascii) {
-        const auto from = static_cast<std::size_t>(clampIndex(position.value, 0, static_cast<std::int64_t>(text.size())));
-        return text.substr(from, search.size()) == search;
-      }
-      const std::int64_t from = clampIndex(position.value, 0, length(text));
-      if (search.empty()) return true;
-      const Locate start = locateUtf8(text, from);
-      if (start.inside) return false;
-      return text.substr(start.byte, search.size()) == search;
+    if (textShape == Shape::Ascii) {
+      const auto from = static_cast<std::size_t>(clampIndex(position.value, 0, static_cast<std::int64_t>(text.size())));
+      return text.substr(from).starts_with(search);
     }
-    const std::u16string units = unitsOf(text);
-    const std::u16string needle = unitsOf(search);
+    if (textShape == Shape::Utf8 && shapeOf(search) != Shape::Other) {
+      const Locate start = locateUtf8(text, clampIndex(position.value, 0, length(text)));
+      return !start.inside && text.substr(start.byte).starts_with(search);
+    }
+    const std::u16string units = toUtf16(text);
     const auto from = static_cast<std::size_t>(clampIndex(position.value, 0, static_cast<std::int64_t>(units.size())));
-    return std::u16string_view(units).substr(from, needle.size()) == needle;
+    return std::u16string_view(units).substr(from).starts_with(toUtf16(search));
   }
 
   bool endsWith(std::string_view text, std::string_view search) {
-    const Shape textShape = shapeOf(text);
     const Shape searchShape = shapeOf(search);
-    if (textShape != Shape::Other && searchShape != Shape::Other) return text.size() >= search.size() && text.substr(text.size() - search.size()) == search;
+    if (searchShape == Shape::Ascii || (searchShape == Shape::Utf8 && shapeOf(text) != Shape::Other)) return text.ends_with(search);
     return endsWith(text, search, std::numeric_limits<double>::infinity());
   }
 
   bool endsWith(std::string_view text, std::string_view search, NumberArg endPosition) {
-    const std::u16string units = unitsOf(text);
-    const std::u16string needle = unitsOf(search);
+    const std::u16string units = toUtf16(text);
     const auto end = static_cast<std::size_t>(clampIndex(endPosition.value, 0, static_cast<std::int64_t>(units.size())));
-    if (needle.size() > end) return false;
-    return std::u16string_view(units).substr(end - needle.size(), needle.size()) == needle;
+    return std::u16string_view(units).substr(0, end).ends_with(toUtf16(search));
   }
 
   // ---- Transformations ---------------------------------------------------------------------
@@ -770,44 +745,26 @@ namespace uos::rt {
   }
 
   namespace {
-    std::string trimImpl(std::string_view text, bool leading, bool trailing) {
+    std::string trimImpl(std::string_view text, bool leading) {
       const Byte* begin = bytes(text);
       const Byte* end = begin + text.size();
-      const Byte* p = begin;
-      const Byte* first = nullptr;
+      const Byte* first = leading ? end : begin;
       const Byte* last = begin;
-      bool verbatim = true;
-      while (p < end) {
-        if (*p < 0x80) {
-          if (!isAsciiWhitespace(*p)) {
-            if (!first) first = p;
-            last = p + 1;
-          } else if (!first && !leading) {
-            first = p;
-          }
-          ++p;
-          continue;
-        }
-        const Element element = decodePoint(p, end);
+      for (const Byte* p = begin; p < end;) {
+        const Element element = decodeUnit(p, end);
         if (!isJsWhitespace(element.value)) {
-          if (!first) first = p;
+          if (first == end) first = p;
           last = p + element.size;
-          if (!element.verbatim) verbatim = false;
-        } else if (!first && !leading) {
-          first = p;
         }
         p += element.size;
       }
-      if (!first) return {};
-      if (!trailing) last = end;
-      const std::string_view kept(reinterpret_cast<const char*>(first), static_cast<std::size_t>(last - first));
-      return verbatim && isCanonicalWtf8(kept) ? std::string(kept) : canonicalWtf8(kept);
+      if (first >= last) return {};
+      return canonicalWtf8(text.substr(static_cast<std::size_t>(first - begin), static_cast<std::size_t>(last - first)));
     }
   }
 
-  std::string trim(std::string_view text) { return trimImpl(text, true, true); }
-  std::string trimStart(std::string_view text) { return trimImpl(text, true, false); }
-  std::string trimEnd(std::string_view text) { return trimImpl(text, false, true); }
+  std::string trim(std::string_view text) { return trimImpl(text, true); }
+  std::string trimEnd(std::string_view text) { return trimImpl(text, false); }
 
   std::vector<std::string> split(std::string_view text) { return {canonicalWtf8(text)}; }
 
@@ -875,11 +832,12 @@ namespace uos::rt {
     }
     const std::u16string units = toUtf16(text);
     const std::u16string needle = toUtf16(pattern);
-    const std::size_t found = std::u16string_view(units).find(needle);
-    if (found == std::u16string_view::npos) return fromUtf16(units);
-    std::string out = fromUtf16(std::u16string_view(units).substr(0, found));
-    appendSubstitution(out, units, found, needle.size(), toUtf16(replacement));
-    append(out, fromUtf16(std::u16string_view(units).substr(found + needle.size())));
+    const std::u16string_view view(units);
+    const std::size_t found = view.find(needle);
+    if (found == std::u16string_view::npos) return fromUtf16(view);
+    std::string out = fromUtf16(view.substr(0, found));
+    appendSubstitution(out, view, found, needle.size(), toUtf16(replacement));
+    append(out, fromUtf16(view.substr(found + needle.size())));
     return out;
   }
 
@@ -905,17 +863,11 @@ namespace uos::rt {
     const std::u16string replacementUnits = toUtf16(replacement);
     const std::u16string_view view(units);
     const std::size_t advance = std::max<std::size_t>(1, needle.size());
-    std::vector<std::size_t> positions;
-    std::size_t position = view.find(needle, 0);
-    while (position != std::u16string_view::npos) {
-      positions.push_back(position);
-      position = position + advance > view.size() ? std::u16string_view::npos : view.find(needle, position + advance);
-    }
     std::string out;
     std::size_t endOfLastMatch = 0;
-    for (const std::size_t match : positions) {
+    for (std::size_t match = view.find(needle); match != std::u16string_view::npos; match = view.find(needle, match + advance)) {
       append(out, fromUtf16(view.substr(endOfLastMatch, match - endOfLastMatch)));
-      appendSubstitution(out, units, match, needle.size(), replacementUnits);
+      appendSubstitution(out, view, match, needle.size(), replacementUnits);
       endOfLastMatch = match + needle.size();
     }
     if (endOfLastMatch < view.size()) append(out, fromUtf16(view.substr(endOfLastMatch)));
