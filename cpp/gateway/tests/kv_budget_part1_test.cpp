@@ -249,10 +249,8 @@ namespace {
 
   rt::Task<DeliveredRetryReply> deliverStreamRetryRequest(const rt::console::Capture& logs, rt::Request request) {
     const auto delivered = h::deferred();
-    auto lifecycle = h::createRequestDeliveryLifecycle(request.signal(), delivered.promise);
-    const handler::http::RequestDeliveryInfo info{delivered.promise, lifecycle.signal};
+    const handler::http::RequestDeliveryInfo info{delivered.promise, request.signal()};
     AWAIT(response, h::handler(request, info));
-    lifecycle.handoff();
     AWAIT(body, response.text());
     delivered.resolve();
     auto waiting = h::waitFor([&logs] { return terminalPayloads(logs).size() == 1; }, "stream retry terminal delivery");
