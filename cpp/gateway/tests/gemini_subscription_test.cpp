@@ -104,6 +104,18 @@ namespace {
     return rt::jsonParse(R"({"command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-weekly","remaining_fraction":0.986355185508728,"reset_time":"2026-11-25T19:04:49Z"}]},{"name":"Claude and GPT models","buckets":[{"id":"3p-weekly","remaining_fraction":1,"reset_time":"2026-11-25T19:38:03Z"}]}]}}})");
   }
 
+  json::object readTerminalLog(const rt::console::Capture& logs) {
+    json::object record;
+    std::size_t count = 0;
+    for (const auto& call : logs.calls()) {
+      if (call.args.size() != 2 || !(call.args.front() == "[ai.ubq.fi] request_terminal")) continue;
+      record = rt::jsonParse(call.args.back().string()).as_object();
+      ++count;
+    }
+    EXPECT_EQ(count, std::size_t(1));
+    return record;
+  }
+
   struct RealCliFixture {
     std::string originalDirectory = rt::process::cwd();
     std::string root = rt::fs::mkdtempSync("/tmp/gemini-process-");
@@ -653,14 +665,14 @@ ASYNC_TEST("authenticated gateway request routes to Gemini and records the subsc
   init.headers = rt::Headers{{"Authorization", "Bearer fixture-gateway-key"}, {"Content-Type", "application/json"}};
   init.body = rt::jsonStringify(body);
   const rt::Request request("https://ai.ubq.fi/v1/responses", init);
+  rt::console::Capture logs({rt::console::Method::info});
   AWAIT(response, uos::handler::index::handler(request));
   EXPECT_EQ(response.status(), 200);
   EXPECT_EQ(response.headers().get("x-uos-upstream"), std::optional<std::string>("gemini"));
-  const auto telemetry = uos::openai_telemetry::getResponseTelemetry(response);
-  ASSERT(telemetry.has_value());
-  EXPECT_EQ(telemetry->provider, "gemini");
-  EXPECT_EQ(telemetry->totalTokens, std::optional<double>(8699));
-  EXPECT_EQ(telemetry->completed, true);
+  const auto terminal = readTerminalLog(logs);
+  EXPECT_EQ(rt::getString(terminal, "provider"), "gemini");
+  EXPECT_EQ(rt::getNumber(terminal, "total_tokens"), std::optional<double>(8699));
+  EXPECT_EQ(rt::getString(terminal, "stream_terminal_type"), "response.completed");
   co_return;
 }
 
@@ -716,7 +728,7 @@ ASYNC_TEST("Gemini API-key request increments the admin usage meter exactly once
   co_return;
 }
 
-ASYNC_TEST("manual live Antigravity acceptance uses an authenticated gateway request and proves quota spend") {
+REAL_GEMINI_TEST("manual live Antigravity acceptance uses an authenticated gateway request and proves quota spend") {
   if (rt::env::get("GEMINI_LIVE_ACCEPTANCE") != std::optional<std::string>("1")) co_return;
   const std::string originalDirectory = rt::process::cwd();
   const std::string root = rt::fs::mkdtempSync("/tmp/gemini-live-");
@@ -746,14 +758,15 @@ ASYNC_TEST("manual live Antigravity acceptance uses an authenticated gateway req
   init.headers = rt::Headers{{"Authorization", "Bearer fixture-live-gateway-key"}, {"Content-Type", "application/json"}};
   init.body = rt::jsonStringify(body);
   const rt::Request request("https://ai.ubq.fi/v1/responses", init);
+  rt::console::Capture logs({rt::console::Method::info});
   AWAIT(response, uos::handler::index::handler(request));
   EXPECT_EQ(response.status(), 200);
   EXPECT_EQ(response.headers().get("x-uos-upstream"), std::optional<std::string>("gemini"));
-  const auto telemetry = uos::openai_telemetry::getResponseTelemetry(response);
-  ASSERT(telemetry.has_value());
-  EXPECT_EQ(telemetry->provider, "gemini");
-  ASSERT(telemetry->totalTokens.has_value());
-  EXPECT(*telemetry->totalTokens > 0);
+  const auto terminal = readTerminalLog(logs);
+  EXPECT_EQ(rt::getString(terminal, "provider"), "gemini");
+  const auto totalTokens = rt::getNumber(terminal, "total_tokens");
+  ASSERT(totalTokens.has_value());
+  EXPECT(*totalTokens > 0);
   AWAIT(serialized, response.text());
   EXPECT(serialized.find("GATEWAY_CANDIDATE_OK") != std::string::npos);
   const rt::AbortSignal pause = rt::AbortSignal::timeout(11'000);
@@ -766,11 +779,9 @@ ASYNC_TEST("manual live Antigravity acceptance uses an authenticated gateway req
   ASSERT(after.quota.get("gemini-weekly"));
   const auto afterFraction = *after.quota.get("gemini-weekly")->remaining_fraction;
   EXPECT(afterFraction < beforeFraction);
-  const json::object receipt{{"status", "passed"}, {"request_status", 200}, {"provider", telemetry->provider},
-    {"provider_request_id", telemetry->providerRequestId ? json::value(*telemetry->providerRequestId) : json::value(nullptr)},
-    {"input_tokens", telemetry->inputTokens ? json::value(*telemetry->inputTokens) : json::value(nullptr)},
-    {"output_tokens", telemetry->outputTokens ? json::value(*telemetry->outputTokens) : json::value(nullptr)},
-    {"total_tokens", telemetry->totalTokens ? json::value(*telemetry->totalTokens) : json::value(nullptr)},
+  const json::object receipt{{"status", "passed"}, {"request_status", 200}, {"provider", terminal.at("provider")},
+    {"provider_request_id", terminal.at("provider_request_id")}, {"input_tokens", terminal.at("input_tokens")},
+    {"output_tokens", terminal.at("output_tokens")}, {"total_tokens", terminal.at("total_tokens")},
     {"gemini_weekly_before", beforeFraction}, {"gemini_weekly_after", afterFraction}, {"observed_at_ms", rt::makeNumber(after.observed_at_ms)}};
   rt::fs::writeFileSync("/tmp/gemini-live-acceptance.json", rt::jsonStringify(receipt) + "\n", {.mode = 0600});
   co_return;
