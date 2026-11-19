@@ -14,8 +14,8 @@
 - [x] Add the ARM64 cutover checklist and runtime environment table.
 - [x] Verify registrations, tracked files, workflows and whitespace.
 - [x] Build the gateway and run the selected release tests in native isolation.
-- [ ] Build and verify the portable package.
-- [ ] Record final results and leave the checkout clean.
+- [x] Build and verify the portable package.
+- [x] Record final results and leave the checkout clean.
 
 ## STATE A
 
@@ -137,3 +137,36 @@ After updating the README and CI fixture environment, repeated the seven groups 
 The interim portable build on `d5454f17` was cancelled with SIGINT after identifying the license that covers the linked KV port. It exited 130 during compilation and published no archive. The accepted build runs the same background build command from `$scratch/package-tree` at `bdcbf891dc45c945c6805d3508d574a084b588f5`, tree `da68f4e4102c12545a929c5858bf76ccb3baa4f2`. The log is `package-build-accepted.log`. The cache already reused compiled objects from the cancelled run.
 
 The verifier is queued in the same background command after successful publication. It uses a separate empty home and fresh temp, the same committed worktree and `bash cpp/gateway/packaging/portable/verify.sh "$scratch/uos-gateway-linux-arm64.tar.gz" "$scratch/package-evidence"` under `env -i` and `/usr/bin/time -p`. Poll `package-build-accepted.status`, `package-verify.log` and `package-verify.status`. A separate loopback benchmark/smoke check is queued after verification in `package-followups.log`. The local portable build, packaged proofs and follow-ups are the remaining verification work.
+
+## Portable package results
+
+The accepted build at `bdcbf891dc45c945c6805d3508d574a084b588f5` finished in 658.93 s. The committed tree recorded in the archive is `da68f4e4102c12545a929c5858bf76ccb3baa4f2`. The Bookworm image used Clang 21.1.5 and the glibc 2.36 ceiling. Ccache reported 154 hits and 382 misses across 536 cacheable calls. The archive is 27,508,858 bytes with SHA-256 `99cdeeece8afaa34a94671015453d7da88acdc11e540da307561600c65e77ffc`. The payload has 65 bound files and one gateway executable. Listing the archive found the SQLite and denokv notices and no legacy program, add-on, dependency lock or copied codec helper.
+
+`verify.sh` passed in 41.83 s. Each container used two CPUs, its listed memory cap, zero swap, ABI 8, an unprivileged uid and Docker's no-network boundary. ELF linkage and relocation checks passed on both Debian releases. The same gateway SHA-256 `8fdcb2ba70b6ef69dce65a061bfb377c7853fd73bdfa2ac2f2013b8aa9c1bc4a` ran in all four proofs. The sealed manifest hashes are `8aed6ae2113b3c5a4a624862aef6f04799c9faf3d2e749924bbf51694f82c136` on Debian 12 and `1a956f12d080e484f1118d087b453cc3fdfc3fa7886cc5fa3aec5fa40fce29df` on Debian 13.
+
+| Debian | Cap | Completed and accounted | Accounted after reopen | Integrity refusals | Cgroup peak | Median requests/s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 12 | 512 MiB | 1,161 | 1,161 | 2 | 83.25 MiB | 387.91 |
+| 12 | 256 MiB | 1,161 | 1,161 | 2 | 83.20 MiB | 383.83 |
+| 13 | 512 MiB | 1,161 | 1,161 | 2 | 83.74 MiB | 386.12 |
+| 13 | 256 MiB | 1,161 | 1,161 | 2 | 83.73 MiB | 383.99 |
+
+Every proof checked packaged favicons, required authentication and observed no OOM events. Each verified the additional seccomp filter and refused a bad binding or modified asset with empty state. Evidence is in `$scratch/package-evidence/debian-{12,13}`. Runtime health returned `git_sha: unknown` and `deployment_id: unknown` in all four proofs, confirming the existing release-identity issue called out in CUTOVER.md.
+
+After sealing the same archive on the Ubuntu runner with `python3 -B "$run/bundle/seal.py" "$scratch/host-sealed"`, ran `bash cpp/gateway/bench/request_path/isolated.sh --package "$scratch/host-sealed" --out "$scratch/native-benchmark" --scenarios small stream reject --repetitions 1 --concurrency 2 --requests 6 --warmup 1` and `python3 -B cpp/gateway/bench/request_path/summarize.py "$scratch/native-benchmark/results.json"`. All 18 timed requests passed, including progressive SSE and the rejected-request scenario. `python3 -B "$scratch/check-native-smoke.py"` ran the native HTTP smoke over the CI fixture boundary with the same sealed package. It passed in 1.719 s with 20 captures, seven terminals and usage increasing from six to seven across graceful shutdown and reopen, with eight mock dispatches before and after. It covered progressive SSE and WebSocket delivery.
+
+The clean-environment CI driver control command was `CXX=clang++-21 UOS_CI_SELFTEST_CONFIG=release python3 -B cpp/gateway/cmake/ci/test_driver.py` with the same explicit PATH, empty HOME and fresh TMPDIR. All seven controls passed in 5.129 s. The final audits parsed 15 changed Python files, five shell files and the launch schema, resolved 366 source units and 449 test registrations, and found no differences from STATE A in the tracked C++ replay data, browser assets or OpenAI schema files.
+
+The archived conversion commands, Mac package execution, target-host Arch deployment, live inference and rollback were outside local qualification. The full Release, sanitizer and fuzz matrix is assigned to automatic branch CI. No workflow was dispatched. The installed local review launcher is a Node script, so local model review was skipped under the job's runtime and provider-traffic rules. The checkout is clean. The build artifacts and logs are outside it.
+
+## Summary
+
+STATE A (`ca045a83`) merges the residual fixes and restores forwarding for unknown Chat roles and Responses tool types. Both oversized-model guards are present.
+
+Removed the paired TypeScript comparison, Bun formatting, unused add-ons and offline conversion and proof commands. The branch ships the C++20 gateway, native tests, browser assets and licenses. The gateway opens the existing marked SQLite format directly and applies linked Landlock and seccomp before listening.
+
+Build the ARM64 gateway and archive with `cpp/gateway/packaging/portable/build.sh`. Run focused Release tests with `cpp/gateway/tools/ci-build.sh --config release <filter>` and verify the archive with `cpp/gateway/packaging/portable/verify.sh`.
+
+STATE A passed 61 binaries and 803 cases. The final focused Release run passed 45 binaries and 629 cases. Registration, whitespace and workflow checks passed. All four Debian package proofs passed, including integrity refusals and durable reopen.
+
+The Arch cutover and Mac package remain unverified. The Linux package reports `unknown` for the production health identity. The existing public auth guide still points to the legacy upload tool.
