@@ -24,3 +24,10 @@ results with a note pointing here. The code retains the model length checks in
 both inference entry points. The two conformance cases again have the same HTTP
 400 and zero-dispatch assertions on both sides. The allowlist tests were removed
 by the revert. Documentation and full qualification are pending.
+
+The runtime documentation now describes the portable and Arch build profiles,
+effective bounds, the explicit systemd environment, and the build and service
+environment variables. The cutover checklist uses the existing shadow unit and
+deployment lock. It labels every live-data and Arch host step as unverified.
+The storage runbooks now reflect the sparse and cyclic graph codec already in
+the branch. Historic synthetic storage receipts remain scoped to their inputs.

@@ -112,7 +112,7 @@ Keep application-specific field order, coercion, status, error code and log shap
   (the release root in production) unless the module already uses the `__FILE__` idiom.
 - Tests that need a different process environment per scenario re-launch the test binary
   itself (from `/proc/self/cmdline`) as a child; see `tests/config_differential_test.cpp`.
-- `rt::KvValue` has no object identity: shared nodes decode as copies, cycles throw. Deep
+- `rt::KvValue` now preserves shared and cyclic graph identity in the stored codecs. Deep
   KvValue nesting is capped at 2000 levels in typed-value.
 - `ChatReplayPublication::ToolName` (anthropic_replay) duplicates `ClaudeToolName`
   (anthropic_response_wire); the `anthropic-chat-responses` porter converts between them.
