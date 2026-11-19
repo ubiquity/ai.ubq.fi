@@ -38,10 +38,10 @@ A commit listed as “this commit” is the commit that introduced that verdict 
 | ID | Verdict | Commit | Test |
 | --- | --- | --- | --- |
 | D01 | FIXED — Closing clears queued writes and keeps the active buffer through Asio's completion callback. | `fix(cpp): retain HTTP write buffer through cancellation` | `runtime_http_lifetime_test`: ASan baseline failed the buffer-liveness assertion, then 5/5 passed under ASan and release. |
-| D02 | LEFT — Failed-bind ownership reverification pending. | — | Pending |
-| D03 | LEFT — Drain waiter abandonment reverification pending. | — | Pending |
-| D04 | LEFT — Early SSE registry ownership reverification pending. | — | Pending |
-| D05 | LEFT — HTTP stream abort listener reverification pending. | — | Pending |
+| D02 | FIXED — Failed startup now closes the low-level server after rejecting both public receipts, releasing its handler registrations. | `fix(cpp): release HTTP listeners on startup failure and teardown` | `runtime_http_lifetime_test`: the failed-bind handler survived on the baseline and expires after the fix. |
+| D03 | FIXED — A waiting frame owns the drain listeners. Event dispatch acquires a weak target and frame destruction removes the registrations. | `fix(cpp): release HTTP listeners on startup failure and teardown` | `runtime_http_test`: backpressure, drain, and disconnect. The public HTTP path closes or aborts before it can abandon a drain wait in isolation. |
+| D04 | FIXED — The request frame unregisters the early SSE entry on destruction, including while its handler is still pending. | `fix(cpp): release HTTP listeners on startup failure and teardown` | `runtime_http_lifetime_test`: a disconnected request survived loop destruction on the baseline and expires after the fix. |
+| D05 | FIXED — The abort callback weakly observes the signal, and the sender removes the listener on frame destruction. | `fix(cpp): release HTTP listeners on startup failure and teardown` | `runtime_http_test` and `runtime_http_sse_headers_test`: pending reads, interruption, and streaming. Abandonment without abort is only exposed during forced loop destruction; a socket-only fixture also introduces connection teardown lifetimes. |
 | D06 | FIXED — Recheck shutdown and disconnect after the module await, before the synchronous WebSocket handoff. | `fix(cpp): refuse WebSocket upgrades that race shutdown` | `runtime_http_lifetime_test`: ASan baseline accepted the upgrade, then 6/6 passed in ASan and release with a 503 refusal. |
 | D07 | LEFT — Memory KV await-expression reverification pending. | — | Pending |
 | D08 | LEFT — Cache fingerprint await-expression reverification pending. | — | Pending |
@@ -93,7 +93,27 @@ bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" src/runtime/http_upgra
 bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" tests/runtime_http_lifetime_test.cpp --config release runtime_http
 ```
 
-The baseline fixture passed 5/6 cases in 12.065 s. The fixed fixture passed 6/6
-cases in the ASan selection and 6/6 cases in the 7.946 s release run.
+The baseline fixture passed 5/6 cases in 12.065 s. The fixed ASan selection
+passed 5 binaries and 37/37 cases in 93.907 s. The release fixture passed 6/6
+cases in 7.946 s.
+
+For D02–D05, `serveHttp` never reached the listener cleanup on listen error.
+`waitForDrain` stored four callbacks capturing their own state, the early SSE
+registry callback owned its key, and the send abort listener owned its own
+signal. The failed-bind and abandoned-handler regressions both failed their
+liveness assertions with the old code. LSan reported 6,205 bytes in 53
+allocations in that process. The first cleanup attempt exposed an additional
+`ServeState` cycle in the unused or unremoved shutdown listener. The listener
+now weakly acquires the state and unregisters when that state expires.
+
+```sh
+bash "$scratch/run.sh" 4 python3 -B "$scratch/focused.py" tests/runtime_http_lifetime_test.cpp --config asan
+bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" src/runtime/http.cpp,src/runtime/http_early_sse.cpp --config asan runtime_http
+bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" src/runtime/http.cpp,src/runtime/http_early_sse.cpp --config release runtime_http
+```
+
+The corrected baseline exited with LSan diagnostics in 14.646 s and did not
+flush a case summary. The fixed release selection passed 6 binaries and 42/42
+cases in 40.573 s. The same six ASan binaries are the focused sanitizer gate.
 
 [Area B audit](cppgw-lifetime-b-20261118.md)

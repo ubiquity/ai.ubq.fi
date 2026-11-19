@@ -1738,8 +1738,7 @@ namespace uos::runtime::http {
                                }};
     }
 
-    // The closures of one waitForDrain promise (`closed` is both a response listener
-    // and an abort listener).
+    // Registrations for one drain wait, owned by the waiting coroutine.
     struct DrainWait {
       std::shared_ptr<ServerResponse> outgoing;
       rt::AbortSignal signal;
@@ -1753,7 +1752,6 @@ namespace uos::runtime::http {
       DrainWait(std::shared_ptr<ServerResponse> outgoing_, rt::AbortSignal signal_, rt::Resolve<void> resolve_, rt::Reject reject_)
         : outgoing(std::move(outgoing_)), signal(std::move(signal_)), resolve(std::move(resolve_)), reject(std::move(reject_)) {}
 
-      // Also drops the listeners' own references to this state once it settled.
       void cleanup() {
         outgoing->removeListener("drain", drain);
         outgoing->removeListener("error", failed);
@@ -1770,22 +1768,32 @@ namespace uos::runtime::http {
       }
     };
 
-    rt::Promise<void> waitForDrain(std::shared_ptr<ServerResponse> outgoing, rt::AbortSignal signal) {
-      return rt::newPromise<void>([&](const rt::Resolve<void>& resolve, const rt::Reject& reject) {
-        auto wait = std::make_shared<DrainWait>(outgoing, signal, resolve, reject);
-        wait->drain = IncomingListener([wait](const IncomingEvent&) {
-          wait->cleanup();
-          wait->resolve();
-        });
-        wait->failed = IncomingListener([wait](const IncomingEvent& event) { wait->fail(std::get<rt::Reason>(event)); });
-        wait->closed = IncomingListener([wait](const IncomingEvent&) { wait->fail(interrupted()); });
-        wait->closedOnAbort = rt::EventListener([wait] { wait->fail(interrupted()); });
-        outgoing->once("drain", wait->drain);
-        outgoing->once("error", wait->failed);
-        outgoing->once("close", wait->closed);
-        signal.addEventListener("abort", wait->closedOnAbort, {.once = true});
-        if (signal.aborted() || outgoing->destroyed()) wait->fail(interrupted());
+    rt::Task<void> waitForDrain(std::shared_ptr<ServerResponse> outgoing, rt::AbortSignal signal) {
+      const auto result = rt::withResolvers<void>();
+      const auto wait = std::make_shared<DrainWait>(outgoing, signal, result.resolve, result.reject);
+      const auto remove = rt::scopeExit([&] { wait->cleanup(); });
+      const std::weak_ptr<DrainWait> weak = wait;
+      wait->drain = IncomingListener([weak](const IncomingEvent&) {
+        if (auto live = weak.lock()) {
+          live->cleanup();
+          live->resolve();
+        }
       });
+      wait->failed = IncomingListener([weak](const IncomingEvent& event) {
+        if (auto live = weak.lock()) live->fail(std::get<rt::Reason>(event));
+      });
+      wait->closed = IncomingListener([weak](const IncomingEvent&) {
+        if (auto live = weak.lock()) live->fail(interrupted());
+      });
+      wait->closedOnAbort = rt::EventListener([weak] {
+        if (auto live = weak.lock()) live->fail(interrupted());
+      });
+      outgoing->once("drain", wait->drain);
+      outgoing->once("error", wait->failed);
+      outgoing->once("close", wait->closed);
+      signal.addEventListener("abort", wait->closedOnAbort, {.once = true});
+      if (signal.aborted() || outgoing->destroyed()) wait->fail(interrupted());
+      co_await result.promise.wait();
     }
 
     /** EOF only ends the producer. The separate response finish event owns delivery. */
@@ -1802,11 +1810,16 @@ namespace uos::runtime::http {
         co_return;
       }
       const rt::ReadableStreamDefaultReader<rt::ByteChunk> reader = body->getReader();
-      const auto cancel = [reader, signal] {
+      const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = signal.state();
+      const auto cancel = [reader, weakSignal] {
         // Never await a pending provider pull to handle a disconnected client.
-        rt::spawn(reader.cancel(signal.reason()), rt::ignoreRejection);
+        if (auto live = weakSignal.lock()) {
+          const rt::AbortSignal aborted(std::move(live));
+          rt::spawn(reader.cancel(aborted.reason()), rt::ignoreRejection);
+        }
       };
       const rt::EventListener cancelListener(cancel);
+      auto removeCancel = rt::scopeExit([&] { signal.removeEventListener("abort", cancelListener); });
       signal.addEventListener("abort", cancelListener, {.once = true});
       rt::Reason failure;
       try {
@@ -1820,14 +1833,15 @@ namespace uos::runtime::http {
             break;
           }
           if (!outgoing->write(std::span<const std::uint8_t>(*chunk.value))) {
-            const rt::Promise<void> draining = waitForDrain(outgoing, signal);
-            co_await draining.wait();
+            auto draining = waitForDrain(outgoing, signal);
+            co_await std::move(draining);
           }
         }
       } catch (...) {
         failure = std::current_exception();
       }
       signal.removeEventListener("abort", cancelListener);
+      removeCancel.release();
       if (responseInterrupted(*outgoing, signal)) cancel();
       reader.releaseLock();
       if (failure) std::rethrow_exception(failure);
@@ -1850,6 +1864,10 @@ namespace uos::runtime::http {
       NetAddr address;
       std::shared_ptr<node_http::Server> server;
       rt::EventListener abort;
+
+      ~ServeState() {
+        if (options.signal) options.signal->removeEventListener("abort", abort);
+      }
     };
 
     // `active.add(task); void task.finally(() => active.delete(task))` (`.catch(() => {})` too for upgrades).
@@ -1869,6 +1887,9 @@ namespace uos::runtime::http {
                                  IncomingListener failListener) {
       std::optional<rt::Request> request;
       std::optional<ResponseReadiness> headerReadiness;
+      auto removeReadiness = rt::scopeExit([&] {
+        if (headerReadiness) headerReadiness->remove();
+      });
       rt::Reason failure;
       try {
         request = incomingRequest(incoming, controller.signal());
@@ -1901,6 +1922,7 @@ namespace uos::runtime::http {
         requestBodies.delete_(*request);
       }
       if (headerReadiness) headerReadiness->remove();
+      removeReadiness.release();
       const rt::Promise<void> draining = drainTasks();
       co_await draining.wait();
       incoming->removeListener("aborted", aborted);
@@ -1991,6 +2013,7 @@ namespace uos::runtime::http {
       if (!live) return;
       (*live->rejectReady)(args.error);
       (*live->rejectFinished)(args.error);
+      live->server->close();
     });
     state->server->once("close", [weak](const node_http::ServerEventArgs&) {
       auto live = weak.lock();
@@ -2040,14 +2063,16 @@ namespace uos::runtime::http {
       }
       rt::setTimeout([self] { (*self)(); }, 25).unref();
     };
-    const std::function<rt::Promise<void>()> shutdown = [state, closeLingeringConnections]() -> rt::Promise<void> {
-      if (state->stopPromise) return *state->stopPromise;
+    const auto requestShutdown = [closeLingeringConnections](const std::shared_ptr<ServeState>& live) -> rt::Promise<void> {
+      if (live->stopPromise) return *live->stopPromise;
       const std::function<void()> closeLingering = [closeLingeringConnections] { (*closeLingeringConnections)(); };
-      state->stopPromise = rt::Promise<void>(shutdownServer(state, closeLingering));
-      return *state->stopPromise;
+      live->stopPromise = rt::Promise<void>(shutdownServer(live, closeLingering));
+      return *live->stopPromise;
     };
-    state->abort = rt::EventListener([shutdown] { (void)shutdown().catch_(rt::ignoreRejection); });
     if (state->options.signal) {
+      state->abort = rt::EventListener([weak, requestShutdown] {
+        if (auto live = weak.lock()) (void)requestShutdown(live).catch_(rt::ignoreRejection);
+      });
       state->options.signal->addEventListener("abort", state->abort, {.once = true});
       if (state->options.signal->aborted()) state->abort();
     }
@@ -2066,7 +2091,7 @@ namespace uos::runtime::http {
     };
     server.ready = state->ready;
     server.finished = state->finished;
-    server.shutdown = shutdown;
+    server.shutdown = [state, requestShutdown] { return requestShutdown(state); };
     server.ref = [state] { state->server->ref(); };
     server.unref = [state] { state->server->unref(); };
     return server;

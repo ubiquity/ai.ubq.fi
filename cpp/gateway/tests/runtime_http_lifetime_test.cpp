@@ -83,6 +83,37 @@ namespace {
     EXPECT(weakPayload.expired());
     if (withSignal) controller.abort();
   }
+
+  rt::Task<void> leaveHttpHandlerPending(std::shared_ptr<std::weak_ptr<const void>> observedRequest) {
+    struct Receipt {
+      rt::Promise<void> completed;
+    };
+    const auto started = rt::withResolvers<Receipt>();
+    const rt::Promise<rt::Response> response;
+    http::ServeHttpOptions options;
+    options.hostname = "127.0.0.1";
+    options.port = 0;
+    const auto server = http::serveHttp(std::move(options), [observedRequest, response, resolve = started.resolve](rt::Request request, http::ServeHandlerInfo info) {
+      *observedRequest = request.weakIdentity();
+      resolve(Receipt{info.completed});
+      return response.wait();
+    });
+    const auto address = co_await server.ready.wait();
+    asio::ip::tcp::socket client(rt::executor());
+    const asio::ip::tcp::endpoint endpoint(asio::ip::address_v4::loopback(), static_cast<unsigned short>(address.port));
+    client.connect(endpoint);
+    const std::string request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    asio::write(client, asio::buffer(request));
+    const auto receipt = co_await started.promise.wait();
+    client.close();
+    const auto disconnected = receipt.completed.catch_(rt::ignoreRejection);
+    co_await disconnected.wait();
+    EXPECT(receipt.completed.rejected());
+    const auto stopping = server.shutdown();
+    co_await rt::microtask();
+    EXPECT(stopping.pending());
+    EXPECT(!observedRequest->expired());
+  }
 }
 
 #ifdef UOS_HTTP_LIFETIME_ASAN
@@ -200,4 +231,37 @@ ASYNC_TEST("HTTP signal shutdown preserves idempotent completion and releases st
 ASYNC_TEST("HTTP already-aborted startup completes normal shutdown and releases state") {
   auto checking = checkServerLifetime(true, true, true);
   co_await std::move(checking);
+}
+
+ASYNC_TEST("HTTP failed bind releases its handler and preserves rejected server receipts") {
+  auto handlerOwner = std::make_shared<int>(0);
+  const std::weak_ptr<int> weakHandler = handlerOwner;
+  http::ServeHttpOptions options;
+  options.hostname = "127.0.0.1";
+  options.port = -1;
+  auto server = http::serveHttp(std::move(options), [handlerOwner](rt::Request, http::ServeHandlerInfo) { return rt::fulfilledTask(rt::Response(std::to_string(*handlerOwner))); });
+  handlerOwner.reset();
+  const auto ready = server.ready.catch_(rt::ignoreRejection);
+  co_await ready.wait();
+  ASSERT(server.ready.rejected());
+  EXPECT_EQ(rt::errorName(server.ready.reason()), "RangeError");
+  EXPECT(server.finished.rejected());
+  EXPECT(server.finished.reason() == server.ready.reason());
+  const auto stopping = server.shutdown();
+  const auto stopped = stopping.catch_(rt::ignoreRejection);
+  co_await stopped.wait();
+  EXPECT(stopping.rejected());
+  EXPECT(stopping.reason() == server.ready.reason());
+  server = {};
+  EXPECT(weakHandler.expired());
+}
+
+TEST("HTTP frame teardown releases the early SSE registry entry for a pending handler") {
+  const auto observedRequest = std::make_shared<std::weak_ptr<const void>>();
+  {
+    rt::Loop loop;
+    auto pending = leaveHttpHandlerPending(observedRequest);
+    rt::blockOn(loop, std::move(pending));
+  }
+  EXPECT(observedRequest->expired());
 }
