@@ -695,6 +695,61 @@ ASYNC_TEST("dispatch differential: waitForCodexRetry") {
   }
 }
 
+TEST("abandoning a Codex retry wait releases the abort signal") {
+  std::weak_ptr<rt::detail::AbortSignalState> signalState;
+  {
+    rt::FakeClock clock;
+    rt::Loop loop(clock);
+    const rt::LoopScope scope(loop);
+    const rt::AbortController controller;
+    const auto signal = controller.signal();
+    signalState = signal.state();
+    const rt::Promise<void> never;
+    auto sleeping = [never](double) { return never.wait(); };
+    auto waiting = dispatch::waitForCodexRetry(10, signal, std::move(sleeping));
+    rt::spawn(std::move(waiting));
+  }
+  EXPECT(signalState.expired());
+}
+
+TEST("abandoning a shared Codex refresh wait releases the abort signal") {
+  const rt::AbortController caller;
+  std::weak_ptr<rt::detail::AbortSignalState> signalState;
+  {
+    rt::FakeClock clock;
+    rt::Loop loop(clock);
+    const rt::LoopScope scope(loop);
+    const auto signal = rt::AbortSignal::any({caller.signal()});
+    signalState = signal.state();
+    const rt::Promise<CodexAuthState> refreshing;
+    auto waiting = auth_refresh::awaitWithoutCancellingSharedWork(refreshing, signal);
+    rt::spawn(std::move(waiting));
+  }
+  EXPECT(signalState.expired());
+}
+
+ASYNC_TEST("an aborted Codex retry lets the sleeper finish with its captures alive") {
+  const rt::AbortController controller;
+  const auto entered = rt::withResolvers();
+  const auto gate = rt::withResolvers();
+  const auto finished = rt::withResolvers<double>();
+  auto sleep = [start = entered.resolve, resume = gate.promise, finish = finished.resolve](double milliseconds) -> rt::Task<void> {
+    start();
+    co_await resume.wait();
+    finish(milliseconds);
+  };
+  rt::Promise<void> waiting(dispatch::waitForCodexRetry(37, controller.signal(), std::move(sleep)));
+  co_await entered.promise.wait();
+  const auto reason = rt::makeReason(rt::DOMException("client stopped waiting", "AbortError"));
+  controller.abort(reason);
+  auto completion = waiting.wait();
+  EXPECT_REJECTS_REASON(std::move(completion), reason);
+  EXPECT(finished.promise.pending());
+  gate.resolve();
+  const auto milliseconds = co_await finished.promise.wait();
+  EXPECT_EQ(milliseconds, 37);
+}
+
 namespace {
   struct FetchRecorder {
     std::vector<std::string> log;

@@ -81,6 +81,9 @@ namespace uos::provider::selection {
 
     rt::Task<std::optional<ProviderSelection>> loadSelectionIntoCache(double nowMs, std::optional<ProviderSelection> stale, double cacheGenerationAtLoad,
                                                                       double loadToken) {
+      const auto cleanup = rt::scopeExit([loadToken] {
+        if (selectionLoadToken == loadToken) selectionLoadInFlight.reset();
+      });
       std::optional<ProviderSelection> result;
       try {
         auto kvPromise = kv::getKv();
@@ -94,7 +97,6 @@ namespace uos::provider::selection {
       } catch (...) {
         result = std::move(stale);
       }
-      if (selectionLoadToken == loadToken) selectionLoadInFlight.reset();
       co_return result;
     }
   }

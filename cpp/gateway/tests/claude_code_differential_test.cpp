@@ -557,6 +557,31 @@ ASYNC_TEST("dispatch hooks run once around the transport and an abort cancels be
   }
 }
 
+TEST("abandoning a Claude Code preheader request releases its combined abort signal") {
+  const rt::AbortController caller;
+  std::weak_ptr<rt::detail::AbortSignalState> signalState;
+  {
+    rt::FakeClock clock;
+    rt::Loop loop(clock);
+    const rt::LoopScope scope(loop);
+    const auto entered = rt::withResolvers();
+    cc::ClaudeCodeAuthenticatedFetchOptions options;
+    options.credential = API_KEY;
+    options.workspace = nullptr;
+    options.signal = caller.signal();
+    options.fetcher = rt::Fetch([&signalState, start = entered.resolve](rt::RequestInfo, rt::RequestInit init) {
+      if (init.signal) signalState = init.signal->state();
+      start();
+      return hang();
+    });
+    const rt::Promise<cc::ClaudeCodeResponsesResult> pending(cc::fetchClaudeCodeResponses(body(), std::move(options)));
+    rt::blockOn(loop, entered.promise.wait());
+    EXPECT(pending.pending());
+    EXPECT(!signalState.expired());
+  }
+  EXPECT(signalState.expired());
+}
+
 ASYNC_TEST("workspace discovery reports failures as data and stores discovered state") {
   const cc::ClaudeCodeAuthHeaders auth{.kind = "api_key", .secret = "sk-ant-api-discover"};
   {

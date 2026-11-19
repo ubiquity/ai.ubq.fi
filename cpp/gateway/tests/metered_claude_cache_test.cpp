@@ -266,6 +266,41 @@ ASYNC_TEST("OpenLux uses catalog native capability and output caps without inven
   if (failure) std::rethrow_exception(failure);
 }
 
+TEST("a new loop can discover Metered models after the shared request was abandoned") {
+  const rt::env::ScopedOverride environment({{"METERED_API_KEY", std::string("discovery-fixture-key")}});
+  resetMeteredModelsCacheForTest();
+  const auto cleanup = rt::scopeExit([] {
+    provider::metered::setMeteredModelsFetchForTest({});
+    resetMeteredModelsCacheForTest();
+  });
+  {
+    rt::FakeClock clock;
+    rt::Loop first(clock);
+    const rt::LoopScope scope(first);
+    const auto entered = rt::withResolvers();
+    const rt::Promise<rt::Response> never;
+    provider::metered::setMeteredModelsFetchForTest(MeteredFetch([start = entered.resolve, never](rt::RequestInfo, rt::RequestInit) {
+      start();
+      return never.wait();
+    }));
+    const rt::Promise<std::optional<provider::metered::MeteredModelsSnapshot>> pending(fetchMeteredModels());
+    rt::blockOn(first, entered.promise.wait());
+    EXPECT(pending.pending());
+  }
+  {
+    rt::FakeClock clock;
+    rt::Loop second(clock);
+    const rt::LoopScope scope(second);
+    provider::metered::setMeteredModelsFetchForTest(MeteredFetch([](rt::RequestInfo, rt::RequestInit) {
+      return jsonResponse(parse(R"({"data":[{"id":"mock-metered-model"}]})"));
+    }));
+    const auto snapshot = rt::blockOn(second, fetchMeteredModels());
+    ASSERT(snapshot);
+    ASSERT_EQ(snapshot->models.size(), std::size_t{1});
+    EXPECT_EQ(snapshot->models[0].id, std::string("mock-metered-model"));
+  }
+}
+
 ASYNC_TEST("OpenLux native streaming exposes reasoning and text through canonical Responses events") {
   json::object start = nativeMessage("native-openlux-stream");
   start["content"] = json::array();

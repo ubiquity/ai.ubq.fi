@@ -85,6 +85,10 @@ namespace uos::codex::supervisor_transport {
       double serial = 0;
       bool closed = false;
 
+      ~ConnectionState() {
+        for (const auto& call : pending.values()) call.cleanup();
+      }
+
       void settle(double id, rt::Reason error, SupervisorCallResult value = std::nullopt) {
         PendingCall* found = pending.get(id);
         if (!found) return;
@@ -131,7 +135,9 @@ namespace uos::codex::supervisor_transport {
         const double id = serial;
         auto self = shared_from_this();
         return rt::newPromise<SupervisorCallResult>([&](const rt::Resolve<SupervisorCallResult>& resolve, const rt::Reject& reject) {
-          const rt::EventListener onAbort([self, id] { self->settle(id, rt::makeReason(rt::JsError("app-server call aborted"))); });
+          const rt::EventListener onAbort([weak = weak_from_this(), id] {
+            if (const auto state = weak.lock()) state->settle(id, rt::makeReason(rt::JsError("app-server call aborted")));
+          });
           const rt::Timeout timer = rt::setTimeout([self, id] { self->settle(id, rt::makeReason(rt::JsError("app-server call timed out"))); }, DEFAULT_CALL_TIMEOUT_MS);
           std::function<void()> cleanup = [callSignal, onAbort] {
             if (callSignal) callSignal->removeEventListener("abort", onAbort);

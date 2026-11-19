@@ -414,3 +414,28 @@ ASYNC_TEST("fetchMeteredTokenLogs aborts a stalled provider fetch at the bounded
   EXPECT_EQ(rt::performanceNow() - startedAt, METERED_FETCH_TIMEOUT_MS);
   rt::clearTimeout(keepAlive);
 }
+
+TEST("abandoning a Metered billing fetch releases its combined abort signal") {
+  const rt::AbortController caller;
+  std::weak_ptr<rt::detail::AbortSignalState> signalState;
+  {
+    rt::FakeClock clock;
+    rt::Loop loop(clock);
+    const rt::LoopScope scope(loop);
+    const auto entered = rt::withResolvers();
+    const rt::Promise<rt::Response> never;
+    MeteredTokenLogFetchOptions options;
+    options.apiKey = "test-metered-key";
+    options.signal = caller.signal();
+    options.fetcher = MeteredFetch([&signalState, start = entered.resolve, never](rt::RequestInfo, rt::RequestInit init) {
+      if (init.signal) signalState = init.signal->state();
+      start();
+      return never.wait();
+    });
+    const rt::Promise<std::vector<MeteredTokenLogEntry>> pending(fetchMeteredTokenLogs(std::move(options)));
+    rt::blockOn(loop, entered.promise.wait());
+    EXPECT(pending.pending());
+    EXPECT(!signalState.expired());
+  }
+  EXPECT(signalState.expired());
+}
